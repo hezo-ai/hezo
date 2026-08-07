@@ -39,12 +39,13 @@ export interface ActiveContainers {
 	/**
 	 * Memory every running container has been promised, in GB, instance-wide.
 	 *
-	 * Summed from what each container actually asked for - its project's
-	 * `memory_limit_gib`, else the instance default - rather than counted. A count
-	 * bounds memory only while every container is the same size, and the
-	 * per-project override exists precisely so they are not: under a count, one
-	 * project raising its cap to 4 GB silently doubles its share of a host sized
-	 * for 2 GB containers.
+	 * Summed from what each container was actually provisioned with
+	 * (`container_pool_members.memory_bytes`, falling back to its project's
+	 * `memory_limit_gib` or the instance default where that was never recorded)
+	 * rather than counted. A count bounds memory only while every container is the
+	 * same size, and the per-project override exists precisely so they are not:
+	 * under a count, one project raising its cap to 4 GB silently doubles its share
+	 * of a host sized for 2 GB containers.
 	 *
 	 * There is deliberately no container *count* here, derived or otherwise. How
 	 * many containers fit depends on the mix of their sizes, so the number is not
@@ -82,7 +83,7 @@ export async function getActiveContainers(
 	const [budgetGb, defaultCapGb, running, spare] = await Promise.all([
 		getMaxContainerMemoryGb(db, engine),
 		getDefaultRamCapPerContainerGb(db),
-		db.query<{ project_id: string }>(
+		db.query<{ project_id: string; memory_bytes: string | number | null }>(
 			// The UNION is keyed on the engine's own container id so a container
 			// recorded in both representations is counted once; the project it
 			// belongs to is carried through because that is where its memory cap
@@ -93,17 +94,24 @@ export async function getActiveContainers(
 			// container's worth back for chat. Counting it here as well reserved the
 			// same memory twice, so an instance sized for three containers dispatched
 			// two whenever the chat was open.
-			`SELECT project_id FROM (
-			   SELECT id AS project_id, container_id FROM projects
-			    WHERE container_id IS NOT NULL AND container_status = $1::container_status
-			      AND NOT EXISTS (
-			        SELECT 1 FROM container_pool_members m
-			         WHERE m.container_id = projects.container_id AND m.reserved_for_chat
-			      )
-			   UNION
-			   SELECT project_id, container_id FROM container_pool_members
-			    WHERE state IN ('creating', 'idle', 'busy') AND NOT reserved_for_chat
-			 ) AS running`,
+			//
+			// The allocation is joined on afterwards rather than selected inside the
+			// UNION: adding a column that is null on one arm and a figure on the other
+			// would stop a container recorded in both places deduplicating, and
+			// counting one container twice is the same defect in the other direction.
+			`SELECT r.project_id, m.memory_bytes
+			   FROM (
+			     SELECT id AS project_id, container_id FROM projects
+			      WHERE container_id IS NOT NULL AND container_status = $1::container_status
+			        AND NOT EXISTS (
+			          SELECT 1 FROM container_pool_members m
+			           WHERE m.container_id = projects.container_id AND m.reserved_for_chat
+			        )
+			     UNION
+			     SELECT project_id, container_id FROM container_pool_members
+			      WHERE state IN ('creating', 'idle', 'busy') AND NOT reserved_for_chat
+			   ) AS r
+			   LEFT JOIN container_pool_members m ON m.container_id = r.container_id`,
 			[ContainerStatus.Running],
 		),
 		db.query<{ project_id: string }>(
@@ -131,7 +139,17 @@ export async function getActiveContainers(
 	const overrides = await loadProjectMemoryCaps(db, new Set(running.rows.map((r) => r.project_id)));
 	let usedMemoryGb = 0;
 	for (const row of running.rows) {
-		usedMemoryGb += overrides.get(row.project_id) ?? defaultCapGb;
+		// What the container was actually built to hold, where that is recorded. A
+		// container keeps its allocation until the pool replaces it, so between a cap
+		// being changed and its containers being recycled the setting describes
+		// something that is not running - and charging the *new* figure for a
+		// container still holding the old one under-counts whenever the cap was
+		// lowered, which is the direction that over-subscribes the host. The cap is
+		// the fallback for a container whose allocation was never recorded.
+		usedMemoryGb +=
+			row.memory_bytes === null
+				? (overrides.get(row.project_id) ?? defaultCapGb)
+				: Number(row.memory_bytes) / 1024 ** 3;
 	}
 	return {
 		budgetGb,

@@ -1,7 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Logger } from '@hiddentao/logger';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
 	type CreateSandboxSpec,
@@ -84,7 +83,6 @@ function fakeApi(
 				rec.destroyed.push(id);
 				sandboxes.delete(id);
 			},
-			getMetrics: async () => new Map(),
 			openPty: async (_s, _sessionId, launch) => {
 				rec.ptyLaunches.push(launch);
 				return {
@@ -559,7 +557,7 @@ describe('DaytonaEngine process management', () => {
 });
 
 describe('DaytonaEngine degradations', () => {
-	it('reports no memory reading rather than zero when metrics are absent', async () => {
+	it('reports no memory reading rather than zero when the cgroup cannot be read', async () => {
 		// The caller treats null as "no reading this tick". Returning 0 would read
 		// as a sandbox using no memory and defeat the cap enforcement entirely.
 		const { api } = fakeApi();
@@ -591,80 +589,48 @@ describe('DaytonaEngine degradations', () => {
 		expect(await new DaytonaEngine(api).diskUsedBytes('sbx-1', '/workspace')).toBeNull();
 	});
 
-	it('reads the newest memory data point when a series exists', async () => {
-		const { api } = fakeApi({
-			getMetrics: async () =>
-				new Map([
-					['sandbox.memory.limit', 8e9],
-					['sandbox.memory.usage', 1.5e9],
-				]),
-		});
+	it('measures memory with the shared cgroup script, as a working set', async () => {
+		// The same arithmetic the Docker engine applies to the daemon's figures -
+		// total charge less reclaimable page cache - because one threshold is
+		// compared against both and they must be the same quantity.
+		const ran: string[] = [];
+		const { api } = fakeApi(
+			{
+				execute: async (_s, command) => {
+					ran.push(command);
+					return { exitCode: 0, output: '2147483648 1073741824\n' };
+				},
+			},
+			[SBX],
+		);
 		expect(await new DaytonaEngine(api).containerStats('sbx-1')).toEqual({
-			usedBytes: 1.5e9,
-			rawUsageBytes: 1.5e9,
+			usedBytes: 1024 ** 3,
+			rawUsageBytes: 2 * 1024 ** 3,
 		});
+		// Read from the sandbox rather than from the provider's telemetry API, which
+		// 403s permanently on an ordinary account and left this backend with no
+		// memory enforcement at all.
+		expect(ran.some((c) => c.includes('memory.current'))).toBe(true);
 	});
 
-	it('tolerates a metrics endpoint that errors', async () => {
-		const { api } = fakeApi({
-			getMetrics: async () => {
-				throw new Error('metrics down');
-			},
-		});
+	it('reports no memory reading when the script says nothing', async () => {
+		// Which is what it does in an unlimited cgroup: the reading there would be
+		// the host's, not this container's, and enforcing against it would stop the
+		// container on the first poll.
+		const { api } = fakeApi({ execute: async () => ({ exitCode: 0, output: '' }) }, [SBX]);
 		expect(await new DaytonaEngine(api).containerStats('sbx-1')).toBeNull();
 	});
 
-	it('stops asking after a 403, rather than once per project per tick', async () => {
-		// The container sync loop asks every ~15s for every running project, and an
-		// ordinary Daytona account answers 403 forever ("Telemetry endpoints are
-		// disabled when Analytics API is configured"). That produced an identical
-		// warn line and a wasted HTTP request per project per tick, while the
-		// outcome - no reading, no enforcement, Daytona's own OOM handling instead -
-		// never changed.
-		let calls = 0;
-		const { api } = fakeApi({
-			getMetrics: async () => {
-				calls += 1;
-				throw new DaytonaApiError('Daytona metrics failed (403)', 403, 'telemetry disabled');
+	it('tolerates an exec that cannot run at all', async () => {
+		const { api } = fakeApi(
+			{
+				execute: async () => {
+					throw new Error('sandbox gone');
+				},
 			},
-		});
-		const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-		try {
-			const engine = new DaytonaEngine(api);
-			for (const id of ['sbx-1', 'sbx-2', 'sbx-1']) {
-				expect(await engine.containerStats(id)).toBeNull();
-			}
-			expect(calls).toBe(1);
-			const ours = warn.mock.calls.filter((c) => String(c[0]).includes('memory metrics'));
-			expect(ours.length).toBe(1);
-			// And it says what the consequence is, so an operator is not left to work
-			// out whether memory enforcement is running.
-			expect(String(ours[0][0])).toContain('Daytona');
-		} finally {
-			warn.mockRestore();
-		}
-	});
-
-	it('keeps asking after a transient error, which is not a disabled endpoint', async () => {
-		// The other half, and the one that matters more: latching on any failure
-		// would silently switch memory enforcement off for the process's life over
-		// a single network blip, on an account that supports it perfectly well.
-		let calls = 0;
-		const { api } = fakeApi({
-			getMetrics: async () => {
-				calls += 1;
-				if (calls < 3) throw new Error('socket hang up');
-				return new Map([['sandbox.memory.usage', 1.5e9]]);
-			},
-		});
-		const engine = new DaytonaEngine(api);
-		expect(await engine.containerStats('sbx-1')).toBeNull();
-		expect(await engine.containerStats('sbx-1')).toBeNull();
-		expect(await engine.containerStats('sbx-1')).toEqual({
-			usedBytes: 1.5e9,
-			rawUsageBytes: 1.5e9,
-		});
-		expect(calls).toBe(3);
+			[SBX],
+		);
+		expect(await new DaytonaEngine(api).containerStats('sbx-1')).toBeNull();
 	});
 
 	it('has no container log stream, because PID 1 is sleep infinity', async () => {

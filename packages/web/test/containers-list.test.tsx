@@ -26,6 +26,8 @@ interface MemberOpts {
 	hasUnpushedCommits?: boolean;
 	lastLogs?: string | null;
 	lastError?: string | null;
+	/** The cap this container was provisioned to cover. Null for one never recorded. */
+	memoryBytes?: number | null;
 }
 
 /** Two teams, each with its project - the 1:1 model means two teams for two projects. */
@@ -47,8 +49,8 @@ async function addMember(projectId: string, containerId: string, o: MemberOpts =
 	await db.query(
 		`INSERT INTO container_pool_members
 		   (project_id, container_id, state, disk_ceiling_bytes, disk_used_bytes,
-		    reserved_for_chat, has_unpushed_commits, last_logs, last_error)
-		 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7, $8, $9)`,
+		    reserved_for_chat, has_unpushed_commits, last_logs, last_error, memory_bytes)
+		 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7, $8, $9, $10)`,
 		[
 			projectId,
 			containerId,
@@ -59,6 +61,7 @@ async function addMember(projectId: string, containerId: string, o: MemberOpts =
 			o.hasUnpushedCommits ?? false,
 			o.lastLogs ?? null,
 			o.lastError ?? null,
+			o.memoryBytes === undefined ? String(2 * 1024 ** 3) : o.memoryBytes,
 		],
 	);
 }

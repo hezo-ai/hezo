@@ -246,6 +246,23 @@ export interface ContainerEngine {
 	inspectContainer(containerId: string): Promise<ContainerInfo | null>;
 	listContainersByLabel(label: string): Promise<Array<{ Id: string; Names: string[] }>>;
 	findContainerByNamePrefix(prefix: string): Promise<ContainerInfo | null>;
+	/**
+	 * This container's memory working set - total charge less reclaimable file
+	 * pages.
+	 *
+	 * **Required of every backend**, because it is what `enforceContainerMemoryLimit`
+	 * stops a container on: an adapter that answers `null` forever has silently
+	 * turned the per-container memory cap into a number nothing checks. Where a
+	 * control plane exposes nothing usable, run `buildMemoryUsageScript()` over the
+	 * exec transport and parse it with `parseCgroupMemory` (`sandbox/proc-scripts.ts`) -
+	 * the same measurement every backend uses, which is what makes one threshold
+	 * mean one thing across all of them.
+	 *
+	 * `null` means **this reading could not be taken** - a transport error, a tick
+	 * that raced a container going away - and the caller leaves the last figure
+	 * alone. It never means "this backend does not do that", and it is never zero,
+	 * which would read as a container using no memory.
+	 */
 	containerStats(containerId: string): Promise<ContainerMemoryStats | null>;
 	containerLogs(
 		containerId: string,

@@ -7,7 +7,8 @@ import {
 	type ContainerDeps,
 	PoolCapacityError,
 } from '../src/services/containers';
-import type { ContainerEngine } from '../src/services/sandbox/types';
+import { listAllContainers } from '../src/services/sandbox/pool-db';
+import type { ContainerConfig, ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import { createStubDocker, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
@@ -278,6 +279,167 @@ describe('acquireRunContainer', () => {
 });
 
 /**
+ * A container has to actually hold the cap it is handed a run against.
+ *
+ * The cap is forwarded correctly at create, but nothing recorded it and nothing
+ * re-checked it, so raising a project's cap left its existing container in
+ * service at the old allocation while everything downstream - the run's sizing,
+ * the instance budget, the enforcement threshold, the exit-137 message and the
+ * Containers page - read the new figure. On a managed sandbox that meant a
+ * project set to 6 GB running in a 2 GB sandbox with nothing saying so.
+ */
+describe('acquireRunContainer against a changed memory cap', () => {
+	async function memberAllocation(containerId: string): Promise<number | null> {
+		const res = await db.query<{ memory_bytes: string | null }>(
+			`SELECT memory_bytes FROM container_pool_members WHERE container_id = $1`,
+			[containerId],
+		);
+		const raw = res.rows[0]?.memory_bytes;
+		return raw === null || raw === undefined ? null : Number(raw);
+	}
+
+	function memoryRecordingDocker(): {
+		docker: ContainerEngine;
+		created: Array<number | undefined>;
+		destroyed: string[];
+	} {
+		const created: Array<number | undefined> = [];
+		const destroyed: string[] = [];
+		const base = provisioningDocker();
+		const docker = createStubDocker({
+			...base,
+			createContainer: vi.fn(async (_name: string, config: ContainerConfig) => {
+				created.push(config.HostConfig.Memory);
+				return { Id: `cap-cid-${seq++}`, Warnings: [] };
+			}),
+			removeContainer: vi.fn(async (id: string) => {
+				destroyed.push(id);
+			}),
+			stopContainer: vi.fn(async () => {}),
+		});
+		return { docker, created, destroyed };
+	}
+
+	it('records the cap the container was provisioned to cover', async () => {
+		const project = await freshProject('Cap Recorded');
+		await db.query('UPDATE projects SET memory_limit_gib = 3 WHERE id = $1', [project]);
+		const { docker, created } = memoryRecordingDocker();
+		const acquired = await acquireRunContainer(deps(docker), project, null);
+		try {
+			expect(created).toEqual([3 * 1024 ** 3]);
+			expect(await memberAllocation(acquired.containerId)).toBe(3 * 1024 ** 3);
+		} finally {
+			await acquired.release();
+		}
+	});
+
+	it('replaces a container built for the old cap rather than reusing it', async () => {
+		// The reported bug, end to end: a container provisioned at the default and a
+		// cap raised afterwards. Reuse here is what handed a run 6 GB of budget and
+		// a 2 GB container.
+		const project = await freshProject('Cap Raised');
+		await db.query('UPDATE projects SET memory_limit_gib = 2 WHERE id = $1', [project]);
+		const { docker, created, destroyed } = memoryRecordingDocker();
+		const first = await acquireRunContainer(deps(docker), project, null);
+		const stale = first.containerId;
+		await first.release();
+
+		await db.query('UPDATE projects SET memory_limit_gib = 6 WHERE id = $1', [project]);
+		const second = await acquireRunContainer(deps(docker), project, null);
+		try {
+			expect(second.containerId).not.toBe(stale);
+			// Destroyed, not merely passed over: a member the ladder refuses still
+			// counts against the instance budget until it is gone, so skipping it
+			// would queue the replacement behind a container nothing can ever use.
+			expect(destroyed).toContain(stale);
+			expect(await memberAllocation(stale)).toBeNull();
+			expect(created).toEqual([2 * 1024 ** 3, 6 * 1024 ** 3]);
+			expect(await memberAllocation(second.containerId)).toBe(6 * 1024 ** 3);
+		} finally {
+			await second.release();
+		}
+	});
+
+	it('replaces one built for more than the cap too', async () => {
+		// It covers the cap, but a managed backend keeps billing for the larger
+		// allocation the operator has since given back.
+		const project = await freshProject('Cap Lowered');
+		await db.query('UPDATE projects SET memory_limit_gib = 8 WHERE id = $1', [project]);
+		const { docker, created, destroyed } = memoryRecordingDocker();
+		const first = await acquireRunContainer(deps(docker), project, null);
+		const large = first.containerId;
+		await first.release();
+
+		await db.query('UPDATE projects SET memory_limit_gib = 2 WHERE id = $1', [project]);
+		const second = await acquireRunContainer(deps(docker), project, null);
+		try {
+			expect(destroyed).toContain(large);
+			expect(created).toEqual([8 * 1024 ** 3, 2 * 1024 ** 3]);
+		} finally {
+			await second.release();
+		}
+	});
+
+	it('replaces a member whose allocation was never recorded', async () => {
+		// An adopted container, or one predating the column. Unknown is not a match:
+		// guessing that it covers the cap is how a container ends up serving a run
+		// it is too small for.
+		const project = await freshProject('Cap Unknown');
+		await db.query('UPDATE projects SET memory_limit_gib = 4 WHERE id = $1', [project]);
+		const { docker, destroyed } = memoryRecordingDocker();
+		const first = await acquireRunContainer(deps(docker), project, null);
+		const adopted = first.containerId;
+		await first.release();
+		await db.query(
+			`UPDATE container_pool_members SET memory_bytes = NULL WHERE container_id = $1`,
+			[adopted],
+		);
+
+		const second = await acquireRunContainer(deps(docker), project, null);
+		try {
+			expect(second.containerId).not.toBe(adopted);
+			expect(destroyed).toContain(adopted);
+		} finally {
+			await second.release();
+		}
+	});
+
+	it('leaves a matching container alone, so an unchanged cap costs no cold start', async () => {
+		const project = await freshProject('Cap Unchanged');
+		await db.query('UPDATE projects SET memory_limit_gib = 4 WHERE id = $1', [project]);
+		const { docker, created, destroyed } = memoryRecordingDocker();
+		const first = await acquireRunContainer(deps(docker), project, null);
+		await first.release();
+		const second = await acquireRunContainer(deps(docker), project, null);
+		try {
+			expect(second.containerId).toBe(first.containerId);
+			expect(destroyed).toEqual([]);
+			expect(created.length).toBe(1);
+		} finally {
+			await second.release();
+		}
+	});
+
+	it('reports what the container holds, not what the cap now says', async () => {
+		// The Containers page read the project's cap, so it showed 6 GB beside a
+		// container that had 2 - describing a container that did not exist.
+		const project = await freshProject('Cap Listed');
+		await db.query('UPDATE projects SET memory_limit_gib = 2 WHERE id = $1', [project]);
+		const { docker } = memoryRecordingDocker();
+		const acquired = await acquireRunContainer(deps(docker), project, null);
+		try {
+			await db.query('UPDATE projects SET memory_limit_gib = 6 WHERE id = $1', [project]);
+			const listed = (await listAllContainers(db)).find(
+				(c) => c.container_id === acquired.containerId,
+			);
+			expect(listed?.memory_bytes).toBe(2 * 1024 ** 3);
+		} finally {
+			await acquired.release();
+		}
+	});
+});
+
+/**
  * The chat takes a container through the same ladder, which is what guarantees
  * the one it pins is not already serving a run.
  *
@@ -318,6 +480,28 @@ describe('acquireRunContainer for the chat', () => {
 		} finally {
 			await run.release();
 		}
+	});
+
+	it('replaces its pinned container when the cap changes under it', async () => {
+		// The pin is checked ahead of the ladder, so the allocation check has to be
+		// repeated there or the chat is the one workload left running in a container
+		// built for a cap nobody set any more.
+		//
+		// Its own project rather than the shared one: this case changes the cap, and
+		// `chatProject()` hands back the *same* project every time (a team holds one
+		// project), so the change would follow every case after it.
+		const project = await freshProject('Chat Cap');
+		await db.query('UPDATE projects SET memory_limit_gib = 2 WHERE id = $1', [project]);
+		const docker = provisioningDocker();
+		const first = await acquireRunContainer(deps(docker), project, null, 'chat');
+
+		await db.query('UPDATE projects SET memory_limit_gib = 5 WHERE id = $1', [project]);
+		const second = await acquireRunContainer(deps(docker), project, null, 'chat');
+		expect(second.containerId).not.toBe(first.containerId);
+		// Exactly one pin: the replacement is pinned and the stale container is gone
+		// from the pool rather than left beside it.
+		expect(await pinned(project)).toEqual([second.containerId]);
+		expect(await poolRow(first.containerId)).toBeUndefined();
 	});
 
 	it('pins rather than claims, so the container reads idle and reserved', async () => {

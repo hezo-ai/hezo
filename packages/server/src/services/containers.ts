@@ -267,6 +267,10 @@ export function shouldKeepOldContainers(): boolean {
 
 const memoryLimitBytes = (gib: number) => gib * 1024 ** 3;
 
+/** A member's recorded allocation as a log line reads it, including "never recorded". */
+const describeAllocation = (bytes: number | null) =>
+	bytes === null ? 'an unrecorded amount of memory' : `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+
 /** Fork-bomb backstop; generous for npm/build process fan-out. */
 const CONTAINER_PIDS_LIMIT = 4096;
 
@@ -560,7 +564,10 @@ export async function provisionContainer(
 		// this id) had no row to be reached from. `creating` is skipped by the
 		// allocation ladder, so registering early cannot hand a half-built container
 		// to a run; the `idle` upsert below is what makes it allocatable.
-		await upsertPoolMember(db, project.id, Id, 'creating', diskGb);
+		await upsertPoolMember(db, project.id, Id, 'creating', {
+			diskGb,
+			memoryBytes: memoryCeilingBytes,
+		});
 		emit('stdout', '→ Starting container');
 		await docker.startContainer(Id);
 		if (pinMtu !== null) {
@@ -724,10 +731,13 @@ export async function provisionContainer(
 		// runs outside the per-project lifecycle lock on two paths (project creation
 		// and startup self-heal), so that was reachable rather than theoretical.
 		//
-		// The disk it was actually provisioned with rides along, so the pool judges
-		// this container against its own allocation rather than against whatever the
-		// setting happens to say later.
-		await upsertPoolMember(db, project.id, Id, 'idle', diskGb);
+		// The disk and memory it was actually provisioned with ride along, so the
+		// pool judges this container against its own allocation rather than against
+		// whatever the settings happen to say later.
+		await upsertPoolMember(db, project.id, Id, 'idle', {
+			diskGb,
+			memoryBytes: memoryCeilingBytes,
+		});
 
 		emit('stdout', '✓ Container ready');
 		await broadcastProjectUpdate(db, wsManager, teamId, project.id);
@@ -928,12 +938,17 @@ export async function acquireRunContainer(
 		// its conversation was built against, and pinning a second container beside
 		// the one it already holds.
 		if (workload === 'chat') {
-			const existing = await reusableChatMember(deps, projectId);
+			const existing = await reusableChatMember(
+				deps,
+				projectId,
+				memoryLimitBytes(await projectContainerMemoryGb(db, projectId)),
+			);
 			if (existing) return existing;
 		}
 		// Bounded: each iteration either claims a member or removes one from
-		// contention (a lost race retries against a pool one member smaller), so
-		// this cannot spin. The cap is the pool's own size, not a timeout.
+		// contention (a lost race retries against a pool one member smaller, and a
+		// recycle pass clears every mismatched member at once), so this cannot spin.
+		// The cap is the pool's own size, not a timeout.
 		for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
 			const [active, requestMemoryGb] = await Promise.all([
 				getActiveContainers(db, deps.docker),
@@ -955,9 +970,27 @@ export async function acquireRunContainer(
 							budgetGb: active.budgetGb,
 							requestMemoryGb,
 						},
+				// The cap every member must have been built to, stated for every
+				// workload - unlike the budget figure above, which chat zeroes out.
+				memoryLimitBytes(requestMemoryGb),
 			);
 
 			if (decision.kind === 'queue') throw new PoolCapacityError(projectId);
+
+			if (decision.kind === 'recycle') {
+				const proj = await loadProjectRow(db, projectId);
+				// Destroyed here rather than merely passed over, because a member the
+				// ladder refuses still counts against the instance memory budget for as
+				// long as it exists: skipping it would leave the replacement to fail
+				// `fitsBudget` and queue a run behind a container nothing will ever use.
+				for (const stale of decision.members) {
+					log.info(
+						`project ${ref(proj.slug, projectId)} container ${ref(proj.slug, stale.id.slice(0, 12))} was provisioned for ${describeAllocation(stale.memoryBytes)} but the cap is now ${requestMemoryGb} GiB; replacing it`,
+					);
+					await destroyContainer(deps, projectId, proj.slug, proj.team_id, stale.id);
+				}
+				continue;
+			}
 
 			if (decision.kind === 'create') {
 				const proj = await loadProjectRow(db, projectId);
@@ -1074,11 +1107,34 @@ async function takeMember(
  * that is gone or unreachable - the caller falls through to the ladder, which is
  * where a fresh container comes from. A stale pin is dropped on the way past so
  * it cannot keep a phantom container out of the budget forever.
+ *
+ * This rung sits **above** the ladder, so the allocation check the ladder makes
+ * has to be repeated here or the chat would be the one workload that keeps
+ * running in a container built for a cap nobody set any more.
  */
-async function reusableChatMember(deps: ContainerDeps, projectId: string): Promise<string | null> {
+async function reusableChatMember(
+	deps: ContainerDeps,
+	projectId: string,
+	requiredMemoryBytes: number,
+): Promise<string | null> {
 	const { db, docker } = deps;
 	const pinned = (await loadPoolMembers(db, projectId)).find((m) => m.reservedForChat);
 	if (!pinned) return null;
+
+	if (pinned.memoryBytes !== requiredMemoryBytes) {
+		// Destroyed rather than merely unpinned, unlike the repairs below: those
+		// answer for a container that is already gone or unreachable, while this one
+		// is alive and would be left running on the backend with nothing referencing
+		// it. The session's next turn starts on a container built to the cap; what it
+		// loses is the parked filesystem, which is the same price a task run pays and
+		// is why the check is on the cap rather than on anything cheaper to satisfy.
+		const proj = await loadProjectRow(db, projectId);
+		log.info(
+			`project ${ref(proj.slug, projectId)} assistant container ${ref(proj.slug, pinned.id.slice(0, 12))} was provisioned for ${describeAllocation(pinned.memoryBytes)} but the cap is now ${requiredMemoryBytes / 1024 ** 3} GiB; replacing it`,
+		);
+		await destroyContainer(deps, projectId, proj.slug, proj.team_id, pinned.id);
+		return null;
+	}
 
 	if (pinned.state === 'suspended') {
 		try {
@@ -1154,6 +1210,10 @@ async function adoptUnpooledContainer(deps: ContainerDeps, projectId: string): P
 	// A stale row naming a container the engine no longer knows is left alone, so
 	// the decision falls through to provisioning - which is what repairs it.
 	if (!info) return;
+	// No allocation is stated, and none can be: this container was provisioned
+	// before the pool knew about it, so what it was built to hold is genuinely
+	// unrecorded. The ladder reads that as "cannot be shown to cover the cap" and
+	// replaces it, which is the only honest answer.
 	await upsertPoolMember(db, projectId, containerId, info.State.Running ? 'idle' : 'suspended');
 }
 

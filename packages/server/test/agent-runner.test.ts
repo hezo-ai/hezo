@@ -32,6 +32,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	seedProjectContainer,
 	stubEngineSeams,
 } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
@@ -275,11 +276,15 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 
 describe('runAgent', () => {
 	it('lazy-starts a stopped container, narrates it in the run log, and proceeds', async () => {
-		await db.query(
-			`UPDATE projects SET container_status = 'stopped'::container_status, container_id = 'c-1',
-			     container_error = NULL WHERE id = $1`,
-			[projectId],
-		);
+		// Seeded through the pool as well as the column, and with the allocation it
+		// was provisioned with: a container the pool has no record of has an
+		// unknown size, which it cannot show covers the project's cap, so it is
+		// replaced rather than resumed. That is right for a genuinely adopted
+		// container and wrong for the one this test is about.
+		await seedProjectContainer(db, projectId, 'c-1', {
+			containerStatus: 'stopped',
+			state: 'suspended',
+		});
 		const startCalls: string[] = [];
 		let started = false;
 		const docker = createMockDocker({

@@ -87,12 +87,6 @@ export interface LiveAdapterFixture {
 	 */
 	reportsDiskUsage: boolean;
 	/**
-	 * Whether this backend reports per-container memory statistics. Documented as
-	 * optional: where a provider does not expose it, its own OOM handling applies
-	 * instead of Hezo's graceful stop.
-	 */
-	reportsMemoryStats: boolean;
-	/**
 	 * Whether the engine honours a per-exec user natively. Docker does; a provider
 	 * that execs as root and deprivileges with `runuser` also does, from the
 	 * caller's point of view - this is false only where the identity cannot be

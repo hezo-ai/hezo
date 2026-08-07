@@ -13,7 +13,9 @@ import {
 	buildAnyPortListeningScript,
 	buildKillPidsScript,
 	buildKillTunnelClientsScript,
+	buildMemoryUsageScript,
 	buildPortsListeningScript,
+	parseCgroupMemory,
 } from '../../src/services/sandbox/proc-scripts';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 import {
@@ -172,19 +174,59 @@ export function describeEngineConformance(
 			expect((await engine.execStart(asRoot)).stdout).toContain('root');
 		});
 
-		it('reports memory statistics, or says it cannot', async () => {
+		it('reports memory statistics', async () => {
+			// Unconditional, unlike the disk assertion below: `containerStats` is what
+			// the memory cap is enforced on, so a backend that cannot answer has
+			// turned the cap into a number nothing checks. There is deliberately no
+			// fixture flag making this optional - an adapter with no usable control
+			// plane runs the shared cgroup script instead.
 			const stats = await engine.containerStats(containerId);
-			if (!fixture.reportsMemoryStats) {
-				// Null is the documented "unavailable"; a number would mean the fixture
-				// is wrong about its own backend.
-				expect(stats).toBeNull();
-				return;
-			}
 			expect(stats).not.toBeNull();
 			expect(stats?.usedBytes).toBeGreaterThan(0);
 			// The cap is a guarantee the rest of the system is sized against, so a
 			// container over it would mean the provider ignored the request.
 			expect(stats?.usedBytes).toBeLessThanOrEqual(fixture.memoryBytes * 2);
+		});
+
+		/**
+		 * The shared cgroup reading, against a real container's real cgroup.
+		 *
+		 * `enforceContainerMemoryLimit` compares one threshold against whatever each
+		 * backend answers, so the answers have to be the same *quantity* - and an
+		 * engine free to source its reading differently (a daemon endpoint here, this
+		 * script on a managed sandbox) is exactly where two plausible-but-different
+		 * numbers come from. Running both against one container is the only place
+		 * that can be shown rather than asserted in a comment.
+		 *
+		 * It also gives the script itself live coverage on the backend that runs in
+		 * CI. Without this it is exercised only by the billable managed leg, which is
+		 * manual - so a cgroup layout change or a shell portability bug would ship.
+		 */
+		it('measures memory from the cgroup, agreeing with the engine’s own reading', async () => {
+			const exec = await engine.execCreate(containerId, {
+				Cmd: ['sh', '-c', buildMemoryUsageScript()],
+				User: 'root',
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			const fromScript = parseCgroupMemory((await engine.execStart(exec)).stdout);
+
+			// Not null: the container was created with a memory limit, so the guard
+			// that suppresses a host-cgroup reading must not have fired.
+			expect(fromScript).not.toBeNull();
+			expect(fromScript?.usedBytes).toBeGreaterThan(0);
+
+			const fromEngine = await engine.containerStats(containerId);
+			// Same order of magnitude rather than equal: the two readings are taken
+			// moments apart on a live container, and the working set genuinely moves
+			// between them. What would fail here is a units error or a different
+			// accounting (charging the host's memory, or not discounting page cache),
+			// which is what this is for.
+			const ratio =
+				(fromScript as { usedBytes: number }).usedBytes /
+				(fromEngine as { usedBytes: number }).usedBytes;
+			expect(ratio).toBeGreaterThan(0.5);
+			expect(ratio).toBeLessThan(2);
 		});
 
 		it('reports disk usage, or answers null rather than zero', async () => {

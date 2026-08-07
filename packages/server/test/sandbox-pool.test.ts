@@ -6,6 +6,11 @@ import {
 	selectPoolMember,
 } from '../src/services/sandbox/pool';
 
+// The cap every member in these tests was provisioned to cover. Stated once so a
+// test that means to exercise the ladder is not accidentally exercising the
+// allocation check in front of it.
+const CAP = 2 * 1024 ** 3;
+
 function member(id: string, over: Partial<PoolMember> = {}): PoolMember {
 	return {
 		id,
@@ -13,6 +18,7 @@ function member(id: string, over: Partial<PoolMember> = {}): PoolMember {
 		lastTaskId: null,
 		hasUnpushedCommits: false,
 		atDiskCeiling: false,
+		memoryBytes: CAP,
 		reservedForChat: false,
 		...over,
 	};
@@ -31,41 +37,47 @@ describe('selectPoolMember ladder', () => {
 			'task-1',
 			[member('other'), member('affine', { lastTaskId: 'task-1' })],
 			ROOM,
+			CAP,
 		);
 		expect(decision).toEqual({ kind: 'reuse', member: expect.objectContaining({ id: 'affine' }) });
 	});
 
 	it('falls back to any warm container', () => {
-		const decision = selectPoolMember('task-1', [member('warm')], ROOM);
+		const decision = selectPoolMember('task-1', [member('warm')], ROOM, CAP);
 		expect(decision.kind).toBe('reuse');
 	});
 
 	it('resumes a suspended container when none is warm', () => {
-		const decision = selectPoolMember('task-1', [member('cold', { state: 'suspended' })], ROOM);
+		const decision = selectPoolMember(
+			'task-1',
+			[member('cold', { state: 'suspended' })],
+			ROOM,
+			CAP,
+		);
 		expect(decision).toEqual({ kind: 'resume', member: expect.objectContaining({ id: 'cold' }) });
 	});
 
 	it('creates when the pool is empty', () => {
-		expect(selectPoolMember('task-1', [], ROOM)).toEqual({ kind: 'create' });
+		expect(selectPoolMember('task-1', [], ROOM, CAP)).toEqual({ kind: 'create' });
 	});
 
 	it('queues when the cap is reached', () => {
-		expect(selectPoolMember('task-1', [], FULL)).toEqual({ kind: 'queue' });
+		expect(selectPoolMember('task-1', [], FULL, CAP)).toEqual({ kind: 'queue' });
 	});
 
 	it('queues rather than resuming past the cap', () => {
 		// Resuming does not exempt a container from the cap - otherwise a fleet of
 		// suspended containers could be woken straight through it.
-		const decision = selectPoolMember('t', [member('cold', { state: 'suspended' })], FULL);
+		const decision = selectPoolMember('t', [member('cold', { state: 'suspended' })], FULL, CAP);
 		expect(decision).toEqual({ kind: 'queue' });
 	});
 
 	it('reuses a warm container even at the cap, since it is already counted', () => {
-		expect(selectPoolMember('t', [member('warm')], FULL).kind).toBe('reuse');
+		expect(selectPoolMember('t', [member('warm')], FULL, CAP).kind).toBe('reuse');
 	});
 
 	it('works with no task, where there is nothing to be affine to', () => {
-		expect(selectPoolMember(null, [member('warm', { lastTaskId: 'other' })], ROOM).kind).toBe(
+		expect(selectPoolMember(null, [member('warm', { lastTaskId: 'other' })], ROOM, CAP).kind).toBe(
 			'reuse',
 		);
 	});
@@ -85,6 +97,7 @@ describe('selectPoolMember exclusions', () => {
 			'task-1',
 			[member('busy', { state: 'busy', lastTaskId: 'task-1' })],
 			ROOM,
+			CAP,
 		);
 		expect(decision).toEqual({ kind: 'create' });
 	});
@@ -92,14 +105,14 @@ describe('selectPoolMember exclusions', () => {
 	it('never hands the chat’s container to a task run', () => {
 		// A queued task run is invisible and harmless; a queued chat turn is a
 		// person watching a spinner.
-		const decision = selectPoolMember('t', [member('chat', { reservedForChat: true })], ROOM);
+		const decision = selectPoolMember('t', [member('chat', { reservedForChat: true })], ROOM, CAP);
 		expect(decision).toEqual({ kind: 'create' });
 	});
 
 	it('never reuses a container that is out of disk', () => {
 		// It would fail its run partway through, which is worse than paying for a
 		// fresh one.
-		const decision = selectPoolMember('t', [member('full', { atDiskCeiling: true })], ROOM);
+		const decision = selectPoolMember('t', [member('full', { atDiskCeiling: true })], ROOM, CAP);
 		expect(decision).toEqual({ kind: 'create' });
 	});
 
@@ -108,8 +121,87 @@ describe('selectPoolMember exclusions', () => {
 			't',
 			[member('busy', { state: 'busy' }), member('chat', { reservedForChat: true })],
 			FULL,
+			CAP,
 		);
 		expect(decision).toEqual({ kind: 'queue' });
+	});
+
+	it('never reuses a container built for a different memory cap', () => {
+		// The cap is a guarantee the run is sized and budgeted against, and no
+		// backend can resize a container in place - so one built for less would OOM
+		// the run it was handed.
+		const stale = member('stale', { memoryBytes: CAP / 2 });
+		expect(selectPoolMember('t', [stale], ROOM, CAP)).toEqual({
+			kind: 'recycle',
+			members: [stale],
+		});
+	});
+
+	it('recycles a container built for more than the cap too', () => {
+		// It covers the cap, but a managed backend keeps billing for memory the
+		// operator has given back.
+		const large = member('large', { memoryBytes: CAP * 4 });
+		expect(selectPoolMember('t', [large], ROOM, CAP)).toEqual({
+			kind: 'recycle',
+			members: [large],
+		});
+	});
+
+	it('recycles a container whose allocation was never recorded', () => {
+		// Unknown is not a match: an adopted container, or one predating the column,
+		// cannot be shown to cover the cap and guessing that it does is how a
+		// container ends up serving a run it is too small for.
+		const adopted = member('adopted', { memoryBytes: null });
+		expect(selectPoolMember('t', [adopted], ROOM, CAP)).toEqual({
+			kind: 'recycle',
+			members: [adopted],
+		});
+	});
+
+	it('recycles before every reuse rung, including an affine warm container', () => {
+		const affine = member('affine', { lastTaskId: 'task-1', memoryBytes: CAP / 2 });
+		expect(selectPoolMember('task-1', [affine], ROOM, CAP)).toEqual({
+			kind: 'recycle',
+			members: [affine],
+		});
+	});
+
+	it('returns every mismatched member at once, not one per decision', () => {
+		// The caller clears them in a single pass; one per re-decide would outlast a
+		// pool larger than its retry budget.
+		const decision = selectPoolMember(
+			't',
+			[member('a', { memoryBytes: null }), member('b', { memoryBytes: CAP * 2 }), member('ok')],
+			ROOM,
+			CAP,
+		);
+		expect(decision).toEqual({
+			kind: 'recycle',
+			members: [expect.objectContaining({ id: 'a' }), expect.objectContaining({ id: 'b' })],
+		});
+	});
+
+	it('never recycles a busy container out from under its run', () => {
+		// It is replaced the next time it comes up for acquisition, which is the
+		// first moment that costs no run.
+		const decision = selectPoolMember(
+			't',
+			[member('busy', { state: 'busy', memoryBytes: CAP / 2 })],
+			ROOM,
+			CAP,
+		);
+		expect(decision).toEqual({ kind: 'create' });
+	});
+
+	it('recycles a mismatched member even when the budget is full', () => {
+		// Destroying it is what frees the budget the replacement needs; refusing
+		// here would queue every run in the project behind a container nothing can
+		// ever use.
+		const stale = member('stale', { memoryBytes: CAP / 2 });
+		expect(selectPoolMember('t', [stale], FULL, CAP)).toEqual({
+			kind: 'recycle',
+			members: [stale],
+		});
 	});
 
 	it('prefers a usable container over an affine one that is busy', () => {
@@ -117,6 +209,7 @@ describe('selectPoolMember exclusions', () => {
 			'task-1',
 			[member('affine-busy', { state: 'busy', lastTaskId: 'task-1' }), member('free')],
 			ROOM,
+			CAP,
 		);
 		expect(decision).toEqual({ kind: 'reuse', member: expect.objectContaining({ id: 'free' }) });
 	});

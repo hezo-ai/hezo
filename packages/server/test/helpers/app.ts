@@ -24,6 +24,7 @@ import { DomainEventBus } from '../../src/events/bus';
 import { getHostMemory } from '../../src/lib/host-memory';
 import type { SandboxBackendInfo } from '../../src/lib/sandbox-backend-info';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
+import { getDefaultRamCapPerContainerGb } from '../../src/lib/system-meta';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
@@ -540,6 +541,44 @@ export async function mintAgentToken(
 export async function projectSlugFor(db: Db, teamId: string): Promise<string> {
 	const res = await createTestProject(db, teamId, { name: 'Work Project' });
 	return (await res.json()).data.slug;
+}
+
+/**
+ * Seed a project as already holding a running container, in **both**
+ * representations and complete.
+ *
+ * A fixture that writes only `projects.container_id` describes a container the
+ * pool has no record of, which production treats as one adopted from outside it:
+ * its allocation is unknown, so it cannot be shown to cover the project's memory
+ * cap and the next acquire replaces it. That is correct behaviour and the wrong
+ * fixture - a test that means "this project has its container" has to seed one
+ * that was provisioned, allocation and all, the same way `createStubDocker`
+ * starts from a complete stub rather than a hand-rolled partial.
+ *
+ * `memoryGb` defaults to the instance-wide cap, which is what a container
+ * provisioned by a project that never overrode it actually gets.
+ */
+export async function seedProjectContainer(
+	db: Db,
+	projectId: string,
+	containerId: string,
+	opts: { state?: string; memoryGb?: number; containerStatus?: string } = {},
+): Promise<void> {
+	const capGb = opts.memoryGb ?? (await getDefaultRamCapPerContainerGb(db));
+	await db.query(
+		`UPDATE projects SET container_id = $2, container_status = $3::container_status,
+		        container_error = NULL
+		  WHERE id = $1`,
+		[projectId, containerId, opts.containerStatus ?? 'running'],
+	);
+	await db.query(
+		`INSERT INTO container_pool_members (project_id, container_id, state, memory_bytes)
+		 VALUES ($1, $2, $3::container_pool_state, $4)
+		 ON CONFLICT (container_id) DO UPDATE
+		    SET project_id = EXCLUDED.project_id, state = EXCLUDED.state,
+		        memory_bytes = EXCLUDED.memory_bytes`,
+		[projectId, containerId, opts.state ?? 'idle', String(capGb * 1024 ** 3)],
+	);
 }
 
 /** Same as {@link projectSlugFor} but keyed by the team's slug. */

@@ -16,6 +16,8 @@ import {
 	buildKillPidsScript,
 	buildKillTunnelClientsScript,
 	buildListHezoProcessesScript,
+	parseDfKilobytes,
+	parseHezoProcessList,
 } from './sandbox/proc-scripts';
 import { tarSingleFile, untarFirstFile } from './sandbox/tar';
 import { DockerBinaryFrameDecoder } from './sandbox/tunnel/docker-frames-binary';
@@ -1203,44 +1205,6 @@ export class DockerClient implements ContainerEngine {
 			},
 		};
 	}
-}
-
-/**
- * Turn `df -Pk`'s used column into bytes. Null for anything that is not a plain
- * number - a container without `df`, or one whose exec produced nothing, has not
- * reported "empty", it has failed to report.
- */
-export function parseDfKilobytes(stdout: string): number | null {
-	const kb = Number.parseInt(stdout.trim(), 10);
-	return Number.isFinite(kb) && kb >= 0 ? kb * 1024 : null;
-}
-
-/**
- * Parse the tab-separated `listHezoProcesses` scan output. The cmdline is the
- * trailing field and may itself contain tabs, so only the first four tabs
- * split; malformed lines (a pid that exited mid-scan can emit partial output)
- * are dropped.
- */
-export function parseHezoProcessList(stdout: string): ContainerProcessInfo[] {
-	const procs: ContainerProcessInfo[] = [];
-	for (const line of stdout.split('\n')) {
-		if (line.length === 0) continue;
-		const parts = line.split('\t');
-		if (parts.length < 5) continue;
-		const [pidRaw, runIdRaw, sockRaw, ageRaw] = parts;
-		const cmdline = parts.slice(4).join('\t');
-		const pid = Number.parseInt(pidRaw, 10);
-		const ageSecs = Number.parseInt(ageRaw, 10);
-		if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(ageSecs)) continue;
-		procs.push({
-			pid,
-			runId: runIdRaw.length > 0 ? runIdRaw : null,
-			hasHezoSock: sockRaw === '1',
-			ageSecs: Math.max(0, ageSecs),
-			cmdline,
-		});
-	}
-	return procs;
 }
 
 /**

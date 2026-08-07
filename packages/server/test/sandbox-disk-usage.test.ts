@@ -1,9 +1,11 @@
 import { DEFAULT_CONTAINER_DISK_GB, poolDiskCeilingBytes } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { parseDfKilobytes } from '../src/services/docker';
 import {
 	buildDiskUsageScript,
+	buildMemoryUsageScript,
 	buildPortsListeningScript,
+	parseCgroupMemory,
+	parseDfKilobytes,
 } from '../src/services/sandbox/proc-scripts';
 
 /**
@@ -75,6 +77,85 @@ describe('parseDfKilobytes', () => {
 		const overKb = String(Math.ceil(ceiling / 1024) + 1);
 		expect(parseDfKilobytes(overKb)).toBeGreaterThan(ceiling);
 		expect(parseDfKilobytes('1024')).toBeLessThan(ceiling);
+	});
+});
+
+/**
+ * The measurement the memory cap is enforced on where the backend has no stats
+ * endpoint of its own.
+ *
+ * Nothing wrote a reading on a managed sandbox until this landed - the provider's
+ * telemetry API answers 403 permanently on an ordinary account - so
+ * `enforceContainerMemoryLimit` never acted and the provider's OOM kill was the
+ * only thing bounding a run. Both directions of "unanswerable" matter here: a
+ * missing reading must stay missing rather than become zero, and a reading taken
+ * from the *host's* cgroup must not be reported as the container's.
+ */
+describe('buildMemoryUsageScript', () => {
+	it('reads the cgroup files rather than a tool the image may not carry', () => {
+		const script = buildMemoryUsageScript();
+		expect(script).toContain('/sys/fs/cgroup/memory.current');
+		expect(script).toContain('/sys/fs/cgroup/memory.stat');
+		expect(script).not.toMatch(/\bfree\b|\bps\b|\btop\b/);
+	});
+
+	it('falls back to the v1 hierarchy, which names the same figures differently', () => {
+		const script = buildMemoryUsageScript();
+		expect(script).toContain('/sys/fs/cgroup/memory/memory.usage_in_bytes');
+		expect(script).toContain('total_inactive_file');
+		// v2 is tried first: a host running both hierarchies must answer with the
+		// one the container is actually accounted in.
+		expect(script.indexOf('memory.current')).toBeLessThan(script.indexOf('memory.usage_in_bytes'));
+	});
+
+	it('says nothing when the cgroup is unlimited', () => {
+		// The guard that makes the number the container's own. Every Hezo container
+		// is created with a limit, so an unlimited one means the reading came from
+		// the host's root cgroup - the machine's memory use, attributed to one
+		// container, which would stop it on the first poll.
+		const script = buildMemoryUsageScript();
+		// v2 spells it `max`, caught by the non-numeric test; v1 uses a near-2^63
+		// sentinel, caught by counting digits.
+		expect(script).toContain('*[!0-9]*');
+		expect(script).toContain('${#lim} -lt 19');
+	});
+
+	it('emits the charge and the discount as two plain numbers', () => {
+		expect(buildMemoryUsageScript()).toContain('printf "%s %s\\n" "$cur"');
+	});
+});
+
+describe('parseCgroupMemory', () => {
+	it('reports the working set: total charge less reclaimable page cache', () => {
+		// The same arithmetic the Docker engine applies to the daemon's figures, so
+		// one threshold compared against both means the same thing on either.
+		expect(parseCgroupMemory('2147483648 1073741824\n')).toEqual({
+			usedBytes: 1024 ** 3,
+			rawUsageBytes: 2 * 1024 ** 3,
+		});
+	});
+
+	it('discounts nothing when the cache figure is missing or unreadable', () => {
+		// Over-reporting the working set is the safe direction for a threshold that
+		// stops a container; under-reporting lets one past its cap.
+		expect(parseCgroupMemory('1048576')).toEqual({ usedBytes: 1048576, rawUsageBytes: 1048576 });
+		expect(parseCgroupMemory('1048576 nope')).toEqual({
+			usedBytes: 1048576,
+			rawUsageBytes: 1048576,
+		});
+	});
+
+	it('never reports a negative working set', () => {
+		expect(parseCgroupMemory('100 500')?.usedBytes).toBe(0);
+	});
+
+	it('answers null for output that is not a reading', () => {
+		// Which is what the script produces in an unlimited cgroup, on a runtime with
+		// no cgroup files, and on an exec that produced nothing. Null leaves the last
+		// figure alone; zero would read as a container using no memory.
+		for (const junk of ['', '\n', '   ', 'cat: no such file', 'NaN', '-1']) {
+			expect(parseCgroupMemory(junk)).toBeNull();
+		}
 	});
 });
 

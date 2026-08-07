@@ -83,6 +83,7 @@
 | A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
 | A new doc- or string-bearing path | `DOC_BEARING_PATTERNS` / `STRING_BEARING_PATTERNS` | its ack-hook test |
 | Container backend behaviour | `SANDBOX_AGENT_ENVIRONMENTS`, that provider's `docs/containers/remote/` page, the Containers settings UI | compile error, **new backend only** |
+| A `ContainerEngine` method added or its contract changed | every adapter, the conformance suite, `.dev/adding-a-container-backend.md` | compile error for the method, **nothing for the contract** |
 | Architecture (data model, run pipeline, providers, egress, SSH/git, OAuth, auth, build) | `.dev/architecture.md` | the `Docs-Checked:` trailer |
 | A `.dev/` guide added, renamed or removed | the link from its section here, the `.dev/` bullet under **Layout**, this table | **nothing - on you** |
 | A Bun workaround added or removed, or `BUN_VERSION` moved | its entry in `.dev/bun-issues.md` | **nothing - on you** |
@@ -263,6 +264,8 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | Guidance for a subset of seeded roles | `agents/_partials/<group>/` |
 | A container backend | `ContainerEngine` (`services/sandbox/types.ts`), always reached via `SandboxBackendHolder.engine` |
 | "Does this backend class need X?" | `SANDBOX_BACKEND_KIND` (`@hezo/shared`) |
+| An in-container script or its parser | `services/sandbox/proc-scripts.ts` - never an adapter |
+| What a container was provisioned with | `container_pool_members` (`memory_bytes`, `disk_ceiling_bytes`) - never re-read from the setting |
 | A chat platform | `ChatChannelAdapter` (`services/chat-channels/`) |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |
@@ -399,10 +402,13 @@ Bun is the production runtime and diverges from Node in ways that fail silently 
 
 ### Container backends
 
-Every backend - local Docker, a third-party sandbox service - sits behind one seam, `ContainerEngine` (`services/sandbox/types.ts`). **Authoring or changing an adapter: `.dev/adding-a-container-backend.md`.** Two rules bind every caller, not just adapter authors:
+Every backend - local Docker, a third-party sandbox service - sits behind one seam, `ContainerEngine` (`services/sandbox/types.ts`). **Authoring or changing an adapter: `.dev/adding-a-container-backend.md`.** Five rules bind every caller, not just adapter authors:
 
 - **Nothing above the seam may learn which backend is in use** - no provider name in a conditional, no provider-shaped field on a shared type, no "if remote". A backend needing host-side work gets a seam method every backend answers, never a branch at the call site. Ask what *kind* of backend it is (`SANDBOX_BACKEND_KIND` in `@hezo/shared`), never which one.
 - **Take `SandboxBackendHolder.engine`, never a concrete engine.** The backend is switchable at runtime, so a captured reference keeps driving the one the operator just left. `instanceof` against the holder is always false, so such a branch silently stops running rather than failing.
+- **Container-management logic is backend-agnostic; only its transport is adapter-specific.** Lifecycle, pooling, capacity, allocation, measurement and enforcement are written once, above the seam or in `services/sandbox/`. What a provider's API costs, spells or refuses is absorbed inside that provider's adapter - a ceiling constant, a rounding rule, a retry, a rendered `runuser`. Code that cannot be written without knowing the backend means the seam is missing a method.
+- **An in-container script and its parser live together in `sandbox/proc-scripts.ts`**, never in an adapter and never imported from one. Each adapter runs them over its own transport. An adapter may read its own control plane where that is cheaper (local Docker takes memory from the daemon), but must return the same quantity - `describeContainerBackendConformance` proves it.
+- **Every seam method is required of every backend.** `null` means "no answer this tick" and leaves the last value alone; it never means "this backend does not do that", and no capability flag may gate one. A backend that cannot answer is unsupported, not a second code path.
 
 Catch violations by grepping the shape, since `instanceof` carries no provider name:
 

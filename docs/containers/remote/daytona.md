@@ -92,12 +92,6 @@ the one that has it.
 
 ## Caveats
 
-- **No per-sandbox memory statistics.** Daytona's telemetry endpoint is unavailable on an
-  ordinary account, so Hezo cannot watch a container approach its cap and stop it
-  gracefully. Daytona's own out-of-memory handling applies instead. Because a container
-  serves one run at a time, that ends the run that overran and nothing else. The run is
-  reported as failed with an error saying it was killed and naming the container's memory
-  cap, so the cause is on the run itself rather than buried in its log.
 - **Agent output arrives over one long-lived connection**, which Daytona's gateway closes when
   it goes quiet - and an agent thinking or waiting on a tool call is quiet for tens of seconds
   at a time. Hezo reopens it and carries on from where it stopped, so a run is not affected. If

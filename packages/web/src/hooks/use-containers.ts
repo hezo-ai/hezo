@@ -21,7 +21,11 @@ export interface ContainerSummary {
 	has_unpushed_commits: boolean;
 	disk_used_bytes: number;
 	disk_ceiling_bytes: number;
-	memory_limit_gib: number;
+	/**
+	 * What this container was provisioned to hold, not what the project's cap says
+	 * today. Null when the allocation was never recorded.
+	 */
+	memory_bytes: number | null;
 	last_task_id: string | null;
 	last_task_identifier: string | null;
 	run_id: string | null;

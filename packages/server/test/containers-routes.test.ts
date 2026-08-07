@@ -25,7 +25,7 @@ interface ContainerRow {
 	reserved_for_chat: boolean;
 	has_unpushed_commits: boolean;
 	disk_used_bytes: number;
-	memory_limit_gib: number;
+	memory_bytes: number | null;
 	run_id: string | null;
 	last_logs: string | null;
 }
@@ -44,11 +44,16 @@ async function list(as = token): Promise<{ status: number; rows: ContainerRow[] 
 	return { status: res.status, rows: (await res.json()).data as ContainerRow[] };
 }
 
-async function addMember(projectId: string, containerId: string, state = 'idle'): Promise<void> {
+async function addMember(
+	projectId: string,
+	containerId: string,
+	state = 'idle',
+	memoryBytes: number | null = 2 * 1024 ** 3,
+): Promise<void> {
 	await db.query(
-		`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
-		 VALUES ($1, $2, $3::container_pool_state, 1000000)`,
-		[projectId, containerId, state],
+		`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes, memory_bytes)
+		 VALUES ($1, $2, $3::container_pool_state, 1000000, $4)`,
+		[projectId, containerId, state, memoryBytes],
 	);
 }
 
@@ -177,10 +182,22 @@ describe('GET /api/containers', () => {
 		expect(rows.filter((r) => r.container_id === 'both-ways')).toHaveLength(1);
 	});
 
-	it('resolves the effective memory cap, so a blank never reads as no limit', async () => {
+	it('reports the memory the container was built with, not the project’s current cap', async () => {
+		// The two diverge the moment the cap is changed, and until the pool replaces
+		// the container the setting describes a container that does not exist - which
+		// is how a page came to show 6 GB beside a sandbox holding 2.
+		await addMember(projectA.id, 'a-sized', 'idle', 2 * 1024 ** 3);
+		await db.query('UPDATE projects SET memory_limit_gib = 6 WHERE id = $1', [projectA.id]);
 		const { rows } = await list();
-		const row = rows.find((r) => r.container_id === 'a-one');
-		expect(row?.memory_limit_gib).toBeGreaterThan(0);
+		expect(rows.find((r) => r.container_id === 'a-sized')?.memory_bytes).toBe(2 * 1024 ** 3);
+	});
+
+	it('reports null for a container whose allocation was never recorded', async () => {
+		// A legacy or adopted container. Null is what the page renders as "-", rather
+		// than borrowing a figure from the setting and stating it as fact.
+		await addMember(projectA.id, 'a-unrecorded', 'idle', null);
+		const { rows } = await list();
+		expect(rows.find((r) => r.container_id === 'a-unrecorded')?.memory_bytes).toBeNull();
 	});
 
 	it('is superuser-only, because it crosses every project', async () => {

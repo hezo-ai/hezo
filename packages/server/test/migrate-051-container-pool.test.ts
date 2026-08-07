@@ -480,6 +480,43 @@ describe('051_container_disk_size migration', () => {
 		expect(ceiling).toBeLessThan(DEFAULT_CONTAINER_DISK_GB * 1024 ** 3);
 		expect(ceiling).toBeGreaterThan(0);
 	});
+
+	it('records nothing for the memory a member was not told it was given', async () => {
+		// Deliberately NULL rather than derived from the project's cap. The two are
+		// only the same figure until someone changes the cap, and a member written
+		// by a path that did not state an allocation genuinely does not know what it
+		// holds - which the ladder reads as "cannot be shown to cover the cap".
+		const row = await h.db.query<{ memory_bytes: string | null }>(
+			'SELECT memory_bytes FROM container_pool_members WHERE id = $1',
+			[memberId],
+		);
+		expect(row.rows.length).toBe(1);
+		expect(row.rows[0].memory_bytes).toBeNull();
+		// And the project it belongs to does carry a cap, so null is the column's
+		// own answer rather than an absent setting leaking through.
+		const proj = await h.db.query<{ memory_limit_gib: number }>(
+			'SELECT memory_limit_gib FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(proj.rows[0].memory_limit_gib).toBe(4);
+	});
+
+	it('keeps a stated allocation, so it survives every later state move', async () => {
+		const stated = await h.db.query<{ id: string }>(
+			`INSERT INTO container_pool_members (project_id, container_id, state, memory_bytes)
+			 VALUES ($1, 'ctr-sized', 'creating'::container_pool_state, $2) RETURNING id`,
+			[projectId, String(6 * 1024 ** 3)],
+		);
+		await h.db.query(
+			`UPDATE container_pool_members SET state = 'idle'::container_pool_state WHERE id = $1`,
+			[stated.rows[0].id],
+		);
+		const row = await h.db.query<{ memory_bytes: string }>(
+			'SELECT memory_bytes FROM container_pool_members WHERE id = $1',
+			[stated.rows[0].id],
+		);
+		expect(Number(row.rows[0].memory_bytes)).toBe(6 * 1024 ** 3);
+	});
 });
 
 describe('049_container_pool run-to-container attribution', () => {

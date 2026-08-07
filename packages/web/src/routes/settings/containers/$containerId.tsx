@@ -141,7 +141,9 @@ function ContainerDetail() {
 				</div>
 				<div>
 					<dt className="text-text-3">{t('containers.column.memory')}</dt>
-					<dd className="mt-0.5">{container.memory_limit_gib} GB</dd>
+					<dd className="mt-0.5">
+						{container.memory_bytes === null ? '-' : formatGib(container.memory_bytes)}
+					</dd>
 				</div>
 			</dl>
 

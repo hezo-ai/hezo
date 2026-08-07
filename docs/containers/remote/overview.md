@@ -123,13 +123,6 @@ of the system is sized against that promise.
 - **A local model provider is not reachable.** Pointing an AI provider at
   `http://host.docker.internal:11434` works only when the container is on your own machine.
   Use a provider the container can reach over the internet.
-- **Per-sandbox memory statistics may be unavailable.** Locally Hezo watches a container's
-  memory and stops it gracefully as it approaches its cap. Where the provider does not
-  expose that, the provider's own out-of-memory handling applies instead. Because a
-  container serves one run at a time, that ends only the run that overran, not the rest of
-  the project's work. The run is reported as failed with an error saying it was killed and
-  naming the container's memory cap, so the cause is on the run itself rather than buried
-  in its log.
 
 ## If the provider is unreachable
 

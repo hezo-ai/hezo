@@ -82,13 +82,13 @@ it('does not report a stale project error against a live member', async () => {
 		`UPDATE projects SET container_error = 'a failure that has since been cleared up' WHERE id = $1`,
 		[projectId],
 	);
-	const listing = await listAllContainers(db, 4);
+	const listing = await listAllContainers(db);
 	const live = listing.find((c) => c.container_id === 'ok-with-history');
 	expect(live?.last_error).toBe('exited with code 137');
 
 	await db.query(`UPDATE container_pool_members SET last_error = NULL WHERE container_id = $1`, [
 		'ok-with-history',
 	]);
-	const after = await listAllContainers(db, 4);
+	const after = await listAllContainers(db);
 	expect(after.find((c) => c.container_id === 'ok-with-history')?.last_error).toBeNull();
 });

@@ -1350,19 +1350,22 @@ marker kill and teardown. Four findings are worth carrying:
   derived from the same figure (`poolDiskCeilingBytes`) and recorded per member
   (`container_pool_members.disk_ceiling_bytes`) at provision, so a container is always
   judged against the disk it actually has rather than against whatever the setting says
-  later.
+  later. `container_pool_members.memory_bytes` is the same fact for memory - see
+  § Container pool.
 - **The label index lags create by ~1-3 s.** A sandbox queried by label immediately after
   `createContainer` is not returned; it appears within about three seconds. The orphan
   reaper's direction of failure is therefore the safe one - a lagging sandbox is simply
   absent from `owned`, so it is a *missed* reap caught on the next pass, never a wrongful
   destroy (`reapOrphanedSandboxes` destroys `owned − live`, never `live − owned`).
-- **`containerStats` legitimately returns null on some accounts.** The telemetry endpoint
-  answers `403 Telemetry endpoints are disabled when Analytics API is configured`, which is
-  an org configuration rather than a missing scope. The honest-null path handles it: memory
-  enforcement degrades to the provider's own OOM, and because one container serves one run
-  that ends only the run that overran. The graceful stop is what is lost, not the
-  diagnosis - the kill still reaches the run row as a SIGKILL naming the cap, via the
-  exit-code decode in § Agent execution.
+- **`containerStats` reads the sandbox's own cgroup, not the provider's telemetry API.**
+  That endpoint answers `403 Telemetry endpoints are disabled when Analytics API is
+  configured` on an ordinary account - an org configuration rather than a missing scope -
+  so memory-cap enforcement did not operate on this backend at all, and the provider's OOM
+  kill was the only thing bounding a run. It also reported whatever the collector had
+  named rather than the working set the Docker engine reports, so one threshold meant two
+  things depending on the backend. `buildMemoryUsageScript` + `parseCgroupMemory`
+  (`sandbox/proc-scripts.ts`) replace it over the ordinary exec transport, exactly as
+  `buildDiskUsageScript` already did for disk.
 - **A digest-pinned `agent-base` is pullable anonymously**, so Daytona builds it with no
   registry credential - the `buildInfo` Dockerfile is `FROM …@sha256:…` and nothing else.
 
@@ -1651,6 +1654,43 @@ exists to remove, and it is not hypothetical - it is how an idle member being au
 killed a run executing in a healthy sibling container. Two sources emit transitions in this
 one shape: `syncAllContainerStatuses` answers for the container `projects.container_id` names,
 and `reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
+
+**A member is reusable only if it was built to the cap it would be built to now.** The cap
+is a memory *guarantee* the run is sized, budgeted and enforced against, and no backend can
+resize a container in place - so `selectPoolMember` compares each non-`busy` member's
+recorded allocation (`container_pool_members.memory_bytes`, written at provision from the
+same `memoryCeilingBytes` the engine was handed) against the project's current effective cap
+and returns `{ kind: 'recycle', members }` ahead of every reuse rung. The caller destroys
+them and re-decides.
+
+Recorded rather than re-derived, for the reason migration 051 already gives for
+`disk_ceiling_bytes`: the container really does only have what it was created with. Before
+this the cap was a figure the pool asserted and could never check, so raising a project's
+cap left its existing container in service at the old allocation while the run's sizing, the
+instance budget, the enforcement threshold, the exit-137 message and the Containers page all
+read the new one - a project set to 6 GB running in a 2 GB sandbox, with nothing saying so.
+
+Four details are load-bearing. **Both directions recycle**: a smaller container fails the run
+it was handed, and a larger one keeps a managed account paying for memory the operator has
+given back. **`NULL` is a mismatch** - an adopted container (`adoptUnpooledContainer` states
+no allocation, because it genuinely has none) or one predating the column cannot be shown to
+cover the cap. **Destroyed, not merely skipped**: a member the ladder refuses still counts
+toward `getActiveContainers`'s `usedMemoryGb` until it is gone, so passing over it would
+leave the replacement failing `fitsBudget` and queue the run behind a container nothing will
+ever use. Every mismatched member comes back in one decision so a pool larger than
+`MAX_ACQUIRE_ATTEMPTS` cannot outlast the retry loop, and a **busy** member is never recycled
+- it is replaced the next time it comes up for acquisition, the first moment that costs no
+run. **The chat repeats the check** in `reusableChatMember`, because its pin is resolved
+above the ladder; otherwise it would be the one workload left in a container built for a cap
+nobody set any more.
+
+Everything that reads a container's size reads the recorded column rather than the setting.
+`getActiveContainers` sums `memory_bytes` (falling back to the cap only where none was
+recorded), so between a cap being lowered and its containers being recycled the budget still
+charges what those containers actually hold - charging the new figure under-counts, which is
+the direction that over-subscribes the host. `CONTAINER_LISTING_SQL` selects the same column,
+so the Containers page reports what each container holds rather than what the setting says -
+the old figure until the swap happens, which is the truth and is the point.
 
 **Capacity is a memory budget, and it reserves for the chat container up front.**
 `max_container_memory_gb` bounds the total memory *task run* containers may hold at once,

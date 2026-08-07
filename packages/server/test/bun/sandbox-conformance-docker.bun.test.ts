@@ -71,7 +71,6 @@ if (reason) {
 		// answers. Over a bind mount the engine deliberately answers null, because
 		// the measurement would be the host partition's.
 		reportsDiskUsage: true,
-		reportsMemoryStats: true,
 		honoursExecUser: true,
 		runUser: 'node',
 		// The same opt-in the Daytona fixture takes, wired here too so the agent-CLI

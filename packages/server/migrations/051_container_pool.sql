@@ -254,3 +254,28 @@ ALTER TABLE projects ADD CONSTRAINT projects_container_disk_gb_positive
 -- this migration must not do.
 ALTER TABLE container_pool_members
     ADD COLUMN disk_ceiling_bytes BIGINT NOT NULL DEFAULT 2147483648;
+
+-- ---------------------------------------------------------------------------
+-- The memory a container was provisioned to cover, recorded per member.
+-- ---------------------------------------------------------------------------
+
+-- The same fact as `disk_ceiling_bytes` above, for the resource that had no
+-- equivalent: what the container was actually built to hold, as distinct from
+-- what the setting says today.
+--
+-- Without it the cap is a number the pool asserts and can never check. Raising a
+-- project's cap left its existing container in service at the old allocation,
+-- and every consumer - the run's sizing, the instance memory budget, the
+-- enforcement threshold, the exit-137 message and the Containers page - read the
+-- new figure against a container that did not have it. The container really is
+-- only as big as it was created, and no backend can resize one in place, so the
+-- only correct response is to replace it.
+--
+-- NULL means "unknown", and is deliberately not backfilled. Existing members
+-- were provisioned against whatever the cap happened to be at the time, and
+-- there is no record of it; deriving one from the current cap would write a
+-- confident wrong answer for exactly the containers this exists to catch.
+-- Unknown reads as "cannot prove it covers the cap", so each pre-existing member
+-- is recycled once, on the next run that would otherwise have reused it.
+ALTER TABLE container_pool_members
+    ADD COLUMN memory_bytes BIGINT;

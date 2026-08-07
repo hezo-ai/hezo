@@ -66,13 +66,14 @@ describe('container capacity', () => {
 			reserved_for_chat: boolean;
 			disk_used_bytes: number;
 			disk_ceiling_bytes: number;
+			memory_bytes: number | null;
 		}> = {},
 	): Promise<void> {
 		await db.query(
 			`INSERT INTO container_pool_members
 			   (project_id, container_id, state, reserved_for_chat, disk_used_bytes,
-			    disk_ceiling_bytes)
-			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6)`,
+			    disk_ceiling_bytes, memory_bytes)
+			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7)`,
 			[
 				projectId,
 				containerId,
@@ -80,6 +81,7 @@ describe('container capacity', () => {
 				over.reserved_for_chat ?? false,
 				over.disk_used_bytes ?? 0,
 				over.disk_ceiling_bytes ?? poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB),
+				over.memory_bytes === undefined ? 2 * 1024 ** 3 : over.memory_bytes,
 			],
 		);
 	}
@@ -128,6 +130,25 @@ describe('container capacity', () => {
 		const project = await seedProject({ id: 'ctr-chat2', status: ContainerStatus.Running });
 		await addMember(project, 'ctr-chat2', { state: 'busy', reserved_for_chat: true });
 		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(0);
+	});
+
+	it('charges what a container was built with, not what the cap now says', async () => {
+		// A container holds its allocation until the pool replaces it, so between a
+		// cap being changed and the recycle the setting describes something that is
+		// not running. Charging the new figure for a container still holding the old
+		// one under-counts whenever the cap was lowered - the direction that
+		// over-subscribes the host.
+		const project = await seedProject();
+		await addMember(project, 'ctr-big', { memory_bytes: 6 * 1024 ** 3 });
+		await db.query('UPDATE projects SET memory_limit_gib = 1 WHERE id = $1', [project]);
+		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(6);
+	});
+
+	it('falls back to the cap for a container whose allocation was never recorded', async () => {
+		const project = await seedProject();
+		await addMember(project, 'ctr-legacy', { memory_bytes: null });
+		await db.query('UPDATE projects SET memory_limit_gib = 3 WHERE id = $1', [project]);
+		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(3);
 	});
 
 	it('charges nothing for suspended and errored members, which cost storage rather than memory', async () => {
@@ -229,7 +250,9 @@ describe('container capacity', () => {
 		// run three 4 GB ones and oversubscribe the host by double.
 		const big = await seedProject();
 		await db.query(`UPDATE projects SET memory_limit_gib = 4 WHERE id = $1`, [big]);
-		await addMember(big, 'ctr-big');
+		// Provisioned under that override, which is what the charge follows - the
+		// setting is only the fallback for a container that never recorded one.
+		await addMember(big, 'ctr-big', { memory_bytes: 4 * 1024 ** 3 });
 		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(4);
 	});
 

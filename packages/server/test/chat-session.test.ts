@@ -16,7 +16,7 @@ import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { getWorkspacePath } from '../src/services/workspace';
 import type { WsSocket } from '../src/services/ws';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker } from './helpers/app';
+import { createStubDocker, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -169,8 +169,7 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 		[encrypt('sk-ant-test', key)],
 	);
 	const proj = await ctx.db.query<{ id: string }>(
-		`UPDATE projects SET container_id = 'hq-container', container_status = 'running'
-		 WHERE team_id = $1 AND is_internal = true RETURNING id`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 		[DEFAULT_TEAM_ID],
 	);
 	// The pool has to say the same thing as the column, because the chat resolves
@@ -179,6 +178,7 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 	// the ladder handed the next test that container instead of `hq-container`,
 	// which is the seeded premise every spec in this file is written against.
 	await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [proj.rows[0].id]);
+	await seedProjectContainer(ctx.db, proj.rows[0].id, 'hq-container');
 	return proj.rows[0].id;
 }
 

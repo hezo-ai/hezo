@@ -42,6 +42,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	seedProjectContainer,
 } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
@@ -113,12 +114,20 @@ beforeAll(async () => {
 });
 
 // Every case declares the container state it wants on the `projects` row, so it
-// must start from an empty pool too - the two are records of the same thing.
+// must start from a known pool too - the two are records of the same thing.
 // Without this a member a previous case left behind is a container the ladder
 // will happily reuse or resume, and the case ends up asserting against whatever
 // ran before it.
+//
+// Reset to the default `makeProject()` describes rather than to nothing: a
+// container the pool has no member for reads as adopted from outside it, whose
+// allocation is unknown and therefore cannot be shown to cover the project's
+// cap - so the ladder replaces it. That is right for a genuinely adopted
+// container and wrong as the starting state for every case here. Cases that
+// want something else (no container, a stopped one) still say so.
 beforeEach(async () => {
 	await db.query('DELETE FROM container_pool_members');
+	await seedProjectContainer(db, projectId, 'container-lc');
 });
 
 afterAll(async () => {
@@ -441,11 +450,21 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 	it('lazy-starts a stopped container and the run proceeds', async () => {
 		// Runs never assume a running container: a stopped one is started in
 		// place before the exec, and the start is stamped on the project row.
-		await db.query(
-			`UPDATE projects SET container_status = $1::container_status, container_id = $2,
-			     container_error = NULL, container_last_started_at = NULL WHERE id = $3`,
-			[ContainerStatus.Stopped, 'lazy-lc', projectId],
-		);
+		// The stopped container has to be the *only* one: the default seeded above
+		// is idle, and the ladder would hand that over rather than resuming this.
+		await db.query('DELETE FROM container_pool_members');
+		// Seeded through the pool as well as the column, and with the allocation it
+		// was provisioned with: a container the pool has no record of has an
+		// unknown size, which it cannot show covers the project's cap, so it is
+		// replaced rather than resumed - right for a genuinely adopted container,
+		// wrong for the one this test is about.
+		await seedProjectContainer(db, projectId, 'lazy-lc', {
+			containerStatus: ContainerStatus.Stopped,
+			state: 'suspended',
+		});
+		await db.query(`UPDATE projects SET container_last_started_at = NULL WHERE id = $1`, [
+			projectId,
+		]);
 		const startCalls: string[] = [];
 		let started = false;
 		const docker = makeDocker({

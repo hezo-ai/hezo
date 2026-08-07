@@ -1,17 +1,11 @@
 import { isProvisioningPlaceholder } from '@hezo/shared';
 import { Hono } from 'hono';
-import type { Db } from '../db/database';
 import { buildContainerDeps } from '../lib/container-deps';
 import { err, ok } from '../lib/response';
-import { getDefaultRamCapPerContainerGb } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
 import { destroyContainer } from '../services/containers';
-import {
-	type ContainerListing,
-	getContainerListing,
-	listAllContainers,
-} from '../services/sandbox/pool-db';
+import { getContainerListing, listAllContainers } from '../services/sandbox/pool-db';
 
 /**
  * The containers an instance is running, listed and removed globally.
@@ -41,13 +35,13 @@ export function buildContainerRoutes(): Hono<Env> {
 		const denied = requireSuperuser(c);
 		if (denied) return denied;
 		const db = c.get('db');
-		return ok(c, await listAllContainers(db, await getDefaultRamCapPerContainerGb(db)));
+		return ok(c, await listAllContainers(db));
 	});
 
 	routes.get('/containers/:containerId', async (c) => {
 		const denied = requireSuperuser(c);
 		if (denied) return denied;
-		const container = await loadContainer(c.get('db'), c.req.param('containerId'));
+		const container = await getContainerListing(c.get('db'), c.req.param('containerId'));
 		if (!container) return err(c, 'NOT_FOUND', 'Container not found', 404);
 		return ok(c, container);
 	});
@@ -76,7 +70,7 @@ export function buildContainerRoutes(): Hono<Env> {
 		// Resolved through the listing rather than trusting the path param: it is
 		// what proves this instance owns the container at all, and it carries the
 		// project the teardown has to be scoped to.
-		const container = await loadContainer(db, containerId);
+		const container = await getContainerListing(db, containerId);
 		if (!container) return err(c, 'NOT_FOUND', 'Container not found', 404);
 
 		const team = await db.query<{ team_id: string }>('SELECT team_id FROM projects WHERE id = $1', [
@@ -100,9 +94,4 @@ export function buildContainerRoutes(): Hono<Env> {
 	});
 
 	return routes;
-}
-
-/** One container, with the instance default resolved so callers state it once. */
-async function loadContainer(db: Db, containerId: string): Promise<ContainerListing | null> {
-	return getContainerListing(db, await getDefaultRamCapPerContainerGb(db), containerId);
 }

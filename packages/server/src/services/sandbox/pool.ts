@@ -43,6 +43,13 @@ export interface PoolMember {
 	hasUnpushedCommits: boolean;
 	/** True when the container is at its disk ceiling and should be recycled rather than reused. */
 	atDiskCeiling: boolean;
+	/**
+	 * The memory cap this container was provisioned to cover, in bytes. Null for a
+	 * container whose allocation is unrecorded - one adopted from outside the pool,
+	 * or created before the column existed - which is indistinguishable from one
+	 * built to the wrong size and treated the same way.
+	 */
+	memoryBytes: number | null;
 	/** The chat's pinned container, which a task run may never take. */
 	reservedForChat: boolean;
 }
@@ -50,6 +57,8 @@ export interface PoolMember {
 export type PoolDecision =
 	| { kind: 'reuse'; member: PoolMember }
 	| { kind: 'resume'; member: PoolMember }
+	/** Destroy these, then decide again. See {@link selectPoolMember}. */
+	| { kind: 'recycle'; members: PoolMember[] }
 	| { kind: 'create' }
 	| { kind: 'queue' };
 
@@ -63,9 +72,22 @@ export interface PoolCapacity {
 }
 
 /**
- * Pick a container for a run, or say to create or queue one.
+ * Pick a container for a run, or say to create, recycle or queue one.
  *
- * The ladder, first match wins:
+ * Ahead of the ladder: **any member not provisioned to the cap it would be
+ * provisioned to now is recycled**, not reused. The cap is a memory guarantee
+ * the run is sized and budgeted against, and no backend can resize a container
+ * in place, so a container built to a different figure cannot be made to satisfy
+ * the current one. Both directions matter - a smaller container fails the run it
+ * was handed partway through, and a larger one keeps a managed account paying
+ * for memory the operator has since given back. An unrecorded allocation cannot
+ * be shown to match and is recycled on the same reasoning.
+ *
+ * All of them come back at once so the caller clears them in a single pass
+ * rather than one per re-decide, which a pool larger than the caller's retry
+ * budget would otherwise outlast.
+ *
+ * Then the ladder, first match wins:
  *
  * 1. **A warm idle container that last served this task.** Nothing to start,
  *    and the task's worktree and `node_modules` are already built. This is the
@@ -78,15 +100,29 @@ export interface PoolCapacity {
  * 4. **Create**, if under the cap.
  * 5. **Queue** on the cap.
  *
- * Note what is *not* here: no rung ever returns a busy container. That is the
- * one-run-per-container rule, and it is what makes a sibling run unable to kill
- * this one.
+ * Note what is *not* here: no rung ever returns a busy container, and no busy
+ * container is ever recycled. That is the one-run-per-container rule, and it is
+ * what makes a sibling run unable to kill this one - a busy member holding the
+ * wrong allocation is caught the next time it comes up for acquisition, which is
+ * the first moment it can be replaced without killing a run mid-flight.
+ *
+ * `requiredMemoryBytes` is separate from `capacity.requestMemoryGb` because they
+ * answer different questions. The capacity figure is what a *new* container
+ * costs the budget, and the chat workload deliberately states zero there to
+ * exempt itself; this is what every container must have been built to, which is
+ * the project's cap for every workload alike.
  */
 export function selectPoolMember(
 	taskId: string | null,
 	members: readonly PoolMember[],
 	capacity: PoolCapacity,
+	requiredMemoryBytes: number,
 ): PoolDecision {
+	const mismatched = members.filter(
+		(m) => m.state !== 'busy' && m.memoryBytes !== requiredMemoryBytes,
+	);
+	if (mismatched.length > 0) return { kind: 'recycle', members: mismatched };
+
 	const available = members.filter(usable);
 
 	if (taskId !== null) {

@@ -337,7 +337,7 @@ describe('provisionContainer', () => {
 		let inFlight: ContainerListing | undefined;
 		const { docker } = recordingDocker({
 			onStart: async (id) => {
-				const rows = await listAllContainers(db, 2);
+				const rows = await listAllContainers(db);
 				inFlight = rows.find((r) => r.container_id === id);
 			},
 		});
@@ -369,7 +369,7 @@ describe('provisionContainer', () => {
 		const seen: Array<{ state: string; usable: number; suspendable: number }> = [];
 		const { docker } = recordingDocker({
 			onExec: async () => {
-				const rows = await listAllContainers(db, 2);
+				const rows = await listAllContainers(db);
 				const listed = rows.find((r) => r.project_id === projectId);
 				const members = await loadPoolMembers(db, projectId);
 				seen.push({

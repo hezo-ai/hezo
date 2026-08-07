@@ -3,7 +3,6 @@ import { statSync } from 'node:fs';
 import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
 import { trackBackground } from '../../../lib/background';
 import { logger } from '../../../logger';
-import { parseDfKilobytes, parseHezoProcessList } from '../../docker';
 import { assertRegistryPullableImage, resolveDigestPinnedRef } from '../image-ref';
 import {
 	buildDiskUsageScript,
@@ -11,6 +10,10 @@ import {
 	buildKillPidsScript,
 	buildKillTunnelClientsScript,
 	buildListHezoProcessesScript,
+	buildMemoryUsageScript,
+	parseCgroupMemory,
+	parseDfKilobytes,
+	parseHezoProcessList,
 } from '../proc-scripts';
 import type {
 	ContainerByteChannel,
@@ -179,9 +182,6 @@ const STDERR_TAIL_BYTES = 256 * 1024;
  */
 const MAX_TRACKED_EXECS = 512;
 
-/** Trailing window queried for memory metrics; the newest point inside it is used. */
-const METRICS_WINDOW_MS = 5 * 60_000;
-
 interface TrackedExec {
 	containerId: string;
 	/** Fully rendered `sh -c '…'` command. */
@@ -221,8 +221,6 @@ export class DaytonaEngine implements ContainerEngine {
 	 * is scoped to the sandbox's life rather than growing with it.
 	 */
 	private readonly sandboxes = new Map<string, DaytonaSandbox>();
-	/** Set once the account has answered 403 for telemetry; see `containerStats`. */
-	private metricsDisabled = false;
 
 	constructor(private readonly client: DaytonaApi) {}
 
@@ -416,50 +414,27 @@ export class DaytonaEngine implements ContainerEngine {
 	}
 
 	/**
-	 * Per-sandbox memory, from Daytona's OTEL metrics.
+	 * Per-sandbox memory, read from the sandbox's own cgroup by the same script
+	 * `diskUsedBytes` uses for disk - the measurement is runtime-agnostic and only
+	 * its transport differs.
 	 *
-	 * Returns null when the series is missing or empty, which the caller already
-	 * treats as "no reading this tick" - so a sandbox whose metrics have not
-	 * landed yet is simply not enforced against, never mistaken for one using
-	 * zero.
+	 * Deliberately not the provider's telemetry API, which this replaced. That
+	 * endpoint answers `403` permanently on an ordinary account ("Telemetry
+	 * endpoints are disabled when Analytics API is configured"), so memory-cap
+	 * enforcement did not operate on this backend at all: `enforceContainerMemoryLimit`
+	 * saw no reading, took no action, and the provider's OOM kill was the only
+	 * thing bounding a run. It also reported a metric named by the collector rather
+	 * than the working set the Docker engine reports, so the same threshold meant
+	 * two different things depending on the backend.
 	 *
-	 * **The caller is a 15s loop over every running project**, so an endpoint the
-	 * account has switched off must be asked once, not forever. Daytona answers
-	 * 403 permanently ("Telemetry endpoints are disabled when Analytics API is
-	 * configured") on an ordinary account, which produced one identical warn line
-	 * per project per tick and a wasted HTTP request behind each - while the
-	 * outcome (`null`, no enforcement, Daytona's own OOM handling instead of
-	 * Hezo's graceful stop) never changed. So a 403 latches: the answer is
-	 * remembered and no further request is made.
-	 *
-	 * Latched on 403 **only**. Any other error is transient as far as we can tell
-	 * - a network blip, a restarting collector - and disabling the reading for the
-	 * process's life over one of those would silently turn off memory enforcement
-	 * on an account that supports it.
+	 * Returns null when the script cannot measure, which the caller already treats
+	 * as "no reading this tick" rather than as a sandbox using zero.
 	 */
 	async containerStats(containerId: string): Promise<ContainerMemoryStats | null> {
-		if (this.metricsDisabled) return null;
 		try {
-			const metrics = await this.client.getMetrics(containerId, METRICS_WINDOW_MS);
-			for (const [name, value] of metrics) {
-				const n = name.toLowerCase();
-				if (n.includes('memory') && !n.includes('limit') && !n.includes('total')) {
-					return { usedBytes: value, rawUsageBytes: value };
-				}
-			}
-			return null;
+			return parseCgroupMemory(await this.runScript(containerId, buildMemoryUsageScript()));
 		} catch (e) {
-			const message = `memory metrics unavailable for ${containerId}: ${(e as Error).message}`;
-			if (e instanceof DaytonaApiError && e.status === 403) {
-				this.metricsDisabled = true;
-				log.warn(
-					`${message} - this account has telemetry disabled, so Hezo's memory-cap ` +
-						"enforcement does not operate on it and Daytona's own OOM handling applies. " +
-						'Not asking again.',
-				);
-			} else {
-				log.warn(message);
-			}
+			log.warn(`memory reading unavailable for ${containerId}: ${(e as Error).message}`);
 			return null;
 		}
 	}

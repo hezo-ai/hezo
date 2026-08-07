@@ -1,15 +1,27 @@
-import type { ProcessEnvMarker } from './types';
+import type { ContainerMemoryStats, ContainerProcessInfo, ProcessEnvMarker } from './types';
 
 /**
- * The `/proc` shell scripts Hezo runs inside a container to find and kill its own
- * processes.
+ * The in-container shell scripts Hezo runs to find and kill its own processes and
+ * to measure what a container is consuming, **and the parsers for what they
+ * print**.
  *
- * These are plain POSIX shell over `/proc` - nothing in them is Docker-specific,
- * only the transport that carries them is. Extracted here so every engine runs
- * the *same* script rather than each reimplementing the scan, because the two
- * things they encode are subtle and easy to get wrong independently: how a pid's
- * marker is recovered from a NUL-separated `environ`, and how process age is
- * derived from `/proc/uptime` minus the `stat` starttime field.
+ * These are plain POSIX shell over `/proc` and `/sys` - nothing in them is
+ * specific to any backend, only the transport that carries them is. Every engine
+ * runs the *same* script and reads it with the *same* parser rather than each
+ * reimplementing either, because the things they encode are subtle and easy to
+ * get wrong independently: how a pid's marker is recovered from a NUL-separated
+ * `environ`, how process age is derived from `/proc/uptime` minus the `stat`
+ * starttime field, and which reading of a cgroup is the container's own.
+ *
+ * **Script and parser stay together, and neither lives in an adapter.** A new
+ * backend implements its `ContainerEngine` measurement methods by running these
+ * strings over whatever exec transport it has and handing the output back here -
+ * it never writes a second copy, and it never reaches into another adapter's
+ * module to borrow one. That is what keeps two backends answering
+ * `enforceContainerMemoryLimit` and the pool's disk rung with the same quantity
+ * rather than two plausible ones. A backend whose control plane offers something
+ * genuinely cheaper may prefer it (local Docker reads memory from the daemon's
+ * own stats endpoint), but it must compute the same figure.
  */
 
 /**
@@ -105,6 +117,61 @@ export function buildDiskUsageScript(path: string): string {
 	return (
 		`[ "$(stat -c %d / 2>/dev/null)" = "$(stat -c %d ${path} 2>/dev/null)" ] || exit 0; ` +
 		`df -Pk ${path} 2>/dev/null | awk 'NR==2 {print $3}'`
+	);
+}
+
+/**
+ * Digits at which a cgroup memory limit is the kernel's "no limit" sentinel
+ * rather than a real allocation. cgroup v1 spells unlimited as a number near
+ * 2^63; nothing an operator can configure comes within three orders of magnitude
+ * of it, and counting digits avoids asking a shell to compare 64-bit integers.
+ */
+const UNLIMITED_MEMORY_DIGITS = 19;
+
+/**
+ * A container's own memory charge and its reclaimable page cache, **or nothing
+ * at all when the reading would not be the container's own**.
+ *
+ * Read from the cgroup files the kernel exposes inside the container, which is
+ * the same accounting a local Docker daemon reports through its stats endpoint -
+ * so both backends answer `enforceContainerMemoryLimit` with the same quantity
+ * rather than two plausible ones. v2 first, v1 as the fallback; a runtime
+ * offering neither says nothing.
+ *
+ * The limit check in front of it is what makes the number mean what the caller
+ * thinks it means, and is the direct analogue of the device check in
+ * {@link buildDiskUsageScript}. A container in its own cgroup namespace reads its
+ * own charge at the cgroup root; one without a namespace reads the **host's**,
+ * which would be the machine's memory use attributed to a single container and
+ * would stop it on the first poll. An unlimited limit is exactly the case where
+ * that has happened, since every Hezo container is created with one - so it is
+ * the measurement's own property, which is why the guard lives in the shared
+ * script rather than in one engine.
+ *
+ * Two whitespace-separated integers on success: total charge, then the inactive
+ * file pages to discount from it. No output parses to null, which already means
+ * "could not measure" to every caller - not zero, and it leaves the last reading
+ * alone.
+ */
+export function buildMemoryUsageScript(): string {
+	const v2 = '/sys/fs/cgroup';
+	const v1 = '/sys/fs/cgroup/memory';
+	return (
+		`if [ -r ${v2}/memory.current ]; then ` +
+		`lim=$(cat ${v2}/memory.max 2>/dev/null); ` +
+		`cur=$(cat ${v2}/memory.current 2>/dev/null); ` +
+		`ina=$(awk '$1=="inactive_file"{print $2; exit}' ${v2}/memory.stat 2>/dev/null); ` +
+		`elif [ -r ${v1}/memory.usage_in_bytes ]; then ` +
+		`lim=$(cat ${v1}/memory.limit_in_bytes 2>/dev/null); ` +
+		`cur=$(cat ${v1}/memory.usage_in_bytes 2>/dev/null); ` +
+		`ina=$(awk '$1=="total_inactive_file"{print $2; exit}' ${v1}/memory.stat 2>/dev/null); ` +
+		'else exit 0; fi; ' +
+		// Non-numeric covers v2's literal `max`; the digit count covers v1's
+		// near-2^63 sentinel. Either means this is not a limited cgroup.
+		'case "$lim" in "" | *[!0-9]*) exit 0;; esac; ' +
+		`[ ${'${#lim}'} -lt ${UNLIMITED_MEMORY_DIGITS} ] || exit 0; ` +
+		'case "$cur" in "" | *[!0-9]*) exit 0;; esac; ' +
+		'printf "%s %s\\n" "$cur" "${ina:-0}"'
 	);
 }
 
@@ -218,4 +285,64 @@ export function buildAnyPortListeningScript(ports: readonly number[]): string {
 		})
 		.join(' || ');
 	return `{ ${tests} ; } && echo busy`;
+}
+
+/**
+ * Turn `buildDiskUsageScript`'s used column into bytes. Null for anything that is
+ * not a plain number - a container without `df`, or one whose exec produced
+ * nothing, has not reported "empty", it has failed to report.
+ */
+export function parseDfKilobytes(stdout: string): number | null {
+	const kb = Number.parseInt(stdout.trim(), 10);
+	return Number.isFinite(kb) && kb >= 0 ? kb * 1024 : null;
+}
+
+/**
+ * Turn `buildMemoryUsageScript`'s two numbers into the stats shape.
+ *
+ * Working set is the total charge less the reclaimable file pages, which is the
+ * same arithmetic the local Docker engine applies to the daemon's own figures -
+ * they must be the same quantity, because one threshold is compared against
+ * every backend's answer. A missing or unreadable second number discounts
+ * nothing rather than failing the reading: over-reporting the working set is the
+ * safe direction for a threshold that stops a container.
+ *
+ * Null for output that is not a usage figure at all - the script says nothing
+ * when it cannot measure, and that is not zero.
+ */
+export function parseCgroupMemory(stdout: string): ContainerMemoryStats | null {
+	const [usageField, inactiveField] = stdout.trim().split(/\s+/);
+	const usage = Number.parseInt(usageField ?? '', 10);
+	if (!Number.isFinite(usage) || usage < 0) return null;
+	const inactive = Number.parseInt(inactiveField ?? '', 10);
+	const discount = Number.isFinite(inactive) && inactive > 0 ? inactive : 0;
+	return { usedBytes: Math.max(0, usage - discount), rawUsageBytes: usage };
+}
+
+/**
+ * Parse the tab-separated `buildListHezoProcessesScript` scan output. The cmdline
+ * is the trailing field and may itself contain tabs, so only the first four tabs
+ * split; malformed lines (a pid that exited mid-scan can emit partial output)
+ * are dropped.
+ */
+export function parseHezoProcessList(stdout: string): ContainerProcessInfo[] {
+	const procs: ContainerProcessInfo[] = [];
+	for (const line of stdout.split('\n')) {
+		if (line.length === 0) continue;
+		const parts = line.split('\t');
+		if (parts.length < 5) continue;
+		const [pidRaw, runIdRaw, sockRaw, ageRaw] = parts;
+		const cmdline = parts.slice(4).join('\t');
+		const pid = Number.parseInt(pidRaw, 10);
+		const ageSecs = Number.parseInt(ageRaw, 10);
+		if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(ageSecs)) continue;
+		procs.push({
+			pid,
+			runId: runIdRaw.length > 0 ? runIdRaw : null,
+			hasHezoSock: sockRaw === '1',
+			ageSecs: Math.max(0, ageSecs),
+			cmdline,
+		});
+	}
+	return procs;
 }

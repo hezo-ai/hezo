@@ -174,6 +174,12 @@ consume:
   rather than taking down anything else. When the kernel does the killing, the run it was
   serving is reported as failed with an error naming the signal and this cap, so a run
   that ran out of memory says so instead of failing without explanation.
+
+  Changing the cap does not resize a container that is already running - nothing can
+  resize one in place - so Hezo replaces it instead. The next run in that project gets a
+  container built to the new cap and the old one is removed, which costs one cold start.
+  Until that happens the Containers page shows what each container actually has, not what
+  the setting now says.
 - **Disk per container** - how much disk each container is given for its checkouts,
   dependencies and build output (5 GB by default). Like the RAM cap, a project that needs
   more can override it on its own Containers page. A container that fills most of its

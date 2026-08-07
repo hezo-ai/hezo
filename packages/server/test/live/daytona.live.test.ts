@@ -69,13 +69,6 @@ if (!apiKey) {
 		// partition - which is what makes the pool's disk-ceiling rung mean
 		// something here.
 		reportsDiskUsage: true,
-		// Measured, and not what the API surface suggests: the telemetry endpoint
-		// answers 403 on an ordinary account ("Telemetry endpoints are disabled when
-		// Analytics API is configured"), so `containerStats` is null here. That is
-		// the documented optional case - Hezo's graceful stop-before-the-cap does not
-		// operate on this backend and Daytona's own OOM handling applies instead,
-		// which ends the one run that overran rather than the project's other work.
-		reportsMemoryStats: false,
 		// The API accepts a per-exec `user` and silently ignores it, so the adapter
 		// renders a non-root user as `runuser -u <user> --`. From a caller's point
 		// of view the identity is still honoured, which is what this asserts.

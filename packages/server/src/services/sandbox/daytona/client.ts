@@ -264,7 +264,6 @@ export interface DaytonaApi {
 	start(id: string): Promise<void>;
 	stop(id: string): Promise<void>;
 	destroy(id: string): Promise<void>;
-	getMetrics(id: string, windowMs: number): Promise<Map<string, number>>;
 	execute(
 		sandbox: DaytonaSandbox,
 		command: string,
@@ -434,15 +433,8 @@ export class DaytonaClient implements DaytonaApi {
 			// 403 is worth naming, because Daytona returns a bare "Access denied" for
 			// a key missing a scope and that reads like an outage unless you know to
 			// look at the key's permissions.
-			//
-			// Only where a scope is actually the likely cause, though. The telemetry
-			// endpoint 403s on an ordinary account for a reason it states itself
-			// ("Telemetry endpoints are disabled when Analytics API is configured"),
-			// and appending a scope hint there sent the reader to change permissions
-			// that have nothing to do with it - a confident wrong diagnosis is worse
-			// than none, since the response body already said what was wrong.
 			const hint =
-				res.status === 403 && !path.includes('/telemetry/')
+				res.status === 403
 					? ' (the API key is likely missing a permission scope - volumes need read:volumes/write:volumes/delete:volumes)'
 					: '';
 			throw new DaytonaApiError(
@@ -555,34 +547,6 @@ export class DaytonaClient implements DaytonaApi {
 			if (e instanceof DaytonaApiError && e.status === 404) return;
 			throw e;
 		}
-	}
-
-	/**
-	 * Latest value of each OTEL metric series in a trailing window.
-	 *
-	 * This is the one call that answers the parity question the plan left open -
-	 * whether per-sandbox memory stats exist at all. They do, but as an
-	 * observability query over a time range rather than a live gauge, so the
-	 * caller takes the most recent data point and tolerates an empty series.
-	 */
-	async getMetrics(id: string, windowMs: number): Promise<Map<string, number>> {
-		const to = new Date();
-		const from = new Date(to.getTime() - windowMs);
-		const q = `?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`;
-		const res = await this.request<{
-			series?: Array<{
-				metricName: string;
-				dataPoints?: Array<{ timestamp: string; value: number }>;
-			}>;
-		}>('GET', `/sandbox/${encodeURIComponent(id)}/telemetry/metrics${q}`, undefined, {
-			timeoutMs: 15_000,
-		});
-		const out = new Map<string, number>();
-		for (const s of res.series ?? []) {
-			const last = s.dataPoints?.at(-1);
-			if (last) out.set(s.metricName, last.value);
-		}
-		return out;
 	}
 
 	// ---- volumes -----------------------------------------------------------

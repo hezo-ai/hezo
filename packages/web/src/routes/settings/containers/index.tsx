@@ -145,7 +145,11 @@ function ContainersList() {
 			header: t('containers.column.memory'),
 			width: '90px',
 			hideOnMobile: true,
-			render: (row) => <span className="text-text-2">{row.memory_limit_gib} GB</span>,
+			render: (row) => (
+				<span className="text-text-2">
+					{row.memory_bytes === null ? '-' : formatGib(row.memory_bytes)}
+				</span>
+			),
 		},
 		{
 			key: 'age',

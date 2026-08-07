@@ -68,11 +68,12 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 		last_task_id: string | null;
 		disk_used_bytes: string | number;
 		disk_ceiling_bytes: string | number;
+		memory_bytes: string | number | null;
 		has_unpushed_commits: boolean;
 		reserved_for_chat: boolean;
 	}>(
 		`SELECT container_id, state::text AS state, last_task_id, disk_used_bytes,
-		        disk_ceiling_bytes, has_unpushed_commits, reserved_for_chat
+		        disk_ceiling_bytes, memory_bytes, has_unpushed_commits, reserved_for_chat
 		   FROM container_pool_members
 		  WHERE project_id = $1
 		  ORDER BY created_at ASC`,
@@ -93,6 +94,9 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 			// members can carry different allocations (a project override, or a
 			// default that changed after some were provisioned).
 			atDiskCeiling: Number(row.disk_used_bytes) >= Number(row.disk_ceiling_bytes),
+			// Null stays null rather than becoming zero: "never recorded" is a
+			// distinct answer from any allocation, and the ladder recycles on it.
+			memoryBytes: row.memory_bytes === null ? null : Number(row.memory_bytes),
 			reservedForChat: row.reserved_for_chat,
 		});
 	}
@@ -123,26 +127,34 @@ export async function upsertPoolMember(
 	containerId: string,
 	state: PoolMemberState | 'creating',
 	/**
-	 * Disk this container was actually provisioned with, in GB. Recorded on the
-	 * member rather than read from the setting at judgement time, so raising the
-	 * default afterwards cannot tell an existing container it may fill past what
-	 * it really has. Omitted on an upsert that is only moving state, which leaves
-	 * the recorded ceiling alone.
+	 * What this container was actually provisioned with. Recorded on the member
+	 * rather than read from the settings at judgement time, so changing a setting
+	 * afterwards cannot tell an existing container it has resources it was never
+	 * given. Omitted on an upsert that is only moving state, which leaves both
+	 * recorded figures alone.
 	 */
-	diskGb?: number,
+	allocation: {
+		/** Disk, in GB. */
+		diskGb?: number;
+		/** The memory cap this container was built to cover, in bytes. */
+		memoryBytes?: number;
+	} = {},
 ): Promise<void> {
-	const ceiling = diskGb === undefined ? null : poolDiskCeilingBytes(diskGb);
+	const ceiling = allocation.diskGb === undefined ? null : poolDiskCeilingBytes(allocation.diskGb);
+	const memory = allocation.memoryBytes ?? null;
 	await db.query(
-		`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes)
-		 VALUES ($1, $2, $3::container_pool_state, COALESCE($4, ${DEFAULT_DISK_CEILING_SQL}))
+		`INSERT INTO container_pool_members (project_id, container_id, state, disk_ceiling_bytes, memory_bytes)
+		 VALUES ($1, $2, $3::container_pool_state, COALESCE($4, ${DEFAULT_DISK_CEILING_SQL}), $5)
 		 ON CONFLICT (container_id) DO UPDATE
 		    SET state = EXCLUDED.state, project_id = EXCLUDED.project_id,
 		        disk_ceiling_bytes = COALESCE($4, container_pool_members.disk_ceiling_bytes),
+		        memory_bytes = COALESCE($5, container_pool_members.memory_bytes),
 		        updated_at = now()
 		  WHERE container_pool_members.state IS DISTINCT FROM EXCLUDED.state
 		     OR container_pool_members.project_id IS DISTINCT FROM EXCLUDED.project_id
-		     OR container_pool_members.disk_ceiling_bytes IS DISTINCT FROM COALESCE($4, container_pool_members.disk_ceiling_bytes)`,
-		[projectId, containerId, state, ceiling],
+		     OR container_pool_members.disk_ceiling_bytes IS DISTINCT FROM COALESCE($4, container_pool_members.disk_ceiling_bytes)
+		     OR container_pool_members.memory_bytes IS DISTINCT FROM COALESCE($5, container_pool_members.memory_bytes)`,
+		[projectId, containerId, state, ceiling, memory],
 	);
 }
 
@@ -283,8 +295,15 @@ export interface ContainerListing {
 	has_unpushed_commits: boolean;
 	disk_used_bytes: number;
 	disk_ceiling_bytes: number;
-	/** Effective per-container cap: the project's override, else the instance default. */
-	memory_limit_gib: number;
+	/**
+	 * The memory cap this container was provisioned to cover, in bytes - what it
+	 * actually has, not what the project's cap says today. The two diverge from the
+	 * moment the cap is changed until the pool replaces the container, and reporting
+	 * the setting there described a container that did not exist.
+	 *
+	 * Null for a container whose allocation was never recorded.
+	 */
+	memory_bytes: number | null;
 	last_task_id: string | null;
 	last_task_identifier: string | null;
 	/** The run currently executing on it, when one is. */
@@ -311,17 +330,10 @@ export interface ContainerListing {
  * `projects.container_status`. The mapping is stated rather than assumed: `running`
  * reads as `idle` because a legacy row cannot tell us whether a run holds it, and
  * calling it busy would misreport a container an operator may safely remove.
- *
- * `defaultMemoryGb` is passed in rather than read here so this file stays the one that
- * knows the table and nothing else - the instance default is a settings concern.
  */
-export async function listAllContainers(
-	db: Db,
-	defaultMemoryGb: number,
-): Promise<ContainerListing[]> {
+export async function listAllContainers(db: Db): Promise<ContainerListing[]> {
 	const res = await db.query<ContainerListingRow>(
 		`${CONTAINER_LISTING_SQL} ORDER BY p.name ASC, m.created_at ASC NULLS LAST, c.container_id ASC`,
-		[defaultMemoryGb],
 	);
 	return res.rows.map(toContainerListing);
 }
@@ -329,12 +341,11 @@ export async function listAllContainers(
 /** One container by its engine id, or null when nothing references it. */
 export async function getContainerListing(
 	db: Db,
-	defaultMemoryGb: number,
 	containerId: string,
 ): Promise<ContainerListing | null> {
 	const res = await db.query<ContainerListingRow>(
-		`${CONTAINER_LISTING_SQL} AND c.container_id = $2`,
-		[defaultMemoryGb, containerId],
+		`${CONTAINER_LISTING_SQL} AND c.container_id = $1`,
+		[containerId],
 	);
 	return res.rows[0] ? toContainerListing(res.rows[0]) : null;
 }
@@ -349,7 +360,7 @@ interface ContainerListingRow {
 	has_unpushed_commits: boolean;
 	disk_used_bytes: string | number;
 	disk_ceiling_bytes: string | number;
-	memory_limit_gib: string | number;
+	memory_bytes: string | number | null;
 	last_task_id: string | null;
 	last_task_identifier: string | null;
 	run_id: string | null;
@@ -362,8 +373,7 @@ interface ContainerListingRow {
 
 /**
  * Shared body of the two listing reads, so "one row per container" is defined
- * once. `$1` is the instance default memory cap; the caller appends its own
- * ordering or its `container_id` predicate.
+ * once. The caller appends its own ordering or its `container_id` predicate.
  */
 const CONTAINER_LISTING_SQL = `
 	SELECT c.container_id,
@@ -383,7 +393,10 @@ const CONTAINER_LISTING_SQL = `
 	       COALESCE(m.has_unpushed_commits, false) AS has_unpushed_commits,
 	       COALESCE(m.disk_used_bytes, 0)          AS disk_used_bytes,
 	       COALESCE(m.disk_ceiling_bytes, ${DEFAULT_DISK_CEILING_SQL}) AS disk_ceiling_bytes,
-	       COALESCE(p.memory_limit_gib, $1)        AS memory_limit_gib,
+	       -- Deliberately not the project's cap. A container holds the allocation it
+	       -- was built with until the pool replaces it, so reading the setting here
+	       -- reported a size no container had for as long as the two disagreed.
+	       m.memory_bytes,
 	       m.last_task_id,
 	       t.identifier AS last_task_identifier,
 	       r.id         AS run_id,
@@ -434,7 +447,7 @@ function toContainerListing(row: ContainerListingRow): ContainerListing {
 		...row,
 		disk_used_bytes: Number(row.disk_used_bytes),
 		disk_ceiling_bytes: Number(row.disk_ceiling_bytes),
-		memory_limit_gib: Number(row.memory_limit_gib),
+		memory_bytes: row.memory_bytes === null ? null : Number(row.memory_bytes),
 	};
 }
 
@@ -535,8 +548,14 @@ export async function decidePoolAcquisition(
 	projectId: string,
 	taskId: string | null,
 	capacity: PoolCapacity,
+	requiredMemoryBytes: number,
 ): Promise<PoolDecision> {
-	return selectPoolMember(taskId, await loadPoolMembers(db, projectId), capacity);
+	return selectPoolMember(
+		taskId,
+		await loadPoolMembers(db, projectId),
+		capacity,
+		requiredMemoryBytes,
+	);
 }
 
 /**

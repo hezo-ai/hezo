@@ -14,7 +14,7 @@ import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { getWorkspacePath } from '../src/services/workspace';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker } from './helpers/app';
+import { createStubDocker, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -127,11 +127,11 @@ describe('group/coworker ingest path', () => {
 			[encrypt('sk-ant-test', key)],
 		);
 		const proj = await ctx.db.query<{ id: string }>(
-			`UPDATE projects SET container_id = 'hq-container', container_status = 'running'
-			 WHERE team_id = $1 AND is_internal = true RETURNING id`,
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[DEFAULT_TEAM_ID],
 		);
 		hqProjectId = proj.rows[0].id;
+		await seedProjectContainer(ctx.db, hqProjectId, 'hq-container');
 	});
 	afterEach(() => destroyTestContext(ctx));
 
