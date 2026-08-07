@@ -670,6 +670,7 @@ describe('JobManager recovery & maintenance', () => {
 				projectId,
 				teamId,
 				taskKey: key,
+				containerId: null,
 			});
 			await db.query(
 				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, finished_at, exit_code)
@@ -772,6 +773,7 @@ describe('JobManager recovery & maintenance', () => {
 				projectId,
 				teamId,
 				taskKey: key,
+				containerId: null,
 			});
 
 			await (manager as unknown as JmInternals).syncContainerStatuses();
@@ -791,6 +793,111 @@ describe('JobManager recovery & maintenance', () => {
 			expect(project.rows[0].container_status).toBe(ContainerStatus.Stopped);
 
 			manager.shutdown();
+			await db.query(
+				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id = $1',
+				[projectId],
+			);
+		});
+
+		it('spares a run executing in a sibling container when the named one stops', async () => {
+			// The regression: a pool member the project happens to name went away -
+			// a managed backend reclaiming an unused sandbox does this routinely -
+			// and every run in the project died with it, including runs in
+			// containers that were perfectly healthy. Handling a container's death
+			// project-wide is the shared-fate blast radius the pool removes.
+			const { db } = ctx;
+			await db.query(
+				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id <> $1',
+				[projectId],
+			);
+			await db.query(
+				`UPDATE projects SET container_status = 'running'::container_status, container_id = 'ctr-dead'
+				 WHERE id = $1`,
+				[projectId],
+			);
+			// Two tasks: one active run per task is already enforced, so concurrent
+			// runs are never on the same one.
+			const sibling = await db.query<{ id: string }>(
+				`INSERT INTO tasks (project_id, team_id, number, identifier, title)
+				 VALUES ($1, $2, 9101, 'JMR-9101', 'sibling') RETURNING id`,
+				[projectId, teamId],
+			);
+			const siblingTaskId = sibling.rows[0].id;
+			const insertRun = async (task: string, containerId: string): Promise<string> =>
+				(
+					await db.query<{ id: string }>(
+						`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, container_id)
+						 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), $5)
+						 RETURNING id`,
+						[teamId, agentId, task, HeartbeatRunStatus.Running, containerId],
+					)
+				).rows[0].id;
+			const deadRunId = await insertRun(taskId, 'ctr-dead');
+			const aliveRunId = await insertRun(siblingTaskId, 'ctr-alive');
+
+			const manager = createJobManager({
+				docker: createStubDocker({
+					inspectContainer: async (id: string) => ({
+						Id: id,
+						State: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+						Config: { Image: 'stub' },
+					}),
+				}),
+			});
+			const aborts: string[] = [];
+			const register = (runId: string, task: string, key: string, containerId: string) => {
+				manager.launchTask(
+					key,
+					(signal) =>
+						new Promise<void>((resolve) => {
+							signal.addEventListener('abort', () => {
+								aborts.push(key);
+								resolve();
+							});
+						}),
+					60_000,
+				);
+				manager.registerLiveRun({
+					runId,
+					memberId: agentId,
+					taskId: task,
+					projectId,
+					teamId,
+					taskKey: key,
+					containerId: null,
+				});
+				manager.attachLiveRunContainer(runId, containerId);
+			};
+			const deadKey = `${agentId}:${projectId}`;
+			const aliveKey = `${agentId}:${siblingTaskId}`;
+			register(deadRunId, taskId, deadKey, 'ctr-dead');
+			register(aliveRunId, siblingTaskId, aliveKey, 'ctr-alive');
+
+			// No background drain here: the surviving run is still executing by
+			// design, and waiting for it would be waiting for the thing under test
+			// not to have happened. The sync awaits its own DB writes.
+			await (manager as unknown as JmInternals).syncContainerStatuses();
+
+			const statusOf = async (runId: string): Promise<string> =>
+				(
+					await db.query<{ status: string }>(
+						'SELECT status::text AS status FROM heartbeat_runs WHERE id = $1',
+						[runId],
+					)
+				).rows[0].status;
+			expect(await statusOf(deadRunId)).toBe(HeartbeatRunStatus.Failed);
+			expect(await statusOf(aliveRunId)).toBe(HeartbeatRunStatus.Running);
+			expect(aborts).toEqual([deadKey]);
+			expect(manager.getLiveRunIds().has(deadRunId)).toBe(false);
+			expect(manager.getLiveRunIds().has(aliveRunId)).toBe(true);
+
+			manager.cancelLiveRun(aliveRunId);
+			await waitForBackground();
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE id = ANY($1::uuid[])', [
+				[deadRunId, aliveRunId],
+			]);
+			await db.query('DELETE FROM tasks WHERE id = $1', [siblingTaskId]);
 			await db.query(
 				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id = $1',
 				[projectId],

@@ -226,6 +226,43 @@ describe('syncAllContainerStatuses', () => {
 		expect(result.rows[0].container_status).toBe('stopped');
 	});
 
+	it('suspends the pool member when its container stops outside Hezo', async () => {
+		// A managed backend reclaims an unused sandbox on its own schedule. The
+		// container is intact and resumable, so the member must read `suspended` -
+		// left at `idle` it advertises a warm container that is not up, and the
+		// ladder hands it to the next run as "nothing to start".
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Externally Stopped Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+
+		await db.query(
+			"UPDATE projects SET container_id = 'reclaimed-box', container_status = 'running' WHERE id = $1",
+			[projectId],
+		);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state)
+			 VALUES ($1, 'reclaimed-box', 'idle'::container_pool_state)`,
+			[projectId],
+		);
+
+		await syncAllContainerStatuses(
+			deps(
+				createStubDocker({
+					inspectContainer: vi.fn().mockResolvedValue({
+						State: { Running: false, Status: 'exited', ExitCode: 0 },
+					}),
+				}),
+			),
+		);
+
+		const member = await db.query<{ state: string }>(
+			"SELECT state::text AS state FROM container_pool_members WHERE container_id = 'reclaimed-box'",
+		);
+		expect(member.rows[0].state).toBe('suspended');
+	});
+
 	it('keeps status as running when container is actually running', async () => {
 		const projectRes = await createTestProject(db, teamId, {
 			name: 'Running Container Project',

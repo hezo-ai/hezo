@@ -163,6 +163,13 @@ export interface LiveRun {
 	projectId: string;
 	teamId: string;
 	taskKey: string;
+	/**
+	 * The container this run is executing in, filled in once the pool hands one
+	 * over. Null until then: a run is registered when its row is created, which
+	 * is before it has claimed anything - so this is genuinely unknown for a
+	 * moment rather than merely unset.
+	 */
+	containerId: string | null;
 }
 
 export type DispatchNowResult =
@@ -398,6 +405,18 @@ export class JobManager {
 		this.liveRuns.delete(runId);
 	}
 
+	/**
+	 * Record which container a registered run ended up in.
+	 *
+	 * Separate from registration because the order is fixed the other way: a run
+	 * exists as a row, and is cancellable, before the pool has decided what it
+	 * will execute in.
+	 */
+	attachLiveRunContainer(runId: string, containerId: string): void {
+		const run = this.liveRuns.get(runId);
+		if (run) run.containerId = containerId;
+	}
+
 	getLiveRunIds(): Set<string> {
 		return new Set(this.liveRuns.keys());
 	}
@@ -414,8 +433,23 @@ export class JobManager {
 		return true;
 	}
 
-	cancelLiveRunsForProject(projectId: string, reason: ContainerExitReason): number {
-		const runs = this.getLiveRunsForProject(projectId);
+	/**
+	 * Abort the in-process runs one dead container was carrying.
+	 *
+	 * The in-memory half of {@link failProjectRuns}, and scoped identically: the
+	 * named container's runs, plus runs that have not yet claimed one. Those
+	 * cannot be shown to be executing elsewhere, and the DB half fails them for
+	 * the same reason - the two have to agree or a run's row and its exec
+	 * disagree about whether it is alive.
+	 */
+	cancelLiveRunsForContainer(
+		projectId: string,
+		containerId: string,
+		reason: ContainerExitReason,
+	): number {
+		const runs = this.getLiveRunsForProject(projectId).filter(
+			(r) => r.containerId === containerId || r.containerId === null,
+		);
 		for (const run of runs) {
 			this.cancelTask(run.taskKey, reason);
 			this.liveRuns.delete(run.runId);
@@ -2288,7 +2322,9 @@ export class JobManager {
 								projectId,
 								teamId,
 								taskKey,
+								containerId: null,
 							});
+							return (containerId) => this.attachLiveRunContainer(runId, containerId);
 						},
 						wakeupId,
 					);
@@ -2702,7 +2738,9 @@ export class JobManager {
 								projectId: projectRow.id,
 								teamId,
 								taskKey: key,
+								containerId: null,
 							});
+							return (containerId) => this.attachLiveRunContainer(runId, containerId);
 						},
 						wakeupId,
 						progressUpdate,
@@ -3146,18 +3184,17 @@ export class JobManager {
 		}
 
 		const deps = this.buildContainerDeps();
+		// Two sources, one shape. The status sync answers for the container
+		// `projects.container_id` names; the pool reconcile answers for every other
+		// member, which that sync cannot see at all. Both emit per-container
+		// transitions so a dead container is handled identically whichever noticed
+		// it - and, in particular, is never handled project-wide.
 		const transitions = await syncAllContainerStatuses(deps);
+		const reconciled = await reconcilePoolMembers(deps);
 
-		for (const transition of transitions) {
+		for (const transition of [...transitions, ...reconciled.transitions]) {
 			await this.handleContainerTransition(transition);
 		}
-
-		// Pool members are not reachable from the project rows above - a project
-		// names one container, a pool has many - so they are reconciled here.
-		// Without it a member whose container is gone is never revisited and
-		// permanently consumes the instance memory budget (see
-		// `reconcilePoolMembers`).
-		await reconcilePoolMembers(deps);
 	}
 
 	/**
@@ -3337,8 +3374,17 @@ export class JobManager {
 		this.suspectedOrphanContainers = result.suspected;
 	}
 
+	/**
+	 * A container died: end the runs *that container* was carrying, and nothing
+	 * else.
+	 *
+	 * Both halves are scoped to the same container and must stay that way. The
+	 * in-process abort and the DB update describe one set of runs from two sides;
+	 * scoping them differently either leaves a run executing against a row that
+	 * reads `failed`, or fails a row whose exec is still streaming.
+	 */
 	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {
-		const { projectId, projectSlug, teamId, oldStatus, newStatus } = transition;
+		const { projectId, projectSlug, teamId, containerId, oldStatus, newStatus } = transition;
 
 		if (
 			oldStatus === ContainerStatus.Running &&
@@ -3346,8 +3392,15 @@ export class JobManager {
 		) {
 			const reason: ContainerExitReason =
 				newStatus === ContainerStatus.Error ? 'container_error' : 'container_stopped';
-			this.cancelLiveRunsForProject(projectId, reason);
-			await failProjectRuns(this.buildContainerDeps(), projectId, projectSlug, teamId, reason);
+			this.cancelLiveRunsForContainer(projectId, containerId, reason);
+			await failProjectRuns(
+				this.buildContainerDeps(),
+				projectId,
+				projectSlug,
+				teamId,
+				reason,
+				containerId,
+			);
 		}
 	}
 

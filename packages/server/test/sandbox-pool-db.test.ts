@@ -137,11 +137,30 @@ describe('reconcilePoolMembers', () => {
 		);
 		return r.rows.map((x) => x.container_id);
 	};
-	/** Engine that knows only `known`, 404s the rest, and throws for `unanswerable`. */
-	const engine = (known: string[], unanswerable: string[] = []) =>
+	/**
+	 * Engine that knows only `known`, 404s the rest, throws for `unanswerable`,
+	 * and reports anything in `stopped` as present but not running.
+	 */
+	const engine = (
+		known: string[],
+		unanswerable: string[] = [],
+		stopped: Record<string, number> = {},
+	) =>
 		({
 			inspectContainer: async (id: string) => {
 				if (unanswerable.includes(id)) throw new Error('API unreachable');
+				if (id in stopped) {
+					return {
+						Id: id,
+						State: {
+							Status: 'exited',
+							Running: false,
+							Pid: 0,
+							ExitCode: stopped[id],
+						},
+						Config: { Image: 'x' },
+					};
+				}
 				return known.includes(id)
 					? {
 							Id: id,
@@ -151,6 +170,20 @@ describe('reconcilePoolMembers', () => {
 					: null;
 			},
 		}) as unknown as Parameters<typeof reconcilePoolMembers>[0]['docker'];
+
+	/** Always check: the real interval would skip a member a sibling case just looked at. */
+	const reconcile = (docker: Parameters<typeof reconcilePoolMembers>[0]['docker']) =>
+		reconcilePoolMembers({ db, docker, poolLivenessIntervalMs: 0 } as unknown as Parameters<
+			typeof reconcilePoolMembers
+		>[0]);
+
+	const stateOf = async (containerId: string): Promise<string | undefined> =>
+		(
+			await db.query<{ state: string }>(
+				'SELECT state::text AS state FROM container_pool_members WHERE container_id = $1',
+				[containerId],
+			)
+		).rows[0]?.state;
 
 	beforeAll(async () => {
 		db = await createTestDbWithMigrations();
@@ -171,11 +204,8 @@ describe('reconcilePoolMembers', () => {
 	it('drops a busy member whose container is gone — the case nothing else repairs', async () => {
 		await seed('gone-busy', 'busy', 300);
 		await seed('live-busy', 'busy', 300);
-		const dropped = await reconcilePoolMembers({
-			db,
-			docker: engine(['live-busy']),
-		} as unknown as Parameters<typeof reconcilePoolMembers>[0]);
-		expect(dropped).toBe(1);
+		const result = await reconcile(engine(['live-busy']));
+		expect(result.dropped).toBe(1);
 		expect(await remaining()).toEqual(['live-busy']);
 	});
 
@@ -184,11 +214,8 @@ describe('reconcilePoolMembers', () => {
 		// unanswerable check would lose the record of a live container and orphan
 		// it on the backend, which is the strictly worse failure.
 		await seed('unanswerable', 'idle', 300);
-		const dropped = await reconcilePoolMembers({
-			db,
-			docker: engine([], ['unanswerable']),
-		} as unknown as Parameters<typeof reconcilePoolMembers>[0]);
-		expect(dropped).toBe(0);
+		const result = await reconcile(engine([], ['unanswerable']));
+		expect(result.dropped).toBe(0);
 		expect(await remaining()).toContain('unanswerable');
 	});
 
@@ -196,11 +223,79 @@ describe('reconcilePoolMembers', () => {
 		// A container created moments ago may not be answerable for yet, and a
 		// member mid-transition would be racing whatever moved it.
 		await seed('fresh', 'creating', 1);
-		const dropped = await reconcilePoolMembers({
-			db,
-			docker: engine([]),
-		} as unknown as Parameters<typeof reconcilePoolMembers>[0]);
-		expect(dropped).toBe(0);
+		const result = await reconcile(engine([]));
+		expect(result.dropped).toBe(0);
 		expect(await remaining()).toContain('fresh');
+	});
+
+	it('suspends a member that is stopped but still there, and reports the transition', async () => {
+		// The case a managed backend produces routinely: it reclaims a sandbox no
+		// run is using. The container is intact and resumable, so the row must
+		// survive - and the member must stop advertising itself as warm, or the
+		// ladder hands it to a run as "nothing to start".
+		await seed('auto-stopped', 'idle', 300);
+		const result = await reconcile(engine([], [], { 'auto-stopped': 0 }));
+
+		expect(result.dropped).toBe(0);
+		expect(await remaining()).toEqual(['auto-stopped']);
+		expect(await stateOf('auto-stopped')).toBe('suspended');
+		expect(result.transitions).toHaveLength(1);
+		expect(result.transitions[0]).toMatchObject({
+			containerId: 'auto-stopped',
+			projectId,
+			oldStatus: 'running',
+			newStatus: 'stopped',
+		});
+	});
+
+	it('reports a nonzero exit as an error transition, not a clean stop', async () => {
+		// The two are not interchangeable downstream: only a container_error run is
+		// eligible to be requeued once the container is back.
+		await seed('crashed', 'busy', 300);
+		const result = await reconcile(engine([], [], { crashed: 137 }));
+		expect(result.transitions[0]).toMatchObject({
+			containerId: 'crashed',
+			newStatus: 'error',
+		});
+	});
+
+	it('leaves an already-suspended member untouched', async () => {
+		// Nothing changed, so there is nothing to report - and re-emitting would
+		// fail runs for a container that stopped long ago.
+		await seed('parked', 'suspended', 300);
+		const result = await reconcile(engine([], [], { parked: 0 }));
+		expect(result.transitions).toEqual([]);
+		expect(await stateOf('parked')).toBe('suspended');
+	});
+
+	it('never judges a creating member as stopped', async () => {
+		// A container still coming up legitimately reads not-running. Suspending it
+		// here would strand the provision that is building it.
+		await seed('coming-up', 'creating', 300);
+		const result = await reconcile(engine([], [], { 'coming-up': 0 }));
+		expect(result.transitions).toEqual([]);
+		expect(await stateOf('coming-up')).toBe('creating');
+	});
+
+	it('checks a member at most once per interval', async () => {
+		// Without this the 1 Hz sync tick inspects every member every second - a
+		// control-plane round trip per container per second on a managed backend.
+		await seed('throttled', 'idle', 300);
+		let inspections = 0;
+		const counting = {
+			inspectContainer: async (id: string) => {
+				inspections++;
+				return {
+					Id: id,
+					State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+					Config: { Image: 'x' },
+				};
+			},
+		} as unknown as Parameters<typeof reconcilePoolMembers>[0]['docker'];
+
+		const deps = { db, docker: counting } as unknown as Parameters<typeof reconcilePoolMembers>[0];
+		await reconcilePoolMembers(deps);
+		await reconcilePoolMembers(deps);
+		expect(inspections).toBe(1);
 	});
 });

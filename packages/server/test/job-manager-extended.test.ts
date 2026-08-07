@@ -205,6 +205,7 @@ describe('JobManager — extended coverage', () => {
 				projectId,
 				teamId,
 				taskKey: key,
+				containerId: null,
 			});
 
 			expect(manager.cancelLiveRun('run-x')).toBe(true);
@@ -216,14 +217,16 @@ describe('JobManager — extended coverage', () => {
 			manager.shutdown();
 		});
 
-		it('cancelLiveRunsForProject cancels every run in the project and returns the count', () => {
+		it('cancelLiveRunsForContainer spares a sibling run in another container', () => {
+			// The property the pool exists for, on the in-memory side: one container
+			// going away must not abort a run executing in a different one.
 			const manager = createJobManager();
-			const keyA = `${agentId}:${projectId}`;
-			const keyB = `${secondAgentId}:${projectId}`;
+			const keyDead = `${agentId}:${projectId}`;
+			const keyAlive = `${secondAgentId}:${projectId}`;
 			const aborts: string[] = [];
 			for (const [key, who] of [
-				[keyA, 'a'],
-				[keyB, 'b'],
+				[keyDead, 'dead'],
+				[keyAlive, 'alive'],
 			] as const) {
 				manager.launchTask(
 					key,
@@ -238,21 +241,25 @@ describe('JobManager — extended coverage', () => {
 				);
 			}
 			manager.registerLiveRun({
-				runId: 'r-a',
+				runId: 'r-dead',
 				memberId: agentId,
 				taskId,
 				projectId,
 				teamId,
-				taskKey: keyA,
+				taskKey: keyDead,
+				containerId: null,
 			});
+			manager.attachLiveRunContainer('r-dead', 'ctr-dead');
 			manager.registerLiveRun({
-				runId: 'r-b',
+				runId: 'r-alive',
 				memberId: secondAgentId,
 				taskId,
 				projectId,
 				teamId,
-				taskKey: keyB,
+				taskKey: keyAlive,
+				containerId: null,
 			});
+			manager.attachLiveRunContainer('r-alive', 'ctr-alive');
 			// A run in a different project must be left alone.
 			manager.registerLiveRun({
 				runId: 'r-other',
@@ -261,12 +268,55 @@ describe('JobManager — extended coverage', () => {
 				projectId: 'other-project',
 				teamId,
 				taskKey: `${agentId}:other-project`,
+				containerId: null,
+			});
+			manager.attachLiveRunContainer('r-other', 'ctr-dead');
+
+			const cancelled = manager.cancelLiveRunsForContainer(
+				projectId,
+				'ctr-dead',
+				'container_stopped',
+			);
+			expect(cancelled).toBe(1);
+			expect(aborts).toEqual(['dead']);
+			expect(manager.getLiveRunIds()).toEqual(new Set(['r-alive', 'r-other']));
+
+			manager.shutdown();
+		});
+
+		it('cancelLiveRunsForContainer also cancels a run that has not claimed a container', () => {
+			// Nothing can show such a run to be executing elsewhere, and the DB half
+			// fails it for the same reason - leaving it registered would disagree
+			// with its own row.
+			const manager = createJobManager();
+			const key = `${agentId}:${projectId}`;
+			let aborted = false;
+			manager.launchTask(
+				key,
+				(signal) =>
+					new Promise<void>((resolve) => {
+						signal.addEventListener('abort', () => {
+							aborted = true;
+							resolve();
+						});
+					}),
+				60_000,
+			);
+			manager.registerLiveRun({
+				runId: 'r-unplaced',
+				memberId: agentId,
+				taskId,
+				projectId,
+				teamId,
+				taskKey: key,
+				containerId: null,
 			});
 
-			const cancelled = manager.cancelLiveRunsForProject(projectId, 'container_stopped');
-			expect(cancelled).toBe(2);
-			expect(aborts.sort()).toEqual(['a', 'b']);
-			expect(manager.getLiveRunIds()).toEqual(new Set(['r-other']));
+			expect(manager.cancelLiveRunsForContainer(projectId, 'ctr-dead', 'container_stopped')).toBe(
+				1,
+			);
+			expect(aborted).toBe(true);
+			expect(manager.getLiveRunIds()).toEqual(new Set());
 
 			manager.shutdown();
 		});
@@ -789,6 +839,7 @@ describe('JobManager — extended coverage', () => {
 				projectId,
 				teamId,
 				taskKey: key,
+				containerId: null,
 			});
 
 			await (

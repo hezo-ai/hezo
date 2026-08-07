@@ -15,7 +15,7 @@ import {
 	WakeupSource,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
@@ -110,6 +110,15 @@ beforeAll(async () => {
 		}),
 	});
 	taskId = (await taskRes.json()).data.id;
+});
+
+// Every case declares the container state it wants on the `projects` row, so it
+// must start from an empty pool too - the two are records of the same thing.
+// Without this a member a previous case left behind is a container the ladder
+// will happily reuse or resume, and the case ends up asserting against whatever
+// ran before it.
+beforeEach(async () => {
+	await db.query('DELETE FROM container_pool_members');
 });
 
 afterAll(async () => {

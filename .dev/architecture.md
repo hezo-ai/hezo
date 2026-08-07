@@ -1609,9 +1609,36 @@ for a container the engine does not know and *throws* for anything else, and a t
 "could not determine" and changes nothing - deleting on an unanswerable check would lose the
 record of a live container and orphan it on the backend. A grace period keeps a just-created
 container from being judged early, and a per-pass bound keeps a large pool from turning one tick
-into a fan-out of round trips. This matters more on a managed backend than locally, because
-there a container disappearing is normal rather than anomalous - the provider stops, archives
-and reaps sandboxes on its own schedule, and enforces quota by refusing or removing them.
+into a fan-out of round trips. On top of both, each member is asked about at most once per
+liveness interval: the age floor only skips a member that changed *recently*, so a member idle
+for hours is past it forever and would otherwise be inspected on every tick of a 1 Hz cron - a
+control-plane round trip per container per second. This matters more on a managed backend than
+locally, because there a container disappearing is normal rather than anomalous - the provider
+stops, archives and reaps sandboxes on its own schedule, and enforces quota by refusing or
+removing them.
+
+**A container found stopped-but-present is a suspended member, not a lost one**, and this is
+the case a managed backend produces routinely: Daytona's `autoStopInterval` reclaims a sandbox
+that has seen no toolbox traffic for ten minutes, which is exactly what an idle pool member
+looks like. Hezo's own idle pass cannot pre-empt it - `stopIdleContainers` retires a pool only
+when the whole *project* is idle, so a busy project's unused members are reclaimed by the
+provider first. The member's writable layer is intact, so the repair is to record `suspended`
+and let the ladder resume it in place (about a second) rather than discard the row and pay to
+build a replacement while the sandbox lingers as an orphan. Three places converge on this:
+`syncContainerStatus`'s running→stopped branch, the memory-limit auto-stop, and the `reuse`
+rung of `acquireRunContainer`, which for the same reason now distinguishes *gone* (drop the
+row) from *stopped* (suspend it) from *unanswerable* (change nothing).
+
+**A dead container ends the runs it was carrying, and no others.** `ContainerTransition` names
+the container, and both halves of the response are scoped to it: `failProjectRuns(…,
+containerId)` for the rows, and `JobManager.cancelLiveRunsForContainer` for the in-process
+execs. They must agree, or a run reads `failed` while its exec still streams; both therefore
+also take runs that have not yet claimed a container, which nothing can show to be executing
+elsewhere. Handling a container's death by *project* is the shared-fate blast radius the pool
+exists to remove, and it is not hypothetical - it is how an idle member being auto-stopped
+killed a run executing in a healthy sibling container. Two sources emit transitions in this
+one shape: `syncAllContainerStatuses` answers for the container `projects.container_id` names,
+and `reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
 
 **Capacity is a memory budget, and it reserves for the chat container up front.**
 `max_container_memory_gb` bounds the total memory *task run* containers may hold at once,

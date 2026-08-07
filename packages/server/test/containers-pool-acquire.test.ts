@@ -56,6 +56,19 @@ function deps(docker: ContainerEngine): ContainerDeps {
 	return { db, docker, dataDir };
 }
 
+/**
+ * A project of its own, so a case can reason about a pool of known size.
+ *
+ * Its own **team** too: a team holds at most one project, so asking for a second
+ * one under the shared team hands back the shared project - and with it every
+ * container the cases before it left in the pool.
+ */
+async function freshProject(name: string): Promise<string> {
+	const team = await createTestTeam(db, { name: `${name} Co` });
+	const res = await createTestProject(db, (await team.json()).data.id, { name });
+	return (await res.json()).data.id;
+}
+
 async function poolRow(containerId: string) {
 	const res = await db.query<{ state: string; last_task_id: string | null }>(
 		`SELECT state::text AS state, last_task_id FROM container_pool_members WHERE container_id = $1`,
@@ -119,6 +132,89 @@ describe('acquireRunContainer', () => {
 		} finally {
 			await second.release();
 		}
+	});
+
+	it('resumes a released container the backend stopped, rather than discarding it', async () => {
+		// A managed backend reclaims an unused sandbox on its own schedule, so a
+		// warm member being found stopped is routine rather than anomalous. Its
+		// writable layer is intact - the clones and worktrees it already built are
+		// still there - so the repair is a resume, not deleting the row and paying
+		// to build a replacement while the sandbox lingers as an orphan.
+		//
+		// Its own project, so the pool holds exactly the one member under test:
+		// with a sibling idle member available the ladder would satisfy the second
+		// acquire from that instead, and the assertion would prove nothing.
+		const ownProject = await freshProject('Resume Project');
+		const docker = provisioningDocker();
+		const first = await acquireRunContainer(deps(docker), ownProject, null);
+		const stoppedId = first.containerId;
+		await first.release();
+
+		let running = false;
+		vi.mocked(docker.inspectContainer).mockImplementation(async (id: string) => ({
+			Id: id,
+			State: {
+				Status: id === stoppedId && !running ? 'exited' : 'running',
+				Running: id !== stoppedId || running,
+				Pid: 1,
+				ExitCode: 0,
+			},
+			Config: { Image: 'stub' },
+		}));
+		vi.mocked(docker.startContainer).mockImplementation(async () => {
+			running = true;
+		});
+
+		const second = await acquireRunContainer(deps(docker), ownProject, null);
+		try {
+			expect(second.containerId).toBe(stoppedId);
+			expect(docker.startContainer).toHaveBeenCalledWith(stoppedId);
+			expect(await poolRow(stoppedId)).toMatchObject({ state: 'busy' });
+		} finally {
+			await second.release();
+		}
+	});
+
+	it('drops a member the engine no longer knows', async () => {
+		const ownProject = await freshProject('Vanished Project');
+		const docker = provisioningDocker();
+		const acquired = await acquireRunContainer(deps(docker), ownProject, null);
+		const goneId = acquired.containerId;
+		await acquired.release();
+
+		vi.mocked(docker.inspectContainer).mockImplementation(async (id: string) =>
+			id === goneId
+				? null
+				: {
+						Id: id,
+						State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+						Config: { Image: 'stub' },
+					},
+		);
+		const replacement = await acquireRunContainer(deps(docker), ownProject, null);
+		try {
+			expect(replacement.containerId).not.toBe(goneId);
+			expect(await poolRow(goneId)).toBeUndefined();
+		} finally {
+			await replacement.release();
+		}
+	});
+
+	it('keeps a member the engine could not answer for', async () => {
+		// The third answer, which used to collapse into "gone". Deleting the row on
+		// an unanswerable check loses the record of a live container and orphans it
+		// on the backend, which is the strictly worse failure.
+		const ownProject = await freshProject('Unanswerable Project');
+		const acquired = await acquireRunContainer(deps(provisioningDocker()), ownProject, null);
+		const blipId = acquired.containerId;
+		await acquired.release();
+
+		const blipDocker = provisioningDocker();
+		vi.mocked(blipDocker.inspectContainer).mockRejectedValue(new Error('API unreachable'));
+		await expect(acquireRunContainer(deps(blipDocker), ownProject, null)).rejects.toThrow(
+			'API unreachable',
+		);
+		expect(await poolRow(blipId)).toBeDefined();
 	});
 
 	it('prefers the container that last served this task', async () => {

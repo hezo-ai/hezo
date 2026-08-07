@@ -593,6 +593,14 @@ export async function projectHasStrandedCommits(db: Db, projectId: string): Prom
 	return res.rows[0]?.pinned ?? false;
 }
 
+export interface PoolMemberForReconcile {
+	containerId: string;
+	projectId: string;
+	projectSlug: string;
+	teamId: string;
+	state: string;
+}
+
 /**
  * Pool members old enough to be worth checking against the engine, oldest first.
  *
@@ -600,23 +608,37 @@ export async function projectHasStrandedCommits(db: Db, projectId: string): Prom
  * mid-transition and reconciling it would race the thing that moved it. The age
  * floor is what keeps a container created moments ago from being judged missing
  * before the provider can answer for it.
+ *
+ * The project's slug and team come along because what the caller does with a
+ * dead member is fail the runs it was carrying, which is addressed by project -
+ * and looking each one up per member would turn one query into a fan-out.
  */
 export async function listPoolMembersForReconcile(
 	db: Db,
 	minAgeSeconds: number,
 	limit: number,
-): Promise<Array<{ containerId: string; projectId: string; state: string }>> {
-	const res = await db.query<{ container_id: string; project_id: string; state: string }>(
-		`SELECT container_id, project_id, state::text AS state
-		   FROM container_pool_members
-		  WHERE updated_at < now() - ($1 * interval '1 second')
-		  ORDER BY updated_at ASC
+): Promise<PoolMemberForReconcile[]> {
+	const res = await db.query<{
+		container_id: string;
+		project_id: string;
+		project_slug: string;
+		team_id: string;
+		state: string;
+	}>(
+		`SELECT m.container_id, m.project_id, p.slug AS project_slug, p.team_id,
+		        m.state::text AS state
+		   FROM container_pool_members m
+		   JOIN projects p ON p.id = m.project_id
+		  WHERE m.updated_at < now() - ($1 * interval '1 second')
+		  ORDER BY m.updated_at ASC
 		  LIMIT $2`,
 		[minAgeSeconds, limit],
 	);
 	return res.rows.map((r) => ({
 		containerId: r.container_id,
 		projectId: r.project_id,
+		projectSlug: r.project_slug,
+		teamId: r.team_id,
 		state: r.state,
 	}));
 }

@@ -1005,6 +1005,19 @@ async function createSyntheticOnDemandWakeup(
 	return r.rows[0].id;
 }
 
+/**
+ * Told that a run exists, and given a way to be told where it landed.
+ *
+ * The two are separate calls because the order is fixed: a run has a row - and
+ * is therefore cancellable - before the pool has decided which container it will
+ * execute in. A caller keeping an in-memory registry needs the run from the
+ * first moment and the placement as soon as it is known, or a
+ * container-scoped cancellation cannot aim at the right runs.
+ */
+export type RunRegistrationHook = (
+	heartbeatRunId: string,
+) => ((containerId: string) => void) | void;
+
 export async function runAgent(
 	deps: RunnerDeps,
 	agent: AgentInfo,
@@ -1012,7 +1025,7 @@ export async function runAgent(
 	project: ProjectInfo,
 	wakeupPayload?: Record<string, unknown>,
 	signal?: AbortSignal,
-	onRunRegistered?: (heartbeatRunId: string) => void,
+	onRunRegistered?: RunRegistrationHook,
 	wakeupId?: string,
 	progressUpdate?: ProgressUpdateContext | null,
 ): Promise<RunResult> {
@@ -1043,7 +1056,7 @@ export async function runAgent(
 		extractTriggeredBy(wakeupPayload),
 		progressUpdate ? HeartbeatRunKind.ProgressUpdate : HeartbeatRunKind.Task,
 	);
-	onRunRegistered?.(heartbeatRunId);
+	const onContainerAcquired = onRunRegistered?.(heartbeatRunId);
 	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
 	const streamId = `run:${heartbeatRunId}`;
 
@@ -1264,6 +1277,10 @@ export async function runAgent(
 		);
 		containerId = acquired.containerId;
 		releaseContainer = acquired.release;
+		// Before anything can go wrong inside it: from here on this run can be
+		// ended by its container dying, and only a caller that knows where it
+		// landed can tell that apart from a sibling container dying.
+		onContainerAcquired?.(containerId);
 	} catch (e) {
 		if (e instanceof PoolCapacityError) {
 			// Not a failure: the instance is at its memory budget, which the gate

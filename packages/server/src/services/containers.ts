@@ -67,10 +67,20 @@ import type { WebSocketManager } from './ws';
 
 export type ContainerExitReason = 'container_error' | 'container_stopped';
 
+/**
+ * One container changing liveness, and the project it belongs to.
+ *
+ * **The container is named, and every consumer must honour it.** A project owns
+ * a pool, so "the project's container died" is not a statement anything can act
+ * on: the members are independent, and a run in one is unaffected by another
+ * going away. Handling a transition project-wide is the shared-fate blast radius
+ * the pool exists to remove - see the scoping contract on {@link failProjectRuns}.
+ */
 export interface ContainerTransition {
 	projectId: string;
 	projectSlug: string;
 	teamId: string;
+	containerId: string;
 	oldStatus: string | null;
 	newStatus: string | null;
 }
@@ -125,6 +135,11 @@ export interface ContainerDeps {
 	 * every pass.
 	 */
 	memoryCheckIntervalMs?: number;
+	/**
+	 * How often one pool member is checked against the engine, in ms. Defaults to
+	 * {@link POOL_LIVENESS_CHECK_INTERVAL_MS}. Tests set 0 to check on every pass.
+	 */
+	poolLivenessIntervalMs?: number;
 }
 
 /**
@@ -958,14 +973,27 @@ export async function acquireRunContainer(
 
 			const member = decision.member;
 			if (decision.kind === 'reuse') {
-				// Trusting the row is not enough: a container can be removed out from
-				// under Hezo (an operator, a daemon restart, a provider reaping a
-				// sandbox), and handing a run an id the engine no longer knows fails
-				// it on the first exec with nothing pointing at the cause. Verify,
-				// then drop and re-decide - which is how a stale member gets repaired.
-				const info = await docker.inspectContainer(member.id).catch(() => null);
-				if (!info?.State.Running) {
+				// Trusting the row is not enough: a container can be removed or
+				// stopped out from under Hezo (an operator, a daemon restart, a
+				// managed backend reclaiming an unused sandbox), and handing a run an
+				// id the engine no longer knows - or one that is not up - fails it on
+				// the first exec with nothing pointing at the cause.
+				//
+				// Three answers, three repairs, and conflating them is what made this
+				// wrong: a *throw* means the engine could not be asked, and deleting a
+				// live container's row on an unanswerable question orphans it on the
+				// backend. Only a definite "gone" drops the row.
+				const info = await docker.inspectContainer(member.id);
+				if (info === null) {
 					await removePoolMember(db, member.id);
+					continue;
+				}
+				if (!info.State.Running) {
+					// Present but not up: a suspended member, not a lost one. Recording
+					// that and re-deciding routes it to the resume rung, which starts it
+					// in place - about a second, against discarding a warm filesystem
+					// and paying to build a replacement.
+					await setPoolMemberState(db, member.id, 'suspended');
 					continue;
 				}
 			}
@@ -1551,6 +1579,14 @@ export async function syncContainerStatus(
 			[status, annotatedLogs, errorMessage, projectId],
 		);
 		await setPoolMemberOutcome(db, containerId, annotatedLogs, errorMessage);
+		// The container exists and is not running, which is exactly a suspended
+		// pool member - its writable layer is intact and starting it resumes in
+		// place. Recording it is what keeps the two representations of one
+		// container together when the stop came from outside Hezo: a managed
+		// backend reclaims an unused sandbox on its own schedule, and a member left
+		// reading `idle` advertises a warm container that is not up, so the ladder
+		// hands it to a run as "nothing to start".
+		await setPoolMemberState(db, containerId, 'suspended');
 	} else {
 		// Only write on an actual transition. This runs for every project with a
 		// container on every sync tick, and `projects` carries `container_last_logs`
@@ -1644,6 +1680,8 @@ async function enforceContainerMemoryLimit(
 		[ContainerStatus.Error, lastLogs, errorMessage, projectId],
 	);
 	await setPoolMemberOutcome(db, containerId, lastLogs, errorMessage);
+	// Stopped, so no longer a warm member the ladder may hand out untouched.
+	await setPoolMemberState(db, containerId, 'suspended');
 
 	log.warn(
 		`Auto-stopped container ${ref(projectSlug, containerId.slice(0, 12))} for project ${ref(projectSlug, projectId)}: used ${usedGiB} GiB (> ${memoryLimitGib} GiB)`,
@@ -1724,6 +1762,7 @@ export async function syncAllContainerStatuses(
 				projectId: project.id,
 				projectSlug: project.slug,
 				teamId: project.team_id,
+				containerId: project.container_id,
 				oldStatus,
 				newStatus,
 			});
@@ -1969,7 +2008,37 @@ const POOL_RECONCILE_MIN_AGE_SECONDS = 60;
 const POOL_RECONCILE_LIMIT = 50;
 
 /**
- * Drop pool members whose container no longer exists.
+ * How often one pool member is asked about.
+ *
+ * The age floor above only skips a member that changed *recently*; a member
+ * sitting idle for hours is past it forever, so without this every member is
+ * inspected on every tick of a 1 Hz cron - a control-plane round trip per
+ * container per second on a managed backend. These are members no run is
+ * currently using, and noticing within a few tens of seconds is what the
+ * liveness answer is worth.
+ */
+const POOL_LIVENESS_CHECK_INTERVAL_MS = 15_000;
+
+/**
+ * When a member's last-checked stamp is forgotten. Containers churn, so keying
+ * by container id would otherwise accumulate an entry per container ever
+ * created. Anything older than a few intervals is a container that has not been
+ * seen in the listing for a long time.
+ */
+const POOL_LIVENESS_STAMP_TTL_MS = POOL_LIVENESS_CHECK_INTERVAL_MS * 20;
+
+const lastPoolLivenessCheckAt = new Map<string, number>();
+
+function dueForPoolLivenessCheck(containerId: string, now: number, intervalMs: number): boolean {
+	const last = lastPoolLivenessCheckAt.get(containerId) ?? 0;
+	if (now - last < intervalMs) return false;
+	lastPoolLivenessCheckAt.set(containerId, now);
+	return true;
+}
+
+/**
+ * Reconcile every pool member against the engine: drop the ones whose container
+ * is gone, and suspend the ones that are merely no longer running.
  *
  * The acquire path repairs a stale member on two rungs - `reuse` verifies the
  * container still runs, `resume` drops it if the start throws - but both only
@@ -1983,7 +2052,13 @@ const POOL_RECONCILE_LIMIT = 50;
  * This matters more on a managed backend than on a local daemon, because there a
  * container disappearing is normal rather than anomalous - the provider stops,
  * archives or reaps sandboxes on its own schedule and enforces quota by refusing
- * or removing them.
+ * or removing them. **`syncAllContainerStatuses` cannot see any of it**: it
+ * inspects the one container `projects.container_id` names, so a member that is
+ * not that one can stop with nothing noticing.
+ *
+ * A member found stopped is returned as a {@link ContainerTransition} rather
+ * than acted on here, so failing the runs it carried stays in the one place that
+ * does that - and stays scoped to this container, never to the project.
  *
  * **A member is dropped only on a definite answer.** `inspectContainer` returns
  * null for a container the engine does not know; anything else - a timeout, an
@@ -1992,29 +2067,72 @@ const POOL_RECONCILE_LIMIT = 50;
  * would delete the record of a live container and orphan it on the backend,
  * which is the strictly worse failure.
  */
-export async function reconcilePoolMembers(deps: ContainerDeps): Promise<number> {
+export async function reconcilePoolMembers(
+	deps: ContainerDeps,
+): Promise<{ dropped: number; transitions: ContainerTransition[] }> {
 	const { db, docker } = deps;
+	const now = Date.now();
+	for (const [id, at] of lastPoolLivenessCheckAt) {
+		if (now - at > POOL_LIVENESS_STAMP_TTL_MS) lastPoolLivenessCheckAt.delete(id);
+	}
+
 	const stale = await listPoolMembersForReconcile(
 		db,
 		POOL_RECONCILE_MIN_AGE_SECONDS,
 		POOL_RECONCILE_LIMIT,
 	);
-	if (stale.length === 0) return 0;
+	const result = { dropped: 0, transitions: [] as ContainerTransition[] };
+	if (stale.length === 0) return result;
 
-	let dropped = 0;
+	const interval = deps.poolLivenessIntervalMs ?? POOL_LIVENESS_CHECK_INTERVAL_MS;
 	for (const member of stale) {
+		if (!dueForPoolLivenessCheck(member.containerId, now, interval)) continue;
+
 		let info: Awaited<ReturnType<ContainerEngine['inspectContainer']>>;
 		try {
 			info = await docker.inspectContainer(member.containerId);
 		} catch {
 			continue;
 		}
-		if (info !== null) continue;
-		await removePoolMember(db, member.containerId);
-		dropped++;
-		log.info(
-			`pool member ${member.containerId.slice(0, 12)} (${member.state}) no longer exists on the backend — dropped`,
+
+		if (info === null) {
+			await removePoolMember(db, member.containerId);
+			result.dropped++;
+			log.info(
+				`pool member ${member.containerId.slice(0, 12)} (${member.state}) no longer exists on the backend — dropped`,
+			);
+			continue;
+		}
+
+		if (info.State.Running) continue;
+		// Only a member the pool believed was up. `suspended` is already stopped,
+		// and `creating`/`error` are outside the ladder - a container still coming
+		// up legitimately reads not-running, and judging it dead here would fail
+		// the run that is provisioning it.
+		if (member.state !== 'idle' && member.state !== 'busy') continue;
+
+		const exitCode = info.State.ExitCode;
+		const crashed = exitCode !== 0;
+		await setPoolMemberOutcome(
+			db,
+			member.containerId,
+			null,
+			crashed
+				? `Container exited with code ${exitCode} (${info.State.Status}).`
+				: `Container stopped (${info.State.Status}).`,
 		);
+		await setPoolMemberState(db, member.containerId, 'suspended');
+		log.info(
+			`pool member ${member.containerId.slice(0, 12)} (${member.state}) is stopped on the backend — suspended`,
+		);
+		result.transitions.push({
+			projectId: member.projectId,
+			projectSlug: member.projectSlug,
+			teamId: member.teamId,
+			containerId: member.containerId,
+			oldStatus: ContainerStatus.Running,
+			newStatus: crashed ? ContainerStatus.Error : ContainerStatus.Stopped,
+		});
 	}
-	return dropped;
+	return result;
 }

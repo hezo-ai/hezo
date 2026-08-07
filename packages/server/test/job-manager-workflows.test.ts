@@ -2268,6 +2268,7 @@ describe('JobManager workflow methods', () => {
 				projectId: 'p-1',
 				teamId: 'c-1',
 				taskKey: 'agent:m-1',
+				containerId: null,
 			});
 			manager.registerLiveRun({
 				runId: 'run-2',
@@ -2276,6 +2277,7 @@ describe('JobManager workflow methods', () => {
 				projectId: 'p-1',
 				teamId: 'c-1',
 				taskKey: 'agent:m-2',
+				containerId: null,
 			});
 			manager.registerLiveRun({
 				runId: 'run-3',
@@ -2284,6 +2286,7 @@ describe('JobManager workflow methods', () => {
 				projectId: 'p-2',
 				teamId: 'c-1',
 				taskKey: 'agent:m-3',
+				containerId: null,
 			});
 
 			expect(manager.getLiveRunIds()).toEqual(new Set(['run-1', 'run-2', 'run-3']));

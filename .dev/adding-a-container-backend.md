@@ -46,6 +46,8 @@ export function sandboxBackendNeedsApiKey(b: SandboxBackend): boolean {
 
 **Elevation is a flag, not a username.** The default identity differs per provider, so one adapter renders a per-exec `User` and another deprivileges from root with `runuser`. State `elevated` at the call site; each adapter renders it.
 
+**A provider stopping a container on its own schedule is normal, and it means one pool member is suspended — never that the project's container failed.** Managed backends reclaim an idle sandbox (Daytona's `autoStopInterval`), and Hezo's idle pass cannot pre-empt it because that pass retires a pool only when the whole project is idle. Report the container as present-and-not-running and let the shared path handle it: the member becomes `suspended` and resumes in place, and only the runs *that container* was carrying end. An adapter that maps a provider-stopped sandbox to "gone" instead discards a warm filesystem and orphans the sandbox; a caller that reacts project-wide takes down runs in healthy sibling containers.
+
 **Probe the provider; don't infer from its docs.** Measure every non-obvious behaviour against the live API, and say what was measured in the comment on each workaround.
 
 ## Telling agents what they are running on

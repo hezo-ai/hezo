@@ -226,6 +226,7 @@ describe('killLiveRunProcesses (shutdown reap)', () => {
 			projectId,
 			teamId,
 			taskKey: `${agentId}:${projectId}`,
+			containerId: null,
 		});
 
 		await manager.killLiveRunProcesses();
@@ -253,6 +254,7 @@ describe('killLiveRunProcesses (shutdown reap)', () => {
 			projectId,
 			teamId,
 			taskKey: `${agentId}:${projectId}`,
+			containerId: null,
 		});
 		await expect(manager.killLiveRunProcesses()).resolves.toBeUndefined();
 		manager.shutdown();
