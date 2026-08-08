@@ -261,6 +261,49 @@ describe('discoverConnectorMethods', () => {
 		}
 	});
 
+	it('does not refresh - or degrade - a connector whose token is still fresh', async () => {
+		// Regression: the probe used to call `refreshConnection` unconditionally on
+		// the assumption it no-ops for a fresh token. It does not - it has no expiry
+		// check - so every "Refresh methods" click burned a provider round-trip, and
+		// against a provider that rotates refresh tokens it rotated the grant each
+		// time. Worse, when that gratuitous refresh failed, the connector was marked
+		// degraded: a connector activated seconds earlier, with a perfectly good
+		// token, reported as broken to the operator, to agents, and on the banner.
+		const id = await seedConnector();
+		const secret = await db.query<{ id: string }>(
+			`INSERT INTO secrets (name, encrypted_value) VALUES ($1, $2) RETURNING id`,
+			[`TOK_${Math.random().toString(36).slice(2, 8)}`, await encryptForTest('live-token')],
+		);
+		const refresh = await db.query<{ id: string }>(
+			`INSERT INTO secrets (name, encrypted_value) VALUES ($1, $2) RETURNING id`,
+			[`REFRESH_${Math.random().toString(36).slice(2, 8)}`, await encryptForTest('refresh-token')],
+		);
+		// An hour of life left, and a refresh token present — the exact shape a
+		// just-completed OAuth handshake leaves behind.
+		const conn = await db.query<{ id: string }>(
+			`INSERT INTO oauth_connections
+			   (provider, provider_account_id, provider_account_label,
+			    access_token_secret_id, refresh_token_secret_id, expires_at)
+			 VALUES ('fake', $1, 'Fake', $2, $3, now() + interval '1 hour')
+			 RETURNING id`,
+			[`acct-${Math.random().toString(36).slice(2, 8)}`, secret.rows[0].id, refresh.rows[0].id],
+		);
+		await db.query(
+			`UPDATE mcp_connections SET oauth_connection_id = $1, activated_at = now() WHERE id = $2`,
+			[conn.rows[0].id, id],
+		);
+
+		await discoverConnectorMethods(deps, id, 'manual');
+
+		// No refresh function is registered in this suite, so had the probe tried to
+		// refresh, the attempt would have recorded an auth error and degraded the row.
+		const row = await db.query<{ auth_error: string | null }>(
+			`SELECT auth_error FROM mcp_connections WHERE id = $1`,
+			[id],
+		);
+		expect(row.rows[0].auth_error).toBeNull();
+	});
+
 	it('reports not_found for an unknown connector', async () => {
 		const result = await discoverConnectorMethods(deps, '00000000-0000-0000-0000-000000000000');
 		expect(result.ok).toBe(false);

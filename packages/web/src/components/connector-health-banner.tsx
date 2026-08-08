@@ -28,20 +28,26 @@ export function ConnectorHealthBanner({ projectId }: { projectId: string }) {
 	const { data } = useConnectorHealth(projectId);
 	const [menuCollapsed] = useProjectMenuCollapsed();
 	const { t } = useI18n();
-	if (!data || data.count === 0) return null;
+	// Read the count off the list rather than trusting a separate field, and
+	// tolerate a payload that isn't the shape this expects. This sits in the
+	// project layout, above every page in the project, so an exception here takes
+	// out the whole route rather than just the banner - a warning that a connector
+	// might be broken is never worth that trade.
+	const degraded = data?.degraded ?? [];
+	const first = degraded[0];
+	if (!first) return null;
 
-	const first = data.degraded[0];
 	const message =
-		data.count === 1
+		degraded.length === 1
 			? t('connectors.banner.one', { name: first.display_name ?? first.name })
-			: t('connectors.banner.many', { count: data.count });
+			: t('connectors.banner.many', { count: degraded.length });
 
 	return (
 		<div className={BANNER_OUTER}>
 			<Link
 				to="/projects/$projectId/connectors"
 				params={{ projectId }}
-				search={data.count === 1 ? { focus: first.id } : {}}
+				search={degraded.length === 1 ? { focus: first.id } : {}}
 				data-testid="connector-health-banner"
 				aria-label={`${message} ${t('connectors.banner.action')}`}
 				className={`${bannerInnerClass(menuCollapsed)} bg-warning/10 text-warning-soft-fg transition-colors hover:bg-warning/20`}

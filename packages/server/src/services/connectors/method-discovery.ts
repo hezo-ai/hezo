@@ -36,6 +36,13 @@ const log = logger.child('connector-methods');
 /** How long a discovery probe may take before we give up on the server. */
 const DISCOVERY_TIMEOUT_MS = 20_000;
 
+/**
+ * How close to expiry a token must be before a probe renews it first. Matches
+ * the egress path's own refresh window - a token outside it is fine to probe
+ * with, and refreshing anyway costs a provider round-trip for nothing.
+ */
+const PROBE_REFRESH_WINDOW_MS = 60_000;
+
 export interface MethodDiscoveryDeps {
 	db: Db;
 	masterKeyManager: MasterKeyManager;
@@ -107,24 +114,34 @@ async function buildProbeHeaders(
 	}
 
 	if (row.oauth_connection_id) {
-		// Refresh first. The stored access token is routinely expired - nothing
-		// refreshes it except an agent run hitting the egress proxy and the
-		// periodic health sweep - so probing with what is on disk made the manual
-		// "Refresh methods" button fail against a token that was merely stale but
-		// perfectly renewable. `refreshConnection` is a no-op when the token is
-		// still fresh, and its own `inflight` dedup keeps this safe alongside a
-		// concurrent sweep (double-refreshing a rotating grant would kill it).
-		await refreshConnection(deps, row.oauth_connection_id).catch(() => {
-			// A failed refresh is already recorded on the connector by the resolver.
-			// Fall through and probe anyway: the token may still be valid (the
-			// failure could be the provider's token endpoint, not the grant), and
-			// the probe's own 401 handling gives the operator a better message.
-		});
-		const secretId = await deps.db.query<{ access_token_secret_id: string }>(
-			`SELECT access_token_secret_id FROM oauth_connections WHERE id = $1`,
-			[row.oauth_connection_id],
+		const conn = await deps.db.query<{
+			access_token_secret_id: string;
+			needs_refresh: boolean;
+		}>(
+			`SELECT access_token_secret_id,
+			        (expires_at IS NOT NULL
+			         AND expires_at <= now() + ($2 || ' milliseconds')::interval
+			         AND refresh_token_secret_id IS NOT NULL) AS needs_refresh
+			 FROM oauth_connections WHERE id = $1`,
+			[row.oauth_connection_id, String(PROBE_REFRESH_WINDOW_MS)],
 		);
-		const id = secretId.rows[0]?.access_token_secret_id;
+		// Renew an expiring token before probing, so the manual "Refresh methods"
+		// button stops failing against a token that was merely stale but perfectly
+		// renewable. Gated on expiry, NOT unconditional: `refreshConnection` does
+		// no expiry check of its own, so calling it every probe would burn a
+		// provider round-trip per click and - against a provider that rotates
+		// refresh tokens - rotate the grant each time. Its `inflight` dedup is what
+		// keeps this safe alongside a concurrent health sweep.
+		if (conn.rows[0]?.needs_refresh) {
+			await refreshConnection(deps, row.oauth_connection_id).catch(() => {
+				// A failed refresh is already recorded on the connector by the
+				// resolver. Fall through and probe anyway: the token may still be
+				// valid (the failure could be the provider's token endpoint rather
+				// than the grant), and the probe's own 401 handling gives the
+				// operator a better message than the refresh error would.
+			});
+		}
+		const id = conn.rows[0]?.access_token_secret_id;
 		if (id) {
 			const token = await loadSecretValue(deps, id);
 			if (token === null) return { ok: false, reason: 'locked' };
