@@ -3079,7 +3079,20 @@ nothing looked at what a run achieved in aggregate, which is exactly where a pas
 ask posted as a comment lives. `agent_wakeup_requests` carries no `created_by_run_id`, so "did
 this run wake anyone" is derived from the run's own comments (an active `@`-mention, or a
 `parent_comment_id` reply that wakes the parent author) rather than queried directly; no migration
-is involved. Warn-only, per the standing posture that the system never fabricates a wake from a
+is involved.
+
+The aggregate is **per task, not per run**. A run comments on whatever tasks it touches, so answered
+run-wide the question lets a run that woke a teammate on its own task strand a handoff in a comment
+on a *different* task and still pass clean - the shape of the incident this scoping came from, where
+a review verdict written from a run on a sibling task named its approver passively and no layer
+anywhere reported it. Each task the run commented on is judged on its own comments, its own wakes
+and its own status, and the warning names that task. The run's own task is always judged, since a
+handoff stranded in the final message has no comment behind it; conversely the final message counts
+as outward-facing on that task only, being addressed to no other task's thread. Every touched task
+is read in one query, and `resolveWarnableSlugs` is memoized per distinct `team_id` - one call in
+the ordinary single-team run, and correct for an HQ agent commenting inside another team's project.
+
+Warn-only, per the standing posture that the system never fabricates a wake from a
 non-`@` signal. It fires on attribution-only runs too, which is the accepted cost of having no
 vocabulary - the run-log wording says so, and a run log is the cheap place to over-report.
 

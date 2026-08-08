@@ -2040,57 +2040,98 @@ export async function runAgent(
 			// aggregate — which is exactly where a passively-addressed ask posted as a
 			// comment lives.
 			//
+			// The aggregate is PER TASK, not per run. A run comments on whatever tasks
+			// it touches, so "did this run wake anyone" answered run-wide lets a run
+			// that woke a teammate on its own task strand a handoff on another one and
+			// still pass clean — the shape of the incident this scoping came from. Each
+			// task the run commented on is judged on its own comments, its own wakes and
+			// its own status; the run's own task is always judged, since its handoff can
+			// live in the final message with no comment posted at all.
+			//
 			// Warn-only, deliberately: the standing posture is that the system never
 			// fabricates a wake from a non-`@` signal.
 			if (exitedClean && task) {
 				try {
-					const fresh = await deps.db.query<{ status: string }>(
-						'SELECT status::text AS status FROM tasks WHERE id = $1',
-						[task.id],
+					const posted = await deps.db.query<{
+						task_id: string;
+						content: unknown;
+						parent_comment_id: string | null;
+					}>(
+						`SELECT task_id, content, parent_comment_id FROM task_comments
+						 WHERE created_by_run_id = $1 AND content_type = 'text'`,
+						[heartbeatRunId],
 					);
-					const status = fresh.rows[0]?.status;
-					const stillOpen =
-						Boolean(status) && !(TERMINAL_TASK_STATUSES as readonly string[]).includes(status);
-					if (stillOpen) {
-						const posted = await deps.db.query<{
-							content: unknown;
-							parent_comment_id: string | null;
-						}>(
-							`SELECT content, parent_comment_id FROM task_comments
-							 WHERE created_by_run_id = $1 AND content_type = 'text'`,
-							[heartbeatRunId],
-						);
+					const byTask = new Map<
+						string,
+						{ content: unknown; parent_comment_id: string | null }[]
+					>();
+					for (const row of posted.rows) {
+						const bucket = byTask.get(row.task_id);
+						if (bucket) bucket.push(row);
+						else byTask.set(row.task_id, [row]);
+					}
+					// The run's own task is judged even with no comment on it: that is
+					// where a handoff stranded in the final message lives.
+					if (!byTask.has(task.id)) byTask.set(task.id, []);
+
+					// One read for every touched task rather than one per task, and it
+					// carries team_id so a cross-team comment is warned against the right
+					// roster (an HQ agent acting inside another team's project).
+					const touched = await deps.db.query<{
+						id: string;
+						identifier: string;
+						team_id: string;
+						status: string;
+					}>(
+						`SELECT id, identifier, team_id, status::text AS status
+						 FROM tasks WHERE id = ANY($1)`,
+						[Array.from(byTask.keys())],
+					);
+					// Memoized per team — one call in the ordinary single-team run.
+					const rosterByTeam = new Map<string, string[]>();
+					const rosterFor = async (teamId: string): Promise<string[]> => {
+						const cached = rosterByTeam.get(teamId);
+						if (cached) return cached;
+						const resolved = await resolveWarnableSlugs(deps.db, teamId, agent.id);
+						rosterByTeam.set(teamId, resolved);
+						return resolved;
+					};
+
+					const finalMessage = parser.getFinalAssistantMessage() ?? '';
+					for (const row of touched.rows) {
+						if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(row.status)) continue;
+						const comments = byTask.get(row.id) ?? [];
 						// A wake is an active `@`-mention or a reply (which wakes the parent
 						// author). agent_wakeup_requests carries no created_by_run_id, so this
 						// is derived from the run's own comments rather than queried directly.
-						const wokeSomeone = posted.rows.some(
+						const wokeSomeone = comments.some(
 							(c) => extractMentionSlugs(c.content).length > 0 || c.parent_comment_id !== null,
 						);
-						if (!wokeSomeone) {
-							const finalMessage = parser.getFinalAssistantMessage() ?? '';
-							const outward = [...posted.rows.map((c) => c.content), finalMessage];
-							const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
-							const named = new Set<string>();
-							for (const text of outward) {
-								for (const slug of extractPassiveMentionSlugs(text)) {
-									if (roster.includes(slug)) named.add(slug);
-								}
-								for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
+						if (wokeSomeone) continue;
+						const outward: unknown[] = comments.map((c) => c.content);
+						// The final message is outward-facing on the run's own task only —
+						// it is not addressed to any other task's thread.
+						if (row.id === task.id) outward.push(finalMessage);
+						const roster = await rosterFor(row.team_id);
+						const named = new Set<string>();
+						for (const text of outward) {
+							for (const slug of extractPassiveMentionSlugs(text)) {
+								if (roster.includes(slug)) named.add(slug);
 							}
-							if (named.size > 0) {
-								const list = Array.from(named);
-								const namedList = list.map((s) => `**${s}**`).join(', ');
-								const fixes = list.map((s) => `@${s}`).join(', ');
-								emit(
-									'stdout',
-									`\n[runner] WARNING: this run woke no one. It named ${namedList} without an ` +
-										`active @-mention and left ${task.identifier} open, so whoever acts next was ` +
-										`never notified. If you were handing the work over, post a comment with an ` +
-										`active mention (${fixes}); if you were only referring to them, no action ` +
-										`is needed.\n`,
-								);
-							}
+							for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
 						}
+						if (named.size === 0) continue;
+						const list = Array.from(named);
+						const namedList = list.map((s) => `**${s}**`).join(', ');
+						const fixes = list.map((s) => `@${s}`).join(', ');
+						emit(
+							'stdout',
+							`\n[runner] WARNING: this run woke no one on ${row.identifier}. It named ` +
+								`${namedList} there without an active @-mention and left ${row.identifier} ` +
+								`open, so whoever acts next was never notified. If you were handing the ` +
+								`work over, post a comment with an active mention (${fixes}); if you were ` +
+								`only referring to them, no action is needed.\n`,
+						);
 					}
 				} catch (e) {
 					log.error(`Run ${heartbeatRunId} no-wake exit check failed:`, e);

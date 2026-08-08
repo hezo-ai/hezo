@@ -38,8 +38,10 @@ let db: Db;
 let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
+let projectSlug: string;
 let taskId: string;
 let agentId: string;
+let adminToken: string;
 
 const originalFetch = globalThis.fetch;
 
@@ -48,7 +50,7 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	masterKeyManager = ctx.masterKeyManager;
-	const adminToken = ctx.token;
+	adminToken = ctx.token;
 
 	const typesRes = await app.request('/api/team-templates', { headers: authHeader(adminToken) });
 	const typeId = (await typesRes.json()).data.find(
@@ -73,7 +75,7 @@ beforeAll(async () => {
 	const projectRes = await createTestProject(db, teamId, { name: 'Handoff Project' });
 	const projectData = (await projectRes.json()).data;
 	projectId = projectData.id;
-	const projectSlug = projectData.slug;
+	projectSlug = projectData.slug;
 
 	const agentsRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 		headers: authHeader(adminToken),
@@ -969,5 +971,132 @@ describe('no-wake exit check', () => {
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
 		expect(await logFor(runIdOf(result))).not.toContain('woke no one');
+	});
+
+	// A run comments on whatever tasks it touches, so the aggregate has to be per
+	// TASK. Answered run-wide, a run that woke a teammate on its own task could
+	// strand a handoff on another one and still pass clean — which is exactly how
+	// a review verdict written from a run on a sibling task went undetected.
+	describe('across the other tasks a run comments on', () => {
+		async function createTask(title: string): Promise<{ id: string; identifier: string }> {
+			const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
+				method: 'POST',
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ project_id: projectId, title, assignee_id: agentId }),
+			});
+			const data = (await res.json()).data;
+			return { id: data.id, identifier: data.identifier };
+		}
+
+		/** Mock exec that posts `text` on `onTaskId` mid-run, then emits `finalMessage`. */
+		function postsOnOtherTask(onTaskId: string, text: string, finalMessage: string) {
+			return async (
+				_execId: string,
+				opts: { onChunk?: (c: { stream: string; text: string }) => Promise<void> },
+			) => {
+				const runRow = await db.query<{ id: string }>(
+					`SELECT id FROM heartbeat_runs WHERE task_id = $1 AND status = 'running'`,
+					[taskId],
+				);
+				await db.query(
+					`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_by_run_id)
+					 VALUES ($1, $2, 'text', $3::jsonb, $4)`,
+					[onTaskId, agentId, JSON.stringify({ text }), runRow.rows[0].id],
+				);
+				const event = JSON.stringify({
+					type: 'result',
+					is_error: false,
+					result: finalMessage,
+					usage: {},
+				});
+				await opts.onChunk?.({ stream: 'stdout', text: `${event}\n` });
+				return { stdout: '', stderr: '' };
+			};
+		}
+
+		it('warns about the other task even when the run woke someone on its own', async () => {
+			const { slug } = await otherAgent();
+			await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [
+				taskId,
+			]);
+			const other = await createTask('Sibling review task');
+			// The active mention is auto-delivered on the run's OWN task, so the run
+			// has woken someone — run-wide, this looks clean. The passive handoff on
+			// the sibling task is the one that stranded.
+			const deps = makeDeps(
+				createMockDocker({
+					producesOutput: true,
+					execStart: postsOnOtherTask(
+						other.id,
+						`Review: APPROVED. Ready for @@${slug} strategic review.`,
+						`@${slug} - kicked off the sibling review.`,
+					),
+				}),
+			);
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+			expect(result.success).toBe(true);
+
+			const log = await logFor(runIdOf(result));
+			expect(log).toContain(`woke no one on ${other.identifier}`);
+			expect(log).toContain(`@${slug}`);
+			// The run's own task woke someone, so it must not be warned about.
+			const own = await db.query<{ identifier: string }>(
+				'SELECT identifier FROM tasks WHERE id = $1',
+				[taskId],
+			);
+			expect(log).not.toContain(`woke no one on ${own.rows[0].identifier}`);
+		});
+
+		it('stays silent about another task the run left terminal', async () => {
+			const { slug } = await otherAgent();
+			await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [
+				taskId,
+			]);
+			const other = await createTask('Sibling closed task');
+			await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [other.id]);
+			const deps = makeDeps(
+				createMockDocker({
+					producesOutput: true,
+					execStart: postsOnOtherTask(
+						other.id,
+						`Shipped. Thanks to @@${slug} for the review.`,
+						'Wrapped up the sibling task.',
+					),
+				}),
+			);
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+			expect(result.success).toBe(true);
+			expect(await logFor(runIdOf(result))).not.toContain(`woke no one on ${other.identifier}`);
+		});
+
+		it('warns once per stranded task, naming each', async () => {
+			const { slug } = await otherAgent();
+			await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [
+				taskId,
+			]);
+			const other = await createTask('Second sibling task');
+			// Nothing wakes anyone anywhere: the sibling gets a passive handoff via a
+			// comment, the run's own task gets one via the final message.
+			const deps = makeDeps(
+				createMockDocker({
+					producesOutput: true,
+					execStart: postsOnOtherTask(
+						other.id,
+						`Ready for @@${slug} strategic review.`,
+						`Analysis complete, alongside @@${slug}'s earlier notes.`,
+					),
+				}),
+			);
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+			expect(result.success).toBe(true);
+
+			const log = await logFor(runIdOf(result));
+			const own = await db.query<{ identifier: string }>(
+				'SELECT identifier FROM tasks WHERE id = $1',
+				[taskId],
+			);
+			expect(log).toContain(`woke no one on ${other.identifier}`);
+			expect(log).toContain(`woke no one on ${own.rows[0].identifier}`);
+		});
 	});
 });

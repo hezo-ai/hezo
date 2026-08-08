@@ -42,8 +42,15 @@ export const REVIEW_MARK_ACTIVE_CLASSES =
 // break-words wraps long unbreakable strings (URLs, paths) inside the prose
 // column instead of widening it; tables opt back out so cell tokens stay whole
 // and the table scrolls in its overflow wrapper (see the `table` component).
+//
+// The link colour excludes passive mention chips. `[&_a]:…` compiles to a
+// descendant selector (specificity 0,1,1) which outranks the chip's own
+// `text-neutral-soft-fg` class (0,1,0), so without the :not() a passive `@@slug`
+// rendered in active-blue and a reader could not tell a routed handoff from one
+// that woke nobody. Narrowing the blanket rule is the fix rather than an
+// `!important` on the chip, because the rule over-reaching is the actual defect.
 const PROSE_CLASSES =
-	'prose prose-sm max-w-none break-words [&_table]:[overflow-wrap:normal] text-sm text-text-1 [&_a]:text-info-soft-fg [&_h1]:text-text-1 [&_h2]:text-text-1 [&_h3]:text-text-1 [&_h4]:text-text-1 [&_strong]:text-text-1 [&_code]:text-info-soft-fg [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-surface-3 [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text-1 [&_blockquote]:border-l-border-strong [&_blockquote_p]:text-text-1 [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
+	'prose prose-sm max-w-none break-words [&_table]:[overflow-wrap:normal] text-sm text-text-1 [&_a:not([data-mention-passive])]:text-info-soft-fg [&_h1]:text-text-1 [&_h2]:text-text-1 [&_h3]:text-text-1 [&_h4]:text-text-1 [&_strong]:text-text-1 [&_code]:text-info-soft-fg [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-surface-3 [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text-1 [&_blockquote]:border-l-border-strong [&_blockquote_p]:text-text-1 [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
 
 interface MarkdownProseProps {
 	children: string;
