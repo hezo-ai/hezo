@@ -6,6 +6,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
+import { checkRepoCommitMerged } from '../src/services/repo-github';
 import { performRepoSetup } from '../src/services/repo-provisioning';
 import { refreshRepoPushAccess } from '../src/services/repo-push-access';
 import { safeClose } from './helpers';
@@ -301,5 +302,87 @@ describe('GET /repos/:repoId/git-state', () => {
 		// The panel is the operator's way to notice access changed on GitHub, so it
 		// must answer without depending on a running container.
 		expect(body.data.can_push).toBe(false);
+	});
+});
+
+/**
+ * The host-side half of the stranded-commit guard. The accepted-tip marker stops a
+ * merged-and-deleted branch reading as stranded work, and the cost is that a branch
+ * deleted *without* being merged looks identical in the clone's refs. This is what
+ * tells the two apart, so what matters most is which answers it is willing to call
+ * definitive: anything it could not actually ask must come back `unknown`, because
+ * the caller turns `not_merged` into a failed run.
+ */
+describe('checkRepoCommitMerged', () => {
+	const seedLinkedRepo = async (identifier: string): Promise<string> => {
+		const res = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id)
+			 VALUES ($1, $2, 'github'::repo_host_type, $3) RETURNING id`,
+			[projectId, identifier, oauthConnectionId],
+		);
+		return res.rows[0].id;
+	};
+
+	it('reports merged for a commit a merged pull request carried', async () => {
+		const repoId = await seedLinkedRepo('other-org/merged-branch');
+		sim.state.repos.push(repo('other-org', 'merged-branch'));
+		sim.state.mergedCommits.add('cafebabe');
+		expect(await checkRepoCommitMerged({ db, masterKeyManager }, repoId, 'cafebabe')).toBe(
+			'merged',
+		);
+	});
+
+	it('reports not_merged when no pull request ever carried the commit', async () => {
+		// The branch was pushed and then deleted with the work still on it - the one
+		// case that puts a container back on the stranded-work path.
+		const repoId = await seedLinkedRepo('other-org/thrown-away');
+		sim.state.repos.push(repo('other-org', 'thrown-away'));
+		expect(await checkRepoCommitMerged({ db, masterKeyManager }, repoId, 'deadbeef')).toBe(
+			'not_merged',
+		);
+	});
+
+	it('is unknown for a repo with no OAuth connection', async () => {
+		const res = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'other-org/no-connection', 'github'::repo_host_type) RETURNING id`,
+			[projectId],
+		);
+		expect(await checkRepoCommitMerged({ db, masterKeyManager }, res.rows[0].id, 'abc')).toBe(
+			'unknown',
+		);
+	});
+
+	it('is unknown for a repo row that is gone', async () => {
+		expect(
+			await checkRepoCommitMerged(
+				{ db, masterKeyManager },
+				'00000000-0000-0000-0000-000000000000',
+				'abc',
+			),
+		).toBe('unknown');
+	});
+
+	it('is unknown when the vault is locked, never not_merged', async () => {
+		// No key means the token cannot be decrypted, so the question was never put.
+		// Reading that as "nobody merged it" would fail a run over a check that never
+		// ran.
+		const repoId = await seedLinkedRepo('other-org/locked-vault');
+		sim.state.repos.push(repo('other-org', 'locked-vault'));
+		expect(await checkRepoCommitMerged({ db }, repoId, 'cafebabe')).toBe('unknown');
+	});
+
+	it('is unknown when the host cannot be reached', async () => {
+		const repoId = await seedLinkedRepo('other-org/offline-host');
+		sim.state.repos.push(repo('other-org', 'offline-host'));
+		const prev = process.env.GITHUB_API_BASE_URL;
+		process.env.GITHUB_API_BASE_URL = 'http://127.0.0.1:1';
+		try {
+			expect(await checkRepoCommitMerged({ db, masterKeyManager }, repoId, 'cafebabe')).toBe(
+				'unknown',
+			);
+		} finally {
+			process.env.GITHUB_API_BASE_URL = prev;
+		}
 	});
 });

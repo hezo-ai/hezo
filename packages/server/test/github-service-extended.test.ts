@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+	checkCommitMerged,
 	computeScopeStatus,
 	createGitHubRepo,
+	type FetchFn,
 	listAccessibleRepos,
 	listUserOrgs,
 	parseGitHubUrl,
@@ -308,5 +310,105 @@ describe('createGitHubRepo error path', () => {
 		await expect(createGitHubRepo('whoever', 'x', true, 'gho_bad_create')).rejects.toThrow(
 			/Failed to create GitHub repo \(401\)/,
 		);
+	});
+});
+
+/**
+ * The question a ref comparison inside the clone cannot answer: once a branch is
+ * gone from the remote, was its work merged first or thrown away? Driven with a stub
+ * `fetchFn` rather than the simulator because what is under test is the verdict
+ * mapping - and specifically which responses are allowed to be *definitive*. Anything
+ * short of a 200 must report `unknown`: the caller turns `not_merged` into a failed
+ * run, and a renamed repo or a throttled minute is no evidence anyone lost work.
+ */
+describe('checkCommitMerged', () => {
+	const stub =
+		(res: Partial<Response> | Error): FetchFn =>
+		async () => {
+			if (res instanceof Error) throw res;
+			return res as Response;
+		};
+	const ok = (body: unknown): FetchFn =>
+		stub({ status: 200, json: async () => body } as Partial<Response>);
+
+	it('is merged when any associated pull request has been merged', async () => {
+		const verdict = await checkCommitMerged(
+			'octo',
+			'repo',
+			'abc123',
+			'tok',
+			ok([{ number: 1, merged_at: '2026-08-08T04:53:02Z' }]),
+		);
+		expect(verdict).toBe('merged');
+	});
+
+	it('is not merged when the only associated pull requests are unmerged', async () => {
+		expect(
+			await checkCommitMerged(
+				'octo',
+				'repo',
+				'abc123',
+				'tok',
+				ok([{ number: 1, merged_at: null }]),
+			),
+		).toBe('not_merged');
+	});
+
+	it('is not merged when no pull request ever carried the commit', async () => {
+		// A branch pushed and then thrown away - the case the guard exists for.
+		expect(await checkCommitMerged('octo', 'repo', 'abc123', 'tok', ok([]))).toBe('not_merged');
+	});
+
+	it.each([404, 403, 429, 500])('is unknown on a %i, never not_merged', async (status) => {
+		expect(
+			await checkCommitMerged(
+				'octo',
+				'repo',
+				'abc123',
+				'tok',
+				stub({ status } as Partial<Response>),
+			),
+		).toBe('unknown');
+	});
+
+	it('is unknown when the host is unreachable', async () => {
+		expect(
+			await checkCommitMerged('octo', 'repo', 'abc123', 'tok', stub(new Error('ECONNRESET'))),
+		).toBe('unknown');
+	});
+
+	it('is unknown when the body is not a readable list', async () => {
+		expect(
+			await checkCommitMerged(
+				'octo',
+				'repo',
+				'abc123',
+				'tok',
+				stub({
+					status: 200,
+					json: async () => {
+						throw new Error('not json');
+					},
+				} as Partial<Response>),
+			),
+		).toBe('unknown');
+		expect(await checkCommitMerged('octo', 'repo', 'abc123', 'tok', ok({ message: 'nope' }))).toBe(
+			'unknown',
+		);
+	});
+
+	it('asks the commit-to-pull-request endpoint, bearing the repo credential', async () => {
+		const calls: Array<{ url: string; auth: string | undefined }> = [];
+		const spy: FetchFn = async (input, init) => {
+			calls.push({
+				url: String(input),
+				auth: (init?.headers as Record<string, string> | undefined)?.Authorization,
+			});
+			return { status: 200, json: async () => [] } as Response;
+		};
+		await checkCommitMerged('octo', 'repo', 'deadbee', 'gho_tok', spy);
+		expect(calls).toHaveLength(1);
+		expect(calls[0].url).toContain('/repos/octo/repo/commits/deadbee/pulls');
+		expect(calls[0].auth).toBe('Bearer gho_tok');
 	});
 });

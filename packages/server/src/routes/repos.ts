@@ -24,6 +24,7 @@ import {
 import { ContainerGitExecutor, mintGitOpScopeId } from '../services/git-executor';
 import { createGitHubRepo, parseGitHubUrl, validateRepoAccess } from '../services/github';
 import { getConnection } from '../services/oauth/connection-store';
+import { loadConnectionAccessToken } from '../services/repo-github';
 import { performRepoSetup } from '../services/repo-provisioning';
 import { refreshRepoPushAccess } from '../services/repo-push-access';
 import { removeRepoFromWorkspace } from '../services/repo-sync';
@@ -118,7 +119,7 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'oauth connection is not for GitHub', 400);
 	}
 
-	const accessToken = await loadOAuthAccessToken(db, masterKeyManager, conn.id);
+	const accessToken = await loadConnectionAccessToken({ db, masterKeyManager }, conn.id);
 	if (!accessToken) {
 		return err(c, 'OAUTH_TOKEN_UNAVAILABLE', 'master key locked or token missing', 503);
 	}
@@ -643,7 +644,7 @@ reposRoutes.get('/projects/:projectId/oauth-connections/:id/orgs', async (c) => 
 	)
 		return err(c, 'NOT_FOUND', 'github connection not found', 404);
 
-	const token = await loadOAuthAccessToken(db, masterKeyManager, conn.id);
+	const token = await loadConnectionAccessToken({ db, masterKeyManager }, conn.id);
 	if (!token) return err(c, 'OAUTH_TOKEN_UNAVAILABLE', 'token unavailable', 503);
 
 	const { listUserOrgs } = await import('../services/github');
@@ -665,32 +666,13 @@ reposRoutes.get('/projects/:projectId/oauth-connections/:id/repos', async (c) =>
 		(conn.projectId !== null && conn.projectId !== projectId)
 	)
 		return err(c, 'NOT_FOUND', 'github connection not found', 404);
-	const token = await loadOAuthAccessToken(db, masterKeyManager, conn.id);
+	const token = await loadConnectionAccessToken({ db, masterKeyManager }, conn.id);
 	if (!token) return err(c, 'OAUTH_TOKEN_UNAVAILABLE', 'token unavailable', 503);
 
 	const { listAccessibleRepos } = await import('../services/github');
 	const repos = await listAccessibleRepos(owner, query, token);
 	return ok(c, repos);
 });
-
-async function loadOAuthAccessToken(
-	db: import('../db/database').Db,
-	masterKeyManager: import('../crypto/master-key').MasterKeyManager,
-	oauthConnectionId: string,
-): Promise<string | null> {
-	const key = masterKeyManager.getKey();
-	if (!key) return null;
-	const result = await db.query<{ encrypted_value: string }>(
-		`SELECT s.encrypted_value
-		 FROM oauth_connections oc
-		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.id = $1`,
-		[oauthConnectionId],
-	);
-	if (result.rows.length === 0) return null;
-	const { decrypt } = await import('../crypto/encryption');
-	return decrypt(result.rows[0].encrypted_value, key);
-}
 
 interface RepoGitTarget {
 	repoId: string;

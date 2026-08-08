@@ -1109,6 +1109,23 @@ export async function resetCloneToOrigin(
 export const PUSH_ERROR_LOG_NAME = 'hezo-push-errors.log';
 
 /**
+ * Ref namespace recording, per branch, the tip `origin` last accepted from this clone.
+ * Written by {@link POST_COMMIT_PUSH_HOOK} after a push succeeds and read back by
+ * {@link countUnpushedCommits}.
+ *
+ * It exists because a remote-tracking ref answers "is this on the remote **now**", and
+ * the durability question is "did this ever reach the remote at all" — once `origin`
+ * has accepted a commit, this container is no longer its only home, whatever becomes of
+ * the branch it arrived on. The two answers diverge on the tidiest possible workflow:
+ * an agent that merges its pull request and deletes the remote branch also prunes
+ * `refs/remotes/origin/<branch>` locally, and a squash merge leaves the original
+ * commits reachable from no remote ref at any point, so no amount of fetching recovers
+ * the fact. Sitting outside `refs/remotes/`, this ref is touched by no push, fetch or
+ * prune, and it keeps those commits reachable even once the branch itself is gone.
+ */
+export const PUSHED_MARKER_PREFIX = 'refs/hezo/pushed/';
+
+/**
  * `post-commit` hook installed into every clone so committed work survives an aborted
  * or timed-out run. The per-task worktree is ephemeral and the run's hard time limit
  * discards it on abort, so a commit that only lives in the worktree is lost; pushing
@@ -1135,6 +1152,11 @@ export const PUSH_ERROR_LOG_NAME = 'hezo-push-errors.log';
  * - `--no-verify` — this is a durability checkpoint, not a reviewed push, so it skips
  *   any pre-push test/lint hook; a WIP commit whose tests are still red must reach the
  *   remote all the same.
+ * - {@link PUSHED_MARKER_PREFIX} on the success arm only — records the accepted tip in a
+ *   ref the remote cannot retract. A failed push must leave the marker where it was, or
+ *   a branch pushed up to commit 3 would read as fully delivered. The hook runs in the
+ *   task worktree, but `refs/hezo/*` is not per-worktree, so the ref lands in the common
+ *   git dir, which is where the clone-rooted scan looks for it.
  * - `exit 0` unconditionally — reporting a failure is not the same as failing the commit.
  */
 export const POST_COMMIT_PUSH_HOOK = `#!/bin/sh
@@ -1145,9 +1167,16 @@ export const POST_COMMIT_PUSH_HOOK = `#!/bin/sh
 [ -S "$SSH_AUTH_SOCK" ] || exit 0
 git remote get-url origin >/dev/null 2>&1 || exit 0
 
-hezo_push_out=$(git push --no-verify origin HEAD 2>&1) && exit 0
-
 hezo_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+
+# Record the accepted tip on success only: a remote branch that is later deleted or
+# squash-merged takes its tracking ref with it, and this is what still says the work
+# reached origin.
+if hezo_push_out=$(git push --no-verify origin HEAD 2>&1); then
+  git update-ref "${PUSHED_MARKER_PREFIX}$hezo_branch" HEAD 2>/dev/null || true
+  exit 0
+fi
+
 hezo_remote=$(git remote get-url origin 2>/dev/null || echo origin)
 hezo_log="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/${PUSH_ERROR_LOG_NAME}"
 {
@@ -1228,6 +1257,23 @@ export async function readPushErrors(clone: RepoLoc, maxLines = 40): Promise<str
 export const DURABLE_REMOTES = ['origin'] as const;
 
 /**
+ * The `--not` arguments naming everything a clone has already delivered: the durable
+ * remotes' tracking refs, plus every {@link PUSHED_MARKER_PREFIX} ref, which covers the
+ * commits whose tracking ref has since been pruned.
+ *
+ * Shared by {@link countUnpushedCommits} and {@link createRecoveryBundle} because the
+ * two must agree exactly - the count says how much is undelivered and the bundle packs
+ * it, so a bundle built against a wider exclusion set would re-pack commits the count
+ * already treats as safe.
+ *
+ * `--glob` over a namespace with no refs in it contributes nothing rather than failing,
+ * so a clone whose pushes have all been denied needs no special case.
+ */
+function deliveredExclusions(remotes: readonly string[]): string[] {
+	return [...remotes.map((r) => `--remotes=${r}`), `--glob=${PUSHED_MARKER_PREFIX}*`];
+}
+
+/**
  * Commits on a clone's task branch that reached none of {@link DURABLE_REMOTES}.
  *
  * **This is a ref comparison, deliberately, and not a read of
@@ -1242,11 +1288,16 @@ export const DURABLE_REMOTES = ['origin'] as const;
  * run prep fetches before the agent starts, so the tracking refs are a faithful
  * local record of what the remote holds - no network call is needed or made.
  *
- * `--not --remotes=<name>` excludes everything reachable from that remote's
- * tracking refs, which answers all four shapes uniformly: pushed and current (0),
- * pushed but behind (the delta), never pushed but already merged into the default
- * branch (0, correctly - the commits are on the remote), and never pushed at all
- * (the whole branch).
+ * Excluding everything reachable from those tracking refs answers four shapes
+ * uniformly: pushed and current (0), pushed but behind (the delta), never pushed but
+ * already merged into the default branch (0, correctly - the commits are on the
+ * remote), and never pushed at all (the whole branch). {@link PUSHED_MARKER_PREFIX}
+ * answers the fifth, which the tracking refs cannot: pushed, and then the remote
+ * branch deleted or the work squash-merged, where deleting the branch prunes its
+ * tracking ref and a squash leaves the originals reachable from nothing on the
+ * remote. Without the marker that reads as the entire branch being stranded, so
+ * merging a pull request and tidying up after it - the workflow the role prompts ask
+ * for - would fail its own run.
  *
  * Returns 0 for a definite all-clear (including "the branch was never created", so
  * the agent committed nothing), and **null when the question could not be answered**
@@ -1259,6 +1310,32 @@ export async function countUnpushedCommits(
 	branch: string,
 	remotes: readonly string[] = DURABLE_REMOTES,
 ): Promise<number | null> {
+	return (await countBranchDelivery(executor, repo, branch, remotes))?.unpushed ?? null;
+}
+
+/**
+ * How much of a branch a durable remote has, split by the two ways it can fail to
+ * have it.
+ *
+ * `retracted` is the state the marker introduces and the tracking refs alone cannot
+ * express: commits `origin` demonstrably accepted, which it no longer advertises
+ * under any ref. Almost always that is a merged pull request tidied up after -
+ * a squash puts the content on the default branch under a new commit and deleting
+ * the branch prunes its tracking ref - and it is then entirely benign. But it is
+ * the *same* local picture as a branch deleted without ever being merged, where the
+ * work really has left the remote and this clone may hold the last copy. Git cannot
+ * tell those apart (a squash preserves no per-commit identity to match on), so this
+ * only reports the state; deciding which one it is takes a question to the git host.
+ *
+ * Counted as the difference between excluding the markers and not, which is exact by
+ * construction. Both reads are local.
+ */
+export async function countBranchDelivery(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+	remotes: readonly string[] = DURABLE_REMOTES,
+): Promise<{ unpushed: number; retracted: number } | null> {
 	if (!(await repo.files.exists('.git'))) return null;
 	const localRef = `refs/heads/${branch}`;
 	const exists = await executor.exec(['rev-parse', '--verify', '--quiet', localRef], {
@@ -1267,15 +1344,68 @@ export async function countUnpushedCommits(
 	});
 	// No branch is a definite absence of unpushed work, not an unanswered question:
 	// the agent committed nothing on this task's branch in this clone.
-	if (exists.exitCode !== 0) return 0;
+	if (exists.exitCode !== 0) return { unpushed: 0, retracted: 0 };
 
+	const count = async (args: string[]): Promise<number | null> => {
+		const { exitCode, stdout } = await executor.exec(
+			['rev-list', '--count', localRef, '--not', ...args],
+			{ cwd: repo.containerPath, timeout: 30_000 },
+		);
+		if (exitCode !== 0) return null;
+		const n = Number.parseInt(stdout.trim(), 10);
+		return Number.isFinite(n) ? n : null;
+	};
+
+	const remoteArgs = remotes.map((r) => `--remotes=${r}`);
+	const onNoRemote = await count(remoteArgs);
+	if (onNoRemote === null) return null;
+	// Nothing off the remotes means nothing to attribute either way, so the second
+	// read is skipped rather than paid for on the overwhelmingly common path.
+	if (onNoRemote === 0) return { unpushed: 0, retracted: 0 };
+
+	const unpushed = await count(deliveredExclusions(remotes));
+	if (unpushed === null) return null;
+	return { unpushed, retracted: Math.max(0, onNoRemote - unpushed) };
+}
+
+/**
+ * The tip a durable remote last accepted for this branch, or null when none was
+ * recorded or the ref could not be read. This is the commit a git host is asked
+ * about when {@link countBranchDelivery} reports retracted work.
+ */
+export async function readPushedMarker(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+): Promise<string | null> {
 	const { exitCode, stdout } = await executor.exec(
-		['rev-list', '--count', localRef, '--not', ...remotes.map((r) => `--remotes=${r}`)],
-		{ cwd: repo.containerPath, timeout: 30_000 },
+		['rev-parse', '--verify', '--quiet', `${PUSHED_MARKER_PREFIX}${branch}`],
+		{ cwd: repo.containerPath, timeout: 10_000 },
 	);
-	if (exitCode !== 0) return null;
-	const count = Number.parseInt(stdout.trim(), 10);
-	return Number.isFinite(count) ? count : null;
+	const sha = stdout.trim();
+	return exitCode === 0 && sha.length > 0 ? sha : null;
+}
+
+/**
+ * Forget that a durable remote ever accepted this branch.
+ *
+ * Called only once a git host has confirmed the work is not on the remote any
+ * more and was never merged - at which point the marker is a record of something
+ * that is no longer true, and leaving it would go on suppressing a report of
+ * commits this container may be the last holder of. Dropping it restores the
+ * ordinary undelivered-work path whole: the count, the recovery bundle and the run
+ * error all follow from the same refs, with nothing downstream needing a second
+ * case for it.
+ */
+export async function voidPushedMarker(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+): Promise<void> {
+	await executor.exec(['update-ref', '-d', `${PUSHED_MARKER_PREFIX}${branch}`], {
+		cwd: repo.containerPath,
+		timeout: 10_000,
+	});
 }
 
 /** A clone left holding commits that reached no durable remote. */
@@ -1372,13 +1502,16 @@ export const RECOVERY_REMOTE = 'hezo-recovery';
 /**
  * Pack a branch's undelivered commits into a bundle inside the container.
  *
- * `--not --remotes=<durable>` makes this a **delta**: the bundle carries only what
- * no durable remote already has, recording the remote tips as prerequisites. That
- * is what keeps it kilobytes for an ordinary task rather than a copy of the whole
- * history, and it is why a container restoring it must have fetched origin first
- * (run prep always has, before it restores). A clone with no remote at all has no
- * prerequisites to exclude, so its bundle is the entire branch - correct, and the
- * case the vault's size cap exists for.
+ * Excluding what the clone has already delivered makes this a **delta**: the bundle
+ * carries only what no durable remote already has, recording the remote tips as
+ * prerequisites. That is what keeps it kilobytes for an ordinary task rather than a
+ * copy of the whole history, and it is why a container restoring it must have
+ * fetched origin first (run prep always has, before it restores). A clone with no
+ * remote at all has no prerequisites to exclude, so its bundle is the entire branch -
+ * correct, and the case the vault's size cap exists for.
+ *
+ * The exclusion set comes from {@link deliveredExclusions}, the same one the count
+ * uses, so the bundle packs exactly the commits the count reported.
  *
  * Never throws: this runs at run finalize, where the run is already being failed
  * for the unpushed work, and a broken bundle must not mask that.
@@ -1396,7 +1529,7 @@ export async function createRecoveryBundle(
 			RECOVERY_BUNDLE_REL_PATH,
 			`refs/heads/${branch}`,
 			'--not',
-			...remotes.map((r) => `--remotes=${r}`),
+			...deliveredExclusions(remotes),
 		],
 		{ cwd: repo.containerPath, timeout: 120_000 },
 	);
