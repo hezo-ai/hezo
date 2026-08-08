@@ -80,6 +80,7 @@
 | A user-facing string | the 11 non-English catalogs | `i18n-catalog.test.ts` |
 | A team prompt or `team.json` | committed `marketplace/teams/*.json` + `index.json` | `marketplace-build.test.ts` |
 | A docs page (add / remove / frontmatter) | the embedded docs bundle | `docs-bundle.test.ts` |
+| A link in a `docs/` page (another page, an anchor, a repo file, an external URL) | the target it names | `docs-links.test.ts` + the `check-docs-links.ts` hook |
 | A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
 | A new doc- or string-bearing path | `DOC_BEARING_PATTERNS` / `STRING_BEARING_PATTERNS` | its ack-hook test |
 | Container backend behaviour | `SANDBOX_AGENT_ENVIRONMENTS`, that provider's `docs/containers/remote/` page, the Containers settings UI | compile error, **new backend only** |
@@ -99,7 +100,9 @@
 
 **Verify, don't assume.** Generated surfaces have drift tests (`{mcp-reference,llms-txt,docs-bundle}.test.ts`); hand-written prose has one guard, `docs-terminology.test.ts`, checking punctuation only. Nothing checks whether prose is *true* — re-read the pages describing what you changed and confirm every concrete claim still matches the code.
 
-**Two husky hooks run on every commit.** `.husky/pre-commit`: `bunx biome check --diagnostic-level=error .`, `bun run typecheck`, `bun run build`. `.husky/commit-msg`: `bunx commitlint --edit`, `scripts/check-docs-ack.ts`, `scripts/check-translations-ack.ts`.
+**Two husky hooks run on every commit.** `.husky/pre-commit`: `bunx biome check --diagnostic-level=error .`, `bun run typecheck`, `bun run build`. `.husky/commit-msg`: `bunx commitlint --edit`, `scripts/check-docs-ack.ts`, `scripts/check-translations-ack.ts`, `scripts/check-docs-links.ts`.
+
+**`check-docs-links.ts` fails a commit staging any `docs/**/*.md` on a broken link.** Internal links (docs-to-docs incl. `#anchors`, relative paths, `github.com/hezo-ai/hezo/{blob,raw,tree}/main/<path>`) are checked across the whole tree - a rename or delete breaks *other* files' links. External URLs are probed for staged files only (7-day success cache in `.git/`); a definitive 404/410 blocks, network-shaped failures (403 bot walls, timeouts, DNS) only warn, so an offline commit passes. Fix the link, never bypass; `docs-links.test.ts` re-runs the internal check in CI.
 
 **`Docs-Checked:` is enforced at commit time.** Any commit staging doc-bearing code (`packages/*/src/`, `packages/*/migrations/`, `agents/`, `skills/`, `docker/`, `deploy/`, `marketplace/`, `scripts/`) is rejected without a `Docs-Checked:` trailer recording the pass you did across **both** `docs/` and `.dev/`. Bare values (`yes`, `n/a`, `done`, anything under 10 characters) are rejected:
 
@@ -155,7 +158,7 @@ All changes ship with tests exercising functionality, not "code runs without thr
 - Use `ctx.app` / `ctx.baseUrl` / `ctx.port` — never a shared singleton, never a hardcoded port. No mutable state shared between files.
 - Pure logic tests can call functions directly.
 - GitHub OAuth/repo/SSH-key tests use `test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the context boots.
-- `HEZO_SKIP_DOCKER=1` swaps in the in-process fake (`services/fake-docker.ts`). **Test/CI-only — never expose it to users.** A Docker-compatible runtime is a hard prerequisite, so it must not appear in CLI/preflight output, `docs/`, README or `--help`; `docker-preflight.test.ts` guards this. Code comments and `.dev/` may reference it.
+- `HEZO_SKIP_DOCKER=1` swaps in the in-process fake (`services/fake-docker.ts`). **Test/CI-only — never expose it to users.** The supported backends are the real ones (a local Docker-compatible runtime, or a managed sandbox service), so the fake must not appear in CLI/preflight output, `docs/`, README or `--help`; `docker-preflight.test.ts` guards this. Code comments and `.dev/` may reference it.
 
 ### Test-setup performance
 
@@ -503,7 +506,7 @@ Agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`) in any header
 
 - Put the placeholder in the agent's container env, never the real value. The real value lives in `secrets` with `allowed_hosts` constraining which upstream hosts substitution may fire for.
 - To obtain a raw secret at runtime the agent calls `request_credential` and a human pastes the value via the task thread. The three HTTP-auth `CredentialKind`s (`api_key`, `oauth_token`, `github_pat`) MUST pass `allowed_hosts` — the tool rejects the request otherwise. The other three (`ssh_private_key`, `webhook_secret`, `other`) are exempt, never riding an outbound HTTP header. Agents request the narrowest scope and shortest expiry, and prefer a registered connector (`register_connector`) where one covers the provider.
-- For GitHub repo access, the human connects an OAuth account once via device flow on the project's Connections page. The OAuth token is for REST calls only (listing orgs/repos, creating repos); clone/fetch/push run over SSH authenticated by the project's Ed25519 key, which is also the commit-signing key. On first connect the public key is registered on the connecting user's account as both a signing and an authentication key. Host-side and in-container git both go through `SshAgentServer` — host via its Unix socket, container via the per-run socat bridge.
+- For GitHub repo access, the human connects an OAuth account once via device flow on the project's Connections page. The OAuth token authenticates REST calls and the git transport: clone/fetch/push run over HTTPS with the token as a `__HEZO_SECRET_*__` placeholder the egress proxy substitutes. The project's Ed25519 key signs commits only, reached through `SshAgentServer` over the per-run bridge; on first connect its public half is registered on the connecting user's account as a signing (and authentication) key.
 - For SaaS MCPs requiring OAuth, the operator starts the auth-code flow from the MCP-connection form; the resulting `oauth_connection_id` links to the `mcp_connections` row and the injector emits a placeholder Authorization header.
 
 The egress proxy does not audit substitution events. Secret values are never logged; substitution failures surface to the agent as explicit HTTP errors.
