@@ -2430,18 +2430,59 @@ failure never fails the commit. *Uncommitted*
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
 
+On the success arm the hook also records the accepted tip at `refs/hezo/pushed/<branch>`
+(`PUSHED_MARKER_PREFIX`) — never on the failure arm, or a branch delivered up to commit 3 would
+read as fully pushed. It runs in the task worktree, but `refs/hezo/*` is not per-worktree, so the
+ref lands in the common git dir where the clone-rooted scan below reads it.
+
 **Stranded commits (ref comparison, not the error log).** Reporting a failed push into the run log
 is not the same as noticing that work is about to be left behind, and the two questions have
 different answers: the error log is append-only within a run and cleared at prep, so a push that
 failed at commit 3 and succeeded at commit 5 leaves a non-empty log with **nothing** actually
 unpushed. At run completion the runner therefore asks the authoritative question directly —
 `findUnpushedWork` / `countUnpushedCommits` (`services/git.ts`) run
-`git rev-list --count refs/heads/hezo/<task> --not --remotes=origin` in each prepared clone, which
-counts commits reachable from the task branch but from no `origin` tracking ref. `git push` updates
-those tracking refs on success and prep fetches before the agent starts, so this is a **local**
-read: no network call, and it is correct for all four shapes (current, behind, merged to the default
-branch under another name, never pushed). What counts as durable is the `DURABLE_REMOTES` parameter
-rather than a hardcoded remote at each call site.
+`git rev-list --count refs/heads/hezo/<task> --not --remotes=origin --glob=refs/hezo/pushed/*` in
+each prepared clone, which counts commits reachable from the task branch but from neither an
+`origin` tracking ref nor the hook's accepted-tip markers. `git push` updates those tracking refs on
+success and prep fetches before the agent starts, so this is a **local** read: no network call.
+What counts as durable is the `DURABLE_REMOTES` parameter rather than a hardcoded remote at each
+call site, and `deliveredExclusions` builds the `--not` set once so the count and the bundle below
+cannot disagree about what is already delivered.
+
+The tracking refs alone are correct for four shapes (current, behind, merged to the default branch
+under another name, never pushed) and **wrong for a fifth**: pushed, and then the remote branch
+deleted or the work squash-merged. Deleting a remote branch prunes its tracking ref locally, and a
+squash puts the content on the default branch under a commit that shares no history with the
+originals — so re-fetching cannot recover the fact either. That read the whole branch as stranded
+and failed the run, firing hardest on the tidiest workflow: merge the pull request, delete the
+branch. The marker answers it, because "did `origin` ever accept this commit" is the durability
+question and a remote cannot retract the answer.
+
+**The merge guard.** What the marker cannot see on its own is the other way a branch leaves the
+remote: deleted *without* being merged, where the work really is gone from `origin` and this clone
+may hold the last copy. Locally the two are indistinguishable — a squash preserves no per-commit
+identity on the default branch to match against — so `countBranchDelivery` reports the state and
+`reviewRetractedWork` (`services/agent-runner.ts`) asks the git host to resolve it, before the
+stranded-commit scan runs. It splits a branch's undelivered commits two ways: `unpushed` (on no
+remote ref and covered by no marker) and `retracted` (accepted by `origin`, advertised by it no
+longer). Only a non-zero `retracted` reaches out, so the ordinary path — branch still on the
+remote, or its tip already merged into a fetched default branch — makes no call at all.
+
+The question is put through `checkRepoCommitMerged` (`services/repo-github.ts` → `checkCommitMerged`
+in `services/github.ts`), which reads the pull requests associated with the marker's commit: that
+association survives both the squash and the branch deletion. On `not_merged` the run
+`voidPushedMarker`s the branch — the delivery record is no longer true — and the ordinary scan
+below then reports, vaults and fails exactly as it would for work that never left, with no second
+case anywhere downstream. **Only a definite `not_merged` acts.** `unknown` (no connection, a locked
+vault, a 404, a rate limit, an unreachable host) reports into the run log and changes nothing,
+because the primary durability question already answered *yes* and turning "could not ask" into a
+failed run would reinstate the false positive the marker exists to remove.
+
+`services/repo-github.ts` is the home for host-side questions about a repo asked with its own
+connected credential, outside the egress proxy — `resolveRepoGitHub` resolves the row, parses the
+identifier and decrypts the token, and `repo-push-access.ts` uses the same seam. The AGENTS.md red
+line holds structurally: the host is the constant `getApiBaseUrl()`, only `parseGitHubUrl`-charset
+`owner`/`repo` segments vary, and every function returns a verdict rather than an upstream body.
 
 A positive finding does three things: the run fails, the commits are copied out to the bundle
 vault, and the container is pinned for as long as it still holds the only copy.
@@ -2483,9 +2524,11 @@ store, and `sandbox/recovery.ts` is the seam between them.
     instance.
   - It needs per-provider volume provisioning plus a Docker bind-mount equivalent: two
     implementations of one thing, against zero today.
-- **A delta, not a copy of the history.** `--not --remotes=origin` packs only what no durable remote
-  has, recording the remote tips as prerequisites — kilobytes for an ordinary task. A clone with no
-  remote to exclude against produces a bundle of the whole branch, which is what
+- **A delta, not a copy of the history.** The same `deliveredExclusions` set the count uses packs
+  only what no durable remote and no accepted-tip marker already covers, recording those tips as
+  prerequisites — kilobytes for an ordinary task. Sharing the set is what stops the bundle carrying
+  commits the count already treats as safe. A clone with nothing to exclude against produces a
+  bundle of the whole branch, which is what
   `MAX_RECOVERY_BUNDLE_BYTES` (64 MiB, checked via `SandboxFiles.size` *before* the read buffers it)
   refuses rather than moving.
 - **Restored in run prep, strictly after the origin fetch** (`restoreRecoveryBundle`), because the

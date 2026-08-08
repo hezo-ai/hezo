@@ -60,6 +60,12 @@ export interface GitHubSimState {
 	repos: GitHubSimRepo[];
 	signingKeys: SigningKey[];
 	authKeys: AuthKey[];
+	/**
+	 * Commit shas the repo treats as carried by a merged pull request. Drives the
+	 * commit-to-pull-request endpoint, which is how Hezo tells a branch that was
+	 * merged and tidied up from one that was deleted with the work still on it.
+	 */
+	mergedCommits: Set<string>;
 	deviceFlows: Map<string, DeviceFlowEntry>;
 	oauthCodes: Map<string, string>;
 }
@@ -81,6 +87,7 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 		repos: [],
 		signingKeys: [],
 		authKeys: [],
+		mergedCommits: new Set(),
 		deviceFlows: new Map(),
 		oauthCodes: new Map(),
 	};
@@ -168,6 +175,20 @@ export async function createGitHubSim(): Promise<GitHubSim> {
 			permissions: { admin: true, push: true, pull: true },
 			...found,
 		});
+	});
+
+	app.get('/repos/:owner/:repo/commits/:sha/pulls', (c) => {
+		if (!isAuthed(c.req.header('Authorization'))) return c.json({ message: 'Unauthorized' }, 401);
+		const full = `${c.req.param('owner')}/${c.req.param('repo')}`;
+		if (!state.repos.some((r) => r.full_name === full))
+			return c.json({ message: 'Not Found' }, 404);
+		// An empty list is GitHub's answer for a commit no pull request ever carried,
+		// which is the shape of a branch pushed and then thrown away.
+		return c.json(
+			state.mergedCommits.has(c.req.param('sha'))
+				? [{ number: 7, state: 'closed', merged_at: '2026-08-08T04:53:02Z' }]
+				: [],
+		);
 	});
 
 	const repoNameAlreadyExistsResponse = () => ({

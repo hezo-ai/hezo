@@ -9,6 +9,7 @@ import {
 	fastForwardFromRecovery,
 	fetchRecoveryBundle,
 	localGitLoc,
+	PUSHED_MARKER_PREFIX,
 	RECOVERY_BUNDLE_REL_PATH,
 	RECOVERY_REMOTE,
 	type RepoLoc,
@@ -214,6 +215,26 @@ describe('recovery bundle hygiene', () => {
 		// already have - proof this is a delta against origin rather than a copy.
 		const verified = run(`git bundle verify ${RECOVERY_BUNDLE_REL_PATH} 2>&1 || true`, clone);
 		expect(verified).toMatch(/requires these \d+ ref|is okay/);
+	});
+
+	it('excludes commits the accepted-tip marker already covers', async () => {
+		// The count and the bundle read the same exclusion set, so a branch whose
+		// remote ref is gone (deleted after a merge) bundles only what came after the
+		// last accepted push - never a second copy of delivered work.
+		const { clone } = setup('marker-delta');
+		run('git commit --allow-empty -m delivered', clone);
+		run(`git push origin HEAD:${BRANCH}`, clone);
+		run(`git update-ref ${PUSHED_MARKER_PREFIX}${BRANCH} refs/heads/${BRANCH}`, clone);
+		const delivered = run('git rev-parse HEAD', clone).trim();
+		run(`git push origin --delete ${BRANCH}`, clone);
+		run('git commit --allow-empty -m stranded', clone);
+
+		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(1);
+		expect((await createRecoveryBundle(exec, repoLoc(clone), BRANCH)).ok).toBe(true);
+		// The delivered commit is named as a prerequisite the reader must already
+		// have, not carried — which is what makes this a delta and not a second copy.
+		const verified = run(`git bundle verify ${RECOVERY_BUNDLE_REL_PATH} 2>&1 || true`, clone);
+		expect(verified).toContain(delivered);
 	});
 
 	it('drops a stored bundle once the work reached origin', async () => {

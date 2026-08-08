@@ -9,6 +9,7 @@ import {
 	ensurePushHook,
 	localGitLoc,
 	POST_COMMIT_PUSH_HOOK,
+	PUSHED_MARKER_PREFIX,
 	type RepoLoc,
 	readPushErrors,
 } from '../src/services/git';
@@ -38,6 +39,24 @@ function configure(dir: string) {
 	run('git config user.name tester', dir);
 	run('git config user.email tester@test.com', dir);
 	run('git config commit.gpgsign false', dir);
+}
+/**
+ * The tip the hook recorded as accepted by origin, or null if it recorded none. This
+ * is the half of the durability check that outlives the remote branch: deleting the
+ * branch (or squash-merging it) prunes the tracking ref, and this ref is what still
+ * says the commits were delivered.
+ */
+function markerSha(clone: string, branch: string): string | null {
+	try {
+		return execSync(`git rev-parse --verify ${PUSHED_MARKER_PREFIX}${branch}`, {
+			cwd: clone,
+			stdio: 'pipe',
+		})
+			.toString()
+			.trim();
+	} catch {
+		return null;
+	}
 }
 function remoteHasRef(bare: string, branch: string): boolean {
 	try {
@@ -108,10 +127,13 @@ describe('post-commit auto-push', () => {
 
 		expect(remoteHasRef(bare, branch)).toBe(true);
 		expect(sha(bare, branch)).toBe(sha(clone, 'HEAD'));
+		// The accepted tip is recorded where no later delete or squash can retract it.
+		expect(markerSha(clone, branch)).toBe(sha(clone, 'HEAD'));
 
 		// A second commit fast-forwards the remote branch to the new tip.
 		run('git commit --allow-empty -m second', clone, { ...process.env, SSH_AUTH_SOCK: sock });
 		expect(sha(bare, branch)).toBe(sha(clone, 'HEAD'));
+		expect(markerSha(clone, branch)).toBe(sha(clone, 'HEAD'));
 	});
 
 	it('does not push (but the commit still succeeds) when there is no live SSH socket', async () => {
@@ -123,6 +145,7 @@ describe('post-commit auto-push', () => {
 
 		expect(sha(clone, 'HEAD')).toBeTruthy(); // commit landed locally
 		expect(remoteHasRef(bare, branch)).toBe(false); // nothing pushed
+		expect(markerSha(clone, branch)).toBeNull(); // and nothing claimed as delivered
 	});
 
 	it('is a no-op (commit still succeeds) when the repo has no origin remote', async () => {
@@ -171,6 +194,9 @@ describe('post-commit auto-push failure reporting', () => {
 		expect(sha(clone, 'HEAD')).not.toBe(before);
 		expect(output).toContain('auto-push');
 		expect(output).toContain('local only');
+		// Nothing reached origin, so nothing may be recorded as having done so — a
+		// marker written here would report a stranded branch as safely delivered.
+		expect(markerSha(clone, 'hezo/AUTO-4')).toBeNull();
 	});
 
 	it('records the git error in the push-error log for the runner to surface', async () => {

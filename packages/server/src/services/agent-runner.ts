@@ -78,6 +78,7 @@ import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } fr
 import { buildEgressProxyEnv, type EgressProxy } from './egress';
 import {
 	clearPushErrors,
+	countBranchDelivery,
 	describeUnpushedWork,
 	ensurePushHook,
 	ensureTaskWorktreeWithRetry,
@@ -89,8 +90,10 @@ import {
 	mergeDefaultIntoWorktree,
 	type RepoLoc,
 	readPushErrors,
+	readPushedMarker,
 	seedInitialCommitIfEmpty,
 	type UnpushedWorkScan,
+	voidPushedMarker,
 	type WorktreeLoc,
 	worktreeChangedPaths,
 	worktreeHasChanges,
@@ -109,6 +112,7 @@ import { retryOrEscalateLostRun } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
+import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
 import { projectContainerMemoryGb } from './run-concurrency';
 import {
@@ -239,6 +243,17 @@ interface RepoRow {
 	id: string;
 	repo_identifier: string;
 }
+
+/**
+ * A prepared clone, carrying the `repos` row it came from.
+ *
+ * The id rides along rather than being looked up again at finalize because the one
+ * check that needs it - asking the git host what became of a branch the remote no
+ * longer advertises - has only a container path to go on otherwise, and matching a
+ * path back to a row by name is a second source of truth for something already known
+ * here. Structurally still a {@link RepoLoc}, so every existing consumer is unchanged.
+ */
+type CloneRef = RepoLoc & { repoId: string };
 
 /**
  * Build the env-var entries for a given provider/auth method. Composed from the
@@ -1642,7 +1657,7 @@ export async function runAgent(
 						workingDir: '/workspace',
 						designatedRepo: null as RepoRow | null,
 						worktrees: [] as WorktreeRef[],
-						clones: [] as RepoLoc[],
+						clones: [] as CloneRef[],
 						branch: null as string | null,
 						executor: null as GitExecutor | null,
 						recoveryFailed: new Set<string>(),
@@ -1713,6 +1728,14 @@ export async function runAgent(
 						`to this repository.\n${pushErrors}\n`,
 				);
 			}
+
+			// Before the scan: a branch `origin` accepted and no longer advertises is
+			// either a merged pull request tidied up after, or work deleted off the remote.
+			// Only the git host can tell those apart, and the scan below reads both as
+			// safe - so ask, and drop the delivery record when the answer is that nothing
+			// merged it. That turns the branch back into ordinary undelivered work, with
+			// nothing downstream needing a second case for it.
+			await reviewRetractedWork(deps, prep, emit);
 
 			// Whether committed work is about to be left behind in this container only.
 			//
@@ -2247,6 +2270,66 @@ async function anyWorktreeChanged(
 }
 
 /**
+ * Decide what became of commits `origin` accepted and no longer advertises, and
+ * void the delivery record for the ones nothing merged.
+ *
+ * The accepted-tip marker exists so that merging a pull request and deleting its
+ * branch - the workflow the role prompts ask for - is not reported as stranded work.
+ * The cost of that is one thing it cannot see on its own: a branch pushed and then
+ * deleted **without** being merged looks locally identical, and its commits really
+ * have left the remote. Git has nothing left to distinguish them by, because a
+ * squash merge preserves no per-commit identity on the default branch, so this asks
+ * the git host the one question refs cannot answer.
+ *
+ * **Only a definite `not_merged` acts.** `unknown` - no connection, a locked vault,
+ * a throttled or unreachable host - reports and leaves everything alone, because the
+ * primary durability question already answered *yes* (the commits did reach the
+ * remote), and turning "we could not ask" into a failed run would reinstate the
+ * false positive the marker was added to remove.
+ *
+ * The host call is reached at all only when a clone is in that state, which on the
+ * ordinary path (branch still on the remote, or its tip already merged into a
+ * fetched default branch) is never - so a run pays nothing for this until there is
+ * something to ask about.
+ */
+async function reviewRetractedWork(
+	deps: RunnerDeps,
+	prep: { executor: GitExecutor | null; clones: CloneRef[]; branch: string | null },
+	emit: (stream: 'stdout' | 'stderr', text: string) => void,
+): Promise<void> {
+	const { executor, branch } = prep;
+	if (!executor || !branch) return;
+
+	for (const clone of prep.clones) {
+		const delivery = await countBranchDelivery(executor, clone, branch);
+		if (!delivery?.retracted) continue;
+
+		const sha = await readPushedMarker(executor, clone, branch);
+		if (!sha) continue;
+
+		const repoName = basename(clone.containerPath);
+		const verdict = await checkRepoCommitMerged(deps, clone.repoId, sha);
+		if (verdict === 'merged') continue;
+		if (verdict === 'unknown') {
+			emit(
+				'stderr',
+				`[system] ${repoName}: ${branch} is no longer on origin and it could not be ` +
+					`confirmed whether its work was merged — treating the ${delivery.retracted} ` +
+					`commit(s) origin accepted as delivered.\n`,
+			);
+			continue;
+		}
+
+		await voidPushedMarker(executor, clone, branch);
+		emit(
+			'stderr',
+			`[system] ${repoName}: ${branch} was deleted from origin without being merged — ` +
+				`its ${delivery.retracted} commit(s) are no longer on the remote.\n`,
+		);
+	}
+}
+
+/**
  * Copy a run's undelivered commits into the bundle vault, and drop stored bundles
  * whose work has since reached the remote.
  *
@@ -2267,7 +2350,7 @@ async function vaultUnpushedWork(
 	unpushed: UnpushedWorkScan,
 	prep: {
 		executor: GitExecutor | null;
-		clones: RepoLoc[];
+		clones: CloneRef[];
 		branch: string | null;
 		recoveryFailed: Set<string>;
 	},
@@ -2353,7 +2436,7 @@ async function prepareWorktrees(
 	designatedRepo: RepoRow | null;
 	worktrees: WorktreeRef[];
 	/** Each prepared repo's clone — where the auto-push hook records failed pushes. */
-	clones: RepoLoc[];
+	clones: CloneRef[];
 	/** The task branch every prepared worktree is on, or null when no repo was prepared. */
 	branch: string | null;
 	executor: GitExecutor | null;
@@ -2627,14 +2710,14 @@ async function prepareWorktrees(
 		// Capture each prepared worktree's location + pre-run commit so the completion
 		// path can detect whether the run produced any code change.
 		const worktrees: WorktreeRef[] = [];
-		const clones: RepoLoc[] = [];
+		const clones: CloneRef[] = [];
 		for (const repo of repos.rows) {
 			if (worktreeErrors.has(repo.id)) continue;
 			const repoName = repoNameFromIdentifier(repo.repo_identifier);
 			const loc = wtLocOf(repoName);
 			if (!(await loc.files.exists('.git'))) continue;
 			worktrees.push({ loc, headBefore: await getWorktreeHead(executor, loc) });
-			clones.push(repoLocOf(repoName));
+			clones.push({ ...repoLocOf(repoName), repoId: repo.id });
 		}
 
 		// Reclaim the worktrees of finished tasks before the agent starts. Worktrees

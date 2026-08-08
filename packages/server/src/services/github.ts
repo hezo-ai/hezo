@@ -299,6 +299,67 @@ export type AuthKeyResult =
 	| { status: 'already_exists' };
 
 /**
+ * Whether a commit's work landed on the repo.
+ *
+ * `unknown` is a first-class answer, not an error: the caller decides whether a
+ * container may be released on the strength of this, so "could not tell" must never
+ * be collapsed into either of the definitive answers.
+ */
+export type CommitMergeVerdict = 'merged' | 'not_merged' | 'unknown';
+
+/**
+ * Ask whether a commit was merged, via the pull requests associated with it.
+ *
+ * This is the question a ref comparison inside the clone cannot answer. Once a
+ * branch is deleted from the remote, the local refs look identical whether the work
+ * was squash-merged first or thrown away - and a squash rewrites the commits, so
+ * there is no per-commit identity left on the default branch to match against. The
+ * association GitHub keeps between a commit and the pull request that carried it
+ * survives both the squash and the branch deletion, which is what makes it the right
+ * thing to ask.
+ *
+ * **Only a 200 is definitive.** A 404, a rate limit, a 5xx or an unreadable body all
+ * report `unknown`, because the caller turns `not_merged` into a failed run and a
+ * renamed repo or a throttled minute is no evidence that anyone lost any work.
+ *
+ * Returns a verdict and nothing else - no upstream body, no status text - so nothing
+ * derived from the credential this call carries can reach a run log.
+ */
+export async function checkCommitMerged(
+	owner: string,
+	repo: string,
+	sha: string,
+	accessToken: string,
+	fetchFn: FetchFn = globalThis.fetch,
+): Promise<CommitMergeVerdict> {
+	let res: Response;
+	try {
+		res = await fetchFn(`${getApiBaseUrl()}/repos/${owner}/${repo}/commits/${sha}/pulls`, {
+			headers: authHeaders(accessToken),
+		});
+	} catch (e) {
+		log.warn(`merge check for ${owner}/${repo}@${sha} failed:`, (e as Error).message);
+		return 'unknown';
+	}
+	if (res.status !== 200) {
+		log.warn(`merge check for ${owner}/${repo}@${sha} was inconclusive (${res.status})`);
+		return 'unknown';
+	}
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		return 'unknown';
+	}
+	if (!Array.isArray(body)) return 'unknown';
+	// An empty list is a definite "no pull request ever carried this commit", which
+	// is exactly the shape of a branch pushed and then thrown away.
+	return body.some((pr) => (pr as { merged_at?: unknown } | null)?.merged_at != null)
+		? 'merged'
+		: 'not_merged';
+}
+
+/**
  * Fetch the authenticated user's full identity — used when establishing an
  * OAuth connection (account id keys the `oauth_connections` row; email/avatar
  * populate its metadata).

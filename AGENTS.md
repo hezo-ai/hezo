@@ -267,6 +267,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | An in-container script or its parser | `services/sandbox/proc-scripts.ts` - never an adapter |
 | What a container was provisioned with | `container_pool_members` (`memory_bytes`, `disk_ceiling_bytes`) - never re-read from the setting |
 | A chat platform | `ChatChannelAdapter` (`services/chat-channels/`) |
+| A host-side call to a repo's git host, with that repo's own credential | `resolveRepoGitHub` (`services/repo-github.ts`) - returns a verdict, never an upstream body |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
