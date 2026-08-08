@@ -15,6 +15,7 @@ import {
 	STAGE_DOWNLOAD_STALE_MS,
 	STAGE_ERROR_COOLDOWN_MS,
 } from '../src/services/updater';
+import { blobBytes } from './helpers';
 
 describe('staging timing invariants', () => {
 	it('keeps the staleness window above the download timeout so a slow live download is never preempted', () => {
@@ -50,7 +51,7 @@ describe('downloadAndStage', () => {
 			if (url.endsWith('/SHA256SUMS')) {
 				return new Response(sumsText, { status: 200 });
 			}
-			return new Response(assetBytes, { status: 200 });
+			return new Response(blobBytes(assetBytes), { status: 200 });
 		});
 	}
 
@@ -113,7 +114,7 @@ describe('ensureUpdateStaged', () => {
 			if (url.endsWith('/SHA256SUMS')) {
 				return new Response(`${sha}  ${currentAssetName()}\n`, { status: 200 });
 			}
-			return onAsset?.() ?? new Response(bytes, { status: 200 });
+			return onAsset?.() ?? new Response(blobBytes(bytes), { status: 200 });
 		});
 	}
 

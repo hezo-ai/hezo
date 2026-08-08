@@ -53,7 +53,7 @@ manager (agents bring their own models and runtimes).
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
 | Crypto | AES-256-GCM at rest; master key held in memory only |
-| Containers | Docker Engine API, one container per project — started on demand, stopped after an idle timeout |
+| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired after a fixed 2-minute idle window (15 for a live assistant chat) |
 
 **Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
 tree:
@@ -359,6 +359,33 @@ topic), and the platform→app direction runs via `parseClose` →
 **single shared lease** per CEO member — a thread is only message-grouping + rolling
 window + memory scope, and each turn is a stateless one-shot `docker exec` reading a
 per-turn prompt file, so N threads run as N independent execs into the one container.
+
+**A session survives its container being suspended.** Because it holds no long-lived
+process — each turn is its own exec and continuity lives in `chat_conversations` /
+`chat_messages` — a container that stops with its filesystem intact takes nothing the
+session needs. `checkHealth` therefore separates two events it used to conflate. A
+**different** container (id changed, or the project has none) means the filesystem is
+gone, so the session is torn down as before. The **same** container, stopped, is a
+suspend: `ChatSessionStatus.Suspended` parks the row, the host-side allocations are
+released, and the next turn resumes into it via `resumeSession` rather than starting
+over, keeping the session id that anchors its messages. This is what makes a managed
+backend usable at all — it suspends sandboxes on its own idle timer, so tearing down
+would end the operator's session every quiet period.
+
+Resume is not a no-op, which is why the host-side half of `startSession` is extracted as
+`allocateHostSide`: the ssh agent socket and egress proxy allocation live on the Hezo
+side, are released at suspend, and come back on **different ports**, so the exec command
+and env have to be rebuilt around them (two copies of that sequence is what the
+second-call-site rule exists to prevent — a drifted copy would mean a resumed chat
+silently losing commit signing or secret substitution). `suspended` counts as **live**
+everywhere it matters: the singleton index is stated as "not terminal" so a parked
+session still blocks a second one, and a process restart reclaims it as crashed like any
+other live row. It is deliberately **not** accepted by `authMiddleware` — a parked
+session has no host-side half, so no exec of it can legitimately be calling. In the
+container pool the chat's container is pinned (`reserved_for_chat`), which suspend keeps
+and teardown releases: chat is exempt from the container cap, and the pin is the other
+half of that, since a task run taking the container out from under a live session is the
+same interruption by a different route.
 Long-term memory (`chat_memories`) stays **per-agent** (shared across a member's
 assistant threads); compaction serialises at the member level so concurrent threads never
 clobber the shared memory row. External channels (Telegram, Slack, Discord) are built on
@@ -1017,44 +1044,885 @@ instance-agent task selection).
 
 ## 5. Agent execution & run lifecycle
 
-**Startup Docker gate.** Every run executes in a per-project container, so a reachable
-Docker-API daemon is a hard prerequisite. Any Docker-compatible runtime qualifies — the
-client speaks the Engine API over a Unix socket (Bun `fetch({unix})` for one-shot calls,
+**Startup backend gate.** Every run executes in a container, and a backend that cannot be
+reached is fatal — for local Docker exactly as for a managed provider. The check lives in
+`openSandboxBackend` (`services/sandbox/open.ts`), which is the single place a
+`ContainerEngine` is constructed: it pings with a bounded 2s/4s backoff and then throws
+`SandboxBackendError`, which `index.ts` prints verbatim before recording a startup-failure
+breadcrumb and exiting non-zero. Docker's message comes from `services/docker-preflight.ts`,
+which checks for a `docker` binary on PATH to tell *not installed* from
+*installed-but-stopped* and prints the matching guidance (install link / start command),
+plus a pointer to `--sandbox-backend` as the alternative to a local daemon.
+`HEZO_SKIP_DOCKER` (the same flag that swaps in the in-process fake docker for dev/tests)
+bypasses it by taking the fake branch in `startup()` before the backend is opened.
+
+**Any Docker-compatible runtime qualifies, and the socket is resolved rather than assumed.**
+The client speaks the Engine API over a Unix socket (Bun `fetch({unix})` for one-shot calls,
 `node:http` `socketPath` for streams), so `tcp://`/`npipe://`/`ssh://` endpoints are
 structurally unsupported and are reported as such rather than silently ignored.
-
-`services/docker-socket.ts` resolves the socket, most-explicit first: `--docker-socket` /
-`HEZO_DOCKER_SOCKET` → `DOCKER_HOST` → the docker CLI's **current context** (read straight
+`services/docker-socket.ts` resolves it, most-explicit first: `--docker-socket` /
+`HEZO_DOCKER_SOCKET` -> `DOCKER_HOST` -> the docker CLI's **current context** (read straight
 from `${DOCKER_CONFIG:-~/.docker}/config.json` + `contexts/meta/<sha256(name)>/meta.json`,
-no subprocess, `DOCKER_CONTEXT` winning) → the well-known path per supported runtime
+no subprocess, `DOCKER_CONTEXT` winning) -> the well-known path per supported runtime
 (`/var/run/docker.sock`, `~/.docker/run`, `~/.colima/<profile>`, `~/.rd`, `~/.orbstack/run`,
 `~/.lima/<instance>/sock`, `$XDG_RUNTIME_DIR`). An explicit endpoint is used *alone*, so a
 typo fails loudly. Podman is deliberately not auto-discovered (unverified exec-streaming /
 host-gateway behaviour); it is reachable only via an explicit override. The filesystem reads
 are injected (`DockerSocketFs`), so the whole resolver unit-tests without a real FS.
 
-Before `startup()` boots the server, `index.ts` runs the preflight
-(`services/docker-preflight.ts`): it pings each candidate in order (2s each — it may walk
-several), records the first that answers via `setResolvedDockerSocket` and logs it, else
-checks for a `docker` binary on PATH to tell *not installed* from *installed-but-stopped*,
-prints the matching guidance (install link, or per-runtime start commands plus the sockets
-it tried and the `--docker-socket` override), and **exits non-zero**. `DockerClient` reads
-the resolved path through a **getter, not a constructor snapshot**, because the preflight's
-own client is constructed before resolution — so all four production clients converge on the
-same socket. `HEZO_SKIP_DOCKER` (the same flag that swaps in the in-process fake docker for
-dev/tests) bypasses the gate.
+The Docker branch of `openSandboxBackend` pings each candidate in order (2s each - it may
+walk several), records the first that answers via `setResolvedDockerSocket`, and logs which
+one it was; `DockerClient` reads that path through a **getter, not a constructor snapshot**,
+so every client converges on the same socket however early it was built. Resolution lives
+there rather than in `index.ts` for the same reason the ping does: an instance running on a
+managed backend has no local daemon to find, and walking Colima's and OrbStack's socket
+paths to tell it so would be noise at best. The failure message names every socket tried
+plus the start command for each runtime it recognised.
+
+**Host setup runs through the seam, not a branch.** `ContainerEngine.prepareHost({ dataDir })`
+is asked of whichever backend is in use, and what it does is that backend's
+business: `DockerClient` extracts the embedded agent-base build context, prunes stale bundled
+images, refreshes the published tag and probes its bind mounts, while `DaytonaEngine`
+implements it as an explicit no-op - a sandbox is built from Dockerfile text on the provider's
+machines and has no host image store or binds to touch. `startup()` used to carry two
+`initialEngine instanceof DockerClient` branches doing that work inline, which is the
+capability-branch-above-a-seam the design forbids, and it had already failed silently once:
+callers hold the backend holder's **proxy**, against which `instanceof` is always false, so
+introducing the holder turned the image setup into dead code with nothing logged.
+
+**It rides with an engine becoming current, and the holder owns that.** `SandboxBackendHolder`
+carries the data directory and calls `prepareHost` from `swap()`, so the deferred open's
+unlock and a runtime backend switch both prepare the incoming engine without asking. Sitting
+at each call site instead meant every site that made an engine current had to remember, and
+two of the three did not: a switch never prepared its destination at all, so an instance that
+booted on a managed provider and moved to the local daemon reached it with no extracted build
+context, no bundled-image prune and no bind-mount probe; and startup asked the **pending**
+engine, whose every member throws by design, which exited the boot of every locked instance
+on a vault-backed backend with an error reading as an unreachable provider. Startup is the
+one caller that still asks explicitly (`holder.prepareHost()`, the path that constructs the
+holder rather than swapping into it) and the one that skips it while the open is deferred -
+a lifecycle question, "is a backend current yet?", not the capability question the seam
+forbids.
 
 **Container mount preflight.** `services/mount-preflight.ts` runs backgrounded from
-`startup()` alongside the connectivity check. Agents work on a bind mount of the data dir
-(workspace / worktrees / previews), and a VM-backed runtime only shares the host paths it
-was configured with — Colima shares `$HOME` **read-only** by default — so an otherwise
-healthy daemon can leave every run failing on its first write. The probe mounts a scratch
-dir from the data dir into a throwaway container, has it read a host-written sentinel and
-write back, and checks host-side that the write landed: missing sentinel (or a write the
-host never sees) → `not-mounted`, sentinel visible but write refused → `read-only`. Logged
-at `error` with the runtime-specific fix but **non-fatal**, same reasoning as the
-connectivity check — exiting would take down the UI the operator needs. Opt out with
-`HEZO_SKIP_MOUNT_CHECK`.
+`DockerClient.prepareHost` - it is a question about bind mounts of a *host* path, which a
+managed backend has none of, so asking it there would boot a throwaway container on a paid
+provider to answer something that cannot apply. Agents work
+on a bind mount of the data dir (workspace / worktrees / previews), and a VM-backed runtime
+only shares the host paths it was configured with - Colima shares `$HOME` **read-only** by
+default - so an otherwise healthy daemon can leave every run failing on its first write. The
+probe mounts a scratch dir from the data dir into a throwaway container, has it read a
+host-written sentinel and write back, and checks host-side that the write landed: missing
+sentinel (or a write the host never sees) -> `not-mounted`, sentinel visible but write
+refused -> `read-only`. Logged at `error` with the runtime-specific fix but **non-fatal** -
+exiting would take down the UI the operator needs. Opt out with `HEZO_SKIP_MOUNT_CHECK`.
+
+**A vault-backed credential defers the open to unlock, and only then.** The provider API
+key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
+an instance, which comes back **locked** after every restart, cannot read it at the moment
+the backend is chosen. Making that fatal meant a managed backend could not survive a
+restart at all: a stored key read back as "no API key is configured", and a
+`HEZO_DAYTONA_API_KEY` supplied at launch threw "the instance is locked" from
+`storeDaytonaApiKey`. Both aborted startup on every boot, and the only workaround was
+passing the master key on the command line — the one thing Hezo never asks an operator to
+persist.
+
+So `resolveStartupBackend` returns `deferred` when (and only when) the backend needs a
+credential, none is in hand, the vault is locked, and `hasDaytonaApiKey` says one is on
+file — an existence check, so it never decrypts.
+
+**"Needs a credential" is asked of the backend's kind, never its name.**
+`SANDBOX_BACKEND_KIND` (`@hezo/shared`) classifies every backend as `local` or `remote` and
+`sandboxBackendNeedsApiKey` derives the requirement from it: a remote service is reached
+over the internet behind an account, a local daemon is a socket on the host. Four sites used
+to spell this `=== SandboxBackend.Daytona` / `!== SandboxBackend.Docker` — the deferral here,
+the launch-key warning beside it, the switch route's `CREDENTIAL_REQUIRED` guard, and the web
+switcher's key field — so a second provider would have inherited "needs no key" at all four
+with nothing failing to compile. The `Record<SandboxBackend, …>` makes adding a backend a
+compile error until it declares its kind. Naming a provider is still right for *which*
+credential (`--daytona-api-key`, the vault entry, `DaytonaClient`); it is never right for
+*whether* one is needed. `startup()` then holds a **pending
+engine** (`sandbox/pending.ts`: a `Proxy` whose every member throws `SandboxBackendError`
+naming the unlock) and `masterKeyManager.onUnlock` runs
+`completeSandboxBackendOnUnlock`, which opens for real and `holder.swap`s it in (preparing its
+host as part of that swap, since startup could not: it held the pending engine, which has no
+host) ahead of
+`startUnlockedServices`, so the job manager, the chat manager and the HQ warm-up each start
+against a real engine and never observe the deferral. Nothing is lost by waiting: those
+consumers already start on that same unlock, because a locked instance cannot run an agent
+whichever backend it is on. The launch-supplied key that could not be written is flushed to
+the vault there too, guarded on an actual change so a boot does not leave a dead tuple.
+
+The two cases this deliberately does **not** cover are the ones that must stay loud. A
+provider selected with no credential anywhere is a misconfiguration that unlocking cannot
+fix, so it still aborts startup. And a deferred open that fails leaves the pending engine
+in place rather than falling back to Docker, so every container operation reports it.
+
+There is deliberately **no** earlier gate at the top of `index.ts`. One used to sit there,
+before the database was open, which meant it could only read the *launch flag* — while the
+**stored** setting is what actually selects the backend (`resolveStartupBackend`). An
+instance switched to Daytona from the Containers page and restarted on a host without
+Docker therefore exited 1, printing Docker install guidance for a backend it would never
+use. Moving the check behind backend resolution also gave the **runtime switch** a
+preflight it never had: `switchSandboxBackend` destroys every container before swapping, so
+a destination that cannot be reached has to be caught before anything is torn down.
+
+### The container-engine seam
+
+Everything that touches a container goes through **`ContainerEngine`**
+(`services/sandbox/types.ts`) — the exact set of operations Hezo needs from whatever runs
+its agent containers. `DockerClient` (`services/docker.ts`) implements it against the local
+daemon; `DaytonaEngine` (`services/sandbox/daytona/`) implements it against a third-party
+sandbox service. No caller above the seam knows which is in use.
+
+Three shared pieces sit alongside it so the two implementations cannot drift:
+
+- **`sandbox/endpoints.ts`** — `RunEndpoints` states the container-to-host addresses (MCP,
+  assets, egress proxy, ssh-agent) once. They previously rode seven separate hardcoded
+  `host.docker.internal` literals, so they broke together and could only be changed together.
+- **`sandbox/files.ts`** — `SandboxFiles` is the async, relative-path-only interface every
+  run-artifact read *and write* goes through: the prompt file, the per-run runtime home
+  (`settings.json`, subscription credentials), the tunnel config, and the read-backs (the
+  runtimes' off-stream usage files, push errors, rotated subscription auth). Paths that
+  would escape the run root are rejected, and the walk never follows symlinks. `removeDir`
+  is part of it because the per-run home holds the provider credential, so removing it is a
+  scrub rather than tidying.
+
+  It is reached as **`ContainerEngine.files(containerId, containerRoot)`**, rooted on the
+  *container* path - identical on both backends by rule; only how it is reached differs.
+  Nothing above the seam may touch `node:fs` for a run artefact: a host-only file path is
+  one that works everywhere except production on a managed backend.
+
+  `readBytes`/`writeBytes` are the raw-byte pair, added for the recovery bundle (§ Agent
+  runtime, Recovery bundles) - a git bundle is binary, and a UTF-8 `read` silently replaces
+  every invalid sequence, so a bundle moved through the text pair would arrive corrupted and
+  only fail later at `git fetch`. Both backends already moved bytes underneath; the decode
+  was applied at the very edge. `size` exists so a caller can decide whether it is willing
+  to buffer a file *before* `readBytes` buffers it - asking by reading and measuring
+  afterwards is the check happening after the damage.
+  - **Daytona** implements it over the toolbox file API. Every endpoint was measured
+    against the live service and several do not behave as the spec reads: `files/folder`
+    answers **201**; `files/find` matches file **content** rather than names, so
+    `findByName` walks the directory listing instead of using an endpoint that looks right
+    and silently finds nothing; and a `DELETE` of a **non-empty directory** is refused with
+    a 400 unless `recursive=true` is passed, deleting nothing. That last one is why
+    `removeDir` passes the flag and treats a path still present afterwards as an error
+    rather than a shrug: its caller is the per-run scrub of the runtime home, so a delete
+    that quietly did nothing left the provider credential on the provider's disk for the
+    rest of the container's life. `exists` and `size` go through `files/info`, which
+    answers for a directory as well as a file - built on a download, a directory was a 400
+    rather than a "yes". An upload lands `0644` owned by root whatever the caller
+    asked, so the mode contract (`0600` on a credential, `0711` on the directories above it
+    so the deprivileged run user can traverse without listing) is re-applied explicitly.
+  - **Docker** implements it over the daemon's `PUT`/`GET /containers/{id}/archive`
+    endpoints, **not** the bind mount - a host fast path would be exercised by every local
+    test while the real path shipped unexercised, and it would break a daemon reached over
+    TCP or running rootless in its own namespace. That needs tar, owned outright in
+    `sandbox/tar.ts` rather than pulled in, since one regular file per call is a 512-byte
+    header plus padding. Two facts there are only findable against a real daemon, which is
+    why `test/bun/sandbox-files-docker.bun.test.ts` exists: the checksum field is **six**
+    octal digits, a NUL and a space (the seven-digit shape every other numeric field uses
+    puts the NUL over the last digit), and the JSON request helper silently
+    `JSON.stringify`d the archive until `requestBinary` was split out.
+  - **The fake engine models the bind mount** rather than an in-memory store, resolving a
+    container path to the project's real workspace. That is what a local daemon actually
+    does, so a test that stages through the seam still reads the bytes off disk.
+- **`sandbox/handle.ts`** — `SandboxHandle.exec()` collapses the
+  `execCreate`/`execStart`/`execInspect` triad into one call returning the exit code with
+  the output, and expresses privilege as **`elevated: boolean`** rather than a username.
+  A username is an instruction only Docker can follow: third-party providers set a user at
+  sandbox creation and ignore a per-exec one, and their *default* identity differs, so each
+  backend renders the intent its own way. Docker maps `elevated` onto `User: root` vs the
+  detected run user; Daytona already execs as root, so it renders the unelevated case as
+  `runuser -u <user> --` — deprivileging, the inverse render.
+- **`sandbox/proc-scripts.ts`** — the `/proc` scan and kill scripts, plus the `df` disk
+  measurement behind `ContainerEngine.diskUsedBytes`. They are plain POSIX shell and nothing
+  in them is runtime-specific, only the transport that carries them, so both engines run the
+  identical script rather than each reimplementing the scan. Every value interpolated into
+  one is validated first (`ENV_MARKER_VALUE_RE` for markers, a path character class for
+  `df`), which is what makes the unquoted interpolation safe.
+
+  Disk is measured with `df` rather than `du`: the question is how close a container is to
+  filling up, which `df` answers from the superblock in constant time, where `du` would walk
+  every `node_modules` in every worktree - exactly the trees that make the number
+  interesting. It runs once per run, **after** the worktree GC, so the figure reflects disk
+  that is actually unavailable rather than what a reclaim was about to free, and it lands in
+  `container_pool_members.disk_used_bytes`. `null` (an unreadable measurement) leaves the
+  previous figure alone; reporting an unmeasurable container as empty would defeat the
+  pool's recycle rung, which had no input at all before this and so could never fire.
+
+**The Daytona adapter** is three files and absorbs four API differences entirely within
+itself: create also *starts* the sandbox (so `startContainer` is a no-op on one already
+running); there is no per-exec user; there is no image store, because a custom image
+arrives as **Dockerfile text** Daytona builds and caches by a hash of that text (which is
+why the image reference must be **digest-pinned** — a tag-pinned `FROM` is byte-identical
+forever, so the cache never invalidates and the sandbox serves a stale toolchain
+indefinitely); and stdout and stderr arrive **merged**, with the response's `stdout`/
+`stderr` fields always null. The stream split is load-bearing upstream — the agent
+stream-json parser routes on it, and a git exec parses stdout for shas while git writes
+progress to stderr — so the adapter recovers it by redirecting stderr to a per-exec file
+and draining it with a bounded `tail -c`. On the streaming path that means stderr arrives
+as one chunk at the end rather than interleaved: the honest cost of a provider that merges
+the two.
+
+**A transient gateway failure is retried inside the client, not surfaced.** Daytona's front
+door answers a bare nginx `502 Bad Gateway` from time to time, and the first non-2xx used to
+be final at every call site — so one blip during a create settle (which polls twice a second
+for the length of a build), a resume, or a run's exec killed the whole operation, while the
+container sync, the one caller that did catch it, made the problem look cosmetic. Every
+non-streaming call now goes through a single attempt loop that owns the auth header, a
+**per-attempt** timeout (a shared signal is already counting down when the second attempt
+starts) and a bounded jittered backoff on `408/429/502/503/504` or a transport-level
+rejection. It deliberately does not interpret the result: "not ok" means something different
+at each endpoint, so the response is handed back and the caller raises its own named error on
+give-up, exactly as before there was a retry. An abort is never retried in either of its
+forms — a caller cancelling is a decision, and re-sending after a timeout would stack whole
+control timeouts past the deadline the waiter is measuring against.
+
+What may be re-sent is decided by the method (`GET`/`HEAD`/`DELETE`), which keeps the
+billable `POST /sandbox` and the command-starting `POST …/exec` out by construction. One
+endpoint overrides that on measured behaviour: `executeStreaming`'s session create *is*
+retried, because the session id is minted on Hezo's side, so a re-send carries the same id —
+and the live API answers `409 CONFLICT` while leaving the session fully usable (its exec, log
+stream and command record all still work). The conflict is therefore the success case. That
+is worth having because the session create is the first call of the exec every agent run, git
+operation and chat turn goes through. Teardown rests on the mirror-image fact: a repeat
+`DELETE` of a session answers `404`, which is already the desired end state. Both are pinned
+in the live suite rather than assumed, since if either stops holding the retry has to go.
+
+**A gateway error page is not command output.** The log-follow stream is the one place a
+retry cannot help, because the failure is not an exception: a 502 carries a perfectly good
+HTML body, and the reader decoded it and handed it to the caller as the command's own stdout
+— `<html><head><title>502 Bad Gateway</title>` in an agent's run log — and then reported a
+clean exit, since the stream ends normally and the exit code comes from a separate call. The
+status is now checked before the body is touched, with a transient one feeding the reconnect
+counter that already exists rather than a second mechanism. The exit-code fetch is checked
+the same way: `json()` on an HTML page throws a bare `SyntaxError` naming neither the
+provider nor the status, and any shape that *did* parse would take the `?? 0` and report a
+failed command as a clean one.
+
+Per-sandbox memory comes from Daytona's OTEL metrics endpoint as a windowed query rather
+than a live gauge; an absent or empty series reports as **null**, which the caller already
+treats as "no reading this tick" (reporting zero would read as a sandbox using no memory
+and defeat cap enforcement). There is no container log stream, and nothing useful in one:
+PID 1 is `sleep infinity`, so the content the UI shows is provisioning and lifecycle output
+Hezo produces itself.
+
+**Volumes are an object store, not a filesystem** - re-measured against the live API with a
+volume-scoped key (`GET`/`POST /volumes` both 200, so the scopes are not the blocker they
+were once assumed to be), mounting one at `/mnt/vault` on a running sandbox:
+
+| Operation | Result |
+|---|---|
+| `mount` type | `mountpoint-s3 … type fuse (rw,nosuid,nodev,noatime,default_permissions,allow_other)` |
+| create a new file, read it back | ✅ |
+| copy a finished file in (the bundle transport) | ✅ |
+| `mkdir` / `rmdir` | ✅ |
+| append to or modify an existing file | ❌ `Operation not permitted` |
+| `rename` | ❌ `Function not implemented` |
+| `chmod` | ❌ `Operation not permitted` - every file stays `0666` owned by `nobody` |
+| `git init --bare` | ❌ `could not write config file …: Function not implemented` |
+
+Two things about *how* this was measured are worth keeping, because both produced a wrong
+answer first. **Exit codes lie on this mount**: a first pass chaining `cmd && echo ok`
+reported append, rename, chmod and `git init --bare` as all succeeding, and every one of
+them is false - the failures only appear when the data is read back. Assert on read-back,
+never on the exit status. And **writes are not always immediately visible**: a file written
+and `cat`ed in the same breath can read as absent, which made an early probe look like
+`mkdir` did not persist when it does.
+
+This is what makes the whole-file bundle the only workable shape on a volume, and why the
+recovery vault does not use one (§ Agent runtime, Recovery bundles).
+
+**Measured end to end against the live API**, driving the real `DaytonaEngine` (not a fake)
+through provision, the exec triad, elevation, streaming, files, disk, suspend/resume, the
+marker kill and teardown. Four findings are worth carrying:
+
+- **Concurrent pool size on Daytona is bounded by the org's total *disk* quota, not by
+  Hezo's memory budget.** A create past the quota fails with `400 Total disk limit
+  exceeded`, and Hezo's admission check (`projectMemoryFitsBudget`) models memory only, so
+  on a disk-constrained account it will keep admitting runs the provider then refuses; the
+  failure surfaces as a provisioning error on the project, flagged by the error banner. What the
+  operator *can* do about it is the per-container disk allocation, which is now a setting
+  (`default_container_disk_gb`, default 5 GB) with a per-project override
+  (`projects.container_disk_gb`) rather than the flat 10 GB the adapter used to hardcode -
+  so `quota_disk_gb / allocation` is a number they control. The pool's recycle threshold is
+  derived from the same figure (`poolDiskCeilingBytes`) and recorded per member
+  (`container_pool_members.disk_ceiling_bytes`) at provision, so a container is always
+  judged against the disk it actually has rather than against whatever the setting says
+  later. `container_pool_members.memory_bytes` is the same fact for memory - see
+  § Container pool.
+- **The label index lags create by ~1-3 s.** A sandbox queried by label immediately after
+  `createContainer` is not returned; it appears within about three seconds. The orphan
+  reaper's direction of failure is therefore the safe one - a lagging sandbox is simply
+  absent from `owned`, so it is a *missed* reap caught on the next pass, never a wrongful
+  destroy (`reapOrphanedSandboxes` destroys `owned − live`, never `live − owned`).
+- **`containerStats` reads the sandbox's own cgroup, not the provider's telemetry API.**
+  That endpoint answers `403 Telemetry endpoints are disabled when Analytics API is
+  configured` on an ordinary account - an org configuration rather than a missing scope -
+  so memory-cap enforcement did not operate on this backend at all, and the provider's OOM
+  kill was the only thing bounding a run. It also reported whatever the collector had
+  named rather than the working set the Docker engine reports, so one threshold meant two
+  things depending on the backend. `buildMemoryUsageScript` + `parseCgroupMemory`
+  (`sandbox/proc-scripts.ts`) replace it over the ordinary exec transport, exactly as
+  `buildDiskUsageScript` already did for disk.
+- **A digest-pinned `agent-base` is pullable anonymously**, so Daytona builds it with no
+  registry credential - the `buildInfo` Dockerfile is `FROM …@sha256:…` and nothing else.
+
+**The tunnel has since been driven end to end**, from a network that permits WebSocket
+upgrades (the earlier pass could not reach it at all, which is why three defects lived in it -
+see the PTY section above and the readiness contract in § Container tunnel). A real agent run
+now completes on Daytona: DeepSeek through Claude Code, `tools=97` in the session line,
+`create_comment` and `update_task` landing over MCP, run `succeeded`, tokens priced from the
+table. Run logs stream over the WebSocket, suspend/resume preserves the filesystem, the pool
+serves concurrent runs one-per-container, the wall-clock kill leaves no marked process behind,
+and deleting the project destroys every sandbox it owned. On a network that blocks WebSocket
+upgrades none of that is reachable - a property of such a network, not of the adapter, since
+every HTTP path (control plane, exec, streaming logs, files) works through the same one.
+
+Two further quota facts were measured, and both bear on the pool:
+
+- **A *suspended* sandbox still holds its full memory and disk quota.** `planIdleShutdown`
+  keeps one suspended container per project on the reasoning that retention is nearly free.
+  It is not free here: stopping a sandbox releases nothing, so an idle project holds a whole
+  concurrency slot indefinitely, and on a tier allowing three sandboxes, three idle projects
+  consume the entire org quota and no run can start. Daytona's own refusal names the state
+  that *does* release it - **archive** - which Hezo never uses (`autoArchiveInterval` defaults
+  to 7 days and `archived` already maps to `exited`). **Known gap**: the suspend rung wants a
+  provider-side notion of "suspended" the adapter chooses, rather than one shape for both.
+- **Memory is a separate provider cap from disk, and binds first at this container size.** The
+  tier measured allowed 10 GiB total memory and 30 GiB total disk - three sandboxes either
+  way at 3 GiB/10 GiB each. Hezo's budget knows neither, so a budget set to 24 GB admits
+  twelve containers the provider refuses on the fourth. The workaround noted above (size the
+  budget against `quota_disk_gb / 10`) therefore needs to be the *minimum* of the disk and
+  memory derivations. Note the budget and the provider now agree on the **per-container**
+  figure at least: the caller states the project's ceiling and the Docker adapter alone adds
+  its cgroup headroom, so a managed sandbox is allocated exactly what the budget charges for
+  it (rounded up to the provider's whole-GB unit).
+
+**Digest resolution** (`sandbox/image-ref.ts`) is the generic OCI registry manifest lookup
+that makes the pin possible: a HEAD on the manifest, exchanging a `WWW-Authenticate: Bearer`
+challenge for an anonymous pull token when the registry asks for one, reading the digest off
+the `Docker-Content-Digest` header. It caches with a TTL and a cap, and **falls back to the
+tag** rather than failing when the registry cannot be reached - an offline instance, a
+private registry, or a locally-built tag that exists in no registry at all would otherwise
+be unable to start a container over a cache-freshness concern. The fallback logs what it
+costs, because the failure it re-admits is otherwise invisible.
+
+**The loopback ports are drawn from below the kernel's ephemeral range.**
+`TUNNEL_PORT_BASE` is 19080 with a range of 300 (`sandbox/endpoints.ts`), allocated as
+adjacent triples per container (`tunnel/ports.ts`) because a container carries several
+tunnels at once - a run, a chat turn, a provisioning git op - each with its own host-side
+egress and ssh allocation behind it. The range must stay under **32768**, the floor of
+Linux's default `net.ipv4.ip_local_port_range` (32768-60999, which a fresh network namespace
+inherits as its own default): a range inside it - this used to start at 47080 - can be
+claimed as the *source* port of an outbound connection the container makes, and the client's
+later `bind()` then fails. It presented as "the tunnel client did not bind its ports within
+Nms", intermittently and more often on a busy container, reading as an infrastructure flake
+rather than a port conflict.
+
+**`startRunTunnel` does not return until the endpoints work.** Opening the channel only
+*starts* the client; it is a process that still has to boot and bind three loopback ports, and
+on Daytona they appear ~1s later (the sandbox execs a shell, then `runuser`, then node). A run
+hands those endpoints straight to the coding CLI, which dials them immediately - and a CLI that
+gets `ECONNREFUSED` on the MCP endpoint marks that server failed **for the whole session**
+rather than retrying, so the agent runs to completion with no Hezo tools and the run reads as
+the agent having done nothing (`tools=25` instead of `tools=97` in the session line was the
+tell). So the tunnel polls the container until all three ports listen, reading `/proc/net/tcp`
+(always present, unlike `ss`/`netstat`, which a custom `docker_base_image` need not carry) and
+matching loopback specifically. It **fails the run** if they never do: without the tunnel the
+container cannot reach MCP, the egress proxy or the ssh-agent, so proceeding would produce
+exactly the silent no-op it exists to prevent. The wait lives in the shared tunnel code, not in
+either adapter - the race is Docker's too, just narrower.
+
+**And the readiness poll is only the start of the run.** A tunnel that bound and then died
+produced exactly the same toolless run, and for a long time nothing could observe it:
+`RunTunnel` was `{endpoints, close()}`, the channel's close handler tore the multiplexer down
+and told no one, and the container stayed *alive* - so no `container_*` transition fired
+either. A real CEO run on Daytona burned a full max-effort budget that way and was recorded as
+"produced no output", which reads as a lazy model rather than a dead transport. Two guards now
+cover the rest of the run:
+
+- **`RunTunnel.onClosed(cb)`** fires when the tunnel dies unrequested - the exec channel
+  dropping, or the multiplexer tearing itself down on a framing error - and never for a
+  caller's own `close()`, since every run ends that way. The runner aborts on it with the
+  named reason **`tunnel_lost`** (a derived `AbortController`, so the caller keeps ownership
+  of its own signal) and the chat manager tears the session down, because a session that has
+  lost its tunnel would answer every later turn from the model alone.
+- **The runtime's own MCP report.** Claude Code states each configured server's connection
+  status in the `system`/`init` event - the first event the parser already reads for
+  `tools=N`. `agent-stream-parser` records a Hezo server reported as **failed** there as the
+  run's terminal error, naming the tunnel, and the session line carries
+  `mcp: hezo=<status>` so a log read after the fact answers the question `tools=25` only
+  hinted at.
+
+  **The report can only ever rule a server out, never in.** Measured against Claude Code
+  2.1.220: MCP servers connect *asynchronously, after* `init` is emitted, so a healthy run
+  reports `pending` there and lists its built-ins only (the CLI ships a `WaitForMcpServers`
+  tool for an agent to block on), and nothing restates the status later. Whether a run sees
+  `pending` or `connected` is therefore a race. So only the known failure statuses
+  (`failed` / `error` / `needs-auth`) are terminal; `pending`, an absent `mcp_servers`
+  array, and any status the CLI has not emitted before are all read as "not known", with
+  the tunnel guard above as the backstop. Reading anything-but-`connected` as a failure -
+  the first cut of this check - would have failed every Claude Code run on that CLI, and
+  the live agent-CLI conformance suite is what caught it.
+
+The runner also orders these: a signal kill outranks a captured terminal error, which in
+turn outranks "produced no output" on the run row - each is the cause of the one below it,
+and reporting the symptom first sends the reader after the wrong thing. A process a signal
+destroyed reports nothing at all, so without the top rung a run killed by the kernel OOM
+killer recorded a *blank* error: the two lower candidates are gated on a clean exit, and a
+killed CLI emits no terminal event. `signalFromExitCode`/`describeSignalExit`
+(`lib/exit-code.ts`) decode the shell's `128 + N` convention, and a SIGKILL additionally
+names the container's memory cap so the sentence carries its own remedy. Demoting the
+terminal error costs the log nothing, because both of its writers already push their own
+line into the stream as they detect it. Stranded commits stay above all three: they are the
+only time-sensitive item, at the accepted cost that a run that committed and was then
+killed leaves the signal to the exit-code column.
+
+**The tunnel is the only way a container reaches Hezo**, on every backend, with no gate and
+no second path. `RunEndpoints` always names container loopback, where the in-container
+client listens; `host.docker.internal` survives only for an operator-configured local model
+provider, which is a host address the *agent* dials rather than a route back into Hezo. An
+earlier draft shipped this behind `HEZO_TUNNEL=1`, off by default, so Docker kept its
+existing direct path — that was removed: a gate that leaves the new mechanism off means the
+old path is still the real one, and the shape local dev and CI exercise is then not the
+shape production runs (§ *One mechanism, no silent fallbacks* in AGENTS.md). The CEO chat
+takes the tunnel too.
+
+**The Docker hijack is spoken over a raw socket, not `http.request`'s `'upgrade'`.** The
+hijacked exec socket was the one piece written from Docker's API documentation rather than
+from something observed, and running it against a live daemon showed it could not have
+worked in production at all. `'upgrade'` is the documented event and is correct on Node;
+**Bun never emits it** for Docker's hijack. Bun emits `'response'` with status **101**,
+routes the framed exec bytes onto the response stream, and ignores writes to `res.socket`,
+so stdin never reaches the exec - both measured. Since Bun is the production runtime, every
+attach rejected with "attach failed (101)", 101 being the success status. A hijack is just
+"send a request, then own the socket", so `hijackExec` now speaks the request over a plain
+`node:net` socket: one code path, identical on both runtimes, accepting 200 as well as 101
+(some daemon versions answer that for a non-TTY attach). The socket is handed back
+**paused** so bytes arriving alongside the headers can be `unshift`ed without loss, which
+makes the explicit `resume()` in `openExecChannel` load-bearing rather than tidy - a `data`
+listener does not auto-resume an explicitly-paused stream, and without it the channel
+connects, the client binds its listeners, and no frame is ever delivered.
+`test/bun/sandbox-tunnel-docker.bun.test.ts` runs the real client in the real image over a
+real hijacked exec and asserts a request made *inside* the container reaches a host server,
+which is the claim no pipe-based or fake-engine test can make.
+
+**The byte channel a tunnel would ride on differs per backend - measured.** The plan for
+reaching Hezo from a remote container (one exec with stdin attached, carrying a multiplexed
+tunnel) assumed every backend has Docker's `AttachStdin`. Daytona does not: its exec ignores
+an `input`/`stdin`/`stdinData` field entirely, and a command that reads stdin sees immediate
+EOF. What it has instead is a **PTY session over WebSocket** -
+`POST /process/pty {id}` then `wss://…/process/pty/{id}/connect` with the bearer token -
+verified end to end as a real bidirectional byte channel (writes reach the shell, output
+comes back). The consequence for the seam is that the *transport* is per-backend while the
+framing and multiplexing above it stay shared - the plan's "one transport for both backends"
+holds for the protocol, not for the channel underneath it.
+
+**Four things on that channel would each desynchronise the framing on byte one**, and all four
+are absorbed in `openPty` (measured against the live API; the first was handled from the start
+and the rest were found by driving a real agent run over it):
+
+1. the opening `{"status":"connected","type":"control"}` JSON frame, which is not shell output;
+2. the PTY's **echo of `stty raw -echo`** - sent to turn echo off, and echoed back because echo
+   is still on. The decoder read `stty` as a type and stream id and `raw ` as a 1918990112-byte
+   length, and the mux closed the channel before any payload existed;
+3. bash's **bracketed-paste sequences** (`ESC[?2004h` / `ESC[?2004l`), emitted around every
+   command it accepts **even with echo off** - so raw mode does not remove them;
+4. the shell **prompt** printed when the launched command exits.
+
+So the launch is folded into `openPty` as one line - `stty raw -echo`, print a per-session
+sentinel, then **`exec`** the command - and nothing reaches the caller until that sentinel.
+`exec` replaces the shell, which removes (3) and (4) structurally rather than filtering them.
+The sentinel is emitted from **two halves** (`printf '%s%s' 'a' 'b'`) so the still-echoed command
+line does not contain it: printed whole, the sync fired on the echoed copy and forwarded the real
+one, moving the corruption one step later instead of removing it.
+
+**Closing the socket does not end the session or kill what runs on it** - measured: a process
+launched on a PTY was still listening after the WebSocket closed and the session still read
+`active`. Only `DELETE /process/pty/{id}` terminates it, so that is what `close()` does. On
+Docker the equivalent close kills the exec, so without it this leaks a process per channel on
+Daytona alone - and for the tunnel that is not cosmetic, since the client holds the run's three
+loopback ports and a pooled container serves many runs in sequence: the next run's client dies
+with `EADDRINUSE` and that run loses MCP, egress and the ssh-agent entirely.
+
+**That delete runs on the host's close path, so a server that dies first cannot perform it**,
+and two things now cover the gap rather than assuming it away. The port allocator
+(`allocateFreeTunnelPorts`) **probes the container** for a triple that is actually free instead
+of trusting its in-process map - which is authoritative for tunnels this process opened and
+empty at startup, exactly when a container reclaimed from a previous life is most likely to
+carry an abandoned client. And `JobManager.sweepStaleTunnelClients`, a startup reconcile pass,
+SIGKILLs every tunnel client in every container this instance owns: at reconcile the process
+holds no tunnel, so any client alive in one of its containers is by definition stale. That
+reasoning is what makes it a startup pass rather than a cron - during normal operation a
+container legitimately carries several tunnels at once and they are indistinguishable from
+inside. It became reachable when containers started outliving the process (§ orphan sweep);
+before that a restart abandoned the container too, so the orphan went with it.
+
+**Above the transport, the framing layer syncs too, and the two are not redundant.** The
+client emits a NUL-delimited `TUNNEL_PREAMBLE` before its first frame and the decoder
+discards everything up to it. That lives in the shared protocol rather than in an adapter
+deliberately: `openPty`'s sentinel removes noise that is specific to a PTY, while the
+preamble is a property of the protocol and holds on any transport - a channel that *is*
+clean (Docker's hijack) simply syncs on the first bytes it sends. It also carries a version, so an older in-container
+client is refused by name instead of surfacing as an unknown frame type.
+
+**Readiness is a separate, single mechanism**, and it is not the preamble. The client emits
+the preamble after binding, so it arrives at roughly the right moment - but roughly is the
+objection: `waitForTunnelListeners` polls the container for the three loopback sockets
+actually listening, which is the fact rather than a proxy for it, and fails the run on
+timeout. Opening the channel only *starts* the client, and a coding CLI that gets
+`ECONNREFUSED` on the MCP endpoint marks that server failed for the whole session rather
+than retrying - so returning early produced exactly the silent no-op run this exists to
+prevent.
+
+Raw mode is enough for the bytes themselves: measured, all 256 byte values survive a 64 KiB
+payload intact, NUL and XON/XOFF included, so nothing has to be escaped.
+
+**The message *size* is a different limit, and it is the adapter's to keep.** The far end of
+this WebSocket is a terminal, whose input queue is 4 KiB, and a larger single message closes
+the channel rather than being split. The framing layer's payload cap is 64 KiB on every
+backend, so a catalogue-sized reply crossing host-to-container killed the tunnel outright:
+measured, an agent run died ~150ms after Hezo answered `tools/list`, i.e. while the response
+was on its way back - the client kept its ports, the host's mux was gone, and the run spent
+its whole budget with a server it had been told was connected and no tools from it.
+`openPty` therefore splits every write to `PTY_MAX_SEND_BYTES` and paces it against the
+socket's `bufferedAmount`, with all writes serialised through one chain so a framed protocol
+cannot interleave. The split itself is `chunkPtyPayload` in `daytona/command.ts`, pure and
+unit-tested; the cap lives in the adapter because it is this provider's terminal, not a
+property of the framing.
+
+**Both directions fail closed and stay bounded.** A throw anywhere in the mux's frame
+dispatch - not just in the decode - tears the tunnel down, because the alternative is worse
+than closing: the dispatch runs on a promise queue, so an escaping rejection silently stops
+all further reads and leaves a tunnel that is wedged rather than closed. Flow control is a
+credit window in both directions; a stream starts at zero credit and the peer's opening
+`WINDOW` is authoritative, since seeding a default *and* accepting the grant counts one
+allowance twice and ignores a host configured with a different window.
+
+**Network isolation is the provider's, not ours - measured.** Daytona interposes an Envoy
+proxy in front of all sandbox egress: a raw TCP connect to `169.254.169.254`, to an RFC1918
+address, and to a public address all succeed and all answer `server: envoy`, so there is no
+cloud metadata service behind link-local to reach and no other tenant behind the private
+ranges. Hezo therefore sets **no** `networkAllowList`. It could not express one in any case:
+the field is capped at **10 networks**, while "the public internet minus the private ranges"
+is 51 CIDRs, so an attempt to send it fails the create outright - which would have broken
+every remote run rather than hardening it. What protects a secret remains that the secret
+only ever exists on the Hezo side.
+
+**Pool members are reconciled against the engine, because nothing else revisits them.** The
+acquire path repairs a stale member on two rungs - `reuse` verifies the container still runs,
+`resume` drops it if the start throws - but both only fire for a member the ladder actually
+*picks*, and it never picks a `busy` one. A run that died without releasing its row therefore
+left a member nothing ever looked at again, and since `getActiveContainers` counts
+`creating`/`idle`/`busy` towards the memory budget, each orphan permanently consumed capacity
+until every run in the project failed admission with "no container available". So
+`reconcilePoolMembers` runs from the `container-sync` job and drops members whose container the
+engine no longer knows. It drops **only on a definite answer**: `inspectContainer` returns null
+for a container the engine does not know and *throws* for anything else, and a throw means
+"could not determine" and changes nothing - deleting on an unanswerable check would lose the
+record of a live container and orphan it on the backend. A grace period keeps a just-created
+container from being judged early, and a per-pass bound keeps a large pool from turning one tick
+into a fan-out of round trips. On top of both, each member is asked about at most once per
+liveness interval: the age floor only skips a member that changed *recently*, so a member idle
+for hours is past it forever and would otherwise be inspected on every tick of a 1 Hz cron - a
+control-plane round trip per container per second. This matters more on a managed backend than
+locally, because there a container disappearing is normal rather than anomalous - the provider
+stops, archives and reaps sandboxes on its own schedule, and enforces quota by refusing or
+removing them.
+
+**A container found stopped-but-present is a suspended member, not a lost one**, and this is
+the case a managed backend produces routinely: Daytona's `autoStopInterval` reclaims a sandbox
+that has seen no toolbox traffic for ten minutes, which is exactly what an idle pool member
+looks like. Hezo's own idle pass cannot pre-empt it - `stopIdleContainers` retires a pool only
+when the whole *project* is idle, so a busy project's unused members are reclaimed by the
+provider first. The member's writable layer is intact, so the repair is to record `suspended`
+and let the ladder resume it in place (about a second) rather than discard the row and pay to
+build a replacement while the sandbox lingers as an orphan. Three places converge on this:
+`syncContainerStatus`'s running→stopped branch, the memory-limit auto-stop, and the `reuse`
+rung of `acquireRunContainer`, which for the same reason now distinguishes *gone* (drop the
+row) from *stopped* (suspend it) from *unanswerable* (change nothing).
+
+**A dead container ends the runs it was carrying, and no others.** `ContainerTransition` names
+the container, and both halves of the response are scoped to it: `failProjectRuns(…,
+containerId)` for the rows, and `JobManager.cancelLiveRunsForContainer` for the in-process
+execs. They must agree, or a run reads `failed` while its exec still streams; both therefore
+also take runs that have not yet claimed a container, which nothing can show to be executing
+elsewhere. Handling a container's death by *project* is the shared-fate blast radius the pool
+exists to remove, and it is not hypothetical - it is how an idle member being auto-stopped
+killed a run executing in a healthy sibling container. Two sources emit transitions in this
+one shape: `syncAllContainerStatuses` answers for the container `projects.container_id` names,
+and `reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
+
+**A member is reusable only if it was built to the cap it would be built to now.** The cap
+is a memory *guarantee* the run is sized, budgeted and enforced against, and no backend can
+resize a container in place - so `selectPoolMember` compares each non-`busy` member's
+recorded allocation (`container_pool_members.memory_bytes`, written at provision from the
+same `memoryCeilingBytes` the engine was handed) against the project's current effective cap
+and returns `{ kind: 'recycle', members }` ahead of every reuse rung. The caller destroys
+them and re-decides.
+
+Recorded rather than re-derived, for the reason migration 051 already gives for
+`disk_ceiling_bytes`: the container really does only have what it was created with. Before
+this the cap was a figure the pool asserted and could never check, so raising a project's
+cap left its existing container in service at the old allocation while the run's sizing, the
+instance budget, the enforcement threshold, the exit-137 message and the Containers page all
+read the new one - a project set to 6 GB running in a 2 GB sandbox, with nothing saying so.
+
+Four details are load-bearing. **Both directions recycle**: a smaller container fails the run
+it was handed, and a larger one keeps a managed account paying for memory the operator has
+given back. **`NULL` is a mismatch** - an adopted container (`adoptUnpooledContainer` states
+no allocation, because it genuinely has none) or one predating the column cannot be shown to
+cover the cap. **Destroyed, not merely skipped**: a member the ladder refuses still counts
+toward `getActiveContainers`'s `usedMemoryGb` until it is gone, so passing over it would
+leave the replacement failing `fitsBudget` and queue the run behind a container nothing will
+ever use. Every mismatched member comes back in one decision so a pool larger than
+`MAX_ACQUIRE_ATTEMPTS` cannot outlast the retry loop, and a **busy** member is never recycled
+- it is replaced the next time it comes up for acquisition, the first moment that costs no
+run. **The chat repeats the check** in `reusableChatMember`, because its pin is resolved
+above the ladder; otherwise it would be the one workload left in a container built for a cap
+nobody set any more.
+
+Everything that reads a container's size reads the recorded column rather than the setting.
+`getActiveContainers` sums `memory_bytes` (falling back to the cap only where none was
+recorded), so between a cap being lowered and its containers being recycled the budget still
+charges what those containers actually hold - charging the new figure under-counts, which is
+the direction that over-subscribes the host. `CONTAINER_LISTING_SQL` selects the same column,
+so the Containers page reports what each container holds rather than what the setting says -
+the old figure until the swap happens, which is the truth and is the point.
+
+**An unrecorded allocation is learned from the container, never from the setting.** A member
+with `memory_bytes IS NULL` reads as unknown-sized everywhere - a dash in the Containers
+page's Memory column, and a recycle on the next acquire. That is correct while nothing knows
+the answer, but the backend does: `ContainerInfo.HostConfig.MemoryBytes` reports the ceiling
+the container was provisioned to cover, and `reconcilePoolMembers` writes it through
+`recordPoolMemberMemoryIfUnknown` on the `inspectContainer` round trip it was already making
+(≤50 members a pass, ≤1 inspect per member per 15s). Deriving the figure from the current cap
+is the one thing that stays forbidden - it writes a confident wrong answer for exactly the
+containers the column exists to catch - but reading it off the container is not a derivation.
+The write only ever fills a gap (`memory_bytes IS NULL` is in the predicate): the recorded
+figure is the guarantee that was *requested*, while a backend whose unit is coarser reports
+the larger amount it rounded up to, so letting a reading replace a known value would claim a
+container was built to a cap nobody set. A backend that cannot say leaves the member NULL,
+and it keeps being recycled - the right answer for a container nothing can size.
+
+**Capacity is a memory budget, and it reserves for the chat container up front.**
+`max_container_memory_gb` bounds the total memory *task run* containers may hold at once,
+summed from what each one actually asked for (`projects.memory_limit_gib`, else the
+instance default). It replaced a container **count** (migration 050): a count bounds memory
+only while every container is the same size, and the per-project override exists precisely
+so they are not - one project raising its cap to 4 GB took one "slot" but twice the memory
+of the 2 GB containers the host was sized for. There is deliberately no derived container
+count anywhere, not even for display: how many fit depends on the mix of their sizes.
+
+The CEO chat's container is **exempt** from the budget, because a queued task run is
+invisible and harmless while a queued chat turn is a person watching a spinner. On a host
+backend the machine still has to fit it, so `computeDefaultMaxContainerMemoryGb` subtracts
+`HOST_RESERVED_MEMORY_GB` (1) plus one container's worth for the chat. Reserving up front
+rather than subtracting when a session opens keeps task-run capacity a **stable** number -
+opening the chat never silently slows the fleet. The exemption is enforced on **both** sides:
+the budget reserves for it, and `getActiveContainers` excludes a `reserved_for_chat` member
+from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projects` row are
+two records of one container). Charging it in both places reserved the same memory twice,
+so an instance sized for three containers dispatched two whenever the chat was open.
+
+**The chat takes its container through the same ladder a run does**, with
+`acquireRunContainer(..., 'chat')` - the workload changes four things and nothing else: it
+is not gated on the budget (already reserved above), it **pins** the member
+(`reserved_for_chat`) rather than claiming it busy, its release is a no-op because the
+session holds the container across every turn until `teardown` clears the pin, and a pin the
+session already holds is checked *before* the ladder, since `selectPoolMember` excludes
+reserved members by design. It also points `projects.container_id` at what it took, that
+column being the operator's view of the project's container.
+
+Routing it through the ladder is the whole point. The chat used to read
+`projects.container_id` directly, which names the most recently provisioned or resumed
+container - under a pool, possibly one mid-run. It pinned that and executed its turns on it:
+two workloads on one memory cap, which is exactly the shared-fate failure the pool exists to
+remove, reached from the one direction the pool was not guarding. Resume had the mirror
+problem, comparing `ensureProjectContainerRunning`'s answer against the container the session
+parked on, so once task runs had moved the project's named container a healthy parked session
+read as "the container was replaced" and was torn down.
+
+**The backend is a setting, not launch configuration.** It used to be chosen once at
+startup and fixed for the process; it is now switchable from Settings -> Containers, with
+the CLI flag seeding only a fresh instance and the stored choice winning thereafter.
+`SandboxBackendHolder` (`services/sandbox/holder.ts`) exists because of what that changes:
+every consumer used to capture the concrete engine (`c.set('docker')`, the JobManager's
+deps, the chat manager, the process sweeper), and a captured reference would keep driving
+the backend the operator just left - a run provisioned there looks entirely normal. Startup
+builds one `ContainerEngine` proxy and hands *that* out, so re-pointing the holder changes
+what every call site talks to without any of them knowing. The delegation is an explicit
+object rather than a `Proxy` so a method added to the interface is a build error rather than
+a runtime `TypeError`.
+
+`switchSandboxBackend` runs **preflight -> destroy -> swap**, and the order is the design.
+Preflight first (opening the destination *is* the preflight, so there is one definition of
+"usable") because a half-completed switch loses every container *and* lands on an
+unreachable backend. Destroy before the swap because afterwards those ids belong to a
+backend nothing will ever ask again - the pool, the orphan sweep and every lifecycle call go
+through the *current* engine, so a survivor is unreachable by the very things that clean up,
+and on a paid provider that is a bill with no surface in the product. Containers are
+enumerated from the engine **by label** rather than from the database, so one the database
+lost track of goes too. In-flight runs die with their containers through the normal
+container-death path; the route reports the counts up front so the confirmation names them.
+This is still not failover: the holder swaps *which* backend is current, never picks a
+second because the first is down, and an unreachable stored backend still aborts startup.
+The provider key lives in the secrets vault with `allowed_hosts` empty and substitution off
+- it is Hezo's own control-plane credential and must never be reachable from a run.
+
+**The budget derives from host memory only where the containers are the host's to feed.**
+`ContainerEngine.containerHostMemory()` answers with the memory its containers are drawn
+from, or `null` when they are not drawn from this machine at all; `DockerClient` returns the
+host's RAM + swap and `DaytonaEngine` returns `null`, and the budget then falls back to
+`DEFAULT_MAX_CONTAINER_MEMORY_GB` (6). Deriving a managed fleet from `os.totalmem()` sizes it
+by the wrong computer, and wrongly in both directions - a 2 GB VPS computes a budget that fits
+no container and never dispatches, a 128 GB workstation authorises 127 GB of the provider's
+hardware. It is deliberately a **resource** on the seam rather than a provider name: the
+capacity model needs exactly one fact ("is this RAM mine to spend"), and asking it that way
+keeps every provider conditional on the adapter's side of the interface. `GET
+/api/instance-settings` reports `host_total_ram_bytes`/`host_total_swap_bytes` as `null` on
+such a backend, so the settings page renders what the budget was actually computed from
+rather than an arithmetic that had no part in it.
+
+The trade-off a budget accepts is that a large container waits for enough budget rather
+than for any free slot, so smaller runs can overtake it. That is a delay and not
+starvation, because `projectMemoryFitsBudget` refuses a per-container cap larger than the
+whole budget where it is *set* - both on `PATCH /api/projects/:id` and on the instance
+default - rather than letting such a run queue forever with nothing naming the cause.
+
+The budget is total **virtual** memory: swap counts at full weight, which is deliberate for
+the local backend. An agent container is idle between execs, so its cold pages really can
+live on disk, and a host with swap configured genuinely fits more containers than its RAM
+alone - the reference host below fits nothing but the reserves without its swap. (A managed
+backend does no memory arithmetic at all; its cap is a spend guard.) This lowers the
+computed default on small hosts: the documented 1.92 GiB + 6 GiB reference host goes from 4
+to 2, and that drop is entirely the two reserves - the host itself, and the chat container
+the old formula pretended did not exist - not a discount on its swap. Instances that have
+explicitly set the value keep it; only the computed default moves.
+
+**The orphan sweep** (`sandbox/orphan-reaper.ts`, run every 10 minutes by `JobManager`)
+destroys containers this instance created that Hezo no longer references anywhere. Boot
+fails every in-flight run and never reattaches, so a crash, a hard kill or a lost provider
+response strands containers with no owner - harmless on local Docker, but billed for as long
+as nobody looks on a managed backend, which fails as a cost rather than as an error and so
+needs a sweep rather than an alert. Every container Hezo creates carries a `hezo.instance`
+label naming the instance, and the sweep queries on it: several Hezo instances can share one
+provider account, so a broader query would destroy another instance's live sandboxes. The
+pass is bounded and states what it deferred, since a silently-truncated sweep reads as
+"everything was cleaned up" when it was not.
+
+**That label's value outlives the database.** `getOrCreateInstanceId` keeps the id in
+`<dataDir>/instance-id` and only falls back to `system_meta` for an instance that predates the
+file (which it then adopts, rather than minting - minting there would orphan that instance's
+live containers on its first boot after upgrading). It has to outlive the database because
+`--reset` renames `pgdata` aside: a DB-resident id was minted afresh on the next boot, every
+container the previous life created kept the *old* label, and the sweep - which queries the new
+one - could never see them again. On Daytona they then held their disk against the account
+quota indefinitely, and six of them is a 30 GB plan full, which surfaces as the *next* provision
+being refused rather than as anything pointing at the leak.
+
+**The sweep also runs once during `reconcileOnStartup`, destroying on the first sighting.**
+Every other startup pass is DB-driven - it starts from a project row and looks outward - so a
+container the database has forgotten is invisible to all of them, which is exactly what a reset
+leaves. The second-sighting rule is skipped there because the window it guards (a container
+created but not yet recorded) cannot be open before any run has started, and because keeping it
+would defeat the sweep for this case entirely: the suspicion set is in memory, so an instance
+restarting more often than the cron's cadence never reaches a second pass. It is gated on this
+process holding the data dir's lock, which is embedded-only; an external-database deployment,
+where two servers can share an instance id, keeps the conservative path.
+
+**Anything that destroys scopes on `hezo.instance`.** The other two labels (`hezo.team`,
+`hezo.project`, all three in `sandbox/labels.ts`) are descriptive: every container of every
+instance carries them, so a query on either reaches across instances. Backend switching used to
+tear down by the bare key `hezo.project`, and on Daytona a bare key has no server-side
+equivalent - the adapter lists the whole account and filters client-side - so switching backends
+destroyed another instance's live sandboxes.
+
+The live set (`listReferencedContainerIds`) is the union of **both** representations of a
+container - the project row and the pool member - across **every** pool state. A pooled
+project owns several containers at once while `projects.container_id` names only the most
+recently provisioned or resumed one, so a set built from projects alone reads a busy run's
+container, an idle member a task has affinity with, the chat's container and a member pinned
+for unpushed commits as unreferenced. `suspended` matters most: that is the state a container
+the pool means to resume sits in, and destroying one loses its filesystem.
+
+**Project-wide teardown covers the whole pool too, for the same reason.**
+`teardownContainer` (project deletion, archive) removes every `container_pool_members` row of
+the project plus whatever `projects.container_id` names, not the named container alone: a
+pooled project owns several at once, and removing one member of three leaves the rest running,
+still reachable by the allocation ladder and still charged against the memory budget. The
+member row is dropped even when the engine call fails or `--keep-old-containers` spares the
+container itself, so a row can never point at a container the project no longer owns.
+
+**Operator-driven removal is per container, not per project.** `destroyContainer` (the global
+Containers page's Remove, `DELETE /api/containers/:containerId`) captures the container's log
+onto its member row, removes it from the engine, drops the member row, clears
+`projects.container_id` when it named that container, and fails the run it was serving - scoped
+to that container, so a sibling run in another container of the same project is untouched.
+Removing a **busy** container is allowed and is in fact the main reason to reach for it: the run
+dies through the ordinary container-death path, exactly as it would have if the container had
+crashed. There is no Rebuild and no per-container Start/Stop. Rebuild meant "replace this
+project's containers", which stopped corresponding to anything once a project could hold
+several - the operator was looking at one container and the button acted on all of them - and
+the pool provisions a replacement on the next run that needs one, which is the path every other
+container already takes.
+
+**A container joins the pool as `creating` the moment the engine returns an id**, not once
+provisioning finishes - the same instant its provisioning log stream opens, and before
+`startContainer`. Both facts about a container that the global Containers page reads (the
+member row and `projects.container_id`) used to be written at the *end*, so for the whole
+expensive stretch - starting, the MTU pin, the CA, the repo sync, the MCP installs - a real
+container existed, was streaming its log to a room keyed on its own id, and was listed
+nowhere: on a fresh instance the operator saw "Starting the HQ container..." beside an empty
+list, with no row to reach the log from. `creating` is safe to write early because
+`loadPoolMembers` drops every state outside the ladder, so a half-built container can never
+be handed to a run; the `idle` upsert at the end of provisioning is what makes it allocatable.
+A provision that fails *after* the container exists leaves the member as `error` with the
+reason on it (`setPoolMemberState` + `setPoolMemberOutcome`), so it lists as Failed and Remove
+is the fix - rather than a container left running on the engine that nothing references and
+nobody can see.
+
+**Before that id exists there is still a row**, a third arm of the listing's union keyed on
+`provisioningContainerKey(projectId)` = `provisioning:<uuid>` (`@hezo/shared`). Registering the
+member early closed the *back* half of the blank window; the front half - workspace prep, image
+resolution, and on a managed backend the sandbox build, which is the longest part of a cold
+start - has no engine id to key on at all, so the page "View container" sends the operator to
+was still empty exactly when they went looking. The placeholder is suppressed the moment a real
+`creating` member appears, so one provision is never two rows. It is deliberately **not** an
+engine id: `isProvisioningPlaceholder` is how both sides tell them apart, so
+`DELETE /api/containers/:id` refuses it with `CONTAINER_PROVISIONING` (409) - checked on the id
+alone, ahead of the lookup, since the answer does not depend on the provision still being in
+that window - and the detail page renders neither the id nor Remove.
+
+**A dropped output stream resumes rather than killing the run.** A run's entire stdout
+arrives over one long-lived connection - a `follow=true` log stream on Daytona, a hijacked
+attach socket on Docker - held open for the whole command, so it sits idle whenever the agent
+is thinking or waiting on a tool call and a gateway in front of the provider reaps it.
+(Measured: Bun's `fetch` client imposes no idle timeout of its own, so a mid-stream close is
+always the far end's.) Daytona's adapter reopens the stream and discards the bytes it already
+delivered, counted at line granularity so the skip can never cut a multi-byte character. That
+client-side skip is the only exact resume available: measured against the live API, the logs
+endpoint accepts `?offset`, `?from`, `?since`, `?tail` and a `Range:` header and **silently
+ignores every one**, and a reopened follow stream replays from the first byte - so a naive
+reconnect would double-count token usage and re-emit the final assistant message. Bounded,
+because each reconnect re-sends the whole log. When the reconnects are exhausted, or the log
+turns out to have been truncated under us, it raises `ExecStreamLostError` - which
+`agent-runner` routes into the same bounded retry the orphan detector uses
+(`retryOrEscalateLostRun`), because the infrastructure losing a run is not the agent failing
+it.
+
+A container is destroyed only on its **second consecutive sighting**. Provisioning still has a
+window where a container exists on the engine and is recorded nowhere yet - `createContainer`
+has returned an id and the member INSERT has not committed - and one caught there is
+indistinguishable from an orphan. Registering at create narrows that window from the whole of
+setup to a single statement, but does not close it: no ordering of the two reads can, and no
+engine exposes a creation time to age it out with, so the sweep carries its suspicions to the
+next tick instead: whatever was mid-provision has since been recorded, while a real orphan is
+still there. The cost is one extra billing period, against the alternative of destroying a
+container that is running someone's work; the number held back for confirmation is logged so
+the delay is visible.
 
 Work reaches an agent through the **wakeup → job-manager → agent-runner** pipeline.
 
@@ -1124,7 +1992,23 @@ the cached `container_status`: a container pruned externally or lost to a Docker
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
 fails fast with a clear message rather than tripping over a raw 404 mid-exec. It captures
 interleaved stdout/stderr (recorded in full, `[stderr]`-prefixed, with a 10 MB
-runaway-output backstop) into **append-only log chunks**. The exec transport itself
+**The log opens by naming the container the run was given.** The moment `acquireRunContainer`
+returns, the runner writes one `[runner]` line carrying the full engine id and the two figures
+the member row records - `Container <id> · 4 GB RAM · 4 GB disk`, built by
+`formatContainerMetaLogLine` in `@hezo/shared`. It is the *first* line on a warm reuse and the
+second on a cold start, since `Starting the project container…` is emitted before the id
+exists. It lives in the log rather than being rendered from the run row because
+`container_pool_members` is destroyed with its container while the log is not, so the log is
+what still answers this months later - the same reason `heartbeat_runs.container_id` carries
+no FK. The viewer parses it (`parse-agent-log.ts`, matched with the shared
+`parseContainerMetaLogLine`) into a `runner` block and renders the id as a link to
+`/settings/containers/$containerId`, shortened to twelve characters the way the Containers list
+shortens it. Runner lines are a block type rather than falling through to the prose branch
+because that branch coalesces consecutive lines into one markdown document, where a single
+newline is a softbreak - so every runner line used to render as a clause appended to whatever
+the agent had last said.
+
+The exec transport itself
 **retains nothing**: `execStart` with an `onChunk` callback forwards each frame and returns
 an empty `ExecResult`, because a run's raw stream-json output (every tool result in full)
 is strictly larger than the capped rendered log and was, held alongside it, the largest
@@ -1164,7 +2048,14 @@ is replayed a **line-aligned tail** of the buffer rather than the whole thing (`
 for every live stream in the room, so a project with ten concurrent runs would otherwise push
 ten full logs into one socket on tab open); the pending batch is drained first, since the
 snapshot replaces the client's buffer and a line arriving after it would render twice. The
-full log stays available from the REST run endpoint, which is what the run view seeds from.
+full log stays available from the REST run endpoint, which is what the run view seeds from -
+and a cut snapshot is flagged `trimmed`, because "replaces the client's buffer" and "seeds
+from REST" are in direct conflict otherwise. The run view loaded the whole log, joined the
+room, and had it replaced by its own last 256 KB, rendering "earlier output trimmed - open the
+run to see the full log" on the very view that had the rest, until the next event happened to
+re-seed it and it silently came back. `useLogStream` now drops a `trimmed` replace-snapshot
+when it is already holding lines; a client with nothing buffered still applies it, since a
+trimmed log beats no log.
 Sockets carry a `backpressureLimit` with `closeOnBackpressureLimit`, so a client that falls
 irrecoverably behind is dropped and recovers through the existing reconnect-and-resubscribe
 path instead of growing an unbounded send queue.
@@ -1176,7 +2067,21 @@ document, loaded from its **home** team) is resolved per run by
 `linkTeamCaptainToInstanceCeo` — `{{skills_context}}`, `{{project_docs_context}}`,
 `{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
 `{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
-Run Context / Repository / Project State / Teammates blocks and `SHARED_INSTRUCTIONS`.
+Run Context / Repository / Project State / Teammates blocks, `SHARED_INSTRUCTIONS`, and the
+**Container Environment** block.
+
+That last one tells the agent which container service it is running on and what that
+service's network will carry, from `SANDBOX_AGENT_ENVIRONMENTS`
+(`services/sandbox/agent-environment.ts`) — a `Record<SandboxBackend, …>`, so adding a
+backend is a compile error until it states its egress. It exists because an agent cannot
+distinguish "this command is wrong" from "this container's egress will not carry that
+protocol" and has no way to find out: on Daytona `ssh` fails on every port (22 dropped; 443
+admits the connection then resets it once the payload is not TLS), which reads as the remote
+host refusing its key, so it retries. It sits beside `SHARED_INSTRUCTIONS` for the same
+reach — every agent, every run, including runtime hires — but is *resolved per run*, since
+the backend is an operator setting; the resolver reads the **stored** backend
+(`getStoredSandboxBackend`) rather than taking the engine, which is the same answer the
+holder would give and leaves every caller's signature unchanged.
 The **Repository** block names the designated repo *and every other linked repo*, giving each
 additional one its on-disk worktree path (`/worktrees/<task>/<repo>`, a sibling of the working
 directory), and directs agents to read connected repos from disk (`ls`/`Read`/`grep`) rather
@@ -1235,32 +2140,68 @@ review is the one path that instead embeds the **full** comment history (both sh
 **Containers & worktrees.** One container per project, **run on demand**: the container is
 not required to be up between runs. `runAgent` establishes it at the start of every run via
 `ensureProjectContainerRunning` (running → reuse; stopped → start in place; missing/stale row →
-provision), chat sessions do the same, and the `container-idle-stop` cron (1/min) stops any
-container idle past the operator's timeout (`container_idle_timeout_min` in `system_meta`,
-default 15 minutes, `0` = always-on) — so a quiet instance runs zero containers. "Idle" means:
+provision), chat sessions do the same, and the `container-idle-stop` cron (1/min) retires any pool
+idle past `CONTAINER_IDLE_TIMEOUT_MIN` (`@hezo/shared`, **2 minutes**) — so a quiet instance
+runs zero containers. That window is a **constant, not a setting** (migration 050 drops the
+old `container_idle_timeout_min` key): its only job is coalescing a burst — covering the gap
+between one run finishing and the next starting in the same project, which is a comment
+insert, a wakeup fire, the 1 Hz dispatch cron and a container acquire, so seconds to about a
+minute. One minute can suspend a container mid-wakeup-chain; longer buys little, since
+resuming a suspended container costs about a second. The old `0` = always-on escape hatch is
+gone with it — a container that never stops bills forever on a managed backend, and the dev
+server it kept alive belongs in something with its own lifecycle. "Idle" means:
 no active (queued/running) run, no run finished inside the window, no queued wakeup that could
 dispatch (capacity-skipped wakeups deliberately don't pin containers), and no chat session with
 recent `last_activity_at` or an in-flight turn; `projects.container_last_started_at` floors the
-check so a fresh start always gets one full window. Every lifecycle *decision* — ensure-running
+check so a fresh start always gets one full window.
+
+**A live chat session is measured on its own, longer window** — `CHAT_IDLE_TIMEOUT_MIN`
+(`@hezo/shared`, **15 minutes**), interpolated into that one arm of `BUSY_PROJECTS_SQL`. The
+two clocks measure different things: between runs the gap is mechanical, while between chat
+messages it is a person reading a reply, so reclaiming at the run window suspended the
+container out from under an open chatbox and made the next message pay a cold start (~30s on
+a managed backend). It applies only while a session is `starting`/`running`; once it stops,
+the project falls back to the ordinary window at once.
+
+**The idle pass parks a live assistant session before it takes the container down**, via the
+narrow `ChatSessionPark` port on `JobManagerDeps` (`ChatSessionManager.parkForContainerSuspend`,
+attached with `jobManager.setChatSessions` in `startup.ts` because the chat manager is
+constructed second). Ordering is the whole point. `checkHealth` already parks a session whose
+container it *finds* stopped, but it polls, so the idle pass won the race every time and the
+session learned about the suspension from its tunnel dying — the unrequested-death path. That
+logged "closed unexpectedly", ended the session as `crashed` rather than parking it as
+`suspended` (so the next message started a fresh conversation instead of resuming in place),
+and the provider's PTY `DELETE` arrived after the sandbox had begun stopping and 400'd,
+leaking the session on the provider. Parking first closes the tunnel deliberately — which
+`RunTunnel` does not report as a death (`fireClosed` is guarded on `closed`) — so the delete
+lands on a reachable sandbox. It is best-effort: a park that throws is logged and the pool is
+retired anyway, since one wedged session must not leave a container billing. Every lifecycle *decision* — ensure-running
 and the cron's check-then-stop (which re-verifies the predicate plus the scheduler's in-memory
 run/pending refcounts under the lock) — serializes per project through
 `withContainerLifecycleLock` (`services/containers.ts`), so a start and a stop can never
 interleave: worst case is a wasted stop/start cycle, never a failed run. Concurrency is bounded
-by one **global active-container limit** (`max_active_containers` in `system_meta`; when unset,
+by one **global container memory budget** (`max_container_memory_gb` in `system_meta`; when unset,
 the default is computed from host memory as
-`((RAM + swap) - HOST_RESERVED_MEMORY_GB) / default_ram_cap_per_container_gb`, clamped to [1,100] —
+`(RAM + swap) - HOST_RESERVED_MEMORY_GB - default_ram_cap_per_container_gb` —
 the 1GiB reserve keeps the OS, Hezo's own process and the embedded database off the containers'
-budget, since none of them live inside one): dispatch passes a run whose project container is already active (no new
-container needed) and queues one that would need another container past the cap
+budget, since none of them live inside one, and the second subtraction holds back the chat's
+container): dispatch passes a run whose project has a container free to take it (no new
+container needed) and queues one whose next container would not fit the budget
 (`WakeupSkipReason.InstanceAtCapacity`, retried by the 5s dispatcher; an in-memory
-`pendingContainerStarts` refcount covers the window before the DB row reads Running). Dispatch
+`pendingContainerStarts` refcount covers the window before the new member reaches the DB).
+Whether a dispatch takes such a slot is read off the **same** gate verdict that admitted it
+(`CapacityVerdict.hasSpareContainer`), not re-derived from `projects.container_status`: those
+answered the same question only while a project had one container, and with a pool a project
+whose named container reads Running but whose members are all busy still needs a new one - so
+the old test held no slot for a container it was about to create, and two such dispatches
+could fit themselves into the same headroom. Dispatch
 drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
 consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
-path is *not* gated: its container counts toward the limit once running, but starting a chat is
-never refused — busy agents must not lock the operator out of the control surface. All three
-knobs (limit, per-container RAM cap, idle timeout) live on the global Settings → Concurrency
-page (`GET/PATCH /api/instance-settings`; `PATCH {max_active_containers: null}` resets to the
-computed default). The project's
+path is *not* gated: its container is exempt from the budget rather than charged against it
+(reserved up front instead), and starting a chat is never refused — busy agents must not lock the operator out of the control surface. Both
+knobs (memory budget, per-container RAM cap) live on the global Settings → Containers
+page (`GET/PATCH /api/instance-settings`; `PATCH {max_container_memory_gb: null}` resets to the
+computed default), which also hosts the backend switcher. The project's
 `<dataDir>/teams/<teamId>/projects/<projectId>/workspace/` (id-keyed, never slugs) bind-mounts
 to `/workspace`, with one subdirectory per linked repo. For each task the runner creates a `git worktree` at
 `/worktrees/<task-identifier>/<repo-name>` on branch `hezo/<task-identifier>`, persisted
@@ -1292,15 +2233,64 @@ there is no host `git`. Every repo/worktree operation (clone, fetch, `worktree a
 via `docker exec` in the project container (which ships Debian's packaged git), driven from TypeScript on
 the server through a `GitExecutor` seam (`services/git-executor.ts`): `ContainerGitExecutor`
 in production, `HostGitExecutor` (host `execFile`) in unit tests. `git.ts` functions take the
-executor plus a `{ hostPath, containerPath }` pair per location — `node:fs` checks use the
-host (bind-mounted) path; git commands use the container path. SSH-transport ops (clone /
-fetch) are wrapped with the per-run SSH bridge (`hezo-run-with-bridge`) so `git@github.com:`
-authenticates through the host ssh-agent; the container's baked-in `/etc/ssh/ssh_known_hosts`
-verifies the host key. Cloning outside a run (container provision, repo link) uses a
-short-lived `withProvisionBridge`. **Git-over-SSH fails fast.** Every git exec sets a
-`GIT_SSH_COMMAND` carrying `ConnectTimeout` + `ServerAliveInterval`/`ServerAliveCountMax` +
-`BatchMode`, so a stalled or black-holed `git@github.com` connection dies in ~45s rather than
-hanging on OS TCP defaults; each exec also carries a per-op timeout (fetch 60s, clone 120s)
+executor plus a `{ containerPath, files }` pair per location: git commands use the container
+path, and every file question - is this cloned, seed a README, install the post-commit hook,
+read the push-error log, discard a stale worktree - goes through the `SandboxFiles` rooted
+there. The `files` handle comes from `GitExecutor.files()`, because "run git in this
+container" and "read that container's files" are one question and two separately-threaded
+handles could address different containers.
+
+That pair used to be `{ hostPath, containerPath }`, with `node:fs` checks against the
+bind-mounted host path. It answered correctly only while the container was local: on a
+managed backend the clone lives in the sandbox and the host path names an empty directory,
+so repo-linked runs failed with `repo is not cloned` for a repo that was cloned, and repo
+sync's clone-vs-adopt decision flipped depending on which pool rung a run landed on. `git.ts`
+imports no `node:fs` at all now, which is what stops the assumption returning. The one
+deliberate exception is `removeRepoFromWorkspace`/`removeTaskWorktrees`, which still reclaim
+host disk only - that leaves a managed backend's copy in place, which costs disk rather than
+correctness, and the disk-ceiling rung already recycles a container that fills up.
+**Git transport is HTTPS, on every backend** (`buildGitRemoteUrl`):
+`https://x-access-token:__HEZO_SECRET_<NAME>__@github.com/owner/repo.git`, where the
+credential is the GitHub connection's access-token secret as a **placeholder** the egress
+proxy substitutes at request time — so the red line holds and nothing decrypts a token into
+a run. It was SSH (`git@github.com:owner/repo.git`, later pinned to `ssh.github.com:443`),
+which cannot work on a managed sandbox at all: measured on Daytona, port 22 is dropped and
+443 admits the connection then resets it once the payload is not TLS
+(`kex_exchange_identification`, 20/20), and neither `domainAllowList` (matches TLS SNI,
+which SSH lacks) nor `networkAllowList` (GitHub's own CIDRs) lifts it. One transport
+everywhere rather than a per-backend branch, so dev and CI exercise what production runs.
+
+Git base64s a URL credential into `Authorization: Basic`, so `substituteRequest` decodes
+that header, substitutes inside and re-encodes (`applyToAuthorization`) — a literal scan
+finds nothing there, and every clone would otherwise ship the raw placeholder as its
+password. The proxy's cheap pre-flight scan (`headersContainProbe`), which decides whether
+substitution runs at all, therefore decodes the same way: both call
+`headerValueCarriesPlaceholder`/`decodeBasicCredential` so they cannot disagree. A literal
+gate in front of a decoding substitution leaves `applyToAuthorization` correct and
+unreachable, which is exactly how it shipped. `codeload.github.com` is in the GitHub
+capability's `allowedHosts` because it serves the packfiles; without it the ref
+advertisement succeeds and the transfer is refused.
+
+**Every in-container git op that talks to a remote carries the run's proxy env**
+(`HTTP(S)_PROXY`/`NO_PROXY`, from the shared `buildEgressProxyEnv`), because that is the only
+way the placeholder in its remote URL ever becomes a credential. Git reads those variables the
+way any HTTP client does, so nothing git-specific carries a clone to the proxy - and nothing
+supplies them implicitly either: `ContainerGitExecutor` takes them through its `baseEnv`, so
+each caller passes them. Run prep gets them from the run's own allocation (`prepareWorktrees`);
+provisioning gets them from `withProvisionBridge`. A caller that omits them does not fail
+loudly - the clone connects direct, ships `__HEZO_SECRET_<NAME>__` as its Basic password, and
+the remote reports a bad token, which points at the credential rather than at the routing.
+
+Remote ops (`needsNetwork`, formerly `needsSsh`) carry git's own HTTP timeouts
+(`http.lowSpeedLimit`/`lowSpeedTime`) and still run under `hezo-run-with-bridge`, which is
+what scopes the process tree for the marker kill. Cloning outside a run (container provision,
+repo link) uses a short-lived `withProvisionBridge`, which allocates the same pair an agent run
+does - the ssh-agent socket **and** an egress proxy - points the tunnel's `ssh` and `proxy`
+targets at them, and derives the tunnel's split-routing policy from the vault via
+`buildTunnelHostPolicy(db, [])` (no descriptors: provisioning loads no connectors). Only `mcp`
+stays unrouted, since a provisioning op has no MCP identity. The egress leg is mandatory and
+missing one throws rather than standing up a tunnel with nowhere to route. Each exec also carries a per-op timeout
+(fetch 60s, clone 120s)
 and, for prep, the run's own abort signal — both abort the `docker exec` stream, so a hung
 transport can no longer block the run (or the per-project git lock) until it is killed by
 hand. The abort actually tears the exec down because the streaming Docker transport removes
@@ -1309,10 +2299,9 @@ its abort handler on the *response* stream's end, never on the `ClientRequest`'s
 that had already been detached.
 
 **Container hardening.** Each project container is created with a hardened `HostConfig`
-(`provisionContainer`): a cgroup memory cap (`Memory`=`MemorySwap`= the effective RAM cap +
-512 MiB headroom, so no swap escape valve — the per-project `memory_limit_gib` override when
-set, else the instance-wide `default_ram_cap_per_container_gb`, default 2 GB) as a hard
-backstop *behind*
+(`provisionContainer`): a memory ceiling (`Memory`=`MemorySwap`= the per-project
+`memory_limit_gib` override when set, else the instance-wide
+`default_ram_cap_per_container_gb`, default 2 GB) as a hard backstop *behind*
 the sync-loop stats poller that stays the graceful early-stop at the configured ceiling;
 `PidsLimit` (4096) as a fork-bomb guard; `Init: true` so a real init reaps zombies under the
 `sleep infinity` PID 1; and `CapDrop: ['ALL']` with a minimal add-back
@@ -1323,6 +2312,21 @@ conditional `NET_ADMIN` for MTU pinning). Two hardenings are **deliberately omit
 container on the host and break the bind-mount ownership model below). The kernel remains the
 isolation boundary within a host; the tenant boundary for untrusted multi-tenant is the VM
 (see the hosted architecture), not the container.
+
+**Where the cgroup headroom lives.** `provisionContainer` states the project's working-set
+**ceiling** and nothing more; `DockerClient.createContainer` is what sets the cgroup limit a
+little above it (`MEMORY_HARD_CAP_HEADROOM_BYTES`, 512 MiB) so a runaway allocation *between*
+stats-poll ticks meets the kernel OOM killer instead of destabilizing the operator's host.
+That split follows the seam: the margin is a cgroup concern and a shared-host concern, and a
+managed sandbox has neither - it is allocated exactly the ceiling, on a machine that is
+nobody else's. Folding it into the caller made **both** backends ask their provider for more
+memory than the project was configured for, and at the boundary refused outright: a project
+set to a managed provider's documented per-sandbox maximum arrived as maximum-plus-slack,
+rounded up past the ceiling, and was rejected with a message telling the operator to lower a
+limit they had set to the advertised value. What that kernel kill then looks like is
+`exit 137` on the exec, which the run-completion path decodes into a SIGKILL error naming
+the cap (see § Agent execution) - the kill is the *process*, not the container, so nothing
+in the container lifecycle notices and the run row is the only place it can surface.
 
 **Container run-user & host-file ownership.** The agent base image (`node:24-slim`) sets no
 `USER`, so the container runs as **root**; Hezo deprivileges individual `docker exec`s — the
@@ -1426,6 +2430,95 @@ failure never fails the commit. *Uncommitted*
 changes are still not covered — the agent commits to preserve, and the role prompts frame frequent
 committing (not a manual end-of-run push) as the durability action.
 
+**Stranded commits (ref comparison, not the error log).** Reporting a failed push into the run log
+is not the same as noticing that work is about to be left behind, and the two questions have
+different answers: the error log is append-only within a run and cleared at prep, so a push that
+failed at commit 3 and succeeded at commit 5 leaves a non-empty log with **nothing** actually
+unpushed. At run completion the runner therefore asks the authoritative question directly —
+`findUnpushedWork` / `countUnpushedCommits` (`services/git.ts`) run
+`git rev-list --count refs/heads/hezo/<task> --not --remotes=origin` in each prepared clone, which
+counts commits reachable from the task branch but from no `origin` tracking ref. `git push` updates
+those tracking refs on success and prep fetches before the agent starts, so this is a **local**
+read: no network call, and it is correct for all four shapes (current, behind, merged to the default
+branch under another name, never pushed). What counts as durable is the `DURABLE_REMOTES` parameter
+rather than a hardcoded remote at each call site.
+
+A positive finding does three things: the run fails, the commits are copied out to the bundle
+vault, and the container is pinned for as long as it still holds the only copy.
+
+The run is **not** a success — it records
+`error = "run ended with committed work that reached no remote …"` even when it exited 0 and
+produced output, precedent being `BackgroundTerminationDetector`'s clean-exit failure.
+
+**Recovery bundles (the durability backstop).** `vaultUnpushedWork` (`services/agent-runner.ts`)
+packs each stranded clone's undelivered commits and copies them onto the Hezo instance, so a later
+run on a *different* container can pick the work up. Three modules split the job so neither half
+knows the other's business: `createRecoveryBundle` / `fetchRecoveryBundle` /
+`fastForwardFromRecovery` (`services/git.ts`) are the git operations, `bundle-vault.ts` is the
+store, and `sandbox/recovery.ts` is the seam between them.
+
+- **A bundle, not a mirror remote.** A managed backend's shared store is an object store
+  (`mountpoint-s3`), and a bundle is one finished file — which is the only shape such a store
+  supports. Re-measured against a live Daytona volume (see the table below): `git init --bare`
+  fails on it outright, so a mirror remote is not an option there at all.
+- **Built on local disk, moved as a finished file.** `git bundle create` seeks while writing and
+  dies (`pack-objects died`) against anything that is not a real filesystem, so it writes to
+  `<clone>/.git/hezo-recovery.bundle` — local disk, already owned by the run user — and the bytes
+  are then copied out through `SandboxFiles`, which is the seam that already exists for
+  container-writes-host-reads and is implemented on every backend. The vault is therefore
+  **backend-agnostic**: no volume mount and nothing per-adapter to keep in step, and the copy lands
+  under `<dataDir>/git-recovery/<projectId>/`, where the operator's backups already are.
+- **Why the instance's disk and not a provider volume.** The original design put the shared store
+  on a Daytona volume plus a Docker bind mount. Measured against the live API with a
+  volume-scoped key, that would be **the same bundle design and strictly worse**, so it was not
+  built:
+  - A volume holds whole files only, so it could not hold a bare repo or a live working tree. A
+    volume-backed store would therefore also be a bundle store — no architectural gain over the
+    seam that already exists.
+  - **`chmod` is not implemented**, so every file on the mount is `0666` owned by `nobody`. The
+    vault writes bundles `0600`; on a volume that guarantee is unavailable, and a bundle is the
+    user's source code readable by every container that mounts it.
+  - Only containers can read a volume. Hezo itself cannot, so the run-end copy-out would need a
+    container alive to perform it, and the recovery copy would sit outside whatever backs up the
+    instance.
+  - It needs per-provider volume provisioning plus a Docker bind-mount equivalent: two
+    implementations of one thing, against zero today.
+- **A delta, not a copy of the history.** `--not --remotes=origin` packs only what no durable remote
+  has, recording the remote tips as prerequisites — kilobytes for an ordinary task. A clone with no
+  remote to exclude against produces a bundle of the whole branch, which is what
+  `MAX_RECOVERY_BUNDLE_BYTES` (64 MiB, checked via `SandboxFiles.size` *before* the read buffers it)
+  refuses rather than moving.
+- **Restored in run prep, strictly after the origin fetch** (`restoreRecoveryBundle`), because the
+  delta's prerequisites are the remote tips. Refs land under `refs/remotes/hezo-recovery/*` — so the
+  commits are *present* and nothing can be lost by destroying the source container — and
+  `fastForwardFromRecovery` then brings them onto the task branch, fast-forward only.
+- **`RECOVERY_REMOTE` is deliberately not in `DURABLE_REMOTES`.** A recovered ref means Hezo holds a
+  copy, not that the user's git host does.
+
+**The pin and the run failure are decided by different things**, which is the point of the vault.
+`setPoolMemberUnpushedFlag` (`services/sandbox/pool-db.ts`) sets
+`container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from both suspend
+and destroy — but it is now set from whether the copy-out **failed**, not from whether the work
+reached `origin`. A vaulted run releases its container (the work exists in two places) and still
+fails (it never reached the remote); a run whose bundle could not be built, was oversized, or could
+not be moved keeps the pin, failing closed. The scan still distinguishes "no unpushed work" from
+"could not tell": a git failure or a missing clone yields `null`, which neither fails the run nor
+releases a pin an earlier run set — clearing a pin on an unanswerable check would destroy exactly
+the container the pin exists to protect.
+
+The vault's invalidation rule is success: a stored bundle is dropped once a later run finds that
+branch carries no unpushed commits, i.e. the work reached `origin` after all. That is the only
+condition under which it discards anything, and it is why container teardown deliberately does
+**not** clear it — teardown wipes the local clones, so from that point the bundle may be the only
+copy. Only deleting the project (`DELETE /api/projects/:projectId` → `removeProject`) clears it.
+
+None of this changes anything while a project has one container: the next run hits the same `.git`
+and the ref is still there. It matters once a project has several — run 1 commits into container A,
+its push is denied, run 2 lands on container B and fetches from a remote that never received the
+commit, and A is destroyed when it goes idle. Nothing fails at pool size 1, which is why
+`git-recovery-bundle.test.ts` **destroys the source clone** between saving and restoring rather than
+re-running against the same one.
+
 **Admin git-state & recovery (superuser).** Because a clone's live state lives only in the
 container, the project Git settings page exposes a per-repo, **superuser-only** panel to inspect
 and repair it. `GET /api/projects/:projectId/repos/:repoId/git-state` reads it — the clone's
@@ -1517,7 +2610,12 @@ gone mid-op.
 **Timeout handling (graceful cut).** The `run_timeout_min` timer aborts the run's signal with a
 tagged `'run_timeout'` reason (`JobManager.launchTask`), so the runner finalizes it as `timed_out`
 — distinct from a bare abort (user cancel / shutdown → `cancelled`) and container death
-(`container_*` → `failed`); `runAgent`'s `abortedRunStatus` maps the reason. On a `timed_out` run
+(`container_*` → `failed`); `runAgent`'s `abortedRunStatus` maps the reason. **The signal
+decides the status, never the shape of the thrown error.** Only Docker's exec reliably rejects
+with an `AbortError` when its attach is torn down - a managed backend's may reject with anything
+or resolve outright - so keying on the error name recorded a timed-out run on Daytona as `failed`
+while still stamping it with the timeout's own message (measured live). The streak cap below
+reads that column, so the misclassification silently disabled it. On a `timed_out` run
 `onAgentComplete` **auto-queues a same-task continuation wakeup** (`queueTimeoutContinuation` →
 `createWakeup(Timer, {reason:'timeout_continuation'})`) so the agent resumes the task on the next
 wakeup pass — committed work is already pushed, so nothing is lost — and it **skips the failure
@@ -1881,6 +2979,19 @@ They are **instance-global** — `name` is globally unique and the egress proxy 
 placeholder by name with no project context — bounded per-secret by `allowed_hosts`. The
 master key (§ 10) decrypts at request time.
 
+**One matcher for `allowed_hosts`, in `@hezo/shared`.** `hostMatchesAllowedHosts` decides
+both "may a secret be substituted into a request to this host" (the proxy) and "must this
+host go through the proxy at all" (the tunnel's split routing, § Container tunnel) — the same
+question, so deliberately not two functions. Rules: an exact host matches itself;
+`*.example.com` matches subdomains and **not** the apex (the TLS-certificate convention, and
+what the connector registry assumes when it lists `sentry.io` *and* `*.sentry.io`); matching
+is case-insensitive. Three copies had grown and two used a leading-dot syntax instead, so a
+credential scoped to `*.datocms.com` matched nothing on the tunnel side: the container
+connected direct, past the proxy, and the placeholder reached the provider unsubstituted -
+failing as a 401 with nothing naming the cause. The in-container client
+(`docker/scripts/hezo-tunnel`) cannot import the shared function and carries a hand-written
+copy, exercised as the real script over real sockets in `sandbox-tunnel-client.test.ts`.
+
 The decrypted vault is **cached in server memory** rather than re-read and re-decrypted per
 request. `loadAllSecrets` runs for every proxied request carrying a placeholder — every MCP
 call an agent makes — and cost two queries plus an AES-256-GCM decrypt of the whole vault
@@ -1918,27 +3029,50 @@ the secret and fires a `credential_provided` wakeup so the agent retries.
 substitution — there is **no fall-through**; if it can't bind, the run aborts
 (`EgressProxyUnavailableError`). On first boot Hezo generates a per-instance RSA CA
 (`<dataDir>/ca/`, cert world-readable, key host-owner-only) that both signs per-host leaf
-certs and is bind-mounted into every container's trust store
-(`update-ca-certificates`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`).
+certs and is **written into every container through `SandboxFiles`** at provision, then
+installed into the trust store by `update-ca-certificates` and additionally handed to Node
+via `NODE_EXTRA_CA_CERTS`.
+
+It used to arrive as a `host:container` **bind**, which is a Docker primitive: a managed
+backend has no host to bind from, and Daytona's adapter can only render a file bind as
+"create its parent directory" - so the directory appeared, the cert did not,
+`NODE_EXTRA_CA_CERTS` named a missing file and `update-ca-certificates` installed nothing.
+The blast radius was wider than Node: curl, git, Codex and Grok read only the system store
+(see the `CURL_CA_BUNDLE` note below), so every proxied TLS call failed on an unknown
+issuer, on one backend, with nothing naming the cause. Anything a container needs the
+*bytes* of goes through the file seam; a bind can only ever mean "this directory exists".
+
+**`CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` are deliberately not set**, for the same reason
+`SSL_CERT_FILE` is not: they **replace** the trust bundle rather than adding to it.
+That is harmless only while every TLS peer is the MITM proxy. Under the tunnel's split
+routing, where an agent reaches ordinary public hosts directly, curl or git talking to one
+would check a real public certificate against a bundle holding only the Hezo CA and fail.
+The system trust store carries the CA for them instead, so both kinds of certificate
+verify.
 Unlike the CA cert (deliberately world-readable so any in-container uid can read it), the
 per-run runtime config and subscription-credential files the server writes into the
 `/workspace` bind mount stay `0o600`/`0o700` and are instead **chowned to the container
 run-user** (see § Containers & worktrees) so the deprivileged agent CLI can read them
 without exposing secrets to other host users.
-Per run, the agent's container gets `HTTP(S)_PROXY=http://run:<token>@host.docker.internal:<port>`
-with `NO_PROXY` carving out the Hezo backend and the LLM provider host (LLM traffic goes
-direct — credentials are env-injected, and MITM breaks some Anthropic-compatible APIs).
-The front proxy binds `127.0.0.1` by default — reachable from containers via
-`host.docker.internal` on Docker Desktop, but **not** on native-Linux Docker, where that
-name maps to the bridge gateway IP. The bind interface for both the egress proxy and the
-ssh-agent TCP bridge is read **per-run** from a shared mutable holder (`EffectiveBindHost`),
-seeded from `HEZO_CONTAINER_BIND_HOST` / `--container-bind-host` (default `127.0.0.1`).
+Per run, the agent's container gets `HTTP(S)_PROXY=http://run:<token>@127.0.0.1:<tunnelPort>`
+with `NO_PROXY` carving out loopback (where the Hezo MCP endpoint and signed asset URLs also
+arrive) and the LLM provider host (LLM traffic goes direct — credentials are env-injected, and
+MITM breaks some Anthropic-compatible APIs). The front proxy and the ssh-agent TCP bridge bind
+`127.0.0.1` and **only** `127.0.0.1`: the sole thing that dials either is the host-side end of
+that run's tunnel, running in this process. A container reaches them on its own loopback
+through the tunnel, never by routing to the host, so there is no bind interface to choose and
+no firewall rule to open (§ Container tunnel).
 
-**Per-run caller auth.** Because the proxy binds an address the run's container shares with
-any co-resident process (host loopback or the bridge gateway), each run's proxy also mints a
+**Per-run caller auth.** Because the proxy binds an address any co-resident host process
+shares, each run's proxy also mints a
 16-byte token (mirroring the ssh-agent bridge) and requires it as `Proxy-Authorization: Basic
 run:<token>` on every plain request and CONNECT — verified constant-time (`timingSafeEqual`),
-missing/wrong ⇒ **407**, and stripped before the upstream re-request. The token rides the
+missing/wrong ⇒ **407**, and stripped before the upstream re-request. The CONNECT 407 is
+flushed with `end()` and carries `Connection: close`, because a client may legitimately probe
+before it authenticates: git sets libcurl's `CURLOPT_PROXYAUTH` to `CURLAUTH_ANY`, so its
+first CONNECT is unauthenticated and it reads the 407 to learn the scheme. Announcing no
+connection management told it to retry on a socket the proxy had already destroyed, which
+surfaced as `Proxy CONNECT aborted` on every clone. The token rides the
 `HTTP(S)_PROXY` URL userinfo, so each runtime's standard proxy handling sends it with no
 per-runtime change. This closes the gap where any process reaching the proxy port could drive
 substitution for another run; it does not weaken the red line — an unauthenticated caller only
@@ -1957,31 +3091,13 @@ the tunnel: the TLS/SSH handshake (small packets) completes, but a bulk transfer
 ships `iproute2`; `/sys` is read-only in a container so netlink, not a `/sys` write, is
 required). Normal (≥1500) hosts are untouched — no capability, no MTU change.
 
-A boot-time preflight (`container-connectivity-preflight.ts`) starts a throwaway container,
-probes the MCP port and a bind-host listener in the egress range (20000–29999), and resolves
-the bridge gateway IP both host-side (`DockerClient.inspectNetwork('bridge')` → `IPAM.Config[]
-.Gateway`, no container needed) and in-container (for images that expose it). **Auto-rebind:**
-when the bind is loopback-only and a container can't reach it (`bind-loopback`), the proxy +
-SSH bridge are rebound to that detected gateway IP and re-probed — so native-Linux works out
-of the box without exposing them on all interfaces (the gateway IP is host-local, container-
-reachable; binding `0.0.0.0` would expose the proxy and the SSH key bridge on every
-interface). An explicit non-loopback `--container-bind-host` is never overridden. The
-exploratory loopback probe runs **once** (it's deterministic — loopback is reachable on Docker
-Desktop, structurally not on native-Linux) with a short curl timeout, so the whole check is a
-couple of container round-trips (~10s), not a retry loop. The preflight
-logs the exact firewall / `--container-bind-host` remedy when a path is still blocked; severity
-tracks impact: `error` when the MCP server is unreachable (no tools load, runs hang), a
-non-fatal `warn` for a residual egress/SSH bind-host degradation. It never gates startup, so
-the web UI stays up to act on it.
-
-**Run-time gate.** The captured outcome (held in `ContainerConnectivityStatus`) gates egress at
-run time: when egress is required but the proxy is known-unreachable (`bind-loopback` /
-`bind-firewalled` / `mcp-unreachable`), an agent run aborts (recorded `Failed`) and a CEO chat
-turn fails — both with the same operator guidance — instead of allocating a proxy the container
-can't reach and letting the agent fall through to direct egress (which would defeat secret
-substitution, `allowed_hosts`, and audit). It **fails open** on `ok`/`skipped`/unknown, with a
-single-flight lazy re-probe (5-min staleness) so a firewall fix clears the gate — or a
-regression re-closes it — without a restart.
+**No connectivity preflight, and no run-time connectivity gate.** Both existed to cover one
+failure: a container that could not reach the host's egress proxy, which on native-Linux
+Docker meant a silently-dropped bridge→host path. There is no such path any more - the proxy
+is on Hezo's own loopback and the container reaches it through the tunnel - so the ~490-line
+probe, its auto-rebind of the bind host, and the run/chat abort gate it fed were all deleted
+along with `--container-bind-host`. A tunnel that cannot be established fails the run
+directly, with the error from the exec channel.
 
 For each request the proxy terminates TLS, matches placeholders **in the URL and headers**,
 loads the named secret, verifies the host against `allowed_hosts`, substitutes, and
@@ -2006,9 +3122,24 @@ RFC1918 / CGNAT / IPv6 `::1`, `fe80::/10`, `fc00::/7` and IPv4-mapped forms of t
 Without it, a run holding the proxy token could `CONNECT 127.0.0.1:5432` and reach
 Hezo's own API, its database, or any host-bound daemon; `NO_PROXY` is a client-side hint
 the agent controls, not an enforcement point. Enforcement is by **resolved address**, not
-by name — the guard is installed as the request's `lookup`, so a hostname pointing at a
-private address (`evil.example.com A 127.0.0.1`) fails there and the socket connects to
-exactly the address that was checked (no TOCTOU). CONNECT and plain requests also take a
+by name: `forward` calls `resolveGuardedAddress(host)` and then **dials the address it
+returned**, so a hostname pointing at a private address (`evil.example.com A 127.0.0.1`)
+fails there and the socket connects to exactly the address that was checked (no TOCTOU).
+Because the dial target is then an address, the upstream request restates `Host` from the
+original name and passes it as `servername`, so TLS still validates against the name.
+
+That is deliberately **not** the request's `lookup` option, which is the obvious way to
+write it and is broken on Bun: a request carrying a **body** never delivers that body, so
+the upstream answers as though it received an empty one. A `GET` is unaffected, which is
+why it stayed hidden - a proxied `git` clone fetched its ref advertisement normally and
+then hung on `POST /git-upload-pack` (`RPC failed; curl 28`, `expected flush after ref
+listing`), while every agent's POSTed API and MCP call was silently sent empty. It was
+production-only because the guard is skipped when `allowPrivateTargets` is set, and every
+suite in the repo set it; `conformance/git.ts` now exempts its loopback fixture by
+`selfEndpoint` instead, so its real-host legs run the guarded path. See
+oven-sh/bun#28396 for the wider set of `node:http` proxy defects.
+
+CONNECT and plain requests also take a
 synchronous pre-check on IP literals and `localhost`, so a blocked tunnel never mints a
 leaf cert. **One exemption:** Hezo's own endpoint (`host.docker.internal:<serverPort>`,
 matched on host *and* port by `isSelfEndpoint`) — it is already in the run's `NO_PROXY`
@@ -2052,18 +3183,22 @@ tier. Full rationale: `AGENTS.md` › Bun-native runtime rules.
 
 ## 8. SSH signing & git
 
-Each project has **one Ed25519 key** used for git commit signing and SSH git transport.
-The encrypted private key lives on the project's backing team row (`team_ssh_keys`,
-`team_id` UNIQUE — one team backs one project), **not** in the secrets vault. Agents never
-see it.
+Repo access is **SSH end to end**, keyed on one Ed25519 key per team (`team_ssh_keys`,
+`UNIQUE(team_id)`, encrypted on the team row and never in the secrets vault). The same key
+signs commits and authenticates the git transport, so a `Verified` badge on GitHub and a
+successful `git push` are the same credential. The OAuth token is never used for git - see
+§ 9, *Git vs API*.
+
+The key never leaves Hezo. Everything that needs it reaches it through an **ssh-agent
+socket**, which is what lets a container sign and push without the private half ever
+existing inside it - the red line in § 7 applied to git.
 
 **Per-run ssh-agent** (`services/ssh-agent/`). `SshAgentServer.allocateRunSocket` exposes
 the key over two listeners: a **host Unix socket** and a **loopback TCP** listener
 (in-container access, since Docker Desktop on macOS won't forward `AF_UNIX` bind-mounts).
-The TCP listener honours `HEZO_CONTAINER_BIND_HOST` (default `127.0.0.1`), read per-run from
-the same `EffectiveBindHost` holder as the egress proxy — so the boot preflight's auto-rebind
-to the bridge gateway IP makes git-over-SSH containers reach it on native-Linux Docker without
-a manual override.
+The TCP listener binds `127.0.0.1` only; the container reaches it on its own loopback through
+the run's tunnel, so git-over-SSH works identically on Docker Desktop, native-Linux Docker and
+a managed sandbox with no host route at all.
 TCP connections must prefix a 16-byte per-run token (timing-safe compared). The protocol
 answers `MSG_REQUEST_IDENTITIES` (advertises the public key) and `MSG_SIGN_REQUEST` (signs
 with the lazily-decrypted private key). Because **all git now runs in-container** (§ Agent
@@ -2081,20 +3216,24 @@ timeout plus slack for bridge-wrapped ops), the wrapper runs the command under `
 so the tree self-destructs even if the server process died mid-op; the env is ignored by
 older images and absent for the agent CLI run, keeping every old/new image × server
 combination compatible. The container sees a normal `SSH_AUTH_SOCK` Unix socket and is
-unaware of the relay. The same socket serves both commit signing and `git@github.com:`
-clone/fetch/push — including the per-commit auto-push fired by the durability `post-commit`
-hook (§ Agent runtime, Commit durability), which is why that hook keys off a live
-`SSH_AUTH_SOCK`.
+unaware of the relay. The socket now serves **commit signing only** — git transport moved to
+HTTPS and authenticates with a proxy-substituted token, so no `GIT_SSH_COMMAND` is set and no
+ssh config is written into the container. The durability `post-commit` hook still keys off a
+live `SSH_AUTH_SOCK` (§ Agent runtime, Commit durability): it gates on the socket because a
+commit it could not sign is one it should not push, not because the push needs ssh.
 Repo/worktree prep wraps individual git commands with the same `hezo-run-with-bridge` runner;
-cloning outside a run (provision, repo link) allocates a short-lived bridge via
-`withProvisionBridge`, whose per-op `provision-<hex>` id doubles as the exec scope marker
-(§ Agent execution, Process-tree lifecycle).
+cloning outside a run (provision, repo link) allocates a short-lived bridge **and egress proxy**
+via `withProvisionBridge`, whose per-op `provision-<hex>` id doubles as the exec scope marker
+(§ Agent execution, Process-tree lifecycle) and keys both allocations. The proxy is what
+substitutes the clone's credential, so it is as load-bearing here as the socket is for signing.
 
 **Verified-on-GitHub bootstrap.** On every successful GitHub OAuth connect the project's
 public key is auto-registered on the connecting user's account as **both** a signing key
 (`POST /user/ssh_signing_keys` — drives `Verified` badges) and an authentication key
-(`POST /user/keys` — so SSH git works). Registration is idempotent (GitHub 422 "already
-in use" → no-op). Commit *authorship* comes from the project's own GitHub connection (its
+(`POST /user/keys`). The authentication key is now vestigial for Hezo's own transport, which
+is HTTPS; it is still registered because it costs one idempotent call and an operator may
+well use the same key by hand. Registration is idempotent (GitHub 422 "already in use" →
+no-op). Commit *authorship* comes from the project's own GitHub connection (its
 `project_id`-scoped `oauth_connections` row, or a global one as fallback); *signing* uses
 the project's (team's) own key.
 
@@ -2555,6 +3694,23 @@ events have no replay, so the index also **polls every 10s while any container s
 transient state** (`creating` / `stopping` — deliberately not the `null` of a torn-down
 project, which would poll forever). That bounds the damage of a missed transition to a few
 seconds of stale banner instead of "stuck until the operator reloads the page."
+
+The **banner reports errors only**. It used to announce provisioning and base-image builds
+too, from when a project had one container whose bring-up was an event; a project now gets a
+container whenever a run needs one, so "provisioning" fires on almost every page several
+times an hour about something the operator did not ask for and cannot act on. The banner
+links to the global Containers page, where the failed container is addressed as itself.
+
+**Containers are a global surface** (`routes/settings/containers/`), tabbed into a list and
+the limits: `index.tsx` is one row per real container across every project (backed by
+`GET /api/containers`, polled - the pool table has no row-change broadcast to key off),
+`$containerId.tsx` is one container's page with its log and the only lifecycle action there
+is, Remove, and `settings.tsx` holds the backend switcher and the memory/RAM/disk limits. The
+project's own Container page keeps only what is genuinely per project: the caps its containers
+are provisioned with, the image, the dev ports, and the stranded-commits warning. Container
+log rooms are keyed on the **container** (`wsRoom.containerLogs(containerId)`), not its
+project - a project-keyed room merged several containers' output into one stream and served it
+as whichever container the page happened to be showing.
 
 **Overlay lifetime across navigation.** Overlays rendered under the `<Outlet />` unmount on
 navigation; the ones rendered by the shell chrome in `routes/__root.tsx` — the project rail's
@@ -3179,7 +4335,10 @@ shapes.
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`
   (connectors: ensure / auth-start — project-scoped and instance-admin
   (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
-- **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets.
+- **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets,
+  `containers` (global, superuser-only: `GET /containers`, `GET /containers/:containerId`,
+  `DELETE /containers/:containerId` — one row per real container across every project,
+  unioning both representations; no start, stop or rebuild).
 
 **Request-body ceiling.** `/api/*` carries a global `bodyLimit` at `API_BODY_MAX_BYTES`
 (32 MB). Only the handful of upload routes were capped before, so a JSON body had no bound
@@ -3286,6 +4445,38 @@ failures — is in `AGENTS.md` › Testing, which is authoritative):
   MITM path and its streaming (§ 7), the docker exec/log frame transport, the node-postgres
   driver, the S3 asset client's SigV4 over the runtime's own `fetch`/`crypto.subtle`, and
   the updater / shutdown / unlock-handoff paths.
+
+**Backend conformance** cuts across those tiers rather than being one of them. The
+`ContainerEngine` and `SandboxFiles` contracts have more than one implementation, and the
+only way "one seam, no provider knowledge above it" stays true is if the same assertions run
+against every implementation - so `packages/server/test/conformance/*.ts` are
+backend-agnostic suites parameterised by a `LiveAdapterFixture`, and a new provider is a
+fixture file rather than a second suite. The set covers the engine and files contracts, the
+egress red line, the **tunnel** (reachability, idle survival, a large response back into the
+container, survival of a concurrent exec, observable death, stderr) and a real **agent-CLI
+run** wired to a real Hezo over a real tunnel - which asserts the agent both receives Hezo's
+tools and calls one, evidenced host-side by the `tools/call` arriving. They run against the **real** backend, because the
+adapter unit suites drive a fake API and can only pin the requests Hezo sends: every
+non-obvious behaviour the Daytona adapter encodes was measured live and several contradicted
+the documentation, and nothing in a fake notices when one of them changes. Docker's fixture
+runs in CI (self-skipping with a logged reason when there is no daemon); Daytona's is manual
+and opt-in (`bun run test:daytona`), excluded from the default vitest run, refused outright
+under `CI`, and every container it creates is labelled `hezo.conformance` and swept on the
+way *in* as well as out so a crashed run does not leave a sandbox billing.
+
+Where a backend legitimately cannot answer something, the fixture declares it and the suite
+asserts the documented alternative instead of skipping. That has already paid: the live run
+established that Daytona's telemetry endpoint answers 403 on an ordinary account
+("Telemetry endpoints are disabled when Analytics API is configured"), so `containerStats`
+is null there - Hezo's stop-before-the-cap does not operate on that backend and the
+provider's own OOM handling applies, ending the one run that overran. The adapter latches
+that 403 and stops asking, because the caller is a 15s loop over every running project and
+the answer never changes; any other error is treated as transient and retried, so one
+network blip cannot silently disable memory enforcement on an account that supports it.
+
+Running the suites live has repeatedly been the only thing that could find a class of bug:
+the PTY message-size limit that killed the tunnel mid-`tools/list`, and the init-event MCP
+status whose `pending` a unit test would happily have asserted as a failure forever.
 
 All changes ship with tests that exercise functionality, preferring integration over
 heavily-mocked unit tests, and a green run keeps a quiet log (no stray `[error]`/`[warn]`).

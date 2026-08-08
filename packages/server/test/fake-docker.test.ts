@@ -1,12 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ExecLogChunk } from '../src/services/docker';
 import { createFakeDockerClient } from '../src/services/fake-docker';
+import type { ContainerConfig, ExecConfig, ExecLogChunk } from '../src/services/sandbox/types';
 import { createAgentRun } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 // Exercises the in-process Docker fake (createFakeDockerClient) directly: the
 // container lifecycle map, the synthetic exec script, and the heartbeat-run
 // produced_output side-effect that distinguishes it from a bare docker stub.
+
+/** The minimum a real create takes; the fake ignores it, the interface does not. */
+const containerConfig = (): ContainerConfig => ({ Image: 'noop', HostConfig: {} });
+
+/** Same for exec: the attach flags are required, so a bare `{ Cmd }` is not one. */
+const execConfig = (over: Partial<ExecConfig> = {}): ExecConfig => ({
+	Cmd: [],
+	AttachStdout: true,
+	AttachStderr: true,
+	...over,
+});
 
 describe('createFakeDockerClient — container lifecycle (no db)', () => {
 	const docker = createFakeDockerClient();
@@ -18,14 +29,15 @@ describe('createFakeDockerClient — container lifecycle (no db)', () => {
 	});
 
 	it('createContainer returns a deterministic noop id derived from the name', async () => {
-		const res = await docker.createContainer('my-container');
+		const res = await docker.createContainer('my-container', containerConfig());
 		expect(res.Id).toBe('noop-my-container');
 		expect(res.Warnings).toEqual([]);
 	});
 
 	it('a freshly created container inspects as exited (not yet started)', async () => {
-		await docker.createContainer('lifecycle');
+		await docker.createContainer('lifecycle', containerConfig());
 		const info = await docker.inspectContainer('noop-lifecycle');
+		if (!info) throw new Error('container not found');
 		expect(info.State.Running).toBe(false);
 		expect(info.State.Status).toBe('exited');
 		expect(info.State.Pid).toBe(0);
@@ -33,9 +45,10 @@ describe('createFakeDockerClient — container lifecycle (no db)', () => {
 	});
 
 	it('startContainer flips the tracked container to running', async () => {
-		await docker.createContainer('lifecycle2');
+		await docker.createContainer('lifecycle2', containerConfig());
 		await docker.startContainer('noop-lifecycle2');
 		const info = await docker.inspectContainer('noop-lifecycle2');
+		if (!info) throw new Error('container not found');
 		expect(info.State.Running).toBe(true);
 		expect(info.State.Status).toBe('running');
 		expect(info.State.Pid).toBe(1);
@@ -44,14 +57,16 @@ describe('createFakeDockerClient — container lifecycle (no db)', () => {
 	it('starting an unknown container id creates a running entry on the fly', async () => {
 		await docker.startContainer('never-created');
 		const info = await docker.inspectContainer('never-created');
+		if (!info) throw new Error('container not found');
 		expect(info.State.Running).toBe(true);
 	});
 
 	it('stopContainer flips a running container back to stopped', async () => {
-		await docker.createContainer('lifecycle3');
+		await docker.createContainer('lifecycle3', containerConfig());
 		await docker.startContainer('noop-lifecycle3');
 		await docker.stopContainer('noop-lifecycle3');
 		const info = await docker.inspectContainer('noop-lifecycle3');
+		if (!info) throw new Error('container not found');
 		expect(info.State.Running).toBe(false);
 	});
 
@@ -60,10 +75,11 @@ describe('createFakeDockerClient — container lifecycle (no db)', () => {
 	});
 
 	it('removeContainer drops the entry so inspect defaults to running=true', async () => {
-		await docker.createContainer('lifecycle4');
+		await docker.createContainer('lifecycle4', containerConfig());
 		await docker.removeContainer('noop-lifecycle4');
 		// Unknown-after-removal: inspect falls back to running=true.
 		const info = await docker.inspectContainer('noop-lifecycle4');
+		if (!info) throw new Error('container not found');
 		expect(info.State.Running).toBe(true);
 	});
 
@@ -79,7 +95,7 @@ describe('createFakeDockerClient — exec without onChunk', () => {
 	const docker = createFakeDockerClient();
 
 	it('returns empty stdout/stderr and runs no synthetic script', async () => {
-		const execId = await docker.execCreate('cid', { Cmd: ['echo'] });
+		const execId = await docker.execCreate('cid', execConfig({ Cmd: ['echo'] }));
 		expect(execId).toContain('noop-exec-');
 		const result = await docker.execStart(execId, {});
 		expect(result).toEqual({ stdout: '', stderr: '' });
@@ -109,7 +125,7 @@ describe('createFakeDockerClient — synthetic exec with onChunk', () => {
 
 	it('streams the deterministic synthetic script through onChunk', async () => {
 		const docker = createFakeDockerClient();
-		const execId = await docker.execCreate('cid', { Cmd: ['agent'] });
+		const execId = await docker.execCreate('cid', execConfig({ Cmd: ['agent'] }));
 		const chunks: ExecLogChunk[] = [];
 		await docker.execStart(execId, {
 			onChunk: (c) => {
@@ -129,7 +145,7 @@ describe('createFakeDockerClient — synthetic exec with onChunk', () => {
 	// contract production does not offer.
 	it('retains no transcript on the streaming path', async () => {
 		const docker = createFakeDockerClient();
-		const execId = await docker.execCreate('cid', { Cmd: ['agent'] });
+		const execId = await docker.execCreate('cid', execConfig({ Cmd: ['agent'] }));
 		const result = await docker.execStart(execId, { onChunk: () => {} });
 		expect(result).toEqual({ stdout: '', stderr: '' });
 	});
@@ -137,9 +153,10 @@ describe('createFakeDockerClient — synthetic exec with onChunk', () => {
 	it('marks the heartbeat run as having produced output when run id env + db are present', async () => {
 		const runId = await createAgentRun(ctx.db, agentId, teamId, null);
 		const docker = createFakeDockerClient(ctx.db);
-		const execId = await docker.execCreate('cid', {
-			Env: [`HEZO_HEARTBEAT_RUN_ID=${runId}`, 'OTHER=1'],
-		});
+		const execId = await docker.execCreate(
+			'cid',
+			execConfig({ Env: [`HEZO_HEARTBEAT_RUN_ID=${runId}`, 'OTHER=1'] }),
+		);
 		await docker.execStart(execId, { onChunk: () => {} });
 
 		const row = await ctx.db.query<{ produced_output: boolean }>(
@@ -153,7 +170,7 @@ describe('createFakeDockerClient — synthetic exec with onChunk', () => {
 		const runId = await createAgentRun(ctx.db, agentId, teamId, null);
 		const docker = createFakeDockerClient(ctx.db);
 		// No HEZO_HEARTBEAT_RUN_ID in env → execRunIds maps to null → no update.
-		const execId = await docker.execCreate('cid', { Env: ['UNRELATED=1'] });
+		const execId = await docker.execCreate('cid', execConfig({ Env: ['UNRELATED=1'] }));
 		await docker.execStart(execId, { onChunk: () => {} });
 
 		const row = await ctx.db.query<{ produced_output: boolean }>(
@@ -165,7 +182,7 @@ describe('createFakeDockerClient — synthetic exec with onChunk', () => {
 
 	it('aborts the synthetic script when the signal is already aborted', async () => {
 		const docker = createFakeDockerClient();
-		const execId = await docker.execCreate('cid');
+		const execId = await docker.execCreate('cid', execConfig());
 		const controller = new AbortController();
 		controller.abort();
 		await expect(

@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { join } from 'node:path';
 import {
 	AgentEffort,
 	type AgentRuntime,
@@ -28,7 +27,7 @@ import {
 	buildRuntimeInvocation,
 	type EgressEnvDescriptor,
 	getContainerPromptPath,
-	getHostPromptPath,
+	getPromptRelPath,
 	type RunnerDeps,
 } from './agent-runner';
 import {
@@ -36,19 +35,25 @@ import {
 	type AgentRunUsage,
 	createAgentChatParser,
 } from './agent-stream-parser';
-import { getProviderCredentialAndModel } from './ai-provider-keys';
+import {
+	type AiProviderCredentialAndModel,
+	getProviderCredentialAndModel,
+} from './ai-provider-keys';
 import { getChatMemory, loadActiveWindow, markCompacted, selectFlush } from './chat-memory';
-import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
-import { CONNECTIVITY_STALE_MS, shouldAbortForConnectivity } from './container-connectivity-status';
+import { loadConnectorDescriptors } from './connectors/connections';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
-import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
+import { acquireRunContainer, type ContainerDeps } from './containers';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
+import { dockerSandboxHandle } from './sandbox/handle';
+import { setPoolMemberChatReservation } from './sandbox/pool-db';
+import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
+import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
 import type { BridgeRunnerArgs } from './ssh-agent';
 import { resolveSystemPrompt } from './template-resolver';
-import { getRunSocketPath } from './workspace';
+import { CONTAINER_WORKSPACE_ROOT, getRunSocketPath } from './workspace';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('chat-session');
@@ -215,6 +220,46 @@ interface LiveSession {
 	promptDirective: string | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
+	/** Tears down the session's tunnel. Idempotent; see {@link HostSideAllocation}. */
+	closeTunnel: () => void;
+	/** What resume needs to rebuild the host-side half; see {@link HostSideInputs}. */
+	invocationInputs: HostSideInputs;
+}
+
+/**
+ * Everything the host-side half of a session start needs, captured once so
+ * resume can re-run it without re-resolving the CEO, the runtime and the
+ * provider credential.
+ */
+interface HostSideInputs {
+	ceoMemberId: string;
+	projectId: string;
+	provider: AiProvider;
+	credential: AiProviderCredentialAndModel;
+	runtimeType: AgentRuntime;
+	modelOverride: string | null;
+}
+
+/**
+ * The half of a session that lives on the Hezo side and does **not** survive its
+ * container being suspended: the ssh agent socket and egress proxy allocations
+ * (whose ports change), the session JWT, and the exec command and env built
+ * around them. Start and resume both produce one of these, which is why it is a
+ * shape rather than an inline block in `startSession`.
+ */
+interface HostSideAllocation {
+	env: string[];
+	execCmd: string[];
+	promptDirective: string | null;
+	releaseEgress: () => Promise<void>;
+	releaseSsh: () => Promise<void>;
+	/**
+	 * The session's tunnel goes with the rest of this half, because everything it
+	 * points at does: its targets are the ssh and egress allocations above, whose
+	 * ports are gone after a suspend. Leaving it open would also keep the
+	 * container active on a backend that bills for that.
+	 */
+	closeTunnel: () => void;
 }
 
 interface CurrentTurn {
@@ -291,6 +336,12 @@ export interface ChannelHooks {
  */
 export class ChatSessionManager {
 	private live: LiveSession | null = null;
+	/**
+	 * The live session is parked on a stopped-but-intact container: its row is
+	 * still live and still owns the container, but its host-side allocations have
+	 * been released, so no turn may exec until {@link resumeSession} rebuilds them.
+	 */
+	private suspended = false;
 	private ensuring: Promise<LiveSession> | null = null;
 	private healthTimer: ReturnType<typeof setInterval> | null = null;
 	// Per-conversation turn bookkeeping (lock + in-flight turn + compaction). Keyed
@@ -845,9 +896,12 @@ export class ChatSessionManager {
 	}
 
 	private async ensureSession(): Promise<LiveSession> {
-		if (this.live) return this.live;
+		if (this.live && !this.suspended) return this.live;
 		if (this.ensuring) return this.ensuring;
-		this.ensuring = this.startSession().finally(() => {
+		// A parked session resumes into its own container and keeps its row; only a
+		// session that never existed (or whose container was replaced) starts fresh.
+		const begin = this.live && this.suspended ? this.resumeSession() : this.startSession();
+		this.ensuring = begin.finally(() => {
 			this.ensuring = null;
 		});
 		return this.ensuring;
@@ -863,6 +917,7 @@ export class ChatSessionManager {
 			logs: this.deps.logs,
 			containerLogStreamer: this.deps.containerLogStreamer,
 			sshAgentServer: this.deps.sshAgentServer,
+			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 		};
 	}
@@ -879,24 +934,25 @@ export class ChatSessionManager {
 		const ceoMemberId = ceo.rows[0]?.id;
 		if (!ceoMemberId) throw new Error('CEO agent not found in HQ team');
 
-		const proj = await db.query<{
-			id: string;
-			container_id: string | null;
-			container_status: string | null;
-		}>(
-			`SELECT id, container_id, container_status FROM projects
-			 WHERE team_id = $1 AND is_internal = true`,
+		const proj = await db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[DEFAULT_TEAM_ID],
 		);
 		const project = proj.rows[0];
 		if (!project) throw new Error('HQ project not found');
-		// The CEO chat is available app-wide from first load, before any project is
-		// created, so the HQ container may never have been provisioned. Bring it up
-		// on demand rather than failing the turn.
-		const containerId =
-			project.container_status === 'running' && project.container_id
-				? project.container_id
-				: await ensureProjectContainerRunning(this.buildContainerDeps(), project.id);
+		// Through the pool, with the chat workload - which reuses the container this
+		// chat already pinned, else takes an idle one, else resumes or creates.
+		//
+		// It used to read `projects.container_id` and lazily start it. That names
+		// the project's most recently provisioned or resumed container, which under
+		// a pool may be one currently serving a task run: the chat then pinned a
+		// busy container and executed its turns on it, two workloads sharing one
+		// memory cap - the shared-fate failure the pool exists to remove, arrived at
+		// from the one direction the pool was not guarding. The CEO chat is also
+		// available app-wide from first load, before any project exists, so the
+		// create rung is a normal path here rather than an edge case.
+		const acquired = await acquireRunContainer(this.buildContainerDeps(), project.id, null, 'chat');
+		const containerId = acquired.containerId;
 
 		// Detect the HQ container's run-user once for this session; reused on every
 		// turn's exec, the ssh socket owner, and the per-turn config-dir chown.
@@ -927,15 +983,18 @@ export class ChatSessionManager {
 		const modelOverride = override.rows[0]?.model ?? credential.defaultModel ?? null;
 
 		// Reclaim any DB rows left live by a crash without an in-memory session, so
-		// the singleton insert below doesn't collide.
+		// the singleton insert below doesn't collide. `suspended` counts as live -
+		// the singleton index treats every non-terminal status that way - so a
+		// process restart while a session was suspended must reclaim it too.
 		await db.query(
 			`UPDATE chat_sessions SET status = $1, stopped_at = now()
-			 WHERE member_id = $2 AND status IN ($3, $4)`,
+			 WHERE member_id = $2 AND status IN ($3, $4, $5)`,
 			[
 				ChatSessionStatus.Crashed,
 				ceoMemberId,
 				ChatSessionStatus.Starting,
 				ChatSessionStatus.Running,
+				ChatSessionStatus.Suspended,
 			],
 		);
 
@@ -954,115 +1013,25 @@ export class ChatSessionManager {
 		);
 		const sessionId = inserted.rows[0].id;
 
-		let releaseSsh = async (): Promise<void> => undefined;
-		let releaseEgress = async (): Promise<void> => undefined;
 		try {
-			const label = `chat`;
-
-			// Warm ssh bridge (commit signing / git over ssh), allocated once.
-			let sshSocketContainerPath: string | null = null;
-			let bridge: BridgeRunnerArgs | null = null;
-			const sshAgentServer = this.deps.sshAgentServer;
-			if (sshAgentServer) {
-				const socketHostPath = getRunSocketPath(this.deps.dataDir, sessionId);
-				const allocated = await sshAgentServer.allocateRunSocket(
-					sessionId,
-					{ teamId: DEFAULT_TEAM_ID, agentId: ceoMemberId, label },
-					socketHostPath,
-				);
-				sshSocketContainerPath = `/run/hezo/${sessionId}.sock`;
-				bridge = {
-					socketPath: sshSocketContainerPath,
-					socketUser: runUser.name,
-					tokenHex: allocated.tokenHex,
-					hostName: 'host.docker.internal',
-					hostPort: allocated.tcpHostPort,
-				};
-				releaseSsh = () => sshAgentServer.releaseRunSocket(sessionId);
-			}
-
-			// Warm egress proxy (secret substitution), allocated once.
-			let egress: EgressEnvDescriptor | null = null;
-			const egressProxy = this.deps.egressProxy;
-			if (egressProxy && this.deps.egressCAPath) {
-				// Abort with operator guidance when the proxy is known-unreachable from
-				// containers, rather than launching the CEO into a black-hole proxy that
-				// would silently fall through to direct egress. The throw is caught below,
-				// which releases the ssh bridge and records the session error. Fail open on
-				// ok/skipped/unknown (and when no status holder is wired).
-				const connectivityStatus = this.deps.connectivityStatus;
-				const connectivityProbe = this.deps.connectivityProbe;
-				if (connectivityStatus && connectivityProbe) {
-					// Re-confirm a BAD cached outcome before blocking (maxAge 0): the probe
-					// auto-rebinds against the live bind host, so a stale/race-poisoned
-					// loopback result self-heals instead of blocking until restart.
-					const cached = connectivityStatus.get().status;
-					const maxAge = shouldAbortForConnectivity(cached) ? 0 : CONNECTIVITY_STALE_MS;
-					const status = await connectivityStatus.ensureFresh(connectivityProbe, maxAge);
-					if (shouldAbortForConnectivity(status)) {
-						const guidance = formatContainerConnectivityMessage(status, {
-							serverPort: this.deps.serverPort,
-							containerBindHost: connectivityStatus.get().bindHost,
-						});
-						throw new Error(
-							`Egress proxy unreachable from agent containers — cannot start CEO chat.\n\n${guidance}`,
-						);
-					}
-				}
-				const allocated = await egressProxy.allocateRunProxy(sessionId, {
-					teamId: DEFAULT_TEAM_ID,
-					agentId: ceoMemberId,
-					projectId: project.id,
-					label,
-				});
-				egress = {
-					host: allocated.proxyHost,
-					port: allocated.proxyPort,
-					containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
-					token: allocated.token,
-				};
-				releaseEgress = () => egressProxy.releaseRunProxy(sessionId);
-			}
-
-			const agentJwt = await signChatSessionJwt(
-				this.deps.masterKeyManager,
+			const inputs: HostSideInputs = {
 				ceoMemberId,
-				DEFAULT_TEAM_ID,
-				sessionId,
-				project.id,
-			);
-
-			// Max thinking — the CEO chat runs at the highest reasoning effort.
-			const effortApplication: EffortRuntimeApplication = applyEffortToRuntime(
-				runtimeType,
-				AgentEffort.Max,
-			);
-
-			const invocation = await buildRuntimeInvocation({
-				deps: this.deps,
-				runTeamId: DEFAULT_TEAM_ID,
 				projectId: project.id,
 				provider,
 				credential,
 				runtimeType,
-				agentJwt,
-				agentId: ceoMemberId,
-				resourceId: sessionId,
-				containerId,
-				runUser,
-				promptContainerPath: getContainerPromptPath(sessionId),
-				effort: AgentEffort.Max,
-				effortApplication,
 				modelOverride,
-				sshSocketContainerPath,
-				bridge,
-				egress,
-			});
+			};
+			const allocation = await this.allocateHostSide(sessionId, containerId, runUser, inputs);
 
 			await db.query(`UPDATE chat_sessions SET status = $1 WHERE id = $2`, [
 				ChatSessionStatus.Running,
 				sessionId,
 			]);
+			// The pin is established by the acquire above, not here - `acquireRunContainer`
+			// with the chat workload is the one place a container becomes the chat's,
+			// so it is also the one place that can guarantee the container it pins is
+			// not already serving a run.
 
 			this.live = {
 				sessionId,
@@ -1071,23 +1040,201 @@ export class ChatSessionManager {
 				containerId,
 				runUser,
 				runtimeType,
-				env: invocation.env,
-				execCmd: invocation.execCmd,
-				promptDirective: effortApplication.promptDirective ?? null,
-				releaseEgress,
-				releaseSsh,
+				invocationInputs: inputs,
+				...allocation,
 			};
 			log.info(`CEO chat session started (runtime=${runtimeType})`, { session: sessionId });
 			return this.live;
 		} catch (err) {
-			await releaseSsh().catch(() => undefined);
-			await releaseEgress().catch(() => undefined);
 			await db
 				.query(
 					`UPDATE chat_sessions SET status = $1, error = $2, stopped_at = now() WHERE id = $3`,
 					[ChatSessionStatus.Crashed, (err as Error).message, sessionId],
 				)
 				.catch(() => undefined);
+			throw err;
+		}
+	}
+
+	/**
+	 * Allocate the half of a session that lives on the Hezo side: the ssh agent
+	 * socket, the egress proxy, the session JWT, and the exec command and env built
+	 * around them.
+	 *
+	 * Extracted because **resume needs exactly this and nothing else**. A suspended
+	 * container keeps its filesystem, and a chat session holds no long-lived process
+	 * (each turn is its own exec; continuity is in the database) - but these
+	 * allocations live on the Hezo side and are released at suspend, and their ports
+	 * change. Two copies of this sequence is what the second-call-site rule exists to
+	 * prevent, and a drifted copy here would mean a resumed chat silently losing
+	 * commit signing or secret substitution.
+	 *
+	 * Releases whatever it managed to allocate before rethrowing, so a partial
+	 * failure never strands a socket or a proxy port.
+	 */
+	private async allocateHostSide(
+		sessionId: string,
+		containerId: string,
+		runUser: ContainerRunUser,
+		inputs: HostSideInputs,
+	): Promise<HostSideAllocation> {
+		let releaseSsh = async (): Promise<void> => undefined;
+		let releaseEgress = async (): Promise<void> => undefined;
+		let tunnel: RunTunnel | null = null;
+		try {
+			const label = `chat`;
+
+			// Warm ssh bridge (commit signing / git over ssh), allocated once.
+			let sshSocketContainerPath: string | null = null;
+			let sshHostTcpPort = 0;
+			let sshTokenHex: string | null = null;
+			const sshAgentServer = this.deps.sshAgentServer;
+			if (sshAgentServer) {
+				const socketHostPath = getRunSocketPath(this.deps.dataDir, sessionId);
+				const allocated = await sshAgentServer.allocateRunSocket(
+					sessionId,
+					{ teamId: DEFAULT_TEAM_ID, agentId: inputs.ceoMemberId, label },
+					socketHostPath,
+				);
+				sshSocketContainerPath = `/run/hezo/${sessionId}.sock`;
+				sshHostTcpPort = allocated.tcpHostPort;
+				sshTokenHex = allocated.tokenHex;
+				releaseSsh = () => sshAgentServer.releaseRunSocket(sessionId);
+			}
+
+			// Warm egress proxy (secret substitution), allocated once.
+			let egressHost: { host: string; port: number; token: string | null } | null = null;
+			const egressProxy = this.deps.egressProxy;
+			if (egressProxy && this.deps.egressCAPath) {
+				const allocated = await egressProxy.allocateRunProxy(sessionId, {
+					teamId: DEFAULT_TEAM_ID,
+					agentId: inputs.ceoMemberId,
+					projectId: inputs.projectId,
+					label,
+				});
+				egressHost = {
+					host: allocated.proxyHost,
+					port: allocated.proxyPort,
+					token: allocated.token,
+				};
+				releaseEgress = () => egressProxy.releaseRunProxy(sessionId);
+			}
+
+			// The chat reaches Hezo exactly as an agent run does - one tunnel, its
+			// own allocated loopback ports, torn down with the session. A session
+			// outlives many turns, so this is the longest-lived tunnel there is;
+			// suspend closes it and resume opens a fresh one, because the host-side
+			// ports it points at are reallocated too.
+			// Resolved once and used twice: the tunnel's split-routing policy needs
+			// the connector hosts (their method allowlist is enforced at the proxy,
+			// so one routed direct would skip it) and the runtime invocation needs
+			// the descriptors themselves. Two loads a moment apart could disagree.
+			const connectorDescriptors = await loadConnectorDescriptors(this.deps.db, inputs.projectId);
+
+			tunnel = await startRunTunnel({
+				engine: this.deps.docker,
+				containerId,
+				runUser,
+				files: this.deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT),
+				configRelPath: join('.hezo', 'tunnel', `${sessionId}.json`),
+				configContainerPath: `${CONTAINER_WORKSPACE_ROOT}/.hezo/tunnel/${sessionId}.json`,
+				addresses: {
+					mcp: { host: '127.0.0.1', port: this.deps.serverPort },
+					ssh: { host: '127.0.0.1', port: sshHostTcpPort },
+					proxy: egressHost
+						? { host: egressHost.host, port: egressHost.port }
+						: { host: '127.0.0.1', port: 0 },
+				},
+				// Connector hosts belong in the policy even though a chat turn builds no
+				// MCP descriptors of its own: the policy governs what this *container*
+				// proxies, and the per-connector method allowlist is enforced at the
+				// proxy, so a connector host routed direct from here would skip it.
+				policy: await buildTunnelHostPolicy(this.deps.db, connectorDescriptors),
+			});
+			// A session outlives many turns, so this is the tunnel most exposed to an
+			// idle drop - and a chat that has lost its tunnel cannot reach Hezo at
+			// all, so every later turn would answer from the model alone with none of
+			// its tools. Tear the session down instead; the next turn rebuilds it with
+			// a fresh tunnel and fresh host-side ports.
+			tunnel.onClosed((why) => {
+				log.warn(`CEO chat session ${sessionId} lost its tunnel (${why}); tearing it down`);
+				trackBackground(
+					this.teardown(ChatSessionStatus.Crashed).catch((e) =>
+						log.error('tearing down the chat session after tunnel loss failed', e),
+					),
+				);
+			});
+			const endpoints = tunnel.endpoints;
+
+			const bridge: BridgeRunnerArgs | null =
+				sshSocketContainerPath && sshTokenHex
+					? {
+							socketPath: sshSocketContainerPath,
+							socketUser: runUser.name,
+							tokenHex: sshTokenHex,
+							hostName: endpoints.sshHost,
+							hostPort: endpoints.sshPort,
+						}
+					: null;
+
+			const egress: EgressEnvDescriptor | null = egressHost
+				? {
+						host: endpoints.proxyHost,
+						port: endpoints.proxyPort,
+						containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+						token: egressHost.token,
+					}
+				: null;
+
+			const agentJwt = await signChatSessionJwt(
+				this.deps.masterKeyManager,
+				inputs.ceoMemberId,
+				DEFAULT_TEAM_ID,
+				sessionId,
+				inputs.projectId,
+			);
+
+			// Max thinking — the CEO chat runs at the highest reasoning effort.
+			const effortApplication: EffortRuntimeApplication = applyEffortToRuntime(
+				inputs.runtimeType,
+				AgentEffort.Max,
+			);
+
+			const invocation = await buildRuntimeInvocation({
+				endpoints,
+				connectorDescriptors,
+				deps: this.deps,
+				runTeamId: DEFAULT_TEAM_ID,
+				projectId: inputs.projectId,
+				provider: inputs.provider,
+				credential: inputs.credential,
+				runtimeType: inputs.runtimeType,
+				agentJwt,
+				agentId: inputs.ceoMemberId,
+				resourceId: sessionId,
+				containerId,
+				runUser,
+				promptContainerPath: getContainerPromptPath(sessionId),
+				effort: AgentEffort.Max,
+				effortApplication,
+				modelOverride: inputs.modelOverride,
+				sshSocketContainerPath,
+				bridge,
+				egress,
+			});
+
+			return {
+				env: invocation.env,
+				execCmd: invocation.execCmd,
+				promptDirective: effortApplication.promptDirective ?? null,
+				releaseEgress,
+				releaseSsh,
+				closeTunnel: () => tunnel?.close(),
+			};
+		} catch (err) {
+			tunnel?.close();
+			await releaseSsh().catch(() => undefined);
+			await releaseEgress().catch(() => undefined);
 			throw err;
 		}
 	}
@@ -1104,16 +1251,31 @@ export class ChatSessionManager {
 		session: LiveSession,
 		conversationId: string,
 		slot?: string,
-	): { hostPath: string; env: string[] } {
+	): { write: (prompt: string) => Promise<void>; remove: () => Promise<void>; env: string[] } {
 		const key = slot
 			? `${session.sessionId}-${conversationId}-${slot}`
 			: `${session.sessionId}-${conversationId}`;
-		const hostPath = getHostPromptPath(this.deps.dataDir, DEFAULT_TEAM_ID, session.projectId, key);
 		const containerPath = getContainerPromptPath(key);
 		const env = session.env.map((e) =>
 			e.startsWith('HEZO_PROMPT_FILE=') ? `HEZO_PROMPT_FILE=${containerPath}` : e,
 		);
-		return { hostPath, env };
+		// Written through the seam, not to a host path. The exec reads
+		// `HEZO_PROMPT_FILE` from *inside* the container, and that only lined up
+		// with a host write because the workspace is a bind mount on Docker. On a
+		// managed backend there is no such path, so every chat turn would have read
+		// an empty prompt while the write reported success - the failure the
+		// `SandboxFiles` seam exists to remove. `runAgent` moved the identical
+		// write over already; this one was missed.
+		const files = this.deps.docker.files(session.containerId, CONTAINER_WORKSPACE_ROOT);
+		const relPath = getPromptRelPath(key);
+		return {
+			write: (prompt: string) => files.write(relPath, prompt),
+			// Scrubbed the same way it was written: a host `rmSync` against a managed
+			// backend would no-op while looking like it worked, leaving the prompt in
+			// the container for the rest of its life.
+			remove: () => files.remove(relPath),
+			env,
+		};
 	}
 
 	private async runTurn(
@@ -1125,7 +1287,11 @@ export class ChatSessionManager {
 	): Promise<void> {
 		const { conversationId } = ctx;
 		const convo = this.getConvoRuntime(conversationId);
-		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		const {
+			write: writePrompt,
+			remove: removePrompt,
+			env,
+		} = this.turnPrompt(session, conversationId);
 		// Per-exec scope marker: session-level HEZO_HEARTBEAT_RUN_ID is shared by
 		// every exec of this session (turns in other conversations, compaction,
 		// titling), so an interrupt must kill by a marker unique to THIS exec or it
@@ -1162,8 +1328,7 @@ export class ChatSessionManager {
 				kind: ctx.kind,
 				injectedContext,
 			});
-			mkdirSync(dirname(hostPath), { recursive: true });
-			writeFileSync(hostPath, prompt);
+			await writePrompt(prompt);
 
 			const pricing = this.deps.pricing;
 			const parser = createAgentChatParser(
@@ -1179,15 +1344,10 @@ export class ChatSessionManager {
 				}
 			};
 
-			const execId = await this.deps.docker.execCreate(session.containerId, {
-				Cmd: session.execCmd,
-				Env: env,
-				WorkingDir: CHAT_WORKING_DIR,
-				User: session.runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
-			});
-			await this.deps.docker.execStart(execId, {
+			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+				cmd: session.execCmd,
+				env,
+				workingDir: CHAT_WORKING_DIR,
 				signal: abort.signal,
 				onChunk: (chunk) => {
 					if (chunk.stream === 'stdout') handle(parser.onStdout(chunk.text));
@@ -1206,7 +1366,7 @@ export class ChatSessionManager {
 				await finalize(ChatMessageStatus.Failed, null, (err as Error).message);
 			}
 		} finally {
-			rmSync(hostPath, { force: true });
+			await removePrompt();
 			if (convo.current?.assistantMessageId === assistantMessageId) convo.current = null;
 		}
 	}
@@ -1338,23 +1498,24 @@ export class ChatSessionManager {
 		const memory = await getChatMemory(this.deps.db, session.ceoMemberId);
 		const before = memory?.updated_at ?? null;
 		const prompt = buildCompactionPrompt(memory?.content ?? '', flush.windowTranscript);
-		const { hostPath, env } = this.turnPrompt(session, conversationId);
+		const {
+			write: writePrompt,
+			remove: removePrompt,
+			env,
+		} = this.turnPrompt(session, conversationId);
 		const execScopeId = randomUUID();
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
-		mkdirSync(dirname(hostPath), { recursive: true });
-		writeFileSync(hostPath, prompt);
+		await writePrompt(prompt);
 		try {
-			const execId = await this.deps.docker.execCreate(session.containerId, {
-				Cmd: session.execCmd,
-				Env: env,
-				WorkingDir: CHAT_WORKING_DIR,
-				User: session.runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
-			});
 			// Drain output; the reply text is irrelevant — the memory write is the
 			// real product, landed via the update_chat_memory MCP tool.
-			await this.deps.docker.execStart(execId, { signal: abort.signal, onChunk: () => undefined });
+			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+				cmd: session.execCmd,
+				env,
+				workingDir: CHAT_WORKING_DIR,
+				signal: abort.signal,
+				onChunk: () => undefined,
+			});
 		} catch (e) {
 			// A new user turn preempts compaction — that's a clean stop, not a
 			// failure; nothing is evicted and it retries later.
@@ -1364,7 +1525,7 @@ export class ChatSessionManager {
 			}
 			throw e;
 		} finally {
-			rmSync(hostPath, { force: true });
+			await removePrompt();
 		}
 		if (abort.signal.aborted) return;
 
@@ -1449,24 +1610,22 @@ export class ChatSessionManager {
 		const prompt = buildTitlePrompt(window.map(chatTranscriptLine).join('\n\n'));
 		// A dedicated prompt file (the `title` slot) so this exec can run concurrently
 		// with the reply's exec without either overwriting the other's prompt.
-		const { hostPath, env } = this.turnPrompt(session, conversationId, 'title');
+		const {
+			write: writePrompt,
+			remove: removePrompt,
+			env,
+		} = this.turnPrompt(session, conversationId, 'title');
 		const execScopeId = randomUUID();
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
-		mkdirSync(dirname(hostPath), { recursive: true });
-		writeFileSync(hostPath, prompt);
+		await writePrompt(prompt);
 
 		const parser = createAgentChatParser(session.runtimeType);
 		let text = '';
 		try {
-			const execId = await this.deps.docker.execCreate(session.containerId, {
-				Cmd: session.execCmd,
-				Env: env,
-				WorkingDir: CHAT_WORKING_DIR,
-				User: session.runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
-			});
-			await this.deps.docker.execStart(execId, {
+			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+				cmd: session.execCmd,
+				env,
+				workingDir: CHAT_WORKING_DIR,
 				signal: abort.signal,
 				onChunk: (chunk) => {
 					if (chunk.stream === 'stdout') {
@@ -1483,7 +1642,7 @@ export class ChatSessionManager {
 			}
 			throw e;
 		} finally {
-			rmSync(hostPath, { force: true });
+			await removePrompt();
 		}
 		if (abort.signal.aborted) return;
 
@@ -1503,16 +1662,149 @@ export class ChatSessionManager {
 		});
 	}
 
+	/**
+	 * Two different things can happen to the chat's container, and conflating them
+	 * is what used to end a session for no reason.
+	 *
+	 * **A different container** (id changed, or the project has none) means the
+	 * filesystem this session was working in is gone. Nothing can be resumed into
+	 * it, so the session is torn down exactly as before.
+	 *
+	 * **The same container, stopped** is a suspend: the filesystem is intact and
+	 * the session holds no long-lived process, so nothing it needs was lost. It is
+	 * parked rather than ended - the row stays live, its id keeps anchoring the
+	 * message history, and the next turn resumes into it. This is what makes a
+	 * managed backend usable, since it suspends sandboxes on its own idle timer;
+	 * tearing down there would end the operator's session every quiet period.
+	 */
 	private async checkHealth(): Promise<void> {
-		if (!this.live) return;
+		const live = this.live;
+		if (!live || this.suspended) return;
 		const proj = await this.deps.db.query<{
 			container_id: string | null;
 			container_status: string | null;
-		}>(`SELECT container_id, container_status FROM projects WHERE id = $1`, [this.live.projectId]);
+		}>(`SELECT container_id, container_status FROM projects WHERE id = $1`, [live.projectId]);
 		const row = proj.rows[0];
-		if (!row || row.container_status !== 'running' || row.container_id !== this.live.containerId) {
-			log.warn('HQ container unavailable; tearing down CEO chat session');
+		if (!row || !row.container_id || row.container_id !== live.containerId) {
+			log.warn('HQ container replaced or gone; tearing down CEO chat session');
 			await this.teardown(ChatSessionStatus.Stopped);
+			return;
+		}
+		if (row.container_status !== 'running') {
+			await this.suspend();
+		}
+	}
+
+	/**
+	 * Park ahead of a container the idle pass is about to take down.
+	 *
+	 * `checkHealth` already parks a session whose container it *finds* stopped,
+	 * but it polls - so the idle pass won the race every time and the session
+	 * learned about the suspension from its tunnel dying instead. That is the
+	 * unrequested-death path: it logged "closed unexpectedly", ended the session
+	 * as `crashed` rather than parking it as `suspended` (so the next message
+	 * started a fresh conversation instead of resuming), and the provider's PTY
+	 * DELETE arrived after the sandbox had begun stopping and 400'd, leaking the
+	 * session on the provider.
+	 *
+	 * Called with the container still up, this closes the tunnel deliberately -
+	 * which `RunTunnel` does not report as a death - so the teardown is orderly
+	 * and the PTY delete lands on a reachable sandbox.
+	 *
+	 * A no-op unless a live, unparked session is pinned to exactly this container:
+	 * the idle pass calls it for every container it retires, most of which the
+	 * assistant has nothing to do with.
+	 */
+	async parkForContainerSuspend(containerId: string): Promise<void> {
+		const live = this.live;
+		if (!live || this.suspended || live.containerId !== containerId) return;
+		await this.suspend();
+	}
+
+	/**
+	 * Park the session on its stopped-but-intact container: release the host-side
+	 * allocations (their ports do not survive) and record `suspended`, keeping the
+	 * row live so it still owns its container and still blocks a second session.
+	 *
+	 * No marker kill here, unlike teardown - the container is stopped, so there is
+	 * no process tree to reap, and an exec against it would only fail.
+	 */
+	private async suspend(): Promise<void> {
+		const live = this.live;
+		if (!live || this.suspended) return;
+		this.suspended = true;
+		log.info('HQ container suspended; parking CEO chat session', { session: live.sessionId });
+		live.closeTunnel();
+		await live.releaseSsh().catch(() => undefined);
+		await live.releaseEgress().catch(() => undefined);
+		await this.deps.db
+			.query(`UPDATE chat_sessions SET status = $1 WHERE id = $2`, [
+				ChatSessionStatus.Suspended,
+				live.sessionId,
+			])
+			.catch(() => undefined);
+	}
+
+	/**
+	 * Resume a parked session into its container: start the container again and
+	 * re-run the host-side half against the **same** session row, so the id that
+	 * anchors this session's messages survives.
+	 *
+	 * The acquire is scoped to the **chat workload**, so it comes back with the
+	 * container this session pinned - resumed if it was suspended - rather than
+	 * whichever one the project happens to name. That distinction only appeared
+	 * with the pool: asking `ensureProjectContainerRunning` returned the project's
+	 * most recently provisioned or resumed container, so once task runs had moved
+	 * it on, a perfectly healthy parked session read as "the container was
+	 * replaced" and was torn down. Getting a genuinely different id back still
+	 * means the pinned container is gone (the pin was dropped as stale), and
+	 * starting fresh is right then - the filesystem this conversation was built
+	 * against no longer exists.
+	 */
+	private async resumeSession(): Promise<LiveSession> {
+		const live = this.live;
+		if (!live) throw new Error('no session to resume');
+		const acquired = await acquireRunContainer(
+			this.buildContainerDeps(),
+			live.projectId,
+			null,
+			'chat',
+		);
+		const containerId = acquired.containerId;
+		if (containerId !== live.containerId) {
+			log.warn('HQ container was replaced while suspended; starting a fresh CEO chat session');
+			await this.teardown(ChatSessionStatus.Stopped);
+			return this.startSession();
+		}
+
+		try {
+			const allocation = await this.allocateHostSide(
+				live.sessionId,
+				containerId,
+				live.runUser,
+				live.invocationInputs,
+			);
+			await this.deps.db.query(`UPDATE chat_sessions SET status = $1 WHERE id = $2`, [
+				ChatSessionStatus.Running,
+				live.sessionId,
+			]);
+			this.live = { ...live, ...allocation };
+			this.suspended = false;
+			log.info('CEO chat session resumed', { session: live.sessionId });
+			return this.live;
+		} catch (err) {
+			// The session cannot serve a turn without its host-side half, and leaving
+			// it parked would retry the same failure on every message. End it so the
+			// next turn starts cleanly and the error is recorded once.
+			await this.deps.db
+				.query(
+					`UPDATE chat_sessions SET status = $1, error = $2, stopped_at = now() WHERE id = $3`,
+					[ChatSessionStatus.Crashed, (err as Error).message, live.sessionId],
+				)
+				.catch(() => undefined);
+			this.live = null;
+			this.suspended = false;
+			throw err;
 		}
 	}
 
@@ -1525,6 +1817,7 @@ export class ChatSessionManager {
 		const live = this.live;
 		if (!live) return;
 		this.live = null;
+		this.suspended = false;
 		// Session-wide reap: every exec of this session (and its children) carries
 		// HEZO_HEARTBEAT_RUN_ID=<sessionId>, and by teardown they have all been
 		// aborted — nothing live shares the marker, so the broad kill is safe here
@@ -1533,8 +1826,14 @@ export class ChatSessionManager {
 		await this.deps.docker
 			.killProcessesByEnvMarker(live.containerId, 'HEZO_HEARTBEAT_RUN_ID', live.sessionId)
 			.catch(() => undefined);
+		live.closeTunnel();
 		await live.releaseSsh().catch(() => undefined);
 		await live.releaseEgress().catch(() => undefined);
+		// Hand the container back to the pool. Suspend deliberately does NOT do this:
+		// a parked session still owns its container and resumes into it.
+		await setPoolMemberChatReservation(this.deps.db, live.containerId, false).catch(
+			() => undefined,
+		);
 		await this.deps.db
 			.query(`UPDATE chat_sessions SET status = $1, stopped_at = now() WHERE id = $2`, [
 				status,

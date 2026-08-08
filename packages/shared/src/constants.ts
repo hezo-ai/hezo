@@ -59,19 +59,6 @@ export const MAX_CHAT_HISTORY_SIZE_MIN = 8 * 1024;
 export const MAX_CHAT_HISTORY_SIZE_MAX = 256 * 1024;
 
 /**
- * Instance-wide cap on simultaneously ACTIVE (running) project containers,
- * including the assistant chat's container. Combined with the per-container RAM
- * cap, this bounds total memory demand at `N × cap` no matter how many runs
- * share a container. Stored in system_meta; when the key is absent the
- * effective default is COMPUTED from host memory via
- * {@link computeDefaultMaxActiveContainers} — the constant below is only the
- * last-resort fallback when host memory is unreadable. Clamped to [MIN, MAX].
- */
-export const DEFAULT_MAX_ACTIVE_CONTAINERS = 3;
-export const MAX_ACTIVE_CONTAINERS_MIN = 1;
-export const MAX_ACTIVE_CONTAINERS_MAX = 100;
-
-/**
  * Instance-wide default memory cap per project container, in GB. Dual role:
  * the Docker cgroup memory limit applied to every container that doesn't carry
  * a per-project override, and the divisor in the automatic max-active-container
@@ -88,14 +75,25 @@ export const RAM_CAP_PER_CONTAINER_GB_MAX = 512;
  * all live *outside* every container and still need memory; sizing the limit off
  * the full RAM + swap total treated that overhead as free and oversubscribed
  * small hosts. A floor, not a share: it does not scale with host size.
+ *
+ * It also absorbs the per-container `MEMORY_HARD_CAP_HEADROOM_BYTES` slack that
+ * the whole-GiB arithmetic does not model exactly.
  */
 export const HOST_RESERVED_MEMORY_GB = 1;
 
 /**
  * Host memory available to containers: total virtual memory (RAM + swap),
  * rounded to whole GiB, less {@link HOST_RESERVED_MEMORY_GB}. Split out from
- * {@link computeDefaultMaxActiveContainers} so the web settings page can render
+ * {@link computeDefaultMaxContainerMemoryGb} so the web settings page can render
  * the same usable figure instead of re-deriving the rounding.
+ *
+ * **Swap counts at full weight**, deliberately: an agent container spends most of
+ * its life idle between execs, so its cold pages really can live on disk, and a
+ * host with swap configured genuinely fits more containers than its RAM alone.
+ * The budget is total virtual memory, not RAM.
+ *
+ * Only meaningful for a backend that runs containers on this host - see
+ * {@link computeDefaultMaxContainerMemoryGb}, which is where that check lives.
  */
 export function usableMemoryGibForContainers(
 	totalRamBytes: number,
@@ -107,32 +105,254 @@ export function usableMemoryGibForContainers(
 }
 
 /**
- * The automatic max-active-containers default: how many ram-cap-sized
- * containers fit in the host memory left over after the system reserve, so
- * total container demand can never exceed what the host actually has spare. The
- * reference 1.92GiB-RAM + 6GiB-swap host rounds to 8GiB and yields
- * (8 - 1) / 2 = 3. Pure math (shared so the web settings page can render the
- * same formula); byte inputs come from the server's host-memory probe.
+ * Total memory, in GB, that all running containers may consume at once.
+ *
+ * **The cap is a memory budget, not a container count.** A count only bounds
+ * memory while every container is the same size, and `projects.memory_limit_gib`
+ * exists precisely so one project's containers can be bigger. Under a count, a
+ * project overriding to 4 GB silently doubles its share: an instance sized for
+ * three 2 GB containers would happily run three 4 GB ones and oversubscribe the
+ * host - or, on a managed backend, quietly double the bill for the same number.
+ * Summing what each container actually asked for makes the cap mean one thing
+ * regardless of overrides.
+ *
+ * The trade-off, which is real: a large container waits for enough budget rather
+ * than for any free slot, so it can be overtaken by smaller runs. That is why
+ * {@link projectMemoryFitsBudget} refuses a per-project cap larger than the whole
+ * budget - a request that can never fit is a configuration error the operator
+ * should see at once, not a run that queues forever with nothing to show why.
  */
-export function computeDefaultMaxActiveContainers(
-	totalRamBytes: number,
-	totalSwapBytes: number,
-	ramCapGb: number,
-): number {
-	const usableGib = usableMemoryGibForContainers(totalRamBytes, totalSwapBytes);
-	const computed = Math.floor(usableGib / Math.max(1, ramCapGb));
-	return Math.min(MAX_ACTIVE_CONTAINERS_MAX, Math.max(MAX_ACTIVE_CONTAINERS_MIN, computed));
+export const MAX_CONTAINER_MEMORY_GB_MIN = 1;
+export const MAX_CONTAINER_MEMORY_GB_MAX = 4096;
+
+/**
+ * Memory a container engine's containers draw from, as reported by the engine.
+ *
+ * `null` where a container's memory is not this host's to spend - the engine
+ * runs them elsewhere - which is the only distinction the capacity model needs
+ * to make, and the reason it needs no idea which provider is in use.
+ */
+export interface ContainerHostMemory {
+	totalRamBytes: number;
+	totalSwapBytes: number;
 }
 
 /**
- * Minutes a project's container keeps running after its last activity (agent
- * runs, assistant chat) before the idle-stop cron stops it. Containers restart
- * on demand when a run or chat needs them. 0 = never stop (always-on).
- * Stored in system_meta; absent key = default. Clamped to [MIN, MAX].
+ * The budget when there is no host memory to derive one from: a managed backend,
+ * or a host whose memory is unreadable. The old 3 x 2 GB shape.
+ *
+ * Deliberately modest rather than generous. On a managed backend this figure is
+ * a **spend guard**, and the cost of setting it too low is a queued run the
+ * operator can see and raise; the cost of setting it too high is a bill they
+ * find out about later.
  */
-export const DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN = 15;
-export const CONTAINER_IDLE_TIMEOUT_MIN_MIN = 0;
-export const CONTAINER_IDLE_TIMEOUT_MIN_MAX = 10080;
+export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 6;
+
+/**
+ * The automatic memory-budget default, in GB.
+ *
+ * **Only an engine that runs containers on this host derives from host memory**,
+ * which is why the input is the engine's own answer rather than a probe. A
+ * managed backend's containers run on the provider's machines, so the operator's
+ * RAM says nothing about how many fit: deriving from it would size the fleet by
+ * the wrong computer, and wrongly in both directions - a 2 GB VPS driving a
+ * managed backend would compute a budget that fits no container at all, while a
+ * 128 GB workstation would authorise 127 GB of somebody else's hardware.
+ * {@link DEFAULT_MAX_CONTAINER_MEMORY_GB} stands in there, and the operator
+ * raises it deliberately.
+ *
+ * On a host engine it is everything host memory allows, less the system reserve
+ * ({@link HOST_RESERVED_MEMORY_GB}, via {@link usableMemoryGibForContainers})
+ * and one container's worth held back for the CEO chat.
+ *
+ * Chat is exempt from the budget on **every** backend (a queued task run is
+ * invisible; a queued chat turn is a person watching a spinner), so the chat
+ * container is excluded from what the budget counts as used. Reserving for it up
+ * front rather than subtracting when a session opens keeps task-run capacity a
+ * *stable* number - opening the chat never silently slows the fleet. The
+ * managed-backend default already has that reservation priced in, which is why
+ * it is not subtracted again here.
+ */
+export function computeDefaultMaxContainerMemoryGb(
+	hostMemory: ContainerHostMemory | null,
+	ramCapGb: number,
+): number {
+	if (!hostMemory) return DEFAULT_MAX_CONTAINER_MEMORY_GB;
+	const cap = Math.max(1, ramCapGb);
+	const usableGib = Math.max(
+		0,
+		usableMemoryGibForContainers(hostMemory.totalRamBytes, hostMemory.totalSwapBytes) - cap,
+	);
+	// **Floored at one container's cap, not at MAX_CONTAINER_MEMORY_GB_MIN.**
+	// The budget is compared against a whole container's request, so a budget
+	// below the cap admits nothing: every run queues `InstanceAtCapacity`
+	// forever with nothing naming the cause. Flooring at 1 GB did exactly that
+	// on any host with roughly 5 GiB or less of RAM+swap - a 4 GB VPS with no
+	// swap yielded a 1 GB budget against the 2 GB default cap - so the
+	// instance bricked on hardware the docs treat as ordinary.
+	//
+	// Admitting one container over-subscribes a host that genuinely cannot fit
+	// it, and that is the better failure: the container is memory-capped, so
+	// the kernel bounds the damage to that one run, whereas the alternative is
+	// an instance that can never do anything at all.
+	return Math.min(MAX_CONTAINER_MEMORY_GB_MAX, Math.max(cap, Math.floor(usableGib)));
+}
+
+/**
+ * Whether a per-container memory cap can ever be satisfied by the budget.
+ *
+ * Enforced where the cap is set - the instance default and the per-project
+ * override - rather than at acquire time, because at acquire time the only
+ * honest response would be to queue a run that can never start.
+ */
+export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolean {
+	return capGb <= budgetGb;
+}
+
+/**
+ * Disk, in GB, allocated to each project container.
+ *
+ * The sibling of the per-container RAM cap: an instance-wide default, overridable
+ * per project. Unlike memory it is only meaningful where the backend allocates a
+ * per-container filesystem - a managed sandbox does, a local Docker container's
+ * workspace is a bind mount with the operator's whole disk behind it - so each
+ * engine absorbs it, and the setting is stated once rather than branched on by a
+ * caller.
+ *
+ * Small on purpose. A sandbox's disk is billed and quota'd by the provider, and
+ * the account-wide disk quota is usually what binds first, so the default is
+ * sized for a working checkout plus its dependencies rather than for the largest
+ * repository anyone might have. Raise it - globally or for the one project that
+ * needs it - rather than paying for headroom every project holds and none uses.
+ */
+export const DEFAULT_CONTAINER_DISK_GB = 5;
+/** Below this a checkout plus `node_modules` does not reliably fit. */
+export const CONTAINER_DISK_GB_MIN = 2;
+export const CONTAINER_DISK_GB_MAX = 1024;
+
+/**
+ * Headroom, in GB, left below a container's allocation before the pool recycles
+ * it rather than handing it to another run.
+ *
+ * A container that fills up *during* a run fails that run partway through, which
+ * is strictly worse than paying for a fresh container up front - so the recycle
+ * threshold sits below the allocation, not at it, and the gap has to be big
+ * enough for one run's growth (a dependency install, a build output).
+ */
+const POOL_DISK_HEADROOM_GB = 1;
+
+/**
+ * Disk a container may consume before the pool recycles it, in bytes.
+ *
+ * Derived from that container's own allocation rather than fixed, because the
+ * allocation is now configurable: a ceiling that made sense against one size is
+ * either pointless (far above what the container can hold) or thrashing (recycles
+ * a container that had plenty left) against another. The floor keeps the
+ * threshold meaningful when the allocation is small enough that the flat headroom
+ * would consume most of it.
+ */
+export function poolDiskCeilingBytes(diskGb: number): number {
+	const usable = Math.max(diskGb / 2, diskGb - POOL_DISK_HEADROOM_GB);
+	return Math.round(usable * 1024 ** 3);
+}
+
+/**
+ * Bytes as GB to one decimal - the unit every container surface reports in.
+ *
+ * Shared rather than per-surface because the run log names a container's size
+ * and then links straight to the page that names it again: rounding the two
+ * differently would show one container as two.
+ */
+export function formatGib(bytes: number): string {
+	return `${Math.round((bytes / 1024 ** 3) * 10) / 10} GB`;
+}
+
+/**
+ * The run log's opening line naming the container the run was given and what it
+ * was built with.
+ *
+ * Written by the runner and matched by the log viewer, which turns the id into a
+ * link to that container's page - so the two halves live together and are
+ * round-tripped by one test rather than being a format one side re-derives.
+ *
+ * The **full** engine id goes in the line, not a truncated one: it is what the
+ * container page is keyed on, and a log line is also the thing an operator
+ * copies into their own tooling. The viewer shortens it for display.
+ *
+ * The memory segment is dropped rather than guessed when the allocation is
+ * unrecorded, which is the same thing the Containers page does with it.
+ */
+export function formatContainerMetaLogLine(meta: {
+	containerId: string;
+	memoryBytes: number | null;
+	diskCeilingBytes: number;
+}): string {
+	const parts = [`${CONTAINER_META_LOG_LABEL}${meta.containerId}`];
+	if (meta.memoryBytes !== null) parts.push(`${formatGib(meta.memoryBytes)} RAM`);
+	parts.push(`${formatGib(meta.diskCeilingBytes)} disk`);
+	return parts.join(CONTAINER_META_LOG_SEPARATOR);
+}
+
+/**
+ * The wording of {@link formatContainerMetaLogLine}, exported because the viewer
+ * rebuilds the line around a shortened, linked id and must not restate it.
+ *
+ * Untranslated like every other runner line: the log is written once, in one
+ * language, and persisted verbatim.
+ */
+export const CONTAINER_META_LOG_LABEL = 'Container ';
+export const CONTAINER_META_LOG_SEPARATOR = ' · ';
+
+/** The id and the rendered remainder of {@link formatContainerMetaLogLine}, or null for any other line. */
+export function parseContainerMetaLogLine(
+	text: string,
+): { containerId: string; details: string } | null {
+	if (!text.startsWith(CONTAINER_META_LOG_LABEL)) return null;
+	const [containerId, ...rest] = text
+		.slice(CONTAINER_META_LOG_LABEL.length)
+		.split(CONTAINER_META_LOG_SEPARATOR);
+	if (!containerId || /\s/.test(containerId)) return null;
+	return { containerId, details: rest.join(CONTAINER_META_LOG_SEPARATOR) };
+}
+
+/**
+ * Minutes a project's containers keep running after their last activity (agent
+ * runs, assistant chat) before the idle pass retires the pool - suspending one
+ * and destroying the rest. Containers come back on demand.
+ *
+ * **A constant, not an operator setting.** Its only real job is coalescing a
+ * burst: covering the gap between one run finishing and the next starting in the
+ * same project, so the next run finds a warm container rather than resuming or
+ * creating one. That gap is a comment insert, a wakeup fire, the 1 Hz dispatch
+ * cron and a container acquire - seconds to about a minute. Two minutes is the
+ * smallest value that reliably covers that chain; one can suspend a container
+ * mid-wakeup-chain, so the next run pays a resume and the instance pays the
+ * suspend work twice for nothing. Longer buys very little, because resuming a
+ * suspended container costs about a second anyway.
+ *
+ * An operator has no way to reason about this better than the system can, which
+ * is exactly the kind of knob worth deleting - and the old `0 = never stop`
+ * escape hatch was the only thing keeping a dev server alive between runs, which
+ * is a job an agent-run container was never the right home for.
+ */
+export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
+
+/**
+ * The same window, for a project whose **assistant chat session is live**.
+ *
+ * Longer because the two are measuring different things. Between agent runs the
+ * gap is mechanical - a wakeup fires, the dispatch cron ticks, a container is
+ * acquired - and two minutes covers it. Between chat messages the gap is a
+ * person reading a reply and deciding what to say next, and two minutes of that
+ * is an ordinary pause, not an idle instance. Reclaiming there suspended the
+ * container out from under an open chatbox, so the next message paid a cold
+ * start (~30s on a managed backend) for a conversation the operator never left.
+ *
+ * Fifteen minutes is "you have gone away" rather than "you are thinking". It
+ * applies only while a session is `starting`/`running` - once it stops, the
+ * project falls back to the ordinary window immediately.
+ */
+export const CHAT_IDLE_TIMEOUT_MIN = 15;
 
 /**
  * The "latest few" messages kept in the active window after a compaction flush.
@@ -196,6 +416,15 @@ export const wsRoom = {
 	 * progress is broadcast here once and every project page filters by image.
 	 */
 	imageBuilds: () => 'image-builds',
+	/**
+	 * One container's log stream.
+	 *
+	 * Keyed on the **container**, not the project that owns it. A project holds as
+	 * many containers as it has concurrent runs, so a project-keyed room merged
+	 * several containers' output into one stream and attributed it to whichever
+	 * container the page happened to be showing.
+	 */
+	containerLogs: (containerId: string) => `container-logs:${containerId}`,
 	/**
 	 * The single global project-index room. A project is created in a brand-new
 	 * team whose `team:<id>` room no client has joined yet (and whose row isn't in

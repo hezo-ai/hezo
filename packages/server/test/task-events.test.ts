@@ -36,6 +36,12 @@ interface CommentRow {
 		to?: string;
 		from_id?: string | null;
 		to_id?: string | null;
+		// Parent-change events also carry where the parent lives, so a reader can
+		// tell a re-parent inside one project from a move across two.
+		from_identifier?: string;
+		to_identifier?: string;
+		from_project_slug?: string;
+		to_project_slug?: string;
 		from_name?: string;
 		to_name?: string;
 		actor_id?: string | null;

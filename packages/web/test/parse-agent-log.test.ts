@@ -1,8 +1,10 @@
+import { formatContainerMetaLogLine } from '@hezo/shared';
 import {
 	type AgentLogLine,
 	type DoneBlock,
 	parseAgentLog,
 	type ResultBlock,
+	type RunnerBlock,
 	type SystemBlock,
 	type TextBlock,
 	type ThinkingBlock,
@@ -207,4 +209,50 @@ test('separates system stdout from system stderr into different blocks', () => {
 test('flushes pending prose before opening a system block', () => {
 	const blocks = parseAgentLog(makeLines(['Setting up.', '[system] (syncing repos...)', 'Done.']));
 	expect(blocks.map((b) => b.type)).toEqual(['text', 'system', 'text']);
+});
+
+test('gives runner lines their own block rather than gluing them into the prose', () => {
+	const blocks = parseAgentLog(
+		makeLines([
+			'I have finished the refactor.',
+			'[runner] Starting the project container…',
+			'[runner] no work to do',
+		]),
+	);
+	expect(blocks.map((b) => b.type)).toEqual(['text', 'runner']);
+	const runner = blocks[1] as RunnerBlock;
+	expect(runner.lines.map((l) => l.text)).toEqual([
+		'Starting the project container…',
+		'no work to do',
+	]);
+	expect(runner.lines.every((l) => l.container === null)).toBe(true);
+});
+
+test('resolves the container the run was given, keeping the full engine id', () => {
+	const containerId = '56ccc501e6dd28a4f3b1c09a77e5d4128b6f0a91ce23d7845fa6b0192e3c4d5f';
+	const blocks = parseAgentLog(
+		makeLines([
+			`[runner] ${formatContainerMetaLogLine({
+				containerId,
+				memoryBytes: 4 * 1024 ** 3,
+				diskCeilingBytes: 4 * 1024 ** 3,
+			})}`,
+		]),
+	);
+	const runner = blocks[0] as RunnerBlock;
+	expect(runner.lines[0].container).toEqual({
+		id: containerId,
+		details: '4 GB RAM · 4 GB disk',
+	});
+});
+
+test('separates runner stdout from runner stderr into different blocks', () => {
+	const blocks = parseAgentLog(
+		makeLines([
+			['[runner] Starting the project container…', 'stdout'],
+			['[runner] Could not start the project container: timeout', 'stderr'],
+		]),
+	);
+	const runner = blocks.filter((b): b is RunnerBlock => b.type === 'runner');
+	expect(runner.map((b) => b.stream)).toEqual(['stdout', 'stderr']);
 });

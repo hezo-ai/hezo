@@ -32,16 +32,17 @@ const TCP_LISTEN_HOST = '127.0.0.1';
 export interface SshAgentServerDeps {
 	db: Db;
 	masterKeyManager: MasterKeyManager;
-	/** Interface the per-run TCP bridge binds to. Defaults to `127.0.0.1`
-	 * (loopback-only — containers reach it via `host.docker.internal`, which on
-	 * Docker Desktop tunnels to host loopback). Docker integration tests on a
-	 * native-Linux daemon set this to `0.0.0.0` so the container can reach the
-	 * bridge via the gateway IP, which loopback would refuse. */
+	/**
+	 * Interface the per-run TCP bridge binds to. Defaults to `127.0.0.1`, and in
+	 * production that is the only value: a container reaches the bridge through
+	 * the tunnel, whose host-side end dials from inside this process, so nothing
+	 * needs to listen off-host.
+	 *
+	 * Docker integration tests that dial the bridge *directly* from a container
+	 * on a native-Linux daemon set this to `0.0.0.0`, because that route arrives
+	 * on the gateway IP and loopback would refuse it.
+	 */
 	tcpListenHost?: string;
-	/** Mutable override for the bind host, read **per-run** at allocation time so
-	 * the boot connectivity check can auto-rebind to the detected bridge gateway IP
-	 * without a restart. Takes precedence over `tcpListenHost` when set. */
-	bindHostRef?: { get(): string };
 }
 
 export interface AllocatedSocket {
@@ -137,8 +138,7 @@ export class SshAgentServer {
 		);
 		await new Promise<void>((resolve, reject) => {
 			tcpServer.once('error', reject);
-			const tcpBindHost =
-				this.deps.bindHostRef?.get() ?? this.deps.tcpListenHost ?? TCP_LISTEN_HOST;
+			const tcpBindHost = this.deps.tcpListenHost ?? TCP_LISTEN_HOST;
 			tcpServer.listen({ host: tcpBindHost, port: 0 }, () => {
 				tcpServer.removeListener('error', reject);
 				resolve();

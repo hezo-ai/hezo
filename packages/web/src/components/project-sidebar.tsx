@@ -1,6 +1,6 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { AlertTriangle, ChevronsLeft, Globe, Info, Loader2 } from 'lucide-react';
+import { AlertTriangle, ChevronsLeft, Globe, Info } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
@@ -50,8 +50,10 @@ export function ProjectSidebar({
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
 	// `stopped` is the normal on-demand resting state — only genuine errors flag.
+	// Provisioning no longer flags either: a project gets a container whenever a
+	// run needs one, so a spinner here would be on more often than off and would
+	// mark as noteworthy the most ordinary thing the system does.
 	const containerFailed = health?.kind === 'error';
-	const containerProvisioning = health?.kind === 'provisioning' || health?.kind === 'rebuilding';
 
 	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);
 	const byCreatedAt = (a: { created_at: string }, b: { created_at: string }) =>
@@ -69,14 +71,7 @@ export function ProjectSidebar({
 		testId: 'project-sidebar-container',
 		label: (
 			<span className="inline-flex items-center gap-1.5">
-				<span>Container</span>
-				{containerProvisioning && (
-					<Loader2
-						data-testid="project-sidebar-container-spinner"
-						aria-hidden="true"
-						className="w-3 h-3 shrink-0 animate-spin text-info"
-					/>
-				)}
+				<span>Containers</span>
 				{containerFailed && (
 					<Tooltip content="Container failed — click for details" side="right">
 						<span

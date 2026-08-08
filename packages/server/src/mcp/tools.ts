@@ -212,6 +212,20 @@ const log = logger.child('mcp');
 
 export const authContext = new AsyncLocalStorage<AuthInfo>();
 
+/**
+ * Origin the current MCP caller reached Hezo on, e.g. `http://127.0.0.1:47081`.
+ *
+ * Agent-facing asset download URLs have to be absolute and dialable *by the
+ * caller*, and the caller is inside a container whose only route to Hezo is its
+ * own tunnel - on a loopback port allocated for that tunnel, which the server
+ * does not otherwise know. Reading it off the request is what makes it correct
+ * without a registry to keep in sync: the tunnel forwards the container's
+ * request verbatim, so the `Host` header already carries exactly the address the
+ * container used. An out-of-container API-key caller gets the origin it really
+ * reached, which is strictly better than the host-shaped guess this replaced.
+ */
+export const callerOriginContext = new AsyncLocalStorage<string>();
+
 export interface ToolDef {
 	name: string;
 	description: string;
@@ -1229,8 +1243,12 @@ export function registerTools(
 	// callers (reference generation, tests) that register without running
 	// handlers or with a plain local data dir.
 	const assets = assetStore ?? new LocalAssetStore(dataDir);
-	// Port for agent-facing download URLs (host.docker.internal origin).
-	const agentPort = serverPort ?? 0;
+	// Fallback origin for agent-facing download URLs, used only by callers that
+	// register the tools without dispatching a request (reference generation,
+	// tests). A live tool call reads the caller's own origin off its request -
+	// see `callerOriginContext`.
+	const registeredOrigin = `http://127.0.0.1:${serverPort ?? 0}`;
+	const agentOrigin = () => callerOriginContext.getStore() ?? registeredOrigin;
 
 	// Teams
 	tool(
@@ -3018,7 +3036,7 @@ export function registerTools(
 				db,
 				[commentId],
 				masterKeyManager,
-				agentPort,
+				agentOrigin(),
 			);
 			const base = {
 				...row,
@@ -3114,7 +3132,7 @@ export function registerTools(
 				db,
 				commentIds,
 				masterKeyManager,
-				agentPort,
+				agentOrigin(),
 			);
 			const enriched: Record<string, unknown>[] = r.rows.map((row) => ({
 				...row,
@@ -5809,7 +5827,7 @@ export function registerTools(
 					byte_size: byteSize,
 					binary: true,
 					...(width !== null && height !== null ? { width, height } : {}),
-					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentPort),
+					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentOrigin()),
 					...(archived ? { archived: true } : {}),
 					...reviewField,
 				};

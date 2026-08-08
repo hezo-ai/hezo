@@ -5,7 +5,7 @@ import {
 	mkdirInContainer,
 	resolveContainerRunUser,
 } from '../src/services/container-user';
-import type { DockerClient } from '../src/services/docker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 
 interface ExecRec {
 	Cmd: string[];
@@ -57,7 +57,7 @@ function fakeDocker(opts: {
 			const code = script.startsWith('id -u') ? resolveProbe(script).code : 0;
 			return { ExitCode: code, Running: false, Pid: 0 };
 		},
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 
 	return { docker, calls };
 }

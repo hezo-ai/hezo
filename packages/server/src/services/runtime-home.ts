@@ -1,50 +1,57 @@
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { join } from 'node:path';
 import { AiAuthMethod, AiProvider } from '@hezo/shared';
 import type { AiProviderCredential } from './ai-provider-keys';
-import { getWorkspacePath } from './workspace';
+import type { SandboxFiles } from './sandbox/files';
+import type { ContainerEngine } from './sandbox/types';
+import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath } from './workspace';
 
 export const CONTAINER_SUBSCRIPTION_DIR = '/workspace/.hezo/subscription';
 
-/** Host-path segment marking the subscription root. Everything at or below
- *  `.../.hezo/subscription` is Hezo-created and must stay traversable by the
- *  non-root container run-user. */
-const SUBSCRIPTION_PATH_MARKER = `${sep}.hezo${sep}subscription`;
+/**
+ * Root of every Hezo-created per-run config directory, and the boundary the
+ * traversal-bit chmod stops at.
+ *
+ * It is also the root a {@link SandboxFiles} is built on for these files, which
+ * is what lets the mode handling live in one place: `hostSandboxFiles`'s
+ * `write`/`mkdir` chmod each directory they create from the leaf back up to
+ * their root, and that root is exactly this path. Before, the same
+ * umask-proofing was written a second time here with the boundary found by
+ * string-matching `/.hezo/subscription` inside an absolute path.
+ */
+export function getHostSubscriptionBase(
+	dataDir: string,
+	teamId: string,
+	projectId: string,
+): string {
+	return join(getWorkspacePath(dataDir, teamId, projectId), '.hezo', 'subscription');
+}
 
 /**
- * Create `dir` (recursively) and force every Hezo-created component from the
- * subscription root down to `dir` to mode 0o711 (rwx--x--x).
+ * {@link SandboxFiles} over the per-run config directories.
  *
- * Why this exists instead of `mkdirSync(dir, { mode: 0o711 })`: `mkdirSync`'s mode is
- * masked by the **process umask**. On a hardened production host (umask 0o027/0o077 —
- * common under systemd `UMask=`), the intended world-traversable 0o711 is silently
- * stripped to 0o710/0o700, dropping the *other-execute* bit. The non-root container
- * run-user (`node`) then can't **traverse** the intermediate `subscription/<provider>/`
- * dirs to reach its per-run config leaf, so the agent CLI fails with `EACCES` opening
- * `<leaf>/settings.json` — even though the leaf and its files were chowned to that user
- * (see `chownToRunUser`). `chmodSync` is not subject to umask and needs only ownership
- * (the server created these dirs), so it restores the traversal bit uniformly across
- * root-prod, non-root-server, and macOS-dev. Best-effort per component: a host where we
- * can't chmod a dir must not abort the run over a permission tweak.
+ * Everything written through it gets `dirMode: 0o711` (not 0o700) so the
+ * non-root container run-user can **traverse** the intermediate
+ * `subscription/<provider>/` dirs to reach its per-run leaf - which the runner
+ * chowns to that user (see `chownToRunUser`). Without the traversal bit the
+ * agent CLI fails with `EACCES` opening `<leaf>/settings.json` even though the
+ * leaf and its files were chowned correctly.
  */
-export function mkdirTraversable(dir: string): void {
-	mkdirSync(dir, { recursive: true });
-	const idx = dir.indexOf(SUBSCRIPTION_PATH_MARKER);
-	if (idx === -1) return;
-	const stopAt = dir.slice(0, idx + SUBSCRIPTION_PATH_MARKER.length);
-	let cur = dir;
-	for (;;) {
-		try {
-			chmodSync(cur, 0o711);
-		} catch {
-			// Best-effort — see doc comment.
-		}
-		if (cur === stopAt) break;
-		const parent = dirname(cur);
-		if (parent === cur) break;
-		cur = parent;
-	}
+export function subscriptionFiles(engine: ContainerEngine, containerId: string): SandboxFiles {
+	return engine.files(containerId, CONTAINER_SUBSCRIPTION_BASE);
 }
+
+/**
+ * Container-side root the subscription files are written under.
+ *
+ * Rooting on the *container* path rather than the host one is what lets these
+ * credentials reach a sandbox that is not on this machine: the bytes go through
+ * the engine's file transport instead of a bind mount, and the mode contract
+ * above travels with them.
+ */
+export const CONTAINER_SUBSCRIPTION_BASE = `${CONTAINER_WORKSPACE_ROOT}/.hezo/subscription`;
+
+/** Directory mode for everything under the subscription base. See {@link subscriptionFiles}. */
+export const SUBSCRIPTION_DIR_MODE = 0o711;
 
 export interface SubscriptionLayout {
 	dirName: string;
@@ -181,21 +188,39 @@ export function getHostSubscriptionRoot(
 }
 
 export interface SubscriptionMount {
+	/**
+	 * Host path the run's config directory *would* occupy under a bind mount.
+	 *
+	 * Kept only for the prompt's `hostHomeDir` variable and operator-facing
+	 * diagnostics - nothing reads or writes through it, because a managed
+	 * backend's sandbox is not on this machine. Every actual read and write goes
+	 * through {@link SandboxFiles} rooted at `containerDir`.
+	 */
 	hostDir: string;
 	hostAuthFile: string;
+	/**
+	 * The auth file's path *relative to `hostDir`*, which is the form a
+	 * `SandboxFiles` takes. The rotated-credential read-back goes through that
+	 * seam: the container rewrites this file during the run, so on a backend
+	 * whose container is not on this machine the host cannot simply read it
+	 * back - that read-back is one of the cases the abstraction exists for.
+	 */
+	authFileRelative: string;
 	containerDir: string;
 	envEntries: string[];
 	rotates: boolean;
 }
 
-export function buildSubscriptionMount(
+export async function buildSubscriptionMount(
 	dataDir: string,
 	teamId: string,
 	projectId: string,
 	heartbeatRunId: string,
 	provider: AiProvider,
 	credential: AiProviderCredential,
-): SubscriptionMount | null {
+	engine: ContainerEngine,
+	containerId: string,
+): Promise<SubscriptionMount | null> {
 	if (credential.authMethod !== AiAuthMethod.Subscription) return null;
 
 	const layout = SUBSCRIPTION_LAYOUTS[provider];
@@ -214,18 +239,20 @@ export function buildSubscriptionMount(
 	) as string;
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
 	const hostAuthFile = join(hostDir, authFileRelative);
-
-	// 0o711 (not 0o700) so the non-root container run-user can *traverse* these
-	// intermediate dirs to reach the per-run leaf — which the runner chowns to that
-	// user (see chownToRunUser). mkdirTraversable (not a bare mkdir mode) so a strict
-	// process umask can't strip the traversal bit. The credential file itself stays
-	// 0o600 (and is chowned to the run-user), never world-readable.
-	mkdirTraversable(dirname(hostAuthFile));
-	writeFileSync(hostAuthFile, credential.value, { mode: 0o600 });
+	// Relative to the subscription base, which is the form SandboxFiles takes -
+	// and that base is also where its chmod walk stops, so the traversal bit
+	// lands on exactly the dirs Hezo created and no higher. The credential file
+	// itself stays 0o600 (and is chowned to the run-user), never world-readable.
+	await subscriptionFiles(engine, containerId).write(
+		join(layout.dirName, heartbeatRunId, authFileRelative),
+		credential.value,
+		{ mode: 0o600, dirMode: SUBSCRIPTION_DIR_MODE },
+	);
 
 	return {
 		hostDir,
 		hostAuthFile,
+		authFileRelative,
 		containerDir,
 		envEntries: [`${layout.envVarName}=${containerDir}`],
 		rotates: layout.rotates,
@@ -245,14 +272,16 @@ export interface RuntimeHomeMount {
  * project workspace using the same layout conventions as subscription mounts.
  * Returns null only for providers without a SUBSCRIPTION_LAYOUTS entry.
  */
-export function ensureRuntimeHomeDir(
+export async function ensureRuntimeHomeDir(
 	provider: AiProvider,
 	dataDir: string,
 	teamId: string,
 	projectId: string,
 	heartbeatRunId: string,
 	existing: SubscriptionMount | null,
-): RuntimeHomeMount | null {
+	engine: ContainerEngine,
+	containerId: string,
+): Promise<RuntimeHomeMount | null> {
 	const layout = SUBSCRIPTION_LAYOUTS[provider];
 	if (!layout) return null;
 
@@ -273,10 +302,9 @@ export function ensureRuntimeHomeDir(
 	) as string;
 	const containerDir = getContainerSubscriptionRoot(provider, heartbeatRunId) as string;
 
-	// 0o711 so the non-root container run-user can traverse the intermediate dirs to
-	// its per-run config dir (which the runner then chowns to that user). Via
-	// mkdirTraversable so a strict process umask can't strip the traversal bit.
-	mkdirTraversable(hostDir);
+	await subscriptionFiles(engine, containerId).mkdir(join(layout.dirName, heartbeatRunId), {
+		mode: SUBSCRIPTION_DIR_MODE,
+	});
 
 	return {
 		hostDir,

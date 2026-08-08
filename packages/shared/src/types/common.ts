@@ -1152,6 +1152,18 @@ export const ChatSessionStatus = {
 	Running: 'running',
 	Crashed: 'crashed',
 	Stopped: 'stopped',
+	/**
+	 * The container stopped without losing its filesystem, and the session is
+	 * waiting to resume into it. Live, not terminal: the row still owns its
+	 * container and still blocks a second session.
+	 *
+	 * A chat session holds no long-lived process - each turn is its own exec and
+	 * continuity comes from `chat_conversations`/`chat_messages` - so nothing the
+	 * session needs is lost. What does not survive is the host-side half: the ssh
+	 * socket and egress proxy allocations, whose ports change, which is why resume
+	 * re-runs that half rather than being a no-op.
+	 */
+	Suspended: 'suspended',
 } as const;
 export type ChatSessionStatus = (typeof ChatSessionStatus)[keyof typeof ChatSessionStatus];
 
@@ -1877,7 +1889,39 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	// answered, so a model that drifts into plan mode parks there and exits 0 with
 	// only a plan written — a false success. Removing the tool forces the agent to
 	// act on the work directly.
-	[AgentRuntime.ClaudeCode]: ['--disallowedTools', 'WebFetch', 'ExitPlanMode'],
+	//
+	// The three below are removed because Hezo owns what they do, and each of them
+	// silently does nothing useful here rather than failing:
+	//
+	// - **EnterWorktree** switches the session's working directory into
+	//   `.claude/worktrees/<name>/`. Hezo prepares the worktree a run works in and
+	//   watches *that* for changes (`anyWorktreeChanged`, and the push path after
+	//   it), so an agent that moves itself writes where nothing is looking - the
+	//   work is invisible and the run grades as having produced nothing.
+	// - **CronCreate / CronDelete / CronList** schedule inside the session, and the
+	//   container is destroyed when the run ends. Anything scheduled past that
+	//   point is silently lost, and Hezo's own heartbeats and wakeups are the real
+	//   scheduler.
+	// - **ScheduleWakeup** only means anything in `/loop` dynamic mode, which a
+	//   one-shot `-p` run is not.
+	//
+	// Deliberately NOT removed, though a failed run made all three look guilty:
+	// the `Task*` family is the agent's own in-session checklist (what replaced
+	// TodoWrite) and persists nothing; `Skill` loads `.claude/skills/` from the
+	// project's own repo, which is a real capability; and `WebSearch` is proxied
+	// server-side so container egress does not affect it. They only misled an
+	// agent that had lost its Hezo tools entirely - a transport failure, fixed
+	// where transport failures belong.
+	[AgentRuntime.ClaudeCode]: [
+		'--disallowedTools',
+		'WebFetch',
+		'ExitPlanMode',
+		'EnterWorktree',
+		'CronCreate',
+		'CronDelete',
+		'CronList',
+		'ScheduleWakeup',
+	],
 	[AgentRuntime.Codex]: [],
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],
@@ -2291,3 +2335,82 @@ export const DEFAULT_LOCALE_SETTINGS: LocaleSettings = {
 	date_format: DateFormat.Mdy,
 	number_format: NumberFormat.DotComma,
 };
+
+/**
+ * Where agent containers run.
+ *
+ * Shared because both halves need the same answer: the server selects the
+ * backend and reports it, and the web app tells the operator which one is in use
+ * and which limits therefore apply. It lived as a hand-written `'docker' |
+ * 'daytona'` union in each package, which is two places to update for every new
+ * provider.
+ */
+export const SandboxBackend = {
+	/** The operator's own Docker daemon. Containers share the host's memory and disk. */
+	Docker: 'docker',
+	/** Daytona managed sandboxes. Containers run on the provider's machines. */
+	Daytona: 'daytona',
+} as const;
+export type SandboxBackend = (typeof SandboxBackend)[keyof typeof SandboxBackend];
+
+export const SANDBOX_BACKENDS: readonly SandboxBackend[] = Object.values(SandboxBackend);
+
+export function isSandboxBackend(value: string): value is SandboxBackend {
+	return (SANDBOX_BACKENDS as readonly string[]).includes(value);
+}
+
+/**
+ * The stand-in id for a container that is being provisioned but has no engine id
+ * yet.
+ *
+ * Everything about a container is keyed on the id the engine returns, and there
+ * is a real window before that: workspace preparation, resolving the base image,
+ * and - on a managed backend - the sandbox build itself, which is the longest
+ * part of a cold start. The project is already `creating` and the UI already
+ * says so, but the Containers page had nothing to list, so following "View
+ * container" from that notice landed on an empty page.
+ *
+ * A placeholder row closes that. It is deliberately **not** an engine id and
+ * nothing may treat it as one - {@link isProvisioningPlaceholder} is how both
+ * sides tell them apart, so the removal route refuses it and the UI does not
+ * offer Remove for a container that does not exist yet.
+ */
+export function provisioningContainerKey(projectId: string): string {
+	return `provisioning:${projectId}`;
+}
+
+export function isProvisioningPlaceholder(containerId: string): boolean {
+	return containerId.startsWith('provisioning:');
+}
+
+/**
+ * Whether a backend runs containers on this machine or on a third party's.
+ *
+ * This is the only thing about a backend that code outside its own adapter is
+ * allowed to know - everything else a provider does differently is that
+ * adapter's business. It matches how the docs are split (`docs/containers/
+ * local-docker.md` vs `docs/containers/remote/`), so the two cannot drift.
+ *
+ * A table rather than a predicate over a provider name, so adding a backend is a
+ * **compile error** until it declares which kind it is. The alternative -
+ * `=== SandboxBackend.Daytona` at each site - states a fact about one service
+ * where a property of the whole class is meant, and a new provider then silently
+ * inherits whichever branch the comparison happened to fall through to.
+ */
+export const SANDBOX_BACKEND_KIND: Record<SandboxBackend, 'local' | 'remote'> = {
+	[SandboxBackend.Docker]: 'local',
+	[SandboxBackend.Daytona]: 'remote',
+};
+
+/**
+ * Does this backend need an API key before it can be selected?
+ *
+ * True for every remote backend and false for the local daemon: a third-party
+ * container service is reached over the internet behind an account, so an API
+ * key is what makes it usable at all, while a local daemon is a socket on the
+ * host. That is a property of the class, not of any one provider - which is why
+ * this asks the kind rather than naming a service.
+ */
+export function sandboxBackendNeedsApiKey(backend: SandboxBackend): boolean {
+	return SANDBOX_BACKEND_KIND[backend] === 'remote';
+}

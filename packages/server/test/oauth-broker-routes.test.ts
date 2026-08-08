@@ -120,7 +120,7 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-function start(connectorId: string, body: Record<string, unknown>): Promise<Response> {
+async function start(connectorId: string, body: Record<string, unknown>): Promise<Response> {
 	return app.request(`/api/projects/${projectSlug}/connectors/${connectorId}/oauth-device/start`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -128,7 +128,7 @@ function start(connectorId: string, body: Record<string, unknown>): Promise<Resp
 	});
 }
 
-function poll(connectorId: string, flowId: string): Promise<Response> {
+async function poll(connectorId: string, flowId: string): Promise<Response> {
 	return app.request(`/api/projects/${projectSlug}/connectors/${connectorId}/oauth-device/poll`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },

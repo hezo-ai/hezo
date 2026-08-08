@@ -1,8 +1,8 @@
+import { CHAT_IDLE_TIMEOUT_MIN, CONTAINER_IDLE_TIMEOUT_MIN } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
-import { CONTAINER_IDLE_TIMEOUT_KEY, setSystemMeta } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
@@ -27,6 +27,17 @@ let agentId: string;
 let taskId: string;
 
 const CONTAINER_ID = 'idle-box';
+
+/**
+ * A staleness comfortably *inside* the idle window, derived from the constant
+ * rather than written as a number.
+ *
+ * These fixtures used to say "5 minutes", which was inside the old configurable
+ * 15-minute default and is outside the fixed 2-minute one - so a hardcoded
+ * figure would have silently inverted what each test asserts the moment the
+ * window changed, rather than failing.
+ */
+const INSIDE_WINDOW_MIN = Math.max(1, CONTAINER_IDLE_TIMEOUT_MIN - 1);
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
@@ -71,13 +82,16 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-function createManager(stops: string[]): JobManager {
+function createManager(stops: string[], removes: string[] = []): JobManager {
 	return new JobManager({
 		db,
 		docker: createStubDocker({
 			ping: async () => true,
 			stopContainer: async (id: string) => {
 				stops.push(id);
+			},
+			removeContainer: async (id: string) => {
+				removes.push(id);
 			},
 		}),
 		masterKeyManager,
@@ -106,9 +120,11 @@ async function containerStatus(): Promise<string | null> {
 }
 
 beforeEach(async () => {
-	// Reset to "running and idle for an hour" with a 15-minute timeout; each
-	// test then adds exactly one busy signal (or changes the timeout).
-	await setSystemMeta(db, CONTAINER_IDLE_TIMEOUT_KEY, '15');
+	// Reset to "running and idle for an hour"; each test then adds exactly one
+	// busy signal. The window itself is the CONTAINER_IDLE_TIMEOUT_MIN constant,
+	// so "inside the window" below is expressed relative to it rather than to a
+	// number a test could set - which is the point of it no longer being a
+	// setting.
 	await db.query(
 		`UPDATE projects
 		 SET container_id = $2, container_status = 'running', container_error = NULL,
@@ -133,17 +149,10 @@ describe('container-idle-stop', () => {
 		expect(await containerStatus()).toBe('stopped');
 	});
 
-	it('a timeout of 0 disables the reaper entirely', async () => {
-		await setSystemMeta(db, CONTAINER_IDLE_TIMEOUT_KEY, '0');
-		const { stops } = await runIdlePass();
-		expect(stops).toEqual([]);
-		expect(await containerStatus()).toBe('running');
-	});
-
 	it('never stops a container inside its first idle window (start-time floor)', async () => {
 		await db.query(
-			`UPDATE projects SET container_last_started_at = now() - interval '5 minutes' WHERE id = $1`,
-			[projectId],
+			`UPDATE projects SET container_last_started_at = now() - ($2 || ' minutes')::interval WHERE id = $1`,
+			[projectId, INSIDE_WINDOW_MIN],
 		);
 		const { stops } = await runIdlePass();
 		expect(stops).toEqual([]);
@@ -164,8 +173,9 @@ describe('container-idle-stop', () => {
 	it('a run finished inside the idle window holds the container up; an old one does not', async () => {
 		await db.query(
 			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
-			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(), now() - interval '5 minutes')`,
-			[agentId, teamId, taskId],
+			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, now(),
+			         now() - ($4 || ' minutes')::interval)`,
+			[agentId, teamId, taskId, INSIDE_WINDOW_MIN],
 		);
 		expect((await runIdlePass()).stops).toEqual([]);
 
@@ -235,6 +245,76 @@ describe('container-idle-stop', () => {
 		expect((await runIdlePass()).stops).toEqual([]);
 	});
 
+	it('a chat pause holds the container well past the run window', async () => {
+		// The two windows measure different things. Between runs the gap is
+		// mechanical and two minutes covers it; between chat messages it is a person
+		// reading a reply, and reclaiming there suspended the container out from
+		// under an open chatbox so the next message paid a cold start.
+		await db.query(
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status, last_activity_at)
+			 VALUES ($1, $2, $3, 'claude_code', 'running', now() - interval '5 minutes')`,
+			[agentId, teamId, projectId],
+		);
+		// Comfortably past CONTAINER_IDLE_TIMEOUT_MIN, comfortably inside
+		// CHAT_IDLE_TIMEOUT_MIN.
+		expect(CONTAINER_IDLE_TIMEOUT_MIN).toBeLessThan(5);
+		expect(CHAT_IDLE_TIMEOUT_MIN).toBeGreaterThan(5);
+		expect((await runIdlePass()).stops).toEqual([]);
+	});
+
+	it('parks a live assistant session before taking its container down', async () => {
+		// Ordering, and it is the whole point: suspending first meant the session
+		// found out by its tunnel dying - the unrequested-death path - so it ended
+		// as `crashed` rather than parking as `suspended`, and the provider's PTY
+		// delete raced the sandbox already stopping and 400'd.
+		const parked: string[] = [];
+		const order: string[] = [];
+		const stops: string[] = [];
+		const manager = new JobManager({
+			db,
+			docker: createStubDocker({
+				ping: async () => true,
+				stopContainer: async (id: string) => {
+					order.push(`stop:${id}`);
+					stops.push(id);
+				},
+			}),
+			masterKeyManager,
+			serverPort: 3100,
+			dataDir,
+			wsManager: { broadcast: () => {} } as unknown as JobManagerDeps['wsManager'],
+			logs: new LogStreamBroker(),
+			containerLogStreamer: new ContainerLogStreamer(),
+		});
+		manager.setChatSessions({
+			parkForContainerSuspend: async (id: string) => {
+				order.push(`park:${id}`);
+				parked.push(id);
+			},
+		});
+
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+
+		expect(parked).toEqual([CONTAINER_ID]);
+		expect(order).toEqual([`park:${CONTAINER_ID}`, `stop:${CONTAINER_ID}`]);
+	});
+
+	it('retires the pool even when parking the assistant session fails', async () => {
+		// Best-effort: a park that throws must not strand a container that is
+		// otherwise idle, or one failure bills forever on a managed backend.
+		const stops: string[] = [];
+		const manager = createManager(stops);
+		manager.setChatSessions({
+			parkForContainerSuspend: async () => {
+				throw new Error('chat manager is wedged');
+			},
+		});
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+		expect(stops).toContain(CONTAINER_ID);
+	});
+
 	it('the in-memory dispatch recheck blocks a stop even before any run row exists', async () => {
 		const stops: string[] = [];
 		const manager = createManager(stops);
@@ -245,5 +325,74 @@ describe('container-idle-stop', () => {
 		expect(stops).toEqual([]);
 		expect(await containerStatus()).toBe('running');
 		manager.shutdown();
+	});
+
+	it('suspends one idle container and destroys the surplus', async () => {
+		// At most one suspended container per project - exactly the cardinality a
+		// single-container project had. That one rule is what removes a retention
+		// cap, a reap horizon and snapshot storage to watch grow; the price is that
+		// the second and later containers of a burst are always created cold.
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state) VALUES
+			   ($1, 'pool-a', 'idle'), ($1, 'pool-b', 'idle'), ($1, 'pool-c', 'idle')`,
+			[projectId],
+		);
+		await db.query(
+			`UPDATE projects SET container_status = 'running',
+			        container_last_started_at = now() - interval '60 minutes' WHERE id = $1`,
+			[projectId],
+		);
+		const stops: string[] = [];
+		const removes: string[] = [];
+		const manager = createManager(stops, removes);
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+
+		expect(stops).toHaveLength(1);
+		expect(removes).toHaveLength(2);
+		expect([...stops, ...removes].sort()).toEqual(['pool-a', 'pool-b', 'pool-c']);
+
+		const rows = await db.query<{ container_id: string; state: string }>(
+			`SELECT container_id, state::text AS state FROM container_pool_members WHERE project_id = $1`,
+			[projectId],
+		);
+		// The destroyed members are gone from the table, not left as tombstones the
+		// ladder would have to keep skipping.
+		expect(rows.rows).toHaveLength(1);
+		expect(rows.rows[0]).toMatchObject({ container_id: stops[0], state: 'suspended' });
+		await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
+	});
+
+	it('never destroys a container holding commits that reached no durable remote', async () => {
+		// The work exists nowhere else and nothing downstream would report that it
+		// had gone - so the pin outranks *destruction*. It deliberately does not
+		// outrank suspension: stopping preserves the writable layer, so the
+		// commits survive, while leaving the container running would hold its full
+		// RAM cap out of the global budget until some later run on that same
+		// container clears the flag. The pinned member is therefore the one that
+		// takes the single suspend slot.
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, has_unpushed_commits)
+			 VALUES ($1, 'pool-pinned', 'idle', true), ($1, 'pool-free', 'idle', false)`,
+			[projectId],
+		);
+		await db.query(
+			`UPDATE projects SET container_status = 'running',
+			        container_last_started_at = now() - interval '60 minutes' WHERE id = $1`,
+			[projectId],
+		);
+		const stops: string[] = [];
+		const removes: string[] = [];
+		const manager = createManager(stops, removes);
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+
+		// Never destroyed - that is the half that would lose the work.
+		expect(removes).not.toContain('pool-pinned');
+		// Suspended rather than left running, and the unpinned surplus is the one
+		// that gets removed.
+		expect(stops).toEqual(['pool-pinned']);
+		expect(removes).toContain('pool-free');
+		await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
 	});
 });

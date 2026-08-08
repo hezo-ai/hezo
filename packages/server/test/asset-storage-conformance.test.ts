@@ -7,6 +7,7 @@ import { LocalAssetStore } from '../src/assets/drivers/local';
 import { S3AssetStore } from '../src/assets/drivers/s3';
 import { AssetNotFoundError, type AssetStore, AttachmentTooLargeError } from '../src/assets/store';
 import { parseAssetStorageUrl } from '../src/assets/url';
+import { blobBytes } from './helpers';
 import { createS3Sim, type S3Sim } from './helpers/s3-sim';
 
 /**

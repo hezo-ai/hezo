@@ -4,7 +4,7 @@
 // runs — a scripted docker answers each `git …` exec by rule, while the host
 // filesystem (clone `.git` dirs, worktree dirs) is staged per scenario.
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
@@ -14,8 +14,10 @@ import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
-import type { DockerClient } from '../src/services/docker';
+import { RECOVERY_BUNDLE_REL_PATH } from '../src/services/git';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { createBundleVault } from '../src/services/sandbox/bundle-vault';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { getWorkspacePath, getWorktreesPath } from '../src/services/workspace';
 import { safeClose } from './helpers';
 import {
@@ -128,7 +130,7 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-function baseDeps(docker: DockerClient): RunnerDeps {
+function baseDeps(docker: ContainerEngine): RunnerDeps {
 	return {
 		db,
 		docker,
@@ -161,7 +163,7 @@ function scriptedGitDocker(opts: {
 	rules: GitRule[];
 	onAgentExec?: (config: { Cmd: string[]; Env: string[] }) => Promise<void> | void;
 	agentExitCode?: number;
-}): DockerClient {
+}): ContainerEngine {
 	const results = new Map<string, { exitCode: number; stdout: string; stderr: string }>();
 	let seq = 0;
 	const base = createStubDocker({
@@ -204,7 +206,7 @@ function scriptedGitDocker(opts: {
 			Pid: 0,
 		}),
 	});
-	return withRunUserStub(base as unknown as DockerClient);
+	return withRunUserStub(base as unknown as ContainerEngine);
 }
 
 async function insertRepo(identifier: string): Promise<string> {
@@ -572,6 +574,294 @@ describe('prepareWorktrees', () => {
 		} finally {
 			await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
 		}
+	});
+
+	/**
+	 * Committed work that reached no remote must not read as a successful run, and
+	 * the container holding it must be pinned against the idle cron. Nothing fails
+	 * at one container per project - the next run hits the same `.git` and the ref
+	 * is still there - so this is the regression that only appears once a project
+	 * has several containers, which is exactly why it needs its own test.
+	 */
+	describe('stranded commits', () => {
+		/** Rules that carry prep through to a successful agent exec, as above. */
+		const preparedRepo = (extra: GitRule[]): GitRule[] => [
+			when((a) => a === 'remote get-url origin', {
+				stdout: 'git@github.com:acme/todos.git\n',
+			}),
+			when((a) => a === 'symbolic-ref --short refs/remotes/origin/HEAD', {
+				stdout: 'origin/main\n',
+			}),
+			when((a) => a.startsWith('rev-parse --verify --quiet refs/remotes/origin/main'), {
+				exitCode: 0,
+			}),
+			when((a) => a === 'symbolic-ref --quiet --short HEAD', { stdout: 'main\n' }),
+			when((a) => a === 'rev-parse --git-dir', { stdout: '.git\n' }),
+			when((a) => a === 'merge-base --is-ancestor origin/main HEAD', { exitCode: 0 }),
+			when((a) => a === 'status --porcelain', { stdout: ' M src/app.ts\n' }),
+			when((a) => a === 'rev-parse HEAD', { stdout: 'ddd444\n' }),
+			...extra,
+		];
+
+		async function stageRun(identifier: string): Promise<{ repoId: string }> {
+			const repoId = await insertRepo('acme/todos');
+			mkdirSync(join(getWorkspacePath(dataDir, teamId, projectId), 'todos', '.git'), {
+				recursive: true,
+			});
+			mkdirSync(join(getWorktreesPath(dataDir, teamId, projectId), identifier, 'todos', '.git'), {
+				recursive: true,
+			});
+			return { repoId };
+		}
+
+		// The pool member is keyed on the *engine's* container id, which is what
+		// `ensureProjectContainerRunning` returns — the stub engine's fixed
+		// `stub-container`, not the id `makeProject()` reports.
+		const POOL_CONTAINER_ID = 'stub-container';
+
+		const memberFlag = async (): Promise<boolean | null> => {
+			const r = await db.query<{ has_unpushed_commits: boolean }>(
+				'SELECT has_unpushed_commits FROM container_pool_members WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			return r.rows[0]?.has_unpushed_commits ?? null;
+		};
+
+		beforeAll(async () => {
+			await db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, $2, 'busy') ON CONFLICT (container_id) DO NOTHING`,
+				[projectId, POOL_CONTAINER_ID],
+			);
+		});
+
+		it('fails a clean run that leaves commits reaching no remote, and pins the container', async () => {
+			const { repoId } = await stageRun('WT-STRANDED');
+			try {
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '2\n' }),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-STRANDED'),
+					makeProject(),
+				);
+
+				// The worktree is dirty, so this run DID produce output — it fails
+				// purely because the work exists only in this container.
+				expect(result.success).toBe(false);
+				expect(result.exitCode).toBe(0);
+
+				const run = await db.query<{ status: string; error: string | null }>(
+					'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+					[result.heartbeatRunId],
+				);
+				expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+				expect(run.rows[0].error).toContain('reached no remote');
+				expect(run.rows[0].error).toContain('hezo/WT-STRANDED');
+
+				expect(await memberFlag()).toBe(true);
+				expect(await runLog(result.heartbeatRunId!)).toContain('reached no remote');
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('succeeds and releases the pin once the commits are on the remote', async () => {
+			const { repoId } = await stageRun('WT-PUSHED');
+			try {
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '0\n' }),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-PUSHED'),
+					makeProject(),
+				);
+				expect(result.success).toBe(true);
+				// A later run getting the commits out is what releases the pin;
+				// leaving it set would strand the container forever on one denied push.
+				expect(await memberFlag()).toBe(false);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('leaves the pin alone when the check could not answer', async () => {
+			await db.query(
+				'UPDATE container_pool_members SET has_unpushed_commits = true WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			const { repoId } = await stageRun('WT-UNKNOWN');
+			try {
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						// git failed, so the run knows nothing about what is unpushed.
+						when((a) => a.startsWith('rev-list --count'), {
+							exitCode: 128,
+							stderr: 'fatal: bad revision',
+						}),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-UNKNOWN'),
+					makeProject(),
+				);
+				// An unanswerable check must neither fail the run nor release the pin —
+				// releasing it would destroy the container the pin exists to protect.
+				expect(result.success).toBe(true);
+				expect(await memberFlag()).toBe(true);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('releases the pin once the commits are copied out, but still fails the run', async () => {
+			await db.query(
+				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			const { repoId } = await stageRun('WT-VAULTED');
+			try {
+				const clone = join(getWorkspacePath(dataDir, teamId, projectId), 'todos');
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '2\n' }),
+						// Stand in for a real `git bundle create`: the bytes are what the
+						// vault copies out, so the file has to actually appear.
+						when(
+							(a) => a.startsWith('bundle create'),
+							() => {
+								writeFileSync(join(clone, RECOVERY_BUNDLE_REL_PATH), 'PACK-ish bytes');
+								return { exitCode: 0 };
+							},
+						),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-VAULTED'),
+					makeProject(),
+				);
+
+				// The two halves are decided by different things and this is the case
+				// that separates them: Hezo holds a copy, so the container is no longer
+				// the only place the work exists and may be reused or destroyed — but
+				// the work still never reached the remote, so the run is not a success.
+				expect(result.success).toBe(false);
+				expect(await memberFlag()).toBe(false);
+
+				const log = await runLog(result.heartbeatRunId!);
+				expect(log).toContain('kept a recovery copy');
+				expect(log).toContain('still not on the remote');
+				// The bundle is copied out of the clone, not left to be restored over a
+				// newer one on the next run.
+				expect(existsSync(join(clone, RECOVERY_BUNDLE_REL_PATH))).toBe(false);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('keeps a stored bundle when the restore failed, rather than dropping the last copy', async () => {
+			// The data-loss path: container A's commits are in the vault and A is
+			// gone. A run here cannot apply the bundle, so its clone genuinely has
+			// nothing unpushed - and reading that as "the work reached origin" would
+			// delete the only surviving copy.
+			const { repoId } = await stageRun('WT-KEEPBUNDLE');
+			try {
+				const vault = createBundleVault(dataDir);
+				const bundleKey = {
+					projectId,
+					repoName: 'todos',
+					branch: 'hezo/WT-KEEPBUNDLE',
+				};
+				await vault.put(bundleKey, new TextEncoder().encode('a stored bundle'));
+
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						// The restore cannot be applied in this container.
+						when((a) => a.startsWith('fetch --no-write-fetch-head'), {
+							exitCode: 128,
+							stderr: 'fatal: failed to read bundle',
+						}),
+						// ...so this clone reports a perfectly clean branch.
+						when((a) => a.startsWith('rev-list --count'), { stdout: '0\n' }),
+					]),
+				});
+
+				await runAgent(baseDeps(docker), makeAgent(), makeTask('WT-KEEPBUNDLE'), makeProject());
+
+				expect(await vault.has(bundleKey)).toBe(true);
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
+
+		it('keeps the container pinned when the commits could not be copied out', async () => {
+			await db.query(
+				'UPDATE container_pool_members SET has_unpushed_commits = false WHERE container_id = $1',
+				[POOL_CONTAINER_ID],
+			);
+			const { repoId } = await stageRun('WT-VAULTFAIL');
+			try {
+				const docker = scriptedGitDocker({
+					rules: preparedRepo([
+						when((a) => a.startsWith('rev-parse --verify --quiet refs/heads/hezo/'), {
+							exitCode: 0,
+						}),
+						when((a) => a.startsWith('rev-list --count'), { stdout: '2\n' }),
+						when((a) => a.startsWith('bundle create'), {
+							exitCode: 128,
+							stderr: 'fatal: Refusing to create empty bundle.',
+						}),
+					]),
+				});
+
+				const result = await runAgent(
+					baseDeps(docker),
+					makeAgent(),
+					makeTask('WT-VAULTFAIL'),
+					makeProject(),
+				);
+
+				// No copy means the container really is the only place the work exists,
+				// so the pin stays — failing closed, rather than releasing a container
+				// on the strength of a recovery that did not happen.
+				expect(result.success).toBe(false);
+				expect(await memberFlag()).toBe(true);
+				expect(await runLog(result.heartbeatRunId!)).toContain('could not keep a recovery copy');
+			} finally {
+				await db.query('DELETE FROM repos WHERE id = $1', [repoId]);
+			}
+		});
 	});
 
 	it('returns to /workspace when the abort lands during the worktree loop itself', async () => {

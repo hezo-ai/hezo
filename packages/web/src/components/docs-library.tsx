@@ -286,12 +286,15 @@ export function DocsLibrary({
 				{/* Sticky on desktop so the doc list stays visible while a long
 				    document scrolls. The top offset mirrors the project layout's
 				    vertical padding (md:py-5 lg:py-6) so the pinned position
-				    preserves the breathing room visible when unscrolled. max-h
-				    subtracts the h-10 app header (2.5rem) plus the top offset so
-				    the list never overflows the bottom of <main>. The column is a
-				    flex stack: the search header stays fixed while only the list
-				    below it scrolls. */}
-				<div className="md:sticky md:top-5 lg:top-6 md:max-h-[calc(100vh-3.75rem)] lg:max-h-[calc(100vh-4rem)] md:flex md:flex-col">
+				    preserves the breathing room visible when unscrolled. max-h caps
+				    the list at the shell scroller's visible area
+				    (`--shell-scrollport-h`, measured on <main> in __root.tsx) less
+				    that same top offset, so it never overflows the bottom of <main>.
+				    This used to subtract a literal `100vh - 2.5rem` for an app header
+				    that has been h-12 for some time, and no shell banner at all. The
+				    column is a flex stack: the search header stays fixed while only
+				    the list below it scrolls. */}
+				<div className="md:sticky md:top-5 lg:top-6 md:max-h-[calc(var(--shell-scrollport-h)-1.25rem)] lg:max-h-[calc(var(--shell-scrollport-h)-1.5rem)] md:flex md:flex-col">
 					{/* On mobile the whole page scrolls, so the header pins itself to
 					    the shell scroller; on md+ it's a non-scrolling flex row above
 					    the list's own scroller. bg-bg so list rows pass cleanly

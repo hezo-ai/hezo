@@ -26,10 +26,10 @@ import {
 	createTestTeam,
 } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 
 // This suite drives the run-scheduling, task-selection, dispatch, and budget /
@@ -205,6 +205,7 @@ describe('JobManager — extended coverage', () => {
 				projectId,
 				teamId,
 				taskKey: key,
+				containerId: null,
 			});
 
 			expect(manager.cancelLiveRun('run-x')).toBe(true);
@@ -216,14 +217,16 @@ describe('JobManager — extended coverage', () => {
 			manager.shutdown();
 		});
 
-		it('cancelLiveRunsForProject cancels every run in the project and returns the count', () => {
+		it('cancelLiveRunsForContainer spares a sibling run in another container', () => {
+			// The property the pool exists for, on the in-memory side: one container
+			// going away must not abort a run executing in a different one.
 			const manager = createJobManager();
-			const keyA = `${agentId}:${projectId}`;
-			const keyB = `${secondAgentId}:${projectId}`;
+			const keyDead = `${agentId}:${projectId}`;
+			const keyAlive = `${secondAgentId}:${projectId}`;
 			const aborts: string[] = [];
 			for (const [key, who] of [
-				[keyA, 'a'],
-				[keyB, 'b'],
+				[keyDead, 'dead'],
+				[keyAlive, 'alive'],
 			] as const) {
 				manager.launchTask(
 					key,
@@ -238,21 +241,25 @@ describe('JobManager — extended coverage', () => {
 				);
 			}
 			manager.registerLiveRun({
-				runId: 'r-a',
+				runId: 'r-dead',
 				memberId: agentId,
 				taskId,
 				projectId,
 				teamId,
-				taskKey: keyA,
+				taskKey: keyDead,
+				containerId: null,
 			});
+			manager.attachLiveRunContainer('r-dead', 'ctr-dead');
 			manager.registerLiveRun({
-				runId: 'r-b',
+				runId: 'r-alive',
 				memberId: secondAgentId,
 				taskId,
 				projectId,
 				teamId,
-				taskKey: keyB,
+				taskKey: keyAlive,
+				containerId: null,
 			});
+			manager.attachLiveRunContainer('r-alive', 'ctr-alive');
 			// A run in a different project must be left alone.
 			manager.registerLiveRun({
 				runId: 'r-other',
@@ -261,12 +268,55 @@ describe('JobManager — extended coverage', () => {
 				projectId: 'other-project',
 				teamId,
 				taskKey: `${agentId}:other-project`,
+				containerId: null,
+			});
+			manager.attachLiveRunContainer('r-other', 'ctr-dead');
+
+			const cancelled = manager.cancelLiveRunsForContainer(
+				projectId,
+				'ctr-dead',
+				'container_stopped',
+			);
+			expect(cancelled).toBe(1);
+			expect(aborts).toEqual(['dead']);
+			expect(manager.getLiveRunIds()).toEqual(new Set(['r-alive', 'r-other']));
+
+			manager.shutdown();
+		});
+
+		it('cancelLiveRunsForContainer also cancels a run that has not claimed a container', () => {
+			// Nothing can show such a run to be executing elsewhere, and the DB half
+			// fails it for the same reason - leaving it registered would disagree
+			// with its own row.
+			const manager = createJobManager();
+			const key = `${agentId}:${projectId}`;
+			let aborted = false;
+			manager.launchTask(
+				key,
+				(signal) =>
+					new Promise<void>((resolve) => {
+						signal.addEventListener('abort', () => {
+							aborted = true;
+							resolve();
+						});
+					}),
+				60_000,
+			);
+			manager.registerLiveRun({
+				runId: 'r-unplaced',
+				memberId: agentId,
+				taskId,
+				projectId,
+				teamId,
+				taskKey: key,
+				containerId: null,
 			});
 
-			const cancelled = manager.cancelLiveRunsForProject(projectId, 'container_stopped');
-			expect(cancelled).toBe(2);
-			expect(aborts.sort()).toEqual(['a', 'b']);
-			expect(manager.getLiveRunIds()).toEqual(new Set(['r-other']));
+			expect(manager.cancelLiveRunsForContainer(projectId, 'ctr-dead', 'container_stopped')).toBe(
+				1,
+			);
+			expect(aborted).toBe(true);
+			expect(manager.getLiveRunIds()).toEqual(new Set());
 
 			manager.shutdown();
 		});
@@ -297,7 +347,7 @@ describe('JobManager — extended coverage', () => {
 			const manager = createJobManager();
 			// Container semantics: this project's container is stopped, the limit is
 			// 1, and a filler project's running container consumes the only slot.
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
 			await seedRunningContainerProject(db, 'cap-filler-dispatch');
 			const wakeupId = await insertQueuedWakeup(agentId);
@@ -310,7 +360,7 @@ describe('JobManager — extended coverage', () => {
 
 			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 			await removeSeededContainerProject(db, 'cap-filler-dispatch');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 			manager.shutdown();
 		});
 
@@ -530,7 +580,7 @@ describe('JobManager — extended coverage', () => {
 			const manager = createJobManager();
 			// The project's container is stopped and a filler project's running
 			// container consumes the single slot, so activation must re-queue.
-			await setMaxActiveContainersForTest(db, 1);
+			await setContainerCapacityForTest(db, 1);
 			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
 			await seedRunningContainerProject(db, 'cap-filler-activate');
 			const wakeupId = await insertQueuedWakeup(agentId, 'mention');
@@ -559,7 +609,7 @@ describe('JobManager — extended coverage', () => {
 
 			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 			await removeSeededContainerProject(db, 'cap-filler-activate');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 			manager.shutdown();
 		});
 
@@ -789,6 +839,7 @@ describe('JobManager — extended coverage', () => {
 				projectId,
 				teamId,
 				taskKey: key,
+				containerId: null,
 			});
 
 			await (
@@ -1026,10 +1077,14 @@ describe('JobManager — extended coverage', () => {
 			);
 		});
 
-		it('rebuilds a running container whose /workspace mount is unreachable', async () => {
-			// Drop the repo row so the rebuild's downstream bring-up (provisionContainer
-			// → ensureProjectRepos) has nothing to clone — avoids an incidental
-			// repo-sync error from the stubbed exec. Restored below.
+		it('removes a running container whose /workspace mount is unreachable', async () => {
+			// Removed rather than rebuilt: provisioning a replacement here races the
+			// pool, which provisions one on the next run that needs it anyway, and
+			// eagerly rebuilding meant a stale mount on an idle project paid for a
+			// container nobody was waiting on.
+			//
+			// Drop the repo row so nothing downstream reaches for a clone. Restored
+			// below.
 			const savedRepo = await db.query<{ id: string; repo_identifier: string; host_type: string }>(
 				'SELECT id, repo_identifier, host_type::text AS host_type FROM repos WHERE project_id = $1 LIMIT 1',
 				[projectId],
@@ -1046,6 +1101,7 @@ describe('JobManager — extended coverage', () => {
 			// succeeds, so the rebuild completes quietly.
 			let probeExecId = '';
 			let rebuilt = false;
+			const removed: string[] = [];
 			const manager = createJobManager({
 				docker: createStubDocker({
 					execCreate: async (_id: string, opts: { Cmd: string[] }) => {
@@ -1064,6 +1120,9 @@ describe('JobManager — extended coverage', () => {
 						rebuilt = true;
 						return { Id: 'rebuilt-box', Warnings: [] };
 					},
+					removeContainer: async (id: string) => {
+						removed.push(id);
+					},
 				}),
 			});
 
@@ -1073,7 +1132,8 @@ describe('JobManager — extended coverage', () => {
 				(manager as unknown as { deps: { docker: unknown } }).deps.docker,
 			);
 
-			expect(rebuilt).toBe(true);
+			expect(removed).toContain('stale-box');
+			expect(rebuilt).toBe(false);
 
 			// Restore the repo row + designation for the rest of the suite.
 			const r = await db.query<{ id: string }>(

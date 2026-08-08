@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { DockerClient, ImageInfo } from '../src/services/docker';
 import {
 	BUNDLE_SHA_LABEL,
 	pruneStaleBundledImages,
 	resolveLocalImage,
 } from '../src/services/image-registry';
+import type { ContainerEngine, ImageInfo } from '../src/services/sandbox/types';
 
 function fakeDocker(
 	inspect: (name: string) => Promise<ImageInfo | null> | ImageInfo | null,
 	remove: (name: string, force?: boolean) => Promise<void> | void = async () => {},
-): DockerClient {
+): ContainerEngine {
 	return {
 		inspectImage: vi.fn(async (name: string) => inspect(name)),
 		removeImage: vi.fn(async (name: string, force?: boolean) => remove(name, force)),
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 }
 
 describe('pruneStaleBundledImages', () => {

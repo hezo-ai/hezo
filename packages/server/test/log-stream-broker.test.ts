@@ -20,7 +20,7 @@ function makeRunConfig(
 			stream: line.stream,
 			text: line.text,
 		}),
-		buildSnapshot: (text: string) => ({
+		buildSnapshot: (text: string, trimmed: boolean) => ({
 			type: WsMessageType.RunLog,
 			projectId,
 			runId,
@@ -28,6 +28,7 @@ function makeRunConfig(
 			stream: 'stdout' as const,
 			text,
 			replace: true,
+			trimmed,
 		}),
 		onFlush,
 	};
@@ -43,12 +44,13 @@ function makeContainerConfig(projectId: string, streamId = `container:${projectI
 			stream: line.stream,
 			text: line.text,
 		}),
-		buildSnapshot: (text: string) => ({
+		buildSnapshot: (text: string, trimmed: boolean) => ({
 			type: WsMessageType.ContainerLog,
 			projectId,
 			stream: 'stdout' as const,
 			text,
 			replace: true,
+			trimmed,
 		}),
 	};
 }
@@ -158,10 +160,16 @@ describe('LogStreamBroker', () => {
 		const line = `${'x'.repeat(200)}\n`;
 		for (let i = 0; i < 4_000; i++) broker.emit('run:r1', 'stdout', line);
 
-		const replayed: Array<{ text?: string }> = [];
-		broker.replay('project-runs:p1', (p) => replayed.push(p as { text?: string }));
+		const replayed: Array<{ text?: string; trimmed?: boolean }> = [];
+		broker.replay('project-runs:p1', (p) =>
+			replayed.push(p as { text?: string; trimmed?: boolean }),
+		);
 
 		const text = replayed[0].text ?? '';
+		// The flag is what lets a client that seeded the *whole* log from REST
+		// refuse the downgrade; without it the run view replaced a complete log
+		// with its last 256 KB the moment it joined the room.
+		expect(replayed[0].trimmed).toBe(true);
 		expect(text.length).toBeLessThan(300 * 1024);
 		expect(text.length).toBeGreaterThan(200 * 1024);
 		expect(text.startsWith('...[earlier output trimmed')).toBe(true);
@@ -273,8 +281,10 @@ describe('LogStreamBroker', () => {
 		broker.emit('run:r1', 'stdout', '1234567890\n');
 		broker.emit('run:r1', 'stdout', 'this should not broadcast\n');
 
-		const replayed: Array<{ text?: string }> = [];
-		broker.replay('project-runs:p1', (p) => replayed.push(p as { text?: string }));
+		const replayed: Array<{ text?: string; trimmed?: boolean }> = [];
+		broker.replay('project-runs:p1', (p) =>
+			replayed.push(p as { text?: string; trimmed?: boolean }),
+		);
 		expect(replayed).toHaveLength(1);
 		expect(replayed[0].text).toContain('1234567890');
 		expect(replayed[0].text).not.toContain('this should not broadcast');

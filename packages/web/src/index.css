@@ -79,6 +79,16 @@
 	   in-flow and stuck states) — an overflow box clips a downward shadow at its
 	   bottom edge, so the ink has to spread up instead. */
 	--elev-up: 0 -2px 10px oklch(0.2 0.02 262 / 0.14), 0 -1px 3px oklch(0.2 0.02 262 / 0.1);
+
+	/* Height of the shell scroller's visible area (<main>'s clientHeight).
+	   __root.tsx overwrites this ON <main> with the measured value, so anything
+	   rendered inside it can size a sticky panel against the scrollport rather
+	   than against 100dvh minus its own guess at the chrome above. This declared
+	   value only covers the frames before that measurement lands, so it states
+	   the plain case: the viewport minus the h-12 app header. It is the ONLY
+	   place that number appears - a consumer subtracting it again is the bug this
+	   variable exists to remove. */
+	--shell-scrollport-h: calc(100dvh - 3rem);
 }
 
 /* `.log-surface-dark` opts a subtree into the dark palette regardless of the

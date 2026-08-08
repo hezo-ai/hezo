@@ -131,7 +131,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const wakeups = await listWakeups(architectId, parent.id);
@@ -156,7 +156,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const wakeups = await listWakeups(architectId, parent.id);
@@ -178,7 +178,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 		expect(
 			(await listWakeups(architectId, parent.id)).find(
@@ -194,7 +194,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 		const after = (await listWakeups(architectId, parent.id)).find(
 			(w) => w.payload.reason === 'children_closed',
@@ -215,7 +215,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.Backlog,
 			TaskStatus.Cancelled,
 			null,
-			undefined,
+			null,
 		);
 
 		const wakeups = await listWakeups(architectId, parent.id);
@@ -239,7 +239,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.Backlog,
 			TaskStatus.Cancelled,
 			null,
-			undefined,
+			null,
 		);
 
 		const wakeups = await listWakeups(architectId, parent.id);
@@ -260,7 +260,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const wakeups = await listWakeups(architectId, parent.id);
@@ -283,7 +283,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 		await triggerStatusAutomations(
 			db,
@@ -292,7 +292,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const matching = (await listWakeups(architectId, parent.id)).filter(
@@ -315,7 +315,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const wakeups = await listWakeups(architectId, parent.id);
@@ -334,7 +334,7 @@ describe('parent cascade — sub-task closure wakes parent agent', () => {
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const wakeups = await listWakeups(architectId, top.id);

@@ -226,6 +226,7 @@ describe('killLiveRunProcesses (shutdown reap)', () => {
 			projectId,
 			teamId,
 			taskKey: `${agentId}:${projectId}`,
+			containerId: null,
 		});
 
 		await manager.killLiveRunProcesses();
@@ -253,8 +254,65 @@ describe('killLiveRunProcesses (shutdown reap)', () => {
 			projectId,
 			teamId,
 			taskKey: `${agentId}:${projectId}`,
+			containerId: null,
 		});
 		await expect(manager.killLiveRunProcesses()).resolves.toBeUndefined();
 		manager.shutdown();
+	});
+});
+
+describe('stale tunnel-client sweep', () => {
+	// A Daytona PTY does not kill what runs on it when its socket closes, so a
+	// server stopped before its close path ran leaves a tunnel client holding the
+	// container's three loopback ports. The next tunnel dies on EADDRINUSE and
+	// the run loses MCP, egress and ssh - reported only as a 30s bind timeout.
+	// It became reachable once containers started outliving the process.
+
+	it('kills tunnel clients in every container this instance owns', async () => {
+		// By label, not from projects.container_id: a pool member no project
+		// currently points at is the one a later run is most likely to be handed.
+		const swept: string[] = [];
+		const docker = createStubDocker({
+			listContainersByLabel: async (label: string) => {
+				expect(label).toMatch(/^hezo\.instance=/);
+				return [{ Id: 'pool-member-a' }, { Id: 'pool-member-b' }] as never;
+			},
+			killTunnelClients: async (containerId: string) => {
+				swept.push(containerId);
+			},
+		});
+		const manager = createJobManager({ docker });
+		await manager.reconcileOnStartup();
+		manager.shutdown();
+		expect(swept).toEqual(['pool-member-a', 'pool-member-b']);
+	});
+
+	it('does not sweep when the backend is unreachable', async () => {
+		let swept = 0;
+		const docker = createStubDocker({
+			ping: async () => false,
+			killTunnelClients: async () => {
+				swept++;
+			},
+		});
+		const manager = createJobManager({ docker });
+		await manager.reconcileOnStartup();
+		manager.shutdown();
+		expect(swept).toBe(0);
+	});
+
+	it('a failure on one container does not stop the others or fail reconcile', async () => {
+		const swept: string[] = [];
+		const docker = createStubDocker({
+			listContainersByLabel: async () => [{ Id: 'bad' }, { Id: 'good' }] as never,
+			killTunnelClients: async (containerId: string) => {
+				if (containerId === 'bad') throw new Error('container stopped mid-sweep');
+				swept.push(containerId);
+			},
+		});
+		const manager = createJobManager({ docker });
+		await expect(manager.reconcileOnStartup()).resolves.toBeUndefined();
+		manager.shutdown();
+		expect(swept).toEqual(['good']);
 	});
 });

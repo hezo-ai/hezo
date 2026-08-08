@@ -31,7 +31,7 @@ beforeAll(async () => {
 		.data;
 	projectSlug = project.slug;
 	projectId = project.id;
-	planningTaskId = project.planning_task_id;
+	planningTaskId = project.planning_task_id as string;
 
 	const captain = await ctx.db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id

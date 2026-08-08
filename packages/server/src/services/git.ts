@@ -1,36 +1,91 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { RepoHostType } from '@hezo/shared';
+import { credentialPlaceholder } from '../lib/credential-placeholder';
 import type { GitExecutor } from './git-executor';
+import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
 
 /**
- * A repo clone, addressed by both its host path (for `node:fs` checks against the
- * bind-mounted directory) and its in-container path (the cwd git runs in). In unit
- * tests the two are the same temp dir.
+ * A repo clone, addressed the only way that works on every backend: its path
+ * *inside the container* (the cwd git runs in) and a {@link SandboxFiles} rooted
+ * there.
+ *
+ * It used to carry a host path too, for `node:fs` checks against the bind-mounted
+ * directory. That made every "is this cloned?" question a question about the
+ * operator's own disk, which is the same bytes only while the container is local.
+ * On a managed backend the clone lives in the sandbox and the host path names an
+ * empty directory, so those checks answered "not cloned" for a repo that was
+ * cloned - and the run failed with `cannot prepare worktree ... repo is not
+ * cloned`, which sends you looking at the repo connection rather than at a
+ * filesystem assumption.
  */
 export interface RepoLoc {
-	hostPath: string;
 	containerPath: string;
+	/** Reads and writes rooted at {@link containerPath}. */
+	files: SandboxFiles;
 }
 
 /** A task worktree, addressed the same way as {@link RepoLoc}. */
 export interface WorktreeLoc {
-	hostPath: string;
 	containerPath: string;
+	files: SandboxFiles;
+}
+
+/**
+ * A loc whose container path is also a real host path.
+ *
+ * True in exactly two places and nowhere else: a unit test pointing both at one
+ * temp dir, and the fake engine, where a bind mount genuinely makes the two names
+ * the same bytes. Production builds its locs from `ContainerEngine.files`, which
+ * is what makes them work on a backend that is not this machine.
+ */
+export function localGitLoc(dir: string): RepoLoc & WorktreeLoc {
+	return { containerPath: dir, files: hostSandboxFiles(dir) };
 }
 
 function formatGitError(stderr: string): string {
 	return stderr.trim();
 }
 
-const SSH_HOSTS: Record<RepoHostType, string> = {
+const REMOTE_HOSTS: Record<RepoHostType, string> = {
 	[RepoHostType.GitHub]: 'github.com',
 };
 
-export function buildGitSshUrl(hostType: RepoHostType, repoIdentifier: string): string {
-	const host = SSH_HOSTS[hostType];
+/**
+ * The remote URL every git op uses: **HTTPS, on every backend.**
+ *
+ * It was `git@github.com:owner/repo.git` over SSH, which cannot work on a
+ * managed sandbox service. Measured on Daytona: port 22 is dropped, and
+ * `ssh.github.com:443` - GitHub's own endpoint for firewalled networks - accepts
+ * the connection and is then reset the moment the payload turns out not to be
+ * TLS (`kex_exchange_identification: read: Connection reset by peer`, 20/20).
+ * Neither of the provider's own network settings lifts it: a domain allowlist
+ * matches on TLS SNI, which SSH has none of, and naming GitHub's own CIDRs still
+ * left both ports dead. HTTPS to the same repos worked in the same sandbox.
+ *
+ * One transport on every backend rather than HTTPS-there-SSH-here: a per-backend
+ * branch means local dev and CI exercise a path production does not, which is the
+ * failure the container seam exists to prevent.
+ *
+ * The credential is a **placeholder**, never a value - the egress proxy
+ * substitutes `__HEZO_SECRET_<NAME>__` at request time (AGENTS.md red line).
+ * Git base64s it into an `Authorization: Basic` header, which is why the proxy's
+ * substitution decodes that header rather than only scanning literals.
+ *
+ * A repo with no linked connection gets the plain URL: a public repo still
+ * clones, and a private one fails upstream with git's own 403 rather than being
+ * refused here for a credential it may not need.
+ */
+export function buildGitRemoteUrl(
+	hostType: RepoHostType,
+	repoIdentifier: string,
+	tokenSecretName: string | null,
+): string {
+	const host = REMOTE_HOSTS[hostType];
 	if (!host) throw new Error(`Unsupported repo host type: ${hostType}`);
-	return `git@${host}:${repoIdentifier}.git`;
+	if (!tokenSecretName) return `https://${host}/${repoIdentifier}.git`;
+	// `x-access-token` is GitHub's documented username for a token-as-password
+	// Basic credential; the token itself is the password half.
+	return `https://x-access-token:${credentialPlaceholder(tokenSecretName)}@${host}/${repoIdentifier}.git`;
 }
 
 function escapeRegExp(s: string): string {
@@ -38,25 +93,32 @@ function escapeRegExp(s: string): string {
 }
 
 /**
- * Whether a configured remote URL points at the given repo (`owner/repo`) on the
- * given host. Accepts the scp-style SSH form Hezo writes plus the `ssh://` and
- * `http(s)://` forms a human may have configured by hand — a different repo or a
- * different host is a mismatch.
+ * Whether a clone's `origin` is a remote Hezo is willing to leave alone: HTTPS,
+ * on the right host, naming the right repo.
+ *
+ * **This deliberately rejects the SSH forms**, and that is the whole point.
+ * It replaced a permissive matcher that accepted `git@host:owner/repo.git` and
+ * `ssh://` alongside HTTPS, on the reasoning that a human may have configured one
+ * by hand and it is not wrong about *which* repo. True, but `repo-sync` asks this
+ * question to decide whether to rewrite `origin` - so every clone made before the
+ * move to HTTPS kept "matching" and was left on a transport that no longer works
+ * on a managed backend. Rejecting them is what migrates a live clone, on its next
+ * sync, with no migration and nothing stored to change.
+ *
+ * A credential in the URL is ignored, so a rotated secret name does not churn
+ * every clone: git substitutes it at request time either way. A plain
+ * `https://host/owner/repo.git` a human configured is therefore also left alone.
  */
-export function remoteUrlMatchesRepo(
+export function isExpectedRemoteUrl(
 	url: string,
 	repoIdentifier: string,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): boolean {
-	const host = SSH_HOSTS[hostType];
+	const host = REMOTE_HOSTS[hostType];
 	if (!host) return false;
 	const h = escapeRegExp(host);
 	const id = escapeRegExp(repoIdentifier);
-	const forms = new RegExp(
-		`^(?:git@${h}:|ssh://git@${h}(?::\\d+)?/|https?://(?:[^/@]+@)?${h}/)${id}(?:\\.git)?/?$`,
-		'i',
-	);
-	return forms.test(url.trim());
+	return new RegExp(`^https://(?:[^/@]+@)?${h}/${id}(?:\\.git)?/?$`, 'i').test(url.trim());
 }
 
 export type OriginRemote =
@@ -112,12 +174,13 @@ export async function cloneRepo(
 	executor: GitExecutor,
 	repoIdentifier: string,
 	target: RepoLoc,
+	tokenSecretName: string | null,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
-	const url = buildGitSshUrl(hostType, repoIdentifier);
+	const url = buildGitRemoteUrl(hostType, repoIdentifier, tokenSecretName);
 	const { exitCode, stderr } = await executor.exec(['clone', url, target.containerPath], {
 		cwd: dirname(target.containerPath),
-		needsSsh: true,
+		needsNetwork: true,
 		timeout: 120_000,
 	});
 	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
@@ -133,19 +196,21 @@ export async function cloneRepo(
  * abort rather than clobber either side); when the remote is empty the existing
  * files are kept as the working tree to become the repo's initial content on the
  * first commit/push. A `.git` created here is removed on failure so the
- * directory stays eligible for a clean retry. `needsSsh` gates the network ops
+ * directory stays eligible for a clean retry. `needsNetwork` gates the network ops
  * (false for the `file://` repos used in tests).
  */
 export async function connectExistingRepo(
 	executor: GitExecutor,
 	url: string,
 	target: RepoLoc,
-	needsSsh: boolean,
+	needsNetwork: boolean,
 ): Promise<{ success: boolean; error?: string }> {
 	const cwd = target.containerPath;
-	const hadGit = existsSync(join(target.hostPath, '.git'));
-	const fail = (error: string): { success: false; error: string } => {
-		if (!hadGit) rmSync(join(target.hostPath, '.git'), { recursive: true, force: true });
+	const hadGit = await target.files.exists('.git');
+	const fail = async (error: string): Promise<{ success: false; error: string }> => {
+		// Only tear down a `.git` this call created; one that was already there
+		// belongs to the user.
+		if (!hadGit) await target.files.removeDir('.git');
 		return { success: false, error };
 	};
 
@@ -164,13 +229,13 @@ export async function connectExistingRepo(
 	// A remote with no refs has no commits yet — keep the existing files as the
 	// initial working tree. `ls-remote --symref HEAD` can print a symref line even
 	// for an unborn HEAD, so emptiness is judged by the full ref listing.
-	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsSsh, timeout: 60_000 });
+	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsNetwork, timeout: 60_000 });
 	if (refs.exitCode !== 0) return fail(formatGitError(refs.stderr));
 
 	if (refs.stdout.trim().length > 0) {
 		const head = await executor.exec(['ls-remote', '--symref', 'origin', 'HEAD'], {
 			cwd,
-			needsSsh,
+			needsNetwork,
 			timeout: 60_000,
 		});
 		if (head.exitCode !== 0) return fail(formatGitError(head.stderr));
@@ -179,7 +244,7 @@ export async function connectExistingRepo(
 
 		const fetch = await executor.exec(['fetch', 'origin', branch], {
 			cwd,
-			needsSsh,
+			needsNetwork,
 			timeout: 120_000,
 		});
 		if (fetch.exitCode !== 0) return fail(formatGitError(fetch.stderr));
@@ -203,9 +268,15 @@ export async function initRepoInPlace(
 	executor: GitExecutor,
 	repoIdentifier: string,
 	target: RepoLoc,
+	tokenSecretName: string | null,
 	hostType: RepoHostType = RepoHostType.GitHub,
 ): Promise<{ success: boolean; error?: string }> {
-	return connectExistingRepo(executor, buildGitSshUrl(hostType, repoIdentifier), target, true);
+	return connectExistingRepo(
+		executor,
+		buildGitRemoteUrl(hostType, repoIdentifier, tokenSecretName),
+		target,
+		true,
+	);
 }
 
 /** The minimal README seeded as an empty repo's initial commit — just the repo name. */
@@ -227,28 +298,28 @@ export function initialReadmeContent(repoIdentifier: string): string {
  *
  * The commit is deliberately unsigned (`-c commit.gpgsign=false`): SSH commit
  * signing runs `ssh-keygen -Y sign` against `SSH_AUTH_SOCK`, which is only live for
- * bridged (`needsSsh`) ops — a signed local `git commit` here would fail. The push
+ * bridged (`needsNetwork`) ops — a signed local `git commit` here would fail. The push
  * still runs bridged, so it authenticates as the project over the run's SSH bridge.
  * The caller must supply a git identity on the executor env (the prep executor does).
  *
  * A pre-populated working tree (a directory adopted in place) is preserved: the
  * README is only written when absent, and `add -A` folds any existing files into the
  * same initial commit — matching {@link connectExistingRepo}'s "existing files become
- * the initial content" contract. `needsSsh` gates the network ops (false for the
+ * the initial content" contract. `needsNetwork` gates the network ops (false for the
  * `file://` remotes used in tests).
  */
 export async function seedInitialCommitIfEmpty(
 	executor: GitExecutor,
 	repoIdentifier: string,
 	repo: RepoLoc,
-	needsSsh: boolean,
+	needsNetwork: boolean,
 ): Promise<{ seeded: boolean; error?: string }> {
 	const cwd = repo.containerPath;
 
 	// Emptiness is judged by the full remote ref listing: `ls-remote --symref HEAD`
 	// can print a symref line even for an unborn HEAD (see connectExistingRepo), so a
 	// bare `ls-remote` is the authoritative "has any commit" probe.
-	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsSsh, timeout: 60_000 });
+	const refs = await executor.exec(['ls-remote', 'origin'], { cwd, needsNetwork, timeout: 60_000 });
 	if (refs.exitCode !== 0) return { seeded: false, error: formatGitError(refs.stderr) };
 	if (refs.stdout.trim().length > 0) return { seeded: false };
 
@@ -270,10 +341,9 @@ export async function seedInitialCommitIfEmpty(
 		});
 		if (sym.exitCode !== 0) return { seeded: false, error: formatGitError(sym.stderr) };
 
-		const readmePath = join(repo.hostPath, 'README.md');
 		try {
-			if (!existsSync(readmePath)) {
-				writeFileSync(readmePath, initialReadmeContent(repoIdentifier));
+			if (!(await repo.files.exists('README.md'))) {
+				await repo.files.write('README.md', initialReadmeContent(repoIdentifier));
 			}
 		} catch (e) {
 			return { seeded: false, error: e instanceof Error ? e.message : String(e) };
@@ -292,7 +362,7 @@ export async function seedInitialCommitIfEmpty(
 
 	const push = await executor.exec(['push', '-u', 'origin', 'HEAD:main'], {
 		cwd,
-		needsSsh,
+		needsNetwork,
 		timeout: 120_000,
 	});
 	if (push.exitCode !== 0) return { seeded: false, error: formatGitError(push.stderr) };
@@ -310,7 +380,7 @@ export async function fetchRepo(
 	// that state fail loudly instead.
 	const { exitCode, stderr } = await executor.exec(['fetch', '--prune', 'origin'], {
 		cwd: repo.containerPath,
-		needsSsh: true,
+		needsNetwork: true,
 		timeout: 60_000,
 	});
 	if (exitCode !== 0) return { success: false, error: formatGitError(stderr) };
@@ -650,7 +720,7 @@ export async function ensureTaskWorktree(
 	wt: WorktreeLoc,
 	branchName: string,
 ): Promise<{ success: boolean; created: boolean; error?: string }> {
-	if (existsSync(join(wt.hostPath, '.git'))) {
+	if (await wt.files.exists('.git')) {
 		// Reuse the existing worktree when its gitdir still resolves in the container.
 		const probe = await executor.exec(['rev-parse', '--git-dir'], {
 			cwd: wt.containerPath,
@@ -662,7 +732,8 @@ export async function ensureTaskWorktree(
 		// The tree survived but its admin entry was lost (e.g. the clone was
 		// recreated). Discard the stale tree and rebuild from the branch ref, which
 		// still lives in the clone — committed work is preserved.
-		rmSync(wt.hostPath, { recursive: true, force: true });
+		// Rooted at the worktree, so '.' is the worktree itself.
+		await wt.files.removeDir('.');
 		await pruneWorktrees(executor, repo);
 	}
 
@@ -761,17 +832,24 @@ export async function removeWorktree(
  * by the admin "Prune worktrees" action to clear worktrees of closed/orphaned tasks; the
  * main worktree (the clone under `/workspace`) never sits under the worktrees root, so it
  * is inherently skipped.
+ *
+ * `limit` bounds one pass. The admin action leaves it unset and sweeps everything; the
+ * automatic per-run sweep caps it, so a container carrying a long backlog of stale
+ * worktrees pays a bounded cost per run instead of stalling one run to clear all of them.
+ * Callers that care whether more remain compare `removed.length` against the cap.
  */
 export async function removeWorktreesWhere(
 	executor: GitExecutor,
 	repo: RepoLoc,
 	worktreesRootContainer: string,
 	shouldRemove: (taskIdentifier: string) => boolean,
+	limit?: number,
 ): Promise<string[]> {
 	const prefix = `${worktreesRootContainer}/`;
 	const entries = await listWorktrees(executor, repo);
 	const removed: string[] = [];
 	for (const entry of entries) {
+		if (limit !== undefined && removed.length >= limit) break;
 		if (!entry.path.startsWith(prefix)) continue;
 		const taskIdentifier = entry.path.slice(prefix.length).split('/')[0];
 		if (!taskIdentifier || !shouldRemove(taskIdentifier)) continue;
@@ -791,7 +869,7 @@ export async function getWorktreeHead(
 	executor: GitExecutor,
 	wt: WorktreeLoc,
 ): Promise<string | null> {
-	if (!existsSync(join(wt.hostPath, '.git'))) return null;
+	if (!(await wt.files.exists('.git'))) return null;
 	const { exitCode, stdout } = await executor.exec(['rev-parse', 'HEAD'], {
 		cwd: wt.containerPath,
 		timeout: 10_000,
@@ -815,7 +893,7 @@ export async function worktreeChangedPaths(
 	executor: GitExecutor,
 	wt: WorktreeLoc,
 ): Promise<string[]> {
-	if (!existsSync(join(wt.hostPath, '.git'))) return [];
+	if (!(await wt.files.exists('.git'))) return [];
 	const status = await executor
 		.exec(['status', '--porcelain'], { cwd: wt.containerPath, timeout: 10_000 })
 		.catch(() => null);
@@ -845,7 +923,7 @@ export async function worktreeHasChanges(
 	wt: WorktreeLoc,
 	headBefore: string | null,
 ): Promise<boolean> {
-	if (!existsSync(join(wt.hostPath, '.git'))) return false;
+	if (!(await wt.files.exists('.git'))) return false;
 	const status = await executor.exec(['status', '--porcelain'], {
 		cwd: wt.containerPath,
 		timeout: 10_000,
@@ -867,7 +945,7 @@ export async function worktreeTracksPath(
 	wt: WorktreeLoc,
 	path: string,
 ): Promise<boolean> {
-	if (!existsSync(join(wt.hostPath, '.git'))) return false;
+	if (!(await wt.files.exists('.git'))) return false;
 	const r = await executor
 		.exec(['ls-files', '--error-unmatch', '--', path], {
 			cwd: wt.containerPath,
@@ -895,7 +973,7 @@ export interface CloneState {
 }
 
 export async function getCloneState(executor: GitExecutor, repo: RepoLoc): Promise<CloneState> {
-	if (!existsSync(join(repo.hostPath, '.git'))) {
+	if (!(await repo.files.exists('.git'))) {
 		return {
 			cloned: false,
 			defaultBranch: null,
@@ -1091,30 +1169,27 @@ exit 0
  * a filesystem failure is swallowed so it never blocks run prep — the agent's own
  * end-of-run push still lands the work; only the per-commit safeguard is skipped.
  */
-export function ensurePushHook(clone: RepoLoc): void {
-	const hooksDir = join(clone.hostPath, '.git', 'hooks');
-	const hookPath = join(hooksDir, 'post-commit');
+export async function ensurePushHook(clone: RepoLoc): Promise<void> {
 	try {
-		mkdirSync(hooksDir, { recursive: true });
-		writeFileSync(hookPath, POST_COMMIT_PUSH_HOOK, { mode: 0o755 });
-		// writeFileSync only applies `mode` when creating the file; chmod explicitly so a
-		// refresh over an existing (or umask-narrowed) file is always executable.
-		chmodSync(hookPath, 0o755);
+		// The seam writes the mode rather than a separate chmod: it creates parent
+		// directories and applies the mode on every write, so a refresh over an
+		// existing (or umask-narrowed) file is executable either way.
+		await clone.files.write(PUSH_HOOK_REL_PATH, POST_COMMIT_PUSH_HOOK, { mode: 0o755 });
 	} catch {
 		// Non-fatal — see the docstring. Swallowed so run prep never fails on a hook write.
 	}
 }
 
-const pushErrorLogPath = (clone: RepoLoc): string =>
-	join(clone.hostPath, '.git', PUSH_ERROR_LOG_NAME);
+const PUSH_HOOK_REL_PATH = '.git/hooks/post-commit';
+const pushErrorLogRelPath = `.git/${PUSH_ERROR_LOG_NAME}`;
 
 /**
  * Clear a clone's auto-push error log at run prep, so what {@link readPushErrors}
  * reports at run end belongs to this run and not a previous one. Best-effort.
  */
-export function clearPushErrors(clone: RepoLoc): void {
+export async function clearPushErrors(clone: RepoLoc): Promise<void> {
 	try {
-		rmSync(pushErrorLogPath(clone), { force: true });
+		await clone.files.remove(pushErrorLogRelPath);
 	} catch {
 		// Non-fatal — a stale log is worth less than a failed run prep.
 	}
@@ -1129,15 +1204,277 @@ export function clearPushErrors(clone: RepoLoc): void {
  * Returns the trailing `maxLines` lines, or null when nothing failed. Best-effort:
  * an unreadable log reports nothing rather than throwing at run finalize.
  */
-export function readPushErrors(clone: RepoLoc, maxLines = 40): string | null {
+export async function readPushErrors(clone: RepoLoc, maxLines = 40): Promise<string | null> {
 	try {
-		const path = pushErrorLogPath(clone);
-		if (!existsSync(path)) return null;
-		const text = readFileSync(path, 'utf-8').trim();
+		// A missing log rejects, which is the same "nothing failed" answer.
+		const text = (await clone.files.read(pushErrorLogRelPath)).trim();
 		if (!text) return null;
 		const lines = text.split('\n');
 		return lines.length > maxLines ? lines.slice(-maxLines).join('\n') : text;
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Remotes whose refs mean "this commit reached the user's git host".
+ *
+ * Just `origin`, and the durability backstop deliberately did **not** join it.
+ * {@link RECOVERY_REMOTE} means Hezo holds a copy, which is enough to stop
+ * destroying the container but is not the same as the work being on the remote
+ * the human pushes to - a run whose every push was denied must keep reporting
+ * that, however well the copy is kept.
+ */
+export const DURABLE_REMOTES = ['origin'] as const;
+
+/**
+ * Commits on a clone's task branch that reached none of {@link DURABLE_REMOTES}.
+ *
+ * **This is a ref comparison, deliberately, and not a read of
+ * {@link PUSH_ERROR_LOG_NAME}.** The log is append-only within a run and cleared at
+ * prep, so a push that failed at commit 3 and succeeded at commit 5 leaves a
+ * non-empty log with nothing actually unpushed - reporting off it would fail a run
+ * whose work is safely on the remote. The authoritative question is whether the
+ * local `hezo/<task>` tip is reachable from a remote-tracking ref, which this asks
+ * directly.
+ *
+ * `git push` updates the corresponding `refs/remotes/origin/*` ref on success, and
+ * run prep fetches before the agent starts, so the tracking refs are a faithful
+ * local record of what the remote holds - no network call is needed or made.
+ *
+ * `--not --remotes=<name>` excludes everything reachable from that remote's
+ * tracking refs, which answers all four shapes uniformly: pushed and current (0),
+ * pushed but behind (the delta), never pushed but already merged into the default
+ * branch (0, correctly - the commits are on the remote), and never pushed at all
+ * (the whole branch).
+ *
+ * Returns 0 for a definite all-clear (including "the branch was never created", so
+ * the agent committed nothing), and **null when the question could not be answered**
+ * - the clone is gone or git failed. Null is not 0: a diagnostic that could not run
+ * must neither fail a run nor clear a pin.
+ */
+export async function countUnpushedCommits(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+	remotes: readonly string[] = DURABLE_REMOTES,
+): Promise<number | null> {
+	if (!(await repo.files.exists('.git'))) return null;
+	const localRef = `refs/heads/${branch}`;
+	const exists = await executor.exec(['rev-parse', '--verify', '--quiet', localRef], {
+		cwd: repo.containerPath,
+		timeout: 10_000,
+	});
+	// No branch is a definite absence of unpushed work, not an unanswered question:
+	// the agent committed nothing on this task's branch in this clone.
+	if (exists.exitCode !== 0) return 0;
+
+	const { exitCode, stdout } = await executor.exec(
+		['rev-list', '--count', localRef, '--not', ...remotes.map((r) => `--remotes=${r}`)],
+		{ cwd: repo.containerPath, timeout: 30_000 },
+	);
+	if (exitCode !== 0) return null;
+	const count = Number.parseInt(stdout.trim(), 10);
+	return Number.isFinite(count) ? count : null;
+}
+
+/** A clone left holding commits that reached no durable remote. */
+export interface UnpushedWork {
+	repo: RepoLoc;
+	branch: string;
+	commits: number;
+}
+
+export interface UnpushedWorkScan {
+	/** Clones holding commits that reached no durable remote. */
+	work: UnpushedWork[];
+	/**
+	 * True when every clone answered. False when at least one could not be read, in
+	 * which case an empty `work` is "nothing found", not an all-clear - so it may
+	 * not be used to release a container pinned by an earlier run.
+	 */
+	complete: boolean;
+}
+
+/**
+ * The clones a run is about to leave behind with commits that exist nowhere but
+ * this container.
+ *
+ * With one container per project this was survivable: the next run hit the same
+ * `.git` and the ref was still there. Once a project has several containers it is
+ * not - run 1 commits into container A, its push is denied, run 2 lands on
+ * container B and fetches from a remote that never received the commit, and A is
+ * destroyed when it goes idle. Nothing fails at pool size 1, which is why no
+ * existing test caught it.
+ */
+export async function findUnpushedWork(
+	executor: GitExecutor,
+	clones: RepoLoc[],
+	branch: string,
+): Promise<UnpushedWorkScan> {
+	const work: UnpushedWork[] = [];
+	let complete = true;
+	for (const repo of clones) {
+		const commits = await countUnpushedCommits(executor, repo, branch);
+		if (commits === null) complete = false;
+		else if (commits > 0) work.push({ repo, branch, commits });
+	}
+	return { work, complete };
+}
+
+/**
+ * One line per clone, for the run log and the run row's error. Names the branch and
+ * the clone so the human knows exactly which container holds the work and what to
+ * fetch out of it.
+ */
+export function describeUnpushedWork(work: UnpushedWork[]): string {
+	const parts = work.map(
+		(w) =>
+			`${w.commits} commit${w.commits === 1 ? '' : 's'} on ${w.branch} in ${w.repo.containerPath}`,
+	);
+	return `run ended with committed work that reached no remote (${parts.join('; ')}) — the commits exist only in this container`;
+}
+
+/**
+ * Filename, inside a clone's git dir, of the recovery bundle a run builds when its
+ * commits reached no remote - and that a later run on a *different* container
+ * restores from.
+ *
+ * In the git dir deliberately, beside {@link PUSH_ERROR_LOG_NAME}, for two
+ * reasons. It is real local disk: `git bundle create` **seeks while writing** and
+ * dies (`pack-objects died`) against an object-store-backed mount, so the bundle
+ * has to be built locally and moved as a finished file. And the git dir is
+ * already owned by the run user, so the unelevated git that builds it can write
+ * there without a chown dance.
+ */
+export const RECOVERY_BUNDLE_NAME = 'hezo-recovery.bundle';
+
+/**
+ * The bundle's path relative to the clone root, which is what
+ * {@link SandboxFiles} rooted at the clone addresses it by.
+ *
+ * Uses the *common* git dir literally rather than asking git for it: a clone's
+ * `.git` is a real directory (worktrees are what get a file), which
+ * {@link ensurePushHook} already relies on.
+ */
+export const RECOVERY_BUNDLE_REL_PATH = `.git/${RECOVERY_BUNDLE_NAME}`;
+
+/**
+ * Remote-tracking namespace restored bundle refs land in.
+ *
+ * Deliberately **not** in {@link DURABLE_REMOTES}: a recovered ref means Hezo
+ * holds a copy, not that the user's git host does. Counting it as durable would
+ * make a run whose pushes were all denied report success the moment its work was
+ * vaulted, which is the opposite of what the human needs to see.
+ */
+export const RECOVERY_REMOTE = 'hezo-recovery';
+
+/**
+ * Pack a branch's undelivered commits into a bundle inside the container.
+ *
+ * `--not --remotes=<durable>` makes this a **delta**: the bundle carries only what
+ * no durable remote already has, recording the remote tips as prerequisites. That
+ * is what keeps it kilobytes for an ordinary task rather than a copy of the whole
+ * history, and it is why a container restoring it must have fetched origin first
+ * (run prep always has, before it restores). A clone with no remote at all has no
+ * prerequisites to exclude, so its bundle is the entire branch - correct, and the
+ * case the vault's size cap exists for.
+ *
+ * Never throws: this runs at run finalize, where the run is already being failed
+ * for the unpushed work, and a broken bundle must not mask that.
+ */
+export async function createRecoveryBundle(
+	executor: GitExecutor,
+	repo: RepoLoc,
+	branch: string,
+	remotes: readonly string[] = DURABLE_REMOTES,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+	const res = await executor.exec(
+		[
+			'bundle',
+			'create',
+			RECOVERY_BUNDLE_REL_PATH,
+			`refs/heads/${branch}`,
+			'--not',
+			...remotes.map((r) => `--remotes=${r}`),
+		],
+		{ cwd: repo.containerPath, timeout: 120_000 },
+	);
+	if (res.exitCode !== 0) {
+		return { ok: false, error: formatGitError(res.stderr) || 'git bundle create failed' };
+	}
+	return { ok: true };
+}
+
+/**
+ * Fetch a restored bundle's commits into a clone.
+ *
+ * The refs land under `refs/remotes/{@link RECOVERY_REMOTE}/` rather than on the
+ * branch itself. That is the conservative half of recovery: the commits become
+ * *present* in this clone - so nothing is lost when the container that held them
+ * is destroyed - without silently moving a branch the agent is about to work on.
+ *
+ * `git bundle` verifies its own prerequisites, so a bundle whose base commits this
+ * clone lacks fails here rather than half-applying.
+ *
+ * Non-throwing for the same reason as {@link createRecoveryBundle}: a failed
+ * recovery is reported into the run log and the source container stays pinned,
+ * never an exception out of run prep.
+ */
+export async function fetchRecoveryBundle(
+	executor: GitExecutor,
+	repo: RepoLoc,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+	const res = await executor.exec(
+		[
+			'fetch',
+			'--no-write-fetch-head',
+			RECOVERY_BUNDLE_REL_PATH,
+			`+refs/heads/*:refs/remotes/${RECOVERY_REMOTE}/*`,
+		],
+		{ cwd: repo.containerPath, timeout: 120_000 },
+	);
+	if (res.exitCode !== 0) {
+		return { ok: false, error: formatGitError(res.stderr) || 'git fetch from bundle failed' };
+	}
+	return { ok: true };
+}
+
+/**
+ * Merge recovered commits into the task branch, so the agent's worktree actually
+ * contains the work an earlier container committed.
+ *
+ * Separate from {@link fetchRecoveryBundle} because the two answer different
+ * questions: fetching is about *not losing* the commits, merging is about *using*
+ * them. Fast-forward only - the recovered tip descends from what this clone has
+ * whenever the earlier run was the only writer, which the one-active-run-per-task
+ * rule guarantees. If it is not a fast-forward, something genuinely diverged and
+ * the agent should reconcile it deliberately rather than have a merge commit
+ * appear from a background recovery.
+ */
+export async function fastForwardFromRecovery(
+	executor: GitExecutor,
+	worktree: WorktreeLoc,
+	branch: string,
+): Promise<{ merged: boolean; warning?: string }> {
+	const ref = `refs/remotes/${RECOVERY_REMOTE}/${branch}`;
+	const exists = await executor.exec(['rev-parse', '--verify', '--quiet', ref], {
+		cwd: worktree.containerPath,
+		timeout: 10_000,
+	});
+	if (exists.exitCode !== 0) return { merged: false };
+
+	const res = await executor.exec(['merge', '--ff-only', ref], {
+		cwd: worktree.containerPath,
+		timeout: 60_000,
+	});
+	if (res.exitCode !== 0) {
+		return {
+			merged: false,
+			warning:
+				`recovered commits for ${branch} could not be fast-forwarded into the worktree ` +
+				`(${formatGitError(res.stderr) || 'merge failed'}) — they are present as ${ref}`,
+		};
+	}
+	return { merged: !res.stdout.includes('Already up to date') };
 }

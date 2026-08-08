@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaskStatus, TEST_CONTAINERS_ENV, WakeupStatus } from '@hezo/shared';
@@ -15,6 +15,12 @@ import {
 	provisionContainer,
 } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { planIdleShutdown } from '../src/services/sandbox/pool';
+import {
+	type ContainerListing,
+	listAllContainers,
+	loadPoolMembers,
+} from '../src/services/sandbox/pool-db';
 import { getProjectDir } from '../src/services/workspace';
 import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
@@ -60,6 +66,23 @@ function recordingDocker(
 		execStderr?: string;
 		execExitCode?: number;
 		execCreateError?: Error;
+		/**
+		 * Runs in place of `startContainer`, which is the first thing to happen
+		 * after the engine hands back an id - the earliest point a test can observe
+		 * the half-provisioned state.
+		 *
+		 * It is *not* a vantage point on the expensive tail, which is what it used
+		 * to claim: the CA install, the chown, the repo clone and the MCP installs
+		 * all come later still. Use `onExec` for those.
+		 */
+		onStart?: (containerId: string) => Promise<void>;
+		/**
+		 * Runs on every exec the provision issues. The first of those is the CA
+		 * install, so this lands *inside* the setup tail - the window where the
+		 * member used to read `idle` while the container was still being built, and
+		 * the only place a test can observe it.
+		 */
+		onExec?: () => Promise<void>;
 	} = {},
 ) {
 	const created: CreateContainerCall[] = [];
@@ -69,9 +92,12 @@ function recordingDocker(
 			created.push({ name, config });
 			return { Id: `prov-cid-${Date.now().toString(16)}-${seq++}`, Warnings: [] };
 		}),
-		startContainer: vi.fn(async () => {}),
+		startContainer: vi.fn(async (id: string) => {
+			if (opts.onStart) await opts.onStart(id);
+		}),
 		execCreate: vi.fn(async () => {
 			if (opts.execCreateError) throw opts.execCreateError;
+			if (opts.onExec) await opts.onExec();
 			return 'exec-y';
 		}),
 		execStart: vi.fn(async () => ({
@@ -100,6 +126,10 @@ async function resetContainerRow(): Promise<void> {
 		 container_error = NULL, container_last_logs = NULL WHERE id = $1`,
 		[projectId],
 	);
+	// The members too: every provision in this file leaves one behind, and a test
+	// that looks the project's container up by project id would otherwise find an
+	// earlier test's - which reads `idle` and hides exactly what is under test.
+	await db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
 }
 
 async function projectRow(): Promise<ProjectRow> {
@@ -124,7 +154,7 @@ beforeAll(async () => {
 	const project = (await projRes.json()).data;
 	projectId = project.id;
 	projectSlug = project.slug;
-	planningTaskId = project.planning_task_id;
+	planningTaskId = project.planning_task_id as string;
 
 	const agent = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
@@ -276,14 +306,14 @@ describe('provisionContainer', () => {
 
 		expect(subscribe).toHaveBeenCalledWith(projectId, id, logs, docker);
 
-		const text = logs.getLogText(`provision:${projectId}`);
+		const text = logs.getLogText(`container:${id}`);
 		expect(text).toContain('→ Preparing workspace');
 		expect(text).toContain('→ Starting container');
 		expect(text).toContain('✓ Container ready');
 
 		// A late subscriber replay gets the buildSnapshot message with replace: true.
 		const snapshots: Array<Record<string, unknown>> = [];
-		logs.replay(`container-logs:${projectId}`, (payload) =>
+		logs.replay(`container-logs:${id}`, (payload) =>
 			snapshots.push(payload as Record<string, unknown>),
 		);
 		expect(snapshots).toHaveLength(1);
@@ -291,6 +321,110 @@ describe('provisionContainer', () => {
 		expect(snapshots[0].projectId).toBe(projectId);
 		expect(snapshots[0].stream).toBe('stdout');
 		expect(String(snapshots[0].text)).toContain('✓ Container ready');
+	});
+
+	it('joins the pool as `creating` the moment the container exists, then becomes idle', async () => {
+		// The regression this pins: the member row and `projects.container_id` were
+		// both written at the *end* of provisioning, and they are the only two things
+		// the global Containers page reads - so a container that was starting was
+		// listed nowhere, and its log stream (already open, keyed on its id) had no
+		// row to be reached from. On a fresh instance that is the whole of what an
+		// operator sees: "Starting the HQ container..." beside an empty list.
+		await resetContainerRow();
+		// Read it back through `listAllContainers` - what GET /api/containers calls -
+		// rather than off the member row directly, so this asserts the page would
+		// actually show it rather than that a row exists somewhere.
+		let inFlight: ContainerListing | undefined;
+		const { docker } = recordingDocker({
+			onStart: async (id) => {
+				const rows = await listAllContainers(db);
+				inFlight = rows.find((r) => r.container_id === id);
+			},
+		});
+
+		const id = await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
+
+		expect(inFlight?.state).toBe('creating');
+		expect(inFlight?.project_id).toBe(projectId);
+
+		// And it is allocatable only once provisioning finished - `creating` is
+		// dropped by the ladder, so registering early cannot hand a half-built
+		// container to a run.
+		const after = await db.query<{ state: string }>(
+			`SELECT state::text AS state FROM container_pool_members WHERE container_id = $1`,
+			[id],
+		);
+		expect(after.rows[0].state).toBe('idle');
+	});
+
+	it('stays `creating` through the setup tail, so it is neither shown nor used as ready', async () => {
+		// The window the screenshot caught: the member was flipped to `idle` right
+		// after `startContainer`, above the CA install, the chown, the repo clone and
+		// the MCP installs. The page showed "Idle" for the slowest minutes of the
+		// container's life while its own log said it was cloning.
+		//
+		// Observed from an exec, because that is what the setup tail is made of -
+		// `onStart` fires above the old write and so could never have caught this.
+		await resetContainerRow();
+		const seen: Array<{ state: string; usable: number; suspendable: number }> = [];
+		const { docker } = recordingDocker({
+			onExec: async () => {
+				const rows = await listAllContainers(db);
+				const listed = rows.find((r) => r.project_id === projectId);
+				const members = await loadPoolMembers(db, projectId);
+				seen.push({
+					state: listed?.state ?? 'missing',
+					// The half the label hides: `idle` is what makes a member
+					// allocatable and suspendable. A container with no CA trusted and
+					// no repos must be neither.
+					usable: members.length,
+					suspendable: planIdleShutdown(members).suspend === null ? 0 : 1,
+				});
+			},
+		});
+
+		const id = await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
+
+		expect(seen.length).toBeGreaterThan(0);
+		for (const at of seen) {
+			expect(at.state).toBe('creating');
+			expect(at.usable).toBe(0);
+			expect(at.suspendable).toBe(0);
+		}
+
+		// And it does become usable once the container really is ready.
+		const after = await db.query<{ state: string }>(
+			`SELECT state::text AS state FROM container_pool_members WHERE container_id = $1`,
+			[id],
+		);
+		expect(after.rows[0].state).toBe('idle');
+		expect((await loadPoolMembers(db, projectId)).length).toBe(1);
+	});
+
+	it('leaves a container that failed part-way through setup in the pool, marked and explained', async () => {
+		// It is a real container on the engine. Dropping the member row would leave
+		// it running and referenced by nothing - invisible on a local daemon, billed
+		// for on a managed backend - and an operator with no row to remove.
+		await resetContainerRow();
+		const { docker } = recordingDocker({
+			onStart: async () => {
+				throw new Error('container exited immediately');
+			},
+		});
+
+		await expect(
+			provisionContainer(baseDeps(docker), await projectRow(), teamSlug),
+		).rejects.toThrow('container exited immediately');
+
+		const member = await db.query<{ state: string; last_error: string | null }>(
+			`SELECT state::text AS state, last_error FROM container_pool_members
+			  WHERE project_id = $1 AND state = 'error'::container_pool_state`,
+			[projectId],
+		);
+		expect(member.rows).toHaveLength(1);
+		expect(member.rows[0].last_error).toContain('container exited immediately');
+
+		await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
 	});
 
 	it('labels the container as a test container only when the test-containers env is set', async () => {
@@ -313,26 +447,53 @@ describe('provisionContainer', () => {
 		}
 	});
 
-	it('bind-mounts the egress CA, runs update-ca-certificates, and surfaces its stderr', async () => {
+	it('writes the egress CA through the file seam, runs update-ca-certificates, and surfaces its stderr', async () => {
+		// It used to arrive as a `host:container` bind, which only Docker can
+		// honour: a managed backend has no host to bind from, and Daytona's adapter
+		// could render it only as "create the parent directory" - so the cert never
+		// landed, `NODE_EXTRA_CA_CERTS` named a missing file, and every proxied TLS
+		// call failed on an unknown issuer. Asserting the *write* is what makes the
+		// delivery backend-agnostic rather than Docker-shaped.
 		await resetContainerRow();
 		const { docker, created } = recordingDocker({ execStderr: 'ca-store warning line' });
 		const logs = new LogStreamBroker();
-		const egressCAPath = '/tmp/hezo-fake-egress-ca.pem';
+		const caDir = mkdtempSync(join(tmpdir(), 'hezo-ca-'));
+		const egressCAPath = join(caDir, 'egress-ca.pem');
+		writeFileSync(egressCAPath, '-----BEGIN CERTIFICATE-----\nprovision-test\n');
 
-		await provisionContainer(
+		const writes: Array<{ root: string; rel: string; contents: string }> = [];
+		const realFiles = docker.files;
+		docker.files = (containerId: string, root: string) => {
+			const inner = realFiles(containerId, root);
+			return {
+				...inner,
+				write: async (rel: string, contents: string) => {
+					writes.push({ root, rel, contents });
+				},
+			};
+		};
+
+		const id = await provisionContainer(
 			baseDeps(docker, { logs, egressCAPath }),
 			await projectRow(),
 			teamSlug,
 		);
 
-		expect(created[0].config.HostConfig.Binds).toContain(`${egressCAPath}:${CONTAINER_CA_PATH}:ro`);
+		// No bind carries it any more - that is the regression this guards.
+		const binds = created[0].config.HostConfig.Binds as string[];
+		expect(binds.some((b) => b.includes(CONTAINER_CA_PATH))).toBe(false);
+
+		const caWrite = writes.find((w) => `${w.root}/${w.rel}` === CONTAINER_CA_PATH);
+		expect(caWrite).toBeDefined();
+		expect(caWrite?.contents).toContain('provision-test');
+
 		const execCreate = docker.execCreate as ReturnType<typeof vi.fn>;
 		const caExec = execCreate.mock.calls.find(
 			(c) => (c[1] as { Cmd: string[] }).Cmd[0] === 'update-ca-certificates',
 		);
 		expect(caExec).toBeDefined();
 
-		const text = logs.getLogText(`provision:${projectId}`);
+		const text = logs.getLogText(`container:${id}`);
 		expect(text).toContain('→ Trusting Hezo egress CA');
 		expect(text).toContain('ca-store warning line');
 	});
@@ -342,7 +503,7 @@ describe('provisionContainer', () => {
 		const { docker, created } = recordingDocker();
 		const logs = new LogStreamBroker();
 
-		await provisionContainer(
+		const id = await provisionContainer(
 			baseDeps(docker, { logs, detectEgressMtu: async () => 1420 }),
 			await projectRow(),
 			teamSlug,
@@ -363,7 +524,7 @@ describe('provisionContainer', () => {
 			'mtu',
 			'1420',
 		]);
-		expect(logs.getLogText(`provision:${projectId}`)).toContain('pinning container MTU to 1420');
+		expect(logs.getLogText(`container:${id}`)).toContain('pinning container MTU to 1420');
 	});
 
 	it('leaves MTU untouched and grants only base capabilities on a normal (>=1500) egress host', async () => {
@@ -392,16 +553,19 @@ describe('provisionContainer', () => {
 		expect(hc.Init).toBe(true);
 		expect(hc.CapDrop).toEqual(['ALL']);
 		expect(hc.PidsLimit).toBe(4096);
-		// Hard cap = the instance-wide ram cap (default 2 GB, no per-project
-		// override set) + 512 MiB headroom, no swap escape valve — the stats
-		// poller stops the container at the ceiling itself; the cgroup is the
-		// between-ticks backstop.
-		const expectedCap = 2 * 1024 ** 3 + 512 * 1024 ** 2;
-		expect(hc.Memory).toBe(expectedCap);
-		expect(hc.MemorySwap).toBe(expectedCap);
+		// The project's working-set **ceiling**, stated as itself: the instance-wide
+		// ram cap (default 2 GB, no per-project override set). The 512 MiB cgroup
+		// headroom is no longer added here - it is a cgroup and shared-host concern,
+		// so the Docker adapter adds it (`withCgroupHeadroom`) and a managed sandbox,
+		// which has neither, is allocated exactly this much. Keeping it here made
+		// both backends ask for more than the project was configured for, and at the
+		// boundary refused a project set to a managed provider's documented maximum.
+		const ceiling = 2 * 1024 ** 3;
+		expect(hc.Memory).toBe(ceiling);
+		expect(hc.MemorySwap).toBe(ceiling);
 	});
 
-	it('derives the cgroup cap from a project-specific memory_limit_gib', async () => {
+	it('states the ceiling from a project-specific memory_limit_gib', async () => {
 		await resetContainerRow();
 		await db.query('UPDATE projects SET memory_limit_gib = 8 WHERE id = $1', [projectId]);
 		try {
@@ -409,28 +573,35 @@ describe('provisionContainer', () => {
 
 			await provisionContainer(baseDeps(docker), await projectRow(), teamSlug);
 
-			const expectedCap = 8 * 1024 ** 3 + 512 * 1024 ** 2;
-			expect(created[0].config.HostConfig.Memory).toBe(expectedCap);
-			expect(created[0].config.HostConfig.MemorySwap).toBe(expectedCap);
+			const ceiling = 8 * 1024 ** 3;
+			expect(created[0].config.HostConfig.Memory).toBe(ceiling);
+			expect(created[0].config.HostConfig.MemorySwap).toBe(ceiling);
 		} finally {
 			await db.query('UPDATE projects SET memory_limit_gib = DEFAULT WHERE id = $1', [projectId]);
 		}
 	});
 
-	it('reports a failed update-ca-certificates without failing the provision', async () => {
+	it('reports a failed egress-CA install without failing the provision', async () => {
 		await resetContainerRow();
 		const { docker } = recordingDocker({ execCreateError: new Error('exec transport down') });
 		const logs = new LogStreamBroker();
+		const caDir = mkdtempSync(join(tmpdir(), 'hezo-ca-'));
+		const egressCAPath = join(caDir, 'egress-ca.pem');
+		writeFileSync(egressCAPath, '-----BEGIN CERTIFICATE-----\ninstall-failure\n');
 
 		const id = await provisionContainer(
-			baseDeps(docker, { logs, egressCAPath: '/tmp/hezo-fake-egress-ca.pem' }),
+			baseDeps(docker, { logs, egressCAPath }),
 			await projectRow(),
 			teamSlug,
 		);
 
+		// The write lands and the install exec is what fails, so the step is
+		// reported and the container still comes up: a container without the CA
+		// works for everything that does not transit the proxy, and failing the
+		// whole provision would be a worse trade than saying so here.
 		expect(id).toBeTruthy();
-		const text = logs.getLogText(`provision:${projectId}`);
-		expect(text).toContain('⚠ update-ca-certificates failed: exec transport down');
+		const text = logs.getLogText(`container:${id}`);
+		expect(text).toContain('⚠ installing the egress CA failed: exec transport down');
 		const row = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',
 			[projectId],
@@ -458,7 +629,7 @@ describe('provisionContainer', () => {
 			);
 
 			expect(id).toBeTruthy();
-			const text = logs.getLogText(`provision:${projectId}`);
+			const text = logs.getLogText(`container:${id}`);
 			expect(text).toContain('→ Syncing project repos');
 			expect(text).toContain('coverage-repo');
 			expect(text).toContain('⚠ 1 repo(s) failed to clone');
@@ -483,11 +654,25 @@ describe('provisionContainer', () => {
 			allocateRunSocket,
 			releaseRunSocket,
 		} as unknown as NonNullable<ContainerDeps['sshAgentServer']>;
+		// The bridge allocates an egress proxy as well as an ssh socket — a
+		// provisioning clone's remote carries a credential placeholder only the
+		// proxy can substitute — and refuses to run without one, so a test that
+		// exercises the bridge has to supply both.
+		const allocateRunProxy = vi.fn(async () => ({
+			proxyHost: '127.0.0.1',
+			proxyPort: 29999,
+			token: 'provision-token',
+		}));
+		const releaseRunProxy = vi.fn(async () => {});
+		const egressProxy = {
+			allocateRunProxy,
+			releaseRunProxy,
+		} as unknown as NonNullable<ContainerDeps['egressProxy']>;
 		const { docker } = recordingDocker();
 		const logs = new LogStreamBroker();
 
 		const id = await provisionContainer(
-			baseDeps(docker, { logs, masterKeyManager, sshAgentServer }),
+			baseDeps(docker, { logs, masterKeyManager, sshAgentServer, egressProxy }),
 			await projectRow(),
 			teamSlug,
 		);
@@ -500,9 +685,11 @@ describe('provisionContainer', () => {
 		];
 		expect(runId).toMatch(/^provision-[0-9a-f]{16}$/);
 		expect(identity).toEqual({ teamId, agentId: 'host', label: 'provision-git' });
-		// The short-lived bridge is always released, even with no repos to sync.
+		// The short-lived pair is always released, even with no repos to sync.
 		expect(releaseRunSocket).toHaveBeenCalledWith(runId);
-		expect(logs.getLogText(`provision:${projectId}`)).toContain('→ Syncing project repos');
+		expect(allocateRunProxy).toHaveBeenCalledTimes(1);
+		expect(releaseRunProxy).toHaveBeenCalledWith(runId);
+		expect(logs.getLogText(`container:${id}`)).toContain('→ Syncing project repos');
 	});
 
 	it('reports failed local MCP installs without failing the provision', async () => {
@@ -516,9 +703,9 @@ describe('provisionContainer', () => {
 			const { docker } = recordingDocker();
 			const logs = new LogStreamBroker();
 
-			await provisionContainer(baseDeps(docker, { logs }), await projectRow(), teamSlug);
+			const id = await provisionContainer(baseDeps(docker, { logs }), await projectRow(), teamSlug);
 
-			const text = logs.getLogText(`provision:${projectId}`);
+			const text = logs.getLogText(`container:${id}`);
 			expect(text).toContain('→ Installing pending local MCP servers');
 			expect(text).toContain('⚠ 1 MCP server install(s) failed');
 
@@ -556,8 +743,10 @@ describe('provisionContainer', () => {
 		expect(row.rows[0].container_status).toBe('error');
 		expect(row.rows[0].container_error).toContain('no space left on device');
 
-		const text = logs.getLogText(`provision:${projectId}`);
-		expect(text).toContain('✗ Provisioning failed: no space left on device');
+		// No log assertion here, deliberately: the failure landed before the engine
+		// returned an id, so there is no container to attach output to and the
+		// provisioning stream was never opened. `projects.container_error` above is
+		// what carries the reason, and it is what the banner reads.
 
 		// creating → error transitions were both broadcast.
 		const statuses = wsManager.broadcast.mock.calls.map(

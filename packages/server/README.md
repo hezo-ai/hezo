@@ -32,13 +32,15 @@ Starts the server on port 3100 with hot reload. In dev, PGlite data persists at 
 | `--data-dir <path>` | `~/.hezo` | Data directory for the embedded database and assets (env: `HEZO_DATA_DIR`) |
 | `--database-url <url>` | - | External Postgres connection string; omit for the embedded database (env: `HEZO_DATABASE_URL`) |
 | `--asset-storage-url <url>` | - | S3-compatible object storage for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`); omit to store assets under the data directory (env: `HEZO_ASSET_STORAGE_URL`) |
+| `--sandbox-backend <name>` | `docker` | Where agent containers run: `docker` (the local daemon) or `daytona` (a managed sandbox service). A managed backend that cannot be reached is fatal at startup - Hezo never falls back to local Docker (env: `HEZO_SANDBOX_BACKEND`) |
+| `--daytona-api-key <key>` | - | Daytona API key, required when `--sandbox-backend` is `daytona` (env: `HEZO_DAYTONA_API_KEY`) |
+| `--daytona-api-url <url>` | Daytona's public API | Daytona API base URL, for a regional or self-hosted endpoint (env: `HEZO_DAYTONA_API_URL`) |
 | `--master-key <phrase>` | - | Twelve-word master key to set up/unlock on startup (env: `HEZO_MASTER_KEY`) |
 | `--web-url <url>` | same origin | Public base URL for sign-in redirects (env: `HEZO_WEB_URL`) |
 | `--reset` | `false` | Start fresh (existing `pgdata` is renamed aside, not deleted) (env: `HEZO_RESET`) |
 | `--no-open` | open on | Auto-open the web app in the browser on startup (on by default; skipped automatically in CI/containers/SSH/headless Linux). Disable with `--no-open` or `HEZO_OPEN=0` |
 | `--log-level <level>` | `info` | Logging verbosity: `debug`, `info`, `warn`, `error` (env: `HEZO_LOG_LEVEL`) |
 | `--keep-old-containers` | `false` | Keep old project containers instead of removing them, for debugging (env: `HEZO_KEEP_OLD_CONTAINERS`) |
-| `--container-bind-host <host>` | `127.0.0.1` | Interface the egress proxy and SSH bridge bind to so agent containers can reach them. On native-Linux Docker the boot connectivity check auto-rebinds them to the detected bridge gateway IP; set this only to pin a specific interface (env: `HEZO_CONTAINER_BIND_HOST`) |
 | `--docker-socket <path>` | auto | Path to the container runtime's Unix socket. By default Hezo finds it: `DOCKER_HOST`, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Unix sockets only - `tcp://` and `npipe://` are not supported (env: `HEZO_DOCKER_SOCKET`) |
 | `--egress-allow-private-targets` | blocked | Allow agent egress through the proxy to reach loopback, link-local and private addresses. Blocked by default so an agent can't tunnel to Hezo's own API or database. Enable only for an MCP server or git remote on your LAN (env: `HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`) |
 | `--no-egress-proxy-auth` | auth on | Per-run egress-proxy authentication. On by default: each run's `HTTP(S)_PROXY` URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client can't send proxy credentials - the secret red line still holds (env: `HEZO_EGRESS_PROXY_AUTH=0`) |
@@ -60,7 +62,7 @@ The master key encrypts all secrets using AES-256-GCM. It is held in memory only
 - If `--master-key` wrong: starts in `locked` state
 - If no key: starts in `locked` state - web UI prompts for the key
 
-**Reset**: `--reset` wipes the database directory and starts fresh.
+**Reset**: `--reset` starts fresh with an empty embedded database. The existing `pgdata` is renamed aside rather than deleted, and the containers the previous life left behind are reclaimed on the next start.
 
 ## Migrations
 

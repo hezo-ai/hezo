@@ -442,7 +442,7 @@ hypervisor — the provisioner interface keeps that door open.
 > The credential/billing model (bring-your-own-key vs. a pooled platform key
 > with metering) deserves at least as much design effort as the substrate;
 > Hezo's per-project/per-agent budget caps and the instance-wide
-> `max_active_containers` cap are the existing levers.
+> `max_container_memory_gb` budget are the existing levers.
 
 ## Quotas, rate limiting, abuse
 

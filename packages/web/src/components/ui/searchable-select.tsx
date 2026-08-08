@@ -27,6 +27,15 @@ interface SearchableSelectProps {
 	contentClassName?: string;
 	testId?: string;
 	disabled?: boolean;
+	/**
+	 * Whether to show the type-to-filter box. Default true.
+	 *
+	 * A search field over two or three fixed options is noise - it invites typing
+	 * where the whole list is already on screen. Widening this component rather
+	 * than hand-rolling a second dropdown keeps one implementation of the popover,
+	 * the keyboard behaviour and the checked-state rendering.
+	 */
+	searchable?: boolean;
 }
 
 /**
@@ -47,6 +56,7 @@ export function SearchableSelect({
 	contentClassName = '',
 	testId,
 	disabled = false,
+	searchable = true,
 }: SearchableSelectProps) {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState('');
@@ -97,19 +107,21 @@ export function SearchableSelect({
 					data-testid={testId ? `${testId}-content` : undefined}
 					className={`z-50 min-w-[220px] rounded-md border border-border bg-surface p-1 shadow-md ${contentClassName}`}
 				>
-					<div className="flex items-center gap-1.5 border-b border-border px-2 pb-1.5 mb-1">
-						<Search className="w-3.5 h-3.5 text-text-3 shrink-0" />
-						<input
-							// biome-ignore lint/a11y/noAutofocus: focusing the search box on open is the point
-							autoFocus
-							value={query}
-							onChange={(e) => setQuery(e.target.value)}
-							placeholder={searchPlaceholder}
-							aria-label={searchPlaceholder}
-							data-testid={testId ? `${testId}-search` : undefined}
-							className="w-full bg-transparent text-[13px] text-text-1 outline-none placeholder:text-text-3"
-						/>
-					</div>
+					{searchable && (
+						<div className="flex items-center gap-1.5 border-b border-border px-2 pb-1.5 mb-1">
+							<Search className="w-3.5 h-3.5 text-text-3 shrink-0" />
+							<input
+								// biome-ignore lint/a11y/noAutofocus: focusing the search box on open is the point
+								autoFocus
+								value={query}
+								onChange={(e) => setQuery(e.target.value)}
+								placeholder={searchPlaceholder}
+								aria-label={searchPlaceholder}
+								data-testid={testId ? `${testId}-search` : undefined}
+								className="w-full bg-transparent text-[13px] text-text-1 outline-none placeholder:text-text-3"
+							/>
+						</div>
+					)}
 					<div className="max-h-64 overflow-y-auto">
 						{filtered.length === 0 ? (
 							<div className="px-2.5 py-2 text-[13px] text-text-2">{emptyLabel}</div>

@@ -90,7 +90,7 @@ directory by default, or any **S3-compatible bucket** when one is configured (se
 [Storing assets in S3-compatible object storage](/docs/deployment/configuration)). Either
 way, everyone (you in the browser, and agents through their tools) reads assets through
 Hezo's signed URLs, so a bucket never needs to be publicly accessible and agents never
-depend on server disk paths. The active backend is shown under **Settings → General →
+depend on server disk paths. The active backend is shown under **Settings → Storage →
 Asset storage**.
 
 ## Archiving & deleting assets

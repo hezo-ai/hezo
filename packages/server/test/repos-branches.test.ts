@@ -237,7 +237,7 @@ describe('GET oauth-connections listing — master key unavailable', () => {
 	}
 
 	it('orgs listing returns 503 OAUTH_TOKEN_UNAVAILABLE when the key is unavailable', async () => {
-		const res = await withLockedKey(() =>
+		const res = await withLockedKey(async () =>
 			app.request(`/api/projects/${projectId}/oauth-connections/${connId}/orgs`, {
 				headers: authHeader(token),
 			}),
@@ -247,7 +247,7 @@ describe('GET oauth-connections listing — master key unavailable', () => {
 	});
 
 	it('repos listing returns 503 OAUTH_TOKEN_UNAVAILABLE when the key is unavailable', async () => {
-		const res = await withLockedKey(() =>
+		const res = await withLockedKey(async () =>
 			app.request(`/api/projects/${projectId}/oauth-connections/${connId}/repos?owner=br-user`, {
 				headers: authHeader(token),
 			}),
