@@ -116,6 +116,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
 import {
+	buildWakeReceipt,
 	fireCommentWakeups,
 	postAgentComment,
 	resolveWarnableSlugs,
@@ -313,12 +314,9 @@ function isErrorResult(result: unknown): boolean {
  * scoping (the task's team plus the HQ instance agents) and includes @admin.
  */
 async function buildUnlinkedMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectUnlinkedTeammateReferences(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `**${s}**`).join(', ');
@@ -341,12 +339,9 @@ async function buildUnlinkedMentionWarning(
  * Same scoping as buildUnlinkedMentionWarning; best-effort and non-blocking.
  */
 async function buildPassiveMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectPassiveTeammateAsks(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `@@${s}`).join(', ');
@@ -374,12 +369,9 @@ async function buildPassiveMentionWarning(
  * best-effort and non-blocking.
  */
 async function buildNarratedMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectNarratedActiveMentions(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `@${s}`).join(', ');
@@ -3450,7 +3442,7 @@ export function registerTools(
 			// comment the agent posts and one auto-delivered from a stranded final
 			// message are byte-identical. RETURNING * includes public_id (the
 			// comment-link slug), so the agent gets it back without a list_comments.
-			const row = await postAgentComment({
+			const { row, woke } = await postAgentComment({
 				db,
 				wsManager,
 				teamId,
@@ -3481,6 +3473,11 @@ export function registerTools(
 			// already-persisted comment on this check.
 			if (authorMemberId) {
 				const commentText = args.content as string;
+				// One roster read per write, shared by the receipt and all three mention
+				// advisories. They each used to resolve it themselves, so a single
+				// create_comment ran the identical query three times (four once the
+				// receipt was added) - see "Budget the DB round trips a request costs".
+				const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 				const [
 					teammateWarning,
 					passiveWarning,
@@ -3488,15 +3485,15 @@ export function registerTools(
 					backtickWarning,
 					terminalAskWarning,
 				] = await Promise.all([
-					buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildUnlinkedMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for unlinked teammate references:', e);
 						return null;
 					}),
-					buildPassiveMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildPassiveMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for passive teammate asks:', e);
 						return null;
 					}),
-					buildNarratedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildNarratedMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for narrated active mentions:', e);
 						return null;
 					}),
@@ -3518,7 +3515,13 @@ export function registerTools(
 				]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
-				if (warning) return { ...row, warning };
+				// The receipt ships on every write, warning or not: it is a fact about what
+				// the comment delivered, not an advisory that fires when a heuristic guessed
+				// right. An agent that meant to ask sees `woke: []` with the teammate it
+				// addressed sitting in `named_not_woken`.
+				const wake = buildWakeReceipt(commentText, woke, knownSlugs);
+				if (warning) return { ...row, wake, warning };
+				return { ...row, wake };
 			}
 			return row;
 		},
@@ -3586,7 +3589,7 @@ export function registerTools(
 			// a mention or a task link that was previously backticked and inert —
 			// fires for the first time. That is what makes "fix it by editing"
 			// behave the same as posting it correctly the first time.
-			await fireCommentWakeups({
+			const woke = await fireCommentWakeups({
 				db,
 				taskId,
 				teamId,
@@ -3597,7 +3600,10 @@ export function registerTools(
 				authorRunId: auth.runId,
 				parentCommentId: row.parent_comment_id,
 				wsManager,
-			}).catch((e) => log.error('Failed to fire wakeups for edited comment:', e));
+			}).catch((e) => {
+				log.error('Failed to fire wakeups for edited comment:', e);
+				return [] as string[];
+			});
 			trackBackground(
 				recordTaskLinks(
 					db,
@@ -3610,26 +3616,23 @@ export function registerTools(
 					{ kind: 'comment', commentPublicId: r.rows[0].public_id },
 				).catch((e) => log.error('Failed to record task links from edited comment:', e)),
 			);
+			// One roster read, shared by the receipt and the three mention advisories.
+			const knownSlugs = await resolveWarnableSlugs(db, teamId, auth.memberId);
+			const wake = buildWakeReceipt(args.content as string, woke, knownSlugs);
 			const [teammateWarning, passiveWarning, narratedWarning, backtickWarning] = await Promise.all(
 				[
-					buildUnlinkedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for unlinked teammate references:', e);
-							return null;
-						},
-					),
-					buildPassiveMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for passive teammate asks:', e);
-							return null;
-						},
-					),
-					buildNarratedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for narrated active mentions:', e);
-							return null;
-						},
-					),
+					buildUnlinkedMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for unlinked teammate references:', e);
+						return null;
+					}),
+					buildPassiveMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for passive teammate asks:', e);
+						return null;
+					}),
+					buildNarratedMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for narrated active mentions:', e);
+						return null;
+					}),
 					buildBacktickedEntityWarning(db, teamId, scope.projectId, args.content as string).catch(
 						(e) => {
 							log.error('Failed to check edited comment for backticked entity references:', e);
@@ -3641,8 +3644,8 @@ export function registerTools(
 			const warning = [teammateWarning, passiveWarning, narratedWarning, backtickWarning]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
-			if (warning) return { ...r.rows[0], warning };
-			return r.rows[0];
+			if (warning) return { ...r.rows[0], wake, warning };
+			return { ...r.rows[0], wake };
 		},
 		db,
 	);

@@ -214,12 +214,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_comment: {
 		category: 'Comments & reactions',
 		returns:
-			"The created comment row (`id`, `public_id`, `created_at`, …), optionally with an advisory `warning` string. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.",
+			"The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.",
 	},
 	update_comment: {
 		category: 'Comments & reactions',
 		returns:
-			'The updated comment row, optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
+			'The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
 		auth: 'An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.',
 	},
 	add_reaction: {

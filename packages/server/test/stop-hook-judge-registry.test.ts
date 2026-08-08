@@ -205,8 +205,17 @@ describe('stop-hook rules block handoffs left only in the final message', () => 
 		// no longer earns an exemption — only a first-person claim of the create_comment itself.
 		expect(STOP_HOOK_RULES).toContain('EXPLICITLY states the same handoff was already posted');
 		expect(STOP_HOOK_RULES).toContain('must still be blocked');
-		// The deliberately-passive @@<slug> form still notifies no one and stays exempt.
-		expect(STOP_HOOK_RULES).toContain('written passively (@@<slug>)');
+	});
+
+	it('does not exempt a handoff merely because it is spelled passively', () => {
+		// The @@<slug> spelling used to be a blanket exemption ("notifies no one by
+		// design"), which made the judge structurally blind to the incident it most
+		// needed to catch: a passively-addressed ask ("@@equity-analyst — please mark
+		// INV-86 done.") hands over the next action and wakes nobody, exactly like a
+		// bare name. The exemption is now about who acts next, not how it is spelled.
+		expect(STOP_HOOK_RULES).toContain('NOT itself an exemption');
+		expect(STOP_HOOK_RULES).toContain('who is expected to act next on this ticket?');
+		expect(STOP_HOOK_RULES).not.toContain('written passively (@@<slug>), which notifies no one');
 	});
 
 	it('blocks a stative sign-off recap that names an approver but posts no @-mention', () => {

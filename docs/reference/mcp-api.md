@@ -605,7 +605,7 @@ Add a comment to an task. In content, reference teammates with @<agent-slug>. Re
 | `content` | `string` | Yes | Comment text |
 | `parent_comment_id` | `string` | No | The comment you are replying to - its id (UUID) or its public_id. Setting this wakes that comment's author with source=reply and renders this comment as "replying to ..." in the UI. |
 
-**Returns:** The created comment row (`id`, `public_id`, `created_at`, …), optionally with an advisory `warning` string. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.
+**Returns:** The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.
 
 ### `update_comment`
 
@@ -622,7 +622,7 @@ Edit the text of a comment you posted earlier in THIS run - use it to fix a mist
 | `comment_id` | `string (uuid)` | Yes | UUID of the comment to edit, as returned by create_comment or list_comments. |
 | `content` | `string` | Yes | The replacement comment text (overwrites the existing body). |
 
-**Returns:** The updated comment row, optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
+**Returns:** The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
 
 **Authorization:** An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.
 
