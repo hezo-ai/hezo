@@ -1,15 +1,10 @@
-import type { MasterKeyManager } from '../crypto/master-key';
-import type { Db } from '../db/database';
 import { logger } from '../logger';
-import { type FetchFn, parseGitHubUrl, validateRepoAccess } from './github';
+import { validateRepoAccess } from './github';
+import { type RepoGitHubDeps, resolveRepoGitHub } from './repo-github';
 
 const log = logger.child('repo-push-access');
 
-export interface PushAccessDeps {
-	db: Db;
-	/** Optional so a deployment shape without a vault simply skips the check. */
-	masterKeyManager?: MasterKeyManager;
-}
+export type PushAccessDeps = RepoGitHubDeps;
 
 /**
  * Re-check whether the repo's connected GitHub account can push to it, and
@@ -36,28 +31,27 @@ export async function refreshRepoPushAccess(
 	deps: PushAccessDeps,
 	repoId: string,
 ): Promise<boolean | null> {
-	const { db, masterKeyManager } = deps;
+	const { db } = deps;
 
-	const repoRes = await db.query<{
-		repo_identifier: string;
-		oauth_connection_id: string | null;
-		can_push: boolean | null;
-	}>('SELECT repo_identifier, oauth_connection_id, can_push FROM repos WHERE id = $1', [repoId]);
-	const repo = repoRes.rows[0];
-	if (!repo) return null;
+	const repoRes = await db.query<{ can_push: boolean | null }>(
+		'SELECT can_push FROM repos WHERE id = $1',
+		[repoId],
+	);
+	if (repoRes.rows.length === 0) return null;
+	const stored = repoRes.rows[0].can_push;
 
-	const stored = repo.can_push;
-	if (!repo.oauth_connection_id) return stored;
-
-	const parsed = parseGitHubUrl(repo.repo_identifier);
-	if (!parsed) return stored;
-
-	const token = await loadConnectionAccessToken(deps, repo.oauth_connection_id);
-	if (!token) return stored;
+	const target = await resolveRepoGitHub(deps, repoId);
+	if (!target) return stored;
+	const name = `${target.owner}/${target.repo}`;
 
 	let canPush: boolean | null;
 	try {
-		const access = await validateRepoAccess(parsed.owner, parsed.repo, token, timeBoundedFetch);
+		const access = await validateRepoAccess(
+			target.owner,
+			target.repo,
+			target.token,
+			target.fetchFn,
+		);
 		if (access.accessible) {
 			canPush = access.canPush;
 		} else if (access.status === 403 || access.status === 404) {
@@ -68,42 +62,13 @@ export async function refreshRepoPushAccess(
 			return stored;
 		}
 	} catch (e) {
-		log.warn(`push-access check for ${repo.repo_identifier} failed`, (e as Error).message);
+		log.warn(`push-access check for ${name} failed`, (e as Error).message);
 		return stored;
 	}
 
 	if (canPush === null || canPush === stored) return stored;
 
 	await db.query('UPDATE repos SET can_push = $1 WHERE id = $2', [canPush, repoId]);
-	log.info(`push access for ${repo.repo_identifier}: ${canPush ? 'write' : 'read-only'}`);
+	log.info(`push access for ${name}: ${canPush ? 'write' : 'read-only'}`);
 	return canPush;
-}
-
-/**
- * This check is a convenience, never a dependency — callers run it on paths a user
- * or an agent is waiting behind. A GitHub that hangs must surface as "unknown, keep
- * what we had" within seconds, not stall the caller on the default socket timeout.
- */
-const PUSH_ACCESS_CHECK_TIMEOUT_MS = 10_000;
-
-const timeBoundedFetch: FetchFn = (input, init) =>
-	fetch(input, { ...init, signal: AbortSignal.timeout(PUSH_ACCESS_CHECK_TIMEOUT_MS) });
-
-/** Decrypt an OAuth connection's access token. Null when the vault is locked or the row is gone. */
-async function loadConnectionAccessToken(
-	deps: PushAccessDeps,
-	oauthConnectionId: string,
-): Promise<string | null> {
-	const key = deps.masterKeyManager?.getKey();
-	if (!key) return null;
-	const result = await deps.db.query<{ encrypted_value: string }>(
-		`SELECT s.encrypted_value
-		 FROM oauth_connections oc
-		 JOIN secrets s ON s.id = oc.access_token_secret_id
-		 WHERE oc.id = $1`,
-		[oauthConnectionId],
-	);
-	if (result.rows.length === 0) return null;
-	const { decrypt } = await import('../crypto/encryption');
-	return decrypt(result.rows[0].encrypted_value, key);
 }
