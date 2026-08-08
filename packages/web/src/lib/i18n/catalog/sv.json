@@ -63,6 +63,12 @@
 	"concurrency.ramCap.point.override": "Projekt som behöver mer kan ändra värdet i sina egna inställningar.",
 	"concurrency.ramCap.point.range": "Heltal från {min} till {max}. Standardvärde: {default}.",
 	"concurrency.rangeError": "Ange ett heltal mellan {min} och {max}.",
+	"connection.lost": "Anslutningen bröts",
+	"connection.reconnecting": "Återansluter…",
+	"connection.retryNow": "Försök igen nu",
+	"connection.retrying": "Försöker igen…",
+	"connection.unreachable": "Servern går inte att nå.",
+	"connection.unreachableHint": "Vi återansluter automatiskt så snart servern är tillbaka.",
 	"connectors.banner.action": "Visa kopplingar",
 	"connectors.banner.many": "{count} kopplingar fungerar inte längre. Anslut dem igen så att dina agenter kan använda dem.",
 	"connectors.banner.one": "{name} fungerar inte längre. Anslut den igen så att dina agenter kan använda den.",
@@ -234,5 +240,9 @@
 	"theme.dark": "Mörkt",
 	"theme.label": "Tema",
 	"theme.light": "Ljust",
-	"theme.system": "System"
+	"theme.system": "System",
+	"toast.dismiss": "Dölj",
+	"toast.error": "Något gick fel",
+	"toast.info": "Observera",
+	"toast.success": "Klart"
 }

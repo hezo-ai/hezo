@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { isPageHidden, subscribeToPageVisibility } from '../lib/page-lifecycle';
 
 /**
  * A tiny external store for the app's live connection state, mirroring the
@@ -118,6 +119,16 @@ export function useConnectionStatus(): ConnectionState {
 export const OFFLINE_DEBOUNCE_MS = 2000;
 
 /**
+ * The longer hold applied after the app returns to the foreground.
+ *
+ * A mobile OS freezes a backgrounded PWA and kills its socket, so a drop discovered on
+ * resume is the expected cost of coming back, not an outage - and the client is already
+ * redialing at that moment (`lib/ws.ts`). Long enough to cover a handshake on a slow
+ * radio, short enough that a genuine outage still surfaces promptly.
+ */
+export const RESUME_GRACE_MS = 8000;
+
+/**
  * Drive the connection store from two signals, covering "the internet dropped"
  * and "the server is unreachable" respectively:
  *   - `navigator.onLine` (window `offline`/`online` events) — a hard "no network"
@@ -133,6 +144,12 @@ export const OFFLINE_DEBOUNCE_MS = 2000;
  * never shows "offline". On unmount (logout/lock unmounts `SocketProvider`) it
  * resets the store so a stale disconnect can't bleed into the login / master-key
  * gate.
+ *
+ * Page visibility gates the whole thing. Nothing surfaces while the page is hidden —
+ * the user cannot see it, and a drop noticed while the OS has the page frozen is not
+ * news — and for `RESUME_GRACE_MS` after the app returns to the foreground the hold is
+ * extended, because a mobile launch reliably starts from a socket the freeze killed. A
+ * page that was never backgrounded keeps exactly the old 2s behaviour.
  *
  * Consumes only a boolean + a stable callback (like `useInvalidateOnReconnect`),
  * so it can be driven directly by a prop in tests.
@@ -155,18 +172,36 @@ export function useConnectionMonitor(connected: boolean, reconnect: () => void):
 		};
 	}, []);
 
+	// `resumeAt` is when the app last came back to the foreground; null means it has
+	// never been backgrounded, which leaves the debounce at its plain 2s.
+	const [hidden, setHidden] = useState(isPageHidden);
+	const [resumeAt, setResumeAt] = useState<number | null>(null);
+	useEffect(
+		() =>
+			subscribeToPageVisibility((nowHidden) => {
+				setHidden(nowHidden);
+				if (!nowHidden) setResumeAt(Date.now());
+			}),
+		[],
+	);
+
 	// Disconnected when the browser reports no network, or the socket has dropped
 	// after having connected at least once.
 	const disconnected = !networkOnline || (hasConnectedOnce.current && !connected);
 
 	useEffect(() => {
-		if (!disconnected) {
+		// Clear anything surfaced while hidden too, so the return to the foreground
+		// starts from a clean slate rather than showing a notice the user never saw
+		// appear.
+		if (!disconnected || hidden) {
 			setConnectionOnline();
 			return;
 		}
-		const id = setTimeout(() => setConnectionOffline(reconnect), OFFLINE_DEBOUNCE_MS);
+		const sinceResume = resumeAt === null ? Number.POSITIVE_INFINITY : Date.now() - resumeAt;
+		const delay = Math.max(OFFLINE_DEBOUNCE_MS, RESUME_GRACE_MS - sinceResume);
+		const id = setTimeout(() => setConnectionOffline(reconnect), delay);
 		return () => clearTimeout(id);
-	}, [disconnected, reconnect]);
+	}, [disconnected, hidden, resumeAt, reconnect]);
 
 	// Unmount-only: clear any surfaced disconnect when the provider tears down.
 	useEffect(() => () => setConnectionOnline(), []);

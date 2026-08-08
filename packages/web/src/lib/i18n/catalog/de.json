@@ -63,6 +63,12 @@
 	"concurrency.ramCap.point.override": "Projekte, die mehr benötigen, können den Wert in ihren eigenen Einstellungen überschreiben.",
 	"concurrency.ramCap.point.range": "Ganze Zahl von {min} bis {max}. Standardwert {default}.",
 	"concurrency.rangeError": "Geben Sie eine ganze Zahl zwischen {min} und {max} ein.",
+	"connection.lost": "Verbindung getrennt",
+	"connection.reconnecting": "Verbindung wird wiederhergestellt…",
+	"connection.retryNow": "Jetzt erneut versuchen",
+	"connection.retrying": "Wird erneut versucht…",
+	"connection.unreachable": "Der Server ist nicht erreichbar.",
+	"connection.unreachableHint": "Sobald der Server wieder erreichbar ist, wird die Verbindung automatisch hergestellt.",
 	"connectors.banner.action": "Konnektoren anzeigen",
 	"connectors.banner.many": "{count} Konnektoren funktionieren nicht mehr. Stellen Sie die Verbindungen wieder her, damit Ihre Agenten sie nutzen können.",
 	"connectors.banner.one": "{name} funktioniert nicht mehr. Stellen Sie die Verbindung wieder her, damit Ihre Agenten den Konnektor nutzen können.",
@@ -234,5 +240,9 @@
 	"theme.dark": "Dunkel",
 	"theme.label": "Design",
 	"theme.light": "Hell",
-	"theme.system": "System"
+	"theme.system": "System",
+	"toast.dismiss": "Ausblenden",
+	"toast.error": "Etwas ist schiefgelaufen",
+	"toast.info": "Hinweis",
+	"toast.success": "Fertig"
 }

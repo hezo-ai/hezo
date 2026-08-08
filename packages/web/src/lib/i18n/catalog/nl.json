@@ -63,6 +63,12 @@
 	"concurrency.ramCap.point.override": "Projecten die meer nodig hebben, kunnen dit in hun eigen instellingen overschrijven.",
 	"concurrency.ramCap.point.range": "Heel getal van {min} tot {max}. Standaard {default}.",
 	"concurrency.rangeError": "Voer een heel getal tussen {min} en {max} in.",
+	"connection.lost": "Verbinding verbroken",
+	"connection.reconnecting": "Opnieuw verbinden…",
+	"connection.retryNow": "Nu opnieuw proberen",
+	"connection.retrying": "Opnieuw proberen…",
+	"connection.unreachable": "De server is niet bereikbaar.",
+	"connection.unreachableHint": "Zodra de server terug is, maken we automatisch opnieuw verbinding.",
 	"connectors.banner.action": "Connectoren bekijken",
 	"connectors.banner.many": "{count} connectoren werken niet meer. Verbind ze opnieuw zodat je agents ze weer kunnen gebruiken.",
 	"connectors.banner.one": "{name} werkt niet meer. Verbind opnieuw zodat je agents het weer kunnen gebruiken.",
@@ -234,5 +240,9 @@
 	"theme.dark": "Donker",
 	"theme.label": "Thema",
 	"theme.light": "Licht",
-	"theme.system": "Systeem"
+	"theme.system": "Systeem",
+	"toast.dismiss": "Verbergen",
+	"toast.error": "Er ging iets mis",
+	"toast.info": "Let op",
+	"toast.success": "Klaar"
 }

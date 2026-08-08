@@ -63,6 +63,12 @@
 	"concurrency.ramCap.point.override": "需要更多内存的项目可以在自己的设置中覆盖该值。",
 	"concurrency.ramCap.point.range": "{min} 到 {max} 之间的整数，默认为 {default}。",
 	"concurrency.rangeError": "请输入 {min} 到 {max} 之间的整数。",
+	"connection.lost": "连接已断开",
+	"connection.reconnecting": "正在重新连接…",
+	"connection.retryNow": "立即重试",
+	"connection.retrying": "正在重试…",
+	"connection.unreachable": "无法连接到服务器。",
+	"connection.unreachableHint": "服务器恢复后将自动重新连接。",
 	"connectors.banner.action": "查看连接器",
 	"connectors.banner.many": "{count} 个连接器已停止工作。请重新连接，让智能体可以继续使用。",
 	"connectors.banner.one": "{name} 已停止工作。请重新连接，让智能体可以继续使用。",
@@ -234,5 +240,9 @@
 	"theme.dark": "深色",
 	"theme.label": "主题",
 	"theme.light": "浅色",
-	"theme.system": "跟随系统"
+	"theme.system": "跟随系统",
+	"toast.dismiss": "忽略",
+	"toast.error": "出错了",
+	"toast.info": "提示",
+	"toast.success": "完成"
 }
