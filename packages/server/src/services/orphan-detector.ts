@@ -37,7 +37,7 @@ export const STALE_STATE_GRACE_SECONDS = 120;
 export interface DetectOrphansOpts {
 	/**
 	 * Best-effort reaper for the orphaned run's in-container process tree
-	 * (`DockerClient.killRunProcesses`). A run row can outlive its host-side
+	 * (`ContainerEngine.killRunProcesses`). A run row can outlive its host-side
 	 * driver while the exec'd agent CLI keeps running in the container — when
 	 * the detector declares the run orphaned, the tree must die with it.
 	 */
@@ -140,43 +140,71 @@ export async function detectOrphans(
 			error,
 		});
 
-		if (run.process_loss_retry_count + 1 < MAX_RETRIES) {
-			const failedRun = await db.query<{ exit_code: number | null }>(
-				`SELECT exit_code FROM heartbeat_runs WHERE id = $1`,
-				[run.id],
-			);
-			// Read the excerpt from storage; this used to aggregate the run's whole
-			// log (up to 10 MB) to keep its last 1000 characters, on a 30s cron.
-			const tail = await readRunLogTail(db, run.id, ORPHAN_LOG_TAIL_CHARS);
-
-			await createWakeup(db, run.member_id, run.team_id, WakeupSource.Timer, {
-				reason: 'orphan_retry',
-				retry_count: run.process_loss_retry_count + 1,
-				max_retries: MAX_RETRIES,
-				previous_failure: {
-					run_id: run.id,
-					exit_code: failedRun.rows[0]?.exit_code ?? null,
-					log_tail: tail.text.length > 0 ? tail.text : null,
-				},
-			});
-		} else {
-			await db.query(
-				`INSERT INTO approvals (team_id, type, payload)
-				 VALUES ($1, $2::approval_type, $3::jsonb)`,
-				[
-					run.team_id,
-					ApprovalType.Strategy,
-					JSON.stringify({
-						type: 'agent_error',
-						member_id: run.member_id,
-						message: `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
-					}),
-				],
-			);
-		}
+		await retryOrEscalateLostRun(db, {
+			runId: run.id,
+			memberId: run.member_id,
+			teamId: run.team_id,
+			priorRetries: run.process_loss_retry_count,
+		});
 	}
 
 	return orphanCount;
+}
+
+/**
+ * A run was lost to infrastructure rather than to the agent: retry it, or give
+ * up and ask for a human.
+ *
+ * Two callers, which is why it is here rather than inline. The orphan detector
+ * reaches it when a run's host-side driver died, and `agent-runner` when the
+ * container's output stream closed mid-run - a dropped transport, not a failing
+ * agent. Both are "the run did not get a fair attempt", and both should cost a
+ * bounded retry rather than the agent's turn and a failure ping.
+ *
+ * The previous failure's exit code and log tail ride along on the wakeup, so the
+ * retried agent can see what happened to its last attempt instead of starting
+ * blind. Past {@link MAX_RETRIES} it stops and files an approval: something is
+ * wrong that retrying is not going to fix, and silently retrying forever would
+ * hide it.
+ */
+export async function retryOrEscalateLostRun(
+	db: Db,
+	run: { runId: string; memberId: string; teamId: string; priorRetries: number },
+): Promise<void> {
+	if (run.priorRetries + 1 < MAX_RETRIES) {
+		const failedRun = await db.query<{ exit_code: number | null }>(
+			`SELECT exit_code FROM heartbeat_runs WHERE id = $1`,
+			[run.runId],
+		);
+		// Read the excerpt from storage; this used to aggregate the run's whole
+		// log (up to 10 MB) to keep its last 1000 characters, on a 30s cron.
+		const tail = await readRunLogTail(db, run.runId, ORPHAN_LOG_TAIL_CHARS);
+
+		await createWakeup(db, run.memberId, run.teamId, WakeupSource.Timer, {
+			reason: 'orphan_retry',
+			retry_count: run.priorRetries + 1,
+			max_retries: MAX_RETRIES,
+			previous_failure: {
+				run_id: run.runId,
+				exit_code: failedRun.rows[0]?.exit_code ?? null,
+				log_tail: tail.text.length > 0 ? tail.text : null,
+			},
+		});
+	} else {
+		await db.query(
+			`INSERT INTO approvals (team_id, type, payload)
+				 VALUES ($1, $2::approval_type, $3::jsonb)`,
+			[
+				run.teamId,
+				ApprovalType.Strategy,
+				JSON.stringify({
+					type: 'agent_error',
+					member_id: run.memberId,
+					message: `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
+				}),
+			],
+		);
+	}
 }
 
 /**

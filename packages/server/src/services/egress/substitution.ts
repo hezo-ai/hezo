@@ -1,3 +1,4 @@
+import { hostMatchesAllowedHosts } from '@hezo/shared';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
@@ -214,7 +215,10 @@ export function substituteRequest(
 			}
 			headersOut[name] = replaced;
 		} else {
-			const out = applyToString(raw, secrets, secretsUsed, checkAccess);
+			const out =
+				name.toLowerCase() === 'authorization'
+					? applyToAuthorization(raw, secrets, secretsUsed, checkAccess)
+					: applyToString(raw, secrets, secretsUsed, checkAccess);
 			if (out.failure) failure ??= out.failure;
 			if (out.changed) headersChanged = true;
 			headersOut[name] = out.value;
@@ -278,16 +282,93 @@ function applyToString(
 	return { value: result, changed: result !== input, failure };
 }
 
-function hostMatchesAllowlist(host: string, allowedHosts: string[]): boolean {
-	const normalized = host.toLowerCase();
-	for (const allowed of allowedHosts) {
-		const expected = allowed.toLowerCase();
-		if (expected.startsWith('*.')) {
-			const suffix = expected.slice(1);
-			if (normalized.endsWith(suffix)) return true;
-		} else if (normalized === expected) {
-			return true;
-		}
+/**
+ * An `Authorization` header, substituting **inside** a `Basic` credential.
+ *
+ * A placeholder does not always reach the wire as text. Git turns the credential
+ * in an HTTPS remote into a base64 Basic header - measured:
+ * `https://x-access-token:__HEZO_SECRET_GITHUB_TOKEN__@github.com/…` arrives as
+ * `Basic eC1hY2Nlc3MtdG9rZW46X19IRVpPX1NFQ1JFVF9HSVRIVUJfVE9LRU5fXw==`. A
+ * literal scan finds nothing there, so every clone, fetch and push would ship the
+ * unsubstituted placeholder as its password and be refused by GitHub.
+ *
+ * Decode, substitute, re-encode. Deliberately generic rather than git-shaped:
+ * any API taking a credential through Basic auth gets the same treatment, and
+ * nothing here knows what a git remote is.
+ *
+ * The security properties are unchanged, because this only reaches
+ * {@link applyToString}: the same per-secret `allowed_hosts` gate, the same
+ * `secretsUsed` accounting, the same failure kinds. A value that is not Basic, or
+ * not valid base64, or carries no placeholder, is passed to the ordinary
+ * literal path so a bearer token or a hand-written header behaves exactly as
+ * before.
+ */
+function applyToAuthorization(
+	raw: string,
+	secrets: Map<string, ResolvedSecret>,
+	secretsUsed: Set<string>,
+	checkAccess: (name: string) => SubstitutionFailure | null,
+): ApplyResult {
+	const basic = decodeBasicCredential(raw);
+	// Not Basic, not valid base64, or carrying no placeholder: the ordinary
+	// literal path, so a bearer token or a hand-written header behaves exactly as
+	// before. Re-encoding a value that round-trips differently would corrupt a
+	// credential that never carried a placeholder in the first place.
+	if (!basic) return applyToString(raw, secrets, secretsUsed, checkAccess);
+
+	const out = applyToString(basic.decoded, secrets, secretsUsed, checkAccess);
+	if (!out.changed) return { value: raw, changed: false, failure: out.failure };
+	return {
+		value: `${basic.prefix}${Buffer.from(out.value, 'utf8').toString('base64')}`,
+		changed: true,
+		failure: out.failure,
+	};
+}
+
+/**
+ * The base64 inside a `Basic` credential, **only** when it carries a placeholder.
+ *
+ * Two callers need this and they must agree, which is why it is one function
+ * rather than two copies of the same regex. `applyToAuthorization` needs the
+ * decoded text to substitute into; the proxy's cheap pre-flight scan needs to
+ * know that a header carries a placeholder *at all*, and its literal scan cannot
+ * see through base64 - so a disagreement means the proxy skips substitution
+ * entirely for exactly the credential shape this path exists to handle. It did:
+ * `applyToAuthorization` was correct and unreachable, because the gate above it
+ * looked at the header verbatim and found nothing.
+ *
+ * Returns null for anything that is not a placeholder-carrying Basic value, so
+ * both callers fall back to their ordinary literal behaviour.
+ */
+export function decodeBasicCredential(raw: string): { prefix: string; decoded: string } | null {
+	const match = /^(\s*Basic\s+)([A-Za-z0-9+/=]+)\s*$/i.exec(raw);
+	if (!match) return null;
+	let decoded: string;
+	try {
+		decoded = Buffer.from(match[2], 'base64').toString('utf8');
+	} catch {
+		return null;
 	}
-	return false;
+	if (!PLACEHOLDER_PROBE_REGEX.test(decoded)) return null;
+	return { prefix: match[1], decoded };
+}
+
+/**
+ * Whether a header value carries a placeholder, **including** one hidden inside a
+ * base64 Basic credential. The proxy gates all substitution on this, so it has to
+ * see everything {@link substituteRequest} would act on.
+ */
+export function headerValueCarriesPlaceholder(name: string, value: string): boolean {
+	if (PLACEHOLDER_PROBE_REGEX.test(value)) return true;
+	return name.toLowerCase() === 'authorization' && decodeBasicCredential(value) !== null;
+}
+
+/**
+ * Delegated to `@hezo/shared` so the *substitute here?* answer and the tunnel's
+ * *route through the proxy?* answer come from one definition. They had drifted:
+ * this one reads `*.example.com`, the tunnel's read `.example.com`, and a
+ * wildcard-scoped secret was therefore routed direct and never substituted.
+ */
+function hostMatchesAllowlist(host: string, allowedHosts: string[]): boolean {
+	return hostMatchesAllowedHosts(host, allowedHosts);
 }

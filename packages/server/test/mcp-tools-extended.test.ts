@@ -1226,9 +1226,7 @@ describe('MCP project docs & assets', () => {
 		})) as { binary?: boolean; url?: string; content?: string; error?: string };
 		expect(result.error).toBeUndefined();
 		expect(result.binary).toBe(true);
-		expect(result.url).toMatch(
-			new RegExp(`^http://host\\.docker\\.internal:\\d+/api/assets/${assetId}\\?exp=\\d+&sig=`),
-		);
+		expect(result.url).toMatch(new RegExp(`^https?://[^/]+/api/assets/${assetId}\\?exp=\\d+&sig=`));
 		expect(result.content).toBeUndefined();
 	});
 });

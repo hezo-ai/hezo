@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { DockerClient } from '../src/services/docker';
 import { ensureImage } from '../src/services/ensure-image';
 import { ImageBuildTracker } from '../src/services/image-build-tracker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 
 describe('ensureImage', () => {
 	it('short-circuits when the image already exists locally', async () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(true),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const build = vi.fn();
 		const resolveLocal = vi.fn();
 
@@ -24,7 +24,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'hezo/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -49,7 +49,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'hezo/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -85,7 +85,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockResolvedValue(undefined),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue(null);
 		const build = vi.fn();
 
@@ -100,7 +100,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockRejectedValue(new Error('pull denied')),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue(null);
 
 		await expect(
@@ -112,7 +112,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'hezo/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -131,7 +131,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'hezo/dedup:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -159,7 +159,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'hezo/fanout:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -209,7 +209,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'hezo/benign:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -228,7 +228,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'hezo/tracked:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -264,7 +264,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn(),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'hezo/tracked-fail:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -288,7 +288,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockResolvedValue(undefined),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'ghcr.io/hezo-ai/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -311,7 +311,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockRejectedValue(new Error('manifest unknown')),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue({
 			image: 'ghcr.io/hezo-ai/agent-base:latest',
 			dockerfile: '/repo/docker/Dockerfile.agent-base',
@@ -339,7 +339,7 @@ describe('ensureImage', () => {
 		const docker = {
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockRejectedValue(new Error('manifest unknown')),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 		const resolveLocal = vi.fn().mockReturnValue(null);
 		const build = vi.fn();
 

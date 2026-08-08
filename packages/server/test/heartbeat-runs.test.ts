@@ -229,6 +229,7 @@ describe('run comments', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 		};
 		const broadcast: HeartbeatRunBroadcast = {
 			teamId,
@@ -287,6 +288,7 @@ describe('run comments', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 		};
 
 		const runId = await createHeartbeatRun(
@@ -324,6 +326,7 @@ describe('run comments', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 		};
 		const before = await db.query<{ n: number }>(
 			'SELECT COUNT(*)::int AS n FROM task_comments WHERE task_id = $1',
@@ -386,6 +389,7 @@ describe('task status auto-transition on run start', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 			assignee_id: agentId,
 			...overrides,
 		};

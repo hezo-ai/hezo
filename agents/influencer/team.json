@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 10,
+			"notes": "Captain's hire and description-maintenance guidance now names the required substitution variables through a placeholder rendered from the validator's own list, so the names can no longer be substituted away before the Captain reads them."
+		},
+		{
 			"version": 9,
 			"notes": "Reference project documents by bare filename rather than in backticks, which rendered them as inert code and modelled them as repo file paths - they are database records reached through the document tools. The Trend Researcher now names write_project_doc/edit_project_doc where it is told to record findings."
 		},

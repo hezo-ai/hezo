@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DockerClient } from '../src/services/docker';
 import {
 	AGENT_BASE_GHCR_REPO,
+	AGENT_BASE_IMAGE_OVERRIDE_ENV,
 	BUNDLE_SHA_LABEL,
 	computeBundleSourceHash,
 	findRepoRoot,
@@ -15,6 +15,7 @@ import {
 	resolveLocalImage,
 	setDockerBaseDir,
 } from '../src/services/image-registry';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 
 describe('image-registry', () => {
 	it('findRepoRoot locates the monorepo root from this file', () => {
@@ -44,11 +45,55 @@ describe('image-registry', () => {
 	});
 
 	describe('publishedAgentBaseRef', () => {
+		// An explicit empty env, so these assert the build-type default rather than
+		// whatever the machine running them happens to export.
 		it('returns the :latest GHCR ref for a packaged release build', () => {
-			expect(publishedAgentBaseRef(true)).toBe(`${AGENT_BASE_GHCR_REPO}:latest`);
+			expect(publishedAgentBaseRef(true, {})).toBe(`${AGENT_BASE_GHCR_REPO}:latest`);
 		});
 		it('returns null for an unpackaged (dev/test) build', () => {
-			expect(publishedAgentBaseRef(false)).toBeNull();
+			expect(publishedAgentBaseRef(false, {})).toBeNull();
+		});
+
+		it('lets HEZO_AGENT_BASE_IMAGE override the dev default', () => {
+			// The combination with no other answer: a dev server on a managed
+			// backend. Dev builds agent-base into the local daemon's image store,
+			// which a provider pulling from a registry can never see - so without
+			// this the only route is editing every project by hand, and a newly
+			// created project silently reverts to the local-build sentinel.
+			const pinned = `${AGENT_BASE_GHCR_REPO}:abc123`;
+			expect(publishedAgentBaseRef(false, { [AGENT_BASE_IMAGE_OVERRIDE_ENV]: pinned })).toBe(
+				pinned,
+			);
+		});
+
+		it('lets it override a packaged build too, so CI images can be tested as shipped', () => {
+			const pinned = `${AGENT_BASE_GHCR_REPO}:abc123`;
+			expect(publishedAgentBaseRef(true, { [AGENT_BASE_IMAGE_OVERRIDE_ENV]: pinned })).toBe(pinned);
+		});
+
+		it('ignores an empty or whitespace override rather than resolving to it', () => {
+			// An exported-but-empty variable is a shell accident, not a choice; taking
+			// it literally would resolve every image to the empty string.
+			expect(publishedAgentBaseRef(false, { [AGENT_BASE_IMAGE_OVERRIDE_ENV]: '  ' })).toBeNull();
+			expect(publishedAgentBaseRef(true, { [AGENT_BASE_IMAGE_OVERRIDE_ENV]: '' })).toBe(
+				`${AGENT_BASE_GHCR_REPO}:latest`,
+			);
+		});
+
+		it('flows through resolveAgentBaseImage, so every project picks it up', () => {
+			const pinned = `${AGENT_BASE_GHCR_REPO}:abc123`;
+			const env = { [AGENT_BASE_IMAGE_OVERRIDE_ENV]: pinned };
+			expect(
+				resolveAgentBaseImage(MANAGED_AGENT_BASE_IMAGE, publishedAgentBaseRef(false, env)),
+			).toEqual({ image: pinned, preferPull: true });
+		});
+
+		it('leaves a project that named its own image alone', () => {
+			// The override replaces the *managed default*, not a deliberate choice.
+			const env = { [AGENT_BASE_IMAGE_OVERRIDE_ENV]: `${AGENT_BASE_GHCR_REPO}:abc123` };
+			expect(
+				resolveAgentBaseImage('ghcr.io/acme/custom:1', publishedAgentBaseRef(false, env)),
+			).toEqual({ image: 'ghcr.io/acme/custom:1', preferPull: false });
 		});
 	});
 
@@ -92,14 +137,14 @@ describe('image-registry', () => {
 		it('pulls and returns the published ref when one exists', async () => {
 			const docker = {
 				pullImage: vi.fn().mockResolvedValue(undefined),
-			} as unknown as DockerClient;
+			} as unknown as ContainerEngine;
 			const ref = `${AGENT_BASE_GHCR_REPO}:latest`;
 			const result = await refreshPublishedAgentBaseImage(docker, ref);
 			expect(docker.pullImage).toHaveBeenCalledWith(ref);
 			expect(result).toBe(ref);
 		});
 		it('is a no-op returning null when there is no published ref', async () => {
-			const docker = { pullImage: vi.fn() } as unknown as DockerClient;
+			const docker = { pullImage: vi.fn() } as unknown as ContainerEngine;
 			const result = await refreshPublishedAgentBaseImage(docker, null);
 			expect(docker.pullImage).not.toHaveBeenCalled();
 			expect(result).toBeNull();

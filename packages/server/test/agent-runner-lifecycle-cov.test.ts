@@ -15,7 +15,7 @@ import {
 	WakeupSource,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
@@ -29,14 +29,12 @@ import {
 	recordRunCostAndEnforce,
 	runAgent,
 } from '../src/services/agent-runner';
-import {
-	ContainerConnectivityStatus,
-	type ProbeResult,
-} from '../src/services/container-connectivity-status';
 import { ensureProjectContainerRunning } from '../src/services/containers';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
+import { CONTAINER_SUBSCRIPTION_BASE } from '../src/services/runtime-home';
+import type { ContainerEngine } from '../src/services/sandbox/types';
+import { CONTAINER_WORKSPACE_ROOT } from '../src/services/workspace';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -44,6 +42,7 @@ import {
 	createTestApp,
 	createTestProject,
 	createTestTeam,
+	seedProjectContainer,
 } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
@@ -114,6 +113,23 @@ beforeAll(async () => {
 	taskId = (await taskRes.json()).data.id;
 });
 
+// Every case declares the container state it wants on the `projects` row, so it
+// must start from a known pool too - the two are records of the same thing.
+// Without this a member a previous case left behind is a container the ladder
+// will happily reuse or resume, and the case ends up asserting against whatever
+// ran before it.
+//
+// Reset to the default `makeProject()` describes rather than to nothing: a
+// container the pool has no member for reads as adopted from outside it, whose
+// allocation is unknown and therefore cannot be shown to cover the project's
+// cap - so the ladder replaces it. That is right for a genuinely adopted
+// container and wrong as the starting state for every case here. Cases that
+// want something else (no container, a stopped one) still say so.
+beforeEach(async () => {
+	await db.query('DELETE FROM container_pool_members');
+	await seedProjectContainer(db, projectId, 'container-lc');
+});
+
 afterAll(async () => {
 	await safeClose(db);
 });
@@ -153,7 +169,7 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 
 // Docker stub whose agent exec flips produced_output mid-run (the same write
 // the MCP tool layer does) so exit-0 runs read as genuine successes.
-function makeDocker(overrides: Record<string, any> = {}): DockerClient {
+function makeDocker(overrides: Record<string, any> = {}): ContainerEngine {
 	const { execStart: execStartOverride, producesOutput = true, ...rest } = overrides;
 	const innerExecStart = execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' }));
 	const base = createStubDocker({
@@ -170,7 +186,7 @@ function makeDocker(overrides: Record<string, any> = {}): DockerClient {
 			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
 		},
 	});
-	return withRunUserStub(base as unknown as DockerClient);
+	return withRunUserStub(base as unknown as ContainerEngine);
 }
 
 function recordingWs() {
@@ -186,7 +202,7 @@ function recordingWs() {
 	return { broadcasts, wsManager };
 }
 
-function baseDeps(docker: DockerClient, extra: Partial<RunnerDeps> = {}): RunnerDeps {
+function baseDeps(docker: ContainerEngine, extra: Partial<RunnerDeps> = {}): RunnerDeps {
 	return {
 		db,
 		docker,
@@ -434,11 +450,21 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 	it('lazy-starts a stopped container and the run proceeds', async () => {
 		// Runs never assume a running container: a stopped one is started in
 		// place before the exec, and the start is stamped on the project row.
-		await db.query(
-			`UPDATE projects SET container_status = $1::container_status, container_id = $2,
-			     container_error = NULL, container_last_started_at = NULL WHERE id = $3`,
-			[ContainerStatus.Stopped, 'lazy-lc', projectId],
-		);
+		// The stopped container has to be the *only* one: the default seeded above
+		// is idle, and the ladder would hand that over rather than resuming this.
+		await db.query('DELETE FROM container_pool_members');
+		// Seeded through the pool as well as the column, and with the allocation it
+		// was provisioned with: a container the pool has no record of has an
+		// unknown size, which it cannot show covers the project's cap, so it is
+		// replaced rather than resumed - right for a genuinely adopted container,
+		// wrong for the one this test is about.
+		await seedProjectContainer(db, projectId, 'lazy-lc', {
+			containerStatus: ContainerStatus.Stopped,
+			state: 'suspended',
+		});
+		await db.query(`UPDATE projects SET container_last_started_at = NULL WHERE id = $1`, [
+			projectId,
+		]);
 		const startCalls: string[] = [];
 		let started = false;
 		const docker = makeDocker({
@@ -812,6 +838,69 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 		expect(run.rows[0].error).toBe('run reached its time limit');
 	});
 
+	it('marks the run timed_out even when the engine does not raise an AbortError', async () => {
+		// The sibling test above throws a real `AbortError`, which is what Docker's
+		// exec does when its attach is torn down. A managed backend's exec is under
+		// no such obligation - Daytona's rejects with an ordinary Error - and
+		// keying the status on the error's *name* recorded a timed-out run as
+		// `failed` while still stamping it with the timeout's own message
+		// (measured live: exit -1, status `failed`, error "run reached its time
+		// limit"). The status has to come from the signal, which is the same on
+		// every backend.
+		//
+		// It is not cosmetic: the consecutive-timeout escalation in
+		// `JobManager.onAgentComplete` reads this column, so on such a backend a
+		// task that times out repeatedly is never escalated.
+		const ac = new AbortController();
+		const docker = makeDocker({
+			producesOutput: false,
+			execStart: async () => {
+				ac.abort('run_timeout');
+				throw new Error('socket closed');
+			},
+		});
+		const result = await runAgent(
+			baseDeps(docker),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+		expect(result.timedOut).toBe(true);
+		const run = await db.query<{ status: string; error: string | null }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.TimedOut);
+		expect(run.rows[0].error).toBe('run reached its time limit');
+	});
+
+	it('still fails a run whose error is not an abort at all', async () => {
+		// The other half of the same branch: with no abort reason on the signal a
+		// thrown error is a genuine failure, not a timeout and not a cancel.
+		const docker = makeDocker({
+			producesOutput: false,
+			execStart: async () => {
+				throw new Error('boom');
+			},
+		});
+		const result = await runAgent(
+			baseDeps(docker),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			new AbortController().signal,
+		);
+		expect(result.timedOut).toBeFalsy();
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+	});
+
 	it('finalizes a cancelled run when the abort lands between run creation and credential lock', async () => {
 		const ac = new AbortController();
 		let execCreated = false;
@@ -1022,7 +1111,7 @@ describe('runAgent lifecycle — subscription credential lock + rotation', () =>
 			'SELECT encrypted_credential FROM ai_provider_configs WHERE id = $1',
 			[configId],
 		);
-		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey())).toBe(
+		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey() as Buffer)).toBe(
 			rotatedAuthJson,
 		);
 
@@ -1104,7 +1193,7 @@ describe('runAgent lifecycle — subscription credential lock + rotation', () =>
 			'SELECT encrypted_credential FROM ai_provider_configs WHERE id = $1',
 			[configId],
 		);
-		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey())).toBe(
+		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey() as Buffer)).toBe(
 			originalAuthJson,
 		);
 		await db.query(`DELETE FROM ai_provider_configs WHERE id = $1`, [configId]);
@@ -1149,20 +1238,20 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
 
-		expect(capturedEnv).toContain('HTTP_PROXY=http://172.17.0.1:18080');
-		expect(capturedEnv).toContain('HTTPS_PROXY=http://172.17.0.1:18080');
-		expect(capturedEnv.some((e) => e.startsWith('NO_PROXY=') && e.includes('172.17.0.1'))).toBe(
+		// Whatever host-side address the proxy was allocated on, the container
+		// dials its own loopback: the tunnel is what bridges the two.
+		expect(capturedEnv.some((e) => /^HTTP_PROXY=http:\/\/127\.0\.0\.1:\d+$/.test(e))).toBe(true);
+		expect(capturedEnv.some((e) => /^HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+$/.test(e))).toBe(true);
+		expect(capturedEnv.some((e) => e.startsWith('NO_PROXY=') && e.includes('127.0.0.1'))).toBe(
 			true,
 		);
 		expect(capturedEnv).toContain(
 			'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt',
 		);
-		expect(capturedEnv).toContain(
-			'CURL_CA_BUNDLE=/usr/local/share/ca-certificates/hezo-egress.crt',
-		);
-		expect(capturedEnv).toContain(
-			'GIT_SSL_CAINFO=/usr/local/share/ca-certificates/hezo-egress.crt',
-		);
+		// Not set: both replace the trust bundle rather than adding to it, which
+		// breaks a direct TLS peer under split routing. See agent-runner.
+		expect(capturedEnv.some((e) => e.startsWith('CURL_CA_BUNDLE='))).toBe(false);
+		expect(capturedEnv.some((e) => e.startsWith('GIT_SSL_CAINFO='))).toBe(false);
 		expect(capturedEnv.some((e) => e.startsWith('SSH_AUTH_SOCK=/run/hezo/'))).toBe(true);
 		// Bridge wrapper (not the bare sh prompt-delivery wrapper) leads the exec argv.
 		expect(capturedExecCmd[0]).not.toBe('claude');
@@ -1174,53 +1263,86 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		expect(sshCalls.released).toContain(result.heartbeatRunId);
 	});
 
-	it('aborts before allocating egress and releases the ssh socket when the proxy is unreachable', async () => {
-		const egressCalls = { allocated: [] as string[] };
-		const sshCalls = { released: [] as string[] };
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		status.set('bind-loopback', '127.0.0.1');
-		const probe = async (): Promise<ProbeResult> => ({
-			status: 'bind-loopback',
-			bindHost: '127.0.0.1',
+	it('releases the tunnel, the ssh socket and the egress port when setup throws after the tunnel starts', async () => {
+		// The window between `startRunTunnel` and the point `cleanupRunArtifacts`
+		// becomes reachable - `buildRunContext` sits directly in it. A throw there
+		// used to strand all three, and each is quiet in its own way: the tunnel is
+		// a live exec, so the container counts as active and never goes idle (a bill,
+		// not an error), and on a managed backend its client holds the run's three
+		// loopback ports, so the *next* run on that pooled container dies with
+		// EADDRINUSE having lost MCP and egress outright.
+		//
+		// The failure is injected at the engine seam rather than by reaching into
+		// the runner: the tunnel and the prompt both stage under the workspace root,
+		// while the per-run runtime home - written from inside `buildRunContext` -
+		// is rooted at the subscription base. Refusing that one root therefore fails
+		// after the tunnel is up and before any exec, and it is a real failure mode
+		// (a provider's file API refusing a write) rather than a contrived one.
+		const egressCalls = { allocated: [] as string[], released: [] as string[] };
+		const sshCalls = { allocated: [] as string[], released: [] as string[] };
+		let tunnelClosed = false;
+		const rootsSeen: string[] = [];
+
+		const base = makeDocker({
+			openExecChannel: async () => ({
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: () => {},
+				close: () => {
+					tunnelClosed = true;
+				},
+			}),
 		});
-		const docker = makeDocker({
-			execCreate: async () => {
-				throw new Error('must not exec');
+		const stubFiles = base.files.bind(base);
+		const docker = {
+			...base,
+			files: (containerId: string, containerRoot: string) => {
+				rootsSeen.push(containerRoot);
+				if (containerRoot.startsWith(CONTAINER_SUBSCRIPTION_BASE)) {
+					throw new Error('sandbox file API refused the write');
+				}
+				return stubFiles(containerId, containerRoot);
 			},
-		});
+		} as unknown as ContainerEngine;
+
 		const deps = baseDeps(docker, {
 			egressProxy: {
 				allocateRunProxy: async (runId: string) => {
 					egressCalls.allocated.push(runId);
-					return { proxyHost: '127.0.0.1', proxyPort: 18080 };
+					return { proxyHost: '172.17.0.1', proxyPort: 18081 };
 				},
-				releaseRunProxy: async () => {},
+				releaseRunProxy: async (runId: string) => {
+					egressCalls.released.push(runId);
+				},
 			} as any,
 			egressCAPath: `${dataDir}/egress-ca.crt`,
 			sshAgentServer: {
-				allocateRunSocket: async (_runId: string, _ident: unknown, hostPath: string) => ({
-					socketHostPath: hostPath,
-					tcpHostPort: 41001,
-					tokenHex: 'b'.repeat(32),
-				}),
+				allocateRunSocket: async (runId: string, _ident: unknown, hostPath: string) => {
+					sshCalls.allocated.push(runId);
+					return { socketHostPath: hostPath, tcpHostPort: 41001, tokenHex: 'b'.repeat(32) };
+				},
 				releaseRunSocket: async (runId: string) => {
 					sshCalls.released.push(runId);
 				},
 			} as any,
-			connectivityStatus: status,
-			connectivityProbe: probe,
 		});
 
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-		expect(result.success).toBe(false);
-		expect(result.stderr).toContain('Egress proxy unreachable from agent containers');
-		expect(egressCalls.allocated).not.toContain(result.heartbeatRunId);
-		expect(sshCalls.released).toContain(result.heartbeatRunId);
-		const run = await db.query<{ status: string }>(
-			'SELECT status FROM heartbeat_runs WHERE id = $1',
-			[result.heartbeatRunId],
+		// Setup failures propagate out of `runAgent` (the job manager catches them);
+		// the point here is that the resources are released on the way past.
+		await expect(runAgent(deps, makeAgent(), makeTask(), makeProject())).rejects.toThrow(
+			'refused the write',
 		);
-		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+
+		// The tunnel really did start - otherwise the assertion below is vacuous.
+		expect(rootsSeen).toContain(CONTAINER_WORKSPACE_ROOT);
+		expect(tunnelClosed).toBe(true);
+		// Container provisioning allocates its own socket under a `provision-` id,
+		// so compare sets rather than counts: what matters is that nothing the run
+		// itself took was left held.
+		expect(sshCalls.released.sort()).toEqual(sshCalls.allocated.sort());
+		expect(egressCalls.released.sort()).toEqual(egressCalls.allocated.sort());
+		expect(sshCalls.allocated.some((id) => !id.startsWith('provision-'))).toBe(true);
 	});
 });
 

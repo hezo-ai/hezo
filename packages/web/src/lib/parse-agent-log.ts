@@ -14,6 +14,8 @@
  * a queue of pending tool blocks.
  */
 
+import { parseContainerMetaLogLine } from '@hezo/shared';
+
 /** Minimal shape of a log line; structurally compatible with `LogViewerLine`. */
 export interface AgentLogLine {
 	id: number;
@@ -85,6 +87,34 @@ export interface SystemBlock {
 	stream: 'stdout' | 'stderr';
 }
 
+/** One `[runner]` line, with the container it names resolved when it names one. */
+export interface RunnerLine {
+	id: number;
+	/** The line as written, rendered verbatim unless `container` is set. */
+	text: string;
+	/**
+	 * Set only on the line naming the run's container. The id is the full engine
+	 * id - what the container's page is keyed on - and the viewer shortens it.
+	 */
+	container: { id: string; details: string } | null;
+}
+
+/**
+ * Lifecycle lines from the run host itself (claiming a container, requeuing,
+ * failing to start).
+ *
+ * A block of its own rather than the prose fall-through, which is where these
+ * used to land: the fall-through coalesces consecutive lines into one markdown
+ * document, and a single newline is a softbreak there, so a runner line was
+ * rendered as a clause appended to whatever the agent had last said.
+ */
+export interface RunnerBlock {
+	type: 'runner';
+	id: number;
+	lines: RunnerLine[];
+	stream: 'stdout' | 'stderr';
+}
+
 export type LogBlock =
 	| SessionBlock
 	| TextBlock
@@ -93,7 +123,8 @@ export type LogBlock =
 	| ToolBlock
 	| ResultBlock
 	| DoneBlock
-	| SystemBlock;
+	| SystemBlock
+	| RunnerBlock;
 
 /** Strip a `[prefix]` token and the single following space, if present. */
 function stripPrefix(text: string, prefix: string): string {
@@ -216,6 +247,23 @@ export function parseAgentLog(lines: AgentLogLine[]): LogBlock[] {
 				tail.lines.push(body);
 			} else {
 				blocks.push({ type: 'system', id: line.id, lines: [body], stream: line.stream });
+			}
+			continue;
+		}
+		if (text.startsWith('[runner]')) {
+			flushText();
+			const body = stripPrefix(text, '[runner]');
+			const meta = parseContainerMetaLogLine(body);
+			const entry: RunnerLine = {
+				id: line.id,
+				text: body,
+				container: meta ? { id: meta.containerId, details: meta.details } : null,
+			};
+			const tail = blocks[blocks.length - 1];
+			if (tail && tail.type === 'runner' && tail.stream === line.stream) {
+				tail.lines.push(entry);
+			} else {
+				blocks.push({ type: 'runner', id: line.id, lines: [entry], stream: line.stream });
 			}
 			continue;
 		}

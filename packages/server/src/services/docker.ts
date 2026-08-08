@@ -1,7 +1,65 @@
 import { request as httpRequest } from 'node:http';
+import type { Socket } from 'node:net';
+import { connect as netConnect } from 'node:net';
 import { Readable } from 'node:stream';
+import type { ContainerHostMemory } from '@hezo/shared';
+import { trackBackground } from '../lib/background';
+import { getHostMemory } from '../lib/host-memory';
+import { logger } from '../logger';
 import { DockerFrameDecoder, demuxDockerStream } from './docker-frames';
 import { resolvedDockerSocketPath } from './docker-socket';
+import { ExecStreamLostError } from './sandbox/errors';
+import type { SandboxFiles } from './sandbox/files';
+import {
+	buildDiskUsageScript,
+	buildKillByEnvMarkerScript,
+	buildKillPidsScript,
+	buildKillTunnelClientsScript,
+	buildListHezoProcessesScript,
+	parseDfKilobytes,
+	parseHezoProcessList,
+} from './sandbox/proc-scripts';
+import { tarSingleFile, untarFirstFile } from './sandbox/tar';
+import { DockerBinaryFrameDecoder } from './sandbox/tunnel/docker-frames-binary';
+
+const log = logger.child('docker');
+
+import type {
+	ContainerByteChannel,
+	ContainerConfig,
+	ContainerEngine,
+	ContainerInfo,
+	ContainerMemoryStats,
+	ContainerProcessInfo,
+	ExecConfig,
+	ExecLogChunk,
+	ExecResult,
+	ExecStartOpts,
+	ImageInfo,
+	NetworkInfo,
+	ProcessEnvMarker,
+} from './sandbox/types';
+
+// The shared shapes live in the engine seam (`sandbox/types.ts`); re-exported
+// here so the many existing `from './docker'` type imports keep resolving.
+export type {
+	ContainerByteChannel,
+	ContainerConfig,
+	ContainerEngine,
+	ContainerInfo,
+	ContainerMemoryStats,
+	ContainerProcessInfo,
+	ExecConfig,
+	ExecLogChunk,
+	ExecResult,
+	ExecStartOpts,
+	ImageInfo,
+	NetworkInfo,
+	ProcessEnvMarker,
+} from './sandbox/types';
+
+/** Cap on a hijack response's header block - a daemon that never terminates them is broken, not slow. */
+const MAX_HIJACK_HEADER_BYTES = 64 * 1024;
 
 const API_VERSION = 'v1.44';
 
@@ -26,6 +84,20 @@ const DOCKER_REQUEST_TIMEOUT_MS = (() => {
 const KILL_EXEC_TIMEOUT_MS = 5_000;
 
 /**
+ * Bound on the hijack handshake - connect, write the request, read the response
+ * headers - and on that alone. It is cleared the moment the socket is handed
+ * over, because everything after that point is a **long-lived** channel: the
+ * tunnel sits idle between requests for as long as the run lasts, so an
+ * inactivity timeout on the socket itself would tear down a perfectly healthy
+ * one. Without this the promise had no way to settle at all: a daemon that
+ * accepts the connection and then never answers left it pending forever, and the
+ * caller - a run acquiring its tunnel - waited with it, indefinitely and with no
+ * error to report. `MAX_HIJACK_HEADER_BYTES` only catches a daemon that talks
+ * too much; this catches one that does not talk at all.
+ */
+const HIJACK_HANDSHAKE_TIMEOUT_MS = 30_000;
+
+/**
  * Upper bound on the boot sweep's `/proc` scan exec (`listHezoProcesses`).
  * Wider than the kill bound — the scan walks every pid — but still short enough
  * that a wedged daemon can't stall startup reconciliation.
@@ -44,88 +116,6 @@ const SWEEP_EXEC_TIMEOUT_MS = 10_000;
  */
 const DOCKER_CONTROL_TIMEOUT_MS = 60_000;
 
-/**
- * Every env-marker value interpolated into an in-container `sh -c` script must
- * match this — UUIDs and `<kind>-<hex>` scope ids do; anything shell-active
- * (quotes, spaces, `$`, backticks) is rejected before it reaches the shell.
- */
-const ENV_MARKER_VALUE_RE = /^[0-9a-zA-Z_-]{1,64}$/;
-
-interface ContainerConfig {
-	Image: string;
-	Cmd?: string[];
-	Env?: string[];
-	WorkingDir?: string;
-	Labels?: Record<string, string>;
-	HostConfig: {
-		Binds?: string[];
-		PortBindings?: Record<string, Array<{ HostPort: string }>>;
-		ExtraHosts?: string[];
-		CapAdd?: string[];
-		CapDrop?: string[];
-		/** Run docker-init as PID 1 so zombies are reaped under `sleep infinity`. */
-		Init?: boolean;
-		/** cgroup hard cap in bytes. */
-		Memory?: number;
-		/** Equal to Memory so the cap has no swap escape valve. */
-		MemorySwap?: number;
-		PidsLimit?: number;
-	};
-	ExposedPorts?: Record<string, object>;
-}
-
-interface ExecConfig {
-	Cmd: string[];
-	Env?: string[];
-	WorkingDir?: string;
-	User?: string;
-	AttachStdout: boolean;
-	AttachStderr: boolean;
-}
-
-export interface ExecLogChunk {
-	stream: 'stdout' | 'stderr';
-	text: string;
-}
-
-/**
- * The captured output of an exec.
- *
- * **Populated only on the buffered path** — when `ExecStartOpts.onChunk` is
- * omitted. A streamed exec deliberately retains nothing (see `onChunk`), so
- * both fields come back empty; consume the chunks instead.
- */
-export interface ExecResult {
-	stdout: string;
-	stderr: string;
-}
-
-export interface ExecStartOpts {
-	signal?: AbortSignal;
-	/**
-	 * Per-frame callback. Supplying it switches `execStart` to the streaming
-	 * path, which does **not** retain the output — the returned `ExecResult` is
-	 * empty. An agent run's raw stream-json transcript reaches hundreds of MB
-	 * (every tool result in full, strictly larger than the capped rendered log),
-	 * so anything the caller needs from the stream must be derived incrementally
-	 * here rather than scanned afterwards.
-	 */
-	onChunk?: (chunk: ExecLogChunk) => void | Promise<void>;
-}
-
-interface ContainerInfo {
-	Id: string;
-	State: {
-		Status: string;
-		Running: boolean;
-		Pid: number;
-		ExitCode: number;
-	};
-	Config: {
-		Image: string;
-	};
-}
-
 interface RawContainerStats {
 	memory_stats?: {
 		usage?: number;
@@ -135,24 +125,6 @@ interface RawContainerStats {
 			cache?: number;
 		};
 	};
-}
-
-export interface ContainerMemoryStats {
-	usedBytes: number;
-	rawUsageBytes: number;
-}
-
-export interface ImageInfo {
-	Id: string;
-	Config: {
-		Labels: Record<string, string> | null;
-	};
-}
-
-export interface NetworkInfo {
-	IPAM: {
-		Config: Array<{ Gateway?: string; Subnet?: string }> | null;
-	} | null;
 }
 
 async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
@@ -170,12 +142,113 @@ async function parseJsonOrThrow<T>(res: Response, op: string): Promise<T> {
 	}
 }
 
-export class DockerClient {
+/** Reject a relative path that would escape the run root, matching every SandboxFiles implementation. */
+function resolveContainerPath(root: string, relPath: string): string {
+	if (relPath.startsWith('/')) {
+		throw new Error(`sandbox file path must be relative: ${JSON.stringify(relPath)}`);
+	}
+	const parts: string[] = [];
+	for (const segment of relPath.split('/')) {
+		if (segment === '' || segment === '.') continue;
+		if (segment === '..') {
+			if (parts.length === 0) {
+				throw new Error(`sandbox file path escapes its root: ${JSON.stringify(relPath)}`);
+			}
+			parts.pop();
+			continue;
+		}
+		parts.push(segment);
+	}
+	return parts.length === 0 ? root : `${root}/${parts.join('/')}`;
+}
+
+/**
+ * Every directory from `root` down to `dir`, root first - the chain a `dirMode`
+ * applies to.
+ *
+ * `SandboxFiles.write` promises the mode reaches "every directory this call has
+ * to create", and the host implementation delivers that by chmod'ing each
+ * component from the leaf back up to the root. `mkdir -p -m MODE` does **not**:
+ * both POSIX and coreutils apply `-m` to the final directory only, and create
+ * the intermediates with the default mode instead. So a `dirMode` of 0o711 -
+ * chosen precisely so the deprivileged run user can traverse to a credential
+ * without being able to list what sits beside it - produced a 0o755 parent, and
+ * the one property it was set for was the one that was lost. Nothing failed;
+ * that is what made it worth finding.
+ *
+ * Bounded at `root` exactly as the host walk is, so a mode meant for a per-run
+ * directory can never travel up to `/workspace` or `/`.
+ */
+export function containerDirChain(root: string, dir: string): string[] {
+	if (dir === root) return [root];
+	const suffix = dir.startsWith(`${root}/`) ? dir.slice(root.length + 1) : '';
+	// A path outside the root is not ours to re-mode; `resolveContainerPath`
+	// already refuses to produce one, so this is a belt-and-braces bound.
+	if (suffix === '') return [dir];
+	const chain = [root];
+	let cursor = root;
+	for (const segment of suffix.split('/')) {
+		if (segment === '') continue;
+		cursor = `${cursor}/${segment}`;
+		chain.push(cursor);
+	}
+	return chain;
+}
+
+/**
+ * Headroom the cgroup hard cap sits above the project's working-set ceiling.
+ *
+ * Two limits, doing different jobs. The stats poller in the sync loop is the
+ * graceful early-stop: at the configured ceiling it stops the container cleanly
+ * and writes an explanation into `container_error`. The cgroup cap sits a little
+ * above that so a runaway allocation *between* poll ticks meets the kernel OOM
+ * killer (exit 137) rather than taking the operator's host with it. `MemorySwap`
+ * is set equal to it, so the cap has no swap escape valve.
+ *
+ * This lives in the Docker adapter because it is a cgroup concern and a
+ * shared-host concern, and a managed sandbox has neither: it is allocated
+ * exactly what was asked for, on a machine that is nobody else's. Keeping it in
+ * the caller made the two backends ask their providers for different amounts of
+ * memory than the project was configured for - and at the boundary, refused a
+ * project set to a managed provider's documented maximum.
+ */
+export const MEMORY_HARD_CAP_HEADROOM_BYTES = 512 * 1024 ** 2;
+
+/** The caller's config with Docker's own margin folded onto the cgroup limits. */
+function withCgroupHeadroom(config: ContainerConfig): ContainerConfig {
+	const ceiling = config.HostConfig.Memory;
+	if (!ceiling) return config;
+	const cap = ceiling + MEMORY_HARD_CAP_HEADROOM_BYTES;
+	return { ...config, HostConfig: { ...config.HostConfig, Memory: cap, MemorySwap: cap } };
+}
+
+/**
+ * The inverse of {@link withCgroupHeadroom}, so an inspect reports the ceiling
+ * that was asked for rather than the cgroup limit that was set.
+ *
+ * Without it every container reads back one headroom larger than the figure
+ * recorded on its pool member, and the pool compares the two for exact equality -
+ * so every container would be judged mis-sized and recycled, forever.
+ *
+ * Zero is Docker's "no limit", which is unknown rather than unlimited as far as
+ * a provisioned ceiling goes.
+ */
+function cgroupLimitAsCeiling(limitBytes: number | undefined): number | null {
+	if (!limitBytes || limitBytes <= MEMORY_HARD_CAP_HEADROOM_BYTES) return null;
+	return limitBytes - MEMORY_HARD_CAP_HEADROOM_BYTES;
+}
+
+/** Single-quote for `sh -c`, closing and reopening around any embedded quote. */
+function shellQuote(arg: string): string {
+	return `'${arg.replaceAll("'", `'\\''`)}'`;
+}
+
+export class DockerClient implements ContainerEngine {
 	/**
 	 * An explicit socket path pins this client; otherwise it reads the socket the
 	 * startup preflight resolved. Read LAZILY (a getter, not a constructor-time
 	 * field) because the preflight's own client is constructed before resolution
-	 * happens — a snapshot taken at construction would leave the preflight client
+	 * happens - a snapshot taken at construction would leave the preflight client
 	 * and the startup clients pointing at different sockets.
 	 */
 	constructor(private readonly socketOverride?: string) {}
@@ -202,6 +275,25 @@ export class DockerClient {
 			signal,
 		} as RequestInit & { unix: string });
 		return res;
+	}
+
+	/**
+	 * Raw-bytes request, for the archive endpoints.
+	 *
+	 * Separate from {@link request} because that one is a JSON helper: it
+	 * `JSON.stringify`s whatever it is given and labels it `application/json`, so
+	 * handing it a tar produced `{"0":31,"1":139,…}` and a 500 from the daemon
+	 * that named nothing. A binary body needs its own path rather than a flag, so
+	 * the two can never be confused at a call site.
+	 */
+	private async requestBinary(method: string, path: string, body?: Uint8Array): Promise<Response> {
+		return fetch(`http://localhost/${API_VERSION}${path}`, {
+			method,
+			headers: body ? { 'Content-Type': 'application/x-tar' } : undefined,
+			body: body as BodyInit | undefined,
+			unix: this.socketPath,
+			signal: AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
+		} as RequestInit & { unix: string });
 	}
 
 	/**
@@ -283,10 +375,244 @@ export class DockerClient {
 	}
 
 	/**
+	 * Open a **bidirectional** byte channel to an exec.
+	 *
+	 * This is the tunnel's transport on Docker, and it cannot go through
+	 * `requestStream`: that returns a `Response`, which is read-only. Docker
+	 * hands out a raw socket instead, in answer to `Connection: Upgrade` /
+	 * `Upgrade: tcp`. The request is spoken over a plain socket rather than
+	 * through an HTTP client - see {@link hijackExec} for why that is not
+	 * optional under Bun.
+	 *
+	 * Stdin is written raw; output arrives in Docker's 8-byte framing (the exec
+	 * runs without a TTY on purpose - a TTY gives raw bytes but also line
+	 * discipline, which would mangle a framed protocol) and is demuxed at the
+	 * byte level, never through the text decoder the run-log stream uses.
+	 */
+	async openExecChannel(containerId: string, config: ExecConfig): Promise<ContainerByteChannel> {
+		const execId = await this.execCreate(containerId, {
+			...config,
+			AttachStdin: true,
+			AttachStdout: true,
+			AttachStderr: true,
+		});
+		const socket = await this.hijackExec(execId);
+		const decoder = new DockerBinaryFrameDecoder();
+		let onData: ((chunk: Uint8Array) => void) | undefined;
+		let onClose: (() => void) | undefined;
+		let onStderr: ((chunk: Uint8Array) => void) | undefined;
+
+		socket.on('data', (chunk: Buffer) => {
+			for (const frame of decoder.push(new Uint8Array(chunk))) {
+				if (frame.stream === 'stdout') onData?.(frame.payload);
+				else onStderr?.(frame.payload);
+			}
+		});
+		const finish = () => onClose?.();
+		socket.on('end', finish);
+		socket.on('close', finish);
+		socket.on('error', finish);
+		// `hijackExec` hands the socket back **paused**, so the bytes that arrived
+		// alongside the response headers could be `unshift`ed without being lost.
+		// Attaching a `data` listener only auto-resumes a stream that was never
+		// explicitly paused, so this is required rather than tidy: without it the
+		// channel connects, the client binds its listeners, and not one frame is
+		// ever delivered.
+		socket.resume();
+
+		return {
+			write: (data) => {
+				socket.write(data);
+			},
+			close: () => {
+				socket.destroy();
+			},
+			onData: (handler) => {
+				onData = handler;
+			},
+			onStderr: (handler) => {
+				onStderr = handler;
+			},
+			onClose: (handler) => {
+				onClose = handler;
+			},
+		};
+	}
+
+	/**
+	 * Attach to an exec as a raw bidirectional socket.
+	 *
+	 * **The request is spoken over a plain `node:net` socket rather than through
+	 * `node:http`, deliberately.** `http.request`'s `'upgrade'` event is the
+	 * obvious way to do this and it is what this used to do - but it only works
+	 * under Node. Bun never emits `'upgrade'` for Docker's hijack: it emits
+	 * `'response'` with status **101** and routes the framed exec bytes onto the
+	 * response stream, where writing back to `res.socket` does not reach the
+	 * exec's stdin at all (both measured against a live daemon). Since Bun is the
+	 * production runtime, the version built on `'upgrade'` could never have
+	 * worked - it rejected every attach with "attach failed (101)".
+	 *
+	 * A hijack is just "send a request, then own the socket", so owning it
+	 * outright removes the divergence instead of branching on it: one code path,
+	 * identical on both runtimes, and exercised by
+	 * `test/bun/sandbox-tunnel-docker.bun.test.ts` on the runtime that ships.
+	 */
+	private hijackExec(execId: string): Promise<Socket> {
+		return new Promise((resolve, reject) => {
+			const payload = Buffer.from(JSON.stringify({ Detach: false, Tty: false }));
+			const socket = netConnect({ path: this.socketPath });
+			let header = Buffer.alloc(0);
+			let settled = false;
+
+			/** Settle once, and stop the handshake clock whichever way it went. */
+			const fail = (err: Error): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(handshakeTimer);
+				socket.destroy();
+				reject(err);
+			};
+
+			const handshakeTimer = setTimeout(() => {
+				fail(
+					new Error(
+						`Docker exec attach timed out after ${HIJACK_HANDSHAKE_TIMEOUT_MS}ms waiting for the daemon to answer`,
+					),
+				);
+			}, HIJACK_HANDSHAKE_TIMEOUT_MS);
+			// Node keeps the process alive for a pending timer; this one must not
+			// hold a shutdown open on a daemon that has stopped answering.
+			handshakeTimer.unref?.();
+
+			const onHeaderData = (chunk: Buffer): void => {
+				header = Buffer.concat([header, chunk]);
+				const end = header.indexOf('\r\n\r\n');
+				if (end < 0) {
+					// A response that never terminates its headers is a broken daemon,
+					// not a slow one; cap it rather than buffering without bound.
+					if (header.length > MAX_HIJACK_HEADER_BYTES) {
+						fail(new Error('Docker exec attach: response headers too large'));
+					}
+					return;
+				}
+				socket.removeListener('data', onHeaderData);
+
+				const statusLine = header.subarray(0, header.indexOf('\r\n')).toString();
+				const status = Number.parseInt(statusLine.split(' ')[1] ?? '', 10);
+				// 101 is the hijack; Docker answers 200 for a non-TTY attach on some
+				// versions and the stream is identical. Anything else is a refusal,
+				// and its body says why.
+				if (status !== 101 && status !== 200) {
+					const body = header.subarray(end + 4).toString();
+					fail(new Error(`Docker exec attach failed (${status}): ${body}`));
+					return;
+				}
+
+				// Bytes that arrived in the same chunk as the headers are already
+				// stream payload. Pause first so `unshift` is legal, then hand them
+				// back for the caller's own `data` handler to receive first.
+				const rest = header.subarray(end + 4);
+				socket.pause();
+				if (rest.length > 0) socket.unshift(rest);
+				settled = true;
+				clearTimeout(handshakeTimer);
+				resolve(socket);
+			};
+
+			// Left attached past the handover, deliberately. Removing it left the
+			// socket with **no** `error` listener until the caller attached its own,
+			// and an `error` emitted in that window is not a rejected promise - Node
+			// throws it as an uncaught exception. After the handover `fail` is a
+			// no-op, so this only ever suppresses that.
+			socket.on('error', fail);
+			socket.on('data', onHeaderData);
+			socket.on('connect', () => {
+				socket.write(
+					`POST /${API_VERSION}/exec/${execId}/start HTTP/1.1\r\n` +
+						`Host: docker\r\n` +
+						`Content-Type: application/json\r\n` +
+						`Content-Length: ${payload.length}\r\n` +
+						`Connection: Upgrade\r\n` +
+						`Upgrade: tcp\r\n\r\n`,
+				);
+				socket.write(payload);
+			});
+		});
+	}
+
+	/**
 	 * `timeoutMs` overrides the default request ceiling. The startup preflight
 	 * passes a much tighter one: it may walk several candidate sockets, and a
 	 * dead path should fail fast rather than multiply the 10s default.
 	 */
+	/**
+	 * The local daemon's own host setup: the embedded build context, the bundled
+	 * image prune, the published agent-base refresh, and the bind-mount probe.
+	 *
+	 * All four are meaningless on a backend that builds from Dockerfile text on
+	 * someone else's machines, which is exactly why they used to sit behind an
+	 * `instanceof DockerClient` check in `startup.ts`. Here the caller asks every
+	 * engine and learns nothing about which one answered.
+	 *
+	 * Imported lazily: this pulls in the image builder and registry, and
+	 * `docker.ts` is on the CLI's import path where none of that is wanted.
+	 */
+	async prepareHost({ dataDir }: { dataDir: string }): Promise<void> {
+		const [
+			{ extractBundledDockerContext },
+			{ pruneStaleBundledImages, refreshPublishedAgentBaseImage, setDockerBaseDir },
+			{ checkContainerMounts },
+		] = await Promise.all([
+			import('./docker-assets'),
+			import('./image-registry'),
+			import('./mount-preflight'),
+		]);
+
+		// A compiled binary has no repo checkout, so extract the embedded agent-base
+		// build context to the data dir and point the image resolver at it. This is
+		// the local-build fallback for when the published-image pull fails, and it's
+		// fast (writing files), so it stays on the critical path. No-op in dev/source
+		// (returns null - the resolver falls back to the repo's docker/ dir).
+		try {
+			const contextDir = await extractBundledDockerContext(dataDir);
+			if (contextDir) setDockerBaseDir(contextDir);
+		} catch (err) {
+			log.error('Failed to extract bundled agent-base build context (continuing):', err);
+		}
+
+		// Backgrounded, all of it: the pull is network-bound and can take minutes on
+		// a cold cache, and none of it may gate the server coming up. Best-effort
+		// anyway - provisioning pulls-then-builds on demand and falls back to a local
+		// build, so a missing or slow refresh self-heals on first use.
+		trackBackground(
+			(async () => {
+				try {
+					const outcome = await pruneStaleBundledImages(this);
+					if (outcome.removed.length > 0 || outcome.skipped.length > 0) {
+						log.info(
+							`bundled-image prune: kept=${outcome.kept.length} removed=${outcome.removed.length} skipped=${outcome.skipped.length}`,
+						);
+					}
+				} catch (err) {
+					log.error('bundled-image prune failed (continuing startup):', err);
+				}
+				try {
+					const refreshed = await refreshPublishedAgentBaseImage(this);
+					if (refreshed) log.info(`refreshed published agent-base image ${refreshed}`);
+				} catch (err) {
+					log.warn('agent-base image refresh failed (continuing startup):', err);
+				}
+				try {
+					await checkContainerMounts({ docker: this, dataDir });
+				} catch (err) {
+					log.info('container mount check failed', {
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			})(),
+		);
+	}
+
 	async ping(timeoutMs: number = DOCKER_REQUEST_TIMEOUT_MS): Promise<boolean> {
 		try {
 			const res = await this.request('GET', '/_ping', undefined, AbortSignal.timeout(timeoutMs));
@@ -365,7 +691,7 @@ export class DockerClient {
 		const res = await this.request(
 			'POST',
 			`/containers/create?name=${encodeURIComponent(name)}`,
-			config,
+			withCgroupHeadroom(config),
 			AbortSignal.timeout(DOCKER_CONTROL_TIMEOUT_MS),
 		);
 		if (!res.ok) {
@@ -446,7 +772,13 @@ export class DockerClient {
 			const text = await res.text();
 			throw new Error(`Docker inspectContainer failed (${res.status}): ${text}`);
 		}
-		return parseJsonOrThrow(res, 'inspectContainer');
+		const raw = await parseJsonOrThrow<ContainerInfo & { HostConfig?: { Memory?: number } }>(
+			res,
+			'inspectContainer',
+		);
+		// The daemon's payload is passed through as-is except for this one field,
+		// which is renamed and un-padded so it means the same thing on every backend.
+		return { ...raw, HostConfig: { MemoryBytes: cgroupLimitAsCeiling(raw.HostConfig?.Memory) } };
 	}
 
 	/**
@@ -613,28 +945,16 @@ export class DockerClient {
 	 * NUL-separated `/proc/<pid>/environ` for the marker. Bounded by its own short
 	 * timeout so a wedged kill can never block run finalization. Best-effort: the
 	 * caller swallows failures (a dead/gone container simply can't be exec'd).
+	 *
+	 * The script itself is runtime-agnostic and shared (`sandbox/proc-scripts.ts`);
+	 * only the transport that carries it is Docker's.
 	 */
 	async killProcessesByEnvMarker(
 		containerId: string,
-		name: 'HEZO_HEARTBEAT_RUN_ID' | 'HEZO_EXEC_SCOPE_ID',
+		name: ProcessEnvMarker,
 		value: string,
 	): Promise<void> {
-		// Scope-id values are UUIDs or `<kind>-<hex>` tags. The character-class
-		// check guarantees the value needs no shell escaping inside the
-		// double-quoted grep pattern below — no metacharacters, word-splitting, or
-		// expansion is possible.
-		if (!ENV_MARKER_VALUE_RE.test(value)) {
-			throw new Error(`unsafe env marker value: ${JSON.stringify(value)}`);
-		}
-		const marker = `${name}=${value}`;
-		// `/proc/<pid>/environ` is NUL-separated; `basename $(dirname …)` recovers the
-		// pid without relying on `${…}` shell parameter expansion (a JS-template
-		// look-alike). `|| true` keeps a since-exited pid from failing the loop.
-		const script =
-			'for e in /proc/[0-9]*/environ; do ' +
-			`grep -qFz "${marker}" "$e" 2>/dev/null || continue; ` +
-			'kill -9 "$(basename "$(dirname "$e")")" 2>/dev/null || true; ' +
-			'done';
+		const script = buildKillByEnvMarkerScript(name, value);
 		const execId = await this.execCreate(containerId, {
 			Cmd: ['sh', '-c', script],
 			AttachStdout: false,
@@ -665,24 +985,7 @@ export class DockerClient {
 	 * boot-time dangling-process sweep (`process-sweeper.ts`).
 	 */
 	async listHezoProcesses(containerId: string): Promise<ContainerProcessInfo[]> {
-		// Age derives from /proc/uptime minus stat field 22 (starttime, in clock
-		// ticks). The stat line's second field (comm) may contain spaces or
-		// parentheses, so everything up to the *last* `) ` is stripped first —
-		// after that, starttime is field 20 of the remainder.
-		const script =
-			'up=$(cut -d. -f1 /proc/uptime); hz=$(getconf CLK_TCK 2>/dev/null || echo 100); ' +
-			'for d in /proc/[0-9]*; do ' +
-			'pid=${d#/proc/}; ' +
-			'rid=$(tr "\\0" "\\n" < "$d/environ" 2>/dev/null | sed -n "s/^HEZO_HEARTBEAT_RUN_ID=//p" | head -n1); ' +
-			'sock=0; grep -qz "SSH_AUTH_SOCK=/run/hezo/" "$d/environ" 2>/dev/null && sock=1; ' +
-			'cmd=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null); ' +
-			'st=$(sed "s/^.*) //" "$d/stat" 2>/dev/null | cut -d" " -f20); ' +
-			'age=$(( up - ${st:-0} / hz )); ' +
-			'case "$cmd" in *hezo-run-with-bridge*|*hezo-ssh-bridge*|*/run/hezo/*) hit=1;; *) hit=0;; esac; ' +
-			'if [ -n "$rid" ] || [ "$sock" = 1 ] || [ "$hit" = 1 ]; then ' +
-			'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$pid" "$rid" "$sock" "$age" "$cmd"; ' +
-			'fi; ' +
-			'done';
+		const script = buildListHezoProcessesScript();
 		const execId = await this.execCreate(containerId, {
 			Cmd: ['sh', '-c', script],
 			AttachStdout: true,
@@ -705,16 +1008,29 @@ export class DockerClient {
 	 * and kills by pid. Validates every pid so nothing unexpected reaches the
 	 * shell; a no-op on an empty list. Best-effort, bounded like the marker kill.
 	 */
+	/**
+	 * SIGKILL every tunnel client in `containerId`. Same script the managed
+	 * backends run - the scan is runtime-agnostic and only its transport differs.
+	 * Best-effort and bounded like the other kills.
+	 */
+	async killTunnelClients(containerId: string): Promise<void> {
+		const execId = await this.execCreate(containerId, {
+			Cmd: ['sh', '-c', buildKillTunnelClientsScript()],
+			AttachStdout: false,
+			AttachStderr: false,
+		});
+		const ac = new AbortController();
+		const timer = setTimeout(() => ac.abort(), KILL_EXEC_TIMEOUT_MS);
+		try {
+			await this.execStart(execId, { signal: ac.signal });
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
 	async killPids(containerId: string, pids: number[]): Promise<void> {
 		if (pids.length === 0) return;
-		for (const pid of pids) {
-			if (!Number.isInteger(pid) || pid <= 1) {
-				throw new Error(`unsafe pid: ${JSON.stringify(pid)}`);
-			}
-		}
-		// Validated positive integers only — safe to interpolate. `|| true` keeps
-		// an already-exited pid from failing the exec.
-		const script = `kill -9 ${pids.join(' ')} 2>/dev/null || true`;
+		const script = buildKillPidsScript(pids);
 		const execId = await this.execCreate(containerId, {
 			Cmd: ['sh', '-c', script],
 			AttachStdout: false,
@@ -728,47 +1044,189 @@ export class DockerClient {
 			clearTimeout(timer);
 		}
 	}
-}
 
-/** One matching process from `listHezoProcesses`'s in-container `/proc` scan. */
-export interface ContainerProcessInfo {
-	pid: number;
-	/** Value of `HEZO_HEARTBEAT_RUN_ID` in the process env, or null when absent. */
-	runId: string | null;
-	/** Whether the process env carries `SSH_AUTH_SOCK=/run/hezo/…` (legacy bridge-scoped exec). */
-	hasHezoSock: boolean;
-	/** Seconds since the process started, floored. */
-	ageSecs: number;
-	/** NUL-joined cmdline rendered with spaces; empty for kernel threads. */
-	cmdline: string;
-}
-
-/**
- * Parse the tab-separated `listHezoProcesses` scan output. The cmdline is the
- * trailing field and may itself contain tabs, so only the first four tabs
- * split; malformed lines (a pid that exited mid-scan can emit partial output)
- * are dropped.
- */
-export function parseHezoProcessList(stdout: string): ContainerProcessInfo[] {
-	const procs: ContainerProcessInfo[] = [];
-	for (const line of stdout.split('\n')) {
-		if (line.length === 0) continue;
-		const parts = line.split('\t');
-		if (parts.length < 5) continue;
-		const [pidRaw, runIdRaw, sockRaw, ageRaw] = parts;
-		const cmdline = parts.slice(4).join('\t');
-		const pid = Number.parseInt(pidRaw, 10);
-		const ageSecs = Number.parseInt(ageRaw, 10);
-		if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(ageSecs)) continue;
-		procs.push({
-			pid,
-			runId: runIdRaw.length > 0 ? runIdRaw : null,
-			hasHezoSock: sockRaw === '1',
-			ageSecs: Math.max(0, ageSecs),
-			cmdline,
+	/**
+	 * Bytes used on the filesystem holding `path`, read with `df` inside the
+	 * container. Null when the exec failed or answered something unparseable - an
+	 * unanswerable measurement must not read as an empty container.
+	 */
+	async diskUsedBytes(containerId: string, path: string): Promise<number | null> {
+		const execId = await this.execCreate(containerId, {
+			Cmd: ['sh', '-c', buildDiskUsageScript(path)],
+			AttachStdout: true,
+			AttachStderr: false,
 		});
+		const ac = new AbortController();
+		const timer = setTimeout(() => ac.abort(), SWEEP_EXEC_TIMEOUT_MS);
+		try {
+			const { stdout } = await this.execStart(execId, { signal: ac.signal });
+			return parseDfKilobytes(stdout);
+		} catch {
+			return null;
+		} finally {
+			clearTimeout(timer);
+		}
 	}
-	return procs;
+
+	/**
+	 * The host's own memory: a local daemon's containers are carved out of the
+	 * same RAM and swap this process is running in, which is exactly why the
+	 * automatic budget holds a reserve back for the system.
+	 */
+	containerHostMemory(): ContainerHostMemory {
+		return getHostMemory();
+	}
+
+	/**
+	 * {@link SandboxFiles} over Docker's archive endpoints, rooted inside the
+	 * container.
+	 *
+	 * Deliberately **not** the bind mount, even though one is usually there. A
+	 * host-filesystem fast path is one that works everywhere except the cases this
+	 * seam exists for - a daemon reached over TCP, a rootless daemon in its own
+	 * mount namespace, and the managed backend it is a rehearsal for - and it
+	 * would be exercised by every local test while the real path shipped
+	 * unexercised. Going through the daemon means both backends move the same
+	 * bytes the same way and only the transport differs.
+	 *
+	 * Small metadata questions (exists, find) go through an exec rather than the
+	 * archive endpoint: `find` in one call is cheaper and simpler than pulling a
+	 * tar of a directory tree just to read its names.
+	 */
+	files(containerId: string, containerRoot: string): SandboxFiles {
+		const abs = (relPath: string): string => resolveContainerPath(containerRoot, relPath);
+		const run = async (script: string): Promise<{ exitCode: number; stdout: string }> => {
+			const execId = await this.execCreate(containerId, {
+				Cmd: ['sh', '-c', script],
+				User: 'root',
+				AttachStdout: true,
+				AttachStderr: true,
+			});
+			const { stdout } = await this.execStart(execId);
+			const { ExitCode } = await this.execInspect(execId);
+			return { exitCode: ExitCode, stdout };
+		};
+
+		// The byte-level halves of read/write, shared by their UTF-8 and raw
+		// variants: only the encode/decode at the very edge differs, and the
+		// archive round trip is where every real detail lives.
+		const readArchived = async (relPath: string): Promise<Uint8Array> => {
+			const res = await this.requestBinary(
+				'GET',
+				`/containers/${containerId}/archive?path=${encodeURIComponent(abs(relPath))}`,
+			);
+			if (!res.ok) throw new Error(`sandbox file not found: ${relPath}`);
+			const entry = untarFirstFile(new Uint8Array(await res.arrayBuffer()));
+			if (!entry) throw new Error(`sandbox file not found: ${relPath}`);
+			return entry.contents;
+		};
+
+		const writeArchived = async (
+			relPath: string,
+			contents: Uint8Array,
+			opts: { mode?: number; dirMode?: number },
+		): Promise<void> => {
+			const target = abs(relPath);
+			const dir = target.slice(0, Math.max(target.lastIndexOf('/'), 1));
+			// `mkdir -p` first, then chmod the whole chain - `-m` alone would mode
+			// the leaf and leave every directory above it at the default. See
+			// {@link containerDirChain}. chmod is not subject to the umask either,
+			// which is the same reason the host walk chmods rather than trusting
+			// `mkdirSync`'s mode.
+			const dirMode = (opts.dirMode ?? 0o755).toString(8);
+			const chain = containerDirChain(containerRoot, dir).map(shellQuote).join(' ');
+			const made = await run(`mkdir -p ${shellQuote(dir)} && chmod ${dirMode} ${chain}`);
+			if (made.exitCode !== 0) throw new Error(`could not create ${dir} in ${containerId}`);
+
+			const name = target.slice(target.lastIndexOf('/') + 1);
+			const archive = tarSingleFile(name, contents, opts.mode ?? 0o644);
+			const res = await this.requestBinary(
+				'PUT',
+				`/containers/${containerId}/archive?path=${encodeURIComponent(dir)}`,
+				archive,
+			);
+			if (!res.ok) {
+				throw new Error(`could not write ${relPath} into ${containerId} (${res.status})`);
+			}
+		};
+
+		return {
+			exists: async (relPath) => (await run(`test -e ${shellQuote(abs(relPath))}`)).exitCode === 0,
+
+			read: async (relPath) => new TextDecoder().decode(await readArchived(relPath)),
+
+			readBytes: async (relPath) => readArchived(relPath),
+
+			size: async (relPath) => {
+				// `stat -c %s` rather than the archive endpoint's tar header: the
+				// point of asking is to avoid transferring the file at all.
+				//
+				// Guarded on it being a regular file, because `stat` answers for a
+				// directory too - with the size of the directory entry (4096), which is
+				// not a number any caller here can use. They ask before reading, so a
+				// directory has to answer "no size" exactly as a missing path does.
+				// Caught by the shared backend-conformance suite: Daytona already
+				// answered null and this did not, which is the divergence a single
+				// interface with two implementations is supposed to make impossible.
+				const path = shellQuote(abs(relPath));
+				const res = await run(`[ -f ${path} ] && stat -c %s ${path} 2>/dev/null`);
+				if (res.exitCode !== 0) return null;
+				const bytes = Number.parseInt(res.stdout.trim(), 10);
+				return Number.isFinite(bytes) ? bytes : null;
+			},
+
+			remove: async (relPath) => {
+				// Best-effort by contract: a missing file is not an error, and the
+				// callers that scrub a credential must not fail a run over it.
+				await run(`rm -f ${shellQuote(abs(relPath))}`).catch(() => undefined);
+			},
+
+			findByName: async (relDir, basename, maxDepth) => {
+				const root = abs(relDir);
+				// `-type f` and no `-L`: symlinks are never followed, which is what
+				// makes the depth cap a real bound rather than an approximate one.
+				const res = await run(
+					`find ${shellQuote(root)} -maxdepth ${maxDepth + 1} -type f -name ${shellQuote(basename)} 2>/dev/null`,
+				);
+				if (res.exitCode !== 0) return [];
+				return res.stdout
+					.split('\n')
+					.map((line) => line.trim())
+					.filter(Boolean)
+					.map((full) =>
+						full.startsWith(`${containerRoot}/`) ? full.slice(containerRoot.length + 1) : full,
+					);
+			},
+
+			write: async (relPath, contents, opts = {}) =>
+				writeArchived(relPath, new TextEncoder().encode(contents), opts),
+
+			writeBytes: async (relPath, contents, opts = {}) => writeArchived(relPath, contents, opts),
+
+			removeDir: async (relPath) => {
+				// The archive endpoints have no recursive delete, so this is the one
+				// file operation that has to be an exec. Best-effort by contract.
+				await run(`rm -rf ${shellQuote(abs(relPath))}`).catch(() => undefined);
+			},
+
+			list: async (relDir) => {
+				// `-A` includes dotfiles and omits `.`/`..`, so an empty listing really
+				// means empty.
+				const res = await run(`ls -A ${shellQuote(abs(relDir))} 2>/dev/null`);
+				if (res.exitCode !== 0) return [];
+				return res.stdout
+					.split('\n')
+					.map((l) => l.trim())
+					.filter(Boolean);
+			},
+
+			mkdir: async (relPath, opts = {}) => {
+				const mode = (opts.mode ?? 0o755).toString(8);
+				const res = await run(`mkdir -p -m ${mode} ${shellQuote(abs(relPath))}`);
+				if (res.exitCode !== 0) throw new Error(`could not create ${relPath} in ${containerId}`);
+			},
+		};
+	}
 }
 
 /**
@@ -796,7 +1254,18 @@ async function streamDockerExec(
 			if (signal?.aborted) {
 				throw new DOMException('Aborted', 'AbortError');
 			}
-			const { done, value } = await reader.read();
+			let read: Awaited<ReturnType<typeof reader.read>>;
+			try {
+				read = await reader.read();
+			} catch (e) {
+				// The attach socket is held open for the whole command. A daemon
+				// restart or a broken pipe kills it mid-run, which is a transport
+				// failure rather than the agent's - the same shape a managed backend
+				// hits when a gateway reaps an idle stream, so it reads the same way.
+				if (signal?.aborted) throw e;
+				throw new ExecStreamLostError('Docker exec attach', { cause: e });
+			}
+			const { done, value } = read;
 			if (done) break;
 			if (value) {
 				frames.push(value);

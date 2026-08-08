@@ -5,7 +5,7 @@ import { ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker } from './helpers/app';
+import { createStubDocker, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -80,11 +80,11 @@ describe('per-surface chat thread routing', () => {
 			 VALUES ('anthropic', 'api_key', 'test', $1, true, 'verified', 'claude-sonnet-4-6')`,
 			[encrypt('sk-ant-test', key)],
 		);
-		await ctx.db.query(
-			`UPDATE projects SET container_id = 'hq-container', container_status = 'running'
-			 WHERE team_id = $1 AND is_internal = true`,
+		const hq = await ctx.db.query<{ id: string }>(
+			`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 			[DEFAULT_TEAM_ID],
 		);
+		await seedProjectContainer(ctx.db, hq.rows[0].id, 'hq-container');
 	});
 	afterEach(() => destroyTestContext(ctx));
 

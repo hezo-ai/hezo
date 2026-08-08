@@ -1,5 +1,6 @@
 import { logger } from '../logger';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
+import { dockerSandboxHandle } from './sandbox/handle';
 
 const log = logger.child('container-user');
 
@@ -30,8 +31,15 @@ export function clearContainerRunUserCache(containerId?: string): void {
 	else cache.clear();
 }
 
+/**
+ * The pre-run-user probe's exec. Deliberately **not** on `SandboxHandle`: the
+ * handle is built from a `ContainerRunUser`, and this is the call that
+ * *determines* one - there is nothing to build it from yet. Same reason the
+ * provision-time execs (MTU pin, `update-ca-certificates`, the mount probe)
+ * stay on the raw engine.
+ */
 async function execCapture(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	script: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -51,7 +59,7 @@ function delay(ms: number): Promise<void> {
 }
 
 async function probe(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	user: 'node' | null,
 ): Promise<ContainerRunUser | null> {
@@ -79,7 +87,7 @@ async function probe(
  * (root) container read everything the host wrote. Cached per container.
  */
 export async function resolveContainerRunUser(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 ): Promise<ContainerRunUser> {
 	const cached = cache.get(containerId);
@@ -117,7 +125,7 @@ function shSingleQuote(s: string): string {
  * operation that follows surfaces the actionable error if the path truly can't be made.
  */
 export async function mkdirInContainer(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	containerPaths: string[],
 ): Promise<void> {
@@ -153,7 +161,7 @@ const DIR_READY_DELAY_MS = 100;
  * follows surfaces the actionable error if the path truly can't be made.
  */
 export async function ensureContainerDirReady(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	containerPath: string,
 	opts: { retries?: number; delayMs?: number } = {},
@@ -189,7 +197,7 @@ export async function ensureContainerDirReady(
  * never throws — a permission fix must never abort the run/provision around it.
  */
 export async function chownToRunUser(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	containerId: string,
 	runUser: ContainerRunUser,
 	containerPaths: string[],
@@ -200,11 +208,14 @@ export async function chownToRunUser(
 	const owner = `${shSingleQuote(runUser.name)}:${shSingleQuote(runUser.name)}`;
 	const targets = containerPaths.map(shSingleQuote).join(' ');
 	try {
-		const { exitCode, stderr } = await execCapture(
-			docker,
-			containerId,
-			`chown ${flag}${owner} ${targets}`,
-		);
+		// Elevated by necessity: this is the one exec that runs *as root against a
+		// known run user* - it exists to hand ownership over to that user, so it
+		// cannot run as them. Everything else in this file is the pre-run-user
+		// probe, which has no handle to build (see execCapture).
+		const { exitCode, stderr } = await dockerSandboxHandle(docker, containerId, runUser).exec({
+			cmd: ['sh', '-c', `chown ${flag}${owner} ${targets}`],
+			elevated: true,
+		});
 		if (exitCode !== 0) {
 			log.warn(
 				`chown to ${runUser.name} exited ${exitCode} for [${containerPaths.join(', ')}]: ${stderr.trim()}`,

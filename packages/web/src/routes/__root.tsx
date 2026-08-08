@@ -7,7 +7,7 @@ import {
 	useNavigate,
 } from '@tanstack/react-router';
 import { ChevronsRight, RefreshCw } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { ChatWidget } from '../components/chat/chat-widget';
 import { GlobalSearchDialog } from '../components/global-search-dialog';
@@ -321,6 +321,44 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 		if (hash) return;
 		mainRef.current?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
 	}, [pathname, hash]);
+
+	// Publish the shell scroller's own visible height as `--shell-scrollport-h` on
+	// <main>, for the sticky panels rendered inside it (the doc list, the document
+	// preview, the asset review rail). Each of those has to cap its height at the
+	// scrollport or its top rides up on scroll — a sticky box taller than its
+	// scrollport has too little room in its grid cell to stay pinned.
+	//
+	// They used to compute that cap themselves, as `100vh` minus a literal for the
+	// chrome above <main>, and every one of them was wrong. The literals disagreed
+	// (4rem, 3.75rem, 2rem), one still subtracted an h-10 header this app has not
+	// had since it went to h-12, and one never subtracted the header at all. Worse,
+	// the premise is false whenever the shell grows a row: an UpdateBanner sits
+	// between the header and the content well, so <main> starts 47px further down
+	// and every panel overhangs the fold by exactly that much.
+	//
+	// Measuring is the only honest answer — CSS cannot name an ancestor scroller's
+	// height, and the container-query unit that could (`100cqh`) needs
+	// `container-type: size` on <main>, whose layout containment would make it the
+	// containing block for the `position: fixed` descendants inside it. So a
+	// ResizeObserver, the same shape as `--pill-center-x` below. A layout effect,
+	// not an effect: the value is read during layout, so it has to land before
+	// paint or the first frame uses the declared fallback in index.css.
+	useLayoutEffect(() => {
+		if (!mainEl) return;
+		const measure = () => {
+			// clientHeight, not the border box: it excludes a horizontal scrollbar,
+			// which is exactly the area a pinned panel actually has.
+			mainEl.style.setProperty('--shell-scrollport-h', `${mainEl.clientHeight}px`);
+		};
+		measure();
+		// Every input that changes the answer — a banner appearing or being
+		// dismissed, the mobile URL bar collapsing, the on-screen keyboard, a window
+		// resize — moves <main>'s own box, so observing it alone is sufficient.
+		if (typeof ResizeObserver === 'undefined') return;
+		const ro = new ResizeObserver(measure);
+		ro.observe(mainEl);
+		return () => ro.disconnect();
+	}, [mainEl]);
 
 	// Expose the horizontal centre of the registered content column (relative to
 	// the pill anchor) as `--pill-center-x`, so the pills sit over the content the

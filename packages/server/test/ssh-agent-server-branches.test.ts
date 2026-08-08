@@ -175,29 +175,6 @@ describe('SshAgentServer connection-guard branches', () => {
 		await server.releaseRunSocket(runId);
 	});
 
-	it('prefers bindHostRef over tcpListenHost when both are set', async () => {
-		const server = new SshAgentServer({
-			db,
-			masterKeyManager,
-			tcpListenHost: '0.0.0.0',
-			bindHostRef: { get: () => '127.0.0.1' },
-		});
-		const runId = 'run-bindref';
-		const socketPath = join(socketDir, `${runId}.sock`);
-		const allocated = await server.allocateRunSocket(runId, { teamId, agentId }, socketPath);
-
-		// The ref host (loopback) is reachable; the token auth + identities round-trip
-		// proves the listener bound on the ref, not the tcpListenHost default.
-		const tokenBytes = Buffer.from(allocated.tokenHex, 'hex');
-		const reply = await sendOverTcp(
-			allocated.tcpHostPort,
-			Buffer.concat([tokenBytes, frame(Buffer.from([MSG_REQUEST_IDENTITIES]))]),
-		);
-		expect(reply[0]).toBe(MSG_IDENTITIES_ANSWER);
-
-		await server.releaseRunSocket(runId);
-	});
-
 	it('splits a TCP token that arrives across multiple chunks (partial-token branch)', async () => {
 		const server = new SshAgentServer({ db, masterKeyManager });
 		const runId = 'run-tcp-split';

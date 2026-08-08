@@ -20,13 +20,16 @@ handy for baking defaults into a service definition while still overriding per r
 | `--database-url <url>` | `HEZO_DATABASE_URL` | - | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Its `sslmode` follows standard libpq rules - see [TLS and sslmode](#tls-and-sslmode). Omit to use the embedded database under the data directory (the default). |
 | - | `HEZO_DATABASE_POOL_SIZE` | `10` | Connection-pool size for the external database (2-100). Ignored for the embedded database. |
 | `--asset-storage-url <url>` | `HEZO_ASSET_STORAGE_URL` | - | [S3-compatible object storage](#storing-assets-in-s3-compatible-object-storage) for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`). Omit to store assets on the local filesystem under the data directory (the default). |
+| `--sandbox-backend <name>` | `HEZO_SANDBOX_BACKEND` | `docker` | Where agent containers run on a **new** instance: `docker` (the local daemon) or `daytona` (a [managed sandbox service](#running-agent-containers-on-a-managed-sandbox-service)). Once set in Settings -> Containers, the stored choice wins and this is ignored. Selecting a managed backend Hezo cannot reach is fatal at startup - it never falls back to local Docker. |
+| `--daytona-api-key <key>` | `HEZO_DAYTONA_API_KEY` | - | Daytona API key. Required when `--sandbox-backend` is `daytona`. Used only by Hezo itself to reach the provider - it is never placed inside an agent container. |
+| `--daytona-api-url <url>` | `HEZO_DAYTONA_API_URL` | Daytona's public API | Daytona API base URL, for a regional or self-hosted endpoint. |
+| - | `HEZO_AGENT_BASE_IMAGE` | the release's published image | Container image every project's agents run in, overriding the default for this instance. Must be a reference the backend in use can pull, e.g. `ghcr.io/hezo-ai/agent-base:0.42.0`. Mainly for running a development server against a managed sandbox service, where the default is built into the local Docker daemon and a managed service has nothing to pull. A project that names its own base image keeps it. |
 | `--master-key <phrase>` | `HEZO_MASTER_KEY` | - | The twelve-word master key, to set up or unlock without the web gate. |
 | `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
 | `--reset` | `HEZO_RESET` | off | Start fresh with an empty **embedded** database (the existing `pgdata` is renamed aside, not deleted). Not applicable with `--database-url` - recreate an external database with your provider's tools. |
 | `--no-open` | `HEZO_OPEN` | on | Auto-open the web app in your browser on startup. On by default; automatically skipped in environments without a browser (CI, containers, SSH, headless Linux). Pass `--no-open` or set `HEZO_OPEN=0` to disable. |
 | `--log-level <level>` | `HEZO_LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
 | `--keep-old-containers` | `HEZO_KEEP_OLD_CONTAINERS` | off | Keep old project containers instead of removing them - for debugging a crashed container. |
-| `--container-bind-host <host>` | `HEZO_CONTAINER_BIND_HOST` | `127.0.0.1` | Interface the egress proxy and SSH bridge bind to so agent containers can reach them. The default suits Docker Desktop and the other VM-backed runtimes; on native-Linux Docker the boot connectivity check auto-rebinds them to the detected bridge gateway IP (host-local, container-reachable), so this usually needs no change. Set it to pin a specific interface (an explicit non-loopback value is never auto-overridden); firewall-restrict the range (20000-29999) to the docker bridge. See [Self-hosting → Networking & firewall](/docs/deployment/self-hosting). |
 | `--docker-socket <path>` | `HEZO_DOCKER_SOCKET` | auto | Path to the container runtime's Unix socket. By default Hezo finds it: `DOCKER_HOST`, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set it only when the daemon listens somewhere none of those cover. Unix sockets only - `tcp://` and `npipe://` are not supported. See [Container runtimes](/docs/deployment/container-runtimes). |
 | - | `DOCKER_HOST` | - | Standard Docker environment variable, honoured when it points at a `unix://` socket. Takes effect only if `--docker-socket` / `HEZO_DOCKER_SOCKET` is unset. |
 | - | `HEZO_SKIP_MOUNT_CHECK` | off | Skip the boot check that verifies agent containers get a writable view of the data directory. The check is a diagnosis, not a dependency - skipping it hides the warning, it does not make a read-only mount work. |
@@ -180,7 +183,7 @@ s3://ACCESS_KEY:SECRET@endpoint[:port]/bucket[/prefix]?region=…&pathStyle=…&
 
 At startup Hezo verifies it can reach the bucket with the given credentials and exits
 with guidance if it can't. The active backend (with credentials occluded) is shown under
-**Settings → General → Asset storage**.
+**Settings → Storage → Asset storage**.
 
 Recommendations:
 
@@ -218,6 +221,88 @@ Because the local `<data-dir>/assets/` layout and the bucket keys are identical
 (`<project-id>/<asset-id>`), you can alternatively sync the tree directly with any S3 tool
 while the server is stopped - `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/hezo-assets/`
 (or `rclone sync`).
+
+## Running agent containers on a managed sandbox service
+
+Every agent run executes inside a container. By default that container runs on the local
+Docker daemon, which is why Docker is a prerequisite for a normal install. Setting
+These flags choose what a **brand-new** instance starts on. After that the setting in
+Settings -> Containers is what counts, and you can switch service (or switch back to local
+Docker) there at any time without restarting - see
+[Switching at any time](/docs/containers/overview#switching-at-any-time).
+
+`--sandbox-backend` (or `HEZO_SANDBOX_BACKEND`) moves those containers onto a managed
+sandbox service instead, and Docker stops being required at all.
+
+[Remote containers](/docs/containers/remote/overview) covers what changes when you do:
+how a container reaches your instance, what stays on your side, and what is not available
+there; [Daytona](/docs/containers/remote/daytona) carries that provider's own limits. This
+section is the configuration itself.
+
+Today the one managed backend is **Daytona**:
+
+```sh
+hezo --sandbox-backend daytona --daytona-api-key "dtn_..."
+```
+
+or, as environment variables:
+
+```sh
+HEZO_SANDBOX_BACKEND=daytona
+HEZO_DAYTONA_API_KEY=dtn_...
+HEZO_DAYTONA_API_URL=https://app.daytona.io/api   # optional: a regional endpoint
+```
+
+Add `--daytona-api-url` (or `HEZO_DAYTONA_API_URL`) only if you are pointed at a regional
+or self-hosted endpoint; it defaults to Daytona's public API.
+
+**All of it is deployment configuration**, set before the server starts - there is no
+setting for it in the web UI, and the API key does not go in the secrets vault. The
+General settings page shows which backend is in use, read-only, next to the database and
+asset backends.
+
+### The agent image on a managed backend
+
+A released Hezo pulls its agent image from a public registry, so this needs no thought:
+the managed service pulls the same image your local Docker would.
+
+A **development server** is the exception, and it is worth knowing before you try it.
+Running from source, Hezo builds the agent image into your local Docker daemon from the
+Dockerfile in your working tree - which is what makes edits to it take effect on the next
+restart. A managed sandbox service cannot see that image; it pulls from a registry. So
+point the instance at a published image instead:
+
+```sh
+HEZO_AGENT_BASE_IMAGE=ghcr.io/hezo-ai/agent-base:0.42.0 \
+HEZO_SANDBOX_BACKEND=daytona HEZO_DAYTONA_API_KEY=dtn_... bun run dev
+```
+
+That applies to every project. A project that names its own base image on its Container
+settings keeps it. Without it, Hezo refuses at provision time with a message saying so,
+rather than letting the provider fail the build against an image it cannot find.
+
+### It is fatal, never a silent fallback
+
+If you select a managed backend and Hezo cannot reach it - no key, a rejected key, or an
+unreachable API - the server **refuses to start** and prints what to check. It never
+quietly runs your agents on local Docker instead.
+
+This is deliberate, and matches how an external database and S3 asset storage already
+behave. An instance that silently degraded would look perfectly healthy while doing
+something you did not ask for, and the first sign of trouble would be an agent run failing
+for no visible reason.
+
+Startup retries briefly first (a couple of seconds, twice), so a provider that is
+restarting does not kill a boot.
+
+### What the API key can reach
+
+The Daytona API key is used **only by Hezo itself**, to create and manage sandboxes. It is
+never placed inside an agent container, never written into a container's environment, and
+never logged - the same handling as your database password and S3 credentials. Hezo also
+does not use the provider's own secret storage: your credentials stay in Hezo's encrypted
+vault and are substituted into agent requests by Hezo's egress proxy, exactly as they are
+on a local Docker install.
 
 ## Anonymous usage telemetry
 

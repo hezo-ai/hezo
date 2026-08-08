@@ -4,6 +4,10 @@ import {
 	API_BODY_MAX_BYTES,
 	ATTACHMENT_MAX_BYTES,
 	PROJECT_ICON_MAX_BYTES,
+	SANDBOX_BACKEND_KIND,
+	SANDBOX_BACKENDS,
+	SandboxBackend,
+	sandboxBackendNeedsApiKey,
 	TERMINAL_WAKEUP_STATUSES,
 	WakeupStatus,
 } from '../src/types/common';
@@ -77,5 +81,29 @@ describe('wakeup status partitioning', () => {
 	it('treats deferred as active, since a cleared blocker re-queues it', () => {
 		expect(ACTIVE_WAKEUP_STATUSES).toContain(WakeupStatus.Deferred);
 		expect(TERMINAL_WAKEUP_STATUSES).not.toContain(WakeupStatus.Deferred);
+	});
+});
+
+describe('sandbox backend kind', () => {
+	// The credential requirement is a property of the *class* of backend, not of
+	// any one provider: every remote container service is reached over the
+	// internet behind an account. Four sites used to spell it
+	// `=== SandboxBackend.Daytona`, so a second provider would have inherited
+	// "needs no key" at all of them - the switch route would have skipped its
+	// guard, the switcher would have passed no key to the preflight, and the
+	// dialog would have offered no field to type one into.
+	it('classifies every backend, so a new one cannot default into a branch', () => {
+		for (const backend of SANDBOX_BACKENDS) {
+			expect(SANDBOX_BACKEND_KIND[backend]).toMatch(/^(local|remote)$/);
+		}
+		expect(Object.keys(SANDBOX_BACKEND_KIND).sort()).toEqual([...SANDBOX_BACKENDS].sort());
+	});
+
+	it('asks for an API key on exactly the remote backends', () => {
+		for (const backend of SANDBOX_BACKENDS) {
+			expect(sandboxBackendNeedsApiKey(backend)).toBe(SANDBOX_BACKEND_KIND[backend] === 'remote');
+		}
+		expect(sandboxBackendNeedsApiKey(SandboxBackend.Docker)).toBe(false);
+		expect(sandboxBackendNeedsApiKey(SandboxBackend.Daytona)).toBe(true);
 	});
 });

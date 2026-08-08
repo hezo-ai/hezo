@@ -56,6 +56,20 @@ describe('connectFailureHint', () => {
 		expect(connectFailureHint(err('ETIMEDOUT'))).toMatch(/timed out/);
 	});
 
+	it('reads a resolution failure the same however the runtime spells it', () => {
+		// Node reports getaddrinfo codes; Bun reports the c-ares status codes for
+		// the same failures, so an unresolvable host must produce the DNS hint on
+		// either runtime rather than falling through to the generic answer.
+		for (const code of ['EAI_AGAIN', 'ESERVFAIL', 'ENODATA', 'EREFUSED', 'ETIMEOUT']) {
+			expect(connectFailureHint(err(code)), code).toMatch(/did not resolve/);
+		}
+	});
+
+	it('keeps the resolver timeout distinct from the socket timeout', () => {
+		expect(connectFailureHint(err('ETIMEOUT'))).toMatch(/did not resolve/);
+		expect(connectFailureHint(err('ETIMEDOUT'))).toMatch(/timed out/);
+	});
+
 	it('says nothing it cannot back up', () => {
 		expect(connectFailureHint(err('EWHATEVER', 'something odd'))).toBeUndefined();
 		expect(connectFailureHint('a bare string')).toBeUndefined();
@@ -77,7 +91,16 @@ describe('isRetryableConnectError', () => {
 	});
 
 	it('keeps retrying transient ones — DNS and sockets settle after a boot', () => {
-		for (const code of ['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET']) {
+		for (const code of [
+			'ENOTFOUND',
+			'ECONNREFUSED',
+			'ETIMEDOUT',
+			'ECONNRESET',
+			'ESERVFAIL',
+			'ENODATA',
+			'EREFUSED',
+			'ETIMEOUT',
+		]) {
 			expect(isRetryableConnectError(err(code)), code).toBe(true);
 		}
 		expect(isRetryableConnectError(new Error('connection refused by host'))).toBe(true);

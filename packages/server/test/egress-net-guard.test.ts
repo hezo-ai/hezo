@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+	BlockedEgressTargetError,
 	isBlockedEgressAddress,
 	isBlockedEgressHost,
 	isSelfEndpoint,
+	resolveGuardedAddress,
 } from '../src/services/egress/net-guard';
 
 /**
@@ -115,5 +117,41 @@ describe('isSelfEndpoint', () => {
 
 	it('matches nothing when no self endpoint is configured', () => {
 		expect(isSelfEndpoint('host.docker.internal', 3100, null)).toBe(false);
+	});
+});
+
+/**
+ * Resolve-then-dial, which is how the proxy applies the guard on its upstream
+ * leg.
+ *
+ * It replaced a custom `lookup` handed to `http(s).request` - the obvious way to
+ * close the check/connect gap, and one that is broken on the runtime production
+ * uses: a request carrying a **body** never delivered that body, so every
+ * proxied `POST` reached its upstream empty while a `GET` was unaffected. These
+ * pin the guard's own behaviour; that the proxy dials what this returns, and
+ * keeps the caller's `Host`, is asserted where a real upstream can answer
+ * (`test/conformance/git.ts`).
+ */
+describe('resolveGuardedAddress', () => {
+	it('refuses an IP literal that is blocked, without resolving anything', async () => {
+		await expect(resolveGuardedAddress('127.0.0.1')).rejects.toBeInstanceOf(
+			BlockedEgressTargetError,
+		);
+		await expect(resolveGuardedAddress('[::1]')).rejects.toBeInstanceOf(BlockedEgressTargetError);
+		await expect(resolveGuardedAddress('169.254.169.254')).rejects.toBeInstanceOf(
+			BlockedEgressTargetError,
+		);
+	});
+
+	it('returns a public IP literal unchanged, so the caller dials exactly what was checked', async () => {
+		expect(await resolveGuardedAddress('93.184.216.34')).toBe('93.184.216.34');
+	});
+
+	it('refuses a name that resolves onto a blocked address', async () => {
+		// `localhost` is the reachable case that needs no external DNS: the name is
+		// public-looking to a literal check and resolves to loopback.
+		await expect(resolveGuardedAddress('localhost')).rejects.toBeInstanceOf(
+			BlockedEgressTargetError,
+		);
 	});
 });

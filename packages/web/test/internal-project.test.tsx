@@ -43,7 +43,7 @@ test('sidebar exposes Tasks, Documents, Assets, Connectors, Skills and Container
 
 	// Wait for the project-scoped nav (incl. Container link, which only
 	// renders after the projects query resolves) to render.
-	const containerLinks = await findAllByRole('link', { name: 'Container' });
+	const containerLinks = await findAllByRole('link', { name: 'Containers' });
 	expect(containerLinks.length).toBeGreaterThan(0);
 
 	const tasksLinks = queryAllByRole('link', { name: 'Tasks' });

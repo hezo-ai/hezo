@@ -8,7 +8,7 @@
 // covering another.
 
 import { expect, test } from './fixtures';
-import { waitForPageLoad } from './helpers';
+import { waitForPageLoad, waitForStableBox } from './helpers';
 
 test('the project menu collapses to a rail-docked expand tab and restores', async ({
 	page,
@@ -24,7 +24,9 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 
 	// The collapse button hugs the menu panel's top-right corner (absolute
 	// positioning, so only measurable from a real layout pass).
-	const menu = await page.getByTestId('project-menu').boundingBox();
+	// Settled first - see waitForStableBox: an absolute-positioned corner is
+	// measured against a panel that may still be sizing.
+	const menu = await waitForStableBox(page.getByTestId('project-menu'));
 	const collapseBox = await page.getByTestId('project-sidebar-collapse').boundingBox();
 	expect(menu).not.toBeNull();
 	expect(collapseBox).not.toBeNull();
@@ -46,9 +48,11 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 	await expect(tab).toBeVisible();
 
 	// It's docked flush under the app header, against the project rail's right edge.
+	// The tab is docked against the header and the rail, so all three have to be
+	// measured from one settled layout - see waitForStableBox.
+	const tabBox = await waitForStableBox(tab);
 	const header = await page.locator('header').first().boundingBox();
 	const rail = await page.getByTestId('project-rail').boundingBox();
-	const tabBox = await tab.boundingBox();
 	expect(header).not.toBeNull();
 	expect(rail).not.toBeNull();
 	expect(tabBox).not.toBeNull();
@@ -73,10 +77,13 @@ test('the expand tab stays clickable when a sticky banner tops the page', async 
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 
-	// Force the project's container to `error` so ContainerStatusBanner renders.
-	// No REST route sets that status - the e2e server runs the in-process fake
-	// Docker client, where provisioning succeeds - so drive it from the projects
-	// index the banner reads (`useProjectMeta` -> `useProjectsIndex`), the same
+	// Give the project a failed container so ContainerStatusBanner renders. The
+	// banner's error state is `failed_container_count`, not `container_status`:
+	// a project is not bound to one container, so a stored `error` blocks nothing
+	// and is reported as `stopped` (see useContainerHealth). No REST route
+	// produces a failed container - the e2e server runs the in-process fake Docker
+	// client, where provisioning succeeds - so drive it from the projects index
+	// the banner reads (`useProjectMeta` -> `useProjectsIndex`), the same
 	// interception chat.spec.ts uses to pin a container state.
 	await page.route('**/api/projects', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback();
@@ -84,7 +91,7 @@ test('the expand tab stays clickable when a sticky banner tops the page', async 
 		const body = (await response.json()) as { data?: Array<Record<string, unknown>> };
 		const data = Array.isArray(body.data)
 			? body.data.map((p) =>
-					p.slug === lightWorkspace.projectSlug ? { ...p, container_status: 'error' } : p,
+					p.slug === lightWorkspace.projectSlug ? { ...p, failed_container_count: 1 } : p,
 				)
 			: body.data;
 		await route.fulfill({ response, json: { ...body, data } });

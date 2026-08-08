@@ -1,5 +1,5 @@
 import { logger } from '../logger';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 import { getSharedImageBuildTracker, type ImageBuildTracker } from './image-build-tracker';
 import { type BuildOnLine, type BuildOptions, buildImageViaCli } from './image-builder';
 import { BUNDLE_SHA_LABEL, type ResolvedLocalImage, resolveLocalImage } from './image-registry';
@@ -39,7 +39,7 @@ interface InFlightBuild {
 const inFlightBuilds = new Map<string, InFlightBuild>();
 
 export async function ensureImage(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	image: string,
 	deps: EnsureImageDeps = {},
 ): Promise<void> {
@@ -78,7 +78,7 @@ export async function ensureImage(
  * provision stream still sees the trace.
  */
 async function buildLocalImageOnce(
-	docker: DockerClient,
+	docker: ContainerEngine,
 	local: ResolvedLocalImage,
 	deps: EnsureImageDeps,
 ): Promise<void> {

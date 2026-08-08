@@ -1,23 +1,23 @@
 import {
-	CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-	CONTAINER_IDLE_TIMEOUT_MIN_MIN,
+	CONTAINER_DISK_GB_MAX,
+	CONTAINER_DISK_GB_MIN,
 	coerceLocaleSettings,
-	computeDefaultMaxActiveContainers,
-	DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN,
-	DEFAULT_MAX_ACTIVE_CONTAINERS,
+	computeDefaultMaxContainerMemoryGb,
+	DEFAULT_CONTAINER_DISK_GB,
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
+	DEFAULT_MAX_CONTAINER_MEMORY_GB,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 	type LocaleSettings,
 	type LocaleSettingsPatch,
-	MAX_ACTIVE_CONTAINERS_MAX,
-	MAX_ACTIVE_CONTAINERS_MIN,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
+	MAX_CONTAINER_MEMORY_GB_MAX,
+	MAX_CONTAINER_MEMORY_GB_MIN,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { getHostMemory } from './host-memory';
+import type { ContainerEngine } from '../services/sandbox/types';
 
 /**
  * Instance-wide key-value settings stored in the `system_meta` table (the same
@@ -26,9 +26,18 @@ import { getHostMemory } from './host-memory';
 
 export const INSTANCE_BASE_URL_KEY = 'instance_base_url';
 export const MAX_CHAT_HISTORY_SIZE_KEY = 'max_chat_history_size';
-export const MAX_ACTIVE_CONTAINERS_KEY = 'max_active_containers';
+/**
+ * Total memory, in GB, all running containers may consume at once.
+ *
+ * This replaced `max_active_containers` (migration 050). A count only bounds
+ * memory while every container is the same size, and `projects.memory_limit_gib`
+ * exists so they are not - so the count is now *derived* from this budget and
+ * the per-container cap rather than configured beside them.
+ */
+export const MAX_CONTAINER_MEMORY_GB_KEY = 'max_container_memory_gb';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
-export const CONTAINER_IDLE_TIMEOUT_KEY = 'container_idle_timeout_min';
+/** Disk allocated to each project container, in GB. Sibling of the RAM cap. */
+export const CONTAINER_DISK_GB_KEY = 'default_container_disk_gb';
 
 /**
  * Locale keys. One key per axis rather than a single JSON blob, so a partial
@@ -98,58 +107,69 @@ export async function setMaxChatHistorySize(db: Db, value: number): Promise<numb
  * Clamp to the allowed max-active-containers range. Exported so the settings
  * route validates with the same bounds the reader enforces.
  */
-export function clampMaxActiveContainers(value: number): number {
-	if (!Number.isFinite(value)) return DEFAULT_MAX_ACTIVE_CONTAINERS;
+export function clampMaxContainerMemoryGb(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_MAX_CONTAINER_MEMORY_GB;
 	return Math.min(
-		MAX_ACTIVE_CONTAINERS_MAX,
-		Math.max(MAX_ACTIVE_CONTAINERS_MIN, Math.round(value)),
+		MAX_CONTAINER_MEMORY_GB_MAX,
+		Math.max(MAX_CONTAINER_MEMORY_GB_MIN, Math.round(value)),
 	);
 }
 
 /**
- * The automatic max-active-containers value for this host: how many
- * ram-cap-sized containers fit in total virtual memory (RAM + swap). Used
- * whenever the operator has not explicitly set `max_active_containers`.
+ * The automatic memory budget: for an engine whose containers run here, total
+ * virtual memory (RAM + swap) less the system reserve and one container's worth
+ * held for the CEO chat; for one whose containers run elsewhere, a flat default,
+ * since this host's memory is not what bounds them. Used whenever the operator
+ * has not explicitly set a budget.
+ *
+ * The engine is asked rather than probed - `containerHostMemory()` is the one
+ * fact the model needs, and taking it from the engine keeps every provider name
+ * on the far side of the seam.
  */
-export async function computeAutoMaxActiveContainers(db: Db): Promise<number> {
+export async function computeAutoMaxContainerMemoryGb(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+): Promise<number> {
 	const ramCapGb = await getDefaultRamCapPerContainerGb(db);
-	const { totalRamBytes, totalSwapBytes } = getHostMemory();
-	return computeDefaultMaxActiveContainers(totalRamBytes, totalSwapBytes, ramCapGb);
+	return computeDefaultMaxContainerMemoryGb(engine.containerHostMemory(), ramCapGb);
 }
 
 /**
  * The explicitly stored max-active-containers value, or null when the operator
  * has never set one (→ the computed default applies).
  */
-export async function getMaxActiveContainersSetting(db: Db): Promise<number | null> {
-	const raw = await getSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY);
+export async function getMaxContainerMemoryGbSetting(db: Db): Promise<number | null> {
+	const raw = await getSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY);
 	if (raw === null) return null;
 	const parsed = Number.parseInt(raw, 10);
 	if (Number.isNaN(parsed)) return null;
-	return clampMaxActiveContainers(parsed);
+	return clampMaxContainerMemoryGb(parsed);
 }
 
 /**
  * The effective instance-wide cap on simultaneously active (running) project
  * containers — the operator's main bound on memory, since every container is
  * memory-capped and total demand never exceeds `N × cap`. An explicitly stored
- * value wins; otherwise the default is computed from host memory and the
- * per-container ram cap. Malformed stored values degrade to the computed
- * default so a stale row can never wedge dispatch.
+ * value wins; otherwise the default comes from {@link computeAutoMaxContainerMemoryGb}.
+ * Malformed stored values degrade to the computed default so a stale row can
+ * never wedge dispatch.
  */
-export async function getMaxActiveContainers(db: Db): Promise<number> {
-	return (await getMaxActiveContainersSetting(db)) ?? computeAutoMaxActiveContainers(db);
+export async function getMaxContainerMemoryGb(
+	db: Db,
+	engine: Pick<ContainerEngine, 'containerHostMemory'>,
+): Promise<number> {
+	return (await getMaxContainerMemoryGbSetting(db)) ?? computeAutoMaxContainerMemoryGb(db, engine);
 }
 
-export async function setMaxActiveContainers(db: Db, value: number): Promise<number> {
-	const clamped = clampMaxActiveContainers(value);
-	await setSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY, String(clamped));
+export async function setMaxContainerMemoryGb(db: Db, value: number): Promise<number> {
+	const clamped = clampMaxContainerMemoryGb(value);
+	await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, String(clamped));
 	return clamped;
 }
 
 /** Clear the explicit value — the computed (auto) default applies again. */
-export async function clearMaxActiveContainers(db: Db): Promise<void> {
-	await deleteSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY);
+export async function clearMaxContainerMemoryGb(db: Db): Promise<void> {
+	await deleteSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY);
 }
 
 /**
@@ -184,36 +204,46 @@ export async function setDefaultRamCapPerContainerGb(db: Db, value: number): Pro
 	return clamped;
 }
 
-/**
- * Clamp to the allowed container idle-timeout range (minutes). 0 is a valid
- * value meaning "never stop" (always-on containers).
- */
-export function clampContainerIdleTimeoutMin(value: number): number {
-	if (!Number.isFinite(value)) return DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN;
-	return Math.min(
-		CONTAINER_IDLE_TIMEOUT_MIN_MAX,
-		Math.max(CONTAINER_IDLE_TIMEOUT_MIN_MIN, Math.round(value)),
-	);
+/** Clamp to the allowed per-container disk range (GB), matching the RAM cap's shape. */
+export function clampContainerDiskGb(value: number): number {
+	if (!Number.isFinite(value)) return DEFAULT_CONTAINER_DISK_GB;
+	return Math.min(CONTAINER_DISK_GB_MAX, Math.max(CONTAINER_DISK_GB_MIN, Math.round(value)));
 }
 
 /**
- * Minutes a project's container may sit without activity (agent runs, assistant
- * chat) before the idle-stop cron stops it; containers restart on demand.
- * 0 = never stop. Falls back to the default when unset or malformed.
+ * The instance-wide disk allocated to each project container, in GB. Applied to
+ * every container without a per-project override. Falls back to the default when
+ * unset or malformed.
  */
-export async function getContainerIdleTimeoutMin(db: Db): Promise<number> {
-	const raw = await getSystemMeta(db, CONTAINER_IDLE_TIMEOUT_KEY);
-	if (raw === null) return DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN;
+export async function getDefaultContainerDiskGb(db: Db): Promise<number> {
+	const raw = await getSystemMeta(db, CONTAINER_DISK_GB_KEY);
+	if (raw === null) return DEFAULT_CONTAINER_DISK_GB;
 	const parsed = Number.parseInt(raw, 10);
-	if (Number.isNaN(parsed)) return DEFAULT_CONTAINER_IDLE_TIMEOUT_MIN;
-	return clampContainerIdleTimeoutMin(parsed);
+	if (Number.isNaN(parsed)) return DEFAULT_CONTAINER_DISK_GB;
+	return clampContainerDiskGb(parsed);
 }
 
-export async function setContainerIdleTimeoutMin(db: Db, value: number): Promise<number> {
-	const clamped = clampContainerIdleTimeoutMin(value);
-	await setSystemMeta(db, CONTAINER_IDLE_TIMEOUT_KEY, String(clamped));
+export async function setDefaultContainerDiskGb(db: Db, value: number): Promise<number> {
+	const clamped = clampContainerDiskGb(value);
+	await setSystemMeta(db, CONTAINER_DISK_GB_KEY, String(clamped));
 	return clamped;
 }
+
+/**
+ * The disk a given project's containers get, in GB: its own override, else the
+ * instance default. One query, so a caller never has to remember the precedence.
+ */
+export async function getProjectContainerDiskGb(db: Db, projectId: string): Promise<number> {
+	const row = await db.query<{ container_disk_gb: number | null }>(
+		'SELECT container_disk_gb FROM projects WHERE id = $1',
+		[projectId],
+	);
+	const override = row.rows[0]?.container_disk_gb;
+	return override ?? (await getDefaultContainerDiskGb(db));
+}
+
+// The container idle window is no longer an operator setting - it is the
+// `CONTAINER_IDLE_TIMEOUT_MIN` constant in `@hezo/shared`, which explains why.
 
 /**
  * The public base URL of this instance (e.g. `https://hezo.example.com`),

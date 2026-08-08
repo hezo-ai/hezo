@@ -215,7 +215,13 @@ function AssetViewerPage() {
 								panelOpen ? 'translate-x-0' : 'translate-x-full'
 							} lg:static lg:z-auto lg:h-auto lg:w-auto lg:max-w-none lg:translate-x-0 lg:overflow-visible lg:p-0 lg:shadow-none`}
 						>
-							<div className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+							{/* Capped at the shell scroller's visible area
+						    (`--shell-scrollport-h`, measured on <main> in __root.tsx)
+						    less the `top-4` offset and a matching gap at the bottom.
+						    The old `100vh - 2rem` left room for those two gaps but
+						    never subtracted the app header, so the rail overhung the
+						    fold by the header's height on every page. */}
+							<div className="lg:sticky lg:top-4 lg:max-h-[calc(var(--shell-scrollport-h)-2rem)] lg:overflow-y-auto">
 								<AssetReviewPanel
 									projectId={projectId}
 									file={file}

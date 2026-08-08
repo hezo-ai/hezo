@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { waitForBackground } from '../src/lib/background';
 import { getRunSocketDir } from '../src/services/workspace';
 import { type HezoConfig, type StartupResult, startup } from '../src/startup';
+import { testHezoConfig } from './helpers/config';
 
 // startup() must survive a failing built-ins seed and a failing default-team
 // seed — both are logged and swallowed so a broken seed never bricks the boot.
@@ -37,17 +38,7 @@ vi.mock('../src/services/teams.js', async (importOriginal) => {
 });
 
 function makeConfig(dataDir: string): HezoConfig {
-	return {
-		port: 0,
-		dataDir,
-		webUrl: '',
-		reset: false,
-		open: false,
-		logLevel: 'info',
-		keepOldContainers: false,
-		containerBindHost: '127.0.0.1',
-		telemetry: { enabled: false, endpoint: 'https://example.invalid/telemetry' },
-	};
+	return testHezoConfig(dataDir);
 }
 
 describe('startup seed failure paths', () => {

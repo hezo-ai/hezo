@@ -87,7 +87,7 @@ backups. Each backend is one setting, adoptable independently:
 4. **Verify at startup.** Hezo checks both backends and fails fast with guidance if
    the database is older than 14 or the bucket is unreachable. The startup log shows
    `Using external Postgres at …` and `Asset storage: S3-compatible (…)`, and
-   **Settings → General** shows the active **Database** and **Asset storage** backends
+   **Settings → Storage** shows the active **Database** and **Asset storage** backends
    with credentials occluded.
 
 Provider-specific walkthroughs (DigitalOcean Managed Postgres + Spaces, serverless

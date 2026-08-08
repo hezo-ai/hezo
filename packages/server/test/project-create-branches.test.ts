@@ -222,7 +222,7 @@ describe('createProjectWithTeam — failure + actor branches', () => {
 			{
 				name: 'Actor Resolve Co',
 				description: 'audited',
-				template_id: startupTemplateId,
+				templateId: startupTemplateId,
 				actorUserId: creatorUserId,
 				creatorUserId,
 			},

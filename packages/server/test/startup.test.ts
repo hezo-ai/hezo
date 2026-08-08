@@ -4,20 +4,14 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { type HezoConfig, startup } from '../src/startup';
 import { HEZO_VERSION } from '../src/version';
+import { testHezoConfig } from './helpers/config';
 
 function makeTempDir(): string {
 	return mkdtempSync(join(tmpdir(), 'hezo-test-'));
 }
 
 function baseConfig(overrides: Partial<HezoConfig> = {}): HezoConfig {
-	return {
-		port: 0,
-		dataDir: overrides.dataDir ?? makeTempDir(),
-		webUrl: '',
-		reset: false,
-		open: false,
-		...overrides,
-	};
+	return testHezoConfig(overrides.dataDir ?? makeTempDir(), overrides);
 }
 
 describe('startup', () => {

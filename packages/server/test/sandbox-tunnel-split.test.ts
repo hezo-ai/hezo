@@ -1,0 +1,193 @@
+import { hostMatchesAllowedHosts } from '@hezo/shared';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { Db } from '../src/db/database';
+import type { McpDescriptor } from '../src/services/mcp-injectors/types';
+import {
+	buildTunnelHostPolicy,
+	hostNeedsProxy,
+	type TunnelHostPolicy,
+} from '../src/services/sandbox/tunnel/split-routing';
+import { safeClose } from './helpers';
+import { createTestApp } from './helpers/app';
+
+let db: Db;
+
+beforeAll(async () => {
+	({ db } = await createTestApp());
+});
+afterAll(async () => {
+	await safeClose(db);
+});
+beforeEach(async () => {
+	await db.query('DELETE FROM secrets');
+});
+
+async function seedSecret(name: string, allowedHosts: string[], allowAll = false): Promise<void> {
+	await db.query(
+		`INSERT INTO secrets (name, encrypted_value, allowed_hosts, allow_all_hosts)
+		 VALUES ($1, 'enc', $2, $3)`,
+		[name, allowedHosts, allowAll],
+	);
+}
+
+const http = (url: string): McpDescriptor => ({ kind: 'http', name: 'c', url });
+
+/**
+ * The list decides which requests reach the MITM proxy and which go straight
+ * out. Getting it *too narrow* is a security gap - a host that needed a policy
+ * check would skip it - so these lean on the two sources being present, not on
+ * the list being short.
+ */
+describe('buildTunnelHostPolicy', () => {
+	it('collects every secret’s allowed hosts', async () => {
+		await seedSecret('a', ['api.github.com']);
+		await seedSecret('b', ['api.linear.app', 'api.github.com']);
+		const policy = await buildTunnelHostPolicy(db, []);
+		expect(policy.proxiedHosts).toEqual(['api.github.com', 'api.linear.app']);
+		expect(policy.proxyEverything).toBe(false);
+	});
+
+	it('includes connector MCP hosts even when no secret names them', async () => {
+		// The per-connector method allowlist is enforced at the proxy, so a
+		// connector host routed directly would silently skip its policy check.
+		const policy = await buildTunnelHostPolicy(db, [http('https://mcp.linear.app/sse')]);
+		expect(policy.proxiedHosts).toContain('mcp.linear.app');
+	});
+
+	it('ignores stdio descriptors, which have no host to route', async () => {
+		const policy = await buildTunnelHostPolicy(db, [
+			{ kind: 'stdio', name: 'local', command: 'node', args: [] },
+		]);
+		expect(policy.proxiedHosts).toEqual([]);
+	});
+
+	it('normalizes case and whitespace so DNS-equal hosts dedupe', async () => {
+		await seedSecret('a', ['API.GitHub.com', '  api.github.com  ']);
+		expect((await buildTunnelHostPolicy(db, [])).proxiedHosts).toEqual(['api.github.com']);
+	});
+
+	it('drops empty host entries rather than emitting a match-nothing rule', async () => {
+		await seedSecret('a', ['', '   ', 'api.github.com']);
+		expect((await buildTunnelHostPolicy(db, [])).proxiedHosts).toEqual(['api.github.com']);
+	});
+
+	it('routes everything through the proxy when any secret allows all hosts', async () => {
+		// Secrets are instance-global, so one such secret forces every run on the
+		// instance to proxy everything. That is the argument for keeping
+		// request_credential's explicit-hosts requirement, not for special-casing.
+		await seedSecret('scoped', ['api.github.com']);
+		await seedSecret('wide', [], true);
+		const policy = await buildTunnelHostPolicy(db, [http('https://mcp.linear.app/sse')]);
+		expect(policy.proxyEverything).toBe(true);
+		expect(hostNeedsProxy(policy, 'registry.npmjs.org')).toBe(true);
+	});
+
+	it('proxies nothing when the vault is empty', async () => {
+		const policy = await buildTunnelHostPolicy(db, []);
+		expect(policy.proxiedHosts).toEqual([]);
+		// A host in no secret's allowed_hosts would have been rejected by the
+		// proxy anyway, so sending it direct changes nothing but the byte path.
+		expect(hostNeedsProxy(policy, 'registry.npmjs.org')).toBe(false);
+	});
+
+	it('never contains a secret value', async () => {
+		await seedSecret('token', ['api.github.com']);
+		const policy = await buildTunnelHostPolicy(db, []);
+		expect(JSON.stringify(policy)).not.toContain('enc');
+	});
+});
+
+describe('hostNeedsProxy', () => {
+	const policy = (hosts: string[]): TunnelHostPolicy => ({
+		proxiedHosts: hosts,
+		proxyEverything: false,
+	});
+
+	it('matches an exact host and nothing near it', () => {
+		const p = policy(['api.github.com']);
+		expect(hostNeedsProxy(p, 'api.github.com')).toBe(true);
+		expect(hostNeedsProxy(p, 'evil-api.github.com')).toBe(false);
+		expect(hostNeedsProxy(p, 'api.github.com.evil.test')).toBe(false);
+		expect(hostNeedsProxy(p, 'github.com')).toBe(false);
+	});
+
+	it('matches a `*.` wildcard on subdomains, in the syntax the vault stores', () => {
+		// This is the bug the unification fixed. `allowed_hosts` holds
+		// `*.example.com` - the shipped connector registry uses it
+		// (`*.datocms.com`, `*.sentry.io`) and the egress proxy matches on it - but
+		// this side read a leading-dot form, so a wildcard entry matched nothing:
+		// the container routed direct, past the proxy, and the placeholder reached
+		// the provider unsubstituted.
+		const p = policy(['*.github.com']);
+		expect(hostNeedsProxy(p, 'api.github.com')).toBe(true);
+		expect(hostNeedsProxy(p, 'deep.api.github.com')).toBe(true);
+		expect(hostNeedsProxy(p, 'notgithub.com')).toBe(false);
+		// The apex is not a subdomain, matching TLS-certificate convention - and the
+		// registry assumes it, listing `sentry.io` *and* `*.sentry.io`, which would
+		// be redundant otherwise.
+		expect(hostNeedsProxy(p, 'github.com')).toBe(false);
+	});
+
+	it('answers exactly what the egress proxy would answer', () => {
+		// The property that matters, stated directly: "would a secret be
+		// substituted into a request to this host" and "must this host go through
+		// the proxy" are the same question, so they must not be two functions.
+		// Unifying them is what fixed the wildcard; this is what keeps them unified.
+		const entries = ['api.github.com', '*.datocms.com', 'sentry.io', '*.sentry.io'];
+		const hosts = [
+			'api.github.com',
+			'API.GitHub.COM',
+			'github.com',
+			'evil-api.github.com',
+			'api.github.com.evil.test',
+			'mcp.datocms.com',
+			'datocms.com',
+			'sentry.io',
+			'eu.sentry.io',
+			'unrelated.test',
+		];
+		for (const host of hosts) {
+			expect(hostNeedsProxy(policy(entries), host)).toBe(hostMatchesAllowedHosts(host, entries));
+		}
+	});
+
+	it('is case-insensitive, since DNS is', () => {
+		expect(hostNeedsProxy(policy(['api.github.com']), 'API.GitHub.COM')).toBe(true);
+		expect(hostNeedsProxy(policy(['*.GitHub.com']), 'api.github.com')).toBe(true);
+	});
+
+	it('ignores a blank entry rather than matching everything on it', () => {
+		// An empty string in `allowed_hosts` (a stray comma in the UI) must not
+		// become a proxy-everything switch by accident.
+		expect(hostNeedsProxy(policy(['', '  ']), 'anything.test')).toBe(false);
+	});
+});
+
+/**
+ * The production wiring, not just the function.
+ *
+ * `buildTunnelHostPolicy` always took descriptors and always folded their hosts
+ * in - but both call sites passed `[]`, so the branch never contributed and a
+ * connector whose host appears in no secret's `allowed_hosts` was routed direct.
+ * That skips the egress proxy, and with it `shouldBlockMcpRequest`, which is
+ * where a connector's per-method allowlist is enforced. The function's own
+ * docstring calls missing this "a security gap rather than a performance one",
+ * so the regression worth guarding is the argument, not the arithmetic.
+ */
+describe('connector hosts reach the policy', () => {
+	it('proxies a connector host even when no secret names it', async () => {
+		const policy = await buildTunnelHostPolicy(db, [
+			{ kind: 'http', name: 'linear', url: 'https://mcp.linear.app/sse' },
+		]);
+		expect(policy.proxiedHosts).toContain('mcp.linear.app');
+		expect(hostNeedsProxy(policy, 'mcp.linear.app')).toBe(true);
+	});
+
+	it('ignores a descriptor whose url will not parse rather than losing the policy', async () => {
+		const policy = await buildTunnelHostPolicy(db, [
+			{ kind: 'http', name: 'broken', url: 'not a url' },
+			{ kind: 'http', name: 'ok', url: 'https://good.example/sse' },
+		]);
+		expect(policy.proxiedHosts).toContain('good.example');
+	});
+});

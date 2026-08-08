@@ -16,10 +16,10 @@ import {
 	createTestTeam,
 } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 
 // The queued manual progress-update run ("Run now" while the Captain is busy). Covers the queue
@@ -125,7 +125,7 @@ describe('queued manual progress-update run', () => {
 		// Block dispatch on the container limit so run-now takes the queued path
 		// (the pre-lazy-start code got the same outcome from the container being
 		// down; that is no longer a blocker).
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await seedRunningContainerProject(db, 'cap-goals-coalesce');
 
 		// A pre-existing task-less scheduled heartbeat wakeup for the same Captain.
@@ -172,7 +172,7 @@ describe('queued manual progress-update run', () => {
 			[heartbeatId, body.wakeup_id],
 		]);
 		await removeSeededContainerProject(db, 'cap-goals-coalesce');
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 	});
 
 	it('cancel returns 404 for an unknown wakeup id', async () => {
@@ -191,7 +191,7 @@ describe('queued manual progress-update run', () => {
 		await createDueGoal('Capacity re-queue goal');
 		const wakeupId = await insertProgressWakeup();
 		const manager = createJobManager();
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await seedRunningContainerProject(db, 'cap-goals-filler');
 
 		// Drive activateAgent through the public run-now dispatch (task-less path).
@@ -212,7 +212,7 @@ describe('queued manual progress-update run', () => {
 
 		manager.shutdown();
 		await removeSeededContainerProject(db, 'cap-goals-filler');
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 		await db.query(`DELETE FROM agent_wakeup_requests WHERE id = $1`, [wakeupId]);
 	});
 

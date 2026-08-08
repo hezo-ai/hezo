@@ -55,6 +55,7 @@ describe('statusOf precedence', () => {
 	const base = {
 		kind: ConnectorTransport.Saas,
 		oauth_connection_id: null,
+		api_key_secret_id: null,
 		activated_at: null,
 		revoked_at: null,
 		auth_error: null,

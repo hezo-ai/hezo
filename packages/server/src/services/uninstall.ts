@@ -1,14 +1,5 @@
-import type { DockerClient } from './docker';
-
-/**
- * The Docker label every Hezo-provisioned container carries (set as
- * `containerLabels['hezo.team']` in `provisionContainer`). Kept as a local
- * constant so this module — imported by the `hezo uninstall` subcommand — does
- * not pull in the heavy `containers.ts` dependency graph just to remove
- * containers. If the label key ever changes in `provisionContainer`, change it
- * here too.
- */
-const HEZO_CONTAINER_LABEL = 'hezo.team';
+import type { ContainerEngine } from './docker';
+import { TEAM_LABEL } from './sandbox/labels';
 
 /**
  * Best-effort removal of every container Hezo provisioned (any labelled
@@ -23,10 +14,10 @@ const HEZO_CONTAINER_LABEL = 'hezo.team';
  * stopped then force-removed independently; a failure on one (already stopped,
  * already gone) never aborts the sweep.
  */
-export async function removeProvisionedContainers(docker: DockerClient): Promise<number | null> {
+export async function removeProvisionedContainers(docker: ContainerEngine): Promise<number | null> {
 	if (!(await docker.ping())) return null;
 
-	const containers = await docker.listContainersByLabel(HEZO_CONTAINER_LABEL);
+	const containers = await docker.listContainersByLabel(TEAM_LABEL);
 	let removed = 0;
 	for (const container of containers) {
 		try {

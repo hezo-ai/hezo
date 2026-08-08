@@ -24,19 +24,39 @@ export interface ServerTestContext {
 	passwordSalt: string;
 }
 
-export async function createTestContext(): Promise<ServerTestContext> {
-	const {
-		app,
-		db,
-		token,
-		mnemonic,
-		unlockKeyHex,
-		masterKeyManager,
-		dataDir,
-		password,
-		passwordSalt,
-	} = await createTestApp();
+/** One request as it arrived on the wire, before the app saw it. */
+export interface ObservedRequest {
+	method: string;
+	url: string;
+	headers: Headers;
+	/** Decoded as UTF-8. Empty for a body-less request. */
+	body: string;
+}
 
+export interface ServedTestApp {
+	server: Server;
+	port: number;
+	baseUrl: string;
+}
+
+/**
+ * Put a Hono app on a real loopback socket.
+ *
+ * `app.request(...)` covers almost every suite; this is for the ones where
+ * something *outside this process* has to reach the app over TCP - a container
+ * dialling back through its run tunnel being the case that made it worth
+ * extracting.
+ *
+ * `onRequest` observes each request after its body is read and before the app
+ * handles it. That callback is the only place a test can prove a container
+ * really reached Hezo: the agent-CLI conformance suite watches for the MCP
+ * client's `initialize`/`tools/list` arriving here, which is exactly the
+ * evidence a run that silently lost its tunnel does not produce.
+ */
+export async function serveTestApp(
+	app: Hono<Env>,
+	opts: { onRequest?: (req: ObservedRequest) => void } = {},
+): Promise<ServedTestApp> {
 	const server = createServer(async (req, res) => {
 		const url = `http://localhost${req.url}`;
 		const headers = new Headers();
@@ -47,6 +67,19 @@ export async function createTestContext(): Promise<ServerTestContext> {
 		const chunks: Buffer[] = [];
 		for await (const chunk of req) chunks.push(chunk);
 		const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+
+		if (opts.onRequest) {
+			try {
+				opts.onRequest({
+					method: req.method ?? 'GET',
+					url: req.url ?? '/',
+					headers,
+					body: body ? body.toString('utf8') : '',
+				});
+			} catch {
+				// An observer is diagnostics; it must never change what the app sees.
+			}
+		}
 
 		const response = await app.fetch(
 			new Request(url, {
@@ -64,7 +97,23 @@ export async function createTestContext(): Promise<ServerTestContext> {
 	await new Promise<void>((resolve) => server.listen(0, resolve));
 	const addr = server.address();
 	const port = typeof addr === 'object' && addr ? addr.port : 0;
-	const baseUrl = `http://localhost:${port}`;
+	return { server, port, baseUrl: `http://localhost:${port}` };
+}
+
+export async function createTestContext(): Promise<ServerTestContext> {
+	const {
+		app,
+		db,
+		token,
+		mnemonic,
+		unlockKeyHex,
+		masterKeyManager,
+		dataDir,
+		password,
+		passwordSalt,
+	} = await createTestApp();
+
+	const { server, port, baseUrl } = await serveTestApp(app);
 
 	return {
 		db,
