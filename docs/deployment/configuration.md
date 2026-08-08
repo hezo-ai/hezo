@@ -225,14 +225,16 @@ while the server is stopped - `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/
 ## Running agent containers on a managed sandbox service
 
 Every agent run executes inside a container. By default that container runs on the local
-Docker daemon, which is why Docker is a prerequisite for a normal install. Setting
-These flags choose what a **brand-new** instance starts on. After that the setting in
-Settings -> Containers is what counts, and you can switch service (or switch back to local
-Docker) there at any time without restarting - see
-[Switching at any time](/docs/containers/overview#switching-at-any-time).
+Docker daemon, which is why a Docker-compatible runtime is a prerequisite for a normal
+install. `--sandbox-backend` (or `HEZO_SANDBOX_BACKEND`) starts a **brand-new** instance
+on a managed sandbox service instead, and Docker stops being required at all.
 
-`--sandbox-backend` (or `HEZO_SANDBOX_BACKEND`) moves those containers onto a managed
-sandbox service instead, and Docker stops being required at all.
+The flags only choose what a brand-new instance starts on. The first startup records the
+choice, and from then on the stored setting wins: the flags are ignored on later startups
+- Hezo logs that it ignored them if they disagree - so restarting with different
+environment variables never switches an existing instance. Switching, in either
+direction, is done from Settings -> Containers at any time, no restart needed. See
+[Switching at any time](/docs/containers/overview#switching-at-any-time).
 
 [Remote containers](/docs/containers/remote/overview) covers what changes when you do:
 how a container reaches your instance, what stays on your side, and what is not available
@@ -256,10 +258,13 @@ HEZO_DAYTONA_API_URL=https://app.daytona.io/api   # optional: a regional endpoin
 Add `--daytona-api-url` (or `HEZO_DAYTONA_API_URL`) only if you are pointed at a regional
 or self-hosted endpoint; it defaults to Daytona's public API.
 
-**All of it is deployment configuration**, set before the server starts - there is no
-setting for it in the web UI, and the API key does not go in the secrets vault. The
-General settings page shows which backend is in use, read-only, next to the database and
-asset backends.
+The provider API key is stored **encrypted in the secrets vault** and read only by Hezo
+itself to drive the provider's control plane - it never enters an agent container.
+Because it is encrypted, a restarted instance reconnects to the provider once you
+unlock; a key passed at startup is used straight away and saved once you unlock. The
+Containers settings page names the service in use and is also where you replace an
+expired or revoked key - see
+[Restarting an instance on a managed service](/docs/containers/overview#restarting-an-instance-on-a-managed-service).
 
 ### The agent image on a managed backend
 

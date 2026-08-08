@@ -14,8 +14,8 @@ agent's sandbox**, and so the commits your agents make land as **Verified** on G
 
 Each project has its **own [Ed25519](https://en.wikipedia.org/wiki/EdDSA) key**, used to
 sign the project's git commits. The private key is
-[encrypted at rest](/docs/security/master-key) and lives **on the host** - it is never
-written into the container where agent code runs.
+[encrypted at rest](/docs/security/master-key) and lives **on your Hezo instance** - it
+is never written into the container where agent code runs, wherever that container is.
 
 ## Connect GitHub once
 
@@ -81,8 +81,8 @@ Git transport runs over **HTTPS** (`https://github.com/owner/repo.git`), authent
 the token from the GitHub account you connected.
 
 **That token is never inside the container.** The remote carries a placeholder in place of
-the credential, and Hezo's egress proxy swaps in the real value as each request leaves the
-host - the same mechanism that protects every other secret an agent uses. A request that
+the credential, and Hezo's egress proxy swaps in the real value as each request leaves
+for GitHub - the same mechanism that protects every other secret an agent uses. A request that
 somehow avoided the proxy would carry the placeholder, which is not a valid credential, so
 it fails rather than leaking anything.
 
@@ -93,8 +93,8 @@ on your laptop but not in production is worse than one that works in both.
 
 ## Committed work is never lost
 
-Agent runs are time-limited, and each task works in a throwaway copy of the repository that
-is discarded when the run ends. So that committed work always survives - even if a run is
+Agent runs are time-limited, and each task works in a disposable working copy of the
+repository that does not outlive the task. So that committed work always survives - even if a run is
 cut short or reaches its time limit mid-way - Hezo **pushes every commit to the remote the
 moment it is made**. As soon as an agent commits, that commit is on the task's branch on
 GitHub, so nothing an agent has committed is ever lost with the run.
