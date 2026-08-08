@@ -18,7 +18,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { type ContainerProcessInfo, DockerClient } from '../../src/services/docker';
+import { DockerClient } from '../../src/services/docker';
+import type { ContainerEngine, ContainerProcessInfo } from '../../src/services/sandbox/types';
 
 const dockerAvailable = await checkDocker();
 const skipReason =
@@ -35,7 +36,7 @@ const finalSkipReason =
 		: `${IMAGE} not built locally — run \`docker build -t ${IMAGE} -f docker/Dockerfile.agent-base docker\``);
 
 let containerId: string;
-let docker: DockerClient;
+let docker: ContainerEngine;
 
 beforeAll(async () => {
 	if (finalSkipReason) return;

@@ -1,5 +1,25 @@
+import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Db } from '../db/database';
-import type { DockerClient, ExecLogChunk, ExecResult, ExecStartOpts } from './docker';
+import { getHostMemory } from '../lib/host-memory';
+import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
+import type {
+	ContainerByteChannel,
+	ContainerConfig,
+	ContainerEngine,
+	ContainerInfo,
+	ExecConfig,
+	ExecLogChunk,
+	ExecResult,
+	ExecStartOpts,
+} from './sandbox/types';
+import {
+	CONTAINER_WORKSPACE_ROOT,
+	CONTAINER_WORKTREES_ROOT,
+	getWorkspacePath,
+	getWorktreesPath,
+} from './workspace';
 
 const SYNTHETIC_EXEC_SCRIPT: Array<{
 	stream: 'stdout' | 'stderr';
@@ -29,32 +49,93 @@ async function runSyntheticExec(opts: ExecStartOpts): Promise<void> {
 
 const RUN_ID_ENV_PREFIX = 'HEZO_HEARTBEAT_RUN_ID=';
 
+interface FakeContainer {
+	name: string;
+	running: boolean;
+	labels: Record<string, string>;
+	/**
+	 * Remembered from the create rather than answered as a constant: `HEZO_SKIP_DOCKER`
+	 * runs go through the real pool ladder, which recycles any container whose
+	 * recorded allocation differs from the cap. A fixed figure would either recycle
+	 * every container or none of them, and neither is what a real backend does.
+	 */
+	memoryBytes: number | null;
+}
+
 /**
- * A happy-path Docker stub used by tests and any process started with
+ * A happy-path container engine used by tests and any process started with
  * `HEZO_SKIP_DOCKER=1`. All operations succeed; agent execs emit a short
  * deterministic synthetic script so log streams behave like real runs.
  *
  * The synthetic exec stands in for an agent doing real work, so — like a real
  * run that makes an MCP write — it marks its run as having produced output.
  * Without this the completion path would treat every synthetic run as a no-op
- * and fail it. Pass `db` to enable; omit it for pure docker-surface stubs.
+ * and fail it. Pass `db` to enable; omit it for pure engine-surface stubs.
+ *
+ * This **implements `ContainerEngine`** rather than being cast to it. The old
+ * `as unknown as DockerClient` cast let the stub omit methods silently, and
+ * production code that called one (`inspectImage` from the startup image prune,
+ * `listContainersByLabel` from uninstall, `findContainerByNamePrefix` from the
+ * boot self-heal) threw "is not a function" at runtime under `HEZO_SKIP_DOCKER`.
+ * The compiler now rejects an incomplete stub.
  */
-export function createFakeDockerClient(db?: Db): DockerClient {
-	const containers = new Map<string, { running: boolean }>();
+export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngine {
+	const containers = new Map<string, FakeContainer>();
 	const execRunIds = new Map<string, string | null>();
 	let execCounter = 0;
+	const tunnelReadyExecs = new Set<string>();
 
-	const stub = {
+	const describe = (id: string): ContainerInfo => {
+		const existing = containers.get(id);
+		const running = existing?.running ?? true;
+		return {
+			Id: id,
+			State: {
+				Status: running ? 'running' : 'exited',
+				Running: running,
+				Pid: running ? 1 : 0,
+				ExitCode: 0,
+			},
+			Config: { Image: 'noop' },
+			HostConfig: { MemoryBytes: existing?.memoryBytes ?? null },
+		};
+	};
+
+	return {
+		// The fake stands in for a local daemon, which does route back to the host.
 		ping: async () => true,
+
 		imageExists: async () => true,
+		/**
+		 * Null, so `pruneStaleBundledImages` treats every bundled image as
+		 * not-installed and skips it (`if (!info) continue`). A fake has no real
+		 * layers to be stale against, so pruning is a clean no-op.
+		 */
+		inspectImage: async () => null,
+		removeImage: async () => {},
 		pullImage: async () => {},
-		createContainer: async (name: string) => {
+
+		inspectNetwork: async () => ({ IPAM: { Config: [{ Gateway: '172.17.0.1' }] } }),
+
+		// `config` optional for the same reason as `execCreate` below.
+		createContainer: async (name: string, config?: ContainerConfig) => {
 			const id = `noop-${name}`;
-			containers.set(id, { running: false });
+			containers.set(id, {
+				name,
+				running: false,
+				labels: config?.Labels ?? {},
+				memoryBytes: config?.HostConfig?.Memory ?? null,
+			});
+			recordFakeBinds(id, config?.HostConfig?.Binds);
 			return { Id: id, Warnings: [] };
 		},
 		startContainer: async (id: string) => {
-			const c = containers.get(id) ?? { running: false };
+			const c = containers.get(id) ?? {
+				name: id,
+				running: false,
+				labels: {},
+				memoryBytes: null,
+			};
 			c.running = true;
 			containers.set(id, c);
 		},
@@ -65,31 +146,49 @@ export function createFakeDockerClient(db?: Db): DockerClient {
 		removeContainer: async (id: string) => {
 			containers.delete(id);
 		},
-		inspectNetwork: async () => ({ IPAM: { Config: [{ Gateway: '172.17.0.1' }] } }),
-		inspectContainer: async (id: string) => {
-			const c = containers.get(id);
-			const running = c?.running ?? true;
-			return {
-				Id: id,
-				State: {
-					Status: running ? 'running' : 'exited',
-					Running: running,
-					Pid: running ? 1 : 0,
-					ExitCode: 0,
-				},
-				Config: { Image: 'noop' },
-			};
+		inspectContainer: async (id: string) => describe(id),
+		listContainersByLabel: async (label: string) =>
+			[...containers.entries()]
+				.filter(([, c]) => label in c.labels)
+				.map(([id, c]) => ({ Id: id, Names: [`/${c.name}`] })),
+		findContainerByNamePrefix: async (prefix: string) => {
+			for (const [id, c] of containers) {
+				if (c.name.startsWith(prefix)) return describe(id);
+			}
+			return null;
 		},
+		// A container that is comfortably under any limit. Omitting this made the
+		// container-sync memory check throw `containerStats is not a function` on
+		// every pass under HEZO_SKIP_DOCKER - a warning on a green run, and worse,
+		// `enforceContainerMemoryLimit` never actually ran in any harness that
+		// uses the fake, so nothing exercised it.
+		containerStats: async (id: string) =>
+			containers.has(id) ? { usedBytes: 64 * 1024 * 1024, rawUsageBytes: 96 * 1024 * 1024 } : null,
 		containerLogs: async () => new Response(new Uint8Array()),
-		execCreate: async (_id: string, config?: { Env?: string[] }) => {
+
+		// `config` is optional here though `ContainerEngine` requires it (a looser
+		// parameter is still a valid implementation). Callers in tests exercise the
+		// surface without building a full exec config, and a fake has no reason to
+		// be stricter than its callers need.
+		execCreate: async (_id: string, config?: ExecConfig) => {
 			const execId = `noop-exec-${++execCounter}`;
 			const runEntry = config?.Env?.find((e) => e.startsWith(RUN_ID_ENV_PREFIX));
 			execRunIds.set(execId, runEntry ? runEntry.slice(RUN_ID_ENV_PREFIX.length) : null);
+			// The tunnel's port-readiness check, recognised so it can be answered.
+			// `startRunTunnel` will not hand a run its endpoints until the client's
+			// ports are listening, so a fake that never answers leaves every run -
+			// and every chat turn - waiting out the full timeout and then failing.
+			if ((config?.Cmd ?? []).some((part) => part.includes('/proc/net/tcp'))) {
+				tunnelReadyExecs.add(execId);
+			}
 			return execId;
 		},
 		execStart: async (execId: string, opts?: ExecStartOpts): Promise<ExecResult> => {
 			const runId = execRunIds.get(execId) ?? null;
 			execRunIds.delete(execId);
+			// A fake container's tunnel comes up. A test that wants the opposite
+			// drives `startRunTunnel` against its own engine (sandbox-run-tunnel).
+			if (tunnelReadyExecs.delete(execId)) return { stdout: 'ready\n', stderr: '' };
 			if (!opts?.onChunk) return { stdout: '', stderr: '' };
 			await runSyntheticExec(opts);
 			if (db && runId) {
@@ -98,19 +197,192 @@ export function createFakeDockerClient(db?: Db): DockerClient {
 			return { stdout: '', stderr: '' };
 		},
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
-		// A container that is comfortably under any limit. Omitting this made the
-		// container-sync memory check throw `containerStats is not a function` on
-		// every pass under HEZO_SKIP_DOCKER - a warning on a green run, and worse,
-		// `enforceContainerMemoryLimit` never actually ran in any harness that
-		// uses the fake, so nothing exercised it.
-		containerStats: async (id: string) =>
-			containers.has(id) ? { usedBytes: 64 * 1024 * 1024, rawUsageBytes: 96 * 1024 * 1024 } : null,
-		killRunProcesses: async () => {},
+		// A channel that carries nothing and closes on demand. The tunnel treats a
+		// closed channel as fail-closed, so a HEZO_SKIP_DOCKER run simply never
+		// tunnels rather than hanging waiting for bytes that will not come.
+		openExecChannel: async (): Promise<ContainerByteChannel> => {
+			let onClose: (() => void) | undefined;
+			return {
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: (handler) => {
+					onClose = handler;
+				},
+				close: () => onClose?.(),
+			};
+		},
+
 		killProcessesByEnvMarker: async () => {},
+		killRunProcesses: async () => {},
 		// Empty scan = the startup dangling-process sweep is a clean no-op in
 		// every HEZO_SKIP_DOCKER harness.
 		listHezoProcesses: async () => [],
 		killPids: async () => {},
+		killTunnelClients: async () => {},
+		// No host state to prepare: there is no daemon behind this.
+		prepareHost: async () => {},
+		// No real filesystem quota behind the fake, so it reports "could not tell"
+		// rather than 0 - a fake claiming an empty disk would make the pool's
+		// recycle rung untestable by asserting the opposite of what it guards.
+		diskUsedBytes: async () => null,
+
+		// The fake stands in for a *local daemon*, so its containers draw on this
+		// host exactly as Docker's would - which is what keeps the automatic budget
+		// under HEZO_SKIP_DOCKER the same number production would compute.
+		containerHostMemory: () => getHostMemory(),
+
+		// Resolved through the container's bind mounts, exactly as Docker would.
+		// The fake exists to stand in for a *local daemon*, and a local daemon's
+		// defining property here is that a path written inside the container is the
+		// same bytes on the host - which is what lets a test stage a file through
+		// the seam and read it back off disk. An in-memory store would quietly
+		// break every such assertion while looking like it worked.
+		files: (containerId: string, containerRoot: string) =>
+			lazyHostFiles(() => resolveFakeHostRoot(containerId, containerRoot, db, dataDir)),
 	};
-	return stub as unknown as DockerClient;
+}
+
+/**
+ * Container-path -> host-path bind tables, per container.
+ *
+ * Populated from `HostConfig.Binds` at create, which is the same information
+ * Docker itself is given, so the fake's file view matches the real one without
+ * anything having to be declared twice.
+ */
+const fakeBinds = new Map<string, Array<{ containerPath: string; hostPath: string }>>();
+
+/** Fallback roots for containers a test fabricates without going through create. */
+const fakeFallbackRoots = new Map<string, string>();
+
+export function recordFakeBinds(containerId: string, binds?: string[]): void {
+	if (!binds?.length) return;
+	const parsed = binds
+		.map((bind) => {
+			const [hostPath, containerPath] = bind.split(':');
+			return hostPath && containerPath ? { containerPath, hostPath } : null;
+		})
+		.filter((entry): entry is { containerPath: string; hostPath: string } => entry !== null)
+		// Longest container path first, so a nested mount wins over its parent.
+		.sort((a, b) => b.containerPath.length - a.containerPath.length);
+	fakeBinds.set(containerId, parsed);
+}
+
+/**
+ * Register where a container root lives on the host for a container the test
+ * never created through the engine - the common shape, where a project row is
+ * given a `container_id` directly.
+ */
+export function registerFakeContainerRoot(containerId: string, hostRoot: string): void {
+	fakeFallbackRoots.set(containerId, hostRoot);
+}
+
+/**
+ * A {@link SandboxFiles} whose host root is resolved on first use.
+ *
+ * `files()` is synchronous by the interface's contract, but the fake resolves
+ * its root from the database - so the lookup is deferred into the operations,
+ * which are async anyway.
+ */
+function lazyHostFiles(resolve: () => Promise<string>): SandboxFiles {
+	const bound = async (): Promise<SandboxFiles> => hostSandboxFiles(await resolve());
+	return {
+		exists: async (p) => (await bound()).exists(p),
+		read: async (p) => (await bound()).read(p),
+		readBytes: async (p) => (await bound()).readBytes(p),
+		size: async (p) => (await bound()).size(p),
+		remove: async (p) => (await bound()).remove(p),
+		removeDir: async (p) => (await bound()).removeDir(p),
+		findByName: async (d, n, depth) => (await bound()).findByName(d, n, depth),
+		write: async (p, c, o) => (await bound()).write(p, c, o),
+		writeBytes: async (p, c, o) => (await bound()).writeBytes(p, c, o),
+		mkdir: async (p, o) => (await bound()).mkdir(p, o),
+		list: async (p) => (await bound()).list(p),
+	};
+}
+
+/**
+ * The two binds `containers.ts` gives every project container, so a path under
+ * either resolves the way the real mount would.
+ *
+ * Both are needed, not just the workspace: worktrees live on their own mount,
+ * and resolving `/worktrees/<task>/<repo>` against the workspace root answers
+ * with a directory that exists and holds the wrong repo - a wrong answer that
+ * reads as a right one, which is worse than failing.
+ */
+const FAKE_PROJECT_MOUNTS: ReadonlyArray<{
+	containerRoot: string;
+	hostRoot: (dataDir: string, teamId: string, projectId: string) => string;
+}> = [
+	{ containerRoot: CONTAINER_WORKSPACE_ROOT, hostRoot: getWorkspacePath },
+	{ containerRoot: CONTAINER_WORKTREES_ROOT, hostRoot: getWorktreesPath },
+];
+
+async function resolveFakeHostRoot(
+	containerId: string,
+	containerRoot: string,
+	db?: Db,
+	dataDir?: string,
+): Promise<string> {
+	/** Rebase `containerRoot` onto `base` when it sits at or under `mountRoot`. */
+	const under = (mountRoot: string, base: string): string | null => {
+		if (containerRoot === mountRoot) return base;
+		if (containerRoot.startsWith(`${mountRoot}/`)) {
+			return `${base}${containerRoot.slice(mountRoot.length)}`;
+		}
+		return null;
+	};
+
+	// A recorded bind is the most faithful answer: it is the same information
+	// Docker itself was given at create.
+	for (const bind of fakeBinds.get(containerId) ?? []) {
+		const resolved = under(bind.containerPath, bind.hostPath);
+		if (resolved) return resolved;
+	}
+
+	// A root registered for the whole container answers for anything under it,
+	// and stands in unchanged for a path outside the project mounts (a per-run
+	// runtime home, say) - that is what the caller registered it for.
+	const registered = fakeFallbackRoots.get(containerId);
+	if (registered) return under(CONTAINER_WORKSPACE_ROOT, registered) ?? registered;
+
+	// Most tests hand a project a `container_id` without provisioning through the
+	// engine, so there are no binds to read. The project row still says which
+	// directories that container would have mounted, which is the same mapping a
+	// real bind produces.
+	if (db && dataDir) {
+		try {
+			const row = await db.query<{ team_id: string; id: string }>(
+				'SELECT team_id, id FROM projects WHERE container_id = $1 LIMIT 1',
+				[containerId],
+			);
+			const project = row.rows[0];
+			if (project) {
+				for (const mount of FAKE_PROJECT_MOUNTS) {
+					const resolved = under(
+						mount.containerRoot,
+						mount.hostRoot(dataDir, project.team_id, project.id),
+					);
+					if (resolved) return resolved;
+				}
+				// Outside both mounts (a per-run runtime home): the workspace stands in,
+				// so a write and the read that follows it still land on the same bytes.
+				return getWorkspacePath(dataDir, project.team_id, project.id);
+			}
+		} catch {
+			// Fall through to the scratch dir below - a fake must never throw from
+			// a path resolution.
+		}
+	}
+
+	// Nothing to go on: a scratch dir, so writes still round-trip rather than
+	// failing on a path that does not exist.
+	const scratch = join(
+		tmpdir(),
+		'hezo-fake-container',
+		containerId,
+		containerRoot.replaceAll('/', '_'),
+	);
+	mkdirSync(scratch, { recursive: true });
+	return scratch;
 }

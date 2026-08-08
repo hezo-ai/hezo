@@ -16,10 +16,10 @@ import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
@@ -98,7 +98,7 @@ beforeAll(async () => {
 	});
 	const project = (await projectRes.json()).data;
 	projectId = project.id;
-	planningTaskId = project.planning_task_id;
+	planningTaskId = project.planning_task_id as string;
 
 	const captain = await db.query<{ id: string }>(
 		`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
@@ -332,7 +332,7 @@ describe('JobManager progress-update flows', () => {
 			await insertDueGoal('Capacity goal');
 			// Container semantics: the Captain's project container is stopped and a
 			// filler project's running container holds the single slot.
-			await setMaxActiveContainersForTest(ctx.db, 1);
+			await setContainerCapacityForTest(ctx.db, 1);
 			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
 				projectId,
 			]);
@@ -346,7 +346,7 @@ describe('JobManager progress-update flows', () => {
 			);
 			expect(result).toEqual({ dispatched: false, reason: 'instance_at_capacity' });
 			await removeSeededContainerProject(ctx.db, 'cap-filler-progress');
-			await clearMaxActiveContainersForTest(ctx.db);
+			await clearContainerCapacityForTest(ctx.db);
 			manager.shutdown();
 		});
 
@@ -438,7 +438,10 @@ describe('JobManager progress-update flows', () => {
 				projectId,
 			]);
 			const result = await manager.dispatchProgressUpdateNow(projectId);
-			expect('dispatched' in result && result.reason === 'not_due').toBe(false);
+			// `'dispatched' in result` alone still admits the `{dispatched: true}`
+			// variant, which carries no `reason` - so compare the whole shape, which
+			// is also what the assertion actually means: this is not a not-due skip.
+			expect(result).not.toEqual({ dispatched: false, reason: 'not_due' });
 			manager.shutdown();
 		});
 
@@ -623,7 +626,7 @@ describe('JobManager progress-update flows', () => {
 		it('re-queues a manual progress_update_now wakeup while the container limit is reached', async () => {
 			const manager = createJobManager();
 			await insertDueGoal('Manual capacity goal');
-			await setMaxActiveContainersForTest(ctx.db, 1);
+			await setContainerCapacityForTest(ctx.db, 1);
 			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
 				projectId,
 			]);
@@ -647,7 +650,7 @@ describe('JobManager progress-update flows', () => {
 			]);
 			expect(runs.rows.length).toBe(0);
 			await removeSeededContainerProject(ctx.db, 'cap-filler-manual');
-			await clearMaxActiveContainersForTest(ctx.db);
+			await clearContainerCapacityForTest(ctx.db);
 			manager.shutdown();
 		});
 

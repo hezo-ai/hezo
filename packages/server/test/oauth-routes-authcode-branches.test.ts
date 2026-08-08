@@ -185,6 +185,7 @@ describe('GET /oauth/callback error branches', () => {
 	it('renders missing_provider_config for a signed state without manualConfig', async () => {
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: 'acme',
 			redirectUri: 'http://localhost/api/oauth/callback',
 			returnTo: '/',
@@ -197,6 +198,7 @@ describe('GET /oauth/callback error branches', () => {
 	it('renders exchange_failed when the token endpoint rejects the code', async () => {
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: 'acme',
 			redirectUri: 'http://localhost/api/oauth/callback',
 			returnTo: '/',
@@ -268,6 +270,7 @@ describe('auth-code/start → authorize → /oauth/callback success', () => {
 	it('falls back to the configured scopes when the token response carries none', async () => {
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: 'noscope',
 			redirectUri: 'http://localhost/api/oauth/callback',
 			returnTo: '/',
@@ -657,6 +660,7 @@ describe('GET /oauth/mcp-callback error branches', () => {
 	it('renders missing_connector_id when the state has no mcpConnectionId', async () => {
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: 'mcp:none',
 			redirectUri: 'http://localhost/api/oauth/mcp-callback',
 			returnTo: '/',
@@ -671,6 +675,7 @@ describe('GET /oauth/mcp-callback error branches', () => {
 	it('renders missing_provider_config when the state has no manualConfig', async () => {
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: 'mcp:x',
 			redirectUri: 'http://localhost/api/oauth/mcp-callback',
 			returnTo: '/',
@@ -685,6 +690,7 @@ describe('GET /oauth/mcp-callback error branches', () => {
 	it('renders connector_not_found when the referenced connector does not exist', async () => {
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: 'mcp:gone',
 			redirectUri: 'http://localhost/api/oauth/mcp-callback',
 			returnTo: '/',
@@ -706,6 +712,7 @@ describe('GET /oauth/mcp-callback error branches', () => {
 		});
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: `mcp:${row.id}`,
 			redirectUri: 'http://localhost/api/oauth/mcp-callback',
 			returnTo: '/',
@@ -729,6 +736,7 @@ describe('GET /oauth/mcp-callback error branches', () => {
 		});
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: `mcp:${row.id}`,
 			redirectUri: 'http://localhost/api/oauth/mcp-callback',
 			returnTo: '/',

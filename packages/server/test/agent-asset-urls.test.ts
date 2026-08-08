@@ -5,13 +5,13 @@ import type { Db } from '../src/db/database';
 import { AGENT_ASSET_URL_TTL_SECONDS, signAgentAssetUrl } from '../src/lib/asset-urls';
 import type { Env } from '../src/lib/types';
 import { loadAgentAttachmentsForComments } from '../src/services/agent-runner';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 /**
  * Agents receive assets exclusively as signed download URLs (there is no
  * container mount). This suite pins the URL contract: absolute
- * host.docker.internal origin, the long agent TTL, and — the part that
+ * caller-relative origin, the long agent TTL, and — the part that
  * matters — that the public serve route actually accepts the signed path.
  */
 
@@ -77,11 +77,17 @@ async function seedAttachment(): Promise<{ commentId: string; assetId: string }>
 }
 
 describe('agent-facing signed asset URLs', () => {
-	it('signAgentAssetUrl builds an absolute host.docker.internal URL with the 24h TTL', async () => {
-		const url = await signAgentAssetUrl('some-asset-id', masterKeyManager, 3123);
+	it('signAgentAssetUrl builds an absolute URL on the caller’s own origin, with the 24h TTL', async () => {
+		// The origin is the caller's tunnel loopback port, not the server's own -
+		// only the caller's request knows which port its tunnel client is on.
+		const url = await signAgentAssetUrl(
+			'some-asset-id',
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 		const parsed = new URL(url);
 		expect(parsed.protocol).toBe('http:');
-		expect(parsed.host).toBe('host.docker.internal:3123');
+		expect(parsed.host).toBe('127.0.0.1:47081');
 		expect(parsed.pathname).toBe('/api/assets/some-asset-id');
 		const exp = Number(parsed.searchParams.get('exp'));
 		const now = Math.floor(Date.now() / 1000);
@@ -91,12 +97,17 @@ describe('agent-facing signed asset URLs', () => {
 
 	it('attachment URLs from loadAgentAttachmentsForComments are accepted by the serve route', async () => {
 		const { commentId, assetId } = await seedAttachment();
-		const out = await loadAgentAttachmentsForComments(db, [commentId], masterKeyManager, 3100);
+		const out = await loadAgentAttachmentsForComments(
+			db,
+			[commentId],
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 		const [attachment] = out.get(commentId) ?? [];
 		expect(attachment.id).toBe(assetId);
 
 		const parsed = new URL(attachment.url);
-		expect(parsed.host).toBe('host.docker.internal:3100');
+		expect(parsed.host).toBe('127.0.0.1:47081');
 		const res = await app.request(`${parsed.pathname}${parsed.search}`);
 		expect(res.status).toBe(200);
 		expect(await res.text()).toBe('attachment bytes');

@@ -1,0 +1,28 @@
+// Typecheck config: `src` **and** `test`, with no emit.
+//
+// The build config next to this one carries `rootDir: "src"` and an `outDir`,
+// which is what makes it unable to include `test/` - a file outside `rootDir` is
+// a hard error there. Splitting the two is what lets the compiler see the test
+// tree, and seeing it matters: a test referencing a renamed export got
+// `undefined` at runtime and surfaced as a Postgres null-constraint violation,
+// and a fixture left at an old interface's shape turned every decision into a
+// silent fallthrough. Both reached CI; both are one-line compile errors here.
+//
+// `rootDir` is the repo root rather than the base config's `src`: it only
+// constrains where *emitted* files may come from, which is moot under `noEmit`,
+// and the narrower value rejects the tests that legitimately import the
+// repo-root `scripts/` modules they cover (the commit-ack hooks, the coverage
+// merge).
+//
+// Mirrors what `packages/web/tsconfig.json` already does for its own tests.
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"rootDir": "../..",
+		"declaration": false,
+		"declarationMap": false,
+		"sourceMap": false
+	},
+	"include": ["src", "test", "scripts"]
+}

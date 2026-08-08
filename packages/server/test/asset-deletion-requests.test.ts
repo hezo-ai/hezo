@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createTestApp,
@@ -48,7 +48,7 @@ async function uploadAsset(
 	folder?: string,
 ): Promise<{ id: string; path: string }> {
 	const fd = new FormData();
-	fd.set('file', new File([buildPng(filename.length)], filename, { type: 'image/png' }));
+	fd.set('file', new File([blobBytes(buildPng(filename.length))], filename, { type: 'image/png' }));
 	if (folder) fd.set('folder', folder);
 	const res = await app.request(`/api/projects/${projectId}/assets`, {
 		method: 'POST',
@@ -158,7 +158,7 @@ describe('resolve-asset-deletion (legacy pending cards)', () => {
 		const a = await uploadAsset('doomed.png', 'trash');
 		// Attach the asset to a comment so the cascade is exercised.
 		const fd = new FormData();
-		fd.set('file', new File([buildPng(77)], 'attached.png', { type: 'image/png' }));
+		fd.set('file', new File([blobBytes(buildPng(77))], 'attached.png', { type: 'image/png' }));
 		const attachRes = await app.request(`/api/projects/${projectId}/tasks/${taskId}/assets`, {
 			method: 'POST',
 			headers: { ...authHeader(token) },

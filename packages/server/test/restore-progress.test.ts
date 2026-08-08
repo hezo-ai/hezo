@@ -22,7 +22,7 @@ import {
 	progressRatio,
 	truncateLine,
 } from '../src/lib/progress';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import { createTestApp } from './helpers/app';
 import { allMigrations } from './helpers/migrate';
 
@@ -400,7 +400,7 @@ describe('asset restore progress emission', () => {
 						`asset-${i}.txt`,
 					],
 				);
-				await source.write(projectId, asset.rows[0].id, new Blob([content]));
+				await source.write(projectId, asset.rows[0].id, new Blob([blobBytes(content)]));
 			}
 
 			const states: ProgressState[] = [];

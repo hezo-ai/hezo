@@ -2,19 +2,32 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { trackBackground } from '../lib/background';
 import type { ContainerRunUser } from './container-user';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
+import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
+import { dockerSandboxHandle, type SandboxHandle } from './sandbox/handle';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv } from './ssh-agent';
 
 /**
- * SSH options applied to every in-container git transport op so a stalled
- * connection fails fast instead of hanging on OS TCP defaults. `ConnectTimeout`
- * bounds the initial connect; `ServerAliveInterval`/`ServerAliveCountMax` detect
- * an established-then-silent connection (~30s) without tripping a slow-but-alive
- * transfer; `BatchMode` guarantees git never blocks on an interactive prompt.
- * Worst case (~45s) stays under the fetch (60s) and clone (120s) op caps.
+ * Git's own network timeouts, so a stalled transfer fails fast instead of hanging
+ * on libcurl's defaults: one under 1 KB/s for 30s is abandoned, without tripping
+ * a slow-but-alive one. The host-side per-op abort (fetch 60s, clone 120s) is
+ * still the outer bound; this just fails sooner and says why.
+ *
+ * Delivered as **env rather than `-c` argv**, and that is not cosmetic. Several
+ * suites script a docker exec by matching the exact git command line, so
+ * prefixing every remote op with two `-c` pairs stopped their `fetch` rules from
+ * matching - the scripted failure never fired and the tests asserted against a
+ * success they had not asked for. `git-remote-http` reads these two names
+ * directly (verified against the shipped binary), so the argv stays exactly what
+ * the caller passed.
+ *
+ * **There is no ssh config any more.** Git transport is HTTPS on every backend
+ * (see `buildGitRemoteUrl`), so the file this module used to write into every
+ * container - pointing GitHub at `ssh.github.com:443` with a `HostKeyAlias`
+ * against the image's pinned host keys - configured a transport nothing uses.
+ * SSH remains only for commit *signing*, which is local and needs no network.
  */
-export const GIT_SSH_COMMAND_VALUE =
-	'ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3';
+export const GIT_HTTP_TIMEOUT_ENV = ['GIT_HTTP_LOW_SPEED_LIMIT=1000', 'GIT_HTTP_LOW_SPEED_TIME=30'];
 
 /**
  * Mint a scope id for container git ops that run outside an agent run or a
@@ -42,8 +55,16 @@ export interface GitExecResult {
 export interface GitExecOpts {
 	/** Working directory for the git command. CONTAINER path in production; host temp path in tests. */
 	cwd: string;
-	/** Wrap the command with the per-run SSH bridge so transport (clone/fetch/push) can auth. */
-	needsSsh?: boolean;
+	/**
+	 * This op talks to the remote (clone, fetch, push, ls-remote), so it needs
+	 * git's network settings and - on an image that still has one - the per-run
+	 * bridge.
+	 *
+	 * Was `needsSsh`, which stopped being true: transport is HTTPS and
+	 * authenticates with a proxy-substituted token, not with the agent socket.
+	 * The flag still marks the same call sites, it just names what they need.
+	 */
+	needsNetwork?: boolean;
 	/** Milliseconds before the command is abandoned. */
 	timeout?: number;
 }
@@ -56,16 +77,32 @@ export interface GitExecOpts {
  */
 export interface GitExecutor {
 	exec(args: string[], opts: GitExecOpts): Promise<GitExecResult>;
+	/**
+	 * Reads and writes rooted at an in-container path, in the same container this
+	 * executor runs git in.
+	 *
+	 * Here because "run git in this container" and "look at that container's
+	 * files" are the same question, and every caller that has one needs the other:
+	 * a repo loc pairs the cwd git uses with the seam rooted at it. Threading a
+	 * second handle alongside the executor would let the two drift onto different
+	 * containers, which is precisely the bug the seam exists to prevent.
+	 */
+	files(containerPath: string): SandboxFiles;
 }
 
 /**
  * Runs `git` as a host subprocess. Used by unit tests (and only tests in
  * production) — it is the lifted form of git.ts's former `spawn` helper, with the
- * same non-throwing, exit-code-mapping contract. `needsSsh` is a no-op here: any
- * SSH config a test needs is supplied through the injected `env`.
+ * same non-throwing, exit-code-mapping contract. `needsNetwork` is a no-op here:
+ * a test drives `file://` remotes, which need nothing.
  */
 export class HostGitExecutor implements GitExecutor {
 	constructor(private readonly env: Record<string, string | undefined> = {}) {}
+
+	/** Host and container paths are the same string here, by construction. */
+	files(containerPath: string): SandboxFiles {
+		return hostSandboxFiles(containerPath);
+	}
 
 	exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
 		return new Promise((resolve) => {
@@ -91,7 +128,7 @@ export class HostGitExecutor implements GitExecutor {
 export interface ContainerGitExecutorOptions {
 	/** `KEY=value` env entries for every git exec: git identity, `SSH_AUTH_SOCK`, proxy. */
 	baseEnv: string[];
-	/** The run's SSH bridge; required for `needsSsh` ops. Null disables SSH wrapping. */
+	/** The run's bridge; wraps `needsNetwork` ops so their process tree stays scoped. */
 	bridge?: BridgeRunnerArgs | null;
 	/** The container user every git exec runs as (detected, not assumed `node`). */
 	runUser: ContainerRunUser;
@@ -111,13 +148,14 @@ export interface ContainerGitExecutorOptions {
 
 /**
  * Runs `git` inside the project's already-running container via `docker exec`, so
- * the host needs no git. SSH-transport ops (`needsSsh`) are wrapped with the per-run
- * bridge runner (`hezo-run-with-bridge`) so `git@github.com:` clone/fetch/push can
- * authenticate through the host ssh-agent; the container's baked-in
- * `/etc/ssh/ssh_known_hosts` verifies the host key. Non-SSH ops (worktree add,
- * status, rev-parse, update-ref) run bare. Mirrors the former host `spawn`'s
- * non-throwing contract: a docker transport failure or timeout returns
- * `{ exitCode: 1 }` rather than throwing, so git.ts's branching logic is unchanged.
+ * the host needs no git. Remote ops (`needsNetwork`) additionally carry git's HTTP
+ * timeouts and run under the per-run bridge runner, which is still what scopes the
+ * process tree for the marker kill. They authenticate over **HTTPS**, with a
+ * credential the egress proxy substitutes into the request - the agent socket is
+ * for commit signing only. Local ops (worktree add, status, rev-parse,
+ * update-ref) run bare. Mirrors the former host `spawn`'s non-throwing contract:
+ * a docker transport failure or timeout returns `{ exitCode: 1 }` rather than
+ * throwing, so git.ts's branching logic is unchanged.
  */
 export class ContainerGitExecutor implements GitExecutor {
 	private readonly bridge: BridgeRunnerArgs | null;
@@ -125,9 +163,11 @@ export class ContainerGitExecutor implements GitExecutor {
 	private readonly runUser: ContainerRunUser;
 	private readonly scopeId: string;
 	private readonly runSignal?: AbortSignal;
+	/** Built once: exec() runs many git commands per run over a fixed container and user. */
+	private readonly sandbox: SandboxHandle;
 
 	constructor(
-		private readonly docker: DockerClient,
+		private readonly docker: ContainerEngine,
 		private readonly containerId: string,
 		opts: ContainerGitExecutorOptions,
 	) {
@@ -135,12 +175,18 @@ export class ContainerGitExecutor implements GitExecutor {
 		this.runUser = opts.runUser;
 		this.scopeId = opts.scopeId;
 		this.runSignal = opts.signal;
+		this.sandbox = dockerSandboxHandle(docker, containerId, opts.runUser);
 		// The bridge wrapper appends/redirects HEZO_PROMPT_FILE into the command it
 		// runs; it must never leak into a git invocation. Strip it defensively.
 		this.baseEnv = [
 			...opts.baseEnv.filter((e) => !e.startsWith('HEZO_PROMPT_FILE=')),
 			`HEZO_HEARTBEAT_RUN_ID=${opts.scopeId}`,
 		];
+	}
+
+	/** The same container git runs in - see the note on `GitExecutor.files`. */
+	files(containerPath: string): SandboxFiles {
+		return this.docker.files(this.containerId, containerPath);
 	}
 
 	/**
@@ -153,7 +199,7 @@ export class ContainerGitExecutor implements GitExecutor {
 	 * `GIT_CONFIG_*` entries from `buildGitIdentityEnv`); other callers omit it.
 	 */
 	static forPrep(
-		docker: DockerClient,
+		docker: ContainerEngine,
 		containerId: string,
 		bridge: BridgeRunnerArgs | null,
 		runUser: ContainerRunUser,
@@ -161,11 +207,7 @@ export class ContainerGitExecutor implements GitExecutor {
 		extraEnv: string[] = [],
 		signal?: AbortSignal,
 	): ContainerGitExecutor {
-		const baseEnv = [
-			'GIT_TERMINAL_PROMPT=0',
-			`GIT_SSH_COMMAND=${GIT_SSH_COMMAND_VALUE}`,
-			...extraEnv,
-		];
+		const baseEnv = ['GIT_TERMINAL_PROMPT=0', ...extraEnv];
 		if (bridge) baseEnv.push(`SSH_AUTH_SOCK=${bridge.socketPath}`);
 		return new ContainerGitExecutor(docker, containerId, {
 			baseEnv,
@@ -177,12 +219,13 @@ export class ContainerGitExecutor implements GitExecutor {
 	}
 
 	async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
-		const wrapped = Boolean(opts.needsSsh && this.bridge);
-		const cmd =
-			opts.needsSsh && this.bridge
-				? [...buildBridgeRunnerArgv(this.bridge), 'git', ...args]
-				: ['git', ...args];
-		const env = [...this.baseEnv];
+		const wrapped = Boolean(opts.needsNetwork && this.bridge);
+		const cmd = wrapped
+			? [...buildBridgeRunnerArgv(this.bridge as BridgeRunnerArgs), 'git', ...args]
+			: ['git', ...args];
+		// Only a remote op gets the HTTP timeouts; a local one has no transport to
+		// bound.
+		const env = [...this.baseEnv, ...(opts.needsNetwork ? GIT_HTTP_TIMEOUT_ENV : [])];
 		// Self-deadline for bridge-wrapped ops: newer container images run the
 		// wrapped command under `timeout` so the tree dies on its own even if this
 		// server process is gone before the op finishes (crash, hard kill). Old
@@ -196,17 +239,14 @@ export class ContainerGitExecutor implements GitExecutor {
 		const timeoutSignal = opts.timeout ? AbortSignal.timeout(opts.timeout) : undefined;
 		const signal = combineAbortSignals(this.runSignal, timeoutSignal);
 		try {
-			const execId = await this.docker.execCreate(this.containerId, {
-				Cmd: cmd,
-				Env: env,
-				WorkingDir: opts.cwd,
-				User: this.runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
+			// Git runs unelevated so anything it writes into the bind-mounted
+			// workspace stays owned by the run user rather than root.
+			return await this.sandbox.exec({
+				cmd,
+				env,
+				workingDir: opts.cwd,
+				signal,
 			});
-			const { stdout, stderr } = await this.docker.execStart(execId, { signal });
-			const info = await this.docker.execInspect(execId);
-			return { exitCode: info.ExitCode, stdout, stderr };
 		} catch (e) {
 			if (timeoutSignal?.aborted) {
 				this.killAbandonedExec();

@@ -68,7 +68,11 @@ export default defineConfig({
 		baseURL: `http://localhost:${WEB_PORT}`,
 		headless: true,
 		trace: 'retain-on-failure',
-		screenshot: 'only-on-failure',
+		// Full-page rather than the viewport-only default: the failures this tier
+		// produces are geometry ones, and the element that moved the measurement is
+		// routinely below the fold (a banner, a sticky footer, an overflowing list).
+		// A viewport crop hides exactly the evidence the failure is about.
+		screenshot: { mode: 'only-on-failure', fullPage: true },
 		video: 'retain-on-failure',
 		// The app registers a PWA service worker (packages/web/public/sw.js) on
 		// localhost, which is a secure context — so without this it activates in the
@@ -140,6 +144,20 @@ export default defineConfig({
 			url: `http://localhost:${SERVER_PORT}/api/status`,
 			reuseExistingServer: false,
 			timeout: WEB_SERVER_TIMEOUT_MS,
+			// Playwright ignores a webServer's stdout by default and pipes only its
+			// stderr, and Hezo's logger writes at INFO to stdout - so a boot that is
+			// slow rather than broken produces *nothing*. `test-browser (3)` died
+			// exactly that way: three webServers must come up (this one plus the two
+			// vite previews below), the timeout names none of them, and the 180s
+			// between launch and failure held not one line of log. A crash would have
+			// shown on stderr; the silence is what a server still working through
+			// migrations and seeding looks like, and it left the failure impossible
+			// to attribute.
+			//
+			// Cheap, because the log is activity-gated rather than per-tick: the 1Hz
+			// wakeup and heartbeat crons say nothing on a quiet tick, so this costs
+			// the startup sequence and real work, not a line a second.
+			stdout: 'pipe',
 			env: {
 				SKIP_AI_KEY_VALIDATION: '1',
 				HEZO_SKIP_DOCKER: '1',
@@ -164,6 +182,14 @@ export default defineConfig({
 				// Pricing still seeds from the bundled snapshot (offline); skip the
 				// boot-time refresh so e2e doesn't make an outbound feed fetch.
 				HEZO_SKIP_PRICING_REFRESH: '1',
+				// Same reason, plus a sharper one: the GitHub release check decides
+				// whether the UpdateBanner renders, and the banner sits between the app
+				// header and the content row — so on a runner that can reach GitHub,
+				// every element in the shell moves down by 47px (75px at mobile, where
+				// the banner stacks) the moment a release newer than this tree ships.
+				// That is a suite-wide layout change driven by a third party's release
+				// schedule, and it took the browser tier red on the day 0.39.0 landed.
+				HEZO_SKIP_UPDATE_CHECK: '1',
 				// Telemetry defaults on; a CI run crossing the daily cron window
 				// would fire a real outbound report. Tests never phone home.
 				HEZO_TELEMETRY_ENABLED: '0',

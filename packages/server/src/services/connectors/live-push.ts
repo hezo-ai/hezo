@@ -1,12 +1,12 @@
 import type { Db } from '../../db/database';
 import { logger } from '../../logger';
-import type { DockerClient } from '../docker';
+import type { ContainerEngine } from '../docker';
 
 const log = logger.child('connector-live-push');
 
 export interface LivePushDeps {
 	db: Db;
-	docker: DockerClient;
+	docker: ContainerEngine;
 }
 
 export interface LivePushInput {

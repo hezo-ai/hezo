@@ -114,7 +114,7 @@ test('edits the per-project memory limit and persists it', async () => {
 
 	const { findByRole, findByTestId, getByRole, ctx, user, router } = await renderApp({
 		initialPath: '/',
-		seed: async () => {
+		seed: async (seedCtx) => {
 			ws = await seedWorkspace();
 			const project = await seedProject(ws, {
 				name: projectName,
@@ -122,26 +122,36 @@ test('edits the per-project memory limit and persists it', async () => {
 			});
 			projectSlug = project.slug;
 			projectId = project.id;
+			// A per-project cap larger than the whole instance budget can never be
+			// scheduled, so it is refused where it is set. Give the instance room for
+			// the 24 GB this test asks for - otherwise the assertion depends on how
+			// much RAM the machine running the suite happens to have.
+			await seedCtx.db.query(
+				`INSERT INTO system_meta (key, value) VALUES ('max_container_memory_gb', '64')
+				 ON CONFLICT (key) DO UPDATE SET value = '64'`,
+			);
 		},
 	});
 
+	// On the project's **Container** page now, not its General settings: it is a
+	// property of the containers and only means anything beside their state.
 	await router.navigate({
-		to: '/projects/$projectId/settings',
+		to: '/projects/$projectId/container',
 		params: { projectId: projectSlug },
 	});
 
 	// Read view shows the no-override state: the container inherits the
-	// instance-wide ram cap ("Default (2 GB)").
-	const readValue = await findByTestId('memory-limit-gib-value', undefined, { timeout: 8_000 });
-	expect(readValue.textContent).toContain('Default');
+	// instance-wide ram cap.
+	const readValue = await findByTestId('project-memory-limit-value', undefined, { timeout: 8_000 });
+	expect(readValue.textContent).toContain('Instance default');
 
-	await user.click(await findByRole('button', { name: 'Edit' }));
-	const input = (await findByTestId('memory-limit-gib-input', undefined, {
+	await user.click(await findByTestId('project-memory-limit-edit'));
+	const input = (await findByTestId('project-memory-limit-input', undefined, {
 		timeout: 8_000,
 	})) as HTMLInputElement;
 	await user.clear(input);
 	await user.type(input, '24');
-	await user.click(getByRole('button', { name: 'Save' }));
+	await user.click(await findByTestId('project-memory-limit-save'));
 
 	await waitFor(
 		async () => {
@@ -155,12 +165,12 @@ test('edits the per-project memory limit and persists it', async () => {
 	);
 
 	// Clearing the field removes the override — back to inherit (NULL).
-	await user.click(await findByRole('button', { name: 'Edit' }));
-	const input2 = (await findByTestId('memory-limit-gib-input', undefined, {
+	await user.click(await findByTestId('project-memory-limit-edit'));
+	const input2 = (await findByTestId('project-memory-limit-input', undefined, {
 		timeout: 8_000,
 	})) as HTMLInputElement;
 	await user.clear(input2);
-	await user.click(getByRole('button', { name: 'Save' }));
+	await user.click(await findByTestId('project-memory-limit-save'));
 
 	await waitFor(
 		async () => {

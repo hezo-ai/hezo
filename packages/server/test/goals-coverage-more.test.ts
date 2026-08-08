@@ -22,10 +22,10 @@ import {
 } from '../src/services/goals';
 import { authHeader, createTestProject, createTestTeam } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
@@ -790,7 +790,7 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 		// passes the "nothing due" gate. A down container no longer conflicts (the
 		// runner lazy-starts it), so the transient conflict is the container
 		// limit: cap 1, held by a filler project's running container.
-		await setMaxActiveContainersForTest(ctx.db, 1);
+		await setContainerCapacityForTest(ctx.db, 1);
 		await seedRunningContainerProject(ctx.db, 'cap-goals-more');
 		const res = await ctx.app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 			method: 'POST',
@@ -839,7 +839,7 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 		expect(again.status).toBe(409);
 
 		await removeSeededContainerProject(ctx.db, 'cap-goals-more');
-		await clearMaxActiveContainersForTest(ctx.db);
+		await clearContainerCapacityForTest(ctx.db);
 	});
 
 	// "Run now" bypasses the due-check entirely, so freshly-checked goals are no longer a reason

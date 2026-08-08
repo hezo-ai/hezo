@@ -1,15 +1,16 @@
 import type { Db } from '../../src/db/database';
 import {
 	deleteSystemMeta,
-	MAX_ACTIVE_CONTAINERS_KEY,
+	getDefaultRamCapPerContainerGb,
+	MAX_CONTAINER_MEMORY_GB_KEY,
 	setSystemMeta,
 } from '../../src/lib/system-meta';
 
 /**
- * Capacity-test seeding for the container-count concurrency model. A project
- * whose own container is running is never capacity-blocked, so "at capacity"
- * scenarios need the limit consumed by OTHER projects' running containers:
- * this creates a filler team+project pair whose container reads Running.
+ * Capacity-test seeding. A project with a container free to take the run is
+ * never capacity-blocked, so "at capacity" scenarios need the budget consumed
+ * by OTHER projects' running containers: this creates a filler team+project
+ * pair whose container reads Running.
  */
 export async function seedRunningContainerProject(db: Db, slug: string): Promise<string> {
 	const team = await db.query<{ id: string }>(
@@ -24,14 +25,22 @@ export async function seedRunningContainerProject(db: Db, slug: string): Promise
 	return project.rows[0].id;
 }
 
-/** Set the instance-wide active-container limit (system_meta). */
-export async function setMaxActiveContainersForTest(db: Db, limit: number): Promise<void> {
-	await setSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY, String(limit));
+/**
+ * Give the instance room for exactly `containers` default-sized containers.
+ *
+ * Capacity is a memory budget, not a count - a count could not bound memory once
+ * a project may raise its own per-container cap. Tests still think in whole
+ * containers, so the conversion lives here rather than at ten call sites, and
+ * "room for N" keeps meaning the same thing it always did.
+ */
+export async function setContainerCapacityForTest(db: Db, containers: number): Promise<void> {
+	const capGb = await getDefaultRamCapPerContainerGb(db);
+	await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, String(containers * capGb));
 }
 
-/** Remove the explicit limit — the host-memory-computed default applies again. */
-export async function clearMaxActiveContainersForTest(db: Db): Promise<void> {
-	await deleteSystemMeta(db, MAX_ACTIVE_CONTAINERS_KEY);
+/** Remove the explicit budget — the host-memory-computed default applies again. */
+export async function clearContainerCapacityForTest(db: Db): Promise<void> {
+	await deleteSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY);
 }
 
 /** Delete a filler project seeded by {@link seedRunningContainerProject}. */

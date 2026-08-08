@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { DockerClient, type ExecLogChunk } from '../../src/services/docker';
+import { DockerClient } from '../../src/services/docker';
+import type { ContainerEngine, ExecLogChunk } from '../../src/services/sandbox/types';
 import { type DockerSockSim, startDockerSockSim } from '../helpers/docker-sock-sim';
 
 // Runtime tier: the exec-attach / log-follow streams ride node:http over the
@@ -11,7 +12,7 @@ import { type DockerSockSim, startDockerSockSim } from '../helpers/docker-sock-s
 // so the transport contract is pinned here on the production runtime too.
 
 let sim: DockerSockSim;
-let docker: DockerClient;
+let docker: ContainerEngine;
 
 beforeAll(async () => {
 	sim = await startDockerSockSim();

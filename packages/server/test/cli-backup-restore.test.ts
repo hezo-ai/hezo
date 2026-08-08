@@ -13,7 +13,7 @@ import { peekLogicalBackupHeaderFromFile } from '../src/db/logical-backup';
 import { runMigrations } from '../src/db/migrate';
 import { openDatabase } from '../src/db/open';
 import { BASE_SCHEMA } from '../src/db/schema';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import { allMigrations } from './helpers/migrate';
 import { createS3Sim, type S3Sim } from './helpers/s3-sim';
 
@@ -79,7 +79,7 @@ async function seedAssetInDataDir(dataDir: string): Promise<SeededAsset> {
 			[teamId, projectId, content.byteLength, sha256],
 		);
 		const assetId = asset.rows[0].id;
-		await new LocalAssetStore(dataDir).write(projectId, assetId, new Blob([content]));
+		await new LocalAssetStore(dataDir).write(projectId, assetId, new Blob([blobBytes(content)]));
 		return { projectId, assetId, content };
 	} finally {
 		await safeClose(opened.db as { close: () => Promise<void> });

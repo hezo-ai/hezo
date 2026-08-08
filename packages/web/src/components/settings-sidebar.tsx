@@ -25,7 +25,7 @@ const ADMIN_ITEMS: NavItem[] = [
 	{ to: '/settings/admin-password', labelKey: 'settings.adminPassword' },
 	{ to: '/settings/users', labelKey: 'settings.users' },
 	{ to: '/settings/chatbox', labelKey: 'settings.chatbox' },
-	{ to: '/settings/concurrency', labelKey: 'settings.concurrency' },
+	{ to: '/settings/containers', labelKey: 'settings.concurrency' },
 	{ to: '/settings/skills', labelKey: 'settings.skills' },
 	{ to: '/settings/connectors', labelKey: 'settings.connectors' },
 	{ to: '/settings/chat-channels', labelKey: 'settings.chatChannels' },

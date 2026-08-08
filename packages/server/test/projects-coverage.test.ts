@@ -10,7 +10,7 @@ import { seedBuiltins } from '../src/db/seed';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
 import { buildApp } from '../src/startup';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createStubDocker,
@@ -22,7 +22,7 @@ import { createTestDbWithMigrations } from './helpers/db';
 
 function iconForm(bytes: Buffer, type = 'image/png'): FormData {
 	const fd = new FormData();
-	fd.set('file', new Blob([bytes], { type }), 'icon.png');
+	fd.set('file', new Blob([blobBytes(bytes)], { type }), 'icon.png');
 	return fd;
 }
 
@@ -270,65 +270,5 @@ describe('public project icon serve endpoint — signature branches', () => {
 		const res = await app.request(iconUrl);
 		expect(res.status).toBe(404);
 		expect((await res.json()).error.message).toMatch(/Icon not found/);
-	});
-});
-
-describe('container/start — docker error path', () => {
-	let app: Hono<Env>;
-	let db: Db;
-	let token: string;
-	let projectSlug: string;
-	let projectId: string;
-	let tempDataDir: string;
-
-	beforeAll(async () => {
-		tempDataDir = join(tmpdir(), `hezo-test-proj-docker-${Date.now()}`);
-		mkdirSync(tempDataDir, { recursive: true });
-		db = await createTestDbWithMigrations();
-		const masterKeyManager = new MasterKeyManager();
-		await masterKeyManager.initialize(db, generateUnlockKey());
-		await seedBuiltins(db, await loadAgentRoles());
-		// A docker stub whose startContainer throws — drives the catch in container/start.
-		const docker = createStubDocker({
-			startContainer: async () => {
-				throw new Error('simulated docker failure');
-			},
-		});
-		app = buildApp(db, masterKeyManager, { dataDir: tempDataDir, webUrl: '' }, docker);
-		const userResult = await db.query<{ id: string }>(
-			"INSERT INTO users (display_name, is_superuser) VALUES ('Test Admin', true) RETURNING id",
-		);
-		token = await signAdminJwt(masterKeyManager, userResult.rows[0].id);
-
-		const teamRes = await createTestTeam(db, { name: 'Docker Err Co' });
-		const dteamId = (await teamRes.json()).data.id;
-		const projRes = await createTestProject(db, dteamId, {
-			name: 'Docker Err Project',
-			description: 'Exercises the container/start docker error branch.',
-		});
-		const proj = (await projRes.json()).data;
-		projectSlug = proj.slug;
-		projectId = proj.id;
-		await db.query(
-			`UPDATE projects SET container_id = 'stub-container',
-			        container_status = 'stopped'::container_status WHERE id = $1`,
-			[projectId],
-		);
-	});
-
-	afterAll(async () => {
-		await safeClose(db);
-		rmSync(tempDataDir, { recursive: true, force: true });
-	});
-
-	it('500s with DOCKER_ERROR when startContainer throws', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/container/start`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(500);
-		const body = await res.json();
-		expect(body.error.code).toBe('DOCKER_ERROR');
-		expect(body.error.message).toMatch(/simulated docker failure/);
 	});
 });

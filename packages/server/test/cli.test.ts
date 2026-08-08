@@ -50,7 +50,6 @@ describe('parseConfig', () => {
 		expect(config.open).toBe(true);
 		expect(config.logLevel).toBe('info');
 		expect(config.keepOldContainers).toBe(false);
-		expect(config.containerBindHost).toBe('127.0.0.1');
 		expect(config.autoInstallUpdates).toBe(false);
 		expect(config.telemetry.enabled).toBe(true);
 		expect(config.telemetry.endpoint).toBe('https://hezo.ai/api/telemetry');
@@ -174,11 +173,6 @@ describe('parseConfig', () => {
 		expect(config.keepOldContainers).toBe(true);
 	});
 
-	it('parses --container-bind-host', () => {
-		const config = parseConfig(argv('--container-bind-host', '0.0.0.0'), EMPTY_ENV);
-		expect(config.containerBindHost).toBe('0.0.0.0');
-	});
-
 	it('handles multiple flags combined', () => {
 		const config = parseConfig(
 			argv(
@@ -219,13 +213,6 @@ describe('parseConfig', () => {
 		it('HEZO_KEEP_OLD_CONTAINERS overrides absence of CLI flag', () => {
 			const config = parseConfig(argv(), { HEZO_KEEP_OLD_CONTAINERS: '1' });
 			expect(config.keepOldContainers).toBe(true);
-		});
-
-		it('HEZO_CONTAINER_BIND_HOST overrides --container-bind-host', () => {
-			const config = parseConfig(argv('--container-bind-host', '127.0.0.1'), {
-				HEZO_CONTAINER_BIND_HOST: '0.0.0.0',
-			});
-			expect(config.containerBindHost).toBe('0.0.0.0');
 		});
 
 		it('HEZO_RESET=false overrides --reset', () => {

@@ -46,16 +46,16 @@ export function PreviewPanel({ item, onClose, task }: PreviewPanelProps) {
 	// Below lg the panel is a full-screen overlay (fixed inset-0). At lg+ it's an
 	// in-grid sticky column: pinned `top-4` below the shell scroller so its top never
 	// scrolls out of view. The max-height must keep the panel inside the scroller's
-	// visible area — the shell scroller (<main>) sits below the h-12 (3rem) app
-	// header, so `100vh` overshoots it. Subtracting the header (3rem) plus the
-	// `top-4` offset (1rem) = 4rem sizes the panel to fit exactly: a sticky box
-	// taller than its scrollport has too little room in its grid cell and its top
-	// rides up on scroll, which is precisely what an oversized (100vh − 2rem) panel
-	// did.
+	// visible area — a sticky box taller than its scrollport has too little room in
+	// its grid cell and its top rides up on scroll. So cap it at the scrollport
+	// (`--shell-scrollport-h`, measured on <main> in __root.tsx) less this panel's
+	// own `top-4` offset. Do NOT reintroduce a `100vh` calculation here: it would
+	// have to guess the chrome above <main>, and that guess is wrong the moment the
+	// shell renders a banner.
 	return (
 		<aside
 			data-testid="preview-panel"
-			className="fixed inset-0 z-[60] flex min-h-0 flex-col overflow-hidden bg-surface lg:inset-auto lg:z-auto lg:sticky lg:top-4 lg:max-h-[calc(100vh-4rem)] lg:rounded-lg lg:border lg:border-border"
+			className="fixed inset-0 z-[60] flex min-h-0 flex-col overflow-hidden bg-surface lg:inset-auto lg:z-auto lg:sticky lg:top-4 lg:max-h-[calc(var(--shell-scrollport-h)-1rem)] lg:rounded-lg lg:border lg:border-border"
 		>
 			<div className="flex items-center gap-2 border-b border-border bg-surface-2 px-3 py-2">
 				<span

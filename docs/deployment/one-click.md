@@ -194,7 +194,7 @@ sudo journalctl -u hezo | grep -Ei 'postgres|asset storage'
 ```
 
 You should see `Using external Postgres at …` and `Asset storage: S3-compatible (…)`.
-In the web app, **Settings → General** shows the active **Database** and **Asset
+In the web app, **Settings → Storage** shows the active **Database** and **Asset
 storage** backends with credentials occluded.
 
 ### DigitalOcean: Managed Postgres + Spaces

@@ -16,6 +16,7 @@ const PHASE_ORDER = [
 	'seed',
 	'asset-storage',
 	'pricing',
+	'sandbox',
 	'workspace',
 	'ready',
 ];

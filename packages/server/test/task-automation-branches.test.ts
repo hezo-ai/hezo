@@ -91,7 +91,7 @@ describe('notifyParentOfOAuthVerification — label and platform branches', () =
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 		// No confirmation comment posted on the parent.
 		expect(await verifiedCommentCount(parent)).toBe(0);
@@ -116,7 +116,7 @@ describe('notifyParentOfOAuthVerification — label and platform branches', () =
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const text = await latestVerifiedText(parent);
@@ -140,7 +140,7 @@ describe('notifyParentOfOAuthVerification — label and platform branches', () =
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const text = await latestVerifiedText(parent);
@@ -215,7 +215,7 @@ describe('notifyParentOfOAuthVerification — Captain-authored comment + wakeup'
 				TaskStatus.Backlog,
 				TaskStatus.Done,
 				null,
-				undefined,
+				null,
 			);
 
 			const comment = await db2.query<{ author_member_id: string | null }>(
@@ -266,7 +266,7 @@ describe('wakeParentIfChildrenClosed — parent assignee is not an agent', () =>
 			TaskStatus.InProgress,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		// No assignment wakeup landed for the human member.
