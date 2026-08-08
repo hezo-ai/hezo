@@ -71,12 +71,17 @@ without losing anything. Open the project's **Settings**, scroll to the **Danger
 the bottom, and choose **Archive this project**. After you confirm:
 
 - The project disappears from the project rail on the left.
-- Its container is stopped, and any in-progress agent runs are cancelled.
+- Any in-progress agent runs are cancelled, and its containers are removed.
+- Its agents stop being scheduled. An archived project's tasks are not picked up by a
+  heartbeat, and no new container is started for it.
 - Its tasks, documents, and history are all kept - archiving is reversible, not a delete.
+  Anything a repository clone holds, including commits an agent has not pushed yet, stays
+  on disk.
 
 To bring a project back, open the global **Settings → Archived projects**, find it in the
-list, and choose **Unarchive**. It returns to the rail immediately; its container stays
-stopped until you start it again, just like any other stopped project.
+list, and choose **Unarchive**. It returns to the rail immediately and its agents are
+scheduled again; the next run starts a fresh container, the same way it does for any
+project that does not have one.
 
 Archiving and unarchiving are admin (superuser) actions.
 

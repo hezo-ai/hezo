@@ -34,7 +34,7 @@ import { getMaxContainerMemoryGb } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
-import { stopContainerGracefully, teardownContainer } from '../services/containers';
+import { teardownContainer } from '../services/containers';
 import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
@@ -713,9 +713,18 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 // --- Archive / unarchive ------------------------------------------------------
 // Soft-delete a project: it drops out of the default project index (the rail),
 // keeping its row/tasks/history so it can be restored. Superuser-only, matching
-// the global-settings "Archived projects" page that unarchives. Archiving also
-// stops the container (a retired project is dormant); unarchiving restores
-// visibility only — the container stays stopped, like any stopped project.
+// the global-settings "Archived projects" page that unarchives.
+//
+// Archiving makes the project genuinely dormant, not merely hidden. Its
+// containers are torn down (not stopped: a stopped container is a `suspended`
+// pool member, which is a *resume* rung on the pool ladder, so the next wakeup
+// brought it straight back), and every dispatch path filters `archived_at` so
+// nothing asks for one. The workspace survives, because unarchiving has to find
+// the repo clone and any unpushed commits where it left them.
+//
+// Unarchiving restores visibility only. There is no container to restart by
+// then; the next run provisions a fresh one, the same path any project with no
+// container takes.
 projectsRoutes.post('/projects/:projectId/archive', async (c) => {
 	const denied = requireSuperuser(c);
 	if (denied) return denied;
@@ -725,45 +734,45 @@ projectsRoutes.post('/projects/:projectId/archive', async (c) => {
 	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const existing = await db.query<{
-		slug: string;
-		is_internal: boolean;
-		container_id: string | null;
-	}>('SELECT slug, is_internal, container_id FROM projects WHERE id = $1 AND team_id = $2', [
-		projectId,
-		teamId,
-	]);
+	const existing = await db.query<{ slug: string; is_internal: boolean }>(
+		'SELECT slug, is_internal FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
+	);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	if (existing.rows[0].is_internal) {
 		return err(c, 'FORBIDDEN', 'Cannot archive an internal project', 403);
 	}
 
-	const { slug: projectSlug, container_id: containerId } = existing.rows[0];
+	const { slug: projectSlug } = existing.rows[0];
 
-	// Cancel in-flight agent runs before stopping the container (mirrors
-	// POST /projects/:projectId/container/stop). No container yet → just mark it
-	// stopped so the archived project reads as dormant.
-	if (containerId) {
-		await cancelRunningAgentTasks(db, c.get('jobManager'), projectId, teamId);
-	}
+	// Unconditionally, not only when `projects.container_id` is set: that column
+	// names the newest container a project holds, and a project can hold pool
+	// members with no named container at all (`clearProjectContainerIfNamed`
+	// nulls it whenever the named one is destroyed). Gating on it meant a project
+	// in that state was archived with its runs still going and its containers
+	// still up.
+	await cancelRunningAgentTasks(db, c.get('jobManager'), projectId, teamId);
 
+	// `archived_at` is written before the teardown lands so the dispatch gates
+	// see it immediately - a wakeup racing the teardown must find the project
+	// already archived, not merely mid-stop.
 	const result = await db.query(
 		`UPDATE projects
 		 SET archived_at = now(), container_status = $1::container_status
 		 WHERE id = $2 RETURNING *`,
-		[containerId ? ContainerStatus.Stopping : ContainerStatus.Stopped, projectId],
+		[ContainerStatus.Stopping, projectId],
 	);
 
-	if (containerId) {
-		const containerDeps = buildContainerDeps(c);
-		c.get('jobManager').launchTask(
-			`stop:${projectId}`,
-			async () => {
-				await stopContainerGracefully(containerDeps, projectId, projectSlug, teamId, containerId);
-			},
-			60_000,
-		);
-	}
+	const containerDeps = buildContainerDeps(c);
+	c.get('jobManager').launchTask(
+		`teardown:${projectId}`,
+		async () => {
+			await teardownContainer(containerDeps, projectId, projectSlug, teamId, {
+				removeWorkspace: false,
+			});
+		},
+		60_000,
+	);
 
 	broadcastChange(
 		c,

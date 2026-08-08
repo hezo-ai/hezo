@@ -806,15 +806,16 @@ export async function ensureProjectContainerRunning(
 	// second caller sees a running container instead of double-provisioning.
 	return withContainerLifecycleLock(projectId, async () => {
 		const { db, docker } = deps;
-		const res = await db.query<ProjectRow & { team_slug: string }>(
+		const res = await db.query<ProjectRow & { team_slug: string; archived_at: string | null }>(
 			`SELECT p.id, p.team_id, p.slug, p.docker_base_image, p.container_id, p.container_status,
-			        p.dev_ports, c.slug AS team_slug
+			        p.dev_ports, p.archived_at, c.slug AS team_slug
 			 FROM projects p JOIN teams c ON c.id = p.team_id
 			 WHERE p.id = $1`,
 			[projectId],
 		);
 		const proj = res.rows[0];
 		if (!proj) throw new Error('Project not found');
+		if (proj.archived_at) throw new ProjectArchivedError(proj.slug);
 
 		if (proj.container_id) {
 			const info = await docker.inspectContainer(proj.container_id);
@@ -876,6 +877,35 @@ export class PoolCapacityError extends Error {
 		);
 		this.name = 'PoolCapacityError';
 	}
+}
+
+/**
+ * Thrown when something asks for a container on a project the operator retired.
+ *
+ * Archiving tears the project's containers down and every dispatch path filters
+ * archived projects out, so reaching here means a caller asked for a container
+ * that must not exist. It fails loudly rather than quietly provisioning one: a
+ * silently-honoured request is how an archived project came back to life on the
+ * Containers page with nothing in the logs to say why.
+ */
+export class ProjectArchivedError extends Error {
+	constructor(projectSlug: string) {
+		super(`project ${projectSlug} is archived; no container may be provisioned or started for it`);
+		this.name = 'ProjectArchivedError';
+	}
+}
+
+/**
+ * The guard behind `ProjectArchivedError`, for callers that have not already
+ * loaded the project row.
+ */
+export async function assertProjectNotArchived(db: Db, projectId: string): Promise<void> {
+	const res = await db.query<{ slug: string; archived_at: string | null }>(
+		'SELECT slug, archived_at FROM projects WHERE id = $1',
+		[projectId],
+	);
+	const proj = res.rows[0];
+	if (proj?.archived_at) throw new ProjectArchivedError(proj.slug);
 }
 
 /**
@@ -1097,6 +1127,12 @@ export async function acquireRunContainer(
 ): Promise<AcquiredContainer> {
 	const { db, docker } = deps;
 	let bootstrapped = false;
+
+	// Ahead of the ladder rather than inside it: every rung either provisions a
+	// container or resumes a suspended one, and an archived project must get
+	// neither. Checked once, since archiving cannot race a run it has already
+	// cancelled.
+	await assertProjectNotArchived(db, projectId);
 
 	/**
 	 * One pass of the ladder, under the project's lifecycle lock.
@@ -1558,12 +1594,23 @@ export async function destroyContainer(
 	);
 }
 
+/**
+ * Remove every container a project holds, and optionally its workspace.
+ *
+ * Two callers with different appetites for destruction. Deleting a project takes
+ * the workspace too - nothing is coming back for it. Archiving does not: it is
+ * reversible, and the workspace is where a repo clone and any commits an agent
+ * has not pushed live, so removing it would turn "hide this for now" into silent
+ * data loss.
+ */
 export async function teardownContainer(
 	deps: ContainerDeps,
 	projectId: string,
 	projectSlug: string,
 	teamId: string,
+	opts: { removeWorkspace?: boolean } = {},
 ): Promise<void> {
+	const { removeWorkspace = true } = opts;
 	const { db, docker, dataDir } = deps;
 
 	const result = await db.query<{ container_id: string | null }>(
@@ -1586,7 +1633,7 @@ export async function teardownContainer(
 		projectId,
 	]);
 
-	removeProjectWorkspace(dataDir, teamId, projectId);
+	if (removeWorkspace) removeProjectWorkspace(dataDir, teamId, projectId);
 	memoryUsageState.delete(projectId);
 	lastMemoryCheckAt.delete(projectId);
 

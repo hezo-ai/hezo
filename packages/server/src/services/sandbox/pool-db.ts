@@ -363,6 +363,12 @@ export interface ContainerListing {
  * `projects.container_status`. The mapping is stated rather than assumed: `running`
  * reads as `idle` because a legacy row cannot tell us whether a run holds it, and
  * calling it busy would misreport a container an operator may safely remove.
+ *
+ * **Deliberately not filtered by `projects.archived_at`.** Archiving tears the
+ * project's containers down, so an archived project has nothing to list and drops
+ * off this page because it genuinely holds no container. Filtering instead would
+ * hide one that still exists on the engine and still counts against the instance
+ * memory budget - the exact failure this page exists to make visible.
  */
 export async function listAllContainers(db: Db): Promise<ContainerListing[]> {
 	const res = await db.query<ContainerListingRow>(
