@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { wsRoom } from '@hezo/shared';
@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
+	CONTAINER_CA_PATH,
 	type ContainerDeps,
 	consumeFinalMemoryLine,
 	type ProjectRow,
@@ -14,8 +15,8 @@ import {
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 } from '../src/services/containers';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import type { WebSocketManager } from '../src/services/ws';
 import { safeClose } from './helpers';
 import {
@@ -26,7 +27,7 @@ import {
 	createTestTeam,
 } from './helpers/app';
 
-function deps(docker: DockerClient, wsManager?: WebSocketManager): ContainerDeps {
+function deps(docker: ContainerEngine, wsManager?: WebSocketManager): ContainerDeps {
 	// Production samples container memory every 15s rather than on every sync
 	// pass (the stats call is the expensive one and a working set does not move
 	// meaningfully inside a second). These tests drive the sync directly and
@@ -223,6 +224,43 @@ describe('syncAllContainerStatuses', () => {
 			[projectId],
 		);
 		expect(result.rows[0].container_status).toBe('stopped');
+	});
+
+	it('suspends the pool member when its container stops outside Hezo', async () => {
+		// A managed backend reclaims an unused sandbox on its own schedule. The
+		// container is intact and resumable, so the member must read `suspended` -
+		// left at `idle` it advertises a warm container that is not up, and the
+		// ladder hands it to the next run as "nothing to start".
+		const projectRes = await createTestProject(db, teamId, {
+			name: 'Externally Stopped Project',
+			description: 'Test project.',
+		});
+		const projectId = (await projectRes.json()).data.id;
+
+		await db.query(
+			"UPDATE projects SET container_id = 'reclaimed-box', container_status = 'running' WHERE id = $1",
+			[projectId],
+		);
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state)
+			 VALUES ($1, 'reclaimed-box', 'idle'::container_pool_state)`,
+			[projectId],
+		);
+
+		await syncAllContainerStatuses(
+			deps(
+				createStubDocker({
+					inspectContainer: vi.fn().mockResolvedValue({
+						State: { Running: false, Status: 'exited', ExitCode: 0 },
+					}),
+				}),
+			),
+		);
+
+		const member = await db.query<{ state: string }>(
+			"SELECT state::text AS state FROM container_pool_members WHERE container_id = 'reclaimed-box'",
+		);
+		expect(member.rows[0].state).toBe('suspended');
 	});
 
 	it('keeps status as running when container is actually running', async () => {
@@ -812,17 +850,20 @@ describe('provisionContainer broadcasting', () => {
 		expect(binds.find((b) => b.includes('assets'))).toBeUndefined();
 		expect(binds.find((b) => b.endsWith(':/workspace:rw'))).toBeDefined();
 
-		// The cgroup hard cap is set as a backstop (project ceiling + headroom,
-		// no swap); the sync-loop stats poller remains the graceful early-stop.
+		// The project's working-set ceiling, stated as itself and with no swap
+		// escape valve; the sync-loop stats poller is the graceful early-stop at
+		// exactly this figure. Whether a margin sits above it - and how big - is the
+		// engine's business: the Docker adapter adds one for the between-ticks
+		// kernel-OOM backstop, a managed sandbox is allocated exactly this.
 		const limitGib = (
 			await db.query<{ memory_limit_gib: number }>(
 				'SELECT memory_limit_gib FROM projects WHERE id = $1',
 				[projectId],
 			)
 		).rows[0].memory_limit_gib;
-		const expectedCap = limitGib * 1024 ** 3 + 512 * 1024 ** 2;
-		expect(hostConfig.Memory).toBe(expectedCap);
-		expect(hostConfig.MemorySwap).toBe(expectedCap);
+		const ceiling = limitGib * 1024 ** 3;
+		expect(hostConfig.Memory).toBe(ceiling);
+		expect(hostConfig.MemorySwap).toBe(ceiling);
 	});
 
 	it('labels containers as test containers only when HEZO_TEST_CONTAINERS is set', async () => {
@@ -925,7 +966,7 @@ describe('provisionContainer broadcasting', () => {
 		expect(bindsAfter.join('\n')).not.toContain('renamed-project-slug');
 	});
 
-	it('bind-mounts the egress CA when egressCAPath is provided', async () => {
+	it('writes the egress CA through the file seam when egressCAPath is provided', async () => {
 		await db.query(
 			'UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1',
 			[projectId],
@@ -933,14 +974,28 @@ describe('provisionContainer broadcasting', () => {
 
 		const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
 		const egressCAPath = join(dataDir, 'ca.pem');
-		const mockDocker = {
+		writeFileSync(egressCAPath, '-----BEGIN CERTIFICATE-----\nsync-test\n');
+
+		// Built from `createStubDocker` rather than hand-rolled: this spec used to
+		// assemble a six-method object behind `as any`, which is precisely the shape
+		// that breaks the moment production calls a method the stub omitted - and
+		// `files()` is the method this test now depends on.
+		const writes: Array<{ path: string; contents: string }> = [];
+		const mockDocker = createStubDocker({
 			imageExists: vi.fn().mockResolvedValue(false),
 			pullImage: vi.fn().mockResolvedValue(undefined),
 			createContainer: vi.fn().mockResolvedValue({ Id: 'egress-ca-container' }),
 			startContainer: vi.fn().mockResolvedValue(undefined),
 			execCreate: vi.fn().mockResolvedValue('exec-id'),
 			execStart: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
-		} as any;
+		});
+		const realFiles = mockDocker.files;
+		mockDocker.files = (containerId: string, root: string) => ({
+			...realFiles(containerId, root),
+			write: async (rel: string, contents: string) => {
+				writes.push({ path: `${root}/${rel}`, contents });
+			},
+		});
 
 		const project = (
 			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
@@ -952,8 +1007,13 @@ describe('provisionContainer broadcasting', () => {
 			'container-sync-co',
 		);
 
-		const binds = mockDocker.createContainer.mock.calls[0][1].HostConfig.Binds as string[];
-		expect(binds).toContain(`${egressCAPath}:/usr/local/share/ca-certificates/hezo-egress.crt:ro`);
+		const binds = (mockDocker.createContainer as ReturnType<typeof vi.fn>).mock.calls[0][1] as {
+			HostConfig: { Binds: string[] };
+		};
+		expect(binds.HostConfig.Binds.some((b) => b.includes('hezo-egress.crt'))).toBe(false);
+
+		const caWrite = writes.find((w) => w.path === CONTAINER_CA_PATH);
+		expect(caWrite?.contents).toContain('sync-test');
 		expect(mockDocker.execCreate).toHaveBeenCalled();
 	});
 
@@ -1124,13 +1184,16 @@ describe('provisionContainer broadcasting', () => {
 			await db.query<ProjectRow>('SELECT * FROM projects WHERE id = $1', [projectId])
 		).rows[0];
 
-		await provisionContainer(
+		const containerId = await provisionContainer(
 			{ db, docker: mockDocker, dataDir, wsManager: mockWsManager, logs },
 			project,
 			'container-sync-co',
 		);
 
-		const logRoom = `container-logs:${projectId}`;
+		// The room names the container, not its project: a project holds as many
+		// containers as it has concurrent runs, and a project-keyed room interleaved
+		// their provisioning output into one stream.
+		const logRoom = `container-logs:${containerId}`;
 		// Log frames are coalesced on a short window, and the provisioning stream is
 		// never ended (it stays open for replay), so the last batch lands on the
 		// timer rather than synchronously. Read lines, not frames: a frame's text
@@ -1178,19 +1241,21 @@ describe('provisionContainer broadcasting', () => {
 			),
 		).rejects.toThrow('boom');
 
-		const logRoom = `container-logs:${projectId}`;
-		// Log frames are coalesced on a short window, and the provisioning stream is
-		// never ended (it stays open for replay), so the last batch lands on the
-		// timer rather than synchronously. Read lines, not frames: a frame's text
-		// carries however many lines the window happened to collect.
+		// The pull failed before the engine returned an id, so there is no container
+		// to attach output to and no room to publish into. The reason is carried by
+		// `projects.container_error`, which is what the banner reads.
 		await waitForLogBatch();
-		const logLines = mockWsManager.broadcast.mock.calls
-			.filter(([room]: [string]) => room === logRoom)
-			.flatMap(([, event]: [string, any]) => (event.text as string).split('\n'));
-
-		expect(logLines.some((line: string) => line.includes('✗ Provisioning failed: boom'))).toBe(
-			true,
+		const containerRooms = mockWsManager.broadcast.mock.calls.filter(([room]: [string]) =>
+			room.startsWith('container-logs:'),
 		);
+		expect(containerRooms).toHaveLength(0);
+
+		const row = await db.query<{ container_status: string; container_error: string | null }>(
+			'SELECT container_status::text AS container_status, container_error FROM projects WHERE id = $1',
+			[projectId],
+		);
+		expect(row.rows[0].container_status).toBe('error');
+		expect(row.rows[0].container_error).toContain('boom');
 	});
 });
 

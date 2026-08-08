@@ -33,7 +33,9 @@ agent can't hurt you. A few guarantees sit underneath everything:
   hold. See [Master key & encryption](/docs/security/master-key).
 - **Each project's agents run in their own container.** A compromised agent is confined to its
   project's sandbox - it can't reach your host or the rest of your system. See
-  [Container isolation](/docs/security/container-isolation).
+  [Container isolation](/docs/security/container-isolation), and
+  [Containers](/docs/containers/overview) for where those containers run (your own Docker
+  daemon or a managed service).
 - **Agents work in real repos without holding the keys.** Git signing and SSH happen
   on the host, so commits land **verified** while the key never enters the sandbox. See
   [Git & verified commits](/docs/security/git-and-verified-commits).

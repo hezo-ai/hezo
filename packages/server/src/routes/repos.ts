@@ -1,11 +1,5 @@
 import { join } from 'node:path';
-import {
-	ContainerStatus,
-	RepoSetupStatus,
-	repoNameFromIdentifier,
-	TERMINAL_TASK_STATUSES,
-	wsRoom,
-} from '@hezo/shared';
+import { ContainerStatus, RepoSetupStatus, repoNameFromIdentifier, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
@@ -18,12 +12,12 @@ import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import { resolveContainerRunUser } from '../services/container-user';
 import type { ContainerDeps } from '../services/containers';
+import type { EgressProxy } from '../services/egress';
 import {
 	getCloneState,
 	getWorktreeState,
 	listWorktrees,
 	type RepoLoc,
-	removeWorktreesWhere,
 	resetCloneToOrigin,
 	type WorktreeLoc,
 } from '../services/git';
@@ -34,6 +28,7 @@ import { performRepoSetup } from '../services/repo-provisioning';
 import { refreshRepoPushAccess } from '../services/repo-push-access';
 import { removeRepoFromWorkspace } from '../services/repo-sync';
 import { countActiveRunsInProject } from '../services/run-concurrency';
+import { collectFinishedWorktrees } from '../services/sandbox/worktree-gc';
 import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
 import {
 	CONTAINER_WORKSPACE_ROOT,
@@ -159,10 +154,21 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 			return err(c, 'REPO_CREATE_FAILED', (e as Error).message, 500);
 		}
 		if (created.status === 'already_exists') {
+			// Says which repo is in the way, and what to do instead. "Already exists"
+			// alone left an operator staring at a picker that does not list it - the
+			// name is most often held by a **private** repo, which is exactly the one
+			// they cannot see - so the visibility is named whenever it could be read.
+			const visibility =
+				created.existingPrivate === null
+					? ''
+					: created.existingPrivate
+						? ' It is private, which is why it does not appear in the repository picker.'
+						: ' It is public.';
 			return err(
 				c,
 				'GITHUB_REPO_EXISTS',
-				`A repository named "${created.owner}/${created.name}" already exists on GitHub.`,
+				`A repository named "${created.owner}/${created.name}" already exists on GitHub.${visibility}` +
+					' Link that repository instead, or choose a different name.',
 				409,
 			);
 		}
@@ -253,6 +259,7 @@ reposRoutes.post('/projects/:projectId/repos', async (c) => {
 		logs: c.get('logs'),
 		containerLogStreamer: c.get('containerLogStreamer'),
 		sshAgentServer: c.get('sshAgentServer'),
+		egressProxy: c.get('egressProxy'),
 		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 	};
 	trackBackground(
@@ -363,8 +370,12 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 	const wtPrefix = `${CONTAINER_WORKTREES_ROOT}/`;
 
 	const state = await withProjectGitLock(projectId, async () => {
-		const clone = await getCloneState(executor, repo.repoLoc);
-		const entries = await listWorktrees(executor, repo.repoLoc);
+		const repoLoc: RepoLoc = {
+			containerPath: repo.repoContainerPath,
+			files: executor.files(repo.repoContainerPath),
+		};
+		const clone = await getCloneState(executor, repoLoc);
+		const entries = await listWorktrees(executor, repoLoc);
 		const worktrees: {
 			taskIdentifier: string;
 			branch: string | null;
@@ -378,8 +389,8 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 			const taskIdentifier = entry.path.slice(wtPrefix.length).split('/')[0];
 			if (!taskIdentifier) continue;
 			const wtLoc: WorktreeLoc = {
-				hostPath: join(worktreesPath, taskIdentifier, repo.repoName),
 				containerPath: entry.path,
+				files: executor.files(entry.path),
 			};
 			const wt = await getWorktreeState(executor, wtLoc);
 			worktrees.push({
@@ -466,15 +477,17 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 	const docker = c.get('docker');
 
 	if (action === 'reclone') {
-		// Wipe the clone (+ this repo's worktrees) and re-run the standard repo-setup
-		// path, which re-clones and settles the row to ready/failed. The frontend
-		// already renders `setup_status === 'pending'` as "Setting up…".
-		try {
-			removeRepoFromWorkspace(dataDir, teamId, projectId, repo.repoName);
-		} catch (e) {
-			log.error(`Failed to wipe workspace for reclone of ${repo.repoName}:`, e);
-			return err(c, 'RECLONE_FAILED', 'failed to remove existing clone', 500);
-		}
+		// Re-run the standard repo-setup path, asking it for a *fresh* clone: it
+		// wipes the existing one (and this repo's worktrees) inside the container
+		// and then clones, settling the row to ready/failed. The frontend already
+		// renders `setup_status === 'pending'` as "Setting up…".
+		//
+		// The wipe belongs there rather than here because the sync chooses
+		// clone-vs-adopt by reading the container. This route used to delete the
+		// host directory instead, which selected `clone` only while the two were
+		// the same bytes - on a managed backend it emptied nothing, the sync
+		// adopted the clone it was asked to replace, and the action reported
+		// success having done nothing.
 		const updated = await db.query<Record<string, unknown>>(
 			`UPDATE repos r SET setup_status = $1::repo_setup_status, setup_error = NULL
 			 WHERE r.id = $2 AND r.project_id = $3
@@ -494,12 +507,19 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 			logs: c.get('logs'),
 			containerLogStreamer: c.get('containerLogStreamer'),
 			sshAgentServer: c.get('sshAgentServer'),
+			egressProxy: c.get('egressProxy'),
 			egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
 		};
 		trackBackground(
 			performRepoSetup(
 				{ ...setupDeps, docker, dataDir },
-				{ teamId, projectId, repoId: repo.repoId, repoIdentifier: repo.repoIdentifier },
+				{
+					teamId,
+					projectId,
+					repoId: repo.repoId,
+					repoIdentifier: repo.repoIdentifier,
+					freshClone: true,
+				},
 			).catch((e) => log.error(`Background reclone for ${repo.repoIdentifier} failed:`, e)),
 		);
 		return ok(c, { reset: true, action });
@@ -532,41 +552,69 @@ reposRoutes.post('/projects/:projectId/repos/:repoId/reset', async (c) => {
 				// finished tickets plus leftovers from crashed/interrupted runs. Open
 				// tasks' worktrees are left intact; reset is already 409-gated on active
 				// runs, so nothing live is touched. Committed work survives on the pushed
-				// `hezo/<identifier>` branch refs. `removeWorktreesWhere` also runs the
-				// plain `git worktree prune` afterward to clear any dangling metadata.
-				const taskRows = await db.query<{ identifier: string; status: string }>(
-					'SELECT identifier, status FROM tasks WHERE project_id = $1',
-					[projectId],
-				);
-				const statusByIdentifier = new Map(taskRows.rows.map((t) => [t.identifier, t.status]));
-				const isStale = (identifier: string): boolean => {
-					const status = statusByIdentifier.get(identifier);
-					return (
-						status === undefined || (TERMINAL_TASK_STATUSES as readonly string[]).includes(status)
-					);
-				};
-				const removed = await removeWorktreesWhere(
+				// `hezo/<identifier>` branch refs. The sweep also runs the plain
+				// `git worktree prune` afterward to clear any dangling metadata.
+				//
+				// Same policy as the automatic per-run sweep, and unbounded here: a human
+				// asked for this and is waiting on the result, so it clears everything
+				// rather than leaving a remainder for later.
+				const { removed } = await collectFinishedWorktrees(
+					db,
 					executor,
-					repo.repoLoc,
-					CONTAINER_WORKTREES_ROOT,
-					isStale,
+					projectId,
+					[
+						{
+							containerPath: repo.repoContainerPath,
+							files: executor.files(repo.repoContainerPath),
+						},
+					],
+					undefined,
 				);
 				return { success: true, removed };
 			}
-			// discard_local: the best-effort fetch needs the SSH bridge.
+			// discard_local: the best-effort fetch reaches the remote, so it needs the
+			// egress proxy to substitute the origin's credential placeholder as much
+			// as it needs the bridge.
 			const sshAgentServer = c.get('sshAgentServer');
-			const runReset = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
-				resetCloneToOrigin(
-					ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId),
-					repo.repoLoc,
+			const egressProxy = c.get('egressProxy');
+			const runReset = (
+				bridge: BridgeRunnerArgs | null,
+				scopeId: string,
+				proxyEnv: string[] = [],
+			) => {
+				// The loc's files come from this executor, not another: pairing a cwd
+				// with a seam rooted in a different container is the drift the shared
+				// `files()` accessor exists to prevent.
+				const resetExecutor = ContainerGitExecutor.forPrep(
+					docker,
+					containerId,
+					bridge,
+					runUser,
+					scopeId,
+					proxyEnv,
 				);
+				return resetCloneToOrigin(resetExecutor, {
+					containerPath: repo.repoContainerPath,
+					files: resetExecutor.files(repo.repoContainerPath),
+				});
+			};
+			// Ssh server only — the egress proxy is mandatory, and
+			// `withProvisionBridge` enforces that by throwing. See the note at the
+			// equivalent guard in `containers.ts`.
 			return sshAgentServer
 				? withProvisionBridge(
 						sshAgentServer,
-						teamId,
-						dataDir,
-						runUser.name,
-						({ bridge, scopeId }) => runReset(bridge, scopeId),
+						{
+							engine: docker,
+							containerId,
+							teamId,
+							dataDir,
+							runUser,
+							db,
+							egressProxy: egressProxy as EgressProxy,
+							projectId,
+						},
+						({ bridge, scopeId, proxyEnv }) => runReset(bridge, scopeId, proxyEnv),
 					)
 				: runReset(null, mintGitOpScopeId());
 		},
@@ -648,7 +696,12 @@ interface RepoGitTarget {
 	repoId: string;
 	repoIdentifier: string;
 	repoName: string;
-	repoLoc: RepoLoc;
+	/**
+	 * The clone's path *inside* the container. Not a full `RepoLoc`, because that
+	 * carries a `SandboxFiles` rooted at the container this repo lives in and the
+	 * executor which supplies it is built by the caller, after this resolves.
+	 */
+	repoContainerPath: string;
 	containerId: string | null;
 	containerRunning: boolean;
 }
@@ -682,10 +735,7 @@ async function loadRepoForGit(
 		repoId,
 		repoIdentifier,
 		repoName,
-		repoLoc: {
-			hostPath: join(getWorkspacePath(dataDir, teamId, projectId), repoName),
-			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${repoName}`,
-		},
+		repoContainerPath: `${CONTAINER_WORKSPACE_ROOT}/${repoName}`,
 		containerId: containerRes.rows[0]?.container_id ?? null,
 		containerRunning: containerRes.rows[0]?.container_status === ContainerStatus.Running,
 	};

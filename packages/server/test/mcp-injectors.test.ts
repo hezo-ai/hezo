@@ -1,6 +1,7 @@
 import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from '../src/services/mcp-injectors';
+import type { McpInjectionFile } from '../src/services/mcp-injectors/types';
 import {
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 	STOP_HOOK_JUDGE_MODEL_DEEPSEEK,
@@ -672,7 +673,9 @@ describe('kimi adapter', () => {
 
 	const readJson = (contents: string): { mcpServers: Record<string, Record<string, unknown>> } =>
 		JSON.parse(contents) as { mcpServers: Record<string, Record<string, unknown>> };
-	const fileNamed = (injection: { files: readonly { hostPath: string }[] }, name: string) =>
+	// Typed as the real injection file rather than a hand-narrowed shape: callers
+	// read `mode` and `contents` off the result, which the narrower type hid.
+	const fileNamed = (injection: { files: readonly McpInjectionFile[] }, name: string) =>
 		injection.files.find((f) => f.hostPath.endsWith(name));
 
 	it('declares env-var bearer storage and a required home dir', () => {

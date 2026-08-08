@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { initialReadmeContent, seedInitialCommitIfEmpty } from '../src/services/git';
+import { initialReadmeContent, localGitLoc, seedInitialCommitIfEmpty } from '../src/services/git';
 import { HostGitExecutor } from '../src/services/git-executor';
 
 let root: string;
@@ -17,7 +17,7 @@ const exec = new HostGitExecutor({
 	GIT_COMMITTER_NAME: 'Hezo',
 	GIT_COMMITTER_EMAIL: 'agent@hezo.local',
 });
-const loc = (p: string) => ({ hostPath: p, containerPath: p });
+const loc = (p: string) => localGitLoc(p);
 
 function git(cwd: string, ...args: string[]): string {
 	return execFileSync('git', args, {

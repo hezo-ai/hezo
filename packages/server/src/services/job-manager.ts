@@ -5,6 +5,7 @@ import {
 	type AiProvider,
 	BUDGET_PAUSE_STATUSES,
 	CAPTAIN_AGENT_SLUG,
+	CONTAINER_IDLE_TIMEOUT_MIN,
 	CommentContentType,
 	ContainerStatus,
 	DEFAULT_TEAM_ID,
@@ -29,7 +30,7 @@ import { broadcastRowChange } from '../lib/broadcast';
 import type { StorageBackend } from '../lib/db-info';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { ref } from '../lib/log-ref';
-import { getContainerIdleTimeoutMin } from '../lib/system-meta';
+import { getDefaultRamCapPerContainerGb } from '../lib/system-meta';
 import { logger } from '../logger';
 import { getLatestInfo } from '../routes/updates';
 import { exitToApplyUpdate } from '../runtime-control';
@@ -46,25 +47,25 @@ import {
 	setAgentIdleIfNoActiveRuns,
 } from './agent-runtime-status';
 import { checkOverBudget } from './budget';
-import type { ContainerConnectivityStatus, ProbeResult } from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerDeps,
 	type ContainerExitReason,
 	type ContainerTransition,
+	destroyContainer,
 	ensureProjectContainerRunning,
 	failProjectRuns,
 	findIdleContainerCandidates,
 	isProjectIdleForContainerStop,
 	provisionContainer,
-	rebuildContainer,
+	reconcilePoolMembers,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 	verifyContainerWorkspace,
 	wakeAgentsWithPendingWork,
 	withContainerLifecycleLock,
 } from './containers';
-import type { ContainerProcessInfo, DockerClient } from './docker';
+import type { ContainerEngine, ContainerProcessInfo } from './docker';
 import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
 import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
@@ -74,7 +75,13 @@ import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
 import { buildProgressActivityCandidates } from './project-activity';
 import { ensureRepoSetupAction } from './repo-setup';
-import { getActiveContainers, isTaskBusyInDb } from './run-concurrency';
+import {
+	getActiveContainers,
+	isTaskBusyInDb,
+	projectContainerMemoryGb,
+	sumProjectContainerMemoryGb,
+} from './run-concurrency';
+import { reclaimBusyPoolMembers } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -122,6 +129,20 @@ interface RunDispatchContext {
 	pendingContainerStart?: boolean;
 }
 
+/**
+ * What the capacity gate decided, and the fact the dispatch after it needs.
+ *
+ * `hasSpareContainer` is "this project has a member a run may take", which is
+ * also exactly "this dispatch will not create a container". Carrying it out of
+ * the gate keeps that judgement in one place; the alternative - re-deriving it
+ * from `projects.container_status` at the dispatch - is a different question
+ * wearing the same clothes, and answered wrong under a pool.
+ */
+interface CapacityVerdict {
+	blocked: boolean;
+	hasSpareContainer: boolean;
+}
+
 interface RunningTask {
 	key: string;
 	abortController: AbortController;
@@ -142,6 +163,13 @@ export interface LiveRun {
 	projectId: string;
 	teamId: string;
 	taskKey: string;
+	/**
+	 * The container this run is executing in, filled in once the pool hands one
+	 * over. Null until then: a run is registered when its row is created, which
+	 * is before it has claimed anything - so this is genuinely unknown for a
+	 * moment rather than merely unset.
+	 */
+	containerId: string | null;
 }
 
 export type DispatchNowResult =
@@ -182,9 +210,24 @@ export type ProgressUpdateDispatchResult =
 	| TryProgressUpdateResult
 	| { queued: true; wakeupId: string };
 
+/**
+ * The one thing the idle pass needs from the assistant: park a session whose
+ * container is about to go down, while that container is still up.
+ *
+ * Without it the container is suspended first and the session finds out by its
+ * tunnel dying - the *failure* path. That reported "closed unexpectedly", tore
+ * the session down as `crashed` instead of parking it as `suspended` (losing the
+ * resume-in-place path entirely), and left the provider's PTY session undeleted
+ * because the DELETE raced the sandbox already stopping.
+ */
+export interface ChatSessionPark {
+	/** No-op unless a live session is pinned to exactly this container. */
+	parkForContainerSuspend(containerId: string): Promise<void>;
+}
+
 export interface JobManagerDeps {
 	db: Db;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
 	dataDir: string;
@@ -195,8 +238,6 @@ export interface JobManagerDeps {
 	sshAgentServer?: SshAgentServer;
 	egressProxy?: EgressProxy | null;
 	egressCAPath?: string;
-	connectivityStatus?: ContainerConnectivityStatus;
-	connectivityProbe?: () => Promise<ProbeResult>;
 	pricing?: PricingService;
 	/**
 	 * Storage backend, so the log-compaction drain knows whether it may VACUUM
@@ -205,6 +246,14 @@ export interface JobManagerDeps {
 	storageBackend?: StorageBackend;
 	/** Anonymous daily usage telemetry. Omitted/disabled → the cron is not registered. */
 	telemetry?: { enabled: boolean; endpoint: string };
+	/**
+	 * Park a live assistant session before its container is taken down.
+	 *
+	 * A narrow port rather than the `ChatSessionManager` itself: the idle pass
+	 * needs one verb from it, and the manager is constructed after this one, so
+	 * it is attached with {@link JobManager.setChatSessions} once both exist.
+	 */
+	chatSessions?: ChatSessionPark;
 	/**
 	 * Install staged updates automatically (`--auto-install-updates` /
 	 * `HEZO_AUTO_INSTALL_UPDATES`): restart onto a staged newer binary without
@@ -222,6 +271,14 @@ export interface JobManagerDeps {
 }
 
 const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
+/**
+ * Deferrals released per wakeups tick by {@link JobManager.releaseSatisfiedDeferrals}.
+ *
+ * Bounded because the scan is unindexed on the payload reason and this runs
+ * every five seconds; a backlog drains over a few ticks rather than in one long
+ * statement. Comfortably above what a single repo setup can strand.
+ */
+const DEFERRAL_RELEASE_LIMIT = 20;
 const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
 const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
 const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
@@ -263,6 +320,17 @@ const CONTAINER_IDLE_STOP_CRON = process.env.HEZO_CONTAINER_IDLE_STOP_CRON ?? '1
  * tick continues where this one stopped. */
 const IDLE_STOP_BATCH_LIMIT = 10;
 const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * * * * *';
+
+/**
+ * Orphaned-container sweep cadence: every 10 minutes. What it watches - a
+ * container this instance created that no project points at any more - only
+ * appears after a crash or a lost provider response, so a fast tick would burn
+ * provider API calls for nothing. It exists because on a managed backend an
+ * orphan bills until somebody notices, which fails as a cost rather than as an
+ * error and so needs a sweep rather than an alert.
+ */
+const ORPHAN_CONTAINER_SWEEP_CRON =
+	process.env.HEZO_ORPHAN_CONTAINER_SWEEP_CRON ?? '45 */10 * * * *';
 // The reactive budget pauses, which the heartbeat scheduler must not wake (the
 // budget-resume sweep lifts them back to `idle` once the window rolls over).
 // Disabled agents are filtered separately via `admin_status`. Postgres array
@@ -296,6 +364,13 @@ export class JobManager {
 	private runningTasks = new Map<string, RunningTask>();
 	private liveRuns = new Map<string, LiveRun>();
 	private guards = new Map<string, boolean>();
+	/**
+	 * Containers the last orphan sweep found unreferenced. One sighting is not
+	 * enough to destroy on (see `reapOrphanedContainers`), so the set carries
+	 * across ticks. Bounded by the number of containers this instance owns, and
+	 * replaced wholesale each pass rather than accumulated.
+	 */
+	private suspectedOrphanContainers: ReadonlySet<string> = new Set();
 	/** Ticks dropped since the last warning, per job — see guarded(). */
 	private skippedTicks = new Map<string, number>();
 	private skipWarnedAt = new Map<string, number>();
@@ -330,6 +405,18 @@ export class JobManager {
 		this.liveRuns.delete(runId);
 	}
 
+	/**
+	 * Record which container a registered run ended up in.
+	 *
+	 * Separate from registration because the order is fixed the other way: a run
+	 * exists as a row, and is cancellable, before the pool has decided what it
+	 * will execute in.
+	 */
+	attachLiveRunContainer(runId: string, containerId: string): void {
+		const run = this.liveRuns.get(runId);
+		if (run) run.containerId = containerId;
+	}
+
 	getLiveRunIds(): Set<string> {
 		return new Set(this.liveRuns.keys());
 	}
@@ -346,8 +433,23 @@ export class JobManager {
 		return true;
 	}
 
-	cancelLiveRunsForProject(projectId: string, reason: ContainerExitReason): number {
-		const runs = this.getLiveRunsForProject(projectId);
+	/**
+	 * Abort the in-process runs one dead container was carrying.
+	 *
+	 * The in-memory half of {@link failProjectRuns}, and scoped identically: the
+	 * named container's runs, plus runs that have not yet claimed one. Those
+	 * cannot be shown to be executing elsewhere, and the DB half fails them for
+	 * the same reason - the two have to agree or a run's row and its exec
+	 * disagree about whether it is alive.
+	 */
+	cancelLiveRunsForContainer(
+		projectId: string,
+		containerId: string,
+		reason: ContainerExitReason,
+	): number {
+		const runs = this.getLiveRunsForProject(projectId).filter(
+			(r) => r.containerId === containerId || r.containerId === null,
+		);
 		for (const run of runs) {
 			this.cancelTask(run.taskKey, reason);
 			this.liveRuns.delete(run.runId);
@@ -398,7 +500,7 @@ export class JobManager {
 				return { dispatched: false, reason: 'task_busy' };
 			}
 			const project = await this.resolveProjectForTask(wakeupTaskId);
-			if (await this.isContainerCapacityBlocked(project?.id ?? null)) {
+			if ((await this.isContainerCapacityBlocked(project?.id ?? null)).blocked) {
 				await this.markWakeupSkipped(
 					wakeup.id,
 					WakeupSkipReason.InstanceAtCapacity,
@@ -482,6 +584,17 @@ export class JobManager {
 		return { dispatched: true };
 	}
 
+	/**
+	 * Attach the assistant park hook after construction.
+	 *
+	 * The chat manager is built after this one (it takes no job manager, this
+	 * takes one verb from it), so the edge is closed here rather than by
+	 * reordering two constructors around a dependency neither really has.
+	 */
+	setChatSessions(chatSessions: ChatSessionPark): void {
+		this.deps.chatSessions = chatSessions;
+	}
+
 	private buildContainerDeps(): ContainerDeps {
 		return {
 			db: this.deps.db,
@@ -492,6 +605,7 @@ export class JobManager {
 			logs: this.deps.logs,
 			containerLogStreamer: this.deps.containerLogStreamer,
 			sshAgentServer: this.deps.sshAgentServer,
+			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 		};
 	}
@@ -523,6 +637,11 @@ export class JobManager {
 			cron: CONTAINER_IDLE_STOP_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('container-idle-stop', () => this.stopIdleContainers()),
+		});
+		this.cron.createJob('orphan-container-sweep', {
+			cron: ORPHAN_CONTAINER_SWEEP_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('orphan-container-sweep', () => this.reapOrphanedContainers()),
 		});
 		this.cron.createJob('inbox-archive', {
 			cron: INBOX_ARCHIVE_CRON,
@@ -745,6 +864,16 @@ export class JobManager {
 
 		await db.query('UPDATE execution_locks SET released_at = now() WHERE released_at IS NULL');
 
+		// Same reasoning as the execution locks above, for the pool's own claims:
+		// every in-flight run was just failed, so a member still marked busy is
+		// holding a claim for a run that no longer exists. Nothing else reclaims one
+		// - the ladder skips it, the idle pass ignores it, and its memory counts
+		// against the budget - so a crash would otherwise cost a container for good.
+		const reclaimed = await reclaimBusyPoolMembers(db);
+		if (reclaimed.length > 0) {
+			log.info(`Returned ${reclaimed.length} claimed container(s) to the pool after restart`);
+		}
+
 		for (const run of stranded.rows) {
 			broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
 				id: run.id,
@@ -833,6 +962,89 @@ export class JobManager {
 		await this.restartStoppedRunningContainers(docker);
 		await this.repairStaleContainerMounts(docker);
 		await this.sweepDanglingContainerProcesses(docker);
+		await this.sweepStaleTunnelClients(docker);
+		await this.reapOrphanedContainersAtStartup();
+	}
+
+	/**
+	 * Kill the tunnel clients a previous life of this process left listening.
+	 *
+	 * Safe here and nowhere else: at reconcile this process holds **no** tunnel,
+	 * so every client alive in one of its containers is by definition stale. A
+	 * container legitimately carries several at once during normal operation (a
+	 * run, a chat turn, a provisioning git op) and they are indistinguishable from
+	 * inside, which is why this is a startup pass rather than a cron.
+	 *
+	 * The orphan is Daytona-shaped but the sweep is not: closing a PTY there does
+	 * not kill what runs on it, so a server stopped before its close path ran
+	 * (every `ctrl-c` on a dev loop) abandons a client that goes on holding that
+	 * sandbox's three loopback ports. The next tunnel into the container then dies
+	 * on `EADDRINUSE` and the run loses MCP, egress and ssh entirely - reported
+	 * only as a 30s bind timeout. It became reachable when containers started
+	 * outliving the process (`reapOrphanedContainersAtStartup`): before that a
+	 * restart abandoned the container too, so the orphan went with it.
+	 *
+	 * Enumerated by label rather than from `projects.container_id`, so pool members
+	 * no project currently points at are swept too - they are the ones a later run
+	 * is most likely to be handed.
+	 */
+	private async sweepStaleTunnelClients(docker: ContainerEngine): Promise<void> {
+		if (!(await docker.ping())) {
+			log.warn('Container backend not reachable at startup; skipping stale-tunnel sweep');
+			return;
+		}
+		let containers: Array<{ Id: string }>;
+		try {
+			const { INSTANCE_LABEL } = await import('./sandbox/labels');
+			const { getOrCreateInstanceId } = await import('./telemetry');
+			const instanceId = await getOrCreateInstanceId(this.deps.db, this.deps.dataDir);
+			containers = await docker.listContainersByLabel(`${INSTANCE_LABEL}=${instanceId}`);
+		} catch (err) {
+			log.warn('Stale-tunnel sweep could not list this instance’s containers:', err);
+			return;
+		}
+		for (const c of containers) {
+			await docker
+				.killTunnelClients(c.Id)
+				.catch((err) => log.warn(`Stale-tunnel sweep failed for container ${c.Id}:`, err));
+		}
+	}
+
+	/**
+	 * Reclaim the containers a previous life of this instance left behind, before
+	 * the first run needs one.
+	 *
+	 * Every other startup pass above is DB-driven: it starts from a project row
+	 * and looks outward, so a container the database has forgotten is invisible to
+	 * all of them. That is exactly what a `--reset` leaves - and on a managed
+	 * backend those sandboxes hold their disk against the account quota until
+	 * something reclaims them, which is how a handful of dev restarts can fill it
+	 * and make the *next* provision fail. (The instance id now outlives the
+	 * database, so they still carry this instance's label and are ours to reap;
+	 * see `getOrCreateInstanceId`.)
+	 *
+	 * **Destroys on the first sighting, unlike the cron.** The second-sighting rule
+	 * guards one window - a container created but not yet recorded - and that
+	 * window cannot be open here: reconciliation has just failed every stranded run
+	 * and no run has started. The wait is not merely unnecessary, it defeats the
+	 * sweep entirely for the case this exists to fix, because the suspicion set is
+	 * in memory and a dev loop restarting every few minutes never reaches a second
+	 * pass.
+	 *
+	 * Gated on this process owning the data dir's lock, which is what makes "no
+	 * concurrent provisioning" true. The lock is embedded-only by design, so an
+	 * external-database deployment - where two servers can share one instance id -
+	 * gets no startup pass and keeps the conservative cron behaviour.
+	 */
+	private async reapOrphanedContainersAtStartup(): Promise<void> {
+		const { readLiveInstanceLock } = await import('../db/instance-lock');
+		if (readLiveInstanceLock(this.deps.dataDir)?.pid !== process.pid) {
+			log.debug('Not the sole owner of this data dir; leaving orphans to the periodic sweep');
+			return;
+		}
+		await this.reapOrphanedContainers({ atStartup: true }).catch((e) =>
+			log.error('Startup orphan sweep failed:', e),
+		);
 	}
 
 	/**
@@ -874,7 +1086,7 @@ export class JobManager {
 	 * stopped deliberately — by the operator or by the idle-stop cron (both write
 	 * container_status = stopped) — are left alone to lazy-start on demand.
 	 */
-	private async restartStoppedRunningContainers(docker: DockerClient): Promise<void> {
+	private async restartStoppedRunningContainers(docker: ContainerEngine): Promise<void> {
 		const { db, wsManager, containerLogStreamer, logs } = this.deps;
 
 		const reachable = await docker.ping();
@@ -974,7 +1186,7 @@ export class JobManager {
 	 * Probe each running container's `/workspace` and rebuild the broken ones
 	 * so wakeups don't loop on an unrecoverable exec error.
 	 */
-	private async repairStaleContainerMounts(docker: DockerClient): Promise<void> {
+	private async repairStaleContainerMounts(docker: ContainerEngine): Promise<void> {
 		const { db } = this.deps;
 
 		const running = await db.query<{
@@ -1001,27 +1213,22 @@ export class JobManager {
 			if (ok) continue;
 
 			log.warn(
-				`Container ${ref(row.slug, row.container_id.slice(0, 12))} for project ${ref(row.slug, row.id)} has unreachable /workspace mount — rebuilding`,
+				`Container ${ref(row.slug, row.container_id.slice(0, 12))} for project ${ref(row.slug, row.id)} has unreachable /workspace mount — removing`,
 			);
+			// Removed, not replaced. Provisioning a fresh container here would race
+			// the pool, which provisions one anyway on the next run that needs one -
+			// and eagerly rebuilding meant a stale mount on an idle project paid for
+			// a container nobody was waiting on.
 			try {
-				await rebuildContainer(
+				await destroyContainer(
 					this.buildContainerDeps(),
-					{
-						id: row.id,
-						team_id: row.team_id,
-						slug: row.slug,
-						docker_base_image: row.docker_base_image,
-						container_id: row.container_id,
-						container_status: row.container_status,
-						dev_ports: row.dev_ports ?? [],
-					},
-					row.team_slug,
-				);
-				log.info(
-					`Rebuilt container for project ${ref(row.slug, row.id)} after stale-mount detection`,
+					row.id,
+					row.slug,
+					row.team_id,
+					row.container_id,
 				);
 			} catch (err) {
-				log.error(`Failed to rebuild stale container for project ${ref(row.slug, row.id)}:`, err);
+				log.error(`Failed to remove stale container for project ${ref(row.slug, row.id)}:`, err);
 			}
 		}
 	}
@@ -1041,7 +1248,7 @@ export class JobManager {
 	 * marker are caught by their bridge cmdline / `SSH_AUTH_SOCK=/run/hezo/` env.
 	 * Best-effort per container: a container stopping mid-sweep just logs.
 	 */
-	private async sweepDanglingContainerProcesses(docker: DockerClient): Promise<void> {
+	private async sweepDanglingContainerProcesses(docker: ContainerEngine): Promise<void> {
 		const { db } = this.deps;
 
 		const reachable = await docker.ping();
@@ -1096,7 +1303,7 @@ export class JobManager {
 		}
 	}
 
-	private async selfHealErroredContainers(docker: DockerClient): Promise<void> {
+	private async selfHealErroredContainers(docker: ContainerEngine): Promise<void> {
 		const { db, wsManager, containerLogStreamer, logs } = this.deps;
 
 		const reachable = await docker.ping();
@@ -1121,7 +1328,7 @@ export class JobManager {
 
 		for (const project of candidates.rows) {
 			const name = `hezo-${project.slug}-${project.id.slice(0, 8)}`;
-			let info: Awaited<ReturnType<DockerClient['findContainerByNamePrefix']>>;
+			let info: Awaited<ReturnType<ContainerEngine['findContainerByNamePrefix']>>;
 			try {
 				info = await docker.findContainerByNamePrefix(name);
 			} catch (err) {
@@ -1195,27 +1402,50 @@ export class JobManager {
 
 	/**
 	 * Would running in `projectId` need a container start that exceeds the
-	 * instance's active-container cap? A project whose container is already
-	 * running — or already being lazy-started by a concurrent dispatch — is
-	 * never blocked: its run consumes no new container slot. Task-less callers
-	 * pass null and are gated on the total alone (activateAgent re-checks with
-	 * the chosen task's project). The in-memory pending-start refcounts lead
-	 * the DB while a lazy start is in flight and are deduped against projects
-	 * whose container already reads Running, so the ceiling is never exceeded.
+	 * instance's active-container cap? A project with a container genuinely free
+	 * to take the run — or one already being lazy-started by a concurrent
+	 * dispatch — is never blocked, because its run consumes no new slot. Note
+	 * "free", not merely "running": with a pool, a project whose containers are
+	 * all busy needs a *new* container and is gated like any other start.
+	 * Task-less callers pass null and are gated on the total alone (activateAgent
+	 * re-checks with the chosen task's project). The in-memory pending-start
+	 * refcounts lead the DB while a lazy start is in flight and are deduped
+	 * against projects that already have spare capacity, so the ceiling is never
+	 * exceeded.
 	 */
-	private async isContainerCapacityBlocked(projectId: string | null): Promise<boolean> {
-		const { limit, runningProjectIds } = await getActiveContainers(this.deps.db);
-		if (
-			projectId &&
-			(runningProjectIds.has(projectId) || this.pendingContainerStarts.has(projectId))
-		) {
-			return false;
+	private async isContainerCapacityBlocked(projectId: string | null): Promise<CapacityVerdict> {
+		const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(
+			this.deps.db,
+			this.deps.docker,
+		);
+		// Returned alongside the verdict, not just consumed here: the dispatch that
+		// follows has to know whether it is about to *create* a container, and it
+		// used to answer that from `projects.container_status` instead. Those two
+		// stopped meaning the same thing the moment a project could hold several
+		// containers - a project whose named container reads Running but whose
+		// members are all busy needs a new one - so a dispatch would create a
+		// container while holding no pending-start slot, and two of them could fit
+		// themselves into the same headroom. One query, one answer, used by both.
+		const hasSpareContainer = projectId !== null && projectsWithSpareContainer.has(projectId);
+		if (projectId && (hasSpareContainer || this.pendingContainerStarts.has(projectId))) {
+			return { blocked: false, hasSpareContainer };
 		}
-		let pendingExtra = 0;
-		for (const id of this.pendingContainerStarts.keys()) {
-			if (!runningProjectIds.has(id)) pendingExtra++;
-		}
-		return runningProjectIds.size + pendingExtra >= limit;
+		// A lazy start already in flight has not reached the DB yet, so its memory
+		// has to be added here or two dispatches would both see room for the same
+		// GB. Charged at the starting project's own cap, not a flat figure - that
+		// is the whole reason the gate moved from a count to a budget.
+		//
+		// One query for all of them, not one per project: this runs on the dispatch
+		// path, and a gate whose cost grows with the number of starts it is gating
+		// is the wrong shape however small the number happens to be today.
+		const pendingIds = [...this.pendingContainerStarts.keys()].filter(
+			(id) => !projectsWithSpareContainer.has(id),
+		);
+		const pendingGb = await sumProjectContainerMemoryGb(this.deps.db, pendingIds);
+		const requestGb = projectId
+			? await projectContainerMemoryGb(this.deps.db, projectId)
+			: await getDefaultRamCapPerContainerGb(this.deps.db);
+		return { blocked: usedMemoryGb + pendingGb + requestGb > budgetGb, hasSpareContainer };
 	}
 
 	private acquirePendingContainerStart(projectId: string): void {
@@ -1313,8 +1543,59 @@ export class JobManager {
 		return active.rows.length > 0;
 	}
 
+	/**
+	 * Put back wakeups that were parked on a precondition which has since been
+	 * met.
+	 *
+	 * `deferred` is terminal unless something flips it, and the only thing that
+	 * flips `awaiting_repo_setup` is `finalizePendingRepoSetup`, reached solely
+	 * from a repo setup that reaches `finishReady`. It misses three ways: it
+	 * returns early when no approval is pending, it selects on
+	 * `payload->>'project_id'`, and it then skips any row without a `task_id`.
+	 * Any miss parks the wakeup for good - and with the queue empty the only
+	 * remaining driver is the heartbeat sweep, floored at an hour and commonly
+	 * configured far longer, so an instance with assigned, unblocked, in-progress
+	 * work sat idle for half a day with nothing saying why.
+	 *
+	 * The project is resolved through the wakeup's **task**, not through
+	 * `payload->>'project_id'`, precisely because that key is one of the things
+	 * the one-shot path misses. `reason = 'blocked'` is left alone: it has its own
+	 * release in `wakeIfReady`, and two writers for one row is a race.
+	 *
+	 * This is a backstop, not the fast path - `finalizePendingRepoSetup` still
+	 * resumes work the moment setup completes.
+	 */
+	private async releaseSatisfiedDeferrals(): Promise<void> {
+		const { db } = this.deps;
+		const released = await db.query<{ id: string; slug: string }>(
+			`UPDATE agent_wakeup_requests w
+			    SET status = $1::wakeup_status, claimed_at = NULL
+			   FROM tasks t
+			   JOIN projects p ON p.id = t.project_id
+			  WHERE w.id IN (
+			          SELECT w2.id FROM agent_wakeup_requests w2
+			           WHERE w2.status = $2::wakeup_status
+			             AND w2.payload->>'reason' = 'awaiting_repo_setup'
+			           ORDER BY w2.created_at ASC
+			           LIMIT ${DEFERRAL_RELEASE_LIMIT})
+			    AND t.id = (w.payload->>'task_id')::uuid
+			    AND p.designated_repo_id IS NOT NULL
+			  RETURNING w.id, p.slug`,
+			[WakeupStatus.Queued, WakeupStatus.Deferred],
+		);
+		if (released.rows.length === 0) return;
+		// Warned rather than logged at debug: reaching here means work was stranded
+		// until this ran, and a silent release leaves the next occurrence as
+		// unexplained as the first. Zero output on a healthy instance.
+		const projects = [...new Set(released.rows.map((r) => r.slug))].join(', ');
+		log.warn(
+			`Requeued ${released.rows.length} wakeup(s) left deferred on repo setup that has since completed (${projects})`,
+		);
+	}
+
 	private async processWakeups(): Promise<void> {
 		const { db } = this.deps;
+		await this.releaseSatisfiedDeferrals();
 		const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
 
 		const wakeups = await db.query<{
@@ -1354,7 +1635,7 @@ export class JobManager {
 					continue;
 				}
 				const project = await this.resolveProjectForTask(wakeupTaskId);
-				if (await this.isContainerCapacityBlocked(project?.id ?? null)) {
+				if ((await this.isContainerCapacityBlocked(project?.id ?? null)).blocked) {
 					log.debug(`Skipping wakeup ${wakeup.id} — instance is at its active-container limit`);
 					await this.markWakeupSkipped(
 						wakeup.id,
@@ -1797,7 +2078,8 @@ export class JobManager {
 			await this.requeueWakeup(wakeupId);
 			return;
 		}
-		if (await this.isContainerCapacityBlocked(task.project_id)) {
+		const capacity = await this.isContainerCapacityBlocked(task.project_id);
+		if (capacity.blocked) {
 			log.debug(
 				`Instance is at its active-container limit — re-queuing wakeup for ${ref(agent.rows[0].slug, memberId)}`,
 			);
@@ -1997,11 +2279,18 @@ export class JobManager {
 		const lockedTaskId = task.id;
 		this.activeTaskRuns.add(lockedTaskId);
 		this.acquireProjectRun(projectId);
-		// Launching into a project whose container isn't running will lazy-start
-		// one — hold a pending-start slot so the container cap counts it during
-		// the window before the DB row reads Running. Released with the dispatch
-		// guards when the run settles.
-		const pendingContainerStart = projectRow.container_status !== ContainerStatus.Running;
+		// A dispatch with no spare container will create one — hold a pending-start
+		// slot so the memory budget counts it during the window before the new
+		// member reaches the DB. Released with the dispatch guards when the run
+		// settles.
+		//
+		// Read from the capacity verdict computed above, not from
+		// `projects.container_status`. Those answered the same question only while
+		// a project had exactly one container: with a pool, a project whose named
+		// container reads Running but whose members are all busy still needs a new
+		// one, so the old test held no slot for a container it was about to create
+		// and two such dispatches could fit themselves into the same headroom.
+		const pendingContainerStart = !capacity.hasSpareContainer;
 		if (pendingContainerStart) this.acquirePendingContainerStart(projectId);
 
 		const launched = this.launchTask(
@@ -2033,7 +2322,9 @@ export class JobManager {
 								projectId,
 								teamId,
 								taskKey,
+								containerId: null,
 							});
+							return (containerId) => this.attachLiveRunContainer(runId, containerId);
 						},
 						wakeupId,
 					);
@@ -2167,12 +2458,7 @@ export class JobManager {
 			this.deps.wsManager,
 		);
 
-		if (wakeupId) {
-			await db.query(
-				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
-			);
-		}
+		if (await this.settleWakeupForRun(wakeupId, result)) return;
 
 		// A run cut off by its wall-clock time limit is not a failure. Queue a same-task
 		// continuation so the agent resumes it (committed work is already pushed) and skip the
@@ -2364,7 +2650,7 @@ export class JobManager {
 		if (await this.isAgentBusyInProject(memberId, projectRow.id)) {
 			return { dispatched: false, reason: 'agent_busy' };
 		}
-		if (await this.isContainerCapacityBlocked(projectRow.id)) {
+		if ((await this.isContainerCapacityBlocked(projectRow.id)).blocked) {
 			return { dispatched: false, reason: 'instance_at_capacity' };
 		}
 		if (await checkOverBudget(db, memberId, projectRow.id)) {
@@ -2452,7 +2738,9 @@ export class JobManager {
 								projectId: projectRow.id,
 								teamId,
 								taskKey: key,
+								containerId: null,
 							});
+							return (containerId) => this.attachLiveRunContainer(runId, containerId);
 						},
 						wakeupId,
 						progressUpdate,
@@ -2511,12 +2799,44 @@ export class JobManager {
 			result.heartbeatRunId,
 			this.deps.wsManager,
 		);
+		await this.settleWakeupForRun(wakeupId, result);
+	}
+
+	/**
+	 * Settle a wakeup now its run has finished, and say whether the caller should
+	 * stop.
+	 *
+	 * A run that never started because the instance was at its container-memory
+	 * budget is **not** a failure - the dispatcher's own gate tests for exactly
+	 * that state, and a moment later it may not hold. So the wakeup goes back to
+	 * `queued` the same way the dispatcher's transient branch does, and `true`
+	 * stops the caller before the failure ping and the next-task chain, neither of
+	 * which should fire for a scheduling race. Every other outcome is terminal.
+	 */
+	private async settleWakeupForRun(
+		wakeupId: string | undefined,
+		result: { success: boolean; requeued?: boolean },
+	): Promise<boolean> {
+		const { db } = this.deps;
+		if (result.requeued) {
+			if (wakeupId) {
+				await db.query(
+					`UPDATE agent_wakeup_requests
+					 SET status = $1::wakeup_status, claimed_at = NULL,
+					     last_skipped_at = now(), last_skipped_reason = $2
+					 WHERE id = $3`,
+					[WakeupStatus.Queued, WakeupSkipReason.InstanceAtCapacity, wakeupId],
+				);
+			}
+			return true;
+		}
 		if (wakeupId) {
 			await db.query(
 				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
 				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
 			);
 		}
+		return false;
 	}
 
 	/**
@@ -2863,26 +3183,36 @@ export class JobManager {
 			return;
 		}
 
-		const transitions = await syncAllContainerStatuses(this.buildContainerDeps());
+		const deps = this.buildContainerDeps();
+		// Two sources, one shape. The status sync answers for the container
+		// `projects.container_id` names; the pool reconcile answers for every other
+		// member, which that sync cannot see at all. Both emit per-container
+		// transitions so a dead container is handled identically whichever noticed
+		// it - and, in particular, is never handled project-wide.
+		const transitions = await syncAllContainerStatuses(deps);
+		const reconciled = await reconcilePoolMembers(deps);
 
-		for (const transition of transitions) {
+		for (const transition of [...transitions, ...reconciled.transitions]) {
 			await this.handleContainerTransition(transition);
 		}
 	}
 
 	/**
-	 * Stop containers idle past the operator-configured timeout, so an instance
+	 * Retire pools idle past {@link CONTAINER_IDLE_TIMEOUT_MIN}, so an instance
 	 * with no work runs zero containers. Bounded per tick; each stop re-verifies
 	 * the busy predicate under the project's lifecycle lock, so a concurrent
 	 * dispatch's lazy start and this stop can never interleave — the in-memory
 	 * checks close the window before a dispatched run has any DB row, and
-	 * `isProjectIdleForContainerStop` re-runs the DB predicate last. A timeout
-	 * of 0 disables the reaper entirely (always-on containers).
+	 * `isProjectIdleForContainerStop` re-runs the DB predicate last.
+	 *
+	 * The window is a constant rather than a setting, and there is no longer an
+	 * always-on escape hatch: a container that never stops is a container that
+	 * bills forever on a managed backend, and the dev server it used to keep
+	 * alive belongs in something with its own lifecycle.
 	 */
 	private async stopIdleContainers(): Promise<void> {
 		const { db, docker } = this.deps;
-		const timeoutMin = await getContainerIdleTimeoutMin(db);
-		if (timeoutMin === 0) return;
+		const timeoutMin = CONTAINER_IDLE_TIMEOUT_MIN;
 		if (!(await docker.ping())) {
 			log.debug('Docker not reachable; skipping idle-container pass');
 			return;
@@ -2898,16 +3228,9 @@ export class JobManager {
 					if (this.getLiveRunsForProject(candidate.id).length > 0) return;
 					if (!(await isProjectIdleForContainerStop(db, candidate.id, timeoutMin))) return;
 					log.info(
-						`project ${ref(candidate.slug, candidate.id)} idle for ${timeoutMin}min — stopping container ${ref(candidate.slug, candidate.container_id.slice(0, 12))}`,
+						`project ${ref(candidate.slug, candidate.id)} idle for ${timeoutMin}min — retiring its pool`,
 					);
-					await stopContainerGracefully(
-						this.buildContainerDeps(),
-						candidate.id,
-						candidate.slug,
-						candidate.team_id,
-						candidate.container_id,
-					);
-					stopped++;
+					stopped += await this.shutDownIdlePool(candidate);
 				});
 			} catch (err) {
 				log.error(`Idle-stop failed for project ${ref(candidate.slug, candidate.id)}:`, err);
@@ -2918,8 +3241,150 @@ export class JobManager {
 		}
 	}
 
+	/**
+	 * Retire a project's idle containers: suspend one, destroy the rest.
+	 *
+	 * A stopped container *is* a suspended one - it still exists, its writable
+	 * layer is intact, and starting it resumes in place - so the two arms differ
+	 * only in whether the container survives. Keeping **at most one** per project
+	 * is exactly the cardinality a single-container project had, and it is what
+	 * removes a whole category of work that a retained-container pool would
+	 * otherwise need: no retention cap, no reap horizon, no snapshot storage to
+	 * watch grow.
+	 *
+	 * The cost is that the second and later containers of a burst are always
+	 * created cold. That is a fetch rather than a clone, only genuinely concurrent
+	 * runs pay it, and it buys back a bound nobody has to tune.
+	 *
+	 * Returns how many containers this actually retired, for the pass's log line.
+	 */
+	private async shutDownIdlePool(candidate: {
+		id: string;
+		slug: string;
+		team_id: string;
+		container_id: string;
+	}): Promise<number> {
+		const { db, docker } = this.deps;
+		const { planIdleShutdown } = await import('./sandbox/pool');
+		const { clearProjectContainerIfNamed, loadPoolMembers, removePoolMember } = await import(
+			'./sandbox/pool-db'
+		);
+
+		const members = await loadPoolMembers(db, candidate.id);
+		// A project whose pool has no row yet (nothing has provisioned through the
+		// pool since the upgrade) still has exactly one container, which is the
+		// single-member case - handle it as one rather than skipping the project.
+		const plan =
+			members.length > 0
+				? planIdleShutdown(members)
+				: {
+						suspend: {
+							id: candidate.container_id,
+							state: 'idle' as const,
+							lastTaskId: null,
+							hasUnpushedCommits: false,
+							atDiskCeiling: false,
+							reservedForChat: false,
+						},
+						destroy: [],
+					};
+
+		// Park any live assistant session on these containers *first*, while they
+		// are still up: closing the tunnel deliberately deletes the provider's PTY
+		// session on a reachable sandbox and skips the tunnel's unrequested-death
+		// path, so the session ends up `suspended` (resumable in place) instead of
+		// `crashed`. Best-effort - a park that fails must not strand the pool.
+		for (const member of [...plan.destroy, ...(plan.suspend ? [plan.suspend] : [])]) {
+			await this.deps.chatSessions?.parkForContainerSuspend(member.id).catch((e) => {
+				log.warn(
+					`could not park the assistant session on ${ref(candidate.slug, member.id.slice(0, 12))} before retiring it: ${(e as Error).message}`,
+				);
+			});
+		}
+
+		let retired = 0;
+		for (const member of plan.destroy) {
+			// Destroyed, not stopped: its filesystem is reproducible from the git
+			// remote, and a container kept beyond the one suspended member is
+			// storage nobody asked for.
+			log.info(
+				`project ${ref(candidate.slug, candidate.id)} retiring surplus idle container ${ref(candidate.slug, member.id.slice(0, 12))}`,
+			);
+			await docker.removeContainer(member.id, true).catch(() => undefined);
+			await removePoolMember(db, member.id);
+			// The project row may still name this container - `provisionContainer`
+			// points `container_id` at the newest one, which is exactly the surplus
+			// the plan destroys first. Left behind, the row names a container that
+			// no longer exists, and the next status sync reads that as the
+			// project's container having died: a spurious error on a project whose
+			// remaining containers are perfectly healthy.
+			await clearProjectContainerIfNamed(db, candidate.id, member.id);
+			retired++;
+		}
+
+		if (plan.suspend) {
+			log.info(
+				`project ${ref(candidate.slug, candidate.id)} idle — suspending container ${ref(candidate.slug, plan.suspend.id.slice(0, 12))}`,
+			);
+			await stopContainerGracefully(
+				this.buildContainerDeps(),
+				candidate.id,
+				candidate.slug,
+				candidate.team_id,
+				plan.suspend.id,
+			);
+			retired++;
+		}
+		return retired;
+	}
+
+	/**
+	 * Destroy containers this instance created that no project references any
+	 * more. Boot fails every in-flight run and never reattaches, so a crash, a
+	 * hard kill or a lost provider response strands containers with no owner -
+	 * harmless on local Docker, but billed for as long as nobody looks on a
+	 * managed backend.
+	 *
+	 * The live set is read from `projects` rather than from the engine, so a
+	 * container is only ever destroyed when Hezo itself has forgotten it.
+	 */
+	/**
+	 * `atStartup` skips the wait for a second sighting. See
+	 * {@link reconcileOnStartup} for why that is safe there and nowhere else.
+	 */
+	private async reapOrphanedContainers(opts: { atStartup?: boolean } = {}): Promise<void> {
+		const { db, docker } = this.deps;
+		if (!(await docker.ping())) {
+			log.debug('Container engine not reachable; skipping orphan sweep');
+			return;
+		}
+		const { reapOrphanedContainers } = await import('./sandbox/orphan-reaper');
+		const { listReferencedContainerIds } = await import('./sandbox/pool-db');
+		const { getOrCreateInstanceId } = await import('./telemetry');
+		const result = await reapOrphanedContainers(
+			docker,
+			await getOrCreateInstanceId(db, this.deps.dataDir),
+			await listReferencedContainerIds(db),
+			this.suspectedOrphanContainers,
+			{ requireSecondSighting: !opts.atStartup },
+		);
+		// Carried to the next tick: a container is only destroyed once it has looked
+		// orphaned twice running, which is what keeps a mid-provision container -
+		// on the engine, not yet recorded anywhere - from being swept.
+		this.suspectedOrphanContainers = result.suspected;
+	}
+
+	/**
+	 * A container died: end the runs *that container* was carrying, and nothing
+	 * else.
+	 *
+	 * Both halves are scoped to the same container and must stay that way. The
+	 * in-process abort and the DB update describe one set of runs from two sides;
+	 * scoping them differently either leaves a run executing against a row that
+	 * reads `failed`, or fails a row whose exec is still streaming.
+	 */
 	private async handleContainerTransition(transition: ContainerTransition): Promise<void> {
-		const { projectId, projectSlug, teamId, oldStatus, newStatus } = transition;
+		const { projectId, projectSlug, teamId, containerId, oldStatus, newStatus } = transition;
 
 		if (
 			oldStatus === ContainerStatus.Running &&
@@ -2927,8 +3392,15 @@ export class JobManager {
 		) {
 			const reason: ContainerExitReason =
 				newStatus === ContainerStatus.Error ? 'container_error' : 'container_stopped';
-			this.cancelLiveRunsForProject(projectId, reason);
-			await failProjectRuns(this.buildContainerDeps(), projectId, projectSlug, teamId, reason);
+			this.cancelLiveRunsForContainer(projectId, containerId, reason);
+			await failProjectRuns(
+				this.buildContainerDeps(),
+				projectId,
+				projectSlug,
+				teamId,
+				reason,
+				containerId,
+			);
 		}
 	}
 
@@ -3025,6 +3497,6 @@ export class JobManager {
 	private async runTelemetry(): Promise<void> {
 		const t = this.deps.telemetry;
 		if (!t?.enabled) return;
-		await reportTelemetry(this.deps.db, { endpoint: t.endpoint });
+		await reportTelemetry(this.deps.db, { endpoint: t.endpoint, dataDir: this.deps.dataDir });
 	}
 }

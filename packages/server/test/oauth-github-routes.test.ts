@@ -145,7 +145,9 @@ describe('GitHub device-flow connector', () => {
 		]);
 
 		// The capability registry's allowed_hosts lands on the secret (egress proxy)
-		// — including the GitHub MCP host so the injector can authorize MCP calls.
+		// — the GitHub MCP host so the injector can authorize MCP calls, and both
+		// git hosts: `github.com` serves the ref advertisement and
+		// `codeload.github.com` the packfiles, so a clone needs the pair.
 		const secret = await db.query<{ allowed_hosts: string[] }>(
 			`SELECT s.allowed_hosts FROM oauth_connections oc
 			 JOIN secrets s ON s.id = oc.access_token_secret_id`,
@@ -154,6 +156,7 @@ describe('GitHub device-flow connector', () => {
 			'api.githubcopilot.com',
 			'api.github.com',
 			'github.com',
+			'codeload.github.com',
 		]);
 
 		// SSH keys registered on the user's GitHub account.

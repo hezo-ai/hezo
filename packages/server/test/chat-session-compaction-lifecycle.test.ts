@@ -18,17 +18,13 @@ import {
 	ChatSessionManager,
 	formatLongTermMemoryBlock,
 } from '../src/services/chat-session-manager';
-import {
-	ContainerConnectivityStatus,
-	type ProbeResult,
-} from '../src/services/container-connectivity-status';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { SshAgentServer } from '../src/services/ssh-agent/server';
 import { getWorkspacePath } from '../src/services/workspace';
 import type { WsSocket } from '../src/services/ws';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker } from './helpers/app';
+import { createStubDocker, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -156,10 +152,14 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 		[encrypt('sk-ant-test', key)],
 	);
 	const proj = await ctx.db.query<{ id: string }>(
-		`UPDATE projects SET container_id = 'hq-container', container_status = 'running'
-		 WHERE team_id = $1 AND is_internal = true RETURNING id`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 		[DEFAULT_TEAM_ID],
 	);
+	// The pool has to agree with the column: the chat resolves its container
+	// through the pool, so a member left over from an earlier test would be handed
+	// to the next one instead of the `hq-container` it seeds and asserts against.
+	await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [proj.rows[0].id]);
+	await seedProjectContainer(ctx.db, proj.rows[0].id, 'hq-container');
 	return proj.rows[0].id;
 }
 
@@ -511,15 +511,10 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		const chat = scriptedChatDocker(ctx.dataDir, projectId);
 		const ssh = fakeSsh();
 		const egress = fakeEgress();
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		status.set('ok', '127.0.0.1');
-		const probe = async (): Promise<ProbeResult> => ({ status: 'ok', bindHost: '127.0.0.1' });
 		const { manager } = makeManager(ctx, chat.docker, {
 			sshAgentServer: ssh.server,
 			egressProxy: egress.proxy,
 			egressCAPath: '/tmp/hezo-test-ca.crt',
-			connectivityStatus: status,
-			connectivityProbe: probe,
 		});
 
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hello' });
@@ -537,7 +532,9 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		// and the egress proxy plus its CA bundle pointers.
 		const env = chat.envByKind.get('turn') ?? [];
 		expect(env).toContain(`SSH_AUTH_SOCK=/run/hezo/${sessionId}.sock`);
-		expect(env).toContain('HTTPS_PROXY=http://host.docker.internal:24999');
+		// The chat reaches its egress proxy on container loopback through the
+		// session's own tunnel, exactly as an agent run does.
+		expect(env.some((e: string) => /^HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+$/.test(e))).toBe(true);
 		expect(env).toContain('NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt');
 
 		// A second turn reuses the same session — no re-allocation.
@@ -557,37 +554,34 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 	});
 
 	test('a failed session start releases the already-allocated ssh bridge', async () => {
-		// Connectivity pinned bad (and re-confirmed by the probe) → startSession
-		// throws after the ssh socket was allocated; the catch arm must release it
-		// and never touch the egress proxy.
+		// The tunnel is the last thing session start stands up, and it is the leg
+		// that can genuinely fail (the container has to accept an exec channel).
+		// When it does, the catch arm must release the ssh socket and the egress
+		// proxy allocated before it rather than stranding either.
 		const chat = scriptedChatDocker(ctx.dataDir, projectId);
 		const ssh = fakeSsh();
 		const egress = fakeEgress();
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		status.set('mcp-unreachable', '127.0.0.1');
-		const probe = async (): Promise<ProbeResult> => ({
-			status: 'mcp-unreachable',
-			bindHost: '127.0.0.1',
-		});
+		const docker = chat.docker as unknown as { openExecChannel: () => Promise<never> };
+		docker.openExecChannel = async () => {
+			throw new Error('container refused the tunnel channel');
+		};
 		const { manager } = makeManager(ctx, chat.docker, {
 			sshAgentServer: ssh.server,
 			egressProxy: egress.proxy,
 			egressCAPath: '/tmp/hezo-test-ca.crt',
-			connectivityStatus: status,
-			connectivityProbe: probe,
 		});
 
 		await expect(manager.sendTurn({ text: 'hello' })).rejects.toThrow(
-			/Egress proxy unreachable from agent containers/,
+			/container refused the tunnel channel/,
 		);
 		expect(ssh.calls.allocated.length).toBe(1);
 		expect(ssh.calls.released).toEqual(ssh.calls.allocated);
-		expect(egress.calls.allocated.length).toBe(0);
+		expect(egress.calls.released).toEqual(egress.calls.allocated);
 		const session = await ctx.db.query<{ status: string; error: string }>(
 			'SELECT status, error FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
 		);
 		expect(session.rows[0].status).toBe(ChatSessionStatus.Crashed);
-		expect(session.rows[0].error).toContain('Egress proxy unreachable');
+		expect(session.rows[0].error).toContain('container refused the tunnel channel');
 	});
 
 	test('stop() interrupts an in-flight reply and finalizes the partial', async () => {
@@ -737,6 +731,172 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		);
 		expect(live.rows[0].n).toBe(0);
 		await manager.stop();
+	});
+
+	/**
+	 * A stopped container and a *different* container are not the same event, and
+	 * conflating them is what used to end a session for no reason. The chat holds no
+	 * long-lived process - each turn is its own exec, continuity is in the database -
+	 * so a container that stops with its filesystem intact takes nothing the session
+	 * needs. A managed backend suspends sandboxes on its own idle timer, so tearing
+	 * down there would end the operator's session every quiet period.
+	 */
+	describe('suspend and resume', () => {
+		const health = (manager: unknown) =>
+			(manager as { checkHealth(): Promise<void> }).checkHealth();
+
+		const sessionRow = async () => {
+			const r = await ctx.db.query<{ id: string; status: string }>(
+				'SELECT id, status::text FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
+			);
+			return r.rows[0];
+		};
+
+		test('parks the session instead of ending it when the container stops', async () => {
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, assistantMessageId);
+			const before = await sessionRow();
+			expect(before.status).toBe(ChatSessionStatus.Running);
+
+			// Same container id, no longer running: a suspend, not a replacement.
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+
+			const after = await sessionRow();
+			expect(after.status).toBe(ChatSessionStatus.Suspended);
+			// The same row: its id anchors this session's messages, so ending it and
+			// starting a new one would orphan them.
+			expect(after.id).toBe(before.id);
+			await manager.stop();
+		});
+
+		test('resumes into the same session on the next turn', async () => {
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const first = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, first.assistantMessageId);
+			const before = await sessionRow();
+
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+			expect((await sessionRow()).status).toBe(ChatSessionStatus.Suspended);
+
+			// ensureProjectContainerRunning brings the same container back up.
+			await ctx.db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [
+				projectId,
+			]);
+			const second = await manager.sendTurn({ text: 'still there?' });
+			await waitComplete(ctx, second.assistantMessageId);
+
+			const after = await sessionRow();
+			expect(after.status).toBe(ChatSessionStatus.Running);
+			expect(after.id).toBe(before.id);
+			// One session across the whole episode — resume, not restart.
+			const count = await ctx.db.query<{ n: number }>(
+				'SELECT COUNT(*)::int AS n FROM chat_sessions',
+			);
+			expect(count.rows[0].n).toBe(1);
+			await manager.stop();
+		});
+
+		test('starts fresh when the container was replaced rather than restarted', async () => {
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const first = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, first.assistantMessageId);
+			const before = await sessionRow();
+
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+
+			// A different container: the filesystem this session was parked on is gone,
+			// so there is nothing to resume into.
+			//
+			// Replacement is expressed as the pinned **member** disappearing, which is
+			// what it now means - the chat resolves its container through the pool, so
+			// moving `projects.container_id` alone leaves the pin (and therefore the
+			// session's own container) exactly where it was. This is the state the
+			// reconciler leaves behind when a container is removed out from under
+			// Hezo: the member row gone, and the project naming something else.
+			await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
+			await ctx.db.query(
+				`UPDATE projects SET container_id = 'replaced-container', container_status = 'running'
+				 WHERE id = $1`,
+				[projectId],
+			);
+			const second = await manager.sendTurn({ text: 'hello again' });
+			await waitComplete(ctx, second.assistantMessageId);
+
+			const after = await sessionRow();
+			expect(after.status).toBe(ChatSessionStatus.Running);
+			expect(after.id).not.toBe(before.id);
+			await manager.stop();
+		});
+
+		test('a parked session still blocks a second one', async () => {
+			// It owns its row and its container, so the singleton guard has to keep
+			// counting it as live.
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, assistantMessageId);
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+
+			const ceoId = await ceoMemberId(ctx);
+			await expect(
+				ctx.db.query(
+					`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
+					 VALUES ($1, $2, $3, 'claude_code', 'starting')`,
+					[ceoId, DEFAULT_TEAM_ID, projectId],
+				),
+			).rejects.toThrow();
+			await manager.stop();
+		});
+
+		test('reserves the chat’s container in the pool and hands it back at teardown', async () => {
+			// Chat is exempt from the container cap, and the pin is the other half of
+			// that: without it a task run could take the container out from under a live
+			// session, which is the same interruption by a different route.
+			await ctx.db.query(
+				`INSERT INTO container_pool_members (project_id, container_id, state)
+				 VALUES ($1, 'hq-container', 'idle') ON CONFLICT (container_id) DO NOTHING`,
+				[projectId],
+			);
+			const reserved = async (): Promise<boolean> => {
+				const r = await ctx.db.query<{ reserved_for_chat: boolean }>(
+					'SELECT reserved_for_chat FROM container_pool_members WHERE container_id = $1',
+					['hq-container'],
+				);
+				return r.rows[0].reserved_for_chat;
+			};
+
+			const chat = scriptedChatDocker(ctx.dataDir, projectId);
+			const { manager } = makeManager(ctx, chat.docker);
+			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+			await waitComplete(ctx, assistantMessageId);
+			expect(await reserved()).toBe(true);
+
+			// Suspend keeps the pin — a parked session still owns its container.
+			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
+				projectId,
+			]);
+			await health(manager);
+			expect(await reserved()).toBe(true);
+
+			await manager.stop();
+			expect(await reserved()).toBe(false);
+		});
 	});
 
 	test('reconcileOnStartup crashes orphaned sessions and settles orphaned messages', async () => {

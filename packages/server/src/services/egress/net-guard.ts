@@ -14,9 +14,10 @@ import { isIP } from 'node:net';
  *
  * Blocking is by **resolved address**, not by name, because a hostname is not
  * evidence of anything — `evil.example.com A 127.0.0.1` resolves straight back to
- * the host. The resolved address is also what the socket then connects to (the
- * guard is installed as the request's `lookup`), so there is no TOCTOU gap
- * between the check and the connect.
+ * the host. The caller resolves through `resolveGuardedAddress` and then dials
+ * the address it returned, so the address that was checked is the address that
+ * is connected to and there is no TOCTOU gap. It is deliberately not the
+ * request's `lookup` option; see that function for what that cost.
  *
  * Legitimate traffic is unaffected: the container's `NO_PROXY` already carves out
  * `host.docker.internal`, `localhost` and the LLM provider host, so nothing that
@@ -83,45 +84,46 @@ export class BlockedEgressTargetError extends Error {
 }
 
 /**
- * A drop-in replacement for the `lookup` option of `http(s).request` that fails
- * the connection when the name resolves to a blocked address.
+ * Resolve a hostname and refuse it if it lands on a blocked address, returning
+ * the address the caller must then dial.
  *
- * Returning the error through the callback (rather than throwing) is what makes
- * this composable: Node surfaces it as a normal request `error` event, so the
- * existing failure path turns it into a 502 for the agent with no special-casing.
+ * **Resolve-then-dial rather than a custom `lookup`, and that is not a style
+ * choice.** Handing `lookup` to `http(s).request` is the obvious way to close
+ * the check/connect gap, and it is broken on the runtime production uses (Bun
+ * 1.3.14): a request carrying a **body** never delivers that body, so the
+ * upstream answers as though it received an empty one. A `GET` is unaffected,
+ * which is what made this so hard to see - a proxied `git` clone fetched its ref
+ * advertisement normally and then hung on `POST /git-upload-pack`, and every
+ * agent's POSTed API and MCP call was silently sent empty. Bun's `node:http` has
+ * a cluster of known proxy defects (oven-sh/bun#28396); this is the one that
+ * reached us.
+ *
+ * Dialing the resolved literal keeps the property the custom lookup existed for:
+ * the address that was checked is the address that is connected to, so a name
+ * cannot re-resolve to something private in between. The caller must pass the
+ * original hostname as `servername` (TLS/SNI and certificate validation) and set
+ * the `Host` header from it, since the runtime would otherwise derive `Host`
+ * from the address.
  */
-export function guardedLookup(host: string): typeof dnsLookup {
-	const guarded = (
-		hostname: string,
-		options: unknown,
-		callback: (err: Error | null, address?: string | unknown, family?: number) => void,
-	): void => {
-		// `all: true` yields an array; the proxy never sets it, but a future caller
-		// might, so handle both shapes rather than mis-typing the happy path.
-		(dnsLookup as unknown as (h: string, o: unknown, cb: typeof callback) => void)(
-			hostname,
-			options,
-			(err, address, family) => {
-				if (err) return callback(err);
-				const entries = Array.isArray(address)
-					? (address as Array<{ address: string }>).map((e) => e.address)
-					: [String(address)];
-				const blocked = entries.find((a) => isBlockedEgressAddress(a));
-				if (blocked !== undefined) {
-					return callback(new BlockedEgressTargetError(host, blocked));
-				}
-				callback(null, address, family);
-			},
-		);
-	};
-	return guarded as unknown as typeof dnsLookup;
+export async function resolveGuardedAddress(host: string): Promise<string> {
+	const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+	// An IP literal needs no resolution - decide on it directly.
+	if (isIP(bare) !== 0) {
+		if (isBlockedEgressAddress(bare)) throw new BlockedEgressTargetError(host, bare);
+		return bare;
+	}
+	const address = await new Promise<string>((resolve, reject) => {
+		dnsLookup(bare, (err, addr) => (err ? reject(err) : resolve(String(addr))));
+	});
+	if (isBlockedEgressAddress(address)) throw new BlockedEgressTargetError(host, address);
+	return address;
 }
 
 /**
  * Synchronous pre-check for a CONNECT target, so an obviously-blocked tunnel is
  * refused before a per-host TLS server and leaf cert are minted for it. A
- * hostname passes here and is caught later by {@link guardedLookup} on the
- * upstream leg; only IP literals are decidable at this point.
+ * hostname passes here and is caught later by {@link resolveGuardedAddress} on
+ * the upstream leg; only IP literals are decidable at this point.
  */
 export function isBlockedEgressHost(host: string): boolean {
 	const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;

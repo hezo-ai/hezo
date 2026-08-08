@@ -70,6 +70,13 @@ export default defineConfig({
 			HEZO_E2E_SKIP_COHERENCE_REVIEW: '1',
 			HEZO_SKIP_DOCKER: '1',
 			SKIP_AI_KEY_VALIDATION: '1',
+			// The component tier mounts the real shell, so every spec would poll
+			// /api/updates/status and reach GitHub from CI. Beyond the outbound call
+			// itself, whether a newer release exists then decides whether the
+			// UpdateBanner is in the tree - so an unrelated spec's queries start
+			// matching a banner the day upstream ships a version. The server tier does
+			// NOT set this: its updates-*.test.ts files exercise the fetch path.
+			HEZO_SKIP_UPDATE_CHECK: '1',
 			// Collapse the password-verifier KDF (scrypt) to its cheapest valid cost
 			// so the ~280ms production derivation every createTestApp runs becomes
 			// near-instant. Honoured only under NODE_ENV=test and clamped to

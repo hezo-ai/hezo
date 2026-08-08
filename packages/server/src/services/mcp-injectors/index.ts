@@ -31,4 +31,5 @@ export type {
 	McpStdioDescriptor,
 	RuntimeMcpAdapter,
 } from './types';
+export { HEZO_MCP_SERVER_NAME } from './types';
 export { validateInjection } from './validate';

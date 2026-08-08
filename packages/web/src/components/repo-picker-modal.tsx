@@ -24,7 +24,7 @@ type PickerMode = 'link' | 'create';
 
 type CreateError =
 	| { kind: 'generic'; message: string }
-	| { kind: 'repo_exists'; owner: string; name: string };
+	| { kind: 'repo_exists'; owner: string; name: string; message: string };
 
 function isApiError(e: unknown): e is ApiError {
 	return typeof e === 'object' && e !== null && 'code' in e && 'message' in e && 'status' in e;
@@ -102,7 +102,12 @@ export function RepoPickerModal({
 			onOpenChange(false);
 		} catch (e) {
 			if (isApiError(e) && e.code === 'GITHUB_REPO_EXISTS' && mode === 'create') {
-				setCreateError({ kind: 'repo_exists', owner, name: newRepoName.trim() });
+				setCreateError({
+					kind: 'repo_exists',
+					owner,
+					name: newRepoName.trim(),
+					message: e.message,
+				});
 			} else {
 				const message = isApiError(e) ? e.message : (e as Error).message;
 				setCreateError({ kind: 'generic', message });
@@ -243,13 +248,15 @@ export function RepoPickerModal({
 							className="flex flex-col gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger sm:flex-row sm:items-center sm:justify-between"
 							data-testid="repo-picker-exists-banner"
 						>
-							<span>
-								A repository named{' '}
-								<span className="font-mono">
-									{createError.owner}/{createError.name}
-								</span>{' '}
-								already exists on GitHub.
-							</span>
+							{/*
+							 * The server's own sentence, not a second copy of it here. It
+							 * names the repo *and* its visibility, and the visibility is the
+							 * part that resolves the confusion: a private repo holding the
+							 * name is invisible in the picker, so "create" looked like the
+							 * only option. Restating it client-side would be one more place
+							 * for that to go stale.
+							 */}
+							<span>{createError.message}</span>
 							<Button
 								type="button"
 								variant="secondary"

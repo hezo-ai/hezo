@@ -60,7 +60,7 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 	let instanceAtCapacity = false;
 	if (await isTaskBusyInDb(db, taskId)) {
 		taskBusy = true;
-	} else if (projectId && (await isContainerCapacityBlockedInDb(db, projectId))) {
+	} else if (projectId && (await isContainerCapacityBlockedInDb(db, c.get('docker'), projectId))) {
 		instanceAtCapacity = true;
 	}
 

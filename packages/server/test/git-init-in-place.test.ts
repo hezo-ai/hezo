@@ -3,14 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { connectExistingRepo } from '../src/services/git';
+import { connectExistingRepo, localGitLoc } from '../src/services/git';
 import { HostGitExecutor } from '../src/services/git-executor';
 
 let root: string;
 
 // Git runs against host temp dirs here, so host and container paths coincide.
 const exec = new HostGitExecutor();
-const loc = (p: string) => ({ hostPath: p, containerPath: p });
+const loc = (p: string) => localGitLoc(p);
 
 function git(cwd: string, ...args: string[]): void {
 	execFileSync('git', args, {

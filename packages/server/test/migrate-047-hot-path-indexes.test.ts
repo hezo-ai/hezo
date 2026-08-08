@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { QueryResult } from '../src/db/database';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
 const TARGET = '047_hot_path_indexes.sql';
@@ -142,7 +143,9 @@ describe('047_hot_path_indexes migration', () => {
 		let cursor: { created_at: string; id: string } | null = null;
 
 		for (let page = 0; page < 5; page++) {
-			const rows = cursor
+			// Annotated because the seek reads `cursor`, which is written from this
+			// same result a few lines down - inference would chase its own tail.
+			const rows: QueryResult<{ id: string; created_at: string }> = cursor
 				? await h.db.query<{ id: string; created_at: string }>(
 						`SELECT id, created_at FROM audit_log
 						 WHERE (created_at, id) < ($1::timestamptz, $2::uuid)

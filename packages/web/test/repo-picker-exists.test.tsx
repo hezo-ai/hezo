@@ -101,6 +101,10 @@ test('GITHUB_REPO_EXISTS surfaces a link-existing affordance that flips the moda
 	});
 	expect(banner.textContent).toContain(`${ghOwner}/${collisionName}`);
 	expect(banner.textContent).toContain('already exists');
+	// The visibility comes through from the server, because that is the part that
+	// resolves the confusion: a private repo holding the name is invisible in the
+	// picker, so "create" looked like the only option available.
+	expect(banner.textContent).toMatch(/It is (private|public)/);
 
 	await user.click(await screen.findByTestId('repo-picker-link-existing'));
 

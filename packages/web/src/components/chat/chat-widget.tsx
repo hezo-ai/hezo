@@ -606,7 +606,6 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 							>
 								<HqContainerNotice
 									health={blockedHealth}
-									slug={hq.slug}
 									description="The CEO is unavailable until the HQ container is running."
 								/>
 							</div>

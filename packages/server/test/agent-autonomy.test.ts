@@ -404,6 +404,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		const ctx = {
 			authorName: 'Captain',
 			excerpt: 'Please update the spec to cover §6 and §11.',
+			triggeringCommentId: 'c-trigger',
 			openTickets: [
 				{ identifier: 'AUT-10', title: 'Draft spec', status: 'backlog', priority: 'high' },
 				{ identifier: 'AUT-12', title: 'Review PRD', status: 'in_progress', priority: 'medium' },
@@ -435,6 +436,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		const ctx = {
 			authorName: 'Captain',
 			excerpt: 'Take a look at this.',
+			triggeringCommentId: 'c-trigger',
 			openTickets: [],
 		};
 
@@ -452,6 +454,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		const ctx = {
 			authorName: 'Captain',
 			excerpt: 'hi',
+			triggeringCommentId: 'c-trigger',
 			openTickets: [],
 		};
 
@@ -472,6 +475,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		const ctx = {
 			authorName: 'Engineer',
 			excerpt: 'Spec out of date.',
+			triggeringCommentId: 'c-trigger',
 			openTickets: [{ identifier: 'AUT-1', title: 'Spec', status: 'backlog', priority: 'high' }],
 		};
 		const payload = {
@@ -502,6 +506,7 @@ describe('agent-runner: mention context loader', () => {
 		const ctx = {
 			authorName: 'Captain',
 			excerpt: fullComment,
+			triggeringCommentId: 'c-trigger',
 			openTickets: [],
 		};
 

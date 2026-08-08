@@ -88,7 +88,11 @@ export const CONNECTOR_CAPABILITIES: Record<string, ConnectorCapability> = {
 			// read CI logs through the MCP instead of hand-rolling curl.
 			headers: { 'X-MCP-Toolsets': 'context,repos,issues,pull_requests,users,copilot,actions' },
 		},
-		allowedHosts: ['api.githubcopilot.com', 'api.github.com', 'github.com'],
+		// `codeload.github.com` serves the packfiles a clone or fetch downloads, so
+		// git over HTTPS needs it as well as `github.com` - without it the ref
+		// advertisement succeeds and the transfer is refused, which reads as a
+		// broken repo rather than a missing allowlist entry.
+		allowedHosts: ['api.githubcopilot.com', 'api.github.com', 'github.com', 'codeload.github.com'],
 		scopes: ['repo', 'workflow', 'read:org', 'write:ssh_signing_key', 'write:public_key'],
 		deviceAuth: {
 			deviceCodeUrl: 'https://github.com/login/device/code',

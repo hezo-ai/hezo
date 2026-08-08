@@ -119,10 +119,14 @@ test('blocks the composer and links to the container page when the HQ container 
 	const { findByTestId } = await renderApp({
 		initialPath: '/home',
 		seed: async (ctx) => {
+			// A failed **pool member**, not `container_status = 'error'`: that column
+			// is a leftover of the one-container-per-project model and latches, so
+			// it no longer decides whether anything is wrong. See
+			// `use-container-health.ts`.
 			await ctx.db.query(
-				`UPDATE projects SET container_status = 'error',
-				        container_error = 'pull access denied'
-				 WHERE is_internal = true`,
+				`INSERT INTO container_pool_members (project_id, container_id, state, last_error)
+				 SELECT id, 'failed-hq', 'error'::container_pool_state, 'pull access denied'
+				   FROM projects WHERE is_internal = true`,
 			);
 		},
 	});
@@ -139,9 +143,11 @@ test('blocks the composer and links to the container page when the HQ container 
 	expect(notice.textContent ?? '').toContain('error');
 	expect(panel.querySelector('[data-testid="chat-input"]')).toBeNull();
 
-	// It links to the HQ container page.
+	// It links to the global Containers page, where HQ's container is listed as
+	// itself with its own log - the project's own page holds only per-project
+	// settings and shows no container at all.
 	const link = notice.querySelector('[data-testid="hq-container-notice-link"]');
-	expect(link?.getAttribute('href')).toContain('/projects/hq/container');
+	expect(link?.getAttribute('href')).toContain('/settings/containers');
 });
 
 test('each message carries its role eyebrow — "You" for the operator, "CEO · HQ" for the CEO', async () => {

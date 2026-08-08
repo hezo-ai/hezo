@@ -32,6 +32,94 @@ const baseRequest = {
 };
 
 describe('substituteRequest', () => {
+	describe('a credential git base64s into a Basic header', () => {
+		// Measured, not assumed: `git ls-remote https://x-access-token:__HEZO_SECRET_X__@host/…`
+		// puts the credential on the wire as
+		// `Basic eC1hY2Nlc3MtdG9rZW46X19IRVpPX1NFQ1JFVF9YX18=`. A literal scan finds
+		// nothing there, so before this every clone, fetch and push shipped the
+		// unsubstituted placeholder as its password and GitHub refused it.
+		const gh = () =>
+			new Map([
+				[
+					'GH_TOKEN',
+					makeSecret('GH_TOKEN', 'ghs_realtoken', ['github.com', 'codeload.github.com']),
+				],
+			]);
+		const basic = (text: string) => `Basic ${Buffer.from(text, 'utf8').toString('base64')}`;
+		const decode = (header: string) =>
+			Buffer.from(header.replace(/^Basic /, ''), 'base64').toString('utf8');
+
+		it('decodes, substitutes and re-encodes', () => {
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					url: 'https://github.com/acme/widgets.git/info/refs',
+					host: 'github.com',
+					headers: { authorization: basic('x-access-token:__HEZO_SECRET_GH_TOKEN__') },
+				},
+				gh(),
+			);
+			expect(result.headersChanged).toBe(true);
+			expect(decode(result.headers.authorization as string)).toBe('x-access-token:ghs_realtoken');
+			expect(result.secretsUsed.has('GH_TOKEN')).toBe(true);
+			expect(result.failure).toBeNull();
+			// The real value never appears in the header verbatim - it is encoded.
+			expect(result.headers.authorization).not.toContain('ghs_realtoken');
+		});
+
+		it('applies the same allowed_hosts gate as any other substitution', () => {
+			// Nothing about being inside base64 relaxes the red line.
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					url: 'https://evil.example.com/x',
+					host: 'evil.example.com',
+					headers: { authorization: basic('x-access-token:__HEZO_SECRET_GH_TOKEN__') },
+				},
+				gh(),
+			);
+			expect(result.failure).toEqual({
+				kind: 'secret_not_allowed_for_host',
+				name: 'GH_TOKEN',
+				host: 'evil.example.com',
+			});
+			expect(decode(result.headers.authorization as string)).toContain('__HEZO_SECRET_GH_TOKEN__');
+		});
+
+		it('leaves a Basic credential carrying no placeholder byte-identical', () => {
+			// Re-encoding one that never needed substituting would corrupt a
+			// credential that was already correct.
+			const header = basic('user:hunter2');
+			const result = substituteRequest(
+				{ ...baseRequest, host: 'github.com', headers: { authorization: header } },
+				gh(),
+			);
+			expect(result.headers.authorization).toBe(header);
+			expect(result.headersChanged).toBe(false);
+		});
+
+		it('leaves a Bearer token on the ordinary literal path', () => {
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'github.com',
+					headers: { authorization: 'Bearer __HEZO_SECRET_GH_TOKEN__' },
+				},
+				gh(),
+			);
+			expect(result.headers.authorization).toBe('Bearer ghs_realtoken');
+		});
+
+		it('passes a malformed Basic value through rather than throwing', () => {
+			const header = 'Basic not-valid-base64!!';
+			const result = substituteRequest(
+				{ ...baseRequest, host: 'github.com', headers: { authorization: header } },
+				gh(),
+			);
+			expect(result.headers.authorization).toBe(header);
+		});
+	});
+
 	it('replaces a placeholder in a header on a host that is allow-listed', () => {
 		const secrets = new Map([
 			['ANTHROPIC_API_KEY', makeSecret('ANTHROPIC_API_KEY', 'sk-real', ['api.anthropic.com'])],

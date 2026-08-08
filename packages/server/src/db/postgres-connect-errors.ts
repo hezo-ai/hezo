@@ -92,7 +92,12 @@ const FAILURE_KINDS: FailureKind[] = [
 		hint: 'Nothing is listening on that host and port. Check the port and that the database allows connections from this host.',
 	},
 	{
-		codes: ['ENOTFOUND', 'EAI_AGAIN'],
+		// Both spellings of a resolution failure land here: Node surfaces
+		// getaddrinfo codes, while Bun's resolver surfaces the underlying c-ares
+		// status codes for the same failures. Note that the c-ares timeout is
+		// spelled without the trailing D that the socket timeout carries, so it
+		// is unambiguously a resolver that did not answer.
+		codes: ['ENOTFOUND', 'EAI_AGAIN', 'ESERVFAIL', 'ENODATA', 'EREFUSED', 'ETIMEOUT'],
 		patterns: [],
 		deterministic: false,
 		hint: 'The database host name did not resolve. Check the host name and this machine DNS settings.',

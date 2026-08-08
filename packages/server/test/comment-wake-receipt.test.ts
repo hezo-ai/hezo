@@ -101,7 +101,7 @@ describe('comment wake receipt', () => {
 	});
 
 	afterAll(async () => {
-		await safeClose(db, masterKeyManager);
+		await safeClose(db);
 	});
 
 	it('reports an active mention as woken', async () => {

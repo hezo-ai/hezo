@@ -52,7 +52,7 @@ test('the create-project dialog closes when its "View container" link navigates'
 
 	await user.click(within(dialog).getByTestId('hq-container-notice-link'));
 
-	await waitFor(() => expect(router.state.location.pathname).toBe('/projects/hq/container'));
+	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/containers'));
 	await dialogGone();
 });
 
@@ -136,7 +136,7 @@ test('the anchored CEO chat survives navigation', async () => {
 	const panel = await findByTestId('chat-panel');
 	await user.click(await within(panel).findByTestId('hq-container-notice-link'));
 
-	await waitFor(() => expect(router.state.location.pathname).toBe('/projects/hq/container'));
+	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/containers'));
 	expect(screen.getByTestId('chat-panel')).toBeTruthy();
 	expect(screen.getByTestId('chat-panel').getAttribute('data-expanded')).toBe('false');
 });
@@ -164,7 +164,7 @@ test('the expanded CEO chat collapses to anchored on navigation rather than clos
 		within(screen.getByTestId('chat-panel')).getByTestId('hq-container-notice-link'),
 	);
 
-	await waitFor(() => expect(router.state.location.pathname).toBe('/projects/hq/container'));
+	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/containers'));
 	await waitFor(() =>
 		expect(screen.getByTestId('chat-panel').getAttribute('data-expanded')).toBe('false'),
 	);
