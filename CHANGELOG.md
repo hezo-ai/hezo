@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.41.0 - 2026-08-08
+
+### Features
+
+- **providers:** let an operator replace a stored provider credential ([#915](https://github.com/hezo-ai/hezo/pull/915))
+
+### Bug Fixes
+
+- **containers:** stop one project's idle containers starving every other ([#917](https://github.com/hezo-ai/hezo/pull/917))
+
+### Documentation
+
+- realign container docs with the two-backend architecture, guard doc links at commit time ([#916](https://github.com/hezo-ai/hezo/pull/916))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.40.0...0.41.0
+
 ## 0.40.0 - 2026-08-08
 
 ### Features
