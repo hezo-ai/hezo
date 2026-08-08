@@ -12,12 +12,13 @@ A **project** is the primary unit of work in Hezo, and every project owns exactl
 **team** - its roster of agents. The relationship is one-to-one: a team backs a single
 project. You don't manage teams separately; you reach a team through its project.
 
-This keeps things clean: a project's agents, tasks, budget, container, and connections
+This keeps things clean: a project's agents, tasks, budget, containers, and connections
 all belong to that project and nothing leaks between them.
 
-A project's container runs only while there is work: it starts automatically when an
-agent run or the assistant needs it and stops again after sitting idle, so projects you
-aren't actively using cost nothing.
+A project's containers run only while there is work: one starts automatically when an
+agent run or the assistant needs it - each run going at once gets a container of its own
+- and it stops again after sitting idle, so projects you aren't actively using cost
+nothing.
 
 ## Project icon
 

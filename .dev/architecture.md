@@ -3297,11 +3297,12 @@ tier. Full rationale: `AGENTS.md` › Bun-native runtime rules.
 
 ## 8. SSH signing & git
 
-Repo access is **SSH end to end**, keyed on one Ed25519 key per team (`team_ssh_keys`,
-`UNIQUE(team_id)`, encrypted on the team row and never in the secrets vault). The same key
-signs commits and authenticates the git transport, so a `Verified` badge on GitHub and a
-successful `git push` are the same credential. The OAuth token is never used for git - see
-§ 9, *Git vs API*.
+Commit signing is keyed on one Ed25519 key per team (`team_ssh_keys`, `UNIQUE(team_id)`,
+encrypted on the team row and never in the secrets vault). Git **transport is HTTPS on
+every backend** (§ Agent runtime - `buildGitRemoteUrl`), authenticated by the GitHub
+connection's access token as a placeholder the egress proxy substitutes; the key's
+remaining job is signing, which is what makes a `Verified` badge the mark of a commit
+that went through this instance. See § 9, *Git vs API*.
 
 The key never leaves Hezo. Everything that needs it reaches it through an **ssh-agent
 socket**, which is what lets a container sign and push without the private half ever
@@ -3667,10 +3668,12 @@ is withheld rather than absent. There is deliberately **no MCP write tool** for 
 allowlist: letting an agent widen its own access would be a privilege escalation, so the
 write side is human-only (`GET`/`PATCH`/`POST …/methods{,/refresh}`).
 
-**Git vs API.** Repo clone/fetch/push does **not** use the OAuth token — that's SSH with
-the project key (§ 8). The OAuth token is reserved for GitHub REST (listing/creating
-repos, registering keys) and the GitHub MCP tool surface. Full design: this section plus
-the route table in `services/oauth/` and `routes/oauth.ts`.
+**Git vs API.** Both surfaces now ride the OAuth token, differently delivered: GitHub
+REST (listing/creating repos, registering keys) and the GitHub MCP tool surface use it
+server-side, while repo clone/fetch/push carries it as the access-token secret's
+**placeholder** in the HTTPS remote URL, substituted at the egress proxy (§ 8). The
+project key signs commits and never authenticates transport. Full design: this section
+plus the route table in `services/oauth/` and `routes/oauth.ts`.
 
 ---
 

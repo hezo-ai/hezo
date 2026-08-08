@@ -1,6 +1,6 @@
 ---
 title: Remote containers
-order: 25.3
+order: 17.7
 section: Containers
 ---
 
@@ -9,9 +9,10 @@ section: Containers
 Point Hezo at a managed sandbox service and agent containers run on the provider's
 machines instead of yours, while Hezo keeps doing all of the work that touches your data.
 
-Everything in [Containers](/docs/containers/overview) still holds: one container per
-project, started on demand, isolated from everything else, with secrets substituted at
-Hezo's own egress proxy. This page covers what is different.
+Everything in [Containers](/docs/containers/overview) still holds: containers belong to
+one project and serve one run at a time, start on demand, are isolated from everything
+else, and secrets are substituted at Hezo's own egress proxy. This page covers what is
+different.
 
 Hezo supports one managed provider today:
 

@@ -36,8 +36,9 @@ agent can't hurt you. A few guarantees sit underneath everything:
   [Container isolation](/docs/security/container-isolation), and
   [Containers](/docs/containers/overview) for where those containers run (your own Docker
   daemon or a managed service).
-- **Agents work in real repos without holding the keys.** Git signing and SSH happen
-  on the host, so commits land **verified** while the key never enters the sandbox. See
+- **Agents work in real repos without holding the keys.** Commit signing and git
+  credentials stay on your instance, so commits land **verified** while nothing secret
+  enters the sandbox. See
   [Git & verified commits](/docs/security/git-and-verified-commits).
 
 ## What you can do with it

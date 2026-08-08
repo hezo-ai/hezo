@@ -15,6 +15,10 @@ keys, and the spend.
 - A host that can run a **Docker-compatible container runtime** (your laptop,
   a home server, or a cloud VPS). Colima, Rancher Desktop, OrbStack, Lima and rootless
   Docker all work - see [Container runtimes](/docs/deployment/container-runtimes).
+  Running agent containers on a
+  [managed sandbox service](/docs/containers/remote/overview) instead? Then the host
+  needs no container runtime at all - and **Settings -> Containers** switches an
+  instance between the two at any time.
 - The **`hezo` binary** (see [Installation](/docs/getting-started/installation)).
 - Your **master key** (created on first run; see
   [First-run setup](/docs/getting-started/first-run)).

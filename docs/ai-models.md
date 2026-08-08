@@ -93,6 +93,12 @@ Use one of these instead:
 - `http://host.docker.internal:11434` - a server on the same machine as Hezo.
 - `http://192.168.1.50:11434` - a server elsewhere on your network, by its LAN address.
 
+Both only resolve while the container is on the same machine as the server - that is, on
+[local Docker](/docs/containers/local-docker), the default. On a
+[managed sandbox service](/docs/containers/remote/overview) the container runs on the
+provider's machines, where these addresses mean nothing - use a model endpoint reachable
+over the internet instead.
+
 Hezo warns you in the connect form if you enter a `localhost` address.
 
 ### Cost and model choice

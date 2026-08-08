@@ -9,7 +9,8 @@ section: Getting started
 Hezo ships as a **single self-contained binary** - there's no runtime, language
 toolchain, or dependencies to install. Download it, run it, and you're up in seconds.
 The one thing to have in place first is a **Docker-compatible runtime**, which Hezo uses
-to run each project's agents in an isolated container.
+to run each project's agents in isolated containers on your machine - unless you point
+the instance at a managed sandbox service instead (below).
 
 ## Prerequisites
 
@@ -24,6 +25,15 @@ to run each project's agents in an isolated container.
   need.
 - A machine you're happy to leave running while agents work (a laptop is fine to
   start; a small always-on server is better for long-running teams).
+
+**Rather not run containers on this machine at all?** A brand-new instance can start its
+agent containers on a [managed sandbox service](/docs/containers/remote/overview) instead
+- `hezo --sandbox-backend daytona --daytona-api-key "<key>"` - and then no container
+runtime is needed here. See [Containers](/docs/containers/overview) for the trade-off.
+The choice stays live after install: **Settings -> Containers** switches an existing
+instance between local and remote containers at any time
+([Switching at any time](/docs/containers/overview#switching-at-any-time)) - the flag and
+environment variable only seed the first startup.
 
 ## Install the binary
 

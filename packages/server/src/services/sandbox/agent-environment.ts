@@ -40,9 +40,10 @@ export const SANDBOX_AGENT_ENVIRONMENTS: Record<SandboxBackend, SandboxAgentEnvi
 		egress: [
 			'Outbound network is whatever that machine allows, so it is usually unrestricted - ' +
 				'HTTPS, SSH, and other TCP protocols all work unless the operator has a firewall of their own.',
-			"All HTTP and HTTPS traffic still passes through Hezo's egress proxy, which is what " +
-				'substitutes `__HEZO_SECRET_<NAME>__` placeholders. A request that bypasses the proxy ' +
-				'carries the unsubstituted placeholder and simply fails upstream.',
+			"Requests to hosts your credentials and connectors are scoped to pass through Hezo's " +
+				'egress proxy, which is what substitutes `__HEZO_SECRET_<NAME>__` placeholders; ' +
+				'everything else connects direct. A request that reaches a credentialed host without ' +
+				'the proxy carries the unsubstituted placeholder and simply fails upstream.',
 		],
 	},
 	[Backend.Daytona]: {

@@ -17,9 +17,11 @@ hezo [options]
 ```
 
 Boots the Hezo server and web app (default port 3100) against the data directory
-(default `~/.hezo/`). A Docker-compatible container runtime must be installed and running
-first - Hezo checks at startup and exits with install/start guidance if no
-daemon is reachable (see [Installation](/docs/getting-started/installation) and
+(default `~/.hezo/`). Unless the instance runs its containers on a
+[managed sandbox service](/docs/containers/remote/overview) (below), a Docker-compatible
+container runtime must be installed and running first - Hezo checks at startup and exits
+with install/start guidance if no daemon is reachable (see
+[Installation](/docs/getting-started/installation) and
 [Container runtimes](/docs/deployment/container-runtimes)). See the
 [Configuration reference](/docs/deployment/configuration) for the full table of flags and
 their environment-variable equivalents. The most common:
