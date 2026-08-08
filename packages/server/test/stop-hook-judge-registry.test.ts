@@ -164,9 +164,9 @@ describe('stop-hook rules block announced-plan abandonment', () => {
 		expect(STOP_HOOK_RULES).toContain('never for legitimately revising scope in the thread');
 	});
 
-	it('report_no_work carve-out spans rules 1-11', () => {
-		expect(STOP_HOOK_RULES).toContain('block rules 1-11');
-		expect(STOP_HOOK_RULES).not.toContain('block rules 1-10');
+	it('report_no_work carve-out spans rules 1-13', () => {
+		expect(STOP_HOOK_RULES).toContain('block rules 1-13');
+		expect(STOP_HOOK_RULES).not.toContain('block rules 1-11');
 	});
 
 	it('every runtime judge embeds the rule', () => {
@@ -360,5 +360,75 @@ describe('stop-hook rules bless waiting on a pending admin approval', () => {
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('create_hire_proposal');
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('create_hire_proposal');
+	});
+});
+
+/**
+ * Rule 12. The incident: a Captain woken by a teammate's `@captain` review request
+ * did the whole review, wrote its PASS verdict, and ended the run with that verdict
+ * only in its final message. Rule 10 did not reach it — the message named nobody and
+ * passed no baton, so it is not shaped like a handoff — and the ticket sat in `review`
+ * with nobody woken. Rule 12 covers the reply itself, whatever shape it takes.
+ */
+describe('stop-hook rules block a reply left only in the final message', () => {
+	it('blocks an answer to an ask that was never posted as a comment', () => {
+		expect(STOP_HOOK_RULES).toContain('woken by someone ASKING this agent for something');
+		expect(STOP_HOOK_RULES).toContain('Doing the work is NOT the deliverable on its own');
+	});
+
+	it('is scoped so it does not collapse into rule 10', () => {
+		expect(STOP_HOOK_RULES).toContain('a reply that names nobody and passes no baton');
+		// Answering the asker needs no mention — the reply reaches them — so the rule
+		// must not push agents into spraying @-mentions on routine answers.
+		expect(STOP_HOOK_RULES).toContain('it does not need an @-mention if it is simply answering');
+	});
+
+	it('reaches every runtime judge', () => {
+		const needle = 'woken by someone ASKING this agent for something';
+		expect(STOP_HOOK_PROMPT).toContain(needle);
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			needle,
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(needle);
+	});
+});
+
+/**
+ * Rule 13. The same run noticed the IBKR MCP connector's OAuth grant had expired and
+ * filed it as a "Known gap (already acknowledged)" pointing at another ticket. Nothing
+ * reached a human who could reconnect it, so every later run kept producing degraded
+ * output. Rule 6 does not reach this — it covers an agent that never had a credential,
+ * not one whose working integration broke.
+ */
+describe('stop-hook rules block an unescalated broken integration', () => {
+	it('blocks stopping without escalating a broken connector', () => {
+		expect(STOP_HOOK_RULES).toContain('an integration the work depends on is BROKEN');
+		expect(STOP_HOOK_RULES).toContain('is NOT escalation');
+	});
+
+	it('names the acceptable resolutions and rejects the known-gap dodge', () => {
+		expect(STOP_HOOK_RULES).toContain(
+			'active @admin comment on the current ticket naming the connector',
+		);
+		expect(STOP_HOOK_RULES).toContain(
+			'request_credential call where a pasted value is what fixes it',
+		);
+		// Working around it is fine; going quiet about it is not.
+		expect(STOP_HOOK_RULES).toContain('does not discharge the escalation');
+	});
+
+	it('is distinguished from rule 6', () => {
+		expect(STOP_HOOK_RULES).toContain('covers one that WAS working and has stopped working');
+	});
+
+	it('reaches every runtime judge', () => {
+		const needle = 'an integration the work depends on is BROKEN';
+		expect(STOP_HOOK_PROMPT).toContain(needle);
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			needle,
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(needle);
 	});
 });

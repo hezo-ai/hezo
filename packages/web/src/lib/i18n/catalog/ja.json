@@ -149,5 +149,10 @@
 	"attachments.category.audio": "音声：",
 	"attachments.category.video": "動画：",
 	"attachments.category.archives": "アーカイブ：",
-	"attachments.category.scripts": "スクリプト・データ："
+	"attachments.category.scripts": "スクリプト・データ：",
+	"connectors.banner.one": "{name} が使用できなくなりました。エージェントが再び利用できるよう、接続し直してください。",
+	"connectors.banner.many": "コネクタ {count} 件が使用できなくなりました。エージェントが再び利用できるよう、接続し直してください。",
+	"connectors.banner.action": "コネクタを表示",
+	"connectors.status.needsReconnect": "再接続が必要",
+	"connectors.reconnect": "再接続"
 }

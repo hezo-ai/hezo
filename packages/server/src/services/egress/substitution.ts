@@ -97,10 +97,25 @@ interface VaultCacheEntry {
 
 let vaultCache: VaultCacheEntry | null = null;
 let vaultInflight: Promise<Map<string, ResolvedSecret>> | null = null;
+/**
+ * Bumped by every invalidation. A load captures it before reading and refuses to
+ * commit its result if it changed in the meantime.
+ *
+ * Nulling `vaultCache` alone is not enough once anything invalidates from
+ * OUTSIDE this path. A background token refresh that lands while a read is in
+ * flight would have its invalidation immediately overwritten by the older
+ * snapshot the read then commits, and the proxy would serve a rotated-away token
+ * for up to the TTL - intermittent 401s on agent MCP calls with nothing in the
+ * log to explain them. That was unreachable while the only refresher ran inside
+ * `readAndDecryptVault` itself (before the SELECT); the periodic connector-health
+ * sweep made it an ordinary interleaving.
+ */
+let vaultGeneration = 0;
 
 /** Drop the cached vault. Call after any write to the `secrets` table. */
 export function invalidateSecretsVault(): void {
 	vaultCache = null;
+	vaultGeneration++;
 }
 
 /**
@@ -128,11 +143,15 @@ export async function loadAllSecrets(
 	// Coalesce concurrent misses: ten agents hitting the proxy at once would
 	// otherwise each run the full read-and-decrypt before any of them caches.
 	if (vaultInflight) return vaultInflight;
+	const generation = vaultGeneration;
 	const load = readAndDecryptVault(scope, key);
 	vaultInflight = load;
 	try {
 		const secrets = await load;
-		vaultCache = { secrets, loadedAt: Date.now() };
+		// Only cache what is still current. When an invalidation raced this read,
+		// the caller still gets these values (they are no more stale than what it
+		// asked for) but they are not published to the next request.
+		if (generation === vaultGeneration) vaultCache = { secrets, loadedAt: Date.now() };
 		return secrets;
 	} finally {
 		if (vaultInflight === load) vaultInflight = null;

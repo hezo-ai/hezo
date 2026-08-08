@@ -19,9 +19,11 @@ import {
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	ConnectorAccess,
+	ConnectorStatus,
 	ConnectorTransport,
 	CredentialInputType,
 	CredentialKind,
+	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
 	DocumentType,
@@ -149,6 +151,7 @@ import {
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
+import { setConnectorAuthError } from '../services/oauth/token-resolver';
 import {
 	buildProgressActivitySnapshot,
 	type ProgressActivityInput,
@@ -6810,7 +6813,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_connectors',
-		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
+		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
 		{
 			project: projectArg(),
 			...listPagingArgs(),
@@ -6861,25 +6864,16 @@ export function registerTools(
 				 ORDER BY mc.name ASC, (mc.project_id IS NULL) ASC`,
 				[scope.projectId],
 			);
-			// Derive a single oauth_status field that's the load-bearing signal
-			// for whether the connector is usable by agents on subsequent runs.
-			const cfg = (row: { config: Record<string, unknown> }): boolean => {
-				const c = row.config as { dcr?: unknown };
-				return !!c?.dcr;
-			};
 			// A project connector shadows a global one of the same name (the run sees
 			// the same set — see loadConnectorsForRun). Rows are ordered project
 			// first, so keep the first occurrence per name.
 			const byName = new Map<string, (typeof r.rows)[number]>();
 			for (const row of r.rows) if (!byName.has(row.name)) byName.set(row.name, row);
 			const connectors = [...byName.values()].map((row) => {
-				let oauth_status: 'active' | 'pending' | 'failed' | 'revoked' | 'none';
-				if (row.kind !== 'saas') oauth_status = 'none';
-				else if (row.revoked_at) oauth_status = 'revoked';
-				else if (row.auth_error && !row.activated_at) oauth_status = 'failed';
-				else if (row.oauth_connection_id && row.activated_at) oauth_status = 'active';
-				else if (cfg(row) || row.created_by_task_id) oauth_status = 'pending';
-				else oauth_status = 'none';
+				// oauth_status is the load-bearing signal for whether the connector is
+				// usable by agents on subsequent runs. Derived by the shared ladder so
+				// it cannot drift from what the operator sees on the Connections page.
+				const oauth_status = connectorOAuthStatus(row);
 
 				// An active OAuth-backed connector can also authenticate raw REST calls
 				// to the provider's API: expose the secret's placeholder (never its
@@ -6896,8 +6890,14 @@ export function registerTools(
 					discovered_methods,
 					...rest
 				} = row;
+				// `degraded` keeps its rest_auth block: the placeholder and host scoping
+				// are unchanged facts about the credential, and dropping them would make
+				// the REST fallback vanish mid-task with no explanation. oauth_status
+				// alone carries the news that the token needs reconnecting.
 				const rest_auth =
-					oauth_status === 'active' && oauth_secret_name && (oauth_allowed_hosts?.length ?? 0) > 0
+					(oauth_status === ConnectorStatus.Active || oauth_status === ConnectorStatus.Degraded) &&
+					oauth_secret_name &&
+					(oauth_allowed_hosts?.length ?? 0) > 0
 						? {
 								placeholder: credentialPlaceholder(oauth_secret_name),
 								allowed_hosts: oauth_allowed_hosts ?? [],
@@ -6978,7 +6978,7 @@ export function registerTools(
 	tool(
 		server,
 		'test_connector',
-		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
+		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?". A 401 here means the stored credential is no longer accepted: report it to the human with an active @admin comment asking them to reconnect the connector. You do not need this call when oauth_status already says "degraded" - that answer is known.',
 		{
 			project: projectArg(),
 			connector_id: z.string().describe('connector id or name (both shown by list_connectors)'),
@@ -7066,6 +7066,28 @@ export function registerTools(
 			// question ("was a token attached?") is answered by `token_sent`.
 			const redact = (s: string): string =>
 				bearerToken ? s.split(bearerToken).join('[redacted]') : s;
+			// The probe just learned first-hand whether the stored credential is
+			// still accepted. Record it so that knowledge reaches the operator's
+			// banner and the card's reconnect button instead of living only in this
+			// tool result, where the previous incident left it: an agent saw the
+			// 401, wrote it into a report as a "known gap", and the connector stayed
+			// broken for days. Only meaningful when a token was actually sent.
+			// A non-auth failure (a 500, a timeout) says nothing about the credential,
+			// so it leaves whatever health is already recorded alone.
+			const credentialVerdict =
+				probeRes.status === 401 || probeRes.status === 403
+					? `probe: HTTP ${probeRes.status}`
+					: probeRes.ok
+						? null
+						: undefined;
+			if (bearerToken && credentialVerdict !== undefined) {
+				await setConnectorAuthError(
+					{ db, masterKeyManager },
+					connector.id,
+					credentialVerdict,
+				).catch(() => {});
+			}
+
 			return {
 				ok: probeRes.ok,
 				status: probeRes.status,

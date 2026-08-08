@@ -1,4 +1,11 @@
-import { ConnectorAccess, ConnectorTransport, type McpTransport, WakeupSource } from '@hezo/shared';
+import {
+	ConnectorAccess,
+	type ConnectorStatus,
+	ConnectorTransport,
+	connectorStatus,
+	type McpTransport,
+	WakeupSource,
+} from '@hezo/shared';
 import type { Db } from '../../db/database';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
@@ -73,8 +80,13 @@ export interface ConnectorRow {
 	updated_at: string;
 }
 
-export type ConnectorStatus = 'pending' | 'active' | 'failed' | 'revoked';
+export type { ConnectorStatus };
 
+/**
+ * The ladder itself lives in `@hezo/shared` so the server, the web and the
+ * `list_connectors` MCP tool cannot drift apart on what "connected" means (they
+ * did, and a connector with a dead token reported `active` on all three).
+ */
 export function statusOf(
 	row: Pick<
 		ConnectorRow,
@@ -86,19 +98,7 @@ export function statusOf(
 		| 'auth_error'
 	>,
 ): ConnectorStatus {
-	if (row.revoked_at) return 'revoked';
-	if (row.auth_error && !row.activated_at) return 'failed';
-	if (row.oauth_connection_id && row.activated_at) return 'active';
-	// API-key connectors (provider exposes no OAuth) authenticate via a pasted
-	// key stored in the vault and referenced by api_key_secret_id; the descriptor
-	// emits a placeholder for it. Active once the key is stored and stamped.
-	if (row.api_key_secret_id && row.activated_at) return 'active';
-	// Local (stdio) connectors authenticate via credential placeholders
-	// (__HEZO_SECRET_*__ — e.g. a username/password login that fetches a token),
-	// not OAuth, so there is no oauth_connection_id/activated_at handshake. A
-	// non-revoked, non-failed local row is connected the moment it exists.
-	if (row.kind === ConnectorTransport.Local) return 'active';
-	return 'pending';
+	return connectorStatus(row);
 }
 
 /**

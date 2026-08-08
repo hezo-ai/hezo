@@ -149,5 +149,10 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archieven:",
-	"attachments.category.scripts": "Scripts en data:"
+	"attachments.category.scripts": "Scripts en data:",
+	"connectors.banner.one": "{name} werkt niet meer. Verbind opnieuw zodat je agents het weer kunnen gebruiken.",
+	"connectors.banner.many": "{count} connectoren werken niet meer. Verbind ze opnieuw zodat je agents ze weer kunnen gebruiken.",
+	"connectors.banner.action": "Connectoren bekijken",
+	"connectors.status.needsReconnect": "Opnieuw verbinden nodig",
+	"connectors.reconnect": "Opnieuw verbinden"
 }

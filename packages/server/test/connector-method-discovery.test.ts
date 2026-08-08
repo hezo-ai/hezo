@@ -230,6 +230,37 @@ describe('discoverConnectorMethods', () => {
 		}
 	});
 
+	it('reports auth_failed and records connector health when the server rejects the credential', async () => {
+		// The incident shape: an expired OAuth grant answers 401 with an empty body,
+		// so the MCP SDK's message ends at a bare "Error POSTing to endpoint:" and
+		// says nothing about the token. The status is the only usable signal, and
+		// reading `(e as Error).message` threw it away — leaving the operator with
+		// an unactionable toast and the connector still reading as Connected.
+		const unauthorized = await startTestMcpHttpServer({ failWithStatus: 401 });
+		try {
+			const id = await seedConnector();
+			await db.query(`UPDATE mcp_connections SET config = $1::jsonb WHERE id = $2`, [
+				JSON.stringify({ url: `http://127.0.0.1:${unauthorized.port}/mcp` }),
+				id,
+			]);
+			const result = await discoverConnectorMethods(deps, id);
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.reason).toBe('auth_failed');
+				expect(result.detail).toContain('401');
+			}
+			// And the failure is recorded, so the banner lights up and the card
+			// offers a reconnect rather than the knowledge dying in one toast.
+			const row = await db.query<{ auth_error: string | null }>(
+				`SELECT auth_error FROM mcp_connections WHERE id = $1`,
+				[id],
+			);
+			expect(row.rows[0].auth_error).toContain('401');
+		} finally {
+			await unauthorized.close();
+		}
+	});
+
 	it('reports not_found for an unknown connector', async () => {
 		const result = await discoverConnectorMethods(deps, '00000000-0000-0000-0000-000000000000');
 		expect(result.ok).toBe(false);

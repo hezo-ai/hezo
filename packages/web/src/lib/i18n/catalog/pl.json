@@ -149,5 +149,10 @@
 	"attachments.category.audio": "Dźwięk:",
 	"attachments.category.video": "Wideo:",
 	"attachments.category.archives": "Archiwa:",
-	"attachments.category.scripts": "Skrypty i dane:"
+	"attachments.category.scripts": "Skrypty i dane:",
+	"connectors.banner.one": "{name} przestał działać. Połącz go ponownie, aby agenci znów mogli z niego korzystać.",
+	"connectors.banner.many": "Konektory ({count}) przestały działać. Połącz je ponownie, aby agenci znów mogli z nich korzystać.",
+	"connectors.banner.action": "Zobacz konektory",
+	"connectors.status.needsReconnect": "Wymaga ponownego połączenia",
+	"connectors.reconnect": "Połącz ponownie"
 }

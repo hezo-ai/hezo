@@ -149,5 +149,10 @@
 	"attachments.category.audio": "音频：",
 	"attachments.category.video": "视频：",
 	"attachments.category.archives": "压缩包：",
-	"attachments.category.scripts": "脚本与数据："
+	"attachments.category.scripts": "脚本与数据：",
+	"connectors.banner.one": "{name} 已停止工作。请重新连接，让智能体可以继续使用。",
+	"connectors.banner.many": "{count} 个连接器已停止工作。请重新连接，让智能体可以继续使用。",
+	"connectors.banner.action": "查看连接器",
+	"connectors.status.needsReconnect": "需要重新连接",
+	"connectors.reconnect": "重新连接"
 }

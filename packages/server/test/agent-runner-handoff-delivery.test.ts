@@ -768,6 +768,64 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(comments.rows.length).toBe(0);
 	});
 
+	it("delivers a stranded verdict to a teammate's @-mention as a reply", async () => {
+		// The review-handoff failure: a teammate @-mentions the reviewer asking for
+		// sign-off, the reviewer does the whole review and ends the run with its
+		// verdict only in the final message. Nothing wakes the asker and the ticket
+		// sits in `review` until a human notices.
+		const other = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const otherId = other.rows[0].id;
+		const ask = await seedComment(otherId, 'ready for review — please sign off');
+		const wakeupPayload = {
+			source: WakeupSource.Mention,
+			task_id: taskId,
+			comment_id: ask,
+		};
+		const wakeupId = await createWakeupRow(
+			WakeupSource.Mention,
+			wakeupPayload,
+			`mention-agent:${ask}`,
+		);
+
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: false,
+				execStart: streamResult('Verdict: PASS. All 14 reports are accurate.'),
+			}),
+		);
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			wakeupPayload,
+			undefined,
+			undefined,
+			wakeupId,
+		);
+		expect(result.success).toBe(true);
+		const comments = await textComments(result.heartbeatRunId);
+		expect(comments.rows.length).toBe(1);
+		expect(comments.rows[0].parent_comment_id).toBe(ask);
+		expect(JSON.stringify(comments.rows[0].content)).toContain('Verdict: PASS');
+
+		// The loop guard, asserted structurally: the delivered comment carries no
+		// active mention, so it can only ever produce a *reply* wakeup — never a
+		// Mention one, which is the only kind that would let the next hop
+		// auto-deliver back. Two agents therefore cannot ping-pong here.
+		const wakeups = await db.query<{ source: string }>(
+			`SELECT source FROM agent_wakeup_requests WHERE payload->>'comment_id' = $1`,
+			[comments.rows[0].id],
+		);
+		expect(wakeups.rows.every((w) => w.source !== WakeupSource.Mention)).toBe(true);
+	});
+
 	it('does not warn on a bold teammate name used without ask intent', async () => {
 		const other = await db.query<{ slug: string }>(
 			`SELECT ma.slug FROM member_agents ma

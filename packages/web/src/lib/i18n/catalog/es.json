@@ -149,5 +149,10 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Vídeo:",
 	"attachments.category.archives": "Archivos comprimidos:",
-	"attachments.category.scripts": "Scripts y datos:"
+	"attachments.category.scripts": "Scripts y datos:",
+	"connectors.banner.one": "{name} ha dejado de funcionar. Vuelve a conectarlo para que tus agentes puedan usarlo de nuevo.",
+	"connectors.banner.many": "{count} conectores han dejado de funcionar. Vuelve a conectarlos para que tus agentes puedan usarlos de nuevo.",
+	"connectors.banner.action": "Ver conectores",
+	"connectors.status.needsReconnect": "Requiere reconexión",
+	"connectors.reconnect": "Reconectar"
 }

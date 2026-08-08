@@ -149,5 +149,10 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archive:",
-	"attachments.category.scripts": "Skripte & Daten:"
+	"attachments.category.scripts": "Skripte & Daten:",
+	"connectors.banner.one": "{name} funktioniert nicht mehr. Stellen Sie die Verbindung wieder her, damit Ihre Agenten den Konnektor nutzen können.",
+	"connectors.banner.many": "{count} Konnektoren funktionieren nicht mehr. Stellen Sie die Verbindungen wieder her, damit Ihre Agenten sie nutzen können.",
+	"connectors.banner.action": "Konnektoren anzeigen",
+	"connectors.status.needsReconnect": "Neu verbinden nötig",
+	"connectors.reconnect": "Neu verbinden"
 }

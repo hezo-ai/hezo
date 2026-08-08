@@ -149,5 +149,10 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archives:",
-	"attachments.category.scripts": "Scripts & data:"
+	"attachments.category.scripts": "Scripts & data:",
+	"connectors.banner.one": "{name} has stopped working. Reconnect it so agents can use it again.",
+	"connectors.banner.many": "{count} connectors have stopped working. Reconnect them so agents can use them again.",
+	"connectors.banner.action": "View connectors",
+	"connectors.status.needsReconnect": "Needs reconnect",
+	"connectors.reconnect": "Reconnect"
 }

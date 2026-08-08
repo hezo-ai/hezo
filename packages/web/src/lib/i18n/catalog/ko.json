@@ -149,5 +149,10 @@
 	"attachments.category.audio": "오디오:",
 	"attachments.category.video": "동영상:",
 	"attachments.category.archives": "압축 파일:",
-	"attachments.category.scripts": "스크립트 및 데이터:"
+	"attachments.category.scripts": "스크립트 및 데이터:",
+	"connectors.banner.one": "{name}이(가) 더 이상 작동하지 않아요. 에이전트가 다시 사용할 수 있도록 재연결해 주세요.",
+	"connectors.banner.many": "커넥터 {count}개가 더 이상 작동하지 않아요. 에이전트가 다시 사용할 수 있도록 재연결해 주세요.",
+	"connectors.banner.action": "커넥터 보기",
+	"connectors.status.needsReconnect": "재연결 필요",
+	"connectors.reconnect": "재연결"
 }
