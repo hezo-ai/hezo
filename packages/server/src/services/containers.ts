@@ -930,6 +930,15 @@ async function reclaimIdleCapacityForProject(
 			// excluded: its own idle members are offered to it by the reuse rung long
 			// before this, so anything of its own still here is a member the ladder
 			// already refused.
+			//
+			// Deliberately no LIMIT. The row count is already bounded by the memory
+			// budget itself - every row here is a *running* container, so there can
+			// never be more than `max_container_memory_gb` divided by the smallest
+			// per-container cap, which is tens at the outside and three on a default
+			// host. A LIMIT could only truncate below that, and truncating is the one
+			// thing that would break the all-or-nothing rule silently: the plan would
+			// read as "cannot cover the shortfall" while the memory to cover it was
+			// sitting outside the window.
 			`SELECT m.container_id, m.project_id, p.slug, p.team_id, m.memory_bytes,
 			        m.has_unpushed_commits,
 			        EXTRACT(EPOCH FROM (now() - m.last_released_at)) * 1000 AS idle_for_ms
