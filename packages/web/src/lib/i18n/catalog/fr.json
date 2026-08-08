@@ -149,7 +149,6 @@
 	"nav.settings": "Réglages",
 	"nav.tasks": "Tâches",
 	"progress.columns.actioned": "Traité récemment",
-	"progress.columns.allTasks": "Toutes les tâches",
 	"progress.columns.awaitingRun": "Le Captain les remplit lors d'une mise à jour de progression.",
 	"progress.columns.closed": "Terminées récemment",
 	"progress.columns.created": "Créées récemment",

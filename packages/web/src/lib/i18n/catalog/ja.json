@@ -149,7 +149,6 @@
 	"nav.settings": "設定",
 	"nav.tasks": "タスク",
 	"progress.columns.actioned": "最近着手したもの",
-	"progress.columns.allTasks": "すべてのタスク",
 	"progress.columns.awaitingRun": "進捗更新の際に Captain が記入します。",
 	"progress.columns.closed": "最近完了したもの",
 	"progress.columns.created": "最近作成されたもの",

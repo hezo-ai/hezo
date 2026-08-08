@@ -122,18 +122,9 @@ export function RecentTaskColumns({
 			<div className="hidden gap-4 md:grid md:grid-cols-3">
 				{PROGRESS_ACTIVITY_KINDS.map((kind) => (
 					<div key={kind} data-testid={`progress-column-${kind}`}>
-						<div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-							<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3">
-								{t(COLUMN_LABELS[kind].heading)}
-							</h2>
-							<Link
-								to="/projects/$projectId/tasks"
-								params={{ projectId }}
-								className="text-[11px] text-text-3 transition-colors hover:text-text-1 hover:underline"
-							>
-								{t('progress.columns.allTasks')}
-							</Link>
-						</div>
+						<h2 className="mb-1.5 px-0.5 text-[11px] font-medium uppercase tracking-wider text-text-3">
+							{t(COLUMN_LABELS[kind].heading)}
+						</h2>
 						<ColumnBody
 							projectId={projectId}
 							entries={activity[kind] ?? []}

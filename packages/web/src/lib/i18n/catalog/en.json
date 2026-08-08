@@ -149,7 +149,6 @@
 	"nav.settings": "Settings",
 	"nav.tasks": "Tasks",
 	"progress.columns.actioned": "Recently actioned",
-	"progress.columns.allTasks": "All tasks",
 	"progress.columns.awaitingRun": "The Captain fills these in during a progress update.",
 	"progress.columns.closed": "Recently closed",
 	"progress.columns.created": "Recently created",

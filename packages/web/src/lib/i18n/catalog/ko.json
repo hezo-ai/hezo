@@ -149,7 +149,6 @@
 	"nav.settings": "설정",
 	"nav.tasks": "작업",
 	"progress.columns.actioned": "최근 진행한 작업",
-	"progress.columns.allTasks": "모든 태스크",
 	"progress.columns.awaitingRun": "진행 업데이트 때 Captain이 채웁니다.",
 	"progress.columns.closed": "최근 완료된 작업",
 	"progress.columns.created": "최근 생성된 작업",

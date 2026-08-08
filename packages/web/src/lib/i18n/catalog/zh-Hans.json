@@ -149,7 +149,6 @@
 	"nav.settings": "设置",
 	"nav.tasks": "任务",
 	"progress.columns.actioned": "最近处理",
-	"progress.columns.allTasks": "全部任务",
 	"progress.columns.awaitingRun": "Captain 会在进展更新时填写。",
 	"progress.columns.closed": "最近完成",
 	"progress.columns.created": "最近创建",
