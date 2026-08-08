@@ -119,6 +119,16 @@ of the system is sized against that promise.
   suspended sandbox still counts against your provider account's memory and disk limits, so
   on a small plan a handful of idle projects can hold the whole allowance. If runs start
   failing to provision while nothing appears to be running, that is what to look at.
+
+  A container holding commits that have not reached the remote is always suspended rather
+  than destroyed, whichever of these retires it, so the work is never the thing that gets
+  thrown away.
+- **A waiting run can retire another project's idle sandbox.** Hezo's own budget is shared,
+  so when a run does not fit, an idle container elsewhere is retired and a fresh one built
+  for the waiting run. That costs a cold start on the project that gave one up, and on a
+  managed backend it is a sandbox destroyed and later recreated rather than resumed. If you
+  see more provisioning than you expect, the memory budget is set tighter than the work you
+  are asking the instance to do.
 - **The first container of a project is slower to start** than a local one, because the
   provider builds it. Later ones start in a few seconds.
 - **A local model provider is not reachable.** Pointing an AI provider at

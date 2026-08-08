@@ -1,4 +1,4 @@
-import { ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
+import { CONTAINER_RECLAIM_MIN_IDLE_SEC, ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
 
@@ -6,11 +6,12 @@ import type { ContainerEngine } from './sandbox/types';
 
 /**
  * DB-backed concurrency checks — the single source of truth for the two run
- * rules: at most one active (queued/running) agent run per task, and at most
- * `max_active_containers` (system_meta; default from the engine's own memory
- * answer) simultaneously RUNNING project containers across the instance. The container
- * cap is the memory guarantee: every container is memory-capped, so total
- * demand never exceeds `N × cap` no matter how many runs share a container.
+ * rules: at most one active (queued/running) agent run per task, and no more
+ * simultaneously RUNNING container memory across the instance than
+ * `max_container_memory_gb` (system_meta; default derived from the engine's own
+ * memory answer). A budget rather than a container count, because
+ * `projects.memory_limit_gib` exists so containers are not all the same size —
+ * see {@link ActiveContainers.usedMemoryGb}.
  * Shared by the scheduler (`JobManager`, which layers its in-memory dispatch
  * guards on top) and the stateless run-now route.
  *
@@ -64,6 +65,34 @@ export interface ActiveContainers {
 	 * a second one and must be gated like any other new start.
 	 */
 	projectsWithSpareContainer: Set<string>;
+	/**
+	 * Per project, how much of {@link usedMemoryGb} is held by idle members that
+	 * have sat idle long enough for another project to reclaim them, in GB.
+	 *
+	 * Keyed by project rather than summed because the figure is only meaningful
+	 * relative to who is asking: a project cannot reclaim from itself, and its own
+	 * idle members are already offered to it through the pool's reuse rung. Read it
+	 * with {@link reclaimableForOthers}.
+	 *
+	 * A container is pinned to its project for life - it is built around that
+	 * project's workspace mount, clone and git identity - so this memory is
+	 * reachable only by retiring the container, never by handing it over. Charging
+	 * it as free would over-subscribe the host; ignoring it entirely wedges the
+	 * instance, which is what it used to do.
+	 */
+	reclaimableMemoryGbByProject: Map<string, number>;
+}
+
+/** What {@link ActiveContainers.reclaimableMemoryGbByProject} offers a project other than its own. */
+export function reclaimableForOthers(
+	active: Pick<ActiveContainers, 'reclaimableMemoryGbByProject'>,
+	projectId: string | null,
+): number {
+	let total = 0;
+	for (const [id, gb] of active.reclaimableMemoryGbByProject) {
+		if (id !== projectId) total += gb;
+	}
+	return total;
 }
 
 /**
@@ -80,7 +109,7 @@ export async function getActiveContainers(
 	db: Db,
 	engine: Pick<ContainerEngine, 'containerHostMemory'>,
 ): Promise<ActiveContainers> {
-	const [budgetGb, defaultCapGb, running, spare] = await Promise.all([
+	const [budgetGb, defaultCapGb, running, spare, reclaimable] = await Promise.all([
 		getMaxContainerMemoryGb(db, engine),
 		getDefaultRamCapPerContainerGb(db),
 		db.query<{ project_id: string; memory_bytes: string | number | null }>(
@@ -132,11 +161,30 @@ export async function getActiveContainers(
 			    )`,
 			[ContainerStatus.Running],
 		),
+		db.query<{ project_id: string; memory_bytes: string | number | null }>(
+			// The subset of the running count that another project could get back by
+			// retiring it. Pool members only: the legacy `projects.container_*` arm
+			// records no state, so a container known only there cannot be shown to be
+			// idle, and retiring one on a guess would kill a live run.
+			//
+			// The chat's pinned member is excluded here as it is above - it is not in
+			// `usedMemoryGb`, so retiring it frees nothing against the budget and only
+			// interrupts somebody's session.
+			//
+			// Served by `idx_container_pool_members_idle`.
+			`SELECT project_id, memory_bytes FROM container_pool_members
+			  WHERE state = 'idle' AND NOT reserved_for_chat
+			    AND last_released_at <= now() - ($1 * interval '1 second')`,
+			[CONTAINER_RECLAIM_MIN_IDLE_SEC],
+		),
 	]);
 	// One query for the overrides rather than one per container: the set of
 	// distinct projects here is small, and a per-row lookup would make this gate
 	// cost grow with the fleet it is gating.
-	const overrides = await loadProjectMemoryCaps(db, new Set(running.rows.map((r) => r.project_id)));
+	const overrides = await loadProjectMemoryCaps(
+		db,
+		new Set([...running.rows, ...reclaimable.rows].map((r) => r.project_id)),
+	);
 	let usedMemoryGb = 0;
 	for (const row of running.rows) {
 		// What the container was actually built to hold, where that is recorded. A
@@ -151,10 +199,26 @@ export async function getActiveContainers(
 				? (overrides.get(row.project_id) ?? defaultCapGb)
 				: Number(row.memory_bytes) / 1024 ** 3;
 	}
+	// Resolved exactly as `usedMemoryGb` above, and it has to be: this is a subset
+	// of that figure, so a different fallback would let a project reclaim more or
+	// less than retiring the container actually gives back.
+	const reclaimableMemoryGbByProject = new Map<string, number>();
+	for (const row of reclaimable.rows) {
+		const gb =
+			row.memory_bytes === null
+				? (overrides.get(row.project_id) ?? defaultCapGb)
+				: Number(row.memory_bytes) / 1024 ** 3;
+		reclaimableMemoryGbByProject.set(
+			row.project_id,
+			(reclaimableMemoryGbByProject.get(row.project_id) ?? 0) + gb,
+		);
+	}
+
 	return {
 		budgetGb,
 		usedMemoryGb,
 		projectsWithSpareContainer: new Set(spare.rows.map((r) => r.project_id)),
+		reclaimableMemoryGbByProject,
 	};
 }
 
@@ -223,18 +287,22 @@ export async function projectContainerMemoryGb(db: Db, projectId: string): Promi
  * would let concurrent runs in one project walk straight past the cap. What
  * replaces it is the narrower and still-correct claim that a project with a
  * container genuinely free to take the run consumes no new slot.
+ *
+ * Reclaimable memory counts as headroom here, and must: the acquire path can now
+ * retire another project's idle container to make room, but it never gets the
+ * chance if this gate skips the dispatch first. Gating on the raw budget alone is
+ * what let one busy project's idle containers wedge every other project on the
+ * instance.
  */
 export async function isContainerCapacityBlockedInDb(
 	db: Db,
 	engine: Pick<ContainerEngine, 'containerHostMemory'>,
 	projectId: string,
 ): Promise<boolean> {
-	const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(
-		db,
-		engine,
-	);
-	if (projectsWithSpareContainer.has(projectId)) return false;
-	return usedMemoryGb + (await projectContainerMemoryGb(db, projectId)) > budgetGb;
+	const active = await getActiveContainers(db, engine);
+	if (active.projectsWithSpareContainer.has(projectId)) return false;
+	const headroomGb = active.budgetGb + reclaimableForOthers(active, projectId);
+	return active.usedMemoryGb + (await projectContainerMemoryGb(db, projectId)) > headroomGb;
 }
 
 /**

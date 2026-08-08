@@ -60,6 +60,11 @@ export type PoolDecision =
 	/** Destroy these, then decide again. See {@link selectPoolMember}. */
 	| { kind: 'recycle'; members: PoolMember[] }
 	| { kind: 'create' }
+	/**
+	 * Free `needGb` by retiring idle members of *other* projects, then decide
+	 * again. See {@link planCrossProjectReclaim}.
+	 */
+	| { kind: 'reclaim'; needGb: number }
 	| { kind: 'queue' };
 
 export interface PoolCapacity {
@@ -69,6 +74,16 @@ export interface PoolCapacity {
 	budgetGb: number;
 	/** What one more container in *this* project would consume, in GB. */
 	requestMemoryGb: number;
+	/**
+	 * Of {@link usedMemoryGb}, how much is held by idle members of **other**
+	 * projects that reclaim could free right now, in GB.
+	 *
+	 * Separate from the used figure rather than subtracted from it because the
+	 * memory is genuinely spoken for until something retires those containers -
+	 * charging the budget as though it were already free would over-subscribe the
+	 * host in the window between deciding and retiring.
+	 */
+	reclaimableMemoryGb: number;
 }
 
 /**
@@ -98,7 +113,14 @@ export interface PoolCapacity {
  * 2. **Any warm idle container.** Nothing to start, cold worktree.
  * 3. **A suspended container.** Resume costs about a second.
  * 4. **Create**, if under the cap.
- * 5. **Queue** on the cap.
+ * 5. **Reclaim**, if the cap is full but idle containers in *other* projects hold
+ *    enough memory to cover the request. A container is pinned to its project for
+ *    its whole life - it is built around that project's workspace mount, clone and
+ *    git identity - so the only way one project's idle capacity can serve another
+ *    is to retire it and build afresh. Without this rung an instance can sit
+ *    permanently wedged: a busy project's idle members are charged to the budget
+ *    in full, and nothing else can touch them.
+ * 6. **Queue**, when even that would not free enough.
  *
  * Note what is *not* here: no rung ever returns a busy container, and no busy
  * container is ever recycled. That is the one-run-per-container rule, and it is
@@ -140,6 +162,11 @@ export function selectPoolMember(
 	if (suspended && fitsBudget(capacity)) return { kind: 'resume', member: suspended };
 
 	if (fitsBudget(capacity)) return { kind: 'create' };
+
+	// The shortfall, not the request: reclaiming more than the request needs
+	// destroys warm containers for nothing.
+	const needGb = capacity.usedMemoryGb + capacity.requestMemoryGb - capacity.budgetGb;
+	if (needGb <= capacity.reclaimableMemoryGb) return { kind: 'reclaim', needGb };
 	return { kind: 'queue' };
 }
 
@@ -191,10 +218,14 @@ function fitsBudget(capacity: PoolCapacity): boolean {
  * clone, it is paid only by genuinely concurrent runs, and it buys back a bound
  * that would otherwise have to be designed, tuned and tested.
  */
-export function planIdleShutdown(members: readonly PoolMember[]): {
-	suspend: PoolMember | null;
+export interface IdleRetirementPlan {
+	/** Stopped in place - the container survives, its writable layer intact. */
+	suspend: PoolMember[];
+	/** Removed outright; the filesystem is reproducible from the git remote. */
 	destroy: PoolMember[];
-} {
+}
+
+export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirementPlan {
 	// Deliberately *not* filtered by `reservedForChat`. The reservation means "no
 	// task run may take this container" - it does not mean "never stop it". By the
 	// time this runs the project has already been judged idle by a predicate that
@@ -204,7 +235,7 @@ export function planIdleShutdown(members: readonly PoolMember[]): {
 	// parks, and resume starts it again with a fresh host-side half. Treating the
 	// reservation as a pin here would keep the container running forever.
 	const idle = members.filter((m) => m.state === 'idle');
-	const alreadySuspended = members.some((m) => m.state === 'suspended');
+	if (idle.length === 0) return { suspend: [], destroy: [] };
 
 	// A container holding work that reached no durable remote is pinned against
 	// **destroy** - that is what would lose the only copy, and nothing downstream
@@ -218,17 +249,135 @@ export function planIdleShutdown(members: readonly PoolMember[]): {
 	// project never comes. A handful of such projects would consume the whole
 	// budget and queue every run on the instance forever.
 	//
-	// So a pinned member is the *preferred* suspend candidate: it is the one that
-	// must not be destroyed, and suspending is how it stops costing memory while
-	// still holding the work.
+	// So **every** pinned member is suspended, not just one. The single-suspend
+	// rule below is a storage-economy bound on containers kept purely for warmth,
+	// and applying it to pinned members instead left the surplus ones running -
+	// which is the exact budget leak the paragraph above rules out, reached by a
+	// different route.
 	const pinned = idle.filter((m) => m.hasUnpushedCommits);
 	const disposable = idle.filter((m) => !m.hasUnpushedCommits);
-	if (idle.length === 0) return { suspend: null, destroy: [] };
+	if (pinned.length > 0) return { suspend: pinned, destroy: disposable };
 
-	if (alreadySuspended) return { suspend: null, destroy: disposable };
-	// Prefer a pinned member for the single suspend slot; the rest that may be
-	// destroyed are only ever the unpinned ones.
-	if (pinned.length > 0) return { suspend: pinned[0], destroy: disposable };
+	const alreadySuspended = members.some((m) => m.state === 'suspended');
+	if (alreadySuspended) return { suspend: [], destroy: disposable };
 	const [first, ...rest] = disposable;
-	return { suspend: first ?? null, destroy: rest };
+	return { suspend: first ? [first] : [], destroy: rest };
+}
+
+/**
+ * Which of a **working** project's idle containers to retire, judged on each
+ * member's own idle clock rather than on the project falling quiet.
+ *
+ * {@link planIdleShutdown} answers "this whole project has gone idle, retire its
+ * pool". That is the only question the sweeper used to ask, and it left a gap
+ * wide enough to wedge an instance: a project with two busy containers and two
+ * idle ones is never quiet, so its idle members were never candidates, while
+ * being charged to the instance memory budget in full for as long as the project
+ * kept working. Every other project saw a budget it could not reach and queued
+ * indefinitely.
+ *
+ * So a project that is *working* has its idle members judged individually. There
+ * is no keep-one-warm rule here, unlike the whole-project plan: the busy members
+ * are about to become idle themselves, so warmth for the next run is already
+ * accounted for, and holding a second container against that is what the caller
+ * is trying to stop.
+ *
+ * `staleMemberIds` are the members the caller has established sat idle past the
+ * window - the clock lives in SQL, where it can be indexed, so this stays pure.
+ * The chat's pinned member is never touched: it is excluded from the memory
+ * budget already, so retiring it frees nothing and only interrupts a session.
+ */
+export function planSurplusIdleRetirement(
+	members: readonly PoolMember[],
+	staleMemberIds: ReadonlySet<string>,
+): IdleRetirementPlan {
+	// Not a working project - either fully idle, in which case the whole-project
+	// pass owns it and its warm-start guarantees, or holding nothing at all.
+	if (!members.some((m) => m.state === 'busy')) return { suspend: [], destroy: [] };
+
+	const stale = members.filter(
+		(m) => m.state === 'idle' && !m.reservedForChat && staleMemberIds.has(m.id),
+	);
+	return {
+		suspend: stale.filter((m) => m.hasUnpushedCommits),
+		destroy: stale.filter((m) => !m.hasUnpushedCommits),
+	};
+}
+
+/** An idle container in some *other* project, offered up to cover a blocked run. */
+export interface ReclaimCandidate {
+	containerId: string;
+	projectId: string;
+	/** What retiring it gives back to the instance budget, in GB. */
+	memoryGb: number;
+	/** How long it has sat idle. The caller supplies the clock; this stays pure. */
+	idleForMs: number;
+	hasUnpushedCommits: boolean;
+}
+
+export interface ReclaimPlan {
+	suspend: ReclaimCandidate[];
+	destroy: ReclaimCandidate[];
+	/** What executing this plan gives back, in GB. Zero for an empty plan. */
+	freedGb: number;
+}
+
+/**
+ * Which of other projects' idle containers to retire so a blocked run fits.
+ *
+ * Reached only from the `reclaim` rung of {@link selectPoolMember}, which is to
+ * say only when a run would otherwise queue. Idle containers are *useful* while
+ * nobody else wants the memory - that is the whole point of keeping them warm -
+ * so nothing here runs speculatively.
+ *
+ * Four rules, each closing a way this could do harm:
+ *
+ * - **All or nothing.** If the eligible candidates together cannot cover
+ *   `needGb`, the plan is empty. Freeing three of the four GB a run needs helps
+ *   nobody and has destroyed two warm containers to achieve it.
+ * - **Only as much as `needGb`.** Retiring past the shortfall is the same waste
+ *   in smaller units.
+ * - **The project holding the most idle containers loses first**, and only then
+ *   longest-idle first. Ordering by idle time alone takes a quiet project's one
+ *   warm container while a hoarder keeps three, which is the fairness question
+ *   inverted; the tie-break on container id after that keeps the plan
+ *   deterministic for a given input, so a test can pin it.
+ * - **`minIdleMs` floors eligibility.** A project releasing a container between
+ *   two runs seconds apart is mid-burst, not idle, and stripping it there makes
+ *   both runs pay a cold start to hand memory to a third project that would lose
+ *   it the same way. This is what stops two starved projects reclaiming from each
+ *   other in a loop.
+ *
+ * Unpushed commits are suspended rather than destroyed, for the reason
+ * {@link planIdleShutdown} sets out at length: suspend frees the memory and keeps
+ * the only copy of the work.
+ */
+export function planCrossProjectReclaim(
+	candidates: readonly ReclaimCandidate[],
+	needGb: number,
+	minIdleMs: number,
+): ReclaimPlan {
+	const empty: ReclaimPlan = { suspend: [], destroy: [], freedGb: 0 };
+	if (needGb <= 0) return empty;
+
+	const eligible = candidates.filter((c) => c.idleForMs >= minIdleMs);
+	if (eligible.reduce((sum, c) => sum + c.memoryGb, 0) < needGb) return empty;
+
+	const heldBy = new Map<string, number>();
+	for (const c of eligible) heldBy.set(c.projectId, (heldBy.get(c.projectId) ?? 0) + 1);
+
+	const ordered = [...eligible].sort((a, b) => {
+		const byHoard = (heldBy.get(b.projectId) ?? 0) - (heldBy.get(a.projectId) ?? 0);
+		if (byHoard !== 0) return byHoard;
+		if (b.idleForMs !== a.idleForMs) return b.idleForMs - a.idleForMs;
+		return a.containerId.localeCompare(b.containerId);
+	});
+
+	const plan: ReclaimPlan = { suspend: [], destroy: [], freedGb: 0 };
+	for (const candidate of ordered) {
+		if (plan.freedGb >= needGb) break;
+		(candidate.hasUnpushedCommits ? plan.suspend : plan.destroy).push(candidate);
+		plan.freedGb += candidate.memoryGb;
+	}
+	return plan;
 }

@@ -396,3 +396,130 @@ describe('container-idle-stop', () => {
 		await db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
 	});
 });
+
+/**
+ * The reported failure: four containers on one project, two running tasks and two
+ * doing nothing, and every *other* project stuck at "at its active-container
+ * limit". The idle pass above only ever looks at projects that have gone entirely
+ * quiet, and a project running two tasks never is - so those two idle containers
+ * were charged to the instance memory budget in full for as long as the project
+ * kept working, and nothing on the instance could reach that memory.
+ */
+describe('surplus idle containers in a working project', () => {
+	const CAP_BYTES = 2 * 1024 ** 3;
+
+	const seedMember = async (
+		containerId: string,
+		state: 'idle' | 'busy' | 'suspended',
+		over: { unpushed?: boolean; chat?: boolean; idleMin?: number } = {},
+	): Promise<void> => {
+		await db.query(
+			`INSERT INTO container_pool_members
+			   (project_id, container_id, state, memory_bytes, has_unpushed_commits,
+			    reserved_for_chat, last_released_at)
+			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6,
+			         now() - ($7 || ' minutes')::interval)`,
+			[
+				projectId,
+				containerId,
+				state,
+				CAP_BYTES,
+				over.unpushed ?? false,
+				over.chat ?? false,
+				over.idleMin ?? 60,
+			],
+		);
+	};
+
+	/** An active run, which is what makes the whole-project predicate call this project busy. */
+	const startRun = () =>
+		db.query(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, 'running'::heartbeat_run_status, now())`,
+			[agentId, teamId, taskId],
+		);
+
+	const sweep = async (): Promise<{ stops: string[]; removes: string[] }> => {
+		const stops: string[] = [];
+		const removes: string[] = [];
+		const manager = createManager(stops, removes);
+		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
+		manager.shutdown();
+		return { stops, removes };
+	};
+
+	const remaining = async (): Promise<string[]> => {
+		const r = await db.query<{ container_id: string }>(
+			`SELECT container_id FROM container_pool_members WHERE project_id = $1
+			  ORDER BY container_id`,
+			[projectId],
+		);
+		return r.rows.map((row) => row.container_id);
+	};
+
+	beforeEach(async () => {
+		await db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
+	});
+
+	it('retires the idle containers of a project that is still running tasks', async () => {
+		await seedMember('busy-1', 'busy');
+		await seedMember('busy-2', 'busy');
+		await seedMember('idle-1', 'idle');
+		await seedMember('idle-2', 'idle');
+		await startRun();
+
+		const { stops, removes } = await sweep();
+
+		// The whole-project pass correctly declines - the project is busy - and the
+		// surplus pass is what frees the memory.
+		expect(removes.sort()).toEqual(['idle-1', 'idle-2']);
+		expect(stops).toEqual([]);
+		expect(await remaining()).toEqual(['busy-1', 'busy-2']);
+	});
+
+	it('leaves an idle container that has not yet reached the window', async () => {
+		await seedMember('busy-1', 'busy');
+		await seedMember('fresh', 'idle', { idleMin: 0 });
+		await startRun();
+
+		const { removes } = await sweep();
+		expect(removes).toEqual([]);
+		expect(await remaining()).toEqual(['busy-1', 'fresh']);
+	});
+
+	it('suspends rather than destroys a surplus container holding unpushed commits', async () => {
+		// Destroying it loses the only copy of the work; suspending frees the memory
+		// and keeps the writable layer.
+		await seedMember('busy-1', 'busy');
+		await seedMember('risky', 'idle', { unpushed: true });
+		await startRun();
+
+		const { stops, removes } = await sweep();
+		expect(stops).toEqual(['risky']);
+		expect(removes).toEqual([]);
+	});
+
+	it('never touches the assistant’s pinned container', async () => {
+		// It is excluded from the memory budget already, so retiring it frees
+		// nothing and only interrupts somebody's session.
+		await seedMember('busy-1', 'busy');
+		await seedMember('chat', 'idle', { chat: true });
+		await startRun();
+
+		const { stops, removes } = await sweep();
+		expect(stops).toEqual([]);
+		expect(removes).toEqual([]);
+		expect(await remaining()).toEqual(['busy-1', 'chat']);
+	});
+
+	it('leaves a fully idle project to the whole-project pass, which keeps one warm', async () => {
+		// No busy member, so this is not a working project: the pass above owns it
+		// and suspends one member for a warm restart rather than picking them off.
+		await seedMember('a', 'idle');
+		await seedMember('b', 'idle');
+
+		const { stops, removes } = await sweep();
+		expect(stops).toEqual(['a']);
+		expect(removes).toEqual(['b']);
+	});
+});
