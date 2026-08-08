@@ -1,13 +1,12 @@
 import {
 	AGENT_RUNTIME_LABELS,
-	type AgentRuntime,
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
 	type AiProvider,
 	AiProviderStatus,
 	effectiveRuntime,
 } from '@hezo/shared';
-import { Check, Loader2, Pencil, Plus, ShieldCheck, Star, Trash2, X } from 'lucide-react';
+import { Loader2, Pencil, Plus, ShieldCheck, Star, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import {
 	type AiProviderConfig,
@@ -21,18 +20,20 @@ import {
 import { toast } from '../hooks/use-toast';
 import { useI18n } from '../lib/i18n';
 import { AddAiProviderDialog } from './add-ai-provider-dialog';
-import { AgentCliPicker, providerHasCliChoice } from './agent-cli-picker';
+import { EditAiProviderDialog } from './edit-ai-provider-dialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { type Column, DataTable } from './ui/data-table';
 import { Tooltip } from './ui/tooltip';
 
 export function AiProvidersSection() {
+	const { t } = useI18n();
 	const { data: configs } = useAiProviders();
 	const deleteProvider = useDeleteAiProvider();
 	const verifyProvider = useVerifyAiProvider();
 	const setDefaultProvider = useSetDefaultAiProvider();
 	const [addOpen, setAddOpen] = useState(false);
+	const [editing, setEditing] = useState<AiProviderConfig | null>(null);
 	// Per-row transient "verified OK" marker — failures surface as a toast and a
 	// refetched `invalid` status badge, so only successes need an inline cue.
 	const [verifiedOk, setVerifiedOk] = useState<Record<string, boolean>>({});
@@ -61,7 +62,7 @@ export function AiProvidersSection() {
 			header: 'Name',
 			render: (c) => (
 				<span className="flex items-center gap-2">
-					<ProviderNameCell config={c} />
+					<span className="font-mono text-[13px]">{c.label}</span>
 					{c.is_default && <Badge color="accent">Default</Badge>}
 				</span>
 			),
@@ -71,10 +72,16 @@ export function AiProvidersSection() {
 			header: 'Provider',
 			render: (c) => {
 				const info = AI_PROVIDER_INFO[c.provider as AiProvider];
+				// The label comes from the RESOLVED runtime rather than the provider's
+				// default, so a switched credential reads correctly instead of showing
+				// what it would have run on before the switch.
+				const resolved = effectiveRuntime(c.provider as AiProvider, c.runtime);
 				return (
 					<span className="flex items-center gap-2">
 						<span className="text-[13px]">{info?.name ?? c.provider}</span>
-						<ProviderCliCell config={c} />
+						{resolved && (
+							<span className="text-xs text-text-3">{AGENT_RUNTIME_LABELS[resolved]}</span>
+						)}
 					</span>
 				);
 			},
@@ -123,6 +130,16 @@ export function AiProvidersSection() {
 								<ShieldCheck className="w-3.5 h-3.5 text-success-soft-fg" />
 							</Tooltip>
 						)}
+						<Tooltip content={t('settings.provider.edit')}>
+							<button
+								type="button"
+								onClick={() => setEditing(c)}
+								aria-label={t('settings.provider.editFor', { name: c.label })}
+								className="text-text-3 hover:text-text-1"
+							>
+								<Pencil className="w-3.5 h-3.5" />
+							</button>
+						</Tooltip>
 						{!c.is_default && (
 							<Tooltip content="Set as default">
 								<button
@@ -190,170 +207,16 @@ export function AiProvidersSection() {
 			)}
 
 			<AddAiProviderDialog open={addOpen} onOpenChange={setAddOpen} />
-		</section>
-	);
-}
-
-/**
- * The CLI this credential runs on. Read-only text for the providers that offer
- * only one (the common case, and visually identical to the static runtime label
- * this replaced); a click-to-change control for the ones that offer a choice.
- *
- * The label comes from the RESOLVED runtime rather than the provider's default,
- * so a switched credential reads correctly instead of showing what it would have
- * run on before the switch.
- */
-function ProviderCliCell({ config }: { config: AiProviderConfig }) {
-	const { t } = useI18n();
-	const [editing, setEditing] = useState(false);
-	const update = useUpdateAiProviderConfig(config.id);
-	const provider = config.provider as AiProvider;
-
-	const resolved = effectiveRuntime(provider, config.runtime);
-	const label = resolved ? AGENT_RUNTIME_LABELS[resolved] : null;
-
-	if (!providerHasCliChoice(provider)) {
-		return label ? <span className="text-xs text-text-3">{label}</span> : null;
-	}
-
-	async function choose(runtime: AgentRuntime) {
-		setEditing(false);
-		if (runtime === resolved) return;
-		try {
-			await update.mutateAsync({ runtime });
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : 'Could not change the agent CLI');
-		}
-	}
-
-	if (editing) {
-		return (
-			<span className="flex items-center gap-1.5">
-				<AgentCliPicker
-					provider={provider}
-					value={config.runtime}
-					onChange={choose}
-					disabled={update.isPending}
+			{editing && (
+				<EditAiProviderDialog
+					config={editing}
+					open
+					onOpenChange={(open) => {
+						if (!open) setEditing(null);
+					}}
 				/>
-				<button
-					type="button"
-					onClick={() => setEditing(false)}
-					className="text-text-3 hover:text-text-1"
-				>
-					<X className="w-3 h-3" />
-				</button>
-			</span>
-		);
-	}
-
-	return (
-		<Tooltip content={t('settings.provider.changeCli')}>
-			<button
-				type="button"
-				onClick={() => setEditing(true)}
-				aria-label={t('settings.provider.changeCli')}
-				className="text-xs text-text-3 underline decoration-dotted underline-offset-2 hover:text-text-1"
-			>
-				{label}
-			</button>
-		</Tooltip>
-	);
-}
-
-function ProviderNameCell({ config }: { config: AiProviderConfig }) {
-	const { t } = useI18n();
-	const [editing, setEditing] = useState(false);
-	const [value, setValue] = useState(config.label);
-	const update = useUpdateAiProviderConfig(config.id);
-
-	function startEditing() {
-		setValue(config.label);
-		setEditing(true);
-	}
-
-	function cancel() {
-		setEditing(false);
-		setValue(config.label);
-	}
-
-	async function submit() {
-		const trimmed = value.trim();
-		if (!trimmed || trimmed === config.label) {
-			cancel();
-			return;
-		}
-		try {
-			await update.mutateAsync({ label: trimmed });
-			setEditing(false);
-		} catch (e) {
-			// Keep the editor open so the user can fix the name (e.g. a duplicate).
-			toast.error(e instanceof Error ? e.message : 'Could not rename provider');
-		}
-	}
-
-	if (!editing) {
-		return (
-			<span className="flex items-center gap-1.5">
-				<span className="font-mono text-[13px]">{config.label}</span>
-				<Tooltip content="Rename">
-					<button
-						type="button"
-						onClick={startEditing}
-						aria-label={`Rename ${config.label}`}
-						className="text-text-3 hover:text-text-1"
-					>
-						<Pencil className="w-3 h-3" />
-					</button>
-				</Tooltip>
-			</span>
-		);
-	}
-
-	return (
-		<span className="flex items-center gap-1.5">
-			<input
-				value={value}
-				onChange={(e) => setValue(e.target.value)}
-				onKeyDown={(e) => {
-					if (e.key === 'Enter') {
-						e.preventDefault();
-						submit();
-					}
-					if (e.key === 'Escape') cancel();
-				}}
-				aria-label={`New name for ${config.label}`}
-				// biome-ignore lint/a11y/noAutofocus: user just clicked the edit icon — focus follows their action
-				autoFocus
-				disabled={update.isPending}
-				className="w-28 sm:w-36 rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-xs text-text-1 outline-none focus:border-border-strong disabled:opacity-50"
-			/>
-			<Tooltip content={t('common.save')}>
-				<button
-					type="button"
-					onClick={submit}
-					aria-label={`Save name for ${config.label}`}
-					disabled={update.isPending}
-					className="text-text-3 hover:text-text-1 disabled:opacity-50"
-				>
-					{update.isPending ? (
-						<Loader2 className="w-3.5 h-3.5 animate-spin" />
-					) : (
-						<Check className="w-3.5 h-3.5" />
-					)}
-				</button>
-			</Tooltip>
-			<Tooltip content={t('common.cancel')}>
-				<button
-					type="button"
-					onClick={cancel}
-					aria-label={`Cancel renaming ${config.label}`}
-					disabled={update.isPending}
-					className="text-text-3 hover:text-text-1 disabled:opacity-50"
-				>
-					<X className="w-3.5 h-3.5" />
-				</button>
-			</Tooltip>
-		</span>
+			)}
+		</section>
 	);
 }
 

@@ -148,6 +148,22 @@ Verify action re-checks it any time). Mark one provider as the **default** with 
 that's the single global default every agent uses unless it has its own model override.
 Change the default and agents on the default pick up the new provider on their next run.
 
+## Change a stored key
+
+Keys expire, get rotated, or get revoked at the provider. When that happens the connection
+shows as **invalid** and agents on it stop running, because Hezo only picks up verified
+credentials.
+
+Use the **pencil** at the end of the row to fix it in place. The Edit panel holds the
+connection's name, its credential, and - for the providers that offer more than one - the
+agent CLI it runs on. Paste the new key and save: Hezo checks it against the provider before
+storing it, and a key that passes clears the invalid state on the spot, so there's no
+separate Verify step and nothing else about the connection is lost. A key the provider
+rejects is refused, leaving the stored one exactly as it was.
+
+Leave the credential field **blank** to keep the key you already have - that's how you rename
+a connection or switch its CLI without re-pasting anything.
+
 ## Give an agent its own model
 
 By default the agents on a team share the team's model, but you can **override the model

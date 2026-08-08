@@ -2791,9 +2791,23 @@ row per `(provider, label)`, each inlining an encrypted credential. `auth_method
 distinguishes an **API key** (injected as env at run start) from a **subscription** blob
 (materialized to a per-run mount in the container). Subscription auth is supported by
 Anthropic, OpenAI, and Google (xAI is API-key only). A config's `status` is `verified` (the healthy default —
-the add flow live-verifies the key, and the Verify action persists the result, restoring
-`verified` on a key that had gone `invalid`), `invalid` (a verify was rejected), or
-`revoked` (a retired provider). Exactly **one** config instance-wide carries the
+the add flow live-verifies the key, the Verify action persists the result, and replacing the
+credential re-verifies it — each restoring `verified` on a key that had gone `invalid`),
+`invalid` (a verify was rejected), or `revoked` (a retired provider).
+
+**Editing a config.** `PATCH /api/ai-providers/:configId` is the single write behind the
+settings Edit dialog and carries everything about a config except its default model: `label`,
+`runtime`, a replacement credential (`api_key`, with `auth_method` / `base_url` alongside),
+and `default_model` for the inline cell selector. Credential validation is shared with the
+create route (`prepareProviderCredential` in `routes/ai-providers.ts`), so a replacement key
+faces the same format check, subscription-blob check and live pre-flight as a new one, and a
+rejected key leaves the stored one intact. All of it lands in one `UPDATE`, so there is no
+window where the key rotated but the rename failed; a supplied credential also writes
+`status = 'verified'` in that same statement, which is how a config the provider had rejected
+becomes selectable again without a separate Verify click. A blank `api_key` means "keep the
+stored credential", so a rename never requires re-pasting a key, and `base_url` is editable on
+its own for the local runners. `updateAiProviderCredential` remains the narrower helper used
+by the Codex refresh-token write-back, which must not touch `status` or `metadata`. Exactly **one** config instance-wide carries the
 `is_default` flag — a single global default enforced by a partial-unique index
 (`ai_provider_configs_single_default`); the first config added to the instance auto-takes
 it, and `setDefaultAiProvider` moves it atomically. `resolveRuntimeForTask` filters by

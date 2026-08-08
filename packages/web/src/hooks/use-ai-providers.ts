@@ -141,13 +141,29 @@ export function useUpdateAiProviderConfig(configId: string) {
 			default_model?: string | null;
 			label?: string;
 			runtime?: AgentRuntime | null;
+			/** Replacement credential. Omit (or send blank) to keep the stored one. */
+			api_key?: string;
+			auth_method?: string;
+			/** Locally-hosted providers only (Ollama, LM Studio): the operator's server URL. */
+			base_url?: string;
 		}) =>
 			api.patch<{
 				updated: boolean;
 				default_model?: string | null;
 				label?: string;
 				runtime?: AgentRuntime | null;
+				credential_updated?: boolean;
 			}>(`/api/ai-providers/${configId}`, data),
-		onSuccess: invalidateAll,
+		onSuccess: (_data, variables) => {
+			invalidateAll();
+			// The model catalog is fetched with the old key, so a rotation leaves its
+			// cached rejection ("Provider rejected the stored credential") on screen.
+			// The query is lazily enabled, so invalidating wouldn't clear an error that
+			// nothing is currently observing — reset it instead. Keyed off the payload
+			// so a default-model change doesn't throw the catalog away.
+			if (variables.api_key) {
+				queryClient.resetQueries({ queryKey: queryKeys.aiProviderModels(configId) });
+			}
+		},
 	});
 }

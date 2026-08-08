@@ -65,6 +65,31 @@ describe('updateAiProviderCredential', () => {
 		expect(await updateAiProviderCredential(db, masterKeyManager, MISSING_ID, 'x')).toBe(false);
 	});
 
+	// The Codex refresh-token write-back is this helper's only production caller and
+	// runs mid-run, where a status or metadata write would be a side effect nobody
+	// asked for. `updateAiProviderConfig` is what the settings dialog rotates through.
+	it('leaves status and metadata alone', async () => {
+		const configId = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Ollama,
+			'{"refresh_token":"old"}',
+			AiAuthMethod.Subscription,
+			'ollama-untouched',
+			{ base_url: 'http://host.docker.internal:11434' },
+		);
+		await db.query(`UPDATE ai_provider_configs SET status = 'invalid' WHERE id = $1`, [configId]);
+
+		expect(await updateAiProviderCredential(db, masterKeyManager, configId, 'rotated')).toBe(true);
+
+		const row = await db.query<{ status: string; metadata: Record<string, unknown> }>(
+			'SELECT status, metadata FROM ai_provider_configs WHERE id = $1',
+			[configId],
+		);
+		expect(row.rows[0].status).toBe('invalid');
+		expect(row.rows[0].metadata.base_url).toBe('http://host.docker.internal:11434');
+	});
+
 	it('refuses to run without the master key', async () => {
 		const locked = new MasterKeyManager();
 		await expect(updateAiProviderCredential(db, locked, MISSING_ID, 'x')).rejects.toThrow(
