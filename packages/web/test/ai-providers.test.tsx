@@ -21,6 +21,21 @@ async function clearAiProviders() {
 	}
 }
 
+/**
+ * The stored ciphertext for a config, straight from the row. The component tier
+ * has no master key to decrypt with, so identity of the ciphertext is what proves
+ * a write did or did not happen here; that the new value round-trips is asserted
+ * in the server tier (`ai-providers-credential.test.ts`).
+ */
+async function storedCredential(label: string): Promise<{ credential: string; status: string }> {
+	const { db } = getTestContext();
+	const res = await db.query<{ encrypted_credential: string; status: string }>(
+		`SELECT encrypted_credential, status FROM ai_provider_configs WHERE label = $1`,
+		[label],
+	);
+	return { credential: res.rows[0].encrypted_credential, status: res.rows[0].status };
+}
+
 async function postProvider(body: Record<string, unknown>) {
 	const { apiBase, token } = getTestContext();
 	return apiBase('/api/ai-providers', {
@@ -425,7 +440,7 @@ test('flips the single instance-wide default across two different providers', as
 	);
 });
 
-test('renames a provider config in place from the table', async () => {
+test('renames a provider config from the Edit dialog, leaving its key alone', async () => {
 	const { findByRole, findByText, getByRole, queryByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
@@ -441,22 +456,30 @@ test('renames a provider config in place from the table', async () => {
 
 	await findByRole('heading', { name: 'AI providers' });
 	await findByText('anthropic-old-name');
+	const before = await storedCredential('anthropic-old-name');
 
-	await user.click(getByRole('button', { name: 'Rename anthropic-old-name' }));
-	const input = getByRole('textbox', {
-		name: 'New name for anthropic-old-name',
-	}) as HTMLInputElement;
-	// The editor opens pre-filled with the current name.
+	await user.click(getByRole('button', { name: 'Edit anthropic-old-name' }));
+	const dialog = await findByRole('dialog');
+	const input = within(dialog).getByLabelText('Name') as HTMLInputElement;
+	// The dialog opens pre-filled with the current name.
 	expect(input.value).toBe('anthropic-old-name');
+	// The credential field stays empty — blank means "keep the stored key".
+	expect((within(dialog).getByLabelText('API key') as HTMLInputElement).value).toBe('');
+
 	fireEvent.change(input, { target: { value: 'anthropic-shiny' } });
-	await user.click(getByRole('button', { name: 'Save name for anthropic-old-name' }));
+	await user.click(within(dialog).getByRole('button', { name: 'Save' }));
 
 	// The row re-renders under the new name once the refetch lands.
 	await findByText('anthropic-shiny', undefined, { timeout: 15_000 });
 	await waitFor(() => expect(queryByText('anthropic-old-name')).toBeNull());
+
+	// A rename must not rewrite the credential — the ciphertext is byte-identical.
+	const after = await storedCredential('anthropic-shiny');
+	expect(after.credential).toBe(before.credential);
+	expect(after.status).toBe(before.status);
 });
 
-test('cancelling a rename restores the read-only label unchanged', async () => {
+test('cancelling the Edit dialog leaves the row unchanged', async () => {
 	const { findByRole, findByText, getByRole, queryByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
@@ -473,16 +496,58 @@ test('cancelling a rename restores the read-only label unchanged', async () => {
 	await findByRole('heading', { name: 'AI providers' });
 	await findByText('anthropic-keep-name');
 
-	await user.click(getByRole('button', { name: 'Rename anthropic-keep-name' }));
-	const input = getByRole('textbox', {
-		name: 'New name for anthropic-keep-name',
-	}) as HTMLInputElement;
-	fireEvent.change(input, { target: { value: 'discarded-edit' } });
-	await user.click(getByRole('button', { name: 'Cancel renaming anthropic-keep-name' }));
+	await user.click(getByRole('button', { name: 'Edit anthropic-keep-name' }));
+	const dialog = await findByRole('dialog');
+	fireEvent.change(within(dialog).getByLabelText('Name'), {
+		target: { value: 'discarded-edit' },
+	});
+	await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
-	// Editor closes without saving; the original label still renders.
-	expect(queryByRole('textbox', { name: 'New name for anthropic-keep-name' })).toBeNull();
+	// Dialog closes without saving; the original label still renders.
+	await waitFor(() => expect(queryByRole('dialog')).toBeNull());
 	await findByText('anthropic-keep-name');
+});
+
+test('replaces the stored credential from the Edit dialog and clears an invalid status', async () => {
+	const ctx = getTestContext();
+	const { findByRole, findByText, getByRole, queryByText, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			// Keep the harness's own verified credential: an instance whose only
+			// provider is invalid reads as unconfigured and renders the setup wizard
+			// instead of the settings page.
+			const res = await postProvider({
+				provider: 'deepseek',
+				api_key: 'dsk-stale-key',
+				label: 'deepseek-rotate',
+			});
+			expect(res.status).toBe(201);
+			// Simulate the provider having rejected the stored key, which is the state
+			// the row is in when the operator comes to fix it.
+			await ctx.db.query(`UPDATE ai_provider_configs SET status = 'invalid' WHERE label = $1`, [
+				'deepseek-rotate',
+			]);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await findByText('invalid', undefined, { timeout: 15_000 });
+	const before = await storedCredential('deepseek-rotate');
+
+	await user.click(getByRole('button', { name: 'Edit deepseek-rotate' }));
+	const dialog = await findByRole('dialog');
+	fireEvent.change(within(dialog).getByLabelText('API key'), {
+		target: { value: 'dsk-fresh-key' },
+	});
+	await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+	// A rotated key is verified as it is written, so the badge recovers without a
+	// separate Verify click.
+	await waitFor(() => expect(queryByText('invalid')).toBeNull(), { timeout: 15_000 });
+
+	const after = await storedCredential('deepseek-rotate');
+	expect(after.credential).not.toBe(before.credential);
+	expect(after.status).toBe('verified');
 });
 
 test('Add provider modal pre-fills a default name from the selected provider', async () => {

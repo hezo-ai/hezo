@@ -1,5 +1,5 @@
 import { AgentRuntime, AiProvider } from '@hezo/shared';
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 
@@ -101,7 +101,7 @@ test('the chosen CLI is submitted with the credential', async () => {
 	expect(configs[0].runtime).toBe(AgentRuntime.Kimi);
 });
 
-test('the provider list renders the resolved CLI and changes it in place', async () => {
+test('the provider list renders the resolved CLI and changes it from the Edit dialog', async () => {
 	const { findByRole, findByText, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
@@ -113,25 +113,32 @@ test('the provider list renders the resolved CLI and changes it in place', async
 	});
 
 	await findByRole('heading', { name: 'AI providers' }, { timeout: 15_000 });
+	await findByText('Claude Code');
 
-	const trigger = await findByRole('button', { name: 'Change agent CLI' });
-	expect(trigger.textContent).toBe('Claude Code');
-
-	await user.click(trigger);
-	await user.click(getByRole('button', { name: /^Kimi Code/ }));
+	await user.click(getByRole('button', { name: 'Edit Kimi' }));
+	const dialog = await findByRole('dialog');
+	// The CLI picker lives behind the Advanced disclosure, same as when adding.
+	await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
+	await user.click(within(dialog).getByRole('button', { name: /^Kimi Code/ }));
+	await user.click(within(dialog).getByRole('button', { name: 'Save' }));
 
 	await findByText('Kimi Code', undefined, { timeout: 15_000 });
 	const configs = await listProviders();
 	expect(configs.find((c) => c.label === 'Kimi')?.runtime).toBe(AgentRuntime.Kimi);
 });
 
-test('a single-CLI provider row shows its runtime as plain text, not a control', async () => {
-	const { findByRole, findByText, queryByRole } = await renderApp({
+test('a single-CLI provider offers no CLI picker in its Edit dialog', async () => {
+	const { findByRole, findByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
 
 	// The harness seeds an Anthropic credential, which runs only on Claude Code.
 	await findByRole('heading', { name: 'AI providers' }, { timeout: 15_000 });
 	await findByText('Claude Code');
-	expect(queryByRole('button', { name: 'Change agent CLI' })).toBeNull();
+
+	await user.click(await findByRole('button', { name: /^Edit / }));
+	const dialog = await findByRole('dialog');
+	// Nothing to put behind the disclosure, so it is omitted rather than opening
+	// onto an empty box.
+	expect(within(dialog).queryByRole('button', { name: 'Advanced' })).toBeNull();
 });
