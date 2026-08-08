@@ -4,11 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+	countBranchDelivery,
 	countUnpushedCommits,
 	describeUnpushedWork,
 	findUnpushedWork,
 	localGitLoc,
+	PUSHED_MARKER_PREFIX,
 	type RepoLoc,
+	readPushedMarker,
+	voidPushedMarker,
 } from '../src/services/git';
 import { type GitExecutor, HostGitExecutor } from '../src/services/git-executor';
 import { hostSandboxFiles } from '../src/services/sandbox/files';
@@ -38,6 +42,17 @@ function run(cmd: string, cwd?: string): string {
 
 function commit(clone: string, message: string) {
 	run(`git commit --allow-empty -m ${JSON.stringify(message)}`, clone);
+}
+
+/**
+ * Push the branch and record the accepted tip, which is what the `post-commit` hook
+ * does on every successful push (`git-push-hook.test.ts` covers the hook itself). The
+ * marker ref is spelled from the exported constant so the hook's shell-side name and
+ * the scan's git-side name cannot drift apart unnoticed.
+ */
+function pushAndMark(clone: string, branch: string) {
+	run(`git push origin ${branch}`, clone);
+	run(`git update-ref ${PUSHED_MARKER_PREFIX}${branch} refs/heads/${branch}`, clone);
 }
 
 /** A clone on a fresh `hezo/<task>` branch pointed at a bare origin with one commit. */
@@ -103,6 +118,55 @@ describe('countUnpushedCommits', () => {
 		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(0);
 	});
 
+	it('reports 0 after the branch was merged and deleted on the remote', async () => {
+		// The shape that failed in production: the agent pushed every commit, merged its
+		// pull request, then deleted the remote branch - which prunes the local tracking
+		// ref, leaving already-delivered commits reachable from no `origin` ref at all.
+		const { clone } = setupClone('merged-deleted', BRANCH);
+		commit(clone, 'one');
+		commit(clone, 'two');
+		pushAndMark(clone, BRANCH);
+		run(`git push origin --delete ${BRANCH}`, clone);
+
+		// Asserted, not assumed: without the prune this case would pass for the wrong
+		// reason and stop testing anything.
+		expect(() => run(`git rev-parse --verify refs/remotes/origin/${BRANCH}`, clone)).toThrow();
+		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(0);
+	});
+
+	it('reports 0 when the work was squash-merged and the branch deleted', async () => {
+		// A squash merge puts the *content* on the default branch under a brand-new
+		// commit sharing no history with the branch tip, so the originals are reachable
+		// from no remote ref however current the clone's fetch is. Fetching harder
+		// cannot answer this one; only a record of what origin accepted can.
+		const { clone } = setupClone('squashed', BRANCH);
+		commit(clone, 'one');
+		commit(clone, 'two');
+		pushAndMark(clone, BRANCH);
+
+		run('git checkout main', clone);
+		run(`git merge --squash ${BRANCH}`, clone);
+		run('git commit --allow-empty -m squashed', clone);
+		run('git push origin main', clone);
+		run(`git push origin --delete ${BRANCH}`, clone);
+		run('git fetch origin', clone);
+
+		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(0);
+	});
+
+	it('still counts the commits made after the last accepted push', async () => {
+		// The marker clears only what origin actually took. A branch pushed up to its
+		// first commit and then committed on twice more is genuinely stranded by two,
+		// deleted remote branch or not.
+		const { clone } = setupClone('marked-partial', BRANCH);
+		commit(clone, 'landed');
+		pushAndMark(clone, BRANCH);
+		commit(clone, 'stranded one');
+		commit(clone, 'stranded two');
+		run(`git push origin --delete ${BRANCH}`, clone);
+		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(2);
+	});
+
 	it('reports 0 when the task branch was never created', async () => {
 		// A definite absence of unpushed work, not an unanswered question: the agent
 		// committed nothing on this task's branch.
@@ -150,6 +214,106 @@ describe('countUnpushedCommits', () => {
 		run('git push backup HEAD', clone);
 		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(1);
 		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH, ['origin', 'backup'])).toBe(0);
+	});
+});
+
+describe('countBranchDelivery', () => {
+	// The split the git host is asked about. `retracted` is work origin took and no
+	// longer advertises, which is a merged-and-tidied branch or a deleted one, and
+	// git cannot say which - so the two are counted apart from work that never left.
+	it('attributes a vanished remote branch to retracted, not unpushed', async () => {
+		const { clone } = setupClone('delivery-retracted', BRANCH);
+		commit(clone, 'one');
+		commit(clone, 'two');
+		pushAndMark(clone, BRANCH);
+		run(`git push origin --delete ${BRANCH}`, clone);
+		expect(await countBranchDelivery(exec, repoLoc(clone), BRANCH)).toEqual({
+			unpushed: 0,
+			retracted: 2,
+		});
+	});
+
+	it('separates the two when a branch has both', async () => {
+		const { clone } = setupClone('delivery-mixed', BRANCH);
+		commit(clone, 'delivered');
+		pushAndMark(clone, BRANCH);
+		run(`git push origin --delete ${BRANCH}`, clone);
+		commit(clone, 'never left');
+		expect(await countBranchDelivery(exec, repoLoc(clone), BRANCH)).toEqual({
+			unpushed: 1,
+			retracted: 1,
+		});
+	});
+
+	it('reports nothing retracted while the remote still has the branch', async () => {
+		// The ordinary path, and the one that must never reach out to a git host.
+		const { clone } = setupClone('delivery-current', BRANCH);
+		commit(clone, 'work');
+		pushAndMark(clone, BRANCH);
+		expect(await countBranchDelivery(exec, repoLoc(clone), BRANCH)).toEqual({
+			unpushed: 0,
+			retracted: 0,
+		});
+	});
+
+	it('attributes work that never reached origin to unpushed alone', async () => {
+		const { clone } = setupClone('delivery-unpushed', BRANCH);
+		commit(clone, 'one');
+		commit(clone, 'two');
+		expect(await countBranchDelivery(exec, repoLoc(clone), BRANCH)).toEqual({
+			unpushed: 2,
+			retracted: 0,
+		});
+	});
+});
+
+describe('the pushed marker', () => {
+	it('names the tip origin accepted, and nothing when none was recorded', async () => {
+		const { clone } = setupClone('marker-read', BRANCH);
+		commit(clone, 'work');
+		expect(await readPushedMarker(exec, repoLoc(clone), BRANCH)).toBeNull();
+		pushAndMark(clone, BRANCH);
+		expect(await readPushedMarker(exec, repoLoc(clone), BRANCH)).toBe(
+			run('git rev-parse HEAD', clone).trim(),
+		);
+	});
+
+	it('voiding it restores the full undelivered count', async () => {
+		// What the runner does once the git host confirms a branch was deleted
+		// without being merged: the delivery record is no longer true, so dropping it
+		// puts the branch back on the ordinary stranded-work path with no second case
+		// anywhere downstream.
+		const { clone } = setupClone('marker-void', BRANCH);
+		commit(clone, 'one');
+		commit(clone, 'two');
+		pushAndMark(clone, BRANCH);
+		run(`git push origin --delete ${BRANCH}`, clone);
+		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(0);
+
+		await voidPushedMarker(exec, repoLoc(clone), BRANCH);
+		expect(await readPushedMarker(exec, repoLoc(clone), BRANCH)).toBeNull();
+		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(2);
+	});
+
+	it('voiding one branch leaves another branch delivered', async () => {
+		// Two task branches share a clone, so the marker namespace is shared too.
+		// Voiding one must not disturb the other's record. Branched off `main` rather
+		// than off each other, so neither carries commits the other delivered - which
+		// origin would legitimately have either way.
+		const { clone } = setupClone('marker-void-scope', BRANCH);
+		const other = 'hezo/hez-2';
+		commit(clone, 'work a');
+		commit(clone, 'work b');
+		pushAndMark(clone, BRANCH);
+		run(`git checkout -b ${other} main`, clone);
+		commit(clone, 'other work');
+		pushAndMark(clone, other);
+		run(`git push origin --delete ${BRANCH}`, clone);
+		run(`git push origin --delete ${other}`, clone);
+
+		await voidPushedMarker(exec, repoLoc(clone), BRANCH);
+		expect(await countUnpushedCommits(exec, repoLoc(clone), BRANCH)).toBe(2);
+		expect(await countUnpushedCommits(exec, repoLoc(clone), other)).toBe(0);
 	});
 });
 
