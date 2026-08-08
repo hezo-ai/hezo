@@ -2,14 +2,20 @@ import * as RadixToast from '@radix-ui/react-toast';
 import { Loader2, WifiOff, X } from 'lucide-react';
 import { dismissConnectionOffline, useConnectionStatus } from '../../hooks/use-connection-status';
 import { toast, useToasts } from '../../hooks/use-toast';
+import { useI18n } from '../../lib/i18n';
 
 const ERROR_DURATION_MS = 6000;
 
-const TOAST_TITLES = { error: 'Something went wrong', info: 'Heads up', success: 'Done' } as const;
+const TOAST_TITLE_KEYS = {
+	error: 'toast.error',
+	info: 'toast.info',
+	success: 'toast.success',
+} as const;
 
 export function Toaster() {
 	const toasts = useToasts();
 	const { offline, retry } = useConnectionStatus();
+	const { t } = useI18n();
 
 	return (
 		<RadixToast.Provider swipeDirection="right" duration={ERROR_DURATION_MS}>
@@ -33,11 +39,11 @@ export function Toaster() {
 					<WifiOff className="w-4 h-4 text-danger shrink-0 mt-0.5" aria-hidden="true" />
 					<div className="flex-1 min-w-0">
 						<RadixToast.Title className="text-[13px] font-medium mb-0.5 text-danger">
-							Connection lost
+							{t('connection.lost')}
 						</RadixToast.Title>
 						<RadixToast.Description className="text-[13px] text-text-2 break-words flex items-center gap-1.5">
 							<Loader2 className="w-3 h-3 animate-spin shrink-0" aria-hidden="true" />
-							Reconnecting…
+							{t('connection.reconnecting')}
 						</RadixToast.Description>
 						<button
 							type="button"
@@ -45,13 +51,13 @@ export function Toaster() {
 							onClick={() => retry?.()}
 							className="mt-1 inline-block text-[13px] font-medium text-accent-soft-fg hover:underline"
 						>
-							Retry now
+							{t('connection.retryNow')}
 						</button>
 					</div>
 					{/* Tap target is padded out to ~32px so it stays comfortable on mobile,
 					    where this indicator is most often in the way. */}
 					<RadixToast.Close
-						aria-label="Dismiss"
+						aria-label={t('toast.dismiss')}
 						data-testid="connection-dismiss"
 						className="text-text-3 hover:text-text-1 shrink-0 -m-1.5 p-1.5"
 					>
@@ -59,16 +65,16 @@ export function Toaster() {
 					</RadixToast.Close>
 				</RadixToast.Root>
 			)}
-			{toasts.map((t) => (
+			{toasts.map((item) => (
 				<RadixToast.Root
-					key={t.id}
+					key={item.id}
 					onOpenChange={(open) => {
-						if (!open) toast.dismiss(t.id);
+						if (!open) toast.dismiss(item.id);
 					}}
 					className={`border bg-surface text-text-1 rounded-md shadow-md px-3 py-2.5 flex items-start gap-3 data-[state=open]:animate-in data-[state=open]:slide-in-from-right-2 data-[state=closed]:animate-out data-[state=closed]:fade-out ${
-						t.variant === 'error'
+						item.variant === 'error'
 							? 'border-danger'
-							: t.variant === 'success'
+							: item.variant === 'success'
 								? 'border-success'
 								: 'border-border'
 					}`}
@@ -76,40 +82,40 @@ export function Toaster() {
 					<div className="flex-1 min-w-0">
 						<RadixToast.Title
 							className={`text-[13px] font-medium mb-0.5 ${
-								t.variant === 'error'
+								item.variant === 'error'
 									? 'text-danger'
-									: t.variant === 'success'
+									: item.variant === 'success'
 										? 'text-success-soft-fg'
 										: 'text-text-1'
 							}`}
 						>
-							{TOAST_TITLES[t.variant]}
+							{t(TOAST_TITLE_KEYS[item.variant])}
 						</RadixToast.Title>
 						<RadixToast.Description className="text-[13px] text-text-2 break-words">
-							{t.message}
+							{item.message}
 						</RadixToast.Description>
-						{t.link && (
+						{item.link && (
 							// The Toaster mounts outside the RouterProvider, so SPA navigation
 							// rides the caller-supplied onNavigate; the real href keeps
 							// middle-click / copy-link working either way.
 							<a
-								href={t.link.href}
+								href={item.link.href}
 								data-testid="toast-link"
 								className="mt-1 inline-block text-[13px] font-medium text-accent-soft-fg hover:underline"
 								onClick={(e) => {
-									if (t.link?.onNavigate && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+									if (item.link?.onNavigate && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
 										e.preventDefault();
-										t.link.onNavigate();
+										item.link.onNavigate();
 									}
-									toast.dismiss(t.id);
+									toast.dismiss(item.id);
 								}}
 							>
-								{t.link.label}
+								{item.link.label}
 							</a>
 						)}
 					</div>
 					<RadixToast.Close
-						aria-label="Dismiss"
+						aria-label={t('toast.dismiss')}
 						className="text-text-3 hover:text-text-1 shrink-0 mt-0.5"
 					>
 						<X className="w-3.5 h-3.5" />

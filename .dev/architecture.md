@@ -3908,9 +3908,10 @@ already-open half-open socket hasn't noticed) and the socket's own `connected` f
 server that went away while the route is intact) - gated on "connected at least once" and
 debounced ~2s so a mobile radio blip doesn't flash. The store is a module singleton rather than
 a context because the writer lives inside `SocketProvider` while the reader, the global
-`<Toaster />`, mounts outside the provider and the router in `main.tsx`. The indicator renders
-as a persistent, non-auto-dismissing toast ("Connection lost / Reconnecting…" plus **Retry
-now**, wired to the socket client's `reconnect()`). It is **user-dismissable** - close button or
+`<Toaster />`, mounts outside the provider and the router in `main.tsx` (which is also why
+`I18nProvider` sits above both - the toast copy goes through `t()` like everything else). The
+indicator renders as a persistent, non-auto-dismissing toast ("Connection lost / Reconnecting…"
+plus **Retry now**, wired to the socket client's `reconnect()`). It is **user-dismissable** - close button or
 right swipe, both through Radix's `onOpenChange` into `dismissConnectionOffline()` - which
 hides it for `DISMISS_SNOOZE_MS` (20s) and then re-surfaces it if the socket is still down;
 reconnect attempts continue untouched underneath, so the snooze only silences the notice. A heal

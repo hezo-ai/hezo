@@ -63,6 +63,12 @@
 	"concurrency.ramCap.point.override": "Projetos que precisam de mais podem substituir esse valor nas próprias configurações.",
 	"concurrency.ramCap.point.range": "Número inteiro de {min} a {max}. Valor padrão: {default}.",
 	"concurrency.rangeError": "Digite um número inteiro entre {min} e {max}.",
+	"connection.lost": "Conexão perdida",
+	"connection.reconnecting": "Reconectando…",
+	"connection.retryNow": "Tentar novamente agora",
+	"connection.retrying": "Tentando novamente…",
+	"connection.unreachable": "Não foi possível acessar o servidor.",
+	"connection.unreachableHint": "Vamos reconectar automaticamente assim que o servidor voltar.",
 	"connectors.banner.action": "Ver conectores",
 	"connectors.banner.many": "{count} conectores pararam de funcionar. Reconecte-os para que seus agentes possam usá-los de novo.",
 	"connectors.banner.one": "{name} parou de funcionar. Reconecte para que seus agentes possam usá-lo de novo.",
@@ -227,5 +233,9 @@
 	"theme.dark": "Escuro",
 	"theme.label": "Tema",
 	"theme.light": "Claro",
-	"theme.system": "Sistema"
+	"theme.system": "Sistema",
+	"toast.dismiss": "Dispensar",
+	"toast.error": "Algo deu errado",
+	"toast.info": "Atenção",
+	"toast.success": "Pronto"
 }

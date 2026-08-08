@@ -17,6 +17,7 @@ import {
 	useConnectionMonitor,
 	useConnectionStatus,
 } from '../src/hooks/use-connection-status';
+import { I18nProvider } from '../src/lib/i18n';
 import { restorePageVisibility, setPageHidden } from './helpers/page-visibility';
 
 let latest: ConnectionState;
@@ -295,14 +296,22 @@ describe('connection toast (Toaster)', () => {
 	afterEach(() => setConnectionOnline());
 
 	test('shows nothing while online', () => {
-		render(<Toaster />);
+		render(
+			<I18nProvider>
+				<Toaster />
+			</I18nProvider>,
+		);
 		expect(screen.queryByTestId('connection-toast')).toBeNull();
 	});
 
 	test('renders the disconnect banner when offline and Retry now fires reconnect', async () => {
 		const user = userEvent.setup();
 		const retry = vi.fn();
-		render(<Toaster />);
+		render(
+			<I18nProvider>
+				<Toaster />
+			</I18nProvider>,
+		);
 
 		act(() => setConnectionOffline(retry));
 
@@ -320,7 +329,11 @@ describe('connection toast (Toaster)', () => {
 		// its synthesized events), so the click goes through fireEvent instead.
 		vi.useFakeTimers();
 		try {
-			render(<Toaster />);
+			render(
+				<I18nProvider>
+					<Toaster />
+				</I18nProvider>,
+			);
 			act(() => setConnectionOffline(() => {}));
 			expect(screen.getByTestId('connection-toast')).toBeTruthy();
 

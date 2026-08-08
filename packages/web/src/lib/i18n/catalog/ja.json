@@ -63,6 +63,12 @@
 	"concurrency.ramCap.point.override": "より多くのメモリが必要なプロジェクトは、各自の設定で上書きできます。",
 	"concurrency.ramCap.point.range": "{min} から {max} までの整数です。既定値は {default} です。",
 	"concurrency.rangeError": "{min} から {max} までの整数を入力してください。",
+	"connection.lost": "接続が切断されました",
+	"connection.reconnecting": "再接続しています…",
+	"connection.retryNow": "今すぐ再試行",
+	"connection.retrying": "再試行しています…",
+	"connection.unreachable": "サーバーに接続できません。",
+	"connection.unreachableHint": "サーバーが復旧し次第、自動的に再接続します。",
 	"connectors.banner.action": "コネクタを表示",
 	"connectors.banner.many": "コネクタ {count} 件が使用できなくなりました。エージェントが再び利用できるよう、接続し直してください。",
 	"connectors.banner.one": "{name} が使用できなくなりました。エージェントが再び利用できるよう、接続し直してください。",
@@ -227,5 +233,9 @@
 	"theme.dark": "ダーク",
 	"theme.label": "テーマ",
 	"theme.light": "ライト",
-	"theme.system": "システム"
+	"theme.system": "システム",
+	"toast.dismiss": "非表示",
+	"toast.error": "問題が発生しました",
+	"toast.info": "お知らせ",
+	"toast.success": "完了"
 }

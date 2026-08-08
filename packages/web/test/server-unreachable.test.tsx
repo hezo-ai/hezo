@@ -7,6 +7,7 @@
 import { act, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
+import { I18nProvider } from '../src/lib/i18n';
 import { UnreachableScreen } from '../src/routes/__root';
 import { renderApp } from './helpers/render';
 
@@ -77,7 +78,9 @@ test('Retry-now relabels to "Retrying…" and disables while the retry is in fli
 	);
 	const user = userEvent.setup();
 	const { getByRole } = render(
-		<UnreachableScreen message="Can't reach the server." isNetwork onRetry={onRetry} />,
+		<I18nProvider>
+			<UnreachableScreen message="Can't reach the server." isNetwork onRetry={onRetry} />
+		</I18nProvider>,
 	);
 
 	const btn = getByRole('button', { name: /retry now/i }) as HTMLButtonElement;
