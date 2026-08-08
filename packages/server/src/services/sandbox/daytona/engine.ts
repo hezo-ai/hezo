@@ -393,6 +393,13 @@ export class DaytonaEngine implements ContainerEngine {
 				ExitCode: isFailed(sandbox.state) ? 1 : 0,
 			},
 			Config: { Image: sandbox.labels?.[IMAGE_LABEL] ?? '' },
+			// What the provider actually allocated, which is the request rounded up to
+			// its whole-GB unit (see `createContainer`) and so never less than the
+			// ceiling that was asked for. Absent on a sandbox the API declines to
+			// describe, which reads as unknown rather than as unlimited.
+			HostConfig: {
+				MemoryBytes: sandbox.memory === undefined ? null : sandbox.memory * 1024 ** 3,
+			},
 		};
 	}
 

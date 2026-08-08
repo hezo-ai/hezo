@@ -10,6 +10,7 @@ import {
 	type CostTokens,
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
+	formatContainerMetaLogLine,
 	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
@@ -1298,6 +1299,16 @@ export async function runAgent(
 		// ended by its container dying, and only a caller that knows where it
 		// landed can tell that apart from a sibling container dying.
 		onContainerAcquired?.(containerId);
+		// Which container served this run, and the size it actually had. Written
+		// into the log rather than rendered from the run row because the member row
+		// is destroyed when the container is - the log is what still answers months
+		// later. The viewer turns the id into a link to that container's page.
+		if (acquired.allocation) {
+			emit(
+				'stdout',
+				`[runner] ${formatContainerMetaLogLine({ containerId, ...acquired.allocation })}\n`,
+			);
+		}
 	} catch (e) {
 		if (e instanceof PoolCapacityError) {
 			// Not a failure: the instance is at its memory budget, which the gate

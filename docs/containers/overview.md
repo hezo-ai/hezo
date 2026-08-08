@@ -70,6 +70,13 @@ and the confirmation says so.
 A container that fails while it is being set up stays in the list as **Failed**, with the
 reason and whatever its output captured, so you can read what went wrong and remove it.
 
+**A run's log opens by naming the container it was given**, along with the memory and disk
+that container was built with. The identifier is a link to that container's page, so a run
+that behaved oddly leads straight to the container that served it rather than to a guess
+based on timing. Because a project holds several containers at once, that link is the only
+reliable way to tell which one a particular run used - and it keeps working after the
+container itself is gone, since the log records it rather than looking it up.
+
 ## Choosing where containers run
 
 Both options give you the same product. The agents, the tools, the tunnel back to Hezo,

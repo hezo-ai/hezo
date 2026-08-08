@@ -53,6 +53,13 @@ interface FakeContainer {
 	name: string;
 	running: boolean;
 	labels: Record<string, string>;
+	/**
+	 * Remembered from the create rather than answered as a constant: `HEZO_SKIP_DOCKER`
+	 * runs go through the real pool ladder, which recycles any container whose
+	 * recorded allocation differs from the cap. A fixed figure would either recycle
+	 * every container or none of them, and neither is what a real backend does.
+	 */
+	memoryBytes: number | null;
 }
 
 /**
@@ -79,7 +86,8 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 	const tunnelReadyExecs = new Set<string>();
 
 	const describe = (id: string): ContainerInfo => {
-		const running = containers.get(id)?.running ?? true;
+		const existing = containers.get(id);
+		const running = existing?.running ?? true;
 		return {
 			Id: id,
 			State: {
@@ -89,6 +97,7 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 				ExitCode: 0,
 			},
 			Config: { Image: 'noop' },
+			HostConfig: { MemoryBytes: existing?.memoryBytes ?? null },
 		};
 	};
 
@@ -111,12 +120,22 @@ export function createFakeDockerClient(db?: Db, dataDir?: string): ContainerEngi
 		// `config` optional for the same reason as `execCreate` below.
 		createContainer: async (name: string, config?: ContainerConfig) => {
 			const id = `noop-${name}`;
-			containers.set(id, { name, running: false, labels: config?.Labels ?? {} });
+			containers.set(id, {
+				name,
+				running: false,
+				labels: config?.Labels ?? {},
+				memoryBytes: config?.HostConfig?.Memory ?? null,
+			});
 			recordFakeBinds(id, config?.HostConfig?.Binds);
 			return { Id: id, Warnings: [] };
 		},
 		startContainer: async (id: string) => {
-			const c = containers.get(id) ?? { name: id, running: false, labels: {} };
+			const c = containers.get(id) ?? {
+				name: id,
+				running: false,
+				labels: {},
+				memoryBytes: null,
+			};
 			c.running = true;
 			containers.set(id, c);
 		},

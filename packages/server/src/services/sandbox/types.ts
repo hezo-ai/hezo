@@ -106,6 +106,27 @@ export interface ContainerInfo {
 	Config: {
 		Image: string;
 	};
+	HostConfig?: {
+		/**
+		 * The memory ceiling this container was provisioned to cover, in bytes -
+		 * the same quantity `ContainerConfig.HostConfig.Memory` states, read back.
+		 * **Every backend answers it**; the field is optional only so a test double
+		 * that never provisioned anything can stay a literal.
+		 *
+		 * Report the *guarantee*, not the raw control-plane figure: the Docker
+		 * adapter subtracts the cgroup headroom it added, so what comes back is what
+		 * was asked for. A provider whose unit is coarser reports what it actually
+		 * allocated, which rounds up and so is never less than the request - the
+		 * direction that keeps `memory_bytes` conservative when it is backfilled
+		 * from here.
+		 *
+		 * `null` means **this backend could not say for this container** - the
+		 * control plane omitted it, a reading raced the container going away. The
+		 * caller then leaves the recorded allocation alone rather than writing a
+		 * guess; it never means "this backend does not do that".
+		 */
+		MemoryBytes: number | null;
+	};
 }
 
 export interface ExecLogChunk {

@@ -1692,6 +1692,21 @@ the direction that over-subscribes the host. `CONTAINER_LISTING_SQL` selects the
 so the Containers page reports what each container holds rather than what the setting says -
 the old figure until the swap happens, which is the truth and is the point.
 
+**An unrecorded allocation is learned from the container, never from the setting.** A member
+with `memory_bytes IS NULL` reads as unknown-sized everywhere - a dash in the Containers
+page's Memory column, and a recycle on the next acquire. That is correct while nothing knows
+the answer, but the backend does: `ContainerInfo.HostConfig.MemoryBytes` reports the ceiling
+the container was provisioned to cover, and `reconcilePoolMembers` writes it through
+`recordPoolMemberMemoryIfUnknown` on the `inspectContainer` round trip it was already making
+(≤50 members a pass, ≤1 inspect per member per 15s). Deriving the figure from the current cap
+is the one thing that stays forbidden - it writes a confident wrong answer for exactly the
+containers the column exists to catch - but reading it off the container is not a derivation.
+The write only ever fills a gap (`memory_bytes IS NULL` is in the predicate): the recorded
+figure is the guarantee that was *requested*, while a backend whose unit is coarser reports
+the larger amount it rounded up to, so letting a reading replace a known value would claim a
+container was built to a cap nobody set. A backend that cannot say leaves the member NULL,
+and it keeps being recycled - the right answer for a container nothing can size.
+
 **Capacity is a memory budget, and it reserves for the chat container up front.**
 `max_container_memory_gb` bounds the total memory *task run* containers may hold at once,
 summed from what each one actually asked for (`projects.memory_limit_gib`, else the
@@ -1977,7 +1992,23 @@ the cached `container_status`: a container pruned externally or lost to a Docker
 reconciled (status flipped, `container_id` nulled, project update broadcast) and the run
 fails fast with a clear message rather than tripping over a raw 404 mid-exec. It captures
 interleaved stdout/stderr (recorded in full, `[stderr]`-prefixed, with a 10 MB
-runaway-output backstop) into **append-only log chunks**. The exec transport itself
+**The log opens by naming the container the run was given.** The moment `acquireRunContainer`
+returns, the runner writes one `[runner]` line carrying the full engine id and the two figures
+the member row records - `Container <id> · 4 GB RAM · 4 GB disk`, built by
+`formatContainerMetaLogLine` in `@hezo/shared`. It is the *first* line on a warm reuse and the
+second on a cold start, since `Starting the project container…` is emitted before the id
+exists. It lives in the log rather than being rendered from the run row because
+`container_pool_members` is destroyed with its container while the log is not, so the log is
+what still answers this months later - the same reason `heartbeat_runs.container_id` carries
+no FK. The viewer parses it (`parse-agent-log.ts`, matched with the shared
+`parseContainerMetaLogLine`) into a `runner` block and renders the id as a link to
+`/settings/containers/$containerId`, shortened to twelve characters the way the Containers list
+shortens it. Runner lines are a block type rather than falling through to the prose branch
+because that branch coalesces consecutive lines into one markdown document, where a single
+newline is a softbreak - so every runner line used to render as a clause appended to whatever
+the agent had last said.
+
+The exec transport itself
 **retains nothing**: `execStart` with an `onChunk` callback forwards each frame and returns
 an empty `ExecResult`, because a run's raw stream-json output (every tool result in full)
 is strictly larger than the capped rendered log and was, held alongside it, the largest

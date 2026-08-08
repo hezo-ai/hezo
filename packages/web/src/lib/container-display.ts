@@ -58,9 +58,8 @@ export function containerBadge(
 	return { tone: CONTAINER_STATE_TONE[state], label: CONTAINER_STATE_LABEL[state] };
 }
 
-const GIB = 1024 ** 3;
-
-/** Bytes as GB to one decimal - the unit both container surfaces report in. */
-export function formatGib(bytes: number): string {
-	return `${Math.round((bytes / GIB) * 10) / 10} GB`;
-}
+/**
+ * Re-exported rather than defined here: the runner writes the same figures into
+ * the run log, so the rounding has to be one function for both packages.
+ */
+export { formatGib } from '@hezo/shared';

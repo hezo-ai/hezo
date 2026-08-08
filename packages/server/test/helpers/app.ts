@@ -74,6 +74,9 @@ const STUB_DOCKER_METHODS: ContainerEngine = {
 		Id: 'stub-container',
 		State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
 		Config: { Image: 'stub' },
+		// A stub provisions nothing, so it has no allocation to report. Overridden
+		// by any test that exercises the backfill.
+		HostConfig: { MemoryBytes: null },
 	}),
 	findContainerByNamePrefix: async () => null,
 	inspectImage: async () => null,

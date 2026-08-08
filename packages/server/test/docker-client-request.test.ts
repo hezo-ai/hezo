@@ -330,7 +330,10 @@ describe('container lifecycle operations', () => {
 			Config: { Image: 'img' },
 		};
 		stubFetch(() => json(info));
-		await expect(client().inspectContainer('cid-1')).resolves.toEqual(info);
+		await expect(client().inspectContainer('cid-1')).resolves.toEqual({
+			...info,
+			HostConfig: { MemoryBytes: null },
+		});
 		vi.unstubAllGlobals();
 
 		stubFetch(() => json({ message: 'no such container' }, 404));
@@ -341,6 +344,36 @@ describe('container lifecycle operations', () => {
 		await expect(client().inspectContainer('cid-1')).rejects.toThrow(
 			'Docker inspectContainer failed (500): daemon busy',
 		);
+	});
+
+	/**
+	 * The cgroup limit carries the adapter's own margin, and the pool compares a
+	 * container's recorded allocation against the cap for exact equality - so
+	 * reporting the padded figure would judge every container mis-sized and
+	 * recycle the whole pool on every acquire.
+	 */
+	it('inspectContainer reports the ceiling asked for, not the padded cgroup limit', async () => {
+		const asked = 2 * 1024 ** 3;
+		const base = {
+			Id: 'cid-1',
+			State: { Status: 'running', Running: true, Pid: 42, ExitCode: 0 },
+			Config: { Image: 'img' },
+		};
+
+		stubFetch(() =>
+			json({ ...base, HostConfig: { Memory: asked + MEMORY_HARD_CAP_HEADROOM_BYTES } }),
+		);
+		await expect(client().inspectContainer('cid-1')).resolves.toMatchObject({
+			HostConfig: { MemoryBytes: asked },
+		});
+		vi.unstubAllGlobals();
+
+		// Docker's "no limit". Unknown as a provisioned ceiling, so nothing may be
+		// backfilled from it.
+		stubFetch(() => json({ ...base, HostConfig: { Memory: 0 } }));
+		await expect(client().inspectContainer('cid-1')).resolves.toMatchObject({
+			HostConfig: { MemoryBytes: null },
+		});
 	});
 });
 
@@ -365,7 +398,11 @@ describe('findContainerByNamePrefix', () => {
 			return text('unexpected route', 500);
 		});
 
-		await expect(client().findContainerByNamePrefix(prefix)).resolves.toEqual(info);
+		// Delegates to inspectContainer, so it carries the normalized allocation too.
+		await expect(client().findContainerByNamePrefix(prefix)).resolves.toEqual({
+			...info,
+			HostConfig: { MemoryBytes: null },
+		});
 		const listUrl = calls[0].url;
 		expect(listUrl).toContain('/containers/json?all=true&filters=');
 		expect(decodeURIComponent(listUrl.split('filters=')[1])).toBe(

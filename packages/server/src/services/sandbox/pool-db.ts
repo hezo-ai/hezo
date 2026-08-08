@@ -187,6 +187,39 @@ export async function claimPoolMember(
 }
 
 /**
+ * What a container was provisioned with, as its member row records it.
+ *
+ * Read from the row rather than recomputed from the settings: a container holds
+ * the allocation it was built with until the pool replaces it, so the setting
+ * describes the next container rather than this one.
+ */
+export interface ContainerAllocation {
+	/** Null for a member whose allocation was never recorded. */
+	memoryBytes: number | null;
+	diskCeilingBytes: number;
+}
+
+/** The recorded allocation of a member the caller already holds, or null when the row is gone. */
+export async function readPoolMemberAllocation(
+	db: Db,
+	containerId: string,
+): Promise<ContainerAllocation | null> {
+	const res = await db.query<{
+		memory_bytes: string | number | null;
+		disk_ceiling_bytes: string | number;
+	}>(
+		'SELECT memory_bytes, disk_ceiling_bytes FROM container_pool_members WHERE container_id = $1',
+		[containerId],
+	);
+	const row = res.rows[0];
+	if (!row) return null;
+	return {
+		memoryBytes: row.memory_bytes === null ? null : Number(row.memory_bytes),
+		diskCeilingBytes: Number(row.disk_ceiling_bytes),
+	};
+}
+
+/**
  * Hand a container back after a run.
  *
  * The task is recorded even when the run failed: affinity is about which
@@ -618,6 +651,13 @@ export interface PoolMemberForReconcile {
 	projectSlug: string;
 	teamId: string;
 	state: string;
+	/**
+	 * Null for a member whose allocation was never recorded - a container from
+	 * before the column existed, or one adopted from outside the pool. Carried
+	 * here so the reconcile pass can learn it from the engine round trip it is
+	 * already making, rather than asking every member every tick.
+	 */
+	memoryBytes: number | null;
 }
 
 /**
@@ -643,9 +683,10 @@ export async function listPoolMembersForReconcile(
 		project_slug: string;
 		team_id: string;
 		state: string;
+		memory_bytes: string | number | null;
 	}>(
 		`SELECT m.container_id, m.project_id, p.slug AS project_slug, p.team_id,
-		        m.state::text AS state
+		        m.state::text AS state, m.memory_bytes
 		   FROM container_pool_members m
 		   JOIN projects p ON p.id = m.project_id
 		  WHERE m.updated_at < now() - ($1 * interval '1 second')
@@ -659,5 +700,34 @@ export async function listPoolMembersForReconcile(
 		projectSlug: r.project_slug,
 		teamId: r.team_id,
 		state: r.state,
+		memoryBytes: r.memory_bytes === null ? null : Number(r.memory_bytes),
 	}));
+}
+
+/**
+ * Record what a container turned out to have been provisioned with, for a member
+ * that never had it recorded.
+ *
+ * Only ever fills a gap: `memory_bytes IS NULL` is in the predicate, so a
+ * recorded allocation is never overwritten by a reading. What the pool records
+ * is the guarantee the caller asked for, and a backend whose unit is coarser
+ * reports the larger figure it rounded up to - letting that replace a known
+ * value would tell the ladder a container was built to a cap nobody set.
+ *
+ * A member left NULL reads as "cannot prove it covers the cap" and is recycled
+ * on the next acquire, which stays the right answer for a backend that could not
+ * say.
+ */
+export async function recordPoolMemberMemoryIfUnknown(
+	db: Db,
+	containerId: string,
+	memoryBytes: number | null,
+): Promise<void> {
+	if (memoryBytes === null) return;
+	await db.query(
+		`UPDATE container_pool_members
+		    SET memory_bytes = $2, updated_at = now()
+		  WHERE container_id = $1 AND memory_bytes IS NULL`,
+		[containerId, memoryBytes],
+	);
 }

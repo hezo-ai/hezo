@@ -257,6 +257,65 @@ export function poolDiskCeilingBytes(diskGb: number): number {
 }
 
 /**
+ * Bytes as GB to one decimal - the unit every container surface reports in.
+ *
+ * Shared rather than per-surface because the run log names a container's size
+ * and then links straight to the page that names it again: rounding the two
+ * differently would show one container as two.
+ */
+export function formatGib(bytes: number): string {
+	return `${Math.round((bytes / 1024 ** 3) * 10) / 10} GB`;
+}
+
+/**
+ * The run log's opening line naming the container the run was given and what it
+ * was built with.
+ *
+ * Written by the runner and matched by the log viewer, which turns the id into a
+ * link to that container's page - so the two halves live together and are
+ * round-tripped by one test rather than being a format one side re-derives.
+ *
+ * The **full** engine id goes in the line, not a truncated one: it is what the
+ * container page is keyed on, and a log line is also the thing an operator
+ * copies into their own tooling. The viewer shortens it for display.
+ *
+ * The memory segment is dropped rather than guessed when the allocation is
+ * unrecorded, which is the same thing the Containers page does with it.
+ */
+export function formatContainerMetaLogLine(meta: {
+	containerId: string;
+	memoryBytes: number | null;
+	diskCeilingBytes: number;
+}): string {
+	const parts = [`${CONTAINER_META_LOG_LABEL}${meta.containerId}`];
+	if (meta.memoryBytes !== null) parts.push(`${formatGib(meta.memoryBytes)} RAM`);
+	parts.push(`${formatGib(meta.diskCeilingBytes)} disk`);
+	return parts.join(CONTAINER_META_LOG_SEPARATOR);
+}
+
+/**
+ * The wording of {@link formatContainerMetaLogLine}, exported because the viewer
+ * rebuilds the line around a shortened, linked id and must not restate it.
+ *
+ * Untranslated like every other runner line: the log is written once, in one
+ * language, and persisted verbatim.
+ */
+export const CONTAINER_META_LOG_LABEL = 'Container ';
+export const CONTAINER_META_LOG_SEPARATOR = ' · ';
+
+/** The id and the rendered remainder of {@link formatContainerMetaLogLine}, or null for any other line. */
+export function parseContainerMetaLogLine(
+	text: string,
+): { containerId: string; details: string } | null {
+	if (!text.startsWith(CONTAINER_META_LOG_LABEL)) return null;
+	const [containerId, ...rest] = text
+		.slice(CONTAINER_META_LOG_LABEL.length)
+		.split(CONTAINER_META_LOG_SEPARATOR);
+	if (!containerId || /\s/.test(containerId)) return null;
+	return { containerId, details: rest.join(CONTAINER_META_LOG_SEPARATOR) };
+}
+
+/**
  * Minutes a project's containers keep running after their last activity (agent
  * runs, assistant chat) before the idle pass retires the pool - suspending one
  * and destroying the rest. Containers come back on demand.

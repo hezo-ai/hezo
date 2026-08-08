@@ -222,6 +222,22 @@ function withCgroupHeadroom(config: ContainerConfig): ContainerConfig {
 	return { ...config, HostConfig: { ...config.HostConfig, Memory: cap, MemorySwap: cap } };
 }
 
+/**
+ * The inverse of {@link withCgroupHeadroom}, so an inspect reports the ceiling
+ * that was asked for rather than the cgroup limit that was set.
+ *
+ * Without it every container reads back one headroom larger than the figure
+ * recorded on its pool member, and the pool compares the two for exact equality -
+ * so every container would be judged mis-sized and recycled, forever.
+ *
+ * Zero is Docker's "no limit", which is unknown rather than unlimited as far as
+ * a provisioned ceiling goes.
+ */
+function cgroupLimitAsCeiling(limitBytes: number | undefined): number | null {
+	if (!limitBytes || limitBytes <= MEMORY_HARD_CAP_HEADROOM_BYTES) return null;
+	return limitBytes - MEMORY_HARD_CAP_HEADROOM_BYTES;
+}
+
 /** Single-quote for `sh -c`, closing and reopening around any embedded quote. */
 function shellQuote(arg: string): string {
 	return `'${arg.replaceAll("'", `'\\''`)}'`;
@@ -756,7 +772,13 @@ export class DockerClient implements ContainerEngine {
 			const text = await res.text();
 			throw new Error(`Docker inspectContainer failed (${res.status}): ${text}`);
 		}
-		return parseJsonOrThrow(res, 'inspectContainer');
+		const raw = await parseJsonOrThrow<ContainerInfo & { HostConfig?: { Memory?: number } }>(
+			res,
+			'inspectContainer',
+		);
+		// The daemon's payload is passed through as-is except for this one field,
+		// which is renamed and un-padded so it means the same thing on every backend.
+		return { ...raw, HostConfig: { MemoryBytes: cgroupLimitAsCeiling(raw.HostConfig?.Memory) } };
 	}
 
 	/**

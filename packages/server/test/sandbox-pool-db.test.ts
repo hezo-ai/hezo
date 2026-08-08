@@ -298,4 +298,63 @@ describe('reconcilePoolMembers', () => {
 		await reconcilePoolMembers(deps);
 		expect(inspections).toBe(1);
 	});
+
+	/**
+	 * A container from before the allocation was recorded, or one adopted from
+	 * outside the pool, has no `memory_bytes` - and the migration deliberately did
+	 * not guess one from the setting. The backend still knows, so the reconcile
+	 * pass asks it on a round trip it was making anyway.
+	 */
+	describe('backfilling an unrecorded allocation', () => {
+		/** Engine reporting `memoryBytes` as its provisioned ceiling for every container. */
+		const reporting = (memoryBytes: number | null) =>
+			({
+				inspectContainer: async (id: string) => ({
+					Id: id,
+					State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+					Config: { Image: 'x' },
+					HostConfig: { MemoryBytes: memoryBytes },
+				}),
+			}) as unknown as Parameters<typeof reconcilePoolMembers>[0]['docker'];
+
+		const memoryOf = async (containerId: string): Promise<number | null> => {
+			const r = await db.query<{ memory_bytes: string | number | null }>(
+				'SELECT memory_bytes FROM container_pool_members WHERE container_id = $1',
+				[containerId],
+			);
+			const value = r.rows[0]?.memory_bytes;
+			return value === null || value === undefined ? null : Number(value);
+		};
+
+		it('records what the backend says for a member that had no allocation', async () => {
+			await seed('unrecorded', 'idle', 300);
+			expect(await memoryOf('unrecorded')).toBeNull();
+
+			await reconcile(reporting(4 * 1024 ** 3));
+			expect(await memoryOf('unrecorded')).toBe(4 * 1024 ** 3);
+		});
+
+		it('leaves a recorded allocation alone', async () => {
+			// The recorded figure is the guarantee that was asked for; a backend whose
+			// unit is coarser reports the larger amount it rounded up to. Overwriting
+			// would tell the ladder the container was built to a cap nobody set.
+			await seed('recorded', 'idle', 300);
+			await db.query(
+				'UPDATE container_pool_members SET memory_bytes = $2 WHERE container_id = $1',
+				['recorded', 1.5 * 1024 ** 3],
+			);
+
+			await reconcile(reporting(2 * 1024 ** 3));
+			expect(await memoryOf('recorded')).toBe(1.5 * 1024 ** 3);
+		});
+
+		it('writes nothing when the backend cannot say', async () => {
+			// Still unknown, so the ladder keeps recycling it on the next acquire -
+			// which is the right answer for a container we cannot size.
+			await seed('unanswered', 'idle', 300);
+
+			await reconcile(reporting(null));
+			expect(await memoryOf('unanswered')).toBeNull();
+		});
+	});
 });

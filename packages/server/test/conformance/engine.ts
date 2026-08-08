@@ -188,6 +188,21 @@ export function describeEngineConformance(
 			expect(stats?.usedBytes).toBeLessThanOrEqual(fixture.memoryBytes * 2);
 		});
 
+		it('reports back the memory ceiling it was provisioned to cover', async () => {
+			// Unconditional for the same reason as the stats assertion above: this is
+			// what backfills `container_pool_members.memory_bytes` for a container
+			// whose allocation was never recorded, and an adapter answering null
+			// forever leaves those containers reading as unknown-sized for good.
+			const info = await engine.inspectContainer(containerId);
+			expect(info?.HostConfig?.MemoryBytes).not.toBeNull();
+			// Never less than what was asked for - that is the whole guarantee, and a
+			// backend whose unit is coarser rounds *up* to honour it. Bounded above so
+			// a figure carrying an adapter's own headroom (which the caller must never
+			// see) fails rather than silently inflating every container's recorded size.
+			expect(info?.HostConfig?.MemoryBytes).toBeGreaterThanOrEqual(fixture.memoryBytes);
+			expect(info?.HostConfig?.MemoryBytes).toBeLessThan(fixture.memoryBytes * 2);
+		});
+
 		/**
 		 * The shared cgroup reading, against a real container's real cgroup.
 		 *

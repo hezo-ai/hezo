@@ -41,12 +41,15 @@ import { getActiveContainers, projectContainerMemoryGb } from './run-concurrency
 import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
 import { INSTANCE_LABEL, PROJECT_LABEL, TEAM_LABEL } from './sandbox/labels';
 import {
+	type ContainerAllocation,
 	claimPoolMember,
 	clearProjectContainerIfNamed,
 	decidePoolAcquisition,
 	listPoolContainerIds,
 	listPoolMembersForReconcile,
 	loadPoolMembers,
+	readPoolMemberAllocation,
+	recordPoolMemberMemoryIfUnknown,
 	releasePoolMember,
 	removePoolMember,
 	setPoolMemberChatReservation,
@@ -872,6 +875,15 @@ export class PoolCapacityError extends Error {
 /** A container claimed for one run, and the handle that gives it back. */
 export interface AcquiredContainer {
 	containerId: string;
+	/**
+	 * What this container was built with, as its member row records it - the run
+	 * log states it so an operator reading a failure can see the size the run
+	 * actually had, rather than the size the setting says today.
+	 *
+	 * Null only where the row went out from under a container that was just
+	 * claimed. The caller states nothing rather than inventing figures.
+	 */
+	allocation: ContainerAllocation | null;
 	/** Idempotent. Returns the container to the pool as idle, recording task affinity. */
 	release(): Promise<void>;
 }
@@ -1047,6 +1059,10 @@ export async function acquireRunContainer(
 	let released = false;
 	return {
 		containerId,
+		// One point lookup on a unique index, after the ladder has already paid for
+		// an engine round trip - cheaper than threading the figures back out of
+		// every rung, and uniform across all of them.
+		allocation: await readPoolMemberAllocation(db, containerId),
 		release: async () => {
 			if (released) return;
 			released = true;
@@ -2157,6 +2173,18 @@ export async function reconcilePoolMembers(
 				`pool member ${member.containerId.slice(0, 12)} (${member.state}) no longer exists on the backend — dropped`,
 			);
 			continue;
+		}
+
+		// Learn what a container was built with from the container itself, for a
+		// member that has no record of it. It rides this round trip rather than
+		// getting a pass of its own, and sits above the running check because a
+		// healthy container is exactly the one worth asking.
+		if (member.memoryBytes === null) {
+			await recordPoolMemberMemoryIfUnknown(
+				db,
+				member.containerId,
+				info.HostConfig?.MemoryBytes ?? null,
+			);
 		}
 
 		if (info.State.Running) continue;

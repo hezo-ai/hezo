@@ -4,6 +4,7 @@ import {
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
+	formatContainerMetaLogLine,
 	HeartbeatRunStatus,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
@@ -324,6 +325,21 @@ describe('runAgent', () => {
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].log_text).toContain('Starting the project container');
+
+		// And which container it landed on, with the size that container was built
+		// with. The member row is destroyed when the container is, so the log is
+		// what still answers this once the container is gone.
+		const member = await db.query<{ memory_bytes: string; disk_ceiling_bytes: string }>(
+			'SELECT memory_bytes, disk_ceiling_bytes FROM container_pool_members WHERE container_id = $1',
+			['c-1'],
+		);
+		expect(run.rows[0].log_text).toContain(
+			formatContainerMetaLogLine({
+				containerId: 'c-1',
+				memoryBytes: Number(member.rows[0].memory_bytes),
+				diskCeilingBytes: Number(member.rows[0].disk_ceiling_bytes),
+			}),
+		);
 
 		const proj = await db.query<{ container_status: string }>(
 			'SELECT container_status FROM projects WHERE id = $1',
