@@ -77,10 +77,13 @@ test('the expand tab stays clickable when a sticky banner tops the page', async 
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 
-	// Force the project's container to `error` so ContainerStatusBanner renders.
-	// No REST route sets that status - the e2e server runs the in-process fake
-	// Docker client, where provisioning succeeds - so drive it from the projects
-	// index the banner reads (`useProjectMeta` -> `useProjectsIndex`), the same
+	// Give the project a failed container so ContainerStatusBanner renders. The
+	// banner's error state is `failed_container_count`, not `container_status`:
+	// a project is not bound to one container, so a stored `error` blocks nothing
+	// and is reported as `stopped` (see useContainerHealth). No REST route
+	// produces a failed container - the e2e server runs the in-process fake Docker
+	// client, where provisioning succeeds - so drive it from the projects index
+	// the banner reads (`useProjectMeta` -> `useProjectsIndex`), the same
 	// interception chat.spec.ts uses to pin a container state.
 	await page.route('**/api/projects', async (route) => {
 		if (route.request().method() !== 'GET') return route.fallback();
@@ -88,7 +91,7 @@ test('the expand tab stays clickable when a sticky banner tops the page', async 
 		const body = (await response.json()) as { data?: Array<Record<string, unknown>> };
 		const data = Array.isArray(body.data)
 			? body.data.map((p) =>
-					p.slug === lightWorkspace.projectSlug ? { ...p, container_status: 'error' } : p,
+					p.slug === lightWorkspace.projectSlug ? { ...p, failed_container_count: 1 } : p,
 				)
 			: body.data;
 		await route.fulfill({ response, json: { ...body, data } });

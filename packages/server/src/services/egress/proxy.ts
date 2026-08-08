@@ -675,8 +675,8 @@ class RunProxyInstance {
 			client.resume();
 		});
 		up.on('error', () => client.destroy());
-		up.on('close', () => discardingDestroy(client, host, 'agent'));
-		client.on('close', () => discardingDestroy(up, host, 'upstream'));
+		up.on('close', () => flushingClose(client, host, 'agent'));
+		client.on('close', () => flushingClose(up, host, 'upstream'));
 	}
 
 	/** Return a live per-host TLS server, rebuilding it if the cached one has
@@ -1346,23 +1346,43 @@ function headerValue(
 }
 
 /**
- * Tear down one leg of a CONNECT bridge, reporting anything the teardown throws
- * away.
+ * How long a bridge leg may spend flushing after its peer has gone.
  *
- * `destroy()` cancels queued writes rather than flushing them, so a leg torn
- * down while its peer is behind loses whatever had not yet reached the kernel.
- * The agent side falls behind by design - the tunnel multiplexer pauses its
- * socket whenever a stream runs out of credit - and a body that stops short
- * presents to the client as a stall rather than as an error, so a discard is
- * invisible unless it says so here. Silent on a healthy connection, which is
- * every connection where the peer kept up.
+ * Bounded by the surviving peer reading rather than by anything the proxy waits
+ * on, so it is generous. A run's release severs every tracked socket outright,
+ * so nothing here can outlive the run regardless.
  */
-function discardingDestroy(sock: Socket, host: string, leg: 'agent' | 'upstream'): void {
-	const pending = sock.writableLength;
-	if (pending > 0) {
-		log.warn(`egress bridge for ${host} discarded ${pending} unflushed byte(s) on the ${leg} leg`);
-	}
-	sock.destroy();
+const BRIDGE_FLUSH_DEADLINE_MS = 15_000;
+
+/**
+ * Close one leg of a CONNECT bridge once its peer has gone, flushing whatever is
+ * still queued for it.
+ *
+ * `destroy()` cancels queued writes rather than flushing them, so a leg closed
+ * while its peer is behind used to lose whatever had not yet reached the kernel.
+ * The agent side falls behind **by design** - the tunnel multiplexer pauses its
+ * socket whenever a stream runs out of credit - so this is the ordinary state,
+ * not an edge case, and a body that stops short presents to the client as a
+ * stall rather than as an error. `end()` writes the queue out and then sends
+ * FIN, which is the same reason the 407 path already uses it.
+ *
+ * The deadline is the backstop for a peer that never drains, and it is the one
+ * case still worth a warning: reaching it means bytes really were dropped.
+ */
+function flushingClose(sock: Socket, host: string, leg: 'agent' | 'upstream'): void {
+	if (sock.destroyed) return;
+	if (!sock.writableEnded) sock.end();
+
+	const deadline = setTimeout(() => {
+		const pending = sock.writableLength;
+		if (pending > 0) {
+			log.warn(`egress bridge for ${host} gave up flushing ${pending} byte(s) on the ${leg} leg`);
+		}
+		sock.destroy();
+	}, BRIDGE_FLUSH_DEADLINE_MS);
+	// Never a reason to hold the process open.
+	deadline.unref();
+	sock.once('close', () => clearTimeout(deadline));
 }
 
 /**
