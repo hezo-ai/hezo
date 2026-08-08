@@ -89,10 +89,19 @@ export const CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER: Partial<Record<AiProvider, str
  * the run model (the normal case, since agents are assigned one) keeps the judge
  * working without pinning ids we cannot know.
  */
-export function judgeModelForProvider(provider: AiProvider, runModel?: string | null): string {
+export function judgeModelForProvider(
+	provider: AiProvider,
+	runModel?: string | null,
+	/**
+	 * The CLI the run actually uses. Only Claude Code reaches this helper, but a
+	 * provider whose *default* is another CLI can be configured onto it, and its
+	 * judge must then track the run model like any other custom-endpoint provider.
+	 */
+	runtime?: AgentRuntime | null,
+): string {
 	const fallback = CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER[provider] ?? STOP_HOOK_JUDGE_MODEL_ANTHROPIC;
 	const trimmed = runModel?.trim();
-	if (trimmed && claudeCodeProviderUsesCustomEndpoint(provider)) {
+	if (trimmed && claudeCodeProviderUsesCustomEndpoint(provider, runtime)) {
 		return claudeCodeModelArg(provider, trimmed);
 	}
 	return fallback;
@@ -204,7 +213,11 @@ export function buildClaudeCodeSettings(
 	 */
 	docWriteGuardCommand?: string | null,
 ): ClaudeCodeSettings {
-	const model = judgeModelForProvider(provider, runModel);
+	// This settings file is only ever written for a Claude Code run, so the
+	// runtime is known — pass it rather than letting the judge fall back to the
+	// provider's default, which for a credential switched onto Claude Code would
+	// be some other CLI and would wrongly pin the judge to a constant.
+	const model = judgeModelForProvider(provider, runModel, AgentRuntime.ClaudeCode);
 	return {
 		...(deniedTools && deniedTools.length > 0 ? { permissions: { deny: [...deniedTools] } } : {}),
 		hooks: {

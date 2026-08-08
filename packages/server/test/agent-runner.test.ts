@@ -2445,6 +2445,7 @@ describe('runAgent', () => {
 				value: validAuthJson,
 				authMethod: AiAuthMethod.Subscription,
 				baseUrl: null,
+				runtime: null,
 			});
 			expect(env).toEqual([]);
 		});
@@ -2454,6 +2455,7 @@ describe('runAgent', () => {
 				value: 'sk-test',
 				authMethod: AiAuthMethod.ApiKey,
 				baseUrl: null,
+				runtime: null,
 			});
 			expect(env).toEqual(['OPENAI_API_KEY=sk-test']);
 		});
@@ -2470,7 +2472,12 @@ describe('runAgent', () => {
 				'pj',
 				runId,
 				AiProvider.OpenAI,
-				{ value: validAuthJson, authMethod: AiAuthMethod.Subscription, baseUrl: null },
+				{
+					value: validAuthJson,
+					authMethod: AiAuthMethod.Subscription,
+					baseUrl: null,
+					runtime: null,
+				},
 				engine,
 				'container-123',
 			);
@@ -2491,7 +2498,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.OpenAI,
-					{ value: 'sk-x', authMethod: AiAuthMethod.ApiKey, baseUrl: null },
+					{ value: 'sk-x', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
 				),
@@ -2503,7 +2510,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Anthropic,
-					{ value: 'sk-ant', authMethod: AiAuthMethod.ApiKey, baseUrl: null },
+					{ value: 'sk-ant', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
 				),
@@ -2520,7 +2527,12 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Anthropic,
-					{ value: 'sk-ant-oat01-token', authMethod: AiAuthMethod.Subscription, baseUrl: null },
+					{
+						value: 'sk-ant-oat01-token',
+						authMethod: AiAuthMethod.Subscription,
+						baseUrl: null,
+						runtime: null,
+					},
 					createStubDocker(),
 					'container-123',
 				),
@@ -2538,7 +2550,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Kimi,
-					{ value: 'sk-kimi', authMethod: AiAuthMethod.ApiKey, baseUrl: null },
+					{ value: 'sk-kimi', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
 				),
@@ -2548,6 +2560,7 @@ describe('runAgent', () => {
 				value: 'sk-kimi',
 				authMethod: AiAuthMethod.ApiKey,
 				baseUrl: null,
+				runtime: null,
 			});
 			expect(env).toContain('ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic');
 			expect(env).toContain('ANTHROPIC_AUTH_TOKEN=sk-kimi');
@@ -2793,6 +2806,7 @@ describe('buildProviderEnv (Anthropic)', () => {
 			value: 'sk-ant-secret',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		for (const entry of CLAUDE_CODE_QUIET_ENTRIES) {
 			expect(env).toContain(entry);
@@ -2806,6 +2820,7 @@ describe('buildProviderEnv (Anthropic)', () => {
 			value: 'sk-ant-oat01-subtoken',
 			authMethod: AiAuthMethod.Subscription,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-subtoken');
 		expect(env.some((e) => e.startsWith('ANTHROPIC_API_KEY='))).toBe(false);
@@ -2822,6 +2837,7 @@ describe('buildProviderEnv (DeepSeek)', () => {
 			value: 'sk-deepseek-secret',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic');
 		expect(env).toContain('ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro');
@@ -2841,6 +2857,7 @@ describe('buildProviderEnv (DeepSeek)', () => {
 			value: 'unused-blob',
 			authMethod: AiAuthMethod.Subscription,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic');
 		expect(env.some((e) => e.startsWith('ANTHROPIC_AUTH_TOKEN='))).toBe(false);
@@ -2853,6 +2870,7 @@ describe('buildProviderEnv (ZAi)', () => {
 			value: 'zai-secret',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic');
 		expect(env).toContain('ANTHROPIC_DEFAULT_OPUS_MODEL=GLM-4.7');
@@ -2872,13 +2890,19 @@ describe('buildProviderEnv (Codex runtimes do not inherit Claude Code quiet env)
 			value: 'sk-openai-test',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toEqual(['OPENAI_API_KEY=sk-openai-test']);
 	});
 });
 
 describe('buildProviderEnv derives the subagent model from the run model', () => {
-	const cred = { value: 'sk-x', authMethod: AiAuthMethod.ApiKey, baseUrl: null } as const;
+	const cred = {
+		value: 'sk-x',
+		authMethod: AiAuthMethod.ApiKey,
+		baseUrl: null,
+		runtime: null,
+	} as const;
 
 	it('points CLAUDE_CODE_SUBAGENT_MODEL at the selected model for Kimi (k3), not the constant', () => {
 		const env = buildProviderEnv(AiProvider.Kimi, cred, 'kimi-k3');

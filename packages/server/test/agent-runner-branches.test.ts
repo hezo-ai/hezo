@@ -113,6 +113,7 @@ describe('buildProviderEnv', () => {
 			value: 'sk-ant-123',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		// Claude Code quiet flags are prepended for ClaudeCode-runtime providers.
 		expect(env).toContain('DISABLE_TELEMETRY=1');
@@ -131,6 +132,7 @@ describe('buildProviderEnv', () => {
 			value: 'oauth-token-abc',
 			authMethod: AiAuthMethod.Subscription,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abc');
 		expect(env.some((e) => e.startsWith('ANTHROPIC_API_KEY='))).toBe(false);
@@ -144,6 +146,7 @@ describe('buildProviderEnv', () => {
 			value: 'whatever',
 			authMethod: AiAuthMethod.Subscription,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toEqual([]);
 	});
@@ -153,6 +156,7 @@ describe('buildProviderEnv', () => {
 			value: 'ds-key',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		// DeepSeek runs on Claude Code → quiet env present.
 		expect(env).toContain('DISABLE_TELEMETRY=1');
@@ -168,6 +172,7 @@ describe('buildProviderEnv', () => {
 			value: 'kimi-key',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		// Kimi now runs on Claude Code against Moonshot's Anthropic-compatible endpoint
 		// → quiet env present, plus the Moonshot base URL + model defaults.
@@ -185,6 +190,7 @@ describe('buildProviderEnv', () => {
 			value: 'or-key',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		// OpenRouter runs on the OpenCode runtime, not Claude Code → no DISABLE_* flags.
 		expect(env.some((e) => e.startsWith('DISABLE_TELEMETRY='))).toBe(false);
@@ -196,6 +202,7 @@ describe('buildProviderEnv', () => {
 			value: 'sk-openai',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toEqual(['OPENAI_API_KEY=sk-openai']);
 	});
@@ -205,6 +212,7 @@ describe('buildProviderEnv', () => {
 			value: 'AIza-google',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		// Gemini runs headless in /workspace, which the CLI treats as untrusted unless
 		// told otherwise; the runtime env trusts it so --yolo keeps auto-approving.

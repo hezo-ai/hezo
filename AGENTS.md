@@ -93,6 +93,7 @@
 | A tool added to the container image | the toolset paragraph in `SHARED_INSTRUCTIONS` | **nothing - on you** |
 | A new MCP tool taking an array | `MCP_BATCH_ARRAY_PARAMS` | **nothing - on you** |
 | A new AI provider (`AiProvider` + `PROVIDER_RUNTIME_ADAPTERS`) | `.dev/architecture.md`, the provider docs, `model_pricing` rows, and a decision on `claudeCodeProviderUsesCustomEndpoint` | **nothing** - an unpriced model silently records $0 |
+| A provider gaining a second CLI (`alternateRuntimes`) | a `ProviderRuntimeBinding` for the new pairing, declared once as a constant if two providers share it | compile error for a missing binding, **nothing for a duplicated one** |
 | User-visible behaviour, a feature, the setup/onboarding flow | the relevant `docs/` page(s) | **nothing - on you** |
 | **Removing** a feature | every stale reference repo-wide (`docs/**`, `.dev/`, READMEs, comments) - grep for it | **nothing - on you** |
 
@@ -543,6 +544,8 @@ Wiring lives in `services/mcp-injectors/<runtime>.ts`, specs in `JUDGE_SPECS`, t
 **When this area needs strengthening again, reach for a structural signal before a phrase.** A new regex branch is the last resort, not the first: prefer reporting what the system did (the receipt), or asking a question answerable from its own state (the exit check). If a phrase genuinely is needed, it belongs as one row in `DIRECTED_ASK_RES` — the single shared ask vocabulary every gate in `lib/mentions.ts` reads — never as a new positional branch on a detector.
 
 A newly selected judge model needs a `model_pricing` row or its runs price to $0. For the file-mount subscription providers (Codex / Gemini OAuth) the helper script has no API key and fails open silently. **Anthropic subscription is the exception** — it runs via `CLAUDE_CODE_OAUTH_TOKEN`, so the native prompt judge still fires.
+
+A runtime is reachable by any credential configured onto it, not only by the providers that *default* to it (`ai_provider_configs.runtime` — see the provider-runtime rule in **Mirrored surfaces**). So a Moonshot credential reaches Claude Code or Kimi Code depending on the operator's choice, and anything deciding judge behaviour from the provider must take the **resolved** runtime — `claudeCodeProviderUsesCustomEndpoint` and `judgeModelForProvider` both accept it for exactly this reason.
 
 **Deterministic handoff-delivery net (independent of the judge).** At run completion `agent-runner.ts` reads the run's final assistant message and handles three stranded forms. It runs on **every** runtime, including those with no judge, and skips anything the run already posted (checked against that run's own comments), so an echoed handoff isn't delivered twice.
 
