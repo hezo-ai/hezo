@@ -18,6 +18,7 @@ import {
 	type CostTokens,
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
+	effectiveRuntime,
 	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
@@ -25,6 +26,7 @@ import {
 	PROVIDER_RUNTIME_ADAPTERS,
 	type ProgressActivityKind,
 	providerDirectUpstreamHosts,
+	providerRuntimeBinding,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_DISALLOWED_TOOLS_ARGS,
@@ -243,19 +245,26 @@ export function buildProviderEnv(
 	credential: AiProviderCredential,
 	runModel?: string | null,
 ): string[] {
-	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+	// Everything below keys off the runtime the credential actually runs on, not
+	// the provider's default: a provider can be configured onto any of several
+	// CLIs, and each wants a different static bag and a different variable for the
+	// key. Reading the adapter's own fields would build the default runtime's env
+	// for a switched credential, which fails as "no credentials found" rather than
+	// as anything diagnosable.
+	const runtime = effectiveRuntime(provider, credential.runtime);
+	const binding = runtime ? providerRuntimeBinding(provider, runtime) : null;
 	const out: string[] = [];
-	if (adapter.runtime === AgentRuntime.ClaudeCode) {
+	if (runtime === AgentRuntime.ClaudeCode) {
 		for (const [key, value] of Object.entries(CLAUDE_CODE_QUIET_ENV)) {
 			out.push(`${key}=${value}`);
 		}
 	}
-	if (adapter.runtime === AgentRuntime.Gemini) {
+	if (runtime === AgentRuntime.Gemini) {
 		for (const [key, value] of Object.entries(GEMINI_RUNTIME_ENV)) {
 			out.push(`${key}=${value}`);
 		}
 	}
-	if (adapter.staticEnv) {
+	if (binding?.staticEnv) {
 		// For a third-party Anthropic-compatible provider (DeepSeek/Z.ai/Kimi), the
 		// Claude Code subagent default should track the run's own selected model
 		// rather than the hardcoded `CLAUDE_CODE_SUBAGENT_MODEL` constant — so a
@@ -265,7 +274,7 @@ export function buildProviderEnv(
 		// or its runs price to $0 — see the pricing table.)
 		const trimmedModel = runModel?.trim();
 		const subagentOverride =
-			trimmedModel && claudeCodeProviderUsesCustomEndpoint(provider)
+			trimmedModel && claudeCodeProviderUsesCustomEndpoint(provider, runtime)
 				? claudeCodeModelArg(provider, trimmedModel)
 				: null;
 		// Kimi Code selects its model from `KIMI_MODEL_NAME`, not only from
@@ -274,9 +283,8 @@ export function buildProviderEnv(
 		// run's selected model has to land there rather than only on the CLI flag.
 		// The staticEnv value (KIMI_DEFAULT_MODEL) stays the fallback when the run
 		// pins nothing.
-		const kimiModelOverride =
-			trimmedModel && adapter.runtime === AgentRuntime.Kimi ? trimmedModel : null;
-		for (const [key, value] of Object.entries(adapter.staticEnv)) {
+		const kimiModelOverride = trimmedModel && runtime === AgentRuntime.Kimi ? trimmedModel : null;
+		for (const [key, value] of Object.entries(binding.staticEnv)) {
 			if (subagentOverride && key === 'CLAUDE_CODE_SUBAGENT_MODEL') {
 				out.push(`${key}=${subagentOverride}`);
 			} else if (kimiModelOverride && key === 'KIMI_MODEL_NAME') {
@@ -290,7 +298,7 @@ export function buildProviderEnv(
 	// per-install, so it cannot sit in `staticEnv` like the hosted third-party
 	// Anthropic-compatible providers above. It rides on the credential instead and
 	// is stamped here.
-	if (credential.baseUrl && adapter.runtime === AgentRuntime.ClaudeCode) {
+	if (credential.baseUrl && runtime === AgentRuntime.ClaudeCode) {
 		out.push(`ANTHROPIC_BASE_URL=${credential.baseUrl}`);
 		// These runners authenticate (when they authenticate at all) from
 		// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
@@ -298,7 +306,7 @@ export function buildProviderEnv(
 		// and get sent to the operator's local server. Blank it explicitly.
 		out.push('ANTHROPIC_API_KEY=');
 	}
-	const varName = adapter.credentialEnvByAuthMethod[credential.authMethod];
+	const varName = binding?.credentialEnvByAuthMethod[credential.authMethod];
 	if (varName) out.push(`${varName}=${credential.value}`);
 	return out;
 }
@@ -695,7 +703,7 @@ export async function buildRuntimeInvocation(
 			// For a locally-hosted provider the upstream is the operator's own machine,
 			// known only from the config's stored base URL — pass it so that host
 			// bypasses the MITM proxy like any other model-provider endpoint.
-			...providerDirectUpstreamHosts(provider, credential.baseUrl),
+			...providerDirectUpstreamHosts(provider, credential.baseUrl, runtimeType),
 		];
 		const noProxy = [...new Set(noProxyHosts)].join(',');
 		env.push(
@@ -1170,6 +1178,11 @@ export async function runAgent(
 
 	let provider: AiProvider;
 	let runtimeType: AgentRuntime;
+	// Null on the agent-override path: the override names only a provider, and
+	// which CLI that provider runs on is a property of the credential, resolved
+	// below once one is loaded. The task-pinned path already resolved against a
+	// specific credential, so it constrains the lookup to a matching one.
+	let requiredRuntime: AgentRuntime | null = null;
 	if (agent.model_override_provider) {
 		provider = agent.model_override_provider;
 		const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
@@ -1188,13 +1201,26 @@ export async function runAgent(
 		}
 		runtimeType = resolved.runtime;
 		provider = resolved.provider;
+		requiredRuntime = resolved.runtime;
 	}
 
-	const credential = await getProviderCredentialAndModel(deps.db, deps.masterKeyManager, provider);
+	const credential = await getProviderCredentialAndModel(
+		deps.db,
+		deps.masterKeyManager,
+		provider,
+		requiredRuntime,
+	);
 	if (!credential) {
 		return finalizeFailure(
 			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
 		);
+	}
+	// The agent-override path chose a provider without knowing which CLI its
+	// credential is set to run on, so settle that now — otherwise an override onto
+	// a provider whose credential was switched would launch the default binary
+	// with the other binary's env.
+	if (!requiredRuntime) {
+		runtimeType = effectiveRuntime(provider, credential.runtime) ?? runtimeType;
 	}
 
 	const modelOverride = agent.model_override_model ?? credential.defaultModel ?? null;

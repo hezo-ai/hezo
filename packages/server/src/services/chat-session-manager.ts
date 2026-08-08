@@ -14,6 +14,7 @@ import {
 	ChatSessionStatus,
 	type CommentAttachment,
 	DEFAULT_TEAM_ID,
+	effectiveRuntime,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type WsChatServerMessage,
 	WsMessageType,
@@ -909,6 +910,10 @@ export class ChatSessionManager {
 		);
 		let provider = override.rows[0]?.provider ?? null;
 		let runtimeType: AgentRuntime;
+		// Same split as the agent runner: an override names only a provider, so its
+		// CLI comes from the credential below; the resolved path already picked a
+		// credential and constrains the lookup to one that matches.
+		let requiredRuntime: AgentRuntime | null = null;
 		if (provider) {
 			runtimeType = PROVIDER_RUNTIME_ADAPTERS[provider].runtime;
 		} else {
@@ -916,14 +921,19 @@ export class ChatSessionManager {
 			if (!resolved) throw new Error('No AI provider credentials configured');
 			provider = resolved.provider;
 			runtimeType = resolved.runtime;
+			requiredRuntime = resolved.runtime;
 		}
 
 		const credential = await getProviderCredentialAndModel(
 			db,
 			this.deps.masterKeyManager,
 			provider,
+			requiredRuntime,
 		);
 		if (!credential) throw new Error(`No ${provider} credential configured`);
+		if (!requiredRuntime) {
+			runtimeType = effectiveRuntime(provider, credential.runtime) ?? runtimeType;
+		}
 		const modelOverride = override.rows[0]?.model ?? credential.defaultModel ?? null;
 
 		// Reclaim any DB rows left live by a crash without an in-memory session, so

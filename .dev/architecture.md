@@ -1553,24 +1553,53 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
-**Providers → runtimes.** `AiProvider` has **eleven** values — `anthropic`, `openai`,
+**Providers → runtimes is one-to-MANY.** `AiProvider` has **eleven** values — `anthropic`, `openai`,
 `google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `kimi_code`, `x_ai`, `ollama`, `lmstudio` — and
-`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. The mapping
-is data-driven in
-`packages/shared/src/types/common.ts` (`PROVIDER_RUNTIME_ADAPTERS`, `PROVIDER_TO_RUNTIME`,
-`PROVIDERS_BY_RUNTIME`): Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
+`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. A provider
+declares the CLI it runs on **by default** plus, optionally, the other CLIs it can be driven by;
+the operator picks per credential and the choice is stored on
+`ai_provider_configs.runtime` (nullable, `NULL` = follow the provider default; migration `051`).
+The table is data-driven in `packages/shared/src/types/common.ts`
+(`ProviderRuntimeAdapter` = a default `runtime` + its inline `ProviderRuntimeBinding` +
+`alternateRuntimes`), with four accessors that everything else reads through:
+`providerRuntimes` (every CLI, default first — the order the picker renders),
+`providerSupportsRuntime` (validates a stored/incoming choice),
+`providerRuntimeBinding` (the env for one provider-runtime pairing) and `effectiveRuntime`
+(stored choice, else default; an unsupported stored value degrades to the default rather
+than stranding the credential). `PROVIDER_TO_RUNTIME` still means *the default* only;
+`PROVIDERS_BY_RUNTIME` includes providers reachable via a non-default choice, which is what a
+task-level `runtime_type` pin searches.
+
+Defaults: Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI → `codex`,
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
 `XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Kimi Code → `kimi` (Moonshot's own CLI,
-see below), Ollama + LM Studio → `claude_code` (local runners, see below).
+see below), Ollama + LM Studio → `claude_code` (local runners, see below). Only the two Moonshot
+providers currently declare an alternate; every other provider offers exactly one CLI, and the
+UI omits the picker (and the Advanced disclosure holding it) for those.
 
-**Moonshot's models are reachable two ways, and both are supported.** `kimi` drives
-Claude Code against Moonshot's Anthropic-compatible gateway (above); `kimi_code` drives
+**Because the runtime is per credential, it must be resolved from the credential row, never
+from the provider.** `buildProviderEnv` composes from `providerRuntimeBinding(provider,
+resolvedRuntime)` — reading the adapter's own fields would build the *default* runtime's env
+for a switched credential, putting the key in a variable the launched CLI does not read and
+surfacing as "no credentials found". For the same reason `getProviderCredentialAndModel` takes
+an optional runtime: a provider can hold several credentials on different CLIs, so selecting by
+provider alone can return one whose runtime disagrees with the run being configured.
+`resolveRuntimeForTask` scans its candidate rows in priority order and takes the first whose
+`effectiveRuntime` matches the pin, rather than trusting the highest-priority row outright.
+
+**Moonshot's models are reachable two ways, and both providers now offer both.** `kimi` defaults to
+Claude Code against Moonshot's Anthropic-compatible gateway (above); `kimi_code` defaults to
 Moonshot's first-party **Kimi Code CLI** (`kimi`, npm `@moonshot-ai/kimi-code`) on the
-`kimi` runtime. They are siblings — same account, same API key, same models, different
-harness — so an operator may configure either or both and choose per agent
-(`member_agents.model_override_provider`) or per task (`tasks.runtime_type`). The
+`kimi` runtime. Each declares the other as an alternate, sharing one pair of binding constants
+(`MOONSHOT_CLAUDE_CODE_BINDING`, `MOONSHOT_KIMI_CODE_BINDING`) so the two env shapes cannot
+drift, so a credential can be switched between harnesses in place instead of being deleted and
+re-added. They are siblings — same account, same API key, same models, different
+harness — so an operator may configure either or both and choose per credential (the CLI
+picker), per agent (`member_agents.model_override_provider`) or per task (`tasks.runtime_type`).
+They exist as two providers only because the runtime used to be pinned to the provider;
+collapsing them would need a migration of existing rows. The
 `AgentRuntime.Kimi` value reuses the `kimi` label that has existed in the `agent_runtime`
 enum since `001_initial_schema.sql`: it was the original standalone Kimi runtime, retired by
 migration `010` when Kimi moved onto Claude Code, and Postgres cannot drop enum labels — so

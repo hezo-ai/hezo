@@ -1,4 +1,12 @@
-import { AI_PROVIDER_INFO, AiAuthMethod, type AiProvider, AiProviderStatus } from '@hezo/shared';
+import {
+	AGENT_RUNTIME_LABELS,
+	type AgentRuntime,
+	AI_PROVIDER_INFO,
+	AiAuthMethod,
+	type AiProvider,
+	AiProviderStatus,
+	effectiveRuntime,
+} from '@hezo/shared';
 import { Check, Loader2, Pencil, Plus, ShieldCheck, Star, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import {
@@ -13,6 +21,7 @@ import {
 import { toast } from '../hooks/use-toast';
 import { useI18n } from '../lib/i18n';
 import { AddAiProviderDialog } from './add-ai-provider-dialog';
+import { AgentCliPicker, providerHasCliChoice } from './agent-cli-picker';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { type Column, DataTable } from './ui/data-table';
@@ -65,7 +74,7 @@ export function AiProvidersSection() {
 				return (
 					<span className="flex items-center gap-2">
 						<span className="text-[13px]">{info?.name ?? c.provider}</span>
-						{info && <span className="text-xs text-text-3">{info.runtimeLabel}</span>}
+						<ProviderCliCell config={c} />
 					</span>
 				);
 			},
@@ -182,6 +191,72 @@ export function AiProvidersSection() {
 
 			<AddAiProviderDialog open={addOpen} onOpenChange={setAddOpen} />
 		</section>
+	);
+}
+
+/**
+ * The CLI this credential runs on. Read-only text for the providers that offer
+ * only one (the common case, and visually identical to the static runtime label
+ * this replaced); a click-to-change control for the ones that offer a choice.
+ *
+ * The label comes from the RESOLVED runtime rather than the provider's default,
+ * so a switched credential reads correctly instead of showing what it would have
+ * run on before the switch.
+ */
+function ProviderCliCell({ config }: { config: AiProviderConfig }) {
+	const { t } = useI18n();
+	const [editing, setEditing] = useState(false);
+	const update = useUpdateAiProviderConfig(config.id);
+	const provider = config.provider as AiProvider;
+
+	const resolved = effectiveRuntime(provider, config.runtime);
+	const label = resolved ? AGENT_RUNTIME_LABELS[resolved] : null;
+
+	if (!providerHasCliChoice(provider)) {
+		return label ? <span className="text-xs text-text-3">{label}</span> : null;
+	}
+
+	async function choose(runtime: AgentRuntime) {
+		setEditing(false);
+		if (runtime === resolved) return;
+		try {
+			await update.mutateAsync({ runtime });
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not change the agent CLI');
+		}
+	}
+
+	if (editing) {
+		return (
+			<span className="flex items-center gap-1.5">
+				<AgentCliPicker
+					provider={provider}
+					value={config.runtime}
+					onChange={choose}
+					disabled={update.isPending}
+				/>
+				<button
+					type="button"
+					onClick={() => setEditing(false)}
+					className="text-text-3 hover:text-text-1"
+				>
+					<X className="w-3 h-3" />
+				</button>
+			</span>
+		);
+	}
+
+	return (
+		<Tooltip content={t('settings.provider.changeCli')}>
+			<button
+				type="button"
+				onClick={() => setEditing(true)}
+				aria-label={t('settings.provider.changeCli')}
+				className="text-xs text-text-3 underline decoration-dotted underline-offset-2 hover:text-text-1"
+			>
+				{label}
+			</button>
+		</Tooltip>
 	);
 }
 

@@ -19,6 +19,18 @@ export const AgentRuntime = {
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
+const AGENT_RUNTIME_VALUES: readonly string[] = Object.values(AgentRuntime);
+
+/**
+ * Narrow an untrusted value (a request body field, a DB enum column read back)
+ * to a runtime this binary knows. A stored runtime can outlive the label — the
+ * `agent_runtime` enum is append-only in Postgres — so reads go through this
+ * rather than a cast.
+ */
+export function isAgentRuntime(value: unknown): value is AgentRuntime {
+	return typeof value === 'string' && AGENT_RUNTIME_VALUES.includes(value);
+}
+
 /**
  * Reasoning/thinking effort level applied to an individual agent run.
  *
@@ -1458,18 +1470,46 @@ export const AiProviderStatus = {
 export type AiProviderStatus = (typeof AiProviderStatus)[keyof typeof AiProviderStatus];
 
 /**
- * Per-provider configuration that varies even when multiple providers share a
- * runtime. Each provider declares the CLI runtime it's driven through, any
- * static env entries (base URL, model defaults, …), and the env var that
- * carries the credential value for each supported auth method. Runtime-only
- * knobs (CLI binary, MCP injection, headless flags, effort mapping) live in
- * the `RUNTIME_*` maps below and are shared across every provider on that
- * runtime.
+ * The env one provider needs to run on ONE particular CLI: any static entries
+ * (base URL, model defaults, …) plus the env var that carries the credential
+ * value for each supported auth method. Agents that read a different var won't
+ * see the credential.
+ *
+ * A provider that can be driven by more than one CLI needs one of these per
+ * CLI, because the same credential lands in a different variable and alongside
+ * different static entries depending on which binary reads it — a Moonshot key
+ * is `ANTHROPIC_AUTH_TOKEN` next to an `ANTHROPIC_BASE_URL` for Claude Code,
+ * and `KIMI_MODEL_API_KEY` next to the `KIMI_MODEL_*` family for Kimi Code.
  */
-export interface ProviderRuntimeAdapter {
-	runtime: AgentRuntime;
+export interface ProviderRuntimeBinding {
 	staticEnv?: Readonly<Record<string, string>>;
 	credentialEnvByAuthMethod: Partial<Record<AiAuthMethod, string>>;
+}
+
+/**
+ * Per-provider configuration that varies even when multiple providers share a
+ * runtime. Each provider declares the CLI runtime it's driven through by
+ * default, that runtime's binding (inline, as the adapter's own fields), and
+ * optionally the other CLIs it can be driven by. Runtime-only knobs (CLI
+ * binary, MCP injection, headless flags, effort mapping) live in the
+ * `RUNTIME_*` maps below and are shared across every provider on that runtime.
+ *
+ * The provider-to-runtime relationship is one-to-MANY: an operator picks the
+ * CLI per credential (`ai_provider_configs.runtime`, null = this default), so
+ * nothing here may assume a provider implies a single runtime. Resolve a
+ * provider's env through {@link providerRuntimeBinding}, never by reading the
+ * adapter's own `staticEnv`/`credentialEnvByAuthMethod` directly — those are
+ * the DEFAULT runtime's binding and are wrong for any other choice.
+ */
+export interface ProviderRuntimeAdapter extends ProviderRuntimeBinding {
+	/** The CLI this provider runs on when the operator hasn't picked another. */
+	runtime: AgentRuntime;
+	/**
+	 * Other CLIs that can drive this provider, each carrying the env deltas that
+	 * CLI needs instead of the adapter's own. Absent means the provider runs on
+	 * exactly one CLI and the picker is hidden for it.
+	 */
+	alternateRuntimes?: Partial<Record<AgentRuntime, ProviderRuntimeBinding>>;
 }
 
 /**
@@ -1515,16 +1555,76 @@ export const GEMINI_RUNTIME_ENV = {
 } as const;
 
 /**
- * Moonshot's default coding model, shared by both ways of running Kimi: the
- * `kimi` provider (Claude Code against the Anthropic-compatible gateway) and the
- * `kimi_code` provider (Moonshot's own CLI). It is only a *default* — an agent or
- * task may select any model the provider catalog returns, which is why both
- * adapters let the run's selected model override it.
+ * Moonshot's default coding model, shared by both ways of running Kimi: Claude
+ * Code against the Anthropic-compatible gateway, and Moonshot's own CLI. Both
+ * bindings below carry it, and either Moonshot provider can be configured onto
+ * either binding. It is only a *default* — an agent or task may select any model
+ * the provider catalog returns, which is why both bindings let the run's
+ * selected model override it.
  *
  * Keep a `model_pricing` row for whatever this points at: runs are priced solely
  * from that table, so an unpriced model records $0.
  */
 export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code';
+
+/**
+ * Moonshot reached through Claude Code, against the Anthropic-compatible
+ * gateway — the same pattern as DeepSeek/Z.ai. `ENABLE_TOOL_SEARCH` and
+ * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` are Moonshot's documented Claude Code
+ * settings (https://platform.kimi.ai/docs/guide/agent-support).
+ *
+ * Declared once and shared by BOTH Moonshot providers: it is `kimi`'s default
+ * binding and `kimi_code`'s alternate. Two copies would drift the moment one
+ * side gained a setting, and the whole point of the pair is that the same key
+ * reaches the same upstream either way.
+ */
+const MOONSHOT_CLAUDE_CODE_BINDING: ProviderRuntimeBinding = {
+	staticEnv: {
+		ANTHROPIC_BASE_URL: 'https://api.moonshot.ai/anthropic',
+		ANTHROPIC_DEFAULT_OPUS_MODEL: KIMI_DEFAULT_MODEL,
+		ANTHROPIC_DEFAULT_SONNET_MODEL: KIMI_DEFAULT_MODEL,
+		ANTHROPIC_DEFAULT_HAIKU_MODEL: KIMI_DEFAULT_MODEL,
+		CLAUDE_CODE_SUBAGENT_MODEL: KIMI_DEFAULT_MODEL,
+		ENABLE_TOOL_SEARCH: 'false',
+		CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+	},
+	credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+};
+
+/**
+ * Moonshot reached through Moonshot's own first-party CLI (`kimi`), at `/v1`
+ * (OpenAI-shaped) rather than at `/anthropic`. `kimi_code`'s default binding
+ * and `kimi`'s alternate.
+ *
+ * Credential delivery is the unusual part. Kimi Code deliberately does NOT read
+ * provider API keys from the shell environment; they are expected to live in
+ * `config.toml` under `[providers.<name>]`. The one documented exception is the
+ * `KIMI_MODEL_*` family, which IS shell-read and registers a temporary
+ * in-memory provider for the launch. Hezo uses that family so the key stays in
+ * env only — writing it into a config file the agent can read would breach the
+ * plaintext-secret rule (only the run CLI's own model-provider credential may
+ * be in-run, and only via env).
+ *
+ * `KIMI_MODEL_NAME` is what ACTIVATES the family, so it must always be set;
+ * `buildProviderEnv` overrides it with the run's selected model when there is
+ * one. `KIMI_MODEL_CAPABILITIES` must include `image_in` or the CLI's
+ * `downgradeUnsupportedMedia` step silently replaces every image part with
+ * "[image omitted: current model has no image input]" — which would break
+ * `read_project_asset`, the only path by which an agent ever sees an image.
+ * Capabilities resolve as a union of declared + auto-detected, so declaring can
+ * only add.
+ */
+const MOONSHOT_KIMI_CODE_BINDING: ProviderRuntimeBinding = {
+	staticEnv: {
+		KIMI_MODEL_PROVIDER_TYPE: 'kimi',
+		KIMI_MODEL_BASE_URL: 'https://api.moonshot.ai/v1',
+		KIMI_MODEL_NAME: KIMI_DEFAULT_MODEL,
+		KIMI_MODEL_CAPABILITIES: 'image_in,thinking',
+		KIMI_DISABLE_TELEMETRY: '1',
+		KIMI_CODE_NO_AUTO_UPDATE: '1',
+	},
+	credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_MODEL_API_KEY' },
+};
 
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
@@ -1580,61 +1680,27 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.OpenCode,
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENROUTER_API_KEY' },
 	},
-	// Kimi (Moonshot) runs through Claude Code against Moonshot's
-	// Anthropic-compatible endpoint — the same pattern as DeepSeek/Z.ai.
-	// ENABLE_TOOL_SEARCH and CLAUDE_CODE_AUTO_COMPACT_WINDOW are Moonshot's
-	// documented Claude Code settings
-	// (https://platform.kimi.ai/docs/guide/agent-support).
+	// The two Moonshot providers are the same upstream and the same key reached by
+	// two different CLIs, so each offers BOTH — they differ only in which one they
+	// default to. `kimi` defaults to Claude Code against the Anthropic-compatible
+	// gateway; `kimi_code` defaults to Moonshot's own CLI. Neither supersedes the
+	// other, and an operator can now switch a credential between them without
+	// re-adding it. (They exist as two providers only because runtime used to be
+	// pinned to provider; collapsing them is a separate change that would have to
+	// migrate existing rows.)
 	//
-	// This is one of TWO ways to run Kimi models; `kimi_code` below is the other,
-	// driving Moonshot's own CLI. Both are supported and neither supersedes the
-	// other — pick per agent (`model_override_provider`) or per task
+	// Selection precedence is unchanged: the credential's own runtime, else this
+	// default; pick per agent (`model_override_provider`) or per task
 	// (`tasks.runtime_type`).
 	[AiProvider.Kimi]: {
 		runtime: AgentRuntime.ClaudeCode,
-		staticEnv: {
-			ANTHROPIC_BASE_URL: 'https://api.moonshot.ai/anthropic',
-			ANTHROPIC_DEFAULT_OPUS_MODEL: KIMI_DEFAULT_MODEL,
-			ANTHROPIC_DEFAULT_SONNET_MODEL: KIMI_DEFAULT_MODEL,
-			ANTHROPIC_DEFAULT_HAIKU_MODEL: KIMI_DEFAULT_MODEL,
-			CLAUDE_CODE_SUBAGENT_MODEL: KIMI_DEFAULT_MODEL,
-			ENABLE_TOOL_SEARCH: 'false',
-			CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
-		},
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+		...MOONSHOT_CLAUDE_CODE_BINDING,
+		alternateRuntimes: { [AgentRuntime.Kimi]: MOONSHOT_KIMI_CODE_BINDING },
 	},
-	// Kimi Code — the same Moonshot models reached through Moonshot's own
-	// first-party CLI (`kimi`) instead of Claude Code. Sibling of `kimi` above,
-	// not a replacement.
-	//
-	// Credential delivery is the unusual part. Kimi Code deliberately does NOT
-	// read provider API keys from the shell environment; they are expected to
-	// live in `config.toml` under `[providers.<name>]`. The one documented
-	// exception is the `KIMI_MODEL_*` family, which IS shell-read and registers a
-	// temporary in-memory provider for the launch. Hezo uses that family so the
-	// key stays in env only — writing it into a config file the agent can read
-	// would breach the plaintext-secret rule (only the run CLI's own
-	// model-provider credential may be in-run, and only via env).
-	//
-	// `KIMI_MODEL_NAME` is what ACTIVATES the family, so it must always be set;
-	// `buildProviderEnv` overrides it with the run's selected model when there is
-	// one. `KIMI_MODEL_CAPABILITIES` must include `image_in` or the CLI's
-	// `downgradeUnsupportedMedia` step silently replaces every image part with
-	// "[image omitted: current model has no image input]" — which would break
-	// `read_project_asset`, the only path by which an agent ever sees an image.
-	// Capabilities resolve as a union of declared + auto-detected, so declaring
-	// can only add.
 	[AiProvider.KimiCode]: {
 		runtime: AgentRuntime.Kimi,
-		staticEnv: {
-			KIMI_MODEL_PROVIDER_TYPE: 'kimi',
-			KIMI_MODEL_BASE_URL: 'https://api.moonshot.ai/v1',
-			KIMI_MODEL_NAME: KIMI_DEFAULT_MODEL,
-			KIMI_MODEL_CAPABILITIES: 'image_in,thinking',
-			KIMI_DISABLE_TELEMETRY: '1',
-			KIMI_CODE_NO_AUTO_UPDATE: '1',
-		},
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_MODEL_API_KEY' },
+		...MOONSHOT_KIMI_CODE_BINDING,
+		alternateRuntimes: { [AgentRuntime.ClaudeCode]: MOONSHOT_CLAUDE_CODE_BINDING },
 	},
 	// xAI Grok Build runs on its own first-party `grok` CLI (its own runtime),
 	// authenticated by XAI_API_KEY sent direct to api.x.ai (the sanctioned
@@ -1700,9 +1766,16 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 export function providerDirectUpstreamHosts(
 	provider: AiProvider,
 	configuredBaseUrl?: string | null,
+	runtime?: AgentRuntime | null,
 ): readonly string[] {
+	// Read the base URL off the RESOLVED runtime's binding: the two CLIs a
+	// Moonshot credential can run on name it differently (`ANTHROPIC_BASE_URL` vs
+	// `KIMI_MODEL_BASE_URL`), so checking only the Anthropic spelling would miss
+	// it entirely for a credential switched to the native CLI.
+	const binding = providerRuntimeBinding(provider, runtime ?? PROVIDER_TO_RUNTIME[provider]);
+	const staticEnv = binding?.staticEnv ?? PROVIDER_RUNTIME_ADAPTERS[provider]?.staticEnv;
 	const baseUrl =
-		configuredBaseUrl || PROVIDER_RUNTIME_ADAPTERS[provider].staticEnv?.ANTHROPIC_BASE_URL;
+		configuredBaseUrl || staticEnv?.ANTHROPIC_BASE_URL || staticEnv?.KIMI_MODEL_BASE_URL;
 	if (baseUrl) {
 		try {
 			return [new URL(baseUrl).hostname];
@@ -1745,16 +1818,23 @@ export function claudeCodeModelArg(provider: AiProvider, model: string): string 
  * cost (an Opus run should not judge with Opus), and Claude Code already owns a
  * sensible native subagent default there.
  */
-export function claudeCodeProviderUsesCustomEndpoint(provider: AiProvider): boolean {
-	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
-	if (adapter.runtime !== AgentRuntime.ClaudeCode) return false;
+export function claudeCodeProviderUsesCustomEndpoint(
+	provider: AiProvider,
+	runtime?: AgentRuntime | null,
+): boolean {
+	// The question is about the runtime the run actually uses, not the provider's
+	// default: a Moonshot credential switched onto Claude Code reaches a
+	// third-party Anthropic-compatible endpoint exactly like `kimi` does, and its
+	// judge/subagent models must track the run model the same way.
+	const resolved = runtime ?? PROVIDER_RUNTIME_ADAPTERS[provider]?.runtime;
+	if (resolved !== AgentRuntime.ClaudeCode) return false;
 	// Local providers reach a custom endpoint too, but carry it on the credential
 	// rather than in `staticEnv`, so the base-URL probe alone would miss them. The
 	// cost rationale for excluding Anthropic above does not apply here: local
 	// inference is free, so tracking the run's model costs nothing, and the pinned
 	// alternative would be a model the operator may not even have pulled.
 	if (isLocalAiProvider(provider)) return true;
-	return Boolean(adapter.staticEnv?.ANTHROPIC_BASE_URL);
+	return Boolean(providerRuntimeBinding(provider, resolved)?.staticEnv?.ANTHROPIC_BASE_URL);
 }
 
 /**
@@ -1789,6 +1869,73 @@ export function opencodeModelArg(provider: AiProvider, model: string): string {
 	return model.startsWith(`${key}/`) ? model : `${key}/${model}`;
 }
 
+/**
+ * Every CLI a provider can be driven by, DEFAULT FIRST. The order is the
+ * contract the picker renders in, so the first entry is always the one
+ * preselected for a credential that stores no explicit choice.
+ */
+export function providerRuntimes(provider: AiProvider): readonly AgentRuntime[] {
+	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+	if (!adapter) return [];
+	const alternates = Object.keys(adapter.alternateRuntimes ?? {}) as AgentRuntime[];
+	return [adapter.runtime, ...alternates.filter((r) => r !== adapter.runtime)];
+}
+
+/** Whether this provider can run on this CLI at all. Guards the stored choice. */
+export function providerSupportsRuntime(provider: AiProvider, runtime: AgentRuntime): boolean {
+	return providerRuntimes(provider).includes(runtime);
+}
+
+/**
+ * The CLI a stored credential runs on: its own explicit choice, else the
+ * provider's default. This is the ONE place that reading resolves, so the
+ * server's env composition and the UI's chip can never disagree about which
+ * runtime a credential is on.
+ *
+ * A stored runtime the provider no longer supports (the roster changed under an
+ * existing row) falls back to the default rather than producing a pairing with
+ * no env binding — an unrunnable credential should degrade to the working
+ * default, not fail the run.
+ */
+export function effectiveRuntime(
+	provider: AiProvider,
+	storedRuntime: AgentRuntime | null | undefined,
+): AgentRuntime | null {
+	if (storedRuntime && providerSupportsRuntime(provider, storedRuntime)) return storedRuntime;
+	return PROVIDER_TO_RUNTIME[provider] ?? null;
+}
+
+/**
+ * The env binding for running `provider` on `runtime`. Pass the RESOLVED
+ * runtime (the credential's own choice, else the provider default) — reading
+ * the adapter's own fields instead silently returns the default runtime's env,
+ * which for a switched credential means the key lands in the wrong variable and
+ * the CLI reports no credentials at all.
+ *
+ * Returns null for a pairing the provider doesn't support, so a stale stored
+ * runtime surfaces as an explicit failure rather than a half-built env bag.
+ */
+export function providerRuntimeBinding(
+	provider: AiProvider,
+	runtime: AgentRuntime,
+): ProviderRuntimeBinding | null {
+	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+	if (!adapter) return null;
+	if (runtime === adapter.runtime) {
+		return {
+			staticEnv: adapter.staticEnv,
+			credentialEnvByAuthMethod: adapter.credentialEnvByAuthMethod,
+		};
+	}
+	return adapter.alternateRuntimes?.[runtime] ?? null;
+}
+
+/**
+ * Each provider's DEFAULT runtime — what a credential runs on when it stores no
+ * explicit choice. Not "the runtime for this provider": a provider may support
+ * several (see {@link providerRuntimes}), so this must never be used to decide
+ * how an actual run is configured. Resolve that from the credential row.
+ */
 export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = Object.freeze(
 	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(
 		(acc, p) => {
@@ -1799,13 +1946,20 @@ export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = Object.free
 	),
 );
 
+/**
+ * Every provider that can run on a given CLI, including via a non-default
+ * choice. This is what a task-level `runtime_type` pin searches, so a Moonshot
+ * credential is a candidate for both `claude_code` and `kimi` regardless of
+ * which of the two providers it was added under.
+ */
 export const PROVIDERS_BY_RUNTIME: Record<AgentRuntime, readonly AiProvider[]> = Object.freeze(
 	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(
 		(acc, p) => {
-			const r = PROVIDER_RUNTIME_ADAPTERS[p].runtime;
-			const list = acc[r] ?? [];
-			list.push(p);
-			acc[r] = list;
+			for (const r of providerRuntimes(p)) {
+				const list = acc[r] ?? [];
+				if (!list.includes(p)) list.push(p);
+				acc[r] = list;
+			}
 			return acc;
 		},
 		{} as Record<AgentRuntime, AiProvider[]>,
@@ -1819,6 +1973,21 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.OpenCode]: 'opencode',
 	[AgentRuntime.Grok]: 'grok',
 	[AgentRuntime.Kimi]: 'kimi',
+};
+
+/**
+ * How each CLI is named to an operator. These are product names, so they are
+ * NOT translated — the same rule that keeps Captain, CEO and Hezo itself in
+ * English across every catalog. Rendered by the credential form's CLI picker
+ * and the provider list's CLI chip.
+ */
+export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
+	[AgentRuntime.ClaudeCode]: 'Claude Code',
+	[AgentRuntime.Codex]: 'Codex',
+	[AgentRuntime.Gemini]: 'Gemini CLI',
+	[AgentRuntime.OpenCode]: 'OpenCode',
+	[AgentRuntime.Grok]: 'Grok',
+	[AgentRuntime.Kimi]: 'Kimi Code',
 };
 
 /**
