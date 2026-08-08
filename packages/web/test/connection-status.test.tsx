@@ -11,11 +11,13 @@ import {
 	DISMISS_SNOOZE_MS,
 	dismissConnectionOffline,
 	OFFLINE_DEBOUNCE_MS,
+	RESUME_GRACE_MS,
 	setConnectionOffline,
 	setConnectionOnline,
 	useConnectionMonitor,
 	useConnectionStatus,
 } from '../src/hooks/use-connection-status';
+import { restorePageVisibility, setPageHidden } from './helpers/page-visibility';
 
 let latest: ConnectionState;
 function Reader() {
@@ -191,6 +193,101 @@ describe('useConnectionMonitor', () => {
 
 		act(() => window.dispatchEvent(new Event('online')));
 		expect(latest.offline).toBe(false);
+	});
+});
+
+// A mobile OS freezes a backgrounded PWA and kills its socket, so launching the app
+// from the home screen reliably starts from a drop the app caused itself. None of it
+// should reach the user: the client redials on resume, and the indicator holds its
+// fire long enough for that handshake to land.
+describe('useConnectionMonitor across background/foreground', () => {
+	afterEach(() => {
+		restorePageVisibility();
+		vi.useRealTimers();
+		setConnectionOnline();
+	});
+
+	const ui = (connected: boolean, reconnect: () => void) => (
+		<>
+			<Monitor connected={connected} reconnect={reconnect} />
+			<Reader />
+		</>
+	);
+
+	test('surfaces nothing while the page is hidden', () => {
+		vi.useFakeTimers();
+		const noop = () => {};
+		const { rerender } = render(ui(true, noop));
+
+		act(() => setPageHidden(true));
+		rerender(ui(false, noop));
+		act(() => vi.advanceTimersByTime(OFFLINE_DEBOUNCE_MS * 5));
+
+		expect(latest.offline).toBe(false);
+	});
+
+	test('clears an already-surfaced indicator when the app is backgrounded', () => {
+		vi.useFakeTimers();
+		const noop = () => {};
+		const { rerender } = render(ui(true, noop));
+		rerender(ui(false, noop));
+		act(() => vi.advanceTimersByTime(OFFLINE_DEBOUNCE_MS));
+		expect(latest.offline).toBe(true);
+
+		act(() => setPageHidden(true));
+		expect(latest.offline).toBe(false);
+	});
+
+	// The reported bug: the socket the freeze killed is redialed on resume, and the
+	// handshake lands well inside the grace, so the user never sees a notice.
+	test('a drop that heals within the resume grace never surfaces', () => {
+		vi.useFakeTimers();
+		const noop = () => {};
+		const { rerender } = render(ui(true, noop));
+
+		act(() => setPageHidden(true));
+		rerender(ui(false, noop)); // the freeze killed the socket
+		act(() => setPageHidden(false)); // app foregrounded; client redials
+
+		act(() => vi.advanceTimersByTime(OFFLINE_DEBOUNCE_MS));
+		expect(latest.offline).toBe(false); // the old 2s debounce would have shown it here
+
+		rerender(ui(true, noop)); // redial opened
+		act(() => vi.advanceTimersByTime(RESUME_GRACE_MS * 2));
+		expect(latest.offline).toBe(false);
+	});
+
+	test('a drop that outlives the resume grace still surfaces', () => {
+		vi.useFakeTimers();
+		const reconnect = vi.fn();
+		const { rerender } = render(ui(true, reconnect));
+
+		act(() => setPageHidden(true));
+		rerender(ui(false, reconnect));
+		act(() => setPageHidden(false));
+
+		act(() => vi.advanceTimersByTime(RESUME_GRACE_MS - 1));
+		expect(latest.offline).toBe(false);
+
+		act(() => vi.advanceTimersByTime(1));
+		expect(latest.offline).toBe(true);
+		expect(latest.retry).toBe(reconnect);
+	});
+
+	// The grace is measured from the resume, not from the drop, so a socket that dies
+	// well after the app is back gets the ordinary debounce rather than a long hold.
+	test('a drop long after the resume falls back to the plain debounce', () => {
+		vi.useFakeTimers();
+		const noop = () => {};
+		const { rerender } = render(ui(true, noop));
+
+		act(() => setPageHidden(true));
+		act(() => setPageHidden(false));
+		act(() => vi.advanceTimersByTime(RESUME_GRACE_MS * 2)); // long since settled
+
+		rerender(ui(false, noop));
+		act(() => vi.advanceTimersByTime(OFFLINE_DEBOUNCE_MS));
+		expect(latest.offline).toBe(true);
 	});
 });
 

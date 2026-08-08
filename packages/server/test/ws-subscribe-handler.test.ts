@@ -8,7 +8,11 @@ import { ImageBuildTracker } from '../src/services/image-build-tracker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { WebSocketManager, type WsData, type WsSocket } from '../src/services/ws';
-import { handleWsSubscribe, handleWsUnsubscribe } from '../src/services/ws-subscribe-handler';
+import {
+	handleWsPing,
+	handleWsSubscribe,
+	handleWsUnsubscribe,
+} from '../src/services/ws-subscribe-handler';
 import { safeClose } from './helpers';
 import { createTestDbWithMigrations } from './helpers/db';
 
@@ -499,5 +503,15 @@ describe('handleWsUnsubscribe', () => {
 		});
 
 		expect(stopSpy).toHaveBeenCalledWith('proj-1', logs);
+	});
+});
+
+describe('handleWsPing', () => {
+	it('answers a liveness probe with a pong', () => {
+		const ws = createMockWs({ type: AuthType.Admin, userId: 'u1' });
+
+		handleWsPing(ws, { sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)) });
+
+		expect(ws._sent.map((s) => JSON.parse(s))).toEqual([{ type: WsMessageType.Pong }]);
 	});
 });

@@ -3916,6 +3916,32 @@ hides it for `DISMISS_SNOOZE_MS` (20s) and then re-surfaces it if the socket is 
 reconnect attempts continue untouched underneath, so the snooze only silences the notice. A heal
 discards the snooze, so a fresh drop always surfaces immediately.
 
+**Page visibility gates all of it** (`lib/page-lifecycle.ts`, the one home for the
+foreground/background signal - it has two consumers). A mobile OS freezes a backgrounded PWA:
+timers stop and the socket dies, so launching the installed app from the home screen reliably
+starts from a drop the app caused itself. Two halves handle it. The **client redials on resume**
+(`WebSocketClient.handleVisibility`) rather than waiting out RWS's backoff ladder, whose pending
+timer was frozen along with everything else - `reconnect()` recreates the RWS instance, so the
+dial is immediate and `subscribedRooms` replay on open. It redials unconditionally when the page
+was hidden longer than `RESUME_STALE_HIDDEN_MS` (30s) even if `readyState` still reads OPEN,
+because a socket frozen that long is commonly half-open over a dead TCP connection. The
+**indicator surfaces nothing while hidden** and, for `RESUME_GRACE_MS` (8s) measured from the
+resume, holds its fire - long enough for that handshake, and a page that was never backgrounded
+keeps the plain 2s debounce. None of this branches on device: "the page came back" is the signal,
+which is correct on a mobile PWA and inert on a desktop tab switch.
+
+**Liveness probe.** A socket whose peer has vanished keeps reading OPEN until something tries to
+write, and browsers never expose RFC 6455 ping/pong frames to page code - so liveness rides an
+ordinary message pair, `WsClientAction.Ping` → `WsMessageType.Pong` (answered by `handleWsPing`
+ahead of the server's subsystem guards, so a probe is never met with silence). The client probes
+an idle socket every 30s and redials if nothing arrives within 5s; **any** inbound frame settles
+the probe, not just the pong, so a burst of log frames delaying the reply cannot trip it. The
+interval is **parked while the page is hidden** - a probe loop waking the radio in the background
+is the battery cost this whole path exists to avoid - and doubles as a keepalive against carrier
+NAT and proxy idle timers, which commonly reap a silent connection after 30-60s. Each dial carries
+a generation counter its handlers check, so a superseded socket's late `onclose` cannot report the
+replacement as down.
+
 **Lazy comments feed.** A task's comment thread can be long, so the feed
 (`components/task-detail/comments-section.tsx`, virtualized with react-virtuoso) loads in
 two payloads off the one `GET …/tasks/:taskId/comments` route. On mount it fetches a
