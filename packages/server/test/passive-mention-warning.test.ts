@@ -22,10 +22,86 @@ import {
 // a NAME-BOUND SIGN-OFF GATE (`Ready for @@slug review.`) are self-gating (the
 // binding is the ask), while an EMPHASISED `**@@slug**` warns only when its
 // paragraph reads as an ask, since bold marks attribution and headings as much as
-// address.
+// address. On top of those positional fast paths sits the general rule: any
+// `@@slug` whose OWN SENTENCE reads as a directed ask warns wherever the token
+// sits, which is what stops a new phrasing needing a new positional branch.
 
 describe('detectPassiveTeammateAsks', () => {
 	const slugs = ['architect', 'qa-engineer', 'engineer', 'admin'];
+
+	// The position-independent gate. Each of these carries an unmistakable ask
+	// signal while sitting in none of the recognised address positions — the exact
+	// gap that let a mid-paragraph "@@equity-analyst — please mark INV-86 done."
+	// through every check the system had.
+	describe('sentence-scoped ask gate (position-independent)', () => {
+		const roster = ['equity-analyst', 'risk-verifier', 'architect', 'engineer', 'admin'];
+
+		it('flags a mid-paragraph passive ask that opens no line and is not bold', () => {
+			const text =
+				'The JOBY deep-dive at assets/JOBY/stock-JOBY.md is verified and cleared for admin ' +
+				'presentation. @@equity-analyst — please mark INV-86 done.';
+			expect(detectPassiveTeammateAsks(text, roster)).toEqual(['equity-analyst']);
+		});
+
+		it('leaves a purely attributive mention in the same comment alone', () => {
+			// risk-verifier is credited, equity-analyst is asked. Only the ask warns.
+			const text =
+				'@@risk-verifier confirmed PASS on Revision 11 — all 13 sections.\n\n' +
+				'Cleared for presentation. @@equity-analyst — please mark INV-86 done.';
+			expect(detectPassiveTeammateAsks(text, roster)).toEqual(['equity-analyst']);
+		});
+
+		it('flags a mid-sentence question addressed to a teammate', () => {
+			expect(
+				detectPassiveTeammateAsks('The export looks off. @@architect can you confirm the schema?', [
+					'architect',
+				]),
+			).toEqual(['architect']);
+		});
+
+		it('does not flag a citation whose sentence happens to address the reader', () => {
+			// `you` belongs to the instruction, not to the teammate being credited —
+			// the referential frame ("as … noted") vetoes the gate.
+			expect(
+				detectPassiveTeammateAsks('As @@architect noted, you should keep the interface stable.', [
+					'architect',
+				]),
+			).toEqual([]);
+		});
+
+		it('does not flag possessive attribution alongside a second-person sentence', () => {
+			expect(
+				detectPassiveTeammateAsks("Incorporating @@engineer's findings, per @@architect.", [
+					'engineer',
+					'architect',
+				]),
+			).toEqual([]);
+		});
+
+		it('does not let an ask in a neighbouring sentence leak onto a reference', () => {
+			// Paragraph scope (what the old bold branch used) would have flagged this.
+			expect(
+				detectPassiveTeammateAsks(
+					'@@architect wrote the original brief. Please re-run the fixture yourself.',
+					['architect'],
+				),
+			).toEqual([]);
+		});
+
+		it('does not flag a Coach-style all-passive summary row', () => {
+			expect(
+				detectPassiveTeammateAsks('- @@engineer: always run the tests before marking done.', [
+					'engineer',
+				]),
+			).toEqual([]);
+		});
+
+		it('never flags a slug that is also actively mentioned', () => {
+			expect(
+				detectPassiveTeammateAsks('@engineer - please re-run it. Thanks @@engineer.', ['engineer']),
+			).toEqual([]);
+		});
+	});
 
 	it('flags the screenshot case: passive @@admin address with a second-person ask', () => {
 		expect(

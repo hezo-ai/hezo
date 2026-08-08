@@ -2917,6 +2917,33 @@ comment of its own on the task, the final message is delivered verbatim as a rep
 the waking comment (`postAgentComment` with `parentCommentId`), flipping the no-op run to success.
 Runs on **every** runtime including OpenCode (which has no judge at all).
 
+**No-wake exit check.** The net above and the advisories below all classify *text*, so each new
+phrasing that strands a handoff needs new vocabulary. Sitting after the net is one check that
+reads no prose at all and asks a question the system can answer from its own state: did this run
+end having woken **nobody**, on a task it left **non-terminal**, after **naming a teammate** in a
+form that notifies no one? That combination is what a stranded handoff *is*, whatever words
+carried it. It also covers a structural hole neither other layer reaches - the net only inspects
+the run's **final message**, and `create_comment` only inspects **one comment at a time**, so
+nothing looked at what a run achieved in aggregate, which is exactly where a passively addressed
+ask posted as a comment lives. `agent_wakeup_requests` carries no `created_by_run_id`, so "did
+this run wake anyone" is derived from the run's own comments (an active `@`-mention, or a
+`parent_comment_id` reply that wakes the parent author) rather than queried directly; no migration
+is involved. Warn-only, per the standing posture that the system never fabricates a wake from a
+non-`@` signal. It fires on attribution-only runs too, which is the accepted cost of having no
+vocabulary - the run-log wording says so, and a run log is the cheap place to over-report.
+
+**Wake receipt.** Every `create_comment` / `update_comment` result carries a `wake` object:
+`woke` (the teammate slugs the write actually notified - an active `@slug`, `admin` for the inbox
+fan-out, or the reply target) and `named_not_woken` (roster teammates the text names without
+notifying them - a passive `@@slug`, or a bare/bold name in an addressing position). It is built
+by `fireCommentWakeups` itself, recorded at the points wakeups are created, so a receipt can never
+drift from the delivery it describes; `buildWakeReceipt` completes it against
+`resolveWarnableSlugs`. This is the structural complement to the advisories: they guess whether an
+author *meant* to ask someone, while the receipt reports what the write *did*, and so stays true
+for phrasings no detector recognises. It brings the agent-facing write path to parity with the web
+composer, which has always shown human authors a live "Wake:" preview. `SHARED_INSTRUCTIONS` tells
+agents to check it after any comment that hands work over.
+
 **Comment-write mention advisories.** Upstream of the net, `create_comment` / `update_comment`
 run a set of best-effort, non-blocking checks over the posted markdown and return their findings
 to the agent in a `warning` field on the already-persisted result. They **never rewrite the
@@ -2945,9 +2972,24 @@ work. A **name bound directly to a sign-off/approval gate** (`Ready for @@slug r
 @@slug sign-off`, `@@slug to approve`) is the mid-sentence case every address-position form
 misses, and it is the shape a review verdict ends on: it shares `hasNameBoundSignoffGate` with the
 bare-name detector, so `Ready for marketing-lead review.` and `Ready for @@marketing-lead review.`
-warn alike rather than the `@@` spelling being a way around the check. An **emphasised**
-`**@@slug**` stays gated on `readsAsAsk` over its own paragraph(s), since bold marks attribution
-and headings as much as address. `SHARED_INSTRUCTIONS` teaches the matching rules: an active
+warn alike rather than the `@@` spelling being a way around the check. Those three are **fast
+paths, not the whole check**: underneath them sits a **position-independent** gate - any `@@slug`
+whose *own sentence* reads as a directed ask (`readsAsAsk`) and does not merely cite the teammate
+(`isPurelyReferential`) is flagged wherever the token sits. That general rule is what keeps this
+detector off the treadmill it was on, where each incident added another *position* (an unbounded
+set) and the ask signal was only ever consulted *after* one matched - so a mid-paragraph
+`@@equity-analyst — please mark INV-86 done.` warned nowhere while the strongest signal in the
+vocabulary sat four characters away. It is safe for the passive form specifically because `@@slug`
+is deliberate mention syntax naming exactly one teammate: there is no "the word happened to
+appear" failure mode, so position proves nothing the token has not already proved. A **bare** name
+does have that failure mode, which is why `detectUnlinkedTeammateAsks` still requires an address
+position. The gate subsumed the former emphasised-`**@@slug**` branch at a tighter scope
+(sentence, not paragraph, so a `you` in an unrelated sentence can no longer pull an attribution
+into an ask). `isPurelyReferential` is the one place spending vocabulary is principled, and the
+asymmetry is the point: the ways to *ask* are unbounded, but the ways to merely *refer* are few
+and grammatically marked - a preposition in front (`per`/`as`/`by`/`from`/`via`), a possessive, or
+a past-tense reporting verb behind. Enumerating the safe set is finite work; enumerating the
+unsafe set is not. `SHARED_INSTRUCTIONS` teaches the matching rules: an active
 mention's shape is a line opening `@<slug> - ` then the ask, several recipients get one such line
 each, a line never opens with `@@<slug> - `, and a baton-passing handoff ("ready for review") is
 an ask however stative its grammar.
