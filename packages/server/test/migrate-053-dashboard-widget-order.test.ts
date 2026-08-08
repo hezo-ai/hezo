@@ -1,16 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
-const TARGET = '038_dashboard_widget_order.sql';
+const TARGET = '053_dashboard_widget_order.sql';
 
-describe('038_dashboard_widget_order migration', () => {
+describe('053_dashboard_widget_order migration', () => {
 	let h: DataPreservationHarness;
 	let teamId: string;
 	let projectId: string;
 
 	beforeAll(async () => {
 		h = await createDataPreservationHarness();
-		await h.applyUpToExclusive(TARGET); // schema at 037
+		await h.applyUpToExclusive(TARGET); // schema at 052
 
 		const team = await h.db.query<{ id: string }>(
 			`INSERT INTO teams (name, slug) VALUES ('MigrateTest', 'migratetest') RETURNING id`,
