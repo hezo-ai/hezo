@@ -32,7 +32,8 @@ one container's worth reserved for the assistant chat.**
 Swap counts in full, because a container sits idle between runs rather than working
 continuously. The remainder is the budget all project containers share. A run whose
 container will not fit in what is left waits in the queue and starts as memory frees up;
-the assistant chat always starts.
+the assistant chat always starts. No project can hold a share of that budget it is not
+using - see [how the budget is shared](/docs/containers/overview#how-much-can-run-at-once).
 
 You can set the total explicitly in **Settings -> Containers** if you would rather keep
 more headroom, and a project that needs a bigger container than the 2 GB default can raise

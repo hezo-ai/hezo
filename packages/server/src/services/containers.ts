@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
 	CHAT_IDLE_TIMEOUT_MIN,
+	CONTAINER_RECLAIM_MIN_IDLE_SEC,
 	ContainerStatus,
 	HeartbeatRunStatus,
 	TEST_CONTAINER_LABEL_KEY,
@@ -37,9 +38,14 @@ import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
-import { getActiveContainers, projectContainerMemoryGb } from './run-concurrency';
+import {
+	getActiveContainers,
+	projectContainerMemoryGb,
+	reclaimableForOthers,
+} from './run-concurrency';
 import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
 import { INSTANCE_LABEL, PROJECT_LABEL, TEAM_LABEL } from './sandbox/labels';
+import { planCrossProjectReclaim } from './sandbox/pool';
 import {
 	type ContainerAllocation,
 	claimPoolMember,
@@ -865,11 +871,158 @@ export async function ensureProjectContainerRunning(
 export class PoolCapacityError extends Error {
 	constructor(projectId: string) {
 		super(
-			`no container available for project ${projectId} and its next container ` +
-				`does not fit the instance memory budget`,
+			`no container available for project ${projectId}: its next container does not fit ` +
+				`the instance memory budget, and no other project holds idle capacity to reclaim`,
 		);
 		this.name = 'PoolCapacityError';
 	}
+}
+
+/**
+ * Serializes cross-project reclaim across the whole process.
+ *
+ * Two starved projects deciding at the same instant would otherwise both read
+ * the same idle containers as their headroom and both retire enough for
+ * themselves, taking twice what either needed. One at a time, and the second
+ * re-decides against what the first actually left.
+ *
+ * Deliberately *not* the per-project lifecycle lock: this is held while taking
+ * the victims' locks, and a requester holding its own lock at the same time is
+ * how two reclaims in opposite directions deadlock. See {@link acquireRunContainer}
+ * for the other half of that arrangement.
+ */
+const reclaimLock = new Map<string, Promise<unknown>>();
+
+interface ReclaimCandidateRow {
+	container_id: string;
+	project_id: string;
+	slug: string;
+	team_id: string;
+	memory_bytes: string | number | null;
+	has_unpushed_commits: boolean;
+	idle_for_ms: string | number;
+}
+
+/**
+ * Retire other projects' idle containers until `needGb` is free, and say whether
+ * it worked.
+ *
+ * A container belongs to its project for life - it is built around that project's
+ * workspace mount, repo clone and git identity - so the only way one project's
+ * unused memory can serve another is for the container to go and a fresh one to
+ * be built. That is the whole reason this is a retirement and not a handover.
+ *
+ * Only ever reached from the `reclaim` rung of `selectPoolMember`, which is to
+ * say only when the alternative is a run that queues indefinitely. The choice of
+ * victims is {@link planCrossProjectReclaim}, which is pure and holds every rule
+ * about fairness, the idle floor and all-or-nothing.
+ */
+async function reclaimIdleCapacityForProject(
+	deps: ContainerDeps,
+	requestingProjectId: string,
+	requestingSlug: string,
+	needGb: number,
+): Promise<boolean> {
+	const { db } = deps;
+	return withKeyedLock(reclaimLock, 'global', async () => {
+		const rows = await db.query<ReclaimCandidateRow>(
+			// Served by `idx_container_pool_members_idle`. The requesting project is
+			// excluded: its own idle members are offered to it by the reuse rung long
+			// before this, so anything of its own still here is a member the ladder
+			// already refused.
+			`SELECT m.container_id, m.project_id, p.slug, p.team_id, m.memory_bytes,
+			        m.has_unpushed_commits,
+			        EXTRACT(EPOCH FROM (now() - m.last_released_at)) * 1000 AS idle_for_ms
+			   FROM container_pool_members m
+			   JOIN projects p ON p.id = m.project_id
+			  WHERE m.state = 'idle' AND NOT m.reserved_for_chat
+			    AND m.project_id <> $1
+			  ORDER BY m.last_released_at`,
+			[requestingProjectId],
+		);
+		if (rows.rows.length === 0) return false;
+
+		// One lookup per distinct project, not per member: the fallback only applies
+		// to a member whose allocation was never recorded, and the project set here
+		// is small.
+		const capGb = new Map<string, number>();
+		for (const row of rows.rows) {
+			if (row.memory_bytes === null && !capGb.has(row.project_id)) {
+				capGb.set(row.project_id, await projectContainerMemoryGb(db, row.project_id));
+			}
+		}
+
+		const plan = planCrossProjectReclaim(
+			rows.rows.map((row) => ({
+				containerId: row.container_id,
+				projectId: row.project_id,
+				memoryGb:
+					row.memory_bytes === null
+						? (capGb.get(row.project_id) ?? 0)
+						: Number(row.memory_bytes) / 1024 ** 3,
+				idleForMs: Number(row.idle_for_ms),
+				hasUnpushedCommits: row.has_unpushed_commits,
+			})),
+			needGb,
+			CONTAINER_RECLAIM_MIN_IDLE_SEC * 1000,
+		);
+		if (plan.freedGb === 0) return false;
+
+		const victims = new Map<string, ReclaimCandidateRow>();
+		for (const row of rows.rows) victims.set(row.container_id, row);
+		const byProject = new Map<string, { suspend: string[]; destroy: string[] }>();
+		const bucket = (projectId: string) => {
+			const existing = byProject.get(projectId);
+			if (existing) return existing;
+			const fresh = { suspend: [] as string[], destroy: [] as string[] };
+			byProject.set(projectId, fresh);
+			return fresh;
+		};
+		for (const c of plan.suspend) bucket(c.projectId).suspend.push(c.containerId);
+		for (const c of plan.destroy) bucket(c.projectId).destroy.push(c.containerId);
+
+		log.info(
+			`project ${ref(requestingSlug, requestingProjectId)} needs ${needGb.toFixed(1)} GB; ` +
+				`reclaiming ${plan.freedGb.toFixed(1)} GB from ${byProject.size} other project(s)`,
+		);
+
+		let reclaimedAny = false;
+		for (const [victimId, group] of byProject) {
+			const victim = victims.get([...group.suspend, ...group.destroy][0]);
+			if (!victim) continue;
+			try {
+				await withContainerLifecycleLock(victimId, async () => {
+					// Re-verify under the lock: a member claimed since the scan is serving a
+					// run now, and taking it would kill that run to start ours.
+					const live = await db.query<{ container_id: string }>(
+						`SELECT container_id FROM container_pool_members
+						  WHERE project_id = $1 AND state = 'idle' AND NOT reserved_for_chat
+						    AND container_id = ANY($2::text[])`,
+						[victimId, [...group.suspend, ...group.destroy]],
+					);
+					const stillIdle = new Set(live.rows.map((r) => r.container_id));
+					if (stillIdle.size === 0) return;
+					const retired = await executeRetirementPlan(
+						deps,
+						{ id: victimId, slug: victim.slug, team_id: victim.team_id },
+						{
+							suspend: group.suspend.filter((id) => stillIdle.has(id)),
+							destroy: group.destroy.filter((id) => stillIdle.has(id)),
+						},
+						{ reason: `reclaimed for ${ref(requestingSlug, requestingProjectId)}` },
+					);
+					if (retired > 0) reclaimedAny = true;
+				});
+			} catch (err) {
+				// One uncooperative victim must not sink the whole reclaim - the
+				// requester re-decides against whatever was actually freed.
+				log.warn(
+					`could not reclaim from project ${ref(victim.slug, victimId)}: ${(err as Error).message}`,
+				);
+			}
+		}
+		return reclaimedAny;
+	});
 }
 
 /** A container claimed for one run, and the handle that gives it back. */
@@ -934,34 +1087,47 @@ export async function acquireRunContainer(
 	workload: ContainerWorkload = 'task-run',
 ): Promise<AcquiredContainer> {
 	const { db, docker } = deps;
-	const containerId = await withContainerLifecycleLock(projectId, async () => {
-		// Adopt a container the project already names but the pool has no row for.
-		// `projects.container_*` stays authoritative until every lifecycle call site
-		// has moved over (migration 049 is additive), so during that window a live
-		// container can be recorded in one place and not the other. Reading only the
-		// pool would provision a second container beside a perfectly good one -
-		// which is not a fallback path but the two representations of one container
-		// being reconciled, the same UNION `getActiveContainers` already does.
-		await adoptUnpooledContainer(deps, projectId);
-		// A pin the chat already holds is its own rung, and it has to come before
-		// the ladder rather than inside it: `selectPoolMember` excludes reserved
-		// members by design, so a session reconnecting would otherwise be handed a
-		// *different* container from the one it parked on - losing the filesystem
-		// its conversation was built against, and pinning a second container beside
-		// the one it already holds.
-		if (workload === 'chat') {
-			const existing = await reusableChatMember(
-				deps,
-				projectId,
-				memoryLimitBytes(await projectContainerMemoryGb(db, projectId)),
-			);
-			if (existing) return existing;
-		}
-		// Bounded: each iteration either claims a member or removes one from
-		// contention (a lost race retries against a pool one member smaller, and a
-		// recycle pass clears every mismatched member at once), so this cannot spin.
-		// The cap is the pool's own size, not a timeout.
-		for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
+	let bootstrapped = false;
+
+	/**
+	 * One pass of the ladder, under the project's lifecycle lock.
+	 *
+	 * The lock is taken per attempt rather than around the loop so the `reclaim`
+	 * rung can act *outside* it. Reclaim takes other projects' lifecycle locks, and
+	 * a requester still holding its own while doing so is exactly the cycle two
+	 * simultaneously-starved projects need to deadlock each other.
+	 */
+	const attemptAcquire = async (): Promise<
+		| { kind: 'acquired'; containerId: string }
+		| { kind: 'retry' }
+		| { kind: 'reclaim'; needGb: number }
+	> =>
+		withContainerLifecycleLock(projectId, async () => {
+			if (!bootstrapped) {
+				bootstrapped = true;
+				// Adopt a container the project already names but the pool has no row for.
+				// `projects.container_*` stays authoritative until every lifecycle call site
+				// has moved over (migration 049 is additive), so during that window a live
+				// container can be recorded in one place and not the other. Reading only the
+				// pool would provision a second container beside a perfectly good one -
+				// which is not a fallback path but the two representations of one container
+				// being reconciled, the same UNION `getActiveContainers` already does.
+				await adoptUnpooledContainer(deps, projectId);
+				// A pin the chat already holds is its own rung, and it has to come before
+				// the ladder rather than inside it: `selectPoolMember` excludes reserved
+				// members by design, so a session reconnecting would otherwise be handed a
+				// *different* container from the one it parked on - losing the filesystem
+				// its conversation was built against, and pinning a second container beside
+				// the one it already holds.
+				if (workload === 'chat') {
+					const existing = await reusableChatMember(
+						deps,
+						projectId,
+						memoryLimitBytes(await projectContainerMemoryGb(db, projectId)),
+					);
+					if (existing) return { kind: 'acquired' as const, containerId: existing };
+				}
+			}
 			const [active, requestMemoryGb] = await Promise.all([
 				getActiveContainers(db, deps.docker),
 				projectContainerMemoryGb(db, projectId),
@@ -976,11 +1142,17 @@ export async function acquireRunContainer(
 				// reserve for the chat twice and refuse it on a small host. An
 				// unreachable ceiling states that here without a second ladder.
 				workload === 'chat'
-					? { usedMemoryGb: 0, budgetGb: Number.POSITIVE_INFINITY, requestMemoryGb: 0 }
+					? {
+							usedMemoryGb: 0,
+							budgetGb: Number.POSITIVE_INFINITY,
+							requestMemoryGb: 0,
+							reclaimableMemoryGb: 0,
+						}
 					: {
 							usedMemoryGb: active.usedMemoryGb,
 							budgetGb: active.budgetGb,
 							requestMemoryGb,
+							reclaimableMemoryGb: reclaimableForOthers(active, projectId),
 						},
 				// The cap every member must have been built to, stated for every
 				// workload - unlike the budget figure above, which chat zeroes out.
@@ -988,6 +1160,8 @@ export async function acquireRunContainer(
 			);
 
 			if (decision.kind === 'queue') throw new PoolCapacityError(projectId);
+			// Handled by the caller, outside this lock. See `attemptAcquire`.
+			if (decision.kind === 'reclaim') return { kind: 'reclaim' as const, needGb: decision.needGb };
 
 			if (decision.kind === 'recycle') {
 				const proj = await loadProjectRow(db, projectId);
@@ -1001,14 +1175,16 @@ export async function acquireRunContainer(
 					);
 					await destroyContainer(deps, projectId, proj.slug, proj.team_id, stale.id);
 				}
-				continue;
+				return { kind: 'retry' as const };
 			}
 
 			if (decision.kind === 'create') {
 				const proj = await loadProjectRow(db, projectId);
 				const id = await provisionContainer(deps, proj, proj.team_slug);
-				if (await takeMember(deps, projectId, id, taskId, workload)) return id;
-				continue;
+				if (await takeMember(deps, projectId, id, taskId, workload)) {
+					return { kind: 'acquired' as const, containerId: id };
+				}
+				return { kind: 'retry' as const };
 			}
 
 			const member = decision.member;
@@ -1026,7 +1202,7 @@ export async function acquireRunContainer(
 				const info = await docker.inspectContainer(member.id);
 				if (info === null) {
 					await removePoolMember(db, member.id);
-					continue;
+					return { kind: 'retry' as const };
 				}
 				if (!info.State.Running) {
 					// Present but not up: a suspended member, not a lost one. Recording
@@ -1034,7 +1210,7 @@ export async function acquireRunContainer(
 					// in place - about a second, against discarding a warm filesystem
 					// and paying to build a replacement.
 					await setPoolMemberState(db, member.id, 'suspended');
-					continue;
+					return { kind: 'retry' as const };
 				}
 			}
 			if (decision.kind === 'resume') {
@@ -1046,15 +1222,37 @@ export async function acquireRunContainer(
 					// The container is gone from under the row. Drop it and re-decide
 					// rather than handing a run an id the engine no longer knows.
 					await removePoolMember(db, member.id);
-					continue;
+					return { kind: 'retry' as const };
 				}
 				await setPoolMemberState(db, member.id, 'idle');
 				await markProjectContainerStarted(deps, projectId, member.id);
 			}
-			if (await takeMember(deps, projectId, member.id, taskId, workload)) return member.id;
+			if (await takeMember(deps, projectId, member.id, taskId, workload)) {
+				return { kind: 'acquired' as const, containerId: member.id };
+			}
+			return { kind: 'retry' as const };
+		});
+
+	// Bounded: each iteration either claims a member, removes one from contention
+	// (a lost race retries against a pool one member smaller, and a recycle pass
+	// clears every mismatched member at once) or frees memory elsewhere, so this
+	// cannot spin. The cap is the pool's own size, not a timeout.
+	let containerId: string | null = null;
+	for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS && containerId === null; attempt++) {
+		const step = await attemptAcquire();
+		if (step.kind === 'acquired') {
+			containerId = step.containerId;
+		} else if (step.kind === 'reclaim') {
+			const proj = await loadProjectRow(db, projectId);
+			// Nothing reclaimable after all - another requester got there first, or
+			// every candidate was claimed between the decision and the lock. Queue
+			// rather than spin: the dispatcher requeues and the next tick re-decides.
+			if (!(await reclaimIdleCapacityForProject(deps, projectId, proj.slug, step.needGb))) {
+				throw new PoolCapacityError(projectId);
+			}
 		}
-		throw new PoolCapacityError(projectId);
-	});
+	}
+	if (containerId === null) throw new PoolCapacityError(projectId);
 
 	let released = false;
 	return {
@@ -1551,6 +1749,147 @@ export async function isProjectIdleForContainerStop(
 		projectId,
 	]);
 	return res.rows.length > 0;
+}
+
+/**
+ * Idle members of projects that are *working*, on each member's own clock.
+ *
+ * The query above asks a project-shaped question - "has everything here gone
+ * quiet?" - and a project with two busy containers and two idle ones never
+ * answers yes, so its idle members were charged to the instance memory budget in
+ * full for as long as it kept working and no other project could reach that
+ * memory. This asks the member-shaped question instead, which is the one that
+ * bounds the budget.
+ *
+ * The `EXISTS` restricts it to working projects on purpose: a fully idle project
+ * belongs to {@link findIdleContainerCandidates}, which retires its pool as a
+ * unit and keeps one member suspended for a warm restart. Overlapping the two
+ * would take that warm member away.
+ *
+ * The chat's pinned member is excluded - it is not counted against the budget, so
+ * retiring it frees nothing. Served by `idx_container_pool_members_idle`.
+ */
+const STALE_IDLE_MEMBER_SQL = (extraSql: string, limitSql: string) => `
+	SELECT m.container_id, m.project_id, p.slug, p.team_id
+	  FROM container_pool_members m
+	  JOIN projects p ON p.id = m.project_id
+	 WHERE m.state = 'idle'
+	   AND NOT m.reserved_for_chat
+	   AND m.last_released_at < now() - ($1 * interval '1 minute')
+	   AND EXISTS (
+	     SELECT 1 FROM container_pool_members b
+	      WHERE b.project_id = m.project_id AND b.state = 'busy'
+	   )
+	   ${extraSql}
+	 ORDER BY m.last_released_at
+	 ${limitSql}
+`;
+
+export interface StaleIdleMember {
+	container_id: string;
+	project_id: string;
+	slug: string;
+	team_id: string;
+}
+
+/** Surplus idle members across the instance, oldest first. */
+export async function findStaleIdleMembers(
+	db: Db,
+	timeoutMin: number,
+	limit: number,
+): Promise<StaleIdleMember[]> {
+	const res = await db.query<StaleIdleMember>(STALE_IDLE_MEMBER_SQL('', 'LIMIT $2'), [
+		timeoutMin,
+		limit,
+	]);
+	return res.rows;
+}
+
+/**
+ * Re-run the scan for one project immediately before retiring anything, under
+ * that project's lifecycle lock. A member claimed and released again between the
+ * batch scan and the lock is idle once more but no longer *stale*, and retiring
+ * it there would take a container the project is actively cycling through.
+ */
+export async function findStaleIdleMembersInProject(
+	db: Db,
+	projectId: string,
+	timeoutMin: number,
+): Promise<StaleIdleMember[]> {
+	const res = await db.query<StaleIdleMember>(STALE_IDLE_MEMBER_SQL('AND m.project_id = $2', ''), [
+		timeoutMin,
+		projectId,
+	]);
+	return res.rows;
+}
+
+/**
+ * Carry out a retirement plan against one project's containers: suspend some,
+ * destroy the rest.
+ *
+ * The single executor behind all three callers - the whole-project idle pass, the
+ * surplus-member pass, and cross-project reclaim on the acquire path. They differ
+ * only in how the plan was chosen; what it takes to retire a container safely
+ * (park any live chat session first, clear a project row still naming a destroyed
+ * container) is identical, and duplicating it is how one of them would quietly
+ * stop parking sessions.
+ *
+ * Returns how many containers were actually retired, for the caller's log line.
+ */
+export async function executeRetirementPlan(
+	deps: ContainerDeps,
+	project: { id: string; slug: string; team_id: string },
+	plan: { suspend: readonly string[]; destroy: readonly string[] },
+	opts: {
+		/** Why, for the log line: `idle`, `surplus idle`, `reclaimed for another project`. */
+		reason: string;
+		/** Park a live assistant session before its container goes. Omitted where none can exist. */
+		parkSession?: (containerId: string) => Promise<void>;
+	},
+): Promise<number> {
+	const { db, docker } = deps;
+
+	// Park any live assistant session on these containers *first*, while they
+	// are still up: closing the tunnel deliberately deletes the provider's PTY
+	// session on a reachable sandbox and skips the tunnel's unrequested-death
+	// path, so the session ends up `suspended` (resumable in place) instead of
+	// `crashed`. Best-effort - a park that fails must not strand the pool.
+	for (const containerId of [...plan.destroy, ...plan.suspend]) {
+		await opts.parkSession?.(containerId).catch((e) => {
+			log.warn(
+				`could not park the assistant session on ${ref(project.slug, containerId.slice(0, 12))} before retiring it: ${(e as Error).message}`,
+			);
+		});
+	}
+
+	let retired = 0;
+	for (const containerId of plan.destroy) {
+		// Destroyed, not stopped: its filesystem is reproducible from the git
+		// remote, and a container kept beyond the one suspended member is
+		// storage nobody asked for.
+		log.info(
+			`project ${ref(project.slug, project.id)} retiring ${opts.reason} container ${ref(project.slug, containerId.slice(0, 12))}`,
+		);
+		await docker.removeContainer(containerId, true).catch(() => undefined);
+		await removePoolMember(db, containerId);
+		// The project row may still name this container - `provisionContainer`
+		// points `container_id` at the newest one, which is exactly the surplus
+		// the plan destroys first. Left behind, the row names a container that
+		// no longer exists, and the next status sync reads that as the
+		// project's container having died: a spurious error on a project whose
+		// remaining containers are perfectly healthy.
+		await clearProjectContainerIfNamed(db, project.id, containerId);
+		retired++;
+	}
+
+	for (const containerId of plan.suspend) {
+		log.info(
+			`project ${ref(project.slug, project.id)} ${opts.reason} — suspending container ${ref(project.slug, containerId.slice(0, 12))}`,
+		);
+		await stopContainerGracefully(deps, project.id, project.slug, project.team_id, containerId);
+		retired++;
+	}
+	return retired;
 }
 
 /**

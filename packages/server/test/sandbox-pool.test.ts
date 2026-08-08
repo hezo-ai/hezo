@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	type PoolCapacity,
 	type PoolMember,
+	planCrossProjectReclaim,
 	planIdleShutdown,
+	planSurplusIdleRetirement,
+	type ReclaimCandidate,
 	selectPoolMember,
 } from '../src/services/sandbox/pool';
 
@@ -26,8 +29,21 @@ function member(id: string, over: Partial<PoolMember> = {}): PoolMember {
 
 // Capacity is a memory budget, so "room" and "full" are stated in GB. A default
 // container asks for 2 GB: ROOM has 8 GB of a 10 GB budget free, FULL has none.
-const ROOM: PoolCapacity = { usedMemoryGb: 2, budgetGb: 10, requestMemoryGb: 2 };
-const FULL: PoolCapacity = { usedMemoryGb: 10, budgetGb: 10, requestMemoryGb: 2 };
+// Both state nothing reclaimable, so the rungs under test are the ones exercised;
+// FULL_RECLAIMABLE is the same wall with another project's idle container behind it.
+const ROOM: PoolCapacity = {
+	usedMemoryGb: 2,
+	budgetGb: 10,
+	requestMemoryGb: 2,
+	reclaimableMemoryGb: 0,
+};
+const FULL: PoolCapacity = {
+	usedMemoryGb: 10,
+	budgetGb: 10,
+	requestMemoryGb: 2,
+	reclaimableMemoryGb: 0,
+};
+const FULL_RECLAIMABLE: PoolCapacity = { ...FULL, reclaimableMemoryGb: 2 };
 
 describe('selectPoolMember ladder', () => {
 	it('prefers a warm container that last served this task', () => {
@@ -80,6 +96,44 @@ describe('selectPoolMember ladder', () => {
 		expect(selectPoolMember(null, [member('warm', { lastTaskId: 'other' })], ROOM, CAP).kind).toBe(
 			'reuse',
 		);
+	});
+
+	it('reclaims from other projects rather than queueing when the budget is full', () => {
+		// A container belongs to its project for life, so the only way another
+		// project's unused memory can serve this one is for that container to go.
+		// Without this rung one busy project's idle containers wedge the instance:
+		// they are charged to the budget in full and nothing can reach them.
+		expect(selectPoolMember('t', [], FULL_RECLAIMABLE, CAP)).toEqual({
+			kind: 'reclaim',
+			needGb: 2,
+		});
+	});
+
+	it('asks only for the shortfall, not for the whole request', () => {
+		const capacity: PoolCapacity = {
+			usedMemoryGb: 9,
+			budgetGb: 10,
+			requestMemoryGb: 2,
+			reclaimableMemoryGb: 4,
+		};
+		expect(selectPoolMember('t', [], capacity, CAP)).toEqual({ kind: 'reclaim', needGb: 1 });
+	});
+
+	it('queues when reclaim could not free enough either', () => {
+		const capacity: PoolCapacity = { ...FULL, requestMemoryGb: 8, reclaimableMemoryGb: 2 };
+		expect(selectPoolMember('t', [], capacity, CAP)).toEqual({ kind: 'queue' });
+	});
+
+	it('creates rather than reclaiming while the budget still has room', () => {
+		// Idle containers elsewhere are useful while nobody needs the memory; this
+		// rung never runs speculatively.
+		expect(selectPoolMember('t', [], { ...ROOM, reclaimableMemoryGb: 8 }, CAP)).toEqual({
+			kind: 'create',
+		});
+	});
+
+	it('reuses its own warm container rather than reclaiming another project’s', () => {
+		expect(selectPoolMember('t', [member('warm')], FULL_RECLAIMABLE, CAP).kind).toBe('reuse');
 	});
 });
 
@@ -221,13 +275,13 @@ describe('planIdleShutdown', () => {
 		// cardinality - which removes the need for a retention cap or a reap
 		// horizon entirely.
 		const plan = planIdleShutdown([member('a'), member('b'), member('c')]);
-		expect(plan.suspend?.id).toBe('a');
+		expect(plan.suspend.map((m) => m.id)).toEqual(['a']);
 		expect(plan.destroy.map((m) => m.id)).toEqual(['b', 'c']);
 	});
 
 	it('destroys all of them when one is already suspended', () => {
 		const plan = planIdleShutdown([member('kept', { state: 'suspended' }), member('a')]);
-		expect(plan.suspend).toBeNull();
+		expect(plan.suspend).toEqual([]);
 		expect(plan.destroy.map((m) => m.id)).toEqual(['a']);
 	});
 
@@ -238,7 +292,7 @@ describe('planIdleShutdown', () => {
 		// the one that takes the suspend slot rather than being left running.
 		const plan = planIdleShutdown([member('risky', { hasUnpushedCommits: true })]);
 		expect(plan.destroy).toEqual([]);
-		expect(plan.suspend?.id).toBe('risky');
+		expect(plan.suspend.map((m) => m.id)).toEqual(['risky']);
 	});
 
 	it('prefers the risky container for the suspend slot and destroys the safe one', () => {
@@ -246,17 +300,22 @@ describe('planIdleShutdown', () => {
 		// global budget forever - the flag is only cleared by a later run on that
 		// same container, which for a stuck project never comes.
 		const plan = planIdleShutdown([member('risky', { hasUnpushedCommits: true }), member('safe')]);
-		expect(plan.suspend?.id).toBe('risky');
+		expect(plan.suspend.map((m) => m.id)).toEqual(['risky']);
 		expect(plan.destroy.map((m) => m.id)).toEqual(['safe']);
 	});
 
-	it('never destroys the pinned member even when something is already suspended', () => {
+	it('suspends every pinned member, even when one is already suspended', () => {
+		// The single-suspend rule bounds containers kept purely for *warmth*.
+		// Applying it to a pinned member instead left that member running - holding
+		// its full RAM cap out of the budget forever, since nothing but a later run
+		// on that same container clears the flag. That is the leak the rule was
+		// written to prevent, reached from the other side.
 		const plan = planIdleShutdown([
 			member('parked', { state: 'suspended' }),
 			member('risky', { hasUnpushedCommits: true }),
 			member('safe'),
 		]);
-		expect(plan.suspend).toBeNull();
+		expect(plan.suspend.map((m) => m.id)).toEqual(['risky']);
 		expect(plan.destroy.map((m) => m.id)).toEqual(['safe']);
 	});
 
@@ -268,13 +327,177 @@ describe('planIdleShutdown', () => {
 		// belongs to a session that has gone quiet. Parking it is the point:
 		// otherwise the chat's container runs, and bills, forever.
 		const plan = planIdleShutdown([member('chat', { reservedForChat: true })]);
-		expect(plan.suspend?.id).toBe('chat');
+		expect(plan.suspend.map((m) => m.id)).toEqual(['chat']);
 		expect(plan.destroy).toEqual([]);
 	});
 
 	it('leaves busy containers alone', () => {
 		const plan = planIdleShutdown([member('busy', { state: 'busy' })]);
-		expect(plan.suspend).toBeNull();
+		expect(plan.suspend).toEqual([]);
 		expect(plan.destroy).toEqual([]);
+	});
+});
+
+/**
+ * The reported failure in one function: a project running two tasks alongside two
+ * idle containers is never "quiet", so nothing retired those two - while they were
+ * charged to the instance memory budget in full and no other project could reach
+ * that memory.
+ */
+describe('planSurplusIdleRetirement', () => {
+	const stale = (...ids: string[]) => new Set(ids);
+
+	it('retires a working project’s stale idle containers', () => {
+		const plan = planSurplusIdleRetirement(
+			[
+				member('busy-1', { state: 'busy' }),
+				member('busy-2', { state: 'busy' }),
+				member('idle-1'),
+				member('idle-2'),
+			],
+			stale('idle-1', 'idle-2'),
+		);
+		expect(plan.destroy.map((m) => m.id)).toEqual(['idle-1', 'idle-2']);
+		expect(plan.suspend).toEqual([]);
+	});
+
+	it('leaves a fully idle project to the whole-project pass', () => {
+		// That pass keeps one member suspended for a warm restart; picking its
+		// members off individually here would take that away.
+		const plan = planSurplusIdleRetirement([member('a'), member('b')], stale('a', 'b'));
+		expect(plan).toEqual({ suspend: [], destroy: [] });
+	});
+
+	it('leaves an idle container that has not yet gone stale', () => {
+		const plan = planSurplusIdleRetirement(
+			[member('busy', { state: 'busy' }), member('fresh'), member('old')],
+			stale('old'),
+		);
+		expect(plan.destroy.map((m) => m.id)).toEqual(['old']);
+	});
+
+	it('suspends rather than destroys a container holding unpushed commits', () => {
+		const plan = planSurplusIdleRetirement(
+			[member('busy', { state: 'busy' }), member('risky', { hasUnpushedCommits: true })],
+			stale('risky'),
+		);
+		expect(plan.suspend.map((m) => m.id)).toEqual(['risky']);
+		expect(plan.destroy).toEqual([]);
+	});
+
+	it('never touches the chat’s container or a busy one', () => {
+		// The chat's member is excluded from the memory budget already, so retiring
+		// it frees nothing and only interrupts a session.
+		const plan = planSurplusIdleRetirement(
+			[
+				member('busy', { state: 'busy' }),
+				member('chat', { reservedForChat: true }),
+				member('other-busy', { state: 'busy' }),
+			],
+			stale('chat', 'other-busy'),
+		);
+		expect(plan).toEqual({ suspend: [], destroy: [] });
+	});
+});
+
+describe('planCrossProjectReclaim', () => {
+	const MIN_IDLE = 30_000;
+	const candidate = (
+		containerId: string,
+		projectId: string,
+		over: Partial<ReclaimCandidate> = {},
+	): ReclaimCandidate => ({
+		containerId,
+		projectId,
+		memoryGb: 2,
+		idleForMs: 5 * 60_000,
+		hasUnpushedCommits: false,
+		...over,
+	});
+
+	it('frees exactly what the shortfall needs and no more', () => {
+		// Retiring past the shortfall destroys warm containers for nothing.
+		const plan = planCrossProjectReclaim(
+			[candidate('a', 'p1'), candidate('b', 'p1'), candidate('c', 'p1')],
+			2,
+			MIN_IDLE,
+		);
+		expect(plan.destroy).toHaveLength(1);
+		expect(plan.freedGb).toBe(2);
+	});
+
+	it('returns an empty plan when it cannot cover the shortfall', () => {
+		// All or nothing: freeing 2 of the 6 GB a run needs helps nobody, and has
+		// destroyed a warm container to achieve it.
+		const plan = planCrossProjectReclaim([candidate('a', 'p1')], 6, MIN_IDLE);
+		expect(plan).toEqual({ suspend: [], destroy: [], freedGb: 0 });
+	});
+
+	it('takes from the project holding the most idle containers first', () => {
+		// Ordering by idle time alone takes a quiet project's single warm container
+		// while a hoarder keeps three, which is the fairness question inverted.
+		const plan = planCrossProjectReclaim(
+			[
+				candidate('lonely', 'quiet', { idleForMs: 60 * 60_000 }),
+				candidate('h1', 'hoarder'),
+				candidate('h2', 'hoarder'),
+				candidate('h3', 'hoarder'),
+			],
+			2,
+			MIN_IDLE,
+		);
+		expect(plan.destroy.map((c) => c.projectId)).toEqual(['hoarder']);
+	});
+
+	it('takes the longest-idle container within one project', () => {
+		const plan = planCrossProjectReclaim(
+			[
+				candidate('recent', 'p1', { idleForMs: 60_000 }),
+				candidate('ancient', 'p1', { idleForMs: 60 * 60_000 }),
+			],
+			2,
+			MIN_IDLE,
+		);
+		expect(plan.destroy.map((c) => c.containerId)).toEqual(['ancient']);
+	});
+
+	it('ignores a container that has only just gone idle', () => {
+		// A project releasing a container between two runs seconds apart is
+		// mid-burst, not idle. This floor is what stops two starved projects
+		// reclaiming from each other in a loop.
+		const plan = planCrossProjectReclaim(
+			[candidate('justreleased', 'p1', { idleForMs: 1_000 })],
+			2,
+			MIN_IDLE,
+		);
+		expect(plan).toEqual({ suspend: [], destroy: [], freedGb: 0 });
+	});
+
+	it('suspends a container holding unpushed commits rather than destroying it', () => {
+		// Suspend frees the memory and keeps the only copy of the work.
+		const plan = planCrossProjectReclaim(
+			[candidate('risky', 'p1', { hasUnpushedCommits: true })],
+			2,
+			MIN_IDLE,
+		);
+		expect(plan.suspend.map((c) => c.containerId)).toEqual(['risky']);
+		expect(plan.destroy).toEqual([]);
+		expect(plan.freedGb).toBe(2);
+	});
+
+	it('accounts for containers of different sizes', () => {
+		// The budget is memory, not a container count, because
+		// `projects.memory_limit_gib` exists so containers are not all the same size.
+		const plan = planCrossProjectReclaim(
+			[candidate('big', 'p1', { memoryGb: 8 }), candidate('small', 'p2', { memoryGb: 1 })],
+			4,
+			MIN_IDLE,
+		);
+		expect(plan.destroy.map((c) => c.containerId)).toEqual(['big']);
+		expect(plan.freedGb).toBe(8);
+	});
+
+	it('asks for nothing when the shortfall is zero or negative', () => {
+		expect(planCrossProjectReclaim([candidate('a', 'p1')], 0, MIN_IDLE).freedGb).toBe(0);
 	});
 });

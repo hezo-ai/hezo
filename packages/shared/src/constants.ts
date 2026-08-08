@@ -355,6 +355,28 @@ export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
 export const CHAT_IDLE_TIMEOUT_MIN = 15;
 
 /**
+ * How long a member must have sat idle before another **project** may reclaim it
+ * to fit its own container into the memory budget.
+ *
+ * Much shorter than {@link CONTAINER_IDLE_TIMEOUT_MIN} because it answers a
+ * different question. The idle window asks "is this container still worth
+ * keeping warm?", and the answer stays yes for a while because nothing else
+ * wants the memory. Reclaim only runs when something else demonstrably does: a
+ * run that is otherwise queued indefinitely. A starved project waiting two
+ * minutes for a container its neighbour is not using is the defect, not the
+ * remedy.
+ *
+ * It is not zero, and that is what stops the thrash. A project mid-burst
+ * releases a container between two runs seconds apart, and stripping it in that
+ * gap would make the pair of runs pay a cold start each to hand memory to a
+ * third project that would then lose it the same way. Thirty seconds is longer
+ * than the release-to-reacquire chain (comment insert, wakeup fire, 1 Hz
+ * dispatch cron, acquire) and short enough that a genuinely stranded run is not
+ * left waiting on a container nobody wants.
+ */
+export const CONTAINER_RECLAIM_MIN_IDLE_SEC = 30;
+
+/**
  * The "latest few" messages kept in the active window after a compaction flush.
  * Internal constant (not an operator setting): everything older than this tail
  * is summarized into long-term memory and dropped from the chatbox.

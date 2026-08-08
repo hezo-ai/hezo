@@ -54,11 +54,15 @@ import {
 	type ContainerTransition,
 	destroyContainer,
 	ensureProjectContainerRunning,
+	executeRetirementPlan,
 	failProjectRuns,
 	findIdleContainerCandidates,
+	findStaleIdleMembers,
+	findStaleIdleMembersInProject,
 	isProjectIdleForContainerStop,
 	provisionContainer,
 	reconcilePoolMembers,
+	type StaleIdleMember,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
 	verifyContainerWorkspace,
@@ -79,6 +83,7 @@ import {
 	getActiveContainers,
 	isTaskBusyInDb,
 	projectContainerMemoryGb,
+	reclaimableForOthers,
 	sumProjectContainerMemoryGb,
 } from './run-concurrency';
 import { reclaimBusyPoolMembers } from './sandbox/pool-db';
@@ -1436,10 +1441,8 @@ export class JobManager {
 	 * exceeded.
 	 */
 	private async isContainerCapacityBlocked(projectId: string | null): Promise<CapacityVerdict> {
-		const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = await getActiveContainers(
-			this.deps.db,
-			this.deps.docker,
-		);
+		const active = await getActiveContainers(this.deps.db, this.deps.docker);
+		const { budgetGb, usedMemoryGb, projectsWithSpareContainer } = active;
 		// Returned alongside the verdict, not just consumed here: the dispatch that
 		// follows has to know whether it is about to *create* a container, and it
 		// used to answer that from `projects.container_status` instead. Those two
@@ -1467,7 +1470,14 @@ export class JobManager {
 		const requestGb = projectId
 			? await projectContainerMemoryGb(this.deps.db, projectId)
 			: await getDefaultRamCapPerContainerGb(this.deps.db);
-		return { blocked: usedMemoryGb + pendingGb + requestGb > budgetGb, hasSpareContainer };
+		// Idle containers held by *other* projects are headroom, because the acquire
+		// path can retire them to make room. Leaving them out here is what stopped a
+		// starved run ever reaching that path: the dispatch was skipped as
+		// `InstanceAtCapacity` and the reclaim rung never ran. The same figure is
+		// added in `isContainerCapacityBlockedInDb`, which is this check's stateless
+		// twin and must not drift from it.
+		const headroomGb = budgetGb + reclaimableForOthers(active, projectId);
+		return { blocked: usedMemoryGb + pendingGb + requestGb > headroomGb, hasSpareContainer };
 	}
 
 	private acquirePendingContainerStart(projectId: string): void {
@@ -3261,6 +3271,11 @@ export class JobManager {
 		if (candidates.length > 0) {
 			log.debug(`Idle-container pass: ${stopped}/${candidates.length} candidate(s) stopped`);
 		}
+
+		// After the whole-project pass, not before: a project that has gone
+		// entirely quiet should be retired as a unit, keeping one member suspended
+		// for a warm restart, rather than having its members picked off first.
+		await this.retireSurplusIdleContainers();
 	}
 
 	/**
@@ -3286,11 +3301,9 @@ export class JobManager {
 		team_id: string;
 		container_id: string;
 	}): Promise<number> {
-		const { db, docker } = this.deps;
+		const { db } = this.deps;
 		const { planIdleShutdown } = await import('./sandbox/pool');
-		const { clearProjectContainerIfNamed, loadPoolMembers, removePoolMember } = await import(
-			'./sandbox/pool-db'
-		);
+		const { loadPoolMembers } = await import('./sandbox/pool-db');
 
 		const members = await loadPoolMembers(db, candidate.id);
 		// A project whose pool has no row yet (nothing has provisioned through the
@@ -3299,65 +3312,90 @@ export class JobManager {
 		const plan =
 			members.length > 0
 				? planIdleShutdown(members)
-				: {
-						suspend: {
-							id: candidate.container_id,
-							state: 'idle' as const,
-							lastTaskId: null,
-							hasUnpushedCommits: false,
-							atDiskCeiling: false,
-							reservedForChat: false,
-						},
-						destroy: [],
-					};
+				: { suspend: [{ id: candidate.container_id }], destroy: [] };
 
-		// Park any live assistant session on these containers *first*, while they
-		// are still up: closing the tunnel deliberately deletes the provider's PTY
-		// session on a reachable sandbox and skips the tunnel's unrequested-death
-		// path, so the session ends up `suspended` (resumable in place) instead of
-		// `crashed`. Best-effort - a park that fails must not strand the pool.
-		for (const member of [...plan.destroy, ...(plan.suspend ? [plan.suspend] : [])]) {
-			await this.deps.chatSessions?.parkForContainerSuspend(member.id).catch((e) => {
-				log.warn(
-					`could not park the assistant session on ${ref(candidate.slug, member.id.slice(0, 12))} before retiring it: ${(e as Error).message}`,
-				);
-			});
+		return executeRetirementPlan(
+			this.buildContainerDeps(),
+			{ id: candidate.id, slug: candidate.slug, team_id: candidate.team_id },
+			{
+				suspend: plan.suspend.map((m) => m.id),
+				destroy: plan.destroy.map((m) => m.id),
+			},
+			{ reason: 'idle', parkSession: (id) => this.parkChatSession(id) },
+		);
+	}
+
+	/** Best-effort park of any assistant session pinned to a container about to go. */
+	private async parkChatSession(containerId: string): Promise<void> {
+		await this.deps.chatSessions?.parkForContainerSuspend(containerId);
+	}
+
+	/**
+	 * Retire idle containers held by projects that are still working.
+	 *
+	 * {@link stopIdleContainers} only ever looks at projects that have gone
+	 * *entirely* quiet, which left the instance's worst capacity failure
+	 * unaddressed: a project running two tasks alongside two idle containers is
+	 * never quiet, so those two were charged to the memory budget in full and no
+	 * other project could reach them. An operator saw four containers, two of them
+	 * doing nothing, and every other project stuck at "at its active-container
+	 * limit" - not for the idle window, but until that project finished
+	 * everything it had.
+	 *
+	 * Deliberately no keep-one-warm rule, unlike the whole-project pass: this
+	 * project's busy containers are about to become idle themselves, so the next
+	 * run's warm start is already covered.
+	 */
+	private async retireSurplusIdleContainers(): Promise<void> {
+		const { db, docker } = this.deps;
+		const timeoutMin = CONTAINER_IDLE_TIMEOUT_MIN;
+		if (!(await docker.ping())) return;
+
+		const { planSurplusIdleRetirement } = await import('./sandbox/pool');
+		const { loadPoolMembers } = await import('./sandbox/pool-db');
+
+		const stale = await findStaleIdleMembers(db, timeoutMin, IDLE_STOP_BATCH_LIMIT);
+		const byProject = new Map<string, StaleIdleMember[]>();
+		for (const row of stale) {
+			const group = byProject.get(row.project_id);
+			if (group) group.push(row);
+			else byProject.set(row.project_id, [row]);
 		}
 
 		let retired = 0;
-		for (const member of plan.destroy) {
-			// Destroyed, not stopped: its filesystem is reproducible from the git
-			// remote, and a container kept beyond the one suspended member is
-			// storage nobody asked for.
-			log.info(
-				`project ${ref(candidate.slug, candidate.id)} retiring surplus idle container ${ref(candidate.slug, member.id.slice(0, 12))}`,
-			);
-			await docker.removeContainer(member.id, true).catch(() => undefined);
-			await removePoolMember(db, member.id);
-			// The project row may still name this container - `provisionContainer`
-			// points `container_id` at the newest one, which is exactly the surplus
-			// the plan destroys first. Left behind, the row names a container that
-			// no longer exists, and the next status sync reads that as the
-			// project's container having died: a spurious error on a project whose
-			// remaining containers are perfectly healthy.
-			await clearProjectContainerIfNamed(db, candidate.id, member.id);
-			retired++;
-		}
+		for (const [projectId, group] of byProject) {
+			try {
+				await withContainerLifecycleLock(projectId, async () => {
+					// A lazy start in flight has no DB row yet, so the members below could
+					// be claimed the moment this lock is released. Same guard the
+					// whole-project pass uses, and for the same reason.
+					if (this.pendingContainerStarts.has(projectId)) return;
+					// Re-run the scan under the lock: a member claimed and released again
+					// since the batch scan is idle but no longer stale.
+					const fresh = await findStaleIdleMembersInProject(db, projectId, timeoutMin);
+					const staleIds = new Set(fresh.map((r) => r.container_id));
+					if (staleIds.size === 0) return;
 
-		if (plan.suspend) {
-			log.info(
-				`project ${ref(candidate.slug, candidate.id)} idle — suspending container ${ref(candidate.slug, plan.suspend.id.slice(0, 12))}`,
-			);
-			await stopContainerGracefully(
-				this.buildContainerDeps(),
-				candidate.id,
-				candidate.slug,
-				candidate.team_id,
-				plan.suspend.id,
-			);
-			retired++;
+					const plan = planSurplusIdleRetirement(await loadPoolMembers(db, projectId), staleIds);
+					if (plan.suspend.length === 0 && plan.destroy.length === 0) return;
+
+					retired += await executeRetirementPlan(
+						this.buildContainerDeps(),
+						{ id: projectId, slug: group[0].slug, team_id: group[0].team_id },
+						{
+							suspend: plan.suspend.map((m) => m.id),
+							destroy: plan.destroy.map((m) => m.id),
+						},
+						{ reason: 'surplus idle', parkSession: (id) => this.parkChatSession(id) },
+					);
+				});
+			} catch (err) {
+				log.error(`Surplus idle retirement failed for project ${ref('', projectId)}:`, err);
+			}
 		}
-		return retired;
+		if (retired > 0) {
+			log.debug(`Surplus idle pass: retired ${retired} container(s) held by working projects`);
+		}
 	}
 
 	/**

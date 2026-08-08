@@ -53,7 +53,7 @@ manager (agents bring their own models and runtimes).
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
 | Crypto | AES-256-GCM at rest; master key held in memory only |
-| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired after a fixed 2-minute idle window (15 for a live assistant chat) |
+| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired per member after a fixed 2-minute idle window (15 for a live assistant chat), or sooner when another project needs the memory |
 
 **Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
 tree:
@@ -1635,9 +1635,9 @@ removing them.
 **A container found stopped-but-present is a suspended member, not a lost one**, and this is
 the case a managed backend produces routinely: Daytona's `autoStopInterval` reclaims a sandbox
 that has seen no toolbox traffic for ten minutes, which is exactly what an idle pool member
-looks like. Hezo's own idle pass cannot pre-empt it - `stopIdleContainers` retires a pool only
-when the whole *project* is idle, so a busy project's unused members are reclaimed by the
-provider first. The member's writable layer is intact, so the repair is to record `suspended`
+looks like. Hezo's own idle pass narrows the window but does not close it - the surplus pass
+retires a working project's idle members on their own clock (below), but a member inside that
+window can still be reclaimed by the provider first. The member's writable layer is intact, so the repair is to record `suspended`
 and let the ladder resume it in place (about a second) rather than discard the row and pay to
 build a replacement while the sandbox lingers as an orphan. Three places converge on this:
 `syncContainerStatus`'s running→stopped branch, the memory-limit auto-stop, and the `reuse`
@@ -1654,6 +1654,50 @@ exists to remove, and it is not hypothetical - it is how an idle member being au
 killed a run executing in a healthy sibling container. Two sources emit transitions in this
 one shape: `syncAllContainerStatuses` answers for the container `projects.container_id` names,
 and `reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
+
+**The memory budget is instance-wide, so no project may sit on a share of it that it is not
+using.** Two mechanisms enforce that, and both exist because a container is pinned to its
+project for life - `container_pool_members.project_id` is set once at provision and nothing
+reassigns it, since the container is built around that project's `/workspace` bind mount,
+clone and git identity. Unused memory therefore cannot be handed over; the container has to go
+and a fresh one be built.
+
+- **Surplus idle retirement** (`planSurplusIdleRetirement`, run by `JobManager` after the
+  whole-project pass). `findIdleContainerCandidates` asks a project-shaped question - "has
+  everything here gone quiet?" - and a project running two tasks alongside two idle
+  containers never answers yes, so those two were charged to the budget in full for as long
+  as the project kept working and no other project could reach them. That is a permanently
+  wedged instance, not a slow one. `findStaleIdleMembers` asks the member-shaped question
+  instead, clocked on `last_released_at` (made total and indexed by migration 053; the old
+  clock was `projects.container_last_started_at`, so starting any container reset the timer
+  for every idle sibling). It fires only for projects that have a `busy` member - a fully
+  idle project still belongs to the whole-project pass, which keeps one member suspended for
+  a warm restart.
+- **Cross-project reclaim** (`planCrossProjectReclaim`, the `reclaim` rung of
+  `selectPoolMember`). Closes the gap in between: rather than queue behind memory a
+  neighbour is demonstrably not using, a blocked acquire retires enough of other projects'
+  idle members to cover its shortfall. All-or-nothing (freeing part of the shortfall helps
+  nobody and has destroyed a warm container to do it), only as much as the shortfall,
+  hoarder-first then longest-idle, and floored at `CONTAINER_RECLAIM_MIN_IDLE_SEC` so a
+  project mid-burst is not stripped of a container it is about to reuse - which is also what
+  stops two starved projects reclaiming from each other in a loop.
+
+**Both dispatch gates count reclaimable memory as headroom, and must.** The gate runs *before*
+the pool, so leaving it out meant the run was skipped as `InstanceAtCapacity` and the reclaim
+rung never ran - dead code behind a closed door. `getActiveContainers` returns
+`reclaimableMemoryGbByProject`, read through `reclaimableForOthers`; keyed by project because
+the figure is only meaningful relative to who is asking, and a project's own idle members reach
+it through the reuse rung instead. `JobManager.isContainerCapacityBlocked` and
+`isContainerCapacityBlockedInDb` are a deliberate pair and must not drift.
+
+**Reclaim runs outside the requester's lifecycle lock.** `withContainerLifecycleLock` is keyed
+per project, and reclaim takes the *victims'* locks - so a requester holding its own while
+doing that is exactly the cycle two simultaneously-starved projects need to deadlock. Hence
+`acquireRunContainer` takes the lock **per attempt** rather than around its loop: the `reclaim`
+decision returns out of the locked section, reclaim runs between attempts under a single
+process-wide `reclaimLock`, and the loop re-decides against what was actually freed. The
+process-wide serialisation is the other half - two requesters reading the same idle containers
+as their headroom would each retire enough for themselves and take twice what either needed.
 
 **A member is reusable only if it was built to the cap it would be built to now.** The cap
 is a memory *guarantee* the run is sized, budgeted and enforced against, and no backend can
@@ -2540,8 +2584,8 @@ store, and `sandbox/recovery.ts` is the seam between them.
 
 **The pin and the run failure are decided by different things**, which is the point of the vault.
 `setPoolMemberUnpushedFlag` (`services/sandbox/pool-db.ts`) sets
-`container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from both suspend
-and destroy — but it is now set from whether the copy-out **failed**, not from whether the work
+`container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from destroy and
+*prefers* for suspend (suspending keeps the writable layer, so the pin costs no memory) — but it is now set from whether the copy-out **failed**, not from whether the work
 reached `origin`. A vaulted run releases its container (the work exists in two places) and still
 fails (it never reached the remote); a run whose bundle could not be built, was oversized, or could
 not be moved keeps the pin, failing closed. The scan still distinguishes "no unpushed work" from

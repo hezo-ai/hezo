@@ -12,6 +12,7 @@ import { MAX_CONTAINER_MEMORY_GB_KEY, setSystemMeta } from '../src/lib/system-me
 import {
 	getActiveContainers,
 	isContainerCapacityBlockedInDb,
+	reclaimableForOthers,
 } from '../src/services/run-concurrency';
 import { createStubDocker } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
@@ -67,13 +68,20 @@ describe('container capacity', () => {
 			disk_used_bytes: number;
 			disk_ceiling_bytes: number;
 			memory_bytes: number | null;
+			/**
+			 * How long ago this member was released. Defaults to *now*, so a member is
+			 * not reclaimable unless a case says so - the idle floor is a rule these
+			 * tests should have to opt into, not one they trip over.
+			 */
+			idle_for_min: number;
 		}> = {},
 	): Promise<void> {
 		await db.query(
 			`INSERT INTO container_pool_members
 			   (project_id, container_id, state, reserved_for_chat, disk_used_bytes,
-			    disk_ceiling_bytes, memory_bytes)
-			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7)`,
+			    disk_ceiling_bytes, memory_bytes, last_released_at)
+			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7,
+			         now() - ($8 || ' minutes')::interval)`,
 			[
 				projectId,
 				containerId,
@@ -82,6 +90,7 @@ describe('container capacity', () => {
 				over.disk_used_bytes ?? 0,
 				over.disk_ceiling_bytes ?? poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB),
 				over.memory_bytes === undefined ? 2 * 1024 ** 3 : over.memory_bytes,
+				over.idle_for_min ?? 0,
 			],
 		);
 	}
@@ -269,6 +278,73 @@ describe('container capacity', () => {
 		// …while a default-sized container fits in the same remaining 2 GB.
 		const normal = await seedProject();
 		expect(await isContainerCapacityBlockedInDb(db, engine, normal)).toBe(false);
+	});
+
+	/**
+	 * The gate runs *before* the pool, so it decides whether a run ever reaches the
+	 * acquire path at all. Leaving reclaimable memory out of it is what let one busy
+	 * project's idle containers wedge every other project on the instance: the
+	 * dispatch was skipped as `InstanceAtCapacity` and the reclaim rung never ran.
+	 */
+	describe('reclaimable headroom', () => {
+		it('does not block a run that another project’s idle container can cover', async () => {
+			const hoarder = await seedProject();
+			await addMember(hoarder, 'ctr-busy', { state: 'busy' });
+			await addMember(hoarder, 'ctr-idle', { idle_for_min: 10 });
+			// The budget is full: two 2 GB containers against a 4 GB ceiling.
+			expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(4);
+
+			const starved = await seedProject();
+			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(false);
+		});
+
+		it('still blocks when every container elsewhere is busy', async () => {
+			const hoarder = await seedProject();
+			await addMember(hoarder, 'ctr-busy-a', { state: 'busy' });
+			await addMember(hoarder, 'ctr-busy-b', { state: 'busy' });
+
+			const starved = await seedProject();
+			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);
+		});
+
+		it('still blocks while the idle container is inside the reclaim floor', async () => {
+			// A project mid-burst is not idle capacity.
+			const hoarder = await seedProject();
+			await addMember(hoarder, 'ctr-busy', { state: 'busy' });
+			await addMember(hoarder, 'ctr-fresh');
+
+			const starved = await seedProject();
+			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);
+		});
+
+		it('does not count the chat’s pinned container as reclaimable', async () => {
+			// It is excluded from `usedMemoryGb` already, so retiring it frees nothing
+			// against the budget - counting it as headroom would over-subscribe.
+			const hoarder = await seedProject();
+			await addMember(hoarder, 'ctr-busy-a', { state: 'busy' });
+			await addMember(hoarder, 'ctr-busy-b', { state: 'busy' });
+			await addMember(hoarder, 'ctr-chat', { reserved_for_chat: true, idle_for_min: 10 });
+
+			const starved = await seedProject();
+			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);
+		});
+
+		it('does not offer a project its own idle container as reclaimable headroom', async () => {
+			// Its own idle member reaches it through the pool's reuse rung, which
+			// consumes no new budget. Counting it here as well would let the project
+			// start a second container it has no room for.
+			const other = await seedProject();
+			await addMember(other, 'ctr-busy-a', { state: 'busy' });
+			const mine = await seedProject();
+			await addMember(mine, 'ctr-mine-busy', { state: 'busy' });
+			await addMember(mine, 'ctr-mine-idle', { idle_for_min: 10 });
+
+			const active = await getActiveContainers(db, engine);
+			expect(reclaimableForOthers(active, mine)).toBe(0);
+			// And the project is not blocked - but on the spare-container rung, not
+			// on headroom it does not have.
+			expect(active.projectsWithSpareContainer.has(mine)).toBe(true);
+		});
 	});
 });
 
