@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DockerClient } from '../src/services/docker';
+import { DockerClient, MEMORY_HARD_CAP_HEADROOM_BYTES } from '../src/services/docker';
+import { setResolvedDockerSocket } from '../src/services/docker-socket';
 import { startDockerSockSim } from './helpers/docker-sock-sim';
 
 // The DockerClient's one-shot calls ride `fetch` with Bun's `unix` option; under
@@ -63,10 +64,29 @@ describe('request transport', () => {
 		expect(calls[0].contentType).toBeUndefined();
 	});
 
-	it('defaults to the standard docker socket path', async () => {
-		const calls = stubFetch(() => text('OK'));
-		await new DockerClient().ping();
-		expect(calls[0].unix).toBe('/var/run/docker.sock');
+	it('reads the socket the startup preflight resolved when given none', async () => {
+		setResolvedDockerSocket({ path: '/tmp/hezo-colima.sock', source: 'docker-context' });
+		try {
+			const calls = stubFetch(() => text('OK'));
+			await new DockerClient().ping();
+			expect(calls[0].unix).toBe('/tmp/hezo-colima.sock');
+		} finally {
+			setResolvedDockerSocket(null);
+		}
+	});
+
+	it('resolves the socket per request, not at construction', async () => {
+		// The preflight's own client is built before resolution happens; a snapshot
+		// taken in the constructor would leave it on a different socket than the rest.
+		const client = new DockerClient();
+		setResolvedDockerSocket({ path: '/tmp/hezo-late.sock', source: 'flag' });
+		try {
+			const calls = stubFetch(() => text('OK'));
+			await client.ping();
+			expect(calls[0].unix).toBe('/tmp/hezo-late.sock');
+		} finally {
+			setResolvedDockerSocket(null);
+		}
 	});
 
 	it('ping returns false on a non-ok status and on transport failure', async () => {
@@ -218,6 +238,36 @@ describe('container lifecycle operations', () => {
 		);
 	});
 
+	it('sets the cgroup limit above the ceiling it was given, with no swap escape valve', async () => {
+		// The two limits do different jobs. The caller states the project's
+		// working-set **ceiling**, which is where the stats poller stops the
+		// container gracefully; the cgroup cap sits a little above it so a runaway
+		// allocation *between* poll ticks meets the kernel OOM killer rather than
+		// taking the operator's host with it.
+		//
+		// The margin lives here, in the adapter, because it is a cgroup and a
+		// shared-host concern and a managed sandbox has neither. It used to be added
+		// by the caller, which made *both* backends ask their provider for more
+		// memory than the project was configured for - and at the boundary refused a
+		// project set to a managed provider's documented maximum, telling the
+		// operator to lower a limit they had set to the advertised value.
+		const calls = stubFetch(() => json({ Id: 'cid-1', Warnings: [] }, 201));
+		const ceiling = 2 * 1024 ** 3;
+		await client().createContainer('hezo-demo', {
+			Image: 'img',
+			HostConfig: { Memory: ceiling, MemorySwap: ceiling },
+		});
+		const sent = JSON.parse(calls[0].body ?? '{}');
+		expect(sent.HostConfig.Memory).toBe(ceiling + MEMORY_HARD_CAP_HEADROOM_BYTES);
+		expect(sent.HostConfig.MemorySwap).toBe(sent.HostConfig.Memory);
+	});
+
+	it('leaves a config that states no ceiling alone rather than inventing one', async () => {
+		const calls = stubFetch(() => json({ Id: 'cid-1', Warnings: [] }, 201));
+		await client().createContainer('hezo-demo', { Image: 'img', HostConfig: {} });
+		expect(JSON.parse(calls[0].body ?? '{}').HostConfig).toEqual({});
+	});
+
 	it('startContainer succeeds on 204, tolerates 304, and throws otherwise', async () => {
 		const calls = stubFetch(() => empty(204));
 		await client().startContainer('cid-1');
@@ -280,7 +330,10 @@ describe('container lifecycle operations', () => {
 			Config: { Image: 'img' },
 		};
 		stubFetch(() => json(info));
-		await expect(client().inspectContainer('cid-1')).resolves.toEqual(info);
+		await expect(client().inspectContainer('cid-1')).resolves.toEqual({
+			...info,
+			HostConfig: { MemoryBytes: null },
+		});
 		vi.unstubAllGlobals();
 
 		stubFetch(() => json({ message: 'no such container' }, 404));
@@ -291,6 +344,36 @@ describe('container lifecycle operations', () => {
 		await expect(client().inspectContainer('cid-1')).rejects.toThrow(
 			'Docker inspectContainer failed (500): daemon busy',
 		);
+	});
+
+	/**
+	 * The cgroup limit carries the adapter's own margin, and the pool compares a
+	 * container's recorded allocation against the cap for exact equality - so
+	 * reporting the padded figure would judge every container mis-sized and
+	 * recycle the whole pool on every acquire.
+	 */
+	it('inspectContainer reports the ceiling asked for, not the padded cgroup limit', async () => {
+		const asked = 2 * 1024 ** 3;
+		const base = {
+			Id: 'cid-1',
+			State: { Status: 'running', Running: true, Pid: 42, ExitCode: 0 },
+			Config: { Image: 'img' },
+		};
+
+		stubFetch(() =>
+			json({ ...base, HostConfig: { Memory: asked + MEMORY_HARD_CAP_HEADROOM_BYTES } }),
+		);
+		await expect(client().inspectContainer('cid-1')).resolves.toMatchObject({
+			HostConfig: { MemoryBytes: asked },
+		});
+		vi.unstubAllGlobals();
+
+		// Docker's "no limit". Unknown as a provisioned ceiling, so nothing may be
+		// backfilled from it.
+		stubFetch(() => json({ ...base, HostConfig: { Memory: 0 } }));
+		await expect(client().inspectContainer('cid-1')).resolves.toMatchObject({
+			HostConfig: { MemoryBytes: null },
+		});
 	});
 });
 
@@ -315,7 +398,11 @@ describe('findContainerByNamePrefix', () => {
 			return text('unexpected route', 500);
 		});
 
-		await expect(client().findContainerByNamePrefix(prefix)).resolves.toEqual(info);
+		// Delegates to inspectContainer, so it carries the normalized allocation too.
+		await expect(client().findContainerByNamePrefix(prefix)).resolves.toEqual({
+			...info,
+			HostConfig: { MemoryBytes: null },
+		});
 		const listUrl = calls[0].url;
 		expect(listUrl).toContain('/containers/json?all=true&filters=');
 		expect(decodeURIComponent(listUrl.split('filters=')[1])).toBe(

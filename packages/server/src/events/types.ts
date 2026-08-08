@@ -90,6 +90,8 @@ export type DomainEvent =
 			filename: string;
 			/** true = archived, false = restored. */
 			archived: boolean;
+			taskId?: string | null;
+			runId?: string | null;
 	  } & Scope &
 			Actor)
 	| ({
@@ -100,6 +102,19 @@ export type DomainEvent =
 			title?: string | null;
 			/** When set, the audit row is attributed to the agent entity (system prompt edits). */
 			agentMemberId?: string | null;
+	  } & Scope &
+			Actor)
+	/** Deliberately separate from document.updated so a restore is distinguishable from an edit. */
+	| ({
+			type: 'document.archived';
+			documentId: string;
+			documentType: string;
+			slug?: string | null;
+			title?: string | null;
+			/** true = archived, false = restored. */
+			archived: boolean;
+			taskId?: string | null;
+			runId?: string | null;
 	  } & Scope &
 			Actor)
 	| ({

@@ -1,11 +1,12 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { GoalDetailPage } from '../../../../components/goal-detail/goal-detail-page';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
-function ProjectGoalDetailPage() {
-	const { projectId, goalId } = Route.useParams();
-	return <GoalDetailPage projectId={projectId} goalId={goalId} />;
-}
-
+/** Redirect stub for the pre-nesting goal URL — see `goals/index.tsx`. */
 export const Route = createFileRoute('/projects/$projectId/goals/$goalId')({
-	component: ProjectGoalDetailPage,
+	beforeLoad: ({ params }) => {
+		throw redirect({
+			to: '/projects/$projectId/progress/goals/$goalId',
+			params: { projectId: params.projectId, goalId: params.goalId },
+			replace: true,
+		});
+	},
 });

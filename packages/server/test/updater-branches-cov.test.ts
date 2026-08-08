@@ -18,6 +18,7 @@ import {
 	UpdateApplyError,
 } from '../src/services/updater';
 import { HEZO_VERSION } from '../src/version';
+import { blobBytes } from './helpers';
 
 async function tmp(prefix: string): Promise<string> {
 	return mkdtemp(join(tmpdir(), prefix));
@@ -85,7 +86,7 @@ describe('downloadAndStage manifest parsing', () => {
 		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
 			const url = String(input);
 			if (url.endsWith('/SHA256SUMS')) return new Response(sumsText, { status: 200 });
-			return new Response(assetBytes, { status: 200 });
+			return new Response(blobBytes(assetBytes), { status: 200 });
 		});
 	}
 

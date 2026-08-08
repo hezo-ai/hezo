@@ -1,3 +1,7 @@
+// Criterion #2 (viewport-conditional behavior): the assignee badge renders from a
+// different branch of the task-detail header at 375px, and the point of the spec
+// is that the task-scoped idle rule survives that swap. happy-dom runs no media
+// queries against a real layout pass, so the mobile branch never mounts there.
 import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, uniqueName, waitForPageLoad } from './helpers';
 

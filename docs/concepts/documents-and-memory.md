@@ -69,8 +69,12 @@ back to:
 Documents are markdown, and they live in Hezo, not in the project's source repository, so
 every agent can reach them without cluttering the codebase. You read and edit any document
 from the **Documents** page in the web app, and agents read and write the same files as they
-work (`list_project_docs`, `read_project_doc`, and `write_project_doc` over Hezo's
-[MCP server](/docs/mcp/hezo-mcp-server)). A document is referenced by its plain filename -
+work (`list_project_docs`, `read_project_doc`, `write_project_doc`, and `edit_project_doc`
+over Hezo's [MCP server](/docs/mcp/hezo-mcp-server)). An agent changing part of a document
+uses `edit_project_doc`, which replaces one span and leaves the rest alone; `write_project_doc`
+replaces the whole body and is what creates a document. Because documents are records rather
+than files, an agent that tries to save one to its container's filesystem is stopped and told
+to use the document tools instead, and any stray copy it leaves behind is reported on the run. A document is referenced by its plain filename -
 for example `spec.md` - so links stay stable as the work evolves. Each document also carries
 a short **description** - an overall one-or-two-sentence summary of what the document is and
 when to read it, shown under its filename in the list and at the top of the document, so you
@@ -110,9 +114,12 @@ The list in the rail shows **Active** documents by default; the **Active / Archi
 pills under the filter box switch views, each with a live count, and archived entries carry
 an "Archived" chip. Opening an archived document shows a banner naming who archived it and
 when, with a one-click **Restore**. While archived, a document is **read-only** - no edits,
-status changes, or version restores until you restore it. (The repo-backed `AGENTS.md`
-entry is a file in your repository, not a project document - it's always visible and can't
-be archived.)
+status changes, or version restores until you restore it, and that holds for agents and
+for changes you had already approved. Archiving and restoring are both recorded in the
+project's [activity log](/docs/security/activity-log), separately from ordinary edits, and
+when an agent does either, the entry names the task and run it came from. (The repo-backed
+`AGENTS.md` entry is a file in your repository, not a project document - it's always
+visible and can't be archived.)
 
 **Deletion is permanent and admin-only.** Agents can never delete a document. The Delete
 action only appears on archived documents, so removing one for good is a deliberate

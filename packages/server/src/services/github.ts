@@ -21,6 +21,12 @@ export interface RepoAccessResult {
 	 * may not have.
 	 */
 	canPush: boolean | null;
+	/**
+	 * Whether the repo is private, off the same response. `null` means unknown -
+	 * the field was absent or the body unreadable - and is never read as "public",
+	 * so a message that names the visibility can decline to rather than guess.
+	 */
+	isPrivate: boolean | null;
 }
 
 export interface GitHubOrg {
@@ -49,7 +55,20 @@ export type CreateRepoResult =
 			private: boolean;
 			default_branch: string;
 	  }
-	| { status: 'already_exists'; owner: string; name: string };
+	| {
+			status: 'already_exists';
+			owner: string;
+			name: string;
+			/**
+			 * Visibility of the repo that is already there, when it could be read.
+			 *
+			 * Carried because "already exists" on its own is the least useful true
+			 * thing to say: the case that actually confuses people is asking for a
+			 * public repo whose name is taken by a **private** one they cannot see in
+			 * the picker, so the message needs to be able to name it.
+			 */
+			existingPrivate: boolean | null;
+	  };
 
 const authHeaders = (accessToken: string) => ({
 	Authorization: `Bearer ${accessToken}`,
@@ -91,27 +110,42 @@ export async function validateRepoAccess(
 	const res = await fetchFn(`${getApiBaseUrl()}/repos/${owner}/${repo}`, {
 		headers: authHeaders(accessToken),
 	});
-	if (res.status !== 200) return { accessible: false, status: res.status, canPush: null };
-	return { accessible: true, status: res.status, canPush: await parsePushPermission(res) };
+	if (res.status !== 200) {
+		return { accessible: false, status: res.status, canPush: null, isPrivate: null };
+	}
+	// One read of the body for both facts: it is the same response, and asking
+	// twice would be a second API call for something already in hand.
+	const { canPush, isPrivate } = await parseRepoFacts(res);
+	return { accessible: true, status: res.status, canPush, isPrivate };
 }
 
 /**
- * Read `permissions.push` off a repo response. Any shape that doesn't carry a
- * boolean there — an unexpected body, a non-JSON response, an API that omits
- * the field — is reported as unknown rather than assumed either way.
+ * Read `permissions.push` and `private` off a repo response. Any shape that
+ * doesn't carry a boolean where one is expected — an unexpected body, a non-JSON
+ * response, an API that omits the field — is reported as unknown rather than
+ * assumed either way.
  */
-async function parsePushPermission(res: Response): Promise<boolean | null> {
+async function parseRepoFacts(res: Response): Promise<{
+	canPush: boolean | null;
+	isPrivate: boolean | null;
+}> {
 	let body: unknown;
 	try {
 		body = await res.json();
 	} catch {
-		return null;
+		return { canPush: null, isPrivate: null };
 	}
-	if (typeof body !== 'object' || body === null) return null;
+	if (typeof body !== 'object' || body === null) return { canPush: null, isPrivate: null };
 	const permissions = (body as { permissions?: unknown }).permissions;
-	if (typeof permissions !== 'object' || permissions === null) return null;
-	const push = (permissions as { push?: unknown }).push;
-	return typeof push === 'boolean' ? push : null;
+	const push =
+		typeof permissions === 'object' && permissions !== null
+			? (permissions as { push?: unknown }).push
+			: undefined;
+	const priv = (body as { private?: unknown }).private;
+	return {
+		canPush: typeof push === 'boolean' ? push : null,
+		isPrivate: typeof priv === 'boolean' ? priv : null,
+	};
 }
 
 export async function fetchAuthenticatedUser(
@@ -174,6 +208,20 @@ export async function createGitHubRepo(
 	accessToken: string,
 	fetchFn: FetchFn = globalThis.fetch,
 ): Promise<CreateRepoResult> {
+	// Asked before creating, not only inferred from the failure afterwards.
+	//
+	// The 422 path below does catch a collision, but only if GitHub's error prose
+	// still matches - and it can say nothing about the repo that is in the way.
+	// The case that actually confuses people is a **private** repo holding the
+	// name: it is invisible in the picker, so "create" looks like the only option
+	// and the collision reads as a bug in Hezo. One GET turns that into a
+	// statement of what is there.
+	const existing = await validateRepoAccess(owner, name, accessToken, fetchFn);
+	if (existing.accessible) {
+		log.info('GitHub repo already exists, refusing to create', { owner, name });
+		return { status: 'already_exists', owner, name, existingPrivate: existing.isPrivate };
+	}
+
 	const user = await fetchAuthenticatedUser(accessToken, fetchFn);
 	const isPersonal = user?.login.toLowerCase() === owner.toLowerCase();
 
@@ -187,11 +235,14 @@ export async function createGitHubRepo(
 	if (!res.ok) {
 		const body = await res.text();
 		if (res.status === 422 && isRepoNameAlreadyExists(body)) {
+			// The race backstop, and the fallback for a repo the check could not see
+			// (an org repo the token may create in but not read). Kept rather than
+			// replaced: the pre-check narrows the window, it does not close it.
 			log.info('GitHub repo name already exists, surfacing as already_exists', {
 				owner,
 				name,
 			});
-			return { status: 'already_exists', owner, name };
+			return { status: 'already_exists', owner, name, existingPrivate: null };
 		}
 		throw new Error(`Failed to create GitHub repo (${res.status}): ${body}`);
 	}

@@ -31,6 +31,20 @@ function str(details: Record<string, unknown>, key: string): string | null {
 	return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
+/** A tri-state flag: true / false / absent (the key was never written). */
+function bool(details: Record<string, unknown>, key: string): boolean | null {
+	const v = details[key];
+	return typeof v === 'boolean' ? v : null;
+}
+
+/** Comma-joined `filenames`, the plural key the delete/deletion-request rows carry. */
+function fileList(details: Record<string, unknown>, key: string): string | null {
+	const v = details[key];
+	if (!Array.isArray(v)) return null;
+	const names = v.filter((n): n is string => typeof n === 'string' && n.length > 0);
+	return names.length > 0 ? names.join(', ') : null;
+}
+
 /** The task identifier a row concerns, whether it is the entity itself or referenced. */
 function taskRef(entry: AuditEntry): string | null {
 	return entry.entity_identifier ?? entry.ref_task_identifier;
@@ -84,11 +98,31 @@ export function describeAuditEntry(entry: AuditEntry): string {
 			if (entry.action === 'run_completed') return `Completed an agent run${on}${outcome}`;
 			return `${verb} an agent run${on}`;
 		}
-		case 'asset':
-			return `Uploaded ${str(d, 'filename') ?? 'a file'}${task ? ` to ${task}` : ''}`;
-		case 'document':
+		case 'asset': {
+			const name = str(d, 'filename');
+			// `archived` is only present on an archive/restore row, so it also tells
+			// these apart from an upload — every asset action shares the `updated`
+			// action verb.
+			const archived = bool(d, 'archived');
+			if (archived === true) return `Archived ${name ?? 'a file'}`;
+			if (archived === false) return `Restored ${name ?? 'a file'}`;
+			// Deletes and deletion requests carry `filenames` (plural), so reading
+			// `filename` alone made them read as uploads.
+			const names = fileList(d, 'filenames');
+			if (entry.action === 'deleted') return `Deleted ${names ?? name ?? 'a file'}`;
+			if (entry.action === 'requested') {
+				return `Requested deletion of ${names ?? name ?? 'a file'}${task ? ` in ${task}` : ''}`;
+			}
+			return `Uploaded ${name ?? 'a file'}${task ? ` to ${task}` : ''}`;
+		}
+		case 'document': {
 			if (str(d, 'field') === 'system_prompt') return `${verb} the system prompt`;
-			return `${verb} document ${str(d, 'title') ?? str(d, 'slug') ?? ''}`.trimEnd();
+			const name = str(d, 'title') ?? str(d, 'slug') ?? '';
+			const archived = bool(d, 'archived');
+			if (archived === true) return `Archived document ${name}`.trimEnd();
+			if (archived === false) return `Restored document ${name}`.trimEnd();
+			return `${verb} document ${name}`.trimEnd();
+		}
 		case 'agent': {
 			if (entry.action === 'created') return 'Created an agent';
 			const change = str(d, 'change');

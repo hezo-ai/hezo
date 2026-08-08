@@ -4,6 +4,7 @@ import { encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
+import { normalizeAllowedHosts } from '../lib/credential-placeholder';
 import { validateCredentialValue } from '../lib/credential-validator';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import {
@@ -424,7 +425,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 	const authorUserId = auth.type === AuthType.Admin ? auth.userId : null;
 
 	const result = await withTransaction(db, async () => {
-		const inserted = await db.query<{ id: string }>(
+		const inserted = await db.query<{ id: string; public_id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, author_api_key_id, author_user_id, parent_comment_id, content_type, content)
      VALUES ($1, $2, $3, $4, $5, $6::comment_content_type, $7::jsonb)
      RETURNING *`,
@@ -475,6 +476,7 @@ commentsRoutes.post('/projects/:projectId/tasks/:taskId/comments', async (c) => 
 			authorMemberId,
 			authorApiKeyId,
 			c.get('wsManager'),
+			{ kind: 'comment', commentPublicId: result.rows[0].public_id },
 		).catch((e) => log.error('Failed to record task links from comment:', e));
 	}
 
@@ -548,16 +550,15 @@ commentsRoutes.post(
 		const requestContent = row.content;
 		const name = String(requestContent.name ?? '');
 		const kind = String(requestContent.kind ?? '');
-		const requestHosts = Array.isArray(requestContent.allowed_hosts)
-			? (requestContent.allowed_hosts as string[])
-			: [];
+		// Both sides go through the shared normalizer, so a host the agent
+		// requested as `https://api.foo.com` is stored in the bare-hostname shape
+		// the proxy actually compares against rather than silently never matching.
+		const requestHosts = normalizeAllowedHosts(requestContent.allowed_hosts);
 		// The human pasting the value can set or correct the host allowlist —
 		// the safety net when an agent requested an exempt kind (other/webhook)
 		// without scoping, leaving the secret undeliverable. A non-empty override
 		// wins; otherwise the agent's requested hosts stand.
-		const overrideHosts = Array.isArray(body.allowed_hosts)
-			? body.allowed_hosts.map((h) => String(h).trim().toLowerCase()).filter((h) => h.length > 0)
-			: [];
+		const overrideHosts = normalizeAllowedHosts(body.allowed_hosts);
 		const allowedHosts = overrideHosts.length > 0 ? overrideHosts : requestHosts;
 		// Body substitution is a sensitive capability the human must approve. The
 		// agent's request (stored in the comment) seeds the form's checkbox; if the

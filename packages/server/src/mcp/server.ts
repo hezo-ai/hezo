@@ -18,7 +18,13 @@ import {
 	ONBOARDING_TOOLS,
 	REGISTER_TOOL,
 } from './onboarding';
-import { authContext, registerTools, resolveScope, type ToolDef } from './tools';
+import {
+	authContext,
+	callerOriginContext,
+	registerTools,
+	resolveScope,
+	type ToolDef,
+} from './tools';
 
 let mcpServer: McpServer | null = null;
 let toolDefs: ToolDef[] = [];
@@ -88,6 +94,20 @@ function extractBearer(c: Context<Env>): string | null {
 	const header = c.req.header('Authorization');
 	if (!header?.startsWith('Bearer ')) return null;
 	return header.slice(7);
+}
+
+/**
+ * The origin this request was addressed to, for building absolute URLs the same
+ * caller can dial back. See {@link callerOriginContext} for why it comes off the
+ * request rather than from server config.
+ */
+function callerOrigin(c: Context<Env>): string {
+	const host = c.req.header('Host');
+	if (!host) return new URL(c.req.url).origin;
+	// The MCP leg is plain HTTP over the tunnel's loopback port; a deployment
+	// terminating TLS in front says so with the standard forwarded header.
+	const proto = c.req.header('X-Forwarded-Proto') ?? new URL(c.req.url).protocol.replace(':', '');
+	return `${proto}://${host}`;
 }
 
 async function authenticateRequest(c: Context<Env>): Promise<AuthInfo | null> {
@@ -191,7 +211,9 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 	if (body.method === 'tools/list') {
 		result = await client.listTools();
 	} else if (body.method === 'tools/call') {
-		result = await authContext.run(auth, () => client.callTool(body.params));
+		result = await authContext.run(auth, () =>
+			callerOriginContext.run(callerOrigin(c), () => client.callTool(body.params)),
+		);
 	} else {
 		return c.json({
 			jsonrpc: '2.0',

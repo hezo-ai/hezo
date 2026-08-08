@@ -5,6 +5,7 @@ import {
 	Agent as HttpAgent,
 	type Server as HttpServer,
 	request as httpRequest,
+	type IncomingHttpHeaders,
 	type IncomingMessage,
 	type ServerResponse,
 } from 'node:http';
@@ -15,6 +16,7 @@ import {
 	request as httpsRequest,
 } from 'node:https';
 import { connect as netConnect, type Socket } from 'node:net';
+import { rootCertificates } from 'node:tls';
 import type { CA } from 'mockttp/dist/util/certificates';
 import { getCA } from 'mockttp/dist/util/certificates';
 import type { MasterKeyManager } from '../../crypto/master-key';
@@ -30,11 +32,19 @@ import {
 import type { HezoCA } from './ca';
 import { mcpMethodBlockedMessage, shouldBlockMcpRequest } from './mcp-method-guard';
 import {
+	BlockedEgressTargetError,
+	isBlockedEgressHost,
+	isSelfEndpoint,
+	resolveGuardedAddress,
+	type SelfEndpoint,
+} from './net-guard';
+import {
 	EGRESS_HOST_PORT_RANGE_END,
 	EGRESS_HOST_PORT_RANGE_START,
 	PortAllocator,
 } from './port-allocator';
 import {
+	headerValueCarriesPlaceholder,
 	loadAllSecrets,
 	PLACEHOLDER_PROBE_REGEX,
 	type ResolvedSecret,
@@ -72,7 +82,15 @@ const MAX_BODY_SUBSTITUTION_BYTES = 8192;
  * than this is rejected rather than forwarded uninspected — see `forward`. */
 const MAX_MCP_INSPECTION_BYTES = 262144;
 
-const PROXY_HOST = 'host.docker.internal';
+/**
+ * Where the per-run proxy binds, and the address reported back for it.
+ *
+ * One value, and it is loopback: the only thing that ever dials this proxy is
+ * the host-side end of a run's tunnel, running in this process. A container
+ * reaches it on its own loopback port, through that tunnel - never by routing
+ * to the host - so the proxy needs no interface beyond this one and there is
+ * nothing here for an operator to open in a firewall.
+ */
 const PROXY_BIND_HOST = '127.0.0.1';
 
 /** Bytes of per-run proxy token. Mirrors the SSH-agent bridge's TCP token
@@ -110,16 +128,11 @@ export interface EgressProxyDeps {
 	 * churn never contends with front-proxy binds. Injectable for tests. */
 	hostPortAllocator?: PortAllocator;
 	proxyHost?: string;
-	/** Interface the per-run proxy binds to. Defaults to `127.0.0.1`
-	 * (loopback-only — agent containers reach it via `host.docker.internal`,
-	 * which on Docker Desktop tunnels to host loopback). Docker integration
-	 * tests on a native-Linux daemon set this to `0.0.0.0` so the container can
-	 * reach the proxy via the bridge gateway IP, which loopback would refuse. */
+	/** Interface the per-run proxy binds to. Production always uses the loopback
+	 * default (see {@link PROXY_BIND_HOST}); the Docker integration tests set
+	 * `0.0.0.0` because they drive the proxy from a container directly, without
+	 * standing up a tunnel first. */
 	proxyBindHost?: string;
-	/** Mutable override for the bind host, read **per-run** at allocation time so
-	 * the boot connectivity check can auto-rebind to the detected bridge gateway IP
-	 * without a restart. Takes precedence over `proxyBindHost` when set. */
-	bindHostRef?: { get(): string };
 	/** Additional CA certs to trust when verifying upstream HTTPS servers.
 	 * Tests use this to trust upstreams that present certs minted from the
 	 * same CA the proxy uses. Production keeps this empty so the proxy
@@ -131,6 +144,16 @@ export interface EgressProxyDeps {
 	 * secret-substitution red line still holds either way, since an
 	 * unauthenticated caller only ever ships unsubstituted placeholders. */
 	authEnabled?: boolean;
+	/** Permit proxied egress to loopback / link-local / private addresses.
+	 * Defaults to `false`: the proxy runs in the host's network namespace, so
+	 * without this an agent could reach Hezo's own API, its database, or any
+	 * host-bound daemon through the tunnel (see `net-guard.ts`). Set `true` (via
+	 * `--egress-allow-private-targets` / `HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`)
+	 * for an operator whose MCP server or git remote genuinely lives on the LAN. */
+	allowPrivateTargets?: boolean;
+	/** Hezo's own endpoint as a container reaches it, exempted from the
+	 * destination guard above (see `isSelfEndpoint`). */
+	selfEndpoint?: SelfEndpoint;
 }
 
 export interface RunProxyScope {
@@ -174,6 +197,8 @@ export class EgressProxy {
 	private readonly proxyHost: string;
 	private readonly proxyBindHost: string;
 	private readonly authEnabled: boolean;
+	private readonly allowPrivateTargets: boolean;
+	private readonly selfEndpoint: SelfEndpoint | null;
 	private mintCa: Promise<CA> | null = null;
 
 	constructor(private readonly deps: EgressProxyDeps) {
@@ -181,9 +206,11 @@ export class EgressProxy {
 		this.hostPortAllocator =
 			deps.hostPortAllocator ??
 			new PortAllocator(EGRESS_HOST_PORT_RANGE_START, EGRESS_HOST_PORT_RANGE_END);
-		this.proxyHost = deps.proxyHost ?? PROXY_HOST;
+		this.proxyHost = deps.proxyHost ?? PROXY_BIND_HOST;
 		this.proxyBindHost = deps.proxyBindHost ?? PROXY_BIND_HOST;
 		this.authEnabled = deps.authEnabled ?? true;
+		this.allowPrivateTargets = deps.allowPrivateTargets ?? false;
+		this.selfEndpoint = deps.selfEndpoint ?? null;
 	}
 
 	get caCertPath(): string {
@@ -233,7 +260,7 @@ export class EgressProxy {
 					runId,
 					scope,
 					port,
-					bindHost: this.deps.bindHostRef?.get() ?? this.proxyBindHost,
+					bindHost: this.proxyBindHost,
 					token: tokenBytes,
 					db: this.deps.db,
 					masterKeyManager: this.deps.masterKeyManager,
@@ -241,6 +268,8 @@ export class EgressProxy {
 					upstreamTrustedCAs: this.deps.extraUpstreamTrustedCAs,
 					hostPortAllocator: this.hostPortAllocator,
 					mcpRestrictions,
+					allowPrivateTargets: this.allowPrivateTargets,
+					selfEndpoint: this.selfEndpoint,
 				});
 
 				try {
@@ -311,6 +340,10 @@ interface RunProxyConfig {
 	 * inspection path at all. Resolved once at allocation: the allowlist is an
 	 * operator setting, not something that should change under a live run. */
 	mcpRestrictions: Map<string, McpHostRestriction>;
+	/** When true, skip the private/loopback destination guard (`net-guard.ts`). */
+	allowPrivateTargets: boolean;
+	/** Hezo's own endpoint, exempt from that guard. */
+	selfEndpoint: SelfEndpoint | null;
 }
 
 /** A per-host internal TLS-terminating server. The agent's CONNECT socket is
@@ -373,7 +406,14 @@ class RunProxyInstance {
 	constructor(private readonly cfg: RunProxyConfig) {
 		this.upstreamAgent = new HttpsAgent({
 			keepAlive: false,
-			...(cfg.upstreamTrustedCAs ? { ca: cfg.upstreamTrustedCAs } : {}),
+			// Appended to the public roots, never substituted for them: passing `ca`
+			// alone *replaces* the default trust store, so naming one extra
+			// certificate would silently make every public upstream unverifiable.
+			// The option means what it says - an addition, for an upstream whose
+			// certificate is not publicly rooted.
+			...(cfg.upstreamTrustedCAs
+				? { ca: [...rootCertificates, ...[cfg.upstreamTrustedCAs].flat()] }
+				: {}),
 		});
 		this.upstreamHttpAgent = new HttpAgent({ keepAlive: false });
 	}
@@ -551,11 +591,41 @@ class RunProxyInstance {
 		// Proxy-Authorization on the CONNECT (never inside the TLS tunnel), so
 		// this is the only place to enforce it for HTTPS egress.
 		if (!this.isAuthorized(req.headers['proxy-authorization'])) {
-			client.write(
+			// `Connection: close` and a flushing `end()` are both load-bearing, and
+			// the reason is a client that *probes* before it authenticates.
+			//
+			// git sets libcurl's `CURLOPT_PROXYAUTH` to `CURLAUTH_ANY`, so its first
+			// CONNECT deliberately carries no credentials: it reads this 407 to learn
+			// which scheme the proxy wants, then retries. Announcing only
+			// `Content-Length: 0` tells it the connection is still reusable, so the
+			// retry goes out on *this* socket - which `destroy()` had already torn
+			// down without flushing. libcurl reports `Proxy CONNECT aborted` and the
+			// clone fails. curl's own `-x user:pass@` sends Basic on the first
+			// CONNECT and never reaches this path, which is why every curl-driven
+			// assertion passed while every in-container `git clone` failed.
+			client.end(
 				`HTTP/1.1 407 Proxy Authentication Required\r\n` +
 					`Proxy-Authenticate: Basic realm="${PROXY_AUTH_REALM}"\r\n` +
+					`Connection: close\r\n` +
 					`Content-Length: 0\r\n\r\n`,
 			);
+			return;
+		}
+
+		// Refuse an obviously-blocked tunnel before minting a per-host TLS server
+		// and leaf cert for it. A hostname is undecidable here and is caught on the
+		// upstream leg by `resolveGuardedAddress`, which sees the resolved address.
+		const connectPort = Number(target.slice(sep + 1)) || 443;
+		if (
+			!this.cfg.allowPrivateTargets &&
+			!isSelfEndpoint(host, connectPort, this.cfg.selfEndpoint) &&
+			isBlockedEgressHost(host)
+		) {
+			log.warn('egress CONNECT to a private or loopback target refused', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				host,
+			});
+			client.write(`HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
 			client.destroy();
 			return;
 		}
@@ -605,8 +675,8 @@ class RunProxyInstance {
 			client.resume();
 		});
 		up.on('error', () => client.destroy());
-		up.on('close', () => client.destroy());
-		client.on('close', () => up.destroy());
+		up.on('close', () => flushingClose(client, host, 'agent'));
+		client.on('close', () => flushingClose(up, host, 'upstream'));
 	}
 
 	/** Return a live per-host TLS server, rebuilding it if the cached one has
@@ -726,6 +796,54 @@ class RunProxyInstance {
 		req.pause();
 
 		const { host, port, path } = resolveTarget(isSSL, connectHost, req);
+
+		// Plain (non-CONNECT) requests never passed through `onConnect`, so this is
+		// their first destination check. An IP-literal target is refused outright;
+		// a hostname is resolved and checked below, before anything is dialed.
+		const selfTarget = isSelfEndpoint(host, port, this.cfg.selfEndpoint);
+		const guardTarget = !this.cfg.allowPrivateTargets && !selfTarget;
+		if (guardTarget && isBlockedEgressHost(host)) {
+			log.warn('egress request to a private or loopback target refused', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				host,
+			});
+			respondEarly(
+				res,
+				403,
+				'target_not_allowed',
+				`Egress to ${host} is blocked: private and loopback addresses are not reachable through the proxy.`,
+			);
+			req.resume();
+			return;
+		}
+
+		// Resolved here, once, so the upstream legs dial an address that has already
+		// passed the guard. `resolveGuardedAddress` explains why this is not a
+		// `lookup` option on the request.
+		let dialHost = host;
+		if (guardTarget) {
+			try {
+				dialHost = await resolveGuardedAddress(host);
+			} catch (e) {
+				const blocked = e instanceof BlockedEgressTargetError;
+				if (blocked) {
+					log.warn('egress request to a private or loopback target refused', {
+						run: ref(this.cfg.scope.label, this.cfg.runId),
+						host,
+					});
+				}
+				respondEarly(
+					res,
+					blocked ? 403 : 502,
+					blocked ? 'target_not_allowed' : 'dns_failed',
+					blocked
+						? `Egress to ${host} is blocked: private and loopback addresses are not reachable through the proxy.`
+						: `Egress to ${host} failed: ${(e as Error).message}`,
+				);
+				req.resume();
+				return;
+			}
+		}
 		const method = req.method ?? 'GET';
 		const headers: Record<string, string | string[] | undefined> = {};
 		for (const [name, value] of Object.entries(req.headers)) {
@@ -748,6 +866,15 @@ class RunProxyInstance {
 			// correct host:port to the upstream.
 			delete headers.host;
 			delete headers.Host;
+		}
+
+		// Except when the dial target is an address rather than the name: the
+		// runtime would then regenerate `Host` from that address, and the upstream
+		// answers a redirect to its own canonical name instead of serving the
+		// request. Restated explicitly here, which is safe because TLS validates
+		// against `servername` (set to the real name) rather than this header.
+		if (dialHost !== host) {
+			headers.host = port === (isSSL ? 443 : 80) ? host : `${host}:${port}`;
 		}
 
 		const protocol = isSSL ? 'https' : 'http';
@@ -869,14 +996,40 @@ class RunProxyInstance {
 					// pre-validated regex match — defensive only
 				}
 			}
+			// `upstreamPath` now carries real secret values whenever the agent put a
+			// placeholder in the query string, so it must never reach a log line. The
+			// pre-substitution `path` still holds the placeholder — the same diagnostic
+			// value, inert — so that is what rides to the failure logger.
 			if (bufferedBody !== null) {
 				const outBody =
 					result.bodyChanged && result.body !== null
 						? Buffer.from(result.body, 'utf8')
 						: bufferedBody;
-				this.forwardBuffered(isSSL, host, port, method, upstreamPath, headers, outBody, res);
+				this.forwardBuffered(
+					isSSL,
+					host,
+					dialHost,
+					port,
+					method,
+					upstreamPath,
+					headers,
+					outBody,
+					res,
+					path,
+				);
 			} else {
-				this.pipeUpstream(isSSL, host, port, method, upstreamPath, headers, req, res);
+				this.pipeUpstream(
+					isSSL,
+					host,
+					dialHost,
+					port,
+					method,
+					upstreamPath,
+					headers,
+					req,
+					res,
+					path,
+				);
 			}
 			return;
 		}
@@ -884,41 +1037,49 @@ class RunProxyInstance {
 		// No placeholder anywhere. A buffered (eligible) body must be forwarded from
 		// the buffer — its stream is already consumed; otherwise stream as usual.
 		if (bufferedBody !== null) {
-			this.forwardBuffered(isSSL, host, port, method, path, headers, bufferedBody, res);
+			this.forwardBuffered(isSSL, host, dialHost, port, method, path, headers, bufferedBody, res);
 		} else {
-			this.pipeUpstream(isSSL, host, port, method, path, headers, req, res);
+			this.pipeUpstream(isSSL, host, dialHost, port, method, path, headers, req, res);
 		}
 	}
 
 	private pipeUpstream(
 		isSSL: boolean,
 		host: string,
+		dialHost: string,
 		port: number,
 		method: string,
 		path: string,
 		headers: Record<string, string | string[] | undefined>,
 		req: IncomingMessage,
 		res: ServerResponse,
+		logPath: string = path,
 	): void {
 		const requestFn = isSSL ? httpsRequest : httpRequest;
 		const upstream = requestFn(
 			{
-				host,
 				port,
 				method,
 				path,
 				headers,
+				// `dialHost` is the guarded resolution of `host` (see
+				// `resolveGuardedAddress`): dialing the literal already checked leaves
+				// no check/connect gap, and `servername` keeps TLS validating against
+				// the real name rather than the address.
+				host: dialHost,
 				...(isSSL
 					? { servername: host, agent: this.upstreamAgent }
 					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
-				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+				res.writeHead(upstreamRes.statusCode ?? 502, relayedResponseHeaders(upstreamRes.headers));
 				upstreamRes.pipe(res);
 			},
 		);
 		this.trackUpstream(upstream);
-		upstream.on('error', (err) => this.onForwardError(res, err, { host, port, method, path }));
+		upstream.on('error', (err) =>
+			this.onForwardError(res, err, { host, port, method, path: logPath }),
+		);
 		req.pipe(upstream);
 	}
 
@@ -929,12 +1090,14 @@ class RunProxyInstance {
 	private forwardBuffered(
 		isSSL: boolean,
 		host: string,
+		dialHost: string,
 		port: number,
 		method: string,
 		path: string,
 		headers: Record<string, string | string[] | undefined>,
 		body: Buffer,
 		res: ServerResponse,
+		logPath: string = path,
 	): void {
 		const outHeaders: Record<string, string | string[] | undefined> = { ...headers };
 		outHeaders['content-length'] = String(body.byteLength);
@@ -947,22 +1110,28 @@ class RunProxyInstance {
 		const requestFn = isSSL ? httpsRequest : httpRequest;
 		const upstream = requestFn(
 			{
-				host,
 				port,
 				method,
 				path,
 				headers: outHeaders,
+				// `dialHost` is the guarded resolution of `host` (see
+				// `resolveGuardedAddress`): dialing the literal already checked leaves
+				// no check/connect gap, and `servername` keeps TLS validating against
+				// the real name rather than the address.
+				host: dialHost,
 				...(isSSL
 					? { servername: host, agent: this.upstreamAgent }
 					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
-				res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+				res.writeHead(upstreamRes.statusCode ?? 502, relayedResponseHeaders(upstreamRes.headers));
 				upstreamRes.pipe(res);
 			},
 		);
 		this.trackUpstream(upstream);
-		upstream.on('error', (err) => this.onForwardError(res, err, { host, port, method, path }));
+		upstream.on('error', (err) =>
+			this.onForwardError(res, err, { host, port, method, path: logPath }),
+		);
 		upstream.end(body);
 	}
 
@@ -1034,7 +1203,12 @@ interface TargetAddress {
 }
 
 /** The upstream a forwarded request was aimed at, attached to failure logs so a
- * connection error names the host it could not reach. */
+ * connection error names the host it could not reach.
+ *
+ * `path` is the **pre-substitution** path — the one still carrying
+ * `__HEZO_SECRET_<NAME>__`, not the value. This struct feeds `failureMeta`, i.e.
+ * a log line, and a URL-placed placeholder is substituted before forwarding; the
+ * post-substitution path is a live credential and must never be logged. */
 interface UpstreamTarget {
 	host: string;
 	port: number;
@@ -1151,9 +1325,12 @@ function respondProxyAuthRequired(res: ServerResponse): void {
 }
 
 function headersContainProbe(headers: Record<string, string | string[] | undefined>): boolean {
-	for (const v of Object.values(headers)) {
-		if (typeof v === 'string' && PLACEHOLDER_PROBE_REGEX.test(v)) return true;
-		if (Array.isArray(v) && v.some((s) => PLACEHOLDER_PROBE_REGEX.test(s))) return true;
+	// Header-aware on purpose: a placeholder inside a base64 Basic credential is
+	// invisible to a literal scan, and this gate decides whether substitution runs
+	// at all. See `headerValueCarriesPlaceholder`.
+	for (const [name, v] of Object.entries(headers)) {
+		if (typeof v === 'string' && headerValueCarriesPlaceholder(name, v)) return true;
+		if (Array.isArray(v) && v.some((s) => headerValueCarriesPlaceholder(name, s))) return true;
 	}
 	return false;
 }
@@ -1166,6 +1343,82 @@ function headerValue(
 	if (typeof v === 'string') return v;
 	if (Array.isArray(v)) return v[0] ?? null;
 	return null;
+}
+
+/**
+ * How long a bridge leg may spend flushing after its peer has gone.
+ *
+ * Bounded by the surviving peer reading rather than by anything the proxy waits
+ * on, so it is generous. A run's release severs every tracked socket outright,
+ * so nothing here can outlive the run regardless.
+ */
+const BRIDGE_FLUSH_DEADLINE_MS = 15_000;
+
+/**
+ * Close one leg of a CONNECT bridge once its peer has gone, flushing whatever is
+ * still queued for it.
+ *
+ * `destroy()` cancels queued writes rather than flushing them, so a leg closed
+ * while its peer is behind used to lose whatever had not yet reached the kernel.
+ * The agent side falls behind **by design** - the tunnel multiplexer pauses its
+ * socket whenever a stream runs out of credit - so this is the ordinary state,
+ * not an edge case, and a body that stops short presents to the client as a
+ * stall rather than as an error. `end()` writes the queue out and then sends
+ * FIN, which is the same reason the 407 path already uses it.
+ *
+ * The deadline is the backstop for a peer that never drains, and it is the one
+ * case still worth a warning: reaching it means bytes really were dropped.
+ */
+function flushingClose(sock: Socket, host: string, leg: 'agent' | 'upstream'): void {
+	if (sock.destroyed) return;
+	if (!sock.writableEnded) sock.end();
+
+	const deadline = setTimeout(() => {
+		const pending = sock.writableLength;
+		if (pending > 0) {
+			log.warn(`egress bridge for ${host} gave up flushing ${pending} byte(s) on the ${leg} leg`);
+		}
+		sock.destroy();
+	}, BRIDGE_FLUSH_DEADLINE_MS);
+	// Never a reason to hold the process open.
+	deadline.unref();
+	sock.once('close', () => clearTimeout(deadline));
+}
+
+/**
+ * Headers for a relayed response, closing the client connection after it.
+ *
+ * **The close is a runtime workaround, and the body depends on it.** Measured on
+ * Bun (1.3.14), which is what production runs: the *first* response on a client
+ * connection is framed correctly, and every **reused** one carries a spurious
+ * `Content-Length: 0` beside its `Transfer-Encoding: chunked`. A client that
+ * honours the length reads an empty body from a response that actually has one.
+ *
+ * That shape is invisible to a client which opens a connection per request -
+ * which is every `curl` assertion in this repo, and why this survived so long -
+ * and fatal to one that reuses. `git` reuses: it fetches `/info/refs` (fine, the
+ * first response), then `POST`s `git-upload-pack` down the same connection and
+ * reads an empty pack, reported as `RPC failed` plus `expected flush after ref
+ * listing`. Every agent-facing HTTP client that keeps connections alive had the
+ * same silent truncation on its second request onwards.
+ *
+ * `Connection: close` makes every response the first on its connection, which is
+ * the one case the runtime frames correctly. The cost is a handshake per request
+ * against a loopback MITM server; the alternative is silently truncating
+ * responses. Remove it only once a Bun release is confirmed to frame reused
+ * responses correctly - `egress-keepalive.bun.test.ts` is what proves that.
+ */
+function relayedResponseHeaders(
+	headers: IncomingHttpHeaders,
+): Record<string, string | string[] | undefined> {
+	const out: Record<string, string | string[] | undefined> = {};
+	for (const [name, value] of Object.entries(headers)) {
+		// The upstream's own connection management describes its hop, not ours.
+		if (HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
+		out[name] = value;
+	}
+	out.connection = 'close';
+	return out;
 }
 
 /** Whether a request is eligible for body placeholder substitution, decided from

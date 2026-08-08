@@ -54,16 +54,54 @@ header, so the credential itself only ever travels in that one login request.
 ## Scoped to the hosts that need it
 
 Every secret carries an **allowed-hosts** list - the upstreams it may be used with
-(for example `api.stripe.com`). This is what makes a leak structurally impossible
-rather than just discouraged: a secret can only ever reach the destinations you scoped
-it to.
+(for example `api.stripe.com`). This is what makes the boundary structural rather than
+just discouraged: a secret can only ever be sent to the destinations you scoped it to,
+whatever the agent asks for.
 
-## Never logged
+Write each entry as a bare hostname. Hezo normalizes what you type - a scheme, a port
+or a path is stripped, so `https://api.stripe.com:443/v1` is stored as `api.stripe.com`
+and matches the same way. A leading `*.` is a wildcard for subdomains
+(`*.googleapis.com` covers `sheets.googleapis.com`).
 
-Substitution happens inside the egress proxy, and the secret's **value is never written
-anywhere** - not to a log line, a request record, or disk. Hezo does not keep a per-request
-trail of which secret was used against which host; the guarantee is simply that the value
-itself never leaves the vault except as a live substitution into the outbound request.
+### What the scope does and does not promise
+
+Scoping means an agent can **use** a credential against the hosts you named without
+ever **knowing** its value. Two limits are worth understanding, because they are
+properties of the design rather than gaps in it:
+
+- **The upstream sees the real value.** That is the whole point - it is a real request
+  with a real credential. So if a host you allowed happens to echo the credential back
+  (a debug or echo endpoint, or an error message that quotes the `Authorization`
+  header), the agent reads it in the response. Scope secrets to hosts you trust not to
+  reflect them, and prefer the narrowest, shortest-lived credential the provider
+  offers.
+- **"Allow all hosts" gives up the guarantee.** With no host list, the agent chooses
+  the destination, so it can send the credential somewhere it controls. Use it only for
+  a credential you would be comfortable handing over outright.
+
+## Logging
+
+Substitution happens inside the egress proxy, and a secret's **value is never written to
+a log line or to disk**. Hezo also keeps no per-request trail of which secret was used
+against which host, so there is no record to leak: the value never leaves the vault
+except as a live substitution into the outbound request.
+
+Diagnostics deliberately record the **placeholder** rather than the value. If a request
+fails to reach its upstream, the log line names the host and the path with
+`__HEZO_SECRET_<NAME>__` still in it - enough to debug the failure, inert if the log is
+ever shared.
+
+## Where agents can reach
+
+The egress proxy runs on the machine hosting Hezo, so by default it refuses to carry
+agent traffic to **loopback, link-local and private addresses** - an agent cannot tunnel
+through it to reach Hezo's own API, its database, or anything else bound to your host or
+LAN. The check is made on the address a name actually resolves to, not on the name
+itself.
+
+If an MCP server or a git remote your agents genuinely need lives on your local network,
+start Hezo with `--egress-allow-private-targets` (or
+`HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`) to lift the restriction.
 
 ## How secrets get in
 

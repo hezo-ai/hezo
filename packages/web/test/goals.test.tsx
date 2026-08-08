@@ -25,7 +25,7 @@ test('renders the goals empty state when a project has no goals', async () => {
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -34,9 +34,11 @@ test('renders the goals empty state when a project has no goals', async () => {
 	});
 });
 
-test('Progress page renders the Captain progress summary above the goals', async () => {
+// Goals no longer render on the Progress page — they have their own page under it. What the
+// summary header carries instead is the goal-progress indicator, which links there.
+test('Progress page renders the Captain summary with a goal indicator, not the goals themselves', async () => {
 	let projectSlug = '';
-	const { findByText, findByTestId, router } = await renderApp({
+	const { findByText, findByTestId, queryByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -51,14 +53,17 @@ test('Progress page renders the Captain progress summary above the goals', async
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress',
 		params: { projectId: projectSlug },
 	});
 
 	await findByTestId('project-progress-summary', undefined, { timeout: 10_000 });
-	// The bold lead key point renders from markdown, and the goal panel shows below.
+	// The bold lead key point renders from markdown.
 	await findByText('Auth shipped.');
-	await findByText('Reach 100 customers');
+	// The indicator stands in for the goals, which live on their own page now.
+	const indicator = await findByTestId('goal-progress-indicator');
+	expect(indicator.getAttribute('href')).toContain(`/projects/${projectSlug}/progress/goals`);
+	expect(queryByText('Reach 100 customers')).toBeNull();
 });
 
 test('the goal detail run feed renders the health as a coloured pill and links to the run', async () => {
@@ -85,7 +90,7 @@ test('the goal detail run feed renders the health as a coloured pill and links t
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals/$goalId',
+		to: '/projects/$projectId/progress/goals/$goalId',
 		params: { projectId: projectSlug, goalId },
 	});
 
@@ -112,7 +117,7 @@ test('the Progress page progress-update footer renders runs as collapsible run c
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress',
 		params: { projectId: projectSlug },
 	});
 
@@ -135,7 +140,7 @@ test('the Goals header help button opens the SMART guidance modal', async () => 
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -165,7 +170,7 @@ test('the goal create form renders an info tooltip for every field', async () =>
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -200,7 +205,7 @@ test('clicking a goal opens its page with breadcrumbs, run feed, and edit modal'
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -236,7 +241,7 @@ test('the edit dialog pre-fills the Deadline field from a goal saved with a targ
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -277,7 +282,7 @@ test('the goal detail blurb linkifies task identifiers and markdown PR links', a
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals/$goalId',
+		to: '/projects/$projectId/progress/goals/$goalId',
 		params: { projectId: projectSlug, goalId },
 	});
 
@@ -311,7 +316,7 @@ test('Project progress shows only the bold lead line until expanded', async () =
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress',
 		params: { projectId: projectSlug },
 	});
 
@@ -340,19 +345,21 @@ test('Project progress header opens a help dialog explaining how it updates', as
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress',
 		params: { projectId: projectSlug },
 	});
 
 	// The explanation lives behind the question-mark help button, not inline.
 	const help = await findByTestId('project-progress-help', undefined, { timeout: 10_000 });
-	expect(queryByText(/reviews progress across the project/)).toBeNull();
+	expect(queryByText(/reviews the project and rewrites this page/)).toBeNull();
 
 	await user.click(help);
 
-	// The dialog explains what it is and that the Captain refreshes it during progress-update runs.
+	// The dialog explains the summary's altitude (no individual tasks — the columns carry those)
+	// and that the Captain refreshes it during progress-update runs.
 	await findByText('About project progress');
-	await findByText(/reviews progress across the project/);
+	await findByText(/names no individual tasks/);
+	await findByText(/reviews the project and rewrites this page/);
 });
 
 test('the goal run feed hides the status summary until expanded, keeping task chips visible', async () => {
@@ -378,7 +385,7 @@ test('the goal run feed hides the status summary until expanded, keeping task ch
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals/$goalId',
+		to: '/projects/$projectId/progress/goals/$goalId',
 		params: { projectId: projectSlug, goalId },
 	});
 
@@ -407,7 +414,7 @@ test('the New goal button sits on the Goals header line and opens the create dia
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -431,7 +438,7 @@ test('the Progress page shows a Run now button beside the progress update runs l
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress',
 		params: { projectId: projectSlug },
 	});
 
@@ -474,7 +481,7 @@ test('archiving a goal from the Goals list is confirmed first, and cancelling le
 		});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -517,7 +524,7 @@ test('the goal detail page confirms archiving, and unarchiving is a single click
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals/$goalId',
+		to: '/projects/$projectId/progress/goals/$goalId',
 		params: { projectId: projectSlug, goalId },
 	});
 
@@ -548,8 +555,8 @@ test('Run now queues when the Captain is busy, and the queued run can be cancell
 			// project's running container holding the only slot.
 			await seedGoal(ws, project, { title: 'Ship it', measurement: 'shipped' });
 			await ctx.db.query(
-				`INSERT INTO system_meta (key, value) VALUES ('max_active_containers', '1')
-				 ON CONFLICT (key) DO UPDATE SET value = '1'`,
+				`INSERT INTO system_meta (key, value) VALUES ('max_container_memory_gb', '2')
+				 ON CONFLICT (key) DO UPDATE SET value = '2'`,
 			);
 			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
 				project.id,
@@ -566,7 +573,7 @@ test('Run now queues when the Captain is busy, and the queued run can be cancell
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress',
 		params: { projectId: projectSlug },
 	});
 

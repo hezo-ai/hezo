@@ -2,7 +2,6 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { Languages } from 'lucide-react';
 import { useState } from 'react';
 import { useI18n } from '../../lib/i18n';
-import { Button } from '../ui/button';
 import { DialogContent } from '../ui/dialog';
 import { LocaleEditor } from './locale-editor';
 
@@ -44,14 +43,13 @@ export function LocaleSwitcher() {
 				<Dialog.Title className="text-base font-semibold text-text-1 mb-5 pr-8">
 					{t('locale.settings.title')}
 				</Dialog.Title>
+				{/* Cancel is the editor's own button, not a `Dialog.Close` passed in:
+				    it has to re-translate along with the rest of the card while a
+				    language is being previewed, and this dialog is already controlled. */}
 				<LocaleEditor
-					submitLabel={t('locale.settings.save')}
+					submitLabelKey="locale.settings.save"
 					onSaved={() => setOpen(false)}
-					secondaryAction={
-						<Dialog.Close asChild>
-							<Button variant="secondary">{t('locale.settings.cancel')}</Button>
-						</Dialog.Close>
-					}
+					onCancel={() => setOpen(false)}
 				/>
 			</DialogContent>
 		</Dialog.Root>

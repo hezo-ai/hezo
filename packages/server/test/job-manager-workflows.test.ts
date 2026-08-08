@@ -6,9 +6,9 @@ import type { Db } from '../src/db/database';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
-import type { DockerClient } from '../src/services/docker';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -18,12 +18,16 @@ import {
 	createTestTeam,
 } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 
+// The runner's data dir must be the harness's own, not a fixed path: the
+// container engine resolves a run's files through the project's workspace under
+// it, so a hardcoded literal would stage them somewhere the test cannot read.
+let testDataDir: string;
 let app: Hono<Env>;
 let db: Db;
 let token: string;
@@ -35,8 +39,12 @@ let taskId: string;
 let taskIdentifier: string;
 let agentId: string;
 
-function createMockDocker(): DockerClient {
-	return {
+function createMockDocker(): ContainerEngine {
+	// Built on createStubDocker rather than hand-rolled: a literal cast through
+	// `as unknown as ContainerEngine` silently omits whatever the interface grows
+	// next, and the compiler cannot say so. That is how six specs came to call a
+	// method that did not exist on their engine.
+	return createStubDocker({
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
@@ -54,7 +62,7 @@ function createMockDocker(): DockerClient {
 		execStart: async () => ({ stdout: 'done', stderr: '' }),
 		execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
 		killRunProcesses: async () => {},
-	} as unknown as DockerClient;
+	});
 }
 
 function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
@@ -63,7 +71,7 @@ function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 		docker: createMockDocker(),
 		masterKeyManager,
 		serverPort: 3100,
-		dataDir: '/tmp/test-data',
+		dataDir: testDataDir,
 		wsManager: { broadcast: () => {} } as any,
 		logs: new LogStreamBroker(),
 		containerLogStreamer: new ContainerLogStreamer(),
@@ -73,6 +81,7 @@ function createJobManager(overrides: Partial<JobManagerDeps> = {}): JobManager {
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
+	testDataDir = ctx.dataDir;
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
@@ -140,6 +149,27 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
+/**
+ * "This project has no running container" - both representations of it.
+ *
+ * A project row and its pool members are two records of the same containers, so
+ * a fixture that stops only the row leaves the pool advertising a warm container
+ * the capacity gate will happily let a run take.
+ */
+async function stopProjectContainers(db: Db, projectId: string): Promise<void> {
+	await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+	await db.query(`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`, [
+		projectId,
+	]);
+}
+
+async function startProjectContainers(db: Db, projectId: string): Promise<void> {
+	await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+	await db.query(`UPDATE container_pool_members SET state = 'idle' WHERE project_id = $1`, [
+		projectId,
+	]);
+}
+
 describe('JobManager workflow methods', () => {
 	describe('processWakeups', () => {
 		it('skips wakeups that are too recent (within coalescing window)', async () => {
@@ -203,8 +233,8 @@ describe('JobManager workflow methods', () => {
 			const manager = createJobManager();
 			// Container semantics: the wakeup's project container is stopped and a
 			// filler project's running container consumes the single slot.
-			await setMaxActiveContainersForTest(db, 1);
-			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await setContainerCapacityForTest(db, 1);
+			await stopProjectContainers(db, projectId);
 			await seedRunningContainerProject(db, 'cap-filler-wakeups');
 
 			const wakeupRes = await db.query<{ id: string }>(
@@ -244,9 +274,9 @@ describe('JobManager workflow methods', () => {
 			expect(task.queued_wakeup?.reason).toBe('instance_at_capacity');
 
 			manager.shutdown();
-			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await startProjectContainers(db, projectId);
 			await removeSeededContainerProject(db, 'cap-filler-wakeups');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 			// Drain everything still queued: the capacity block skipped not just our
 			// wakeup but any background ones (task-assignment pings), which earlier
 			// tests used to leave settled — later tests assume none are pending.
@@ -2238,6 +2268,7 @@ describe('JobManager workflow methods', () => {
 				projectId: 'p-1',
 				teamId: 'c-1',
 				taskKey: 'agent:m-1',
+				containerId: null,
 			});
 			manager.registerLiveRun({
 				runId: 'run-2',
@@ -2246,6 +2277,7 @@ describe('JobManager workflow methods', () => {
 				projectId: 'p-1',
 				teamId: 'c-1',
 				taskKey: 'agent:m-2',
+				containerId: null,
 			});
 			manager.registerLiveRun({
 				runId: 'run-3',
@@ -2254,6 +2286,7 @@ describe('JobManager workflow methods', () => {
 				projectId: 'p-2',
 				teamId: 'c-1',
 				taskKey: 'agent:m-3',
+				containerId: null,
 			});
 
 			expect(manager.getLiveRunIds()).toEqual(new Set(['run-1', 'run-2', 'run-3']));
@@ -2349,59 +2382,94 @@ describe('JobManager workflow methods', () => {
 	describe('container-capacity gating and cross-project parallelism', () => {
 		it('isContainerCapacityBlocked trips when a new container would exceed the limit', async () => {
 			const manager = createJobManager();
-			await setMaxActiveContainersForTest(db, 1);
-			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await setContainerCapacityForTest(db, 1);
+			await stopProjectContainers(db, projectId);
 			await seedRunningContainerProject(db, 'cap-check-a');
 
-			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(true);
+			expect((await (manager as any).isContainerCapacityBlocked(projectId)).blocked).toBe(true);
 
 			// The filler's container stops — the slot frees and the block lifts.
 			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE slug = 'cap-check-a'`);
-			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
+			expect((await (manager as any).isContainerCapacityBlocked(projectId)).blocked).toBe(false);
 
 			manager.shutdown();
-			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await startProjectContainers(db, projectId);
 			await removeSeededContainerProject(db, 'cap-check-a');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 		});
 
 		it('a project whose container is already running is never capacity-blocked', async () => {
 			const manager = createJobManager();
 			// The project's own running container fills the single slot — but a run
 			// into it needs no NEW container, so it must pass.
-			await setMaxActiveContainersForTest(db, 1);
-			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
+			await setContainerCapacityForTest(db, 1);
+			expect((await (manager as any).isContainerCapacityBlocked(projectId)).blocked).toBe(false);
 			manager.shutdown();
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
+		});
+
+		it('reports spare capacity from the pool, which is what tells a dispatch it will create a container', async () => {
+			// The gate returns this alongside its verdict so the dispatch after it
+			// knows whether to hold a pending-start slot. It used to answer that from
+			// `projects.container_status` instead, and the two stopped agreeing the
+			// moment a project could hold several containers: a project whose named
+			// container reads Running but whose members are all busy still needs a
+			// new one, so no slot was held for a container about to be created and
+			// two such dispatches could fit into the same headroom.
+			const manager = createJobManager();
+			try {
+				await startProjectContainers(db, projectId);
+				expect(
+					(await (manager as any).isContainerCapacityBlocked(projectId)).hasSpareContainer,
+				).toBe(true);
+
+				// Busy, not stopped: the project row still reads `running`, which is
+				// exactly the case the old test could not distinguish.
+				await db.query(`UPDATE container_pool_members SET state = 'busy' WHERE project_id = $1`, [
+					projectId,
+				]);
+				const verdict = await (manager as any).isContainerCapacityBlocked(projectId);
+				expect(verdict.hasSpareContainer).toBe(false);
+				const status = await db.query<{ container_status: string }>(
+					'SELECT container_status FROM projects WHERE id = $1',
+					[projectId],
+				);
+				expect(status.rows[0].container_status).toBe('running');
+			} finally {
+				manager.shutdown();
+				await startProjectContainers(db, projectId);
+			}
 		});
 
 		it('pending lazy-starts hold a slot and let same-project dispatches piggyback', async () => {
 			const manager = createJobManager();
-			await setMaxActiveContainersForTest(db, 1);
-			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await setContainerCapacityForTest(db, 1);
+			await stopProjectContainers(db, projectId);
 			(manager as any).acquirePendingContainerStart(projectId);
 
 			// The same project piggybacks on the in-flight start…
-			expect(await (manager as any).isContainerCapacityBlocked(projectId)).toBe(false);
+			expect((await (manager as any).isContainerCapacityBlocked(projectId)).blocked).toBe(false);
 			// …while a different project is blocked by the slot it holds.
 			expect(
-				await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'),
+				(await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'))
+					.blocked,
 			).toBe(true);
 
 			(manager as any).releasePendingContainerStart(projectId);
 			expect(
-				await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'),
+				(await (manager as any).isContainerCapacityBlocked('00000000-0000-0000-0000-0000000000aa'))
+					.blocked,
 			).toBe(false);
 
 			manager.shutdown();
-			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
-			await clearMaxActiveContainersForTest(db);
+			await startProjectContainers(db, projectId);
+			await clearContainerCapacityForTest(db);
 		});
 
 		it('re-queues a wakeup when the container limit is reached', async () => {
 			const manager = createJobManager();
-			await setMaxActiveContainersForTest(db, 1);
-			await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
+			await setContainerCapacityForTest(db, 1);
+			await stopProjectContainers(db, projectId);
 			await seedRunningContainerProject(db, 'cap-filler-requeue');
 
 			const wakeupRes = await db.query<{ id: string }>(
@@ -2421,9 +2489,9 @@ describe('JobManager workflow methods', () => {
 			expect(status.rows[0].status).toBe(WakeupStatus.Queued);
 
 			manager.shutdown();
-			await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
+			await startProjectContainers(db, projectId);
 			await removeSeededContainerProject(db, 'cap-filler-requeue');
-			await clearMaxActiveContainersForTest(db);
+			await clearContainerCapacityForTest(db);
 			await db.query('DELETE FROM agent_wakeup_requests WHERE id = $1', [wakeupId]);
 		});
 
@@ -2480,9 +2548,15 @@ describe('JobManager workflow methods', () => {
 			// with a free container slot, project B is not blocked by the agent's
 			// activity in project A.
 			expect(manager.isMemberRunning(agentId)).toBe(true);
-			await setMaxActiveContainersForTest(db, 2);
-			expect(await (manager as any).isContainerCapacityBlocked(projectBId)).toBe(false);
-			await clearMaxActiveContainersForTest(db);
+			// "With a free container slot" is the premise, so derive the cap from what
+			// is actually running rather than a literal: by this point in the file the
+			// pool legitimately holds containers from earlier tests, and a hardcoded 2
+			// would be asserting the cap, not the per-agent question under test.
+			const { getActiveContainers } = await import('../src/services/run-concurrency');
+			const active = await getActiveContainers(db, createStubDocker());
+			await setContainerCapacityForTest(db, Math.ceil(active.usedMemoryGb / 2) + 1);
+			expect((await (manager as any).isContainerCapacityBlocked(projectBId)).blocked).toBe(false);
+			await clearContainerCapacityForTest(db);
 
 			manager.shutdown();
 			// Project B lives in its own team, so it cannot interfere with project A's

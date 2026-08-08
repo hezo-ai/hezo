@@ -3,9 +3,12 @@
 // against the project rail's right edge) is measured with boundingBox from the
 // real flex/absolute layout, and the whole affordance is gated `lg:` so it must
 // be exercised at a real desktop width — neither is computable in happy-dom.
+// The sticky-banner test is point 1 too: occlusion is only observable from a real
+// layout pass plus a hit-test, and happy-dom has no notion of one element
+// covering another.
 
 import { expect, test } from './fixtures';
-import { waitForPageLoad } from './helpers';
+import { waitForPageLoad, waitForStableBox } from './helpers';
 
 test('the project menu collapses to a rail-docked expand tab and restores', async ({
 	page,
@@ -21,7 +24,9 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 
 	// The collapse button hugs the menu panel's top-right corner (absolute
 	// positioning, so only measurable from a real layout pass).
-	const menu = await page.getByTestId('project-menu').boundingBox();
+	// Settled first - see waitForStableBox: an absolute-positioned corner is
+	// measured against a panel that may still be sizing.
+	const menu = await waitForStableBox(page.getByTestId('project-menu'));
 	const collapseBox = await page.getByTestId('project-sidebar-collapse').boundingBox();
 	expect(menu).not.toBeNull();
 	expect(collapseBox).not.toBeNull();
@@ -42,17 +47,20 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 	const tab = page.getByTestId('project-sidebar-expand');
 	await expect(tab).toBeVisible();
 
-	// It's docked where the menu used to start, against the project rail's right edge.
+	// It's docked flush under the app header, against the project rail's right edge.
+	// The tab is docked against the header and the rail, so all three have to be
+	// measured from one settled layout - see waitForStableBox.
+	const tabBox = await waitForStableBox(tab);
+	const header = await page.locator('header').first().boundingBox();
 	const rail = await page.getByTestId('project-rail').boundingBox();
-	const tabBox = await tab.boundingBox();
-	expect(menu).not.toBeNull();
+	expect(header).not.toBeNull();
 	expect(rail).not.toBeNull();
 	expect(tabBox).not.toBeNull();
-	if (menu && rail && tabBox) {
+	if (header && rail && tabBox) {
 		// Left edge sits at the rail's right edge (±1px sub-pixel rounding).
 		expect(Math.abs(tabBox.x - (rail.x + rail.width))).toBeLessThanOrEqual(1);
-		// Top edge stays aligned with the menu's former top edge (±1px).
-		expect(Math.abs(tabBox.y - menu.y)).toBeLessThanOrEqual(1);
+		// Top edge sits flush under the header (±1px).
+		expect(Math.abs(tabBox.y - (header.y + header.height))).toBeLessThanOrEqual(1);
 		// It's the intended slim tab, not a tall button.
 		expect(tabBox.height).toBeLessThanOrEqual(24);
 	}
@@ -61,6 +69,61 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 	await tab.click();
 	await expect(page.getByTestId('project-sidebar-dashboard')).toBeVisible();
 	await expect(page.getByTestId('project-sidebar-expand')).toHaveCount(0);
+});
+
+test('the expand tab stays clickable when a sticky banner tops the page', async ({
+	page,
+	lightWorkspace,
+}) => {
+	await page.setViewportSize({ width: 1440, height: 900 });
+
+	// Give the project a failed container so ContainerStatusBanner renders. The
+	// banner's error state is `failed_container_count`, not `container_status`:
+	// a project is not bound to one container, so a stored `error` blocks nothing
+	// and is reported as `stopped` (see useContainerHealth). No REST route
+	// produces a failed container - the e2e server runs the in-process fake Docker
+	// client, where provisioning succeeds - so drive it from the projects index
+	// the banner reads (`useProjectMeta` -> `useProjectsIndex`), the same
+	// interception chat.spec.ts uses to pin a container state.
+	await page.route('**/api/projects', async (route) => {
+		if (route.request().method() !== 'GET') return route.fallback();
+		const response = await route.fetch();
+		const body = (await response.json()) as { data?: Array<Record<string, unknown>> };
+		const data = Array.isArray(body.data)
+			? body.data.map((p) =>
+					p.slug === lightWorkspace.projectSlug ? { ...p, failed_container_count: 1 } : p,
+				)
+			: body.data;
+		await route.fulfill({ response, json: { ...body, data } });
+	});
+
+	await page.goto(`/projects/${lightWorkspace.projectSlug}/tasks`);
+	await waitForPageLoad(page);
+
+	// The banner is `sticky top-0 z-40` at the very top of <main>; collapsed, <main>
+	// starts at the rail's right edge, so it lands on the expand tab's corner.
+	const banner = page.getByTestId('container-status-banner');
+	await expect(banner).toBeVisible({ timeout: 20000 });
+
+	await page.getByTestId('project-sidebar-collapse').click();
+	const tab = page.getByTestId('project-sidebar-expand');
+	await expect(tab).toBeVisible();
+
+	// The tab is drawn above the banner, so the banner insets its content past it
+	// rather than letting the tab bury the warning icon.
+	const tabBox = await tab.boundingBox();
+	const iconBox = await banner.locator('svg').first().boundingBox();
+	expect(tabBox).not.toBeNull();
+	expect(iconBox).not.toBeNull();
+	if (tabBox && iconBox) {
+		expect(iconBox.x).toBeGreaterThanOrEqual(tabBox.x + tabBox.width);
+	}
+
+	// Clicking is the assertion that actually catches the bug: toBeVisible() is
+	// satisfied by a fully covered element, but Playwright's actionability check
+	// hit-tests the click point and fails when another element intercepts it.
+	await tab.click();
+	await expect(page.getByTestId('project-sidebar-dashboard')).toBeVisible();
 });
 
 test('the mobile drawer is unaffected — no collapse affordance there', async ({

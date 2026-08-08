@@ -66,6 +66,10 @@ test('the funnel filter switches views and its caption tracks the selection', as
 	const activeCard = (await r.findByText('keep-me.png')).closest('li') as HTMLElement;
 	expect(activeCard.querySelector('[data-testid="asset-archive"]')).toBeTruthy();
 	expect(activeCard.querySelector('[data-testid="asset-delete"]')).toBeNull();
+	// Move is offered only while active — the server refuses a move on an
+	// archived asset (409 ASSET_ARCHIVED), so hiding it here matches the rule
+	// rather than merely papering over it.
+	expect(activeCard.querySelector('[data-testid="asset-move"]')).toBeTruthy();
 });
 
 test('restoring an archived asset returns it to the Active view', async () => {

@@ -1,6 +1,6 @@
 {
 	"name": "@hezo/shared",
-	"version": "0.38.0",
+	"version": "0.39.0",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"
@@ -9,7 +9,7 @@
 	"scripts": {
 		"build": "tsc",
 		"test": "vitest run",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc -p tsconfig.typecheck.json"
 	},
 	"dependencies": {
 		"@noble/curves": "^1.9.1",

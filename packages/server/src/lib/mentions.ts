@@ -4,28 +4,39 @@ const INLINE_CODE_RE = /`[^`]*`/g;
 // Captures a slug behind one or two leading @ — i.e. both active (@slug) and
 // passive (@@slug) references, so a deliberately-linked name is never flagged.
 const LINKED_MENTION_RE = /(?<![\w@])@@?([a-z0-9][\w-]*)/gi;
+// Passive references only (@@slug) — the deliberate "name them, don't wake them"
+// token. Used to report what a comment named without notifying.
+const PASSIVE_MENTION_RE = /(?<![\w@])@@([a-z0-9][\w-]*)/gi;
 
-// Directed-ask signals — text that reads as a request aimed at the reader rather
-// than a statement about them: a second-person pronoun (`you`/`your`/`yourself`,
-// which also covers `you're`/`you'll` via the word boundary), an imperative
-// request opener, or a question mark.
-const ASK_INTENT_RES: RegExp[] = [
+/**
+ * Directed-ask vocabulary — the ONE table every ask gate in this module reads.
+ * A new phrasing belongs here as a single row; it must never become a new
+ * positional branch on a detector (see detectPassiveTeammateAsks for why the
+ * position/intent split is what put this module on a treadmill).
+ *
+ * Two groups, kept in one list because every caller wants both:
+ *
+ *  - **Explicit request signals** — text aimed at the reader rather than a
+ *    statement about them: a second-person pronoun (`you`/`your`/`yourself`,
+ *    which also covers `you're`/`you'll` via the word boundary), an imperative
+ *    request opener, or a question mark.
+ *  - **Baton-passing signals** — a handoff written as a status line rather than
+ *    a request. SHARED_INSTRUCTIONS already treats this shape as an ask ("ready
+ *    for review", "ready to merge", "over to you"), but its grammar carries no
+ *    imperative opener, no second-person pronoun and no question mark, so the
+ *    request signals alone never fire on it. That is how a report's *closing
+ *    handoff block* — the one part whose entire job is to wake people — slips
+ *    through when its lines are passive: `@@captain — verification confirms
+ *    PASS. The document is ready for the admin.` reads as a status recap and
+ *    wakes no one. (`over to you` / `back to you` need no pattern; the pronoun
+ *    covers them.)
+ */
+const DIRECTED_ASK_RES: RegExp[] = [
+	// -- Explicit request signals --------------------------------------------
 	/\b(?:you|your|yourself)\b/i,
 	/\b(?:please|kindly|ptal)\b/i,
 	/\?/,
-];
-
-// Baton-passing signals — a handoff written as a status line rather than a
-// request. SHARED_INSTRUCTIONS already treats this shape as an ask ("ready for
-// review", "ready to merge", "over to you"), but its grammar carries no
-// imperative opener, no second-person pronoun and no question mark, so
-// ASK_INTENT_RES alone never fires on it. That is how a report's *closing
-// handoff block* — the one part whose entire job is to wake people — slips
-// through when its lines are passive: `@@captain — verification confirms PASS.
-// The document is ready for the admin.` reads as a status recap and wakes no
-// one. (`over to you` / `back to you` need no pattern here; the pronoun covers
-// them.)
-const HANDOFF_INTENT_RES: RegExp[] = [
+	// -- Baton-passing signals -----------------------------------------------
 	// "ready for review", "ready for the admin", "ready to merge/ship/publish"
 	/\bready\s+(?:for|to)\b/i,
 	// "all yours", "the call is yours" — `yours` escapes the `your` pronoun
@@ -50,15 +61,54 @@ const HANDOFF_INTENT_RES: RegExp[] = [
 ];
 
 /**
- * Whether text sitting next to a teammate address reads as a directed ask —
- * either an explicit request signal (ASK_INTENT_RES) or a baton-passing handoff
- * phrased as a status line (HANDOFF_INTENT_RES). Shared by both ask-gated
- * detectors so the passive and unlinked forms recognise the same intent.
+ * Whether text sitting next to a teammate reference reads as a directed ask.
+ * Shared by every ask gate so the passive and unlinked forms — and the
+ * sentence-scoped gate below — recognise exactly the same intent.
  */
 function readsAsAsk(block: string): boolean {
-	return (
-		ASK_INTENT_RES.some((re) => re.test(block)) || HANDOFF_INTENT_RES.some((re) => re.test(block))
+	return DIRECTED_ASK_RES.some((re) => re.test(block));
+}
+
+// Sentence boundary: terminal punctuation followed by whitespace, or a line
+// break. `.` inside a filename (`stock-JOBY.md is verified`) is NOT a boundary
+// because the lookbehind requires whitespace after it, so an entity reference
+// never splits a sentence away from its own ask.
+const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+|\n+/;
+
+/**
+ * REFERENTIAL frames — the closed set of grammatical shapes in which naming a
+ * teammate is attribution rather than an ask.
+ *
+ * This is the one place spending vocabulary is principled, and the asymmetry is
+ * the whole point: the ways to *ask* someone to do something are unbounded (which
+ * is why enumerating them put this module on a treadmill), but the ways to merely
+ * *refer to* someone are few and grammatically marked — a preposition in front, a
+ * possessive, or a past-tense reporting verb behind. Enumerating the safe set is
+ * finite work; enumerating the unsafe set is not.
+ *
+ * Used only to veto the sentence-scoped gate, so a sentence that credits one
+ * teammate while instructing the reader ("as @@architect noted, you should keep
+ * the interface stable") does not warn about the teammate it merely cites.
+ */
+const REFERENTIAL_LEAD_RE = String.raw`(?:per|as|by|from|via|with|cc|about|regarding)\s+(?:the\s+)?`;
+const REFERENTIAL_TRAIL_RE = String.raw`(?:['’]s\b|\s+(?:noted|note|said|says|confirmed|reported|reports|found|flagged|raised|approved|reviewed|verified|shipped|wrote|added|asked|mentioned|observed|recommended|identified|completed|delivered)\b)`;
+
+/** Whether every occurrence of `namePattern` in `sentence` sits in a referential frame. */
+function isPurelyReferential(sentence: string, namePattern: string): boolean {
+	const any = new RegExp(namePattern, 'gi');
+	const referential = new RegExp(
+		`(?:${REFERENTIAL_LEAD_RE}${namePattern})|(?:${namePattern}${REFERENTIAL_TRAIL_RE})`,
+		'gi',
 	);
+	const total = (sentence.match(any) ?? []).length;
+	if (total === 0) return false;
+	return (sentence.match(referential) ?? []).length >= total;
+}
+
+/** The sentence(s) of `stripped` containing a match for `namePattern`. */
+function sentencesContaining(stripped: string, namePattern: string): string[] {
+	const nameRe = new RegExp(namePattern, 'i');
+	return stripped.split(SENTENCE_SPLIT_RE).filter((s) => nameRe.test(s));
 }
 
 // Action-assignment phrases — a line that *assigns* work to the teammate it
@@ -145,6 +195,13 @@ const SIGNOFF_PENDING_ACTION_RE = String.raw`(?:sign-?\s?off|approve|review)`;
  * never when a gate word merely co-occurs with a non-addressed name elsewhere in
  * the sentence ("The doc went out for review last week; the architect wrote the
  * brief." → no match).
+ *
+ * Shared by BOTH ask-gated detectors, so the bare name (`for marketing-lead
+ * review`) and the passive form (`for @@marketing-lead review`) are recognised as
+ * the same handoff — neither wakes anyone. `namePattern` therefore carries its own
+ * left-edge guard (a `(?<![\w@…])` lookbehind) rather than relying on a `\b` here:
+ * a leading `\b` cannot match in front of the passive form's `@@`, which is how a
+ * mid-sentence `@@slug` sign-off gate went unflagged.
  */
 function hasNameBoundSignoffGate(stripped: string, namePattern: string): boolean {
 	const gateNameObject = new RegExp(
@@ -152,7 +209,7 @@ function hasNameBoundSignoffGate(stripped: string, namePattern: string): boolean
 		'i',
 	);
 	const namePendingAction = new RegExp(
-		String.raw`\b${namePattern}(?:['’]s)?\s+(?:(?:still\s+)?(?:needs?|has)\s+to\s+|to\s+|must\s+|should\s+)${SIGNOFF_PENDING_ACTION_RE}\b`,
+		String.raw`${namePattern}(?:['’]s)?\s+(?:(?:still\s+)?(?:needs?|has)\s+to\s+|to\s+|must\s+|should\s+)${SIGNOFF_PENDING_ACTION_RE}\b`,
 		'i',
 	);
 	return gateNameObject.test(stripped) || namePendingAction.test(stripped);
@@ -168,6 +225,26 @@ export function extractMentionSlugs(content: unknown): string[] {
 	while (match !== null) {
 		slugs.add(match[1].toLowerCase());
 		match = MENTION_RE.exec(stripped);
+	}
+	return Array.from(slugs);
+}
+
+/**
+ * The passive (`@@slug`) teammate references in `content` — the slugs the text
+ * deliberately names WITHOUT waking. The exact complement of
+ * {@link extractMentionSlugs}, which is who actually gets woken; together they
+ * let a write report what it did instead of guessing what it meant.
+ */
+export function extractPassiveMentionSlugs(content: unknown): string[] {
+	const text = flattenTextFields(content);
+	if (!text) return [];
+	const stripped = text.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
+	const slugs = new Set<string>();
+	PASSIVE_MENTION_RE.lastIndex = 0;
+	let match = PASSIVE_MENTION_RE.exec(stripped);
+	while (match !== null) {
+		slugs.add(match[1].toLowerCase());
+		match = PASSIVE_MENTION_RE.exec(stripped);
 	}
 	return Array.from(slugs);
 }
@@ -304,17 +381,33 @@ export function detectUnlinkedTeammateReferences(content: unknown, knownSlugs: s
 /**
  * Flags teammate slugs addressed with the PASSIVE mention form (`@@slug`) where an
  * active `@slug` was almost certainly intended — `@@` links without notifying, so
- * the handoff stalls silently. Two addressing forms, gated differently:
+ * the handoff stalls silently. Four forms, gated differently:
  *
+ * - An **action-assignment line** (`## Required actions for @@slug`) — the phrase
+ *   on the line assigns the work, so it is its own ask signal.
  * - A **leading-line address** (`@@slug — …`, optionally after a routing label) is
  *   flagged unconditionally. Opening a line with a teammate reference and a
  *   separator is the address shape, reserved for active mentions; a genuine
  *   passive reference goes inside the sentence. `@@admin — release is done.` is
  *   the canonical miss — it is asking the admin to register the fact, but carries
  *   no pronoun, no `please` and no `?`, so no ask gate can see it.
- * - An **emphasised** `**@@slug**` is ambiguous (bold marks attribution and
- *   headings too), so it keeps the directed-ask gate over its own paragraph(s)
- *   (see readsAsAsk) and a bold name written for emphasis is never flagged.
+ * - A **name bound directly to a sign-off/approval gate** (`Ready for @@slug
+ *   review`, `awaiting @@slug sign-off`, `@@slug to approve`) — the mid-sentence
+ *   handoff every address-position form above misses, because the name sits inside
+ *   the sentence rather than opening a line. This is the verdict-report closing
+ *   line (`APPROVED — the fix is correct. Ready for @@marketing-lead review.`):
+ *   the one sentence whose whole job is to hand over the next action, marked with
+ *   the form that wakes nobody. Same self-gating binding the bare-name detector
+ *   uses (see hasNameBoundSignoffGate), so both spellings of the identical
+ *   stranded handoff warn alike.
+ * - **Any position, when the token's own SENTENCE reads as a directed ask** (see
+ *   readsAsAsk) and does not merely cite the teammate (see isPurelyReferential).
+ *   This is the general case and the reason the three shapes above are now a
+ *   fast path rather than the whole check: they enumerate *positions*, which are
+ *   an unbounded set, so each incident used to add one. It subsumes the former
+ *   emphasised-`**@@slug**` branch, at a tighter scope — that branch gated on the
+ *   whole paragraph, so a `you` in an unrelated sentence could pull an
+ *   attribution into an ask.
  *
  * A slug that is also actively `@`-mentioned anywhere is never flagged — it
  * already notifies. Mirrors detectUnlinkedTeammateReferences for the passive form.
@@ -352,24 +445,48 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
 			flagged.add(slug);
 			continue;
 		}
-		// Emphasised `**@@slug**`/`__@@slug__` is genuinely ambiguous — bold is used
-		// for attribution and headings as much as for address — so it keeps the ask
-		// gate, scoped to the paragraph(s) carrying the mention so a `you` elsewhere
-		// never leaks in.
-		if (!new RegExp(String.raw`(\*\*|__)@@${s}\1`, 'i').test(stripped)) continue;
-		const block = passiveMentionParagraphs(stripped, s);
-		if (block && readsAsAsk(block)) flagged.add(slug);
+		// Name-bound sign-off gate with the passive form: `Ready for @@slug review`,
+		// `awaiting @@slug sign-off`, `@@slug to approve`. The binding to the gate is
+		// itself the ask signal, so like the action-assignment line it needs no
+		// readsAsAsk pass. Without this branch a closing verdict line that hands the
+		// next action to a named approver mid-sentence — the shape a review report
+		// ends on — matched none of the address-position forms and warned nowhere,
+		// even though the bare-name spelling of the same sentence already did.
+		if (hasNameBoundSignoffGate(stripped, String.raw`(?<![\w@])@@${s}(?![\w-])`)) {
+			flagged.add(slug);
+			continue;
+		}
+		// POSITION-INDEPENDENT ask gate — the branch that keeps this detector off the
+		// treadmill. Any `@@slug` whose OWN SENTENCE reads as a directed ask is
+		// flagged wherever the token sits, so a new phrasing never needs a new
+		// positional branch (see the four above, each added by an incident).
+		//
+		// Safe for the passive form specifically because `@@slug` is deliberate
+		// internal mention syntax naming exactly one teammate: there is no "the word
+		// happened to appear" failure mode, so position adds nothing beyond what the
+		// token already proves. A BARE name has that failure mode, which is why
+		// detectUnlinkedTeammateAsks still requires an address position.
+		//
+		// Sentence scope (not the paragraph scope the bold branch used) is what makes
+		// it safe: a `you` three sentences away can no longer pull an unrelated
+		// attribution into an ask. A sentence that only CITES the teammate is vetoed
+		// by isPurelyReferential, so `as @@architect noted, you should keep the
+		// interface stable` credits without warning.
+		//
+		// The miss this was written for: `… cleared for admin presentation.
+		// @@equity-analyst — please mark INV-86 done.` — mid-paragraph, mid-line, not
+		// bold, no sign-off vocabulary, so every positional branch above declined it
+		// while the strongest ask signal in the vocabulary sat four characters away.
+		const namePattern = String.raw`(?<![\w@])@@${s}(?![\w-])`;
+		if (
+			sentencesContaining(stripped, namePattern).some(
+				(sentence) => readsAsAsk(sentence) && !isPurelyReferential(sentence, namePattern),
+			)
+		) {
+			flagged.add(slug);
+		}
 	}
 	return Array.from(flagged);
-}
-
-/** The blank-line-delimited paragraph(s) of `stripped` that contain `@@<slug>`. */
-function passiveMentionParagraphs(stripped: string, escapedSlug: string): string {
-	const mentionRe = new RegExp(String.raw`(?<![\w@])@@${escapedSlug}\b`, 'i');
-	return stripped
-		.split(/\n\s*\n/)
-		.filter((p) => mentionRe.test(p))
-		.join('\n');
 }
 
 /**

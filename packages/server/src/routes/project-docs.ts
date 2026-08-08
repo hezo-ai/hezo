@@ -20,6 +20,7 @@ import {
 	type DocumentRowWithAuthor,
 	deleteDocument,
 	getDocument,
+	isDocumentArchived,
 	listDocuments,
 	listRevisions,
 	restoreRevision,
@@ -114,13 +115,16 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 
 	// Archived docs are read-only: restore first, then edit. Creating a new doc
 	// under an archived name would silently resurrect old history otherwise.
-	const prior = await getDocument(db, {
-		type: DocumentType.ProjectDoc,
-		teamId,
-		projectId,
-		slug: filename,
-	});
-	if (prior?.archived_at) {
+	// Checked here as well as inside upsertDocument because the prd.md branch
+	// below files an approval instead of writing, and never reaches the upsert.
+	if (
+		await isDocumentArchived(db, {
+			type: DocumentType.ProjectDoc,
+			teamId,
+			projectId,
+			slug: filename,
+		})
+	) {
 		return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
 	}
 
@@ -169,6 +173,12 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 		},
 	});
 
+	// Belt and braces: the pre-check above already refuses an archived doc, but
+	// upsertDocument enforces it transactionally too, so honour its verdict.
+	if (doc.status === 'archived') {
+		return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
+	}
+
 	// Re-read WITH_AUTHOR so the response carries created_at + resolved last editor.
 	const saved = await getDocument(db, {
 		type: DocumentType.ProjectDoc,
@@ -180,7 +190,7 @@ projectDocsRoutes.put('/projects/:projectId/docs/:filename', async (c) => {
 		c,
 		toDocResponse(
 			saved ?? {
-				...doc,
+				...doc.row,
 				last_updated_by_name: null,
 				last_updated_by_type: 'admin',
 				archived_by_name: null,
@@ -307,9 +317,6 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 		slug: filename,
 	});
 	if (!doc) return err(c, 'NOT_FOUND', `Document '${filename}' not found`, 404);
-	if (doc.archived_at) {
-		return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
-	}
 
 	const restoredByMemberId = await resolveActorMemberId(db, auth, teamId);
 	const restored = await restoreRevision(db, c.get('wsManager'), {
@@ -323,7 +330,11 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 			actorApiKeyId: apiKeyIdFromAuth(auth),
 		},
 	});
-	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
+	// An archived doc's content is frozen — restoreRevision owns that rule now.
+	if (restored.status === 'archived') {
+		return err(c, 'CONFLICT', `Document '${filename}' is archived — restore it first`, 409);
+	}
+	if (restored.status === 'not_found') return err(c, 'NOT_FOUND', 'Revision not found', 404);
 
 	const saved = await getDocument(db, {
 		type: DocumentType.ProjectDoc,
@@ -335,7 +346,7 @@ projectDocsRoutes.post('/projects/:projectId/docs/:filename/restore', async (c) 
 		c,
 		toDocResponse(
 			saved ?? {
-				...restored,
+				...restored.row,
 				last_updated_by_name: null,
 				last_updated_by_type: 'admin',
 				archived_by_name: null,

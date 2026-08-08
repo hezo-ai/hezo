@@ -8,6 +8,7 @@ import {
 	getCloneState,
 	getWorktreeState,
 	listWorktrees,
+	localGitLoc,
 	type RepoLoc,
 	resetCloneToOrigin,
 	type WorktreeLoc,
@@ -19,8 +20,8 @@ import { HostGitExecutor } from '../src/services/git-executor';
 // against the mkdtemp path would mismatch. No-op where tmpdir() has no symlinks.
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'git-clone-state-')));
 const exec = new HostGitExecutor();
-const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
-const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
+const repoLoc = (p: string): RepoLoc => localGitLoc(p);
+const wtLoc = (p: string): WorktreeLoc => localGitLoc(p);
 
 function run(cmd: string, cwd?: string) {
 	execSync(cmd, { cwd, stdio: 'pipe' });

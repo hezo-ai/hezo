@@ -7,6 +7,7 @@ import {
 	createWorktree,
 	getWorktreeHead,
 	initRepoInPlace,
+	localGitLoc,
 	type RepoLoc,
 	type WorktreeLoc,
 	worktreeHasChanges,
@@ -17,8 +18,8 @@ const root = mkdtempSync(join(tmpdir(), 'git-wt-state-'));
 const exec = new HostGitExecutor();
 // Force SSH ops to fail without touching the network (for initRepoInPlace).
 const failSshExec = new HostGitExecutor({ GIT_SSH_COMMAND: 'false', GIT_TERMINAL_PROMPT: '0' });
-const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
-const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
+const repoLoc = (p: string): RepoLoc => localGitLoc(p);
+const wtLoc = (p: string): WorktreeLoc => localGitLoc(p);
 
 function run(cmd: string, cwd?: string) {
 	execSync(cmd, { cwd, stdio: 'pipe' });
@@ -102,6 +103,7 @@ describe('initRepoInPlace (SSH transport)', () => {
 			failSshExec,
 			'nonexistent-org-hezo/nonexistent-repo',
 			repoLoc(dir),
+			null,
 		);
 		expect(result.success).toBe(false);
 		expect(typeof result.error).toBe('string');

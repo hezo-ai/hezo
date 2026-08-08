@@ -92,13 +92,15 @@ describe('API keys (admin-minted)', () => {
 			});
 			const text = body.result.content[0].text;
 			expect(text).not.toContain('Access denied');
-			expect(Array.isArray(JSON.parse(text))).toBe(true);
+			expect(Array.isArray(JSON.parse(text).items)).toBe(true);
 		}
 
 		// list_projects returns every project across the instance.
-		const projects = toolPayload(
-			await mcp(key, 'tools/call', { name: 'list_projects', arguments: {} }),
-		) as Json[];
+		const projects = (
+			toolPayload(await mcp(key, 'tools/call', { name: 'list_projects', arguments: {} })) as {
+				items: Json[];
+			}
+		).items;
 		const slugs = projects.map((p) => p.slug);
 		expect(slugs).toContain(slugA);
 		expect(slugs).toContain(slugB);

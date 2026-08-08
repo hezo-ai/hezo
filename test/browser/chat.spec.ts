@@ -463,3 +463,54 @@ test.describe('CEO chat widget — composer auto-grow', () => {
 		expect(await isClipped()).toBe(false);
 	});
 });
+
+// Kept in Playwright by decision-tree item 2 (viewport-conditional behavior):
+// the chat closes on navigation only in the presentations that BLOCK the page,
+// and which presentation is live depends on the viewport. happy-dom implements
+// matchMedia but reports a fixed 1024px width, so the component tier can only
+// reach the desktop branches (covered in
+// packages/web/test/overlay-close-on-navigate.test.tsx); the mobile
+// full-screen sheet needs Chromium at a real mobile viewport.
+test.describe('CEO chat widget — dismissal on navigation', () => {
+	test('mobile: following "View container" leaves no sheet over the page', async ({
+		sharedPage,
+		sharedWorkspace,
+	}) => {
+		const page = sharedPage;
+
+		// Put HQ mid-provision so the chat renders its blocked panel, whose only
+		// affordance is the link out to the container page.
+		await page.route('**/api/projects', async (route) => {
+			const res = await route.fetch();
+			const json = (await res.json()) as { data: Array<Record<string, unknown>> };
+			await route.fulfill({
+				response: res,
+				body: JSON.stringify({
+					...json,
+					data: json.data.map((p) =>
+						p.is_internal === true ? { ...p, container_status: 'creating' } : p,
+					),
+				}),
+			});
+		});
+
+		await page.setViewportSize({ width: 375, height: 800 });
+		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
+		await waitForPageLoad(page);
+
+		const launcher = page.getByTestId('chat-launcher');
+		await expect(launcher).toBeVisible({ timeout: 15000 });
+		await launcher.click();
+
+		const panel = page.getByTestId('chat-panel');
+		await expect(panel).toBeVisible();
+		await panel.getByTestId('hq-container-notice-link').click();
+
+		// The sheet and its scrim both go, and the page it navigated to is what the
+		// reader is actually left looking at.
+		await expect(page).toHaveURL(/\/settings\/containers$/);
+		await expect(panel).toBeHidden();
+		await expect(page.getByTestId('chat-overlay')).toBeHidden();
+		await expect(launcher).toBeVisible();
+	});
+});

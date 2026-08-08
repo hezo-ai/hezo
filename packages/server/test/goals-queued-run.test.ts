@@ -16,10 +16,10 @@ import {
 	createTestTeam,
 } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 
 // The queued manual progress-update run ("Run now" while the Captain is busy). Covers the queue
@@ -125,7 +125,7 @@ describe('queued manual progress-update run', () => {
 		// Block dispatch on the container limit so run-now takes the queued path
 		// (the pre-lazy-start code got the same outcome from the container being
 		// down; that is no longer a blocker).
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await seedRunningContainerProject(db, 'cap-goals-coalesce');
 
 		// A pre-existing task-less scheduled heartbeat wakeup for the same Captain.
@@ -137,7 +137,7 @@ describe('queued manual progress-update run', () => {
 		);
 		const heartbeatId = heartbeat.rows[0].id;
 
-		const res = await app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+		const res = await app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: '{}',
@@ -162,7 +162,7 @@ describe('queued manual progress-update run', () => {
 		expect(progress.rows[0].payload.trigger).toBe('progress_update_now');
 
 		// The list surfaces only the manual progress wakeup, never the heartbeat.
-		const list = await app.request(`/api/projects/${projectSlug}/goals/queued-run`, {
+		const list = await app.request(`/api/projects/${projectSlug}/progress/queued-run`, {
 			headers: authHeader(token),
 		});
 		expect((await list.json()).data.queued.id).toBe(body.wakeup_id);
@@ -172,12 +172,12 @@ describe('queued manual progress-update run', () => {
 			[heartbeatId, body.wakeup_id],
 		]);
 		await removeSeededContainerProject(db, 'cap-goals-coalesce');
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 	});
 
 	it('cancel returns 404 for an unknown wakeup id', async () => {
 		const res = await app.request(
-			`/api/projects/${projectSlug}/goals/queued-run/00000000-0000-0000-0000-000000000000/cancel`,
+			`/api/projects/${projectSlug}/progress/queued-run/00000000-0000-0000-0000-000000000000/cancel`,
 			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
 		);
 		expect(res.status).toBe(404);
@@ -191,7 +191,7 @@ describe('queued manual progress-update run', () => {
 		await createDueGoal('Capacity re-queue goal');
 		const wakeupId = await insertProgressWakeup();
 		const manager = createJobManager();
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await seedRunningContainerProject(db, 'cap-goals-filler');
 
 		// Drive activateAgent through the public run-now dispatch (task-less path).
@@ -212,7 +212,7 @@ describe('queued manual progress-update run', () => {
 
 		manager.shutdown();
 		await removeSeededContainerProject(db, 'cap-goals-filler');
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 		await db.query(`DELETE FROM agent_wakeup_requests WHERE id = $1`, [wakeupId]);
 	});
 

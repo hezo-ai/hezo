@@ -7,7 +7,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { signAssetUrl } from '../src/lib/asset-urls';
 import type { Env } from '../src/lib/types';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
 let app: Hono<Env>;
@@ -45,7 +45,7 @@ async function uploadAsset(
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	return app.request(`/api/projects/${targetProjectSlug}/tasks/${targetTaskId}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },
@@ -169,6 +169,63 @@ describe('asset upload', () => {
 		const huge = new Uint8Array(10 * 1024 * 1024 + 1);
 		const res = await uploadAsset('large.png', 'image/png', huge);
 		expect(res.status).toBe(400);
+	});
+
+	it('accepts a zip however the browser spelled its content type', async () => {
+		// Windows Chrome and Edge read `application/x-zip-compressed` out of the
+		// registry; Firefox and Safari send `application/zip`. The extension decides,
+		// so every spelling stores the one canonical type.
+		const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]);
+		for (const [name, declared] of [
+			['bundle.zip', 'application/x-zip-compressed'],
+			['export.zip', 'application/zip'],
+			['blob.zip', 'application/octet-stream'],
+		]) {
+			const res = await uploadAsset(name, declared, zip);
+			expect(res.status, `${name} declared ${declared}`).toBe(201);
+			const body = await res.json();
+			expect(body.data.content_type).toBe('application/zip');
+			expect(body.data.original_filename).toBe(`uploads/${taskIdentifier}/${name}`);
+			expect(body.data.byte_size).toBe(zip.byteLength);
+		}
+	});
+
+	it('stores the other archive formats under their canonical types', async () => {
+		const bytes = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]);
+		for (const [name, declared, expected] of [
+			['logs.tar', '', 'application/x-tar'],
+			// A double extension resolves through its last segment, name intact.
+			['backup.tar.gz', 'application/x-gzip', 'application/gzip'],
+			['snapshot.tgz', '', 'application/gzip'],
+			['files.7z', '', 'application/x-7z-compressed'],
+			['legacy.rar', 'application/x-rar-compressed', 'application/vnd.rar'],
+		]) {
+			const res = await uploadAsset(name, declared, bytes);
+			expect(res.status, name).toBe(201);
+			const body = await res.json();
+			expect(body.data.content_type, name).toBe(expected);
+			expect(body.data.original_filename).toBe(`uploads/${taskIdentifier}/${name}`);
+		}
+	});
+
+	it('serves an archive as a forced download', async () => {
+		const upload = await uploadAsset(
+			'served.zip',
+			'application/zip',
+			new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+		);
+		expect(upload.status).toBe(201);
+		const { url } = (await upload.json()).data;
+
+		// An archive has nothing to render, so it must never come back inline.
+		const res = await app.request(url);
+		expect(res.status).toBe(200);
+		expect(res.headers.get('content-type')).toBe('application/zip');
+		expect(res.headers.get('content-disposition')).toBe('attachment; filename="served.zip"');
+		expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(new Uint8Array(await res.arrayBuffer())).toEqual(
+			new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+		);
 	});
 });
 

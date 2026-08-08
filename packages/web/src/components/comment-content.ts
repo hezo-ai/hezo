@@ -34,10 +34,19 @@ export interface SystemStatusChangeContent {
 
 export interface SystemTaskLinkContent {
 	kind: 'task_link';
+	source_task_id?: string;
 	source_identifier?: string;
 	source_project_slug?: string;
+	/**
+	 * Where in the source task the mention was written. Absent on rows recorded
+	 * before the origin was tracked, which render as description-sourced ones do.
+	 */
+	source_kind?: 'description' | 'comment';
+	/** The `#comment-<id>` anchor on the source task, when the origin was a comment. */
+	source_comment_public_id?: string | null;
+	actor_id?: string | null;
 	actor_name?: string;
-	actor_kind?: 'agent' | 'user' | 'admin';
+	actor_kind?: 'agent' | 'user' | 'admin' | 'api_key';
 	actor_slug?: string | null;
 	text?: string;
 }

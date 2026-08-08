@@ -34,10 +34,17 @@ architect, engineers, QA, and more). See
 
 Open the project from the rail - it lands on the **Dashboard**, where you can see action
 items waiting on you, current spend, work in progress, a progress snippet, and goals at a
-glance. The Captain plans the work into tasks and the agents start picking them up. You'll
-see tasks move across the board, agents comment as they go, and runs stream their logs
-live. Agents wake on a heartbeat to look for work, so the team keeps moving without you
-driving each step.
+glance.
+
+The Captain starts on the **planning task**, turning your brief into the work the team
+will do. If the brief leaves something load-bearing open, it will post a question that
+`@`-mentions you and wait for your answer rather than guessing - so an early question on
+that task is the Captain working, not stalling. It also suggests goals from the outcomes
+you described, for you to approve or deny.
+
+From there the agents start picking work up. You'll see tasks move across the board,
+agents comment as they go, and runs stream their logs live. Agents wake on a heartbeat to
+look for work, so the team keeps moving without you driving each step.
 
 ## 4. Stay in control
 

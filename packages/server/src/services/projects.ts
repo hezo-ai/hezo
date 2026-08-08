@@ -1,6 +1,7 @@
-import { type ProjectProgress, wsRoom } from '@hezo/shared';
+import { type ProgressActivity, type ProjectProgress, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
+import { readProgressActivity } from './project-activity';
 import type { WebSocketManager } from './ws';
 
 export class ProjectProgressError extends Error {
@@ -12,22 +13,40 @@ export class ProjectProgressError extends Error {
 	}
 }
 
-/** The Captain-maintained project progress summary shown at the top of the Progress page. */
+/**
+ * The Captain-maintained progress shown on the Progress page: the high-level summary plus the
+ * three recent-activity columns. Both live on the project row and are written together, so this
+ * is one read with no join — the snapshot captured each task's identifier and title at write time.
+ */
 export async function getProjectProgress(
 	db: Db,
 	projectId: string,
 ): Promise<ProjectProgress | null> {
-	const r = await db.query<{ summary: string; updated_at: string | null }>(
-		`SELECT progress_summary AS summary, progress_summary_updated_at AS updated_at
+	const r = await db.query<{ summary: string; activity: unknown; updated_at: string | null }>(
+		`SELECT progress_summary AS summary,
+		        progress_activity AS activity,
+		        progress_summary_updated_at AS updated_at
 		 FROM projects WHERE id = $1`,
 		[projectId],
 	);
-	return r.rows[0] ?? null;
+	const row = r.rows[0];
+	if (!row) return null;
+	return {
+		summary: row.summary,
+		activity: readProgressActivity(row.activity),
+		updated_at: row.updated_at,
+	};
 }
 
 /**
- * Replace a project's progress summary (Captain, during progress-update runs). Rejected for HQ/internal
- * projects, which have no Progress page. Broadcasts a projects UPDATE so open Progress pages refresh.
+ * Replace a project's progress summary and its activity snapshot (Captain, during progress-update
+ * runs). Rejected for HQ/internal projects, which have no Progress page. Broadcasts a projects
+ * UPDATE so open Progress pages refresh.
+ *
+ * Summary and snapshot are written in a **single statement** rather than a transaction across
+ * two: they are one artifact from one run, so they cannot be observed half-updated and they share
+ * `progress_summary_updated_at`. Passing `activity` as undefined leaves the existing snapshot in
+ * place, so a caller refreshing only the summary never blanks the columns.
  */
 export async function updateProjectProgress(
 	db: Db,
@@ -35,6 +54,7 @@ export async function updateProjectProgress(
 	projectId: string,
 	summary: string,
 	wsManager: WebSocketManager | undefined,
+	activity?: ProgressActivity,
 ): Promise<ProjectProgress> {
 	const proj = await db.query<{ is_internal: boolean }>(
 		`SELECT is_internal FROM projects WHERE id = $1 AND team_id = $2`,
@@ -47,12 +67,21 @@ export async function updateProjectProgress(
 		throw new ProjectProgressError('FORBIDDEN', 'The HQ project has no progress summary');
 	}
 
-	const r = await db.query<{ id: string; summary: string; updated_at: string }>(
+	const r = await db.query<{
+		id: string;
+		summary: string;
+		activity: unknown;
+		updated_at: string;
+	}>(
 		`UPDATE projects
-		 SET progress_summary = $1, progress_summary_updated_at = now(), updated_at = now()
+		 SET progress_summary = $1,
+		     progress_activity = COALESCE($3::jsonb, progress_activity),
+		     progress_summary_updated_at = now(),
+		     updated_at = now()
 		 WHERE id = $2
-		 RETURNING id, progress_summary AS summary, progress_summary_updated_at AS updated_at`,
-		[summary, projectId],
+		 RETURNING id, progress_summary AS summary, progress_activity AS activity,
+		           progress_summary_updated_at AS updated_at`,
+		[summary, projectId, activity ? JSON.stringify(activity) : null],
 	);
 	const updated = r.rows[0];
 	broadcastRowChange(wsManager, wsRoom.team(teamId), 'projects', 'UPDATE', {
@@ -60,5 +89,9 @@ export async function updateProjectProgress(
 		progress_summary: updated.summary,
 		progress_summary_updated_at: updated.updated_at,
 	});
-	return { summary: updated.summary, updated_at: updated.updated_at };
+	return {
+		summary: updated.summary,
+		activity: readProgressActivity(updated.activity),
+		updated_at: updated.updated_at,
+	};
 }

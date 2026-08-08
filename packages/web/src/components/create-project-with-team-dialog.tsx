@@ -13,6 +13,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { setActiveTeamSlug } from '../hooks/use-active-team-slug';
 import { useAgents } from '../hooks/use-agents';
+import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useContainerHealth } from '../hooks/use-container-health';
 import { useMarketplaceTeam, useMarketplaceTeams } from '../hooks/use-marketplace';
 import { useStartProjectIntake } from '../hooks/use-project-intake';
@@ -289,6 +290,16 @@ export function CreateProjectWithTeamDialog({
 		);
 	}, [open, initialMarketplaceSlug]);
 
+	// This dialog outlives a navigation whenever its host is shell chrome:
+	// `ProjectRail` is rendered by `ShellChrome` above the `<Outlet />`
+	// (routes/__root.tsx), so a client-side navigation swaps the page underneath
+	// while the modal keeps covering it. That is reachable from inside the dialog
+	// — the blocked state's "View container" link — and from outside it, via the
+	// Cmd/Ctrl+K palette, which opens on top of an open modal. The invariant
+	// belongs to the modal rather than to whichever host owns the boolean, so the
+	// next host to mount it can't forget.
+	useCloseOnRouteChange(open, () => onOpenChange(false));
+
 	const createProject = useCreateProjectWithTeam();
 	const startIntake = useStartProjectIntake();
 	const navigate = useNavigate();
@@ -435,7 +446,10 @@ export function CreateProjectWithTeamDialog({
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<DialogContent size={view === 'entry' ? 'lg' : view === 'all' ? 'xl' : '2xl'}>
+			<DialogContent
+				size={view === 'entry' ? 'lg' : view === 'all' ? 'xl' : '2xl'}
+				data-testid="create-project-dialog"
+			>
 				<Dialog.Title className="shrink-0 text-base font-medium mb-1 pr-8">
 					New project
 				</Dialog.Title>
@@ -446,7 +460,6 @@ export function CreateProjectWithTeamDialog({
 						</Dialog.Description>
 						<HqContainerNotice
 							health={blockedHealth}
-							slug={hq.slug}
 							description="A new project is scoped by the CEO in HQ, so it can't be created until the HQ container is running."
 						/>
 					</>

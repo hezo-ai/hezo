@@ -63,7 +63,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const comments = await db.query<{
@@ -108,7 +108,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		expect(await confirmationCount()).toBe(before);
@@ -132,7 +132,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const after = await db.query<{ count: string }>(

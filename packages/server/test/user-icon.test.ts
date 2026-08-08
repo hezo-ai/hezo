@@ -4,7 +4,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
 let app: Hono<Env>;
@@ -25,7 +25,7 @@ function pngWithDimensions(width: number, height: number): Buffer {
 
 function iconForm(bytes: Buffer, type = 'image/png'): FormData {
 	const fd = new FormData();
-	fd.set('file', new Blob([bytes], { type }), 'icon.png');
+	fd.set('file', new Blob([blobBytes(bytes)], { type }), 'icon.png');
 	return fd;
 }
 

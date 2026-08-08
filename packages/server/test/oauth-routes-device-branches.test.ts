@@ -388,6 +388,7 @@ describe('mcp-callback finalize failure', () => {
 		sim.addCode('bad-code-1', 'gho_finalize_reject');
 		const { state } = await signState(masterKeyManager, {
 			teamId,
+			projectId: null,
 			provider: 'github',
 			redirectUri: 'http://localhost/api/oauth/mcp-callback',
 			returnTo: '/',

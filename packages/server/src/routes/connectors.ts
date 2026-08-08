@@ -173,6 +173,11 @@ function describeDiscoveryFailure(result: { reason: string; detail?: string }): 
 			return 'Hezo is locked, so this connector’s credential can’t be read. Unlock and try again.';
 		case 'not_found':
 			return 'connector not found';
+		case 'auth_failed':
+			// The case that used to surface as a bare "Error POSTing to endpoint:" -
+			// complete, but useless, because an expired grant answers 401 with an
+			// empty body and the SDK puts the body last. Say what actually happened.
+			return `This server rejected Hezo's credential (${result.detail ?? 'unauthorized'}). Its authorization has expired or been revoked - reconnect the connector, then list its methods again.`;
 		default:
 			return `The server did not answer: ${result.detail ?? 'unknown error'}`;
 	}
@@ -210,6 +215,39 @@ connectorsRoutes.get('/projects/:projectId/connectors', async (c) => {
 		[projectId, perPage, offset],
 	);
 	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });
+});
+
+/**
+ * The broken connectors visible from this project, for the health banner.
+ *
+ * Deliberately not derived from the paginated list above: a connector that broke
+ * is the one thing an operator must see immediately, and reading it off page 1
+ * of a 50-row page would make that depend on where the row happened to sort. The
+ * projection is narrow by design - just enough to name what broke and link to it.
+ *
+ * "Degraded" is the working-to-broken case specifically (`activated_at` set and
+ * an `auth_error` recorded); a connector that never finished its first connect
+ * is a setup step the operator already knows about, not a regression, and is not
+ * banner-worthy. No MCP twin: agents learn the same thing from `list_connectors`,
+ * whose `oauth_status` is derived by the same shared ladder.
+ */
+connectorsRoutes.get('/projects/:projectId/connectors/health', async (c) => {
+	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
+	const result = await db.query<{ id: string; name: string; display_name: string | null }>(
+		`SELECT mc.id, mc.name, mc.display_name
+		 FROM mcp_connections mc
+		 WHERE (mc.project_id = $1 OR mc.project_id IS NULL)
+		   AND mc.revoked_at IS NULL
+		   AND mc.activated_at IS NOT NULL
+		   AND mc.auth_error IS NOT NULL
+		 ORDER BY mc.name ASC
+		 LIMIT 50`,
+		[projectId],
+	);
+	return c.json({
+		data: { degraded: result.rows, count: result.rows.length },
+	});
 });
 
 // Admin surface: every connector across all projects, each annotated with its

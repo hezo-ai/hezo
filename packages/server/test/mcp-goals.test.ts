@@ -92,9 +92,11 @@ describe('MCP goals tools', () => {
 	});
 
 	it('list_goals returns the project goals', async () => {
-		const goals = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
-			id: string;
-		}>;
+		const goals = (
+			(await callTool(token, 'list_goals', { project: projectSlug })) as {
+				items: Array<{ id: string }>;
+			}
+		).items;
 		expect(goals.map((g) => g.id)).toContain(goalId);
 	});
 
@@ -125,10 +127,11 @@ describe('MCP goals tools', () => {
 		expect(updated.last_checked_at).not.toBeNull();
 
 		// The snapshot is linked to the run, so it shows in the goal's history.
-		const goals = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
-			id: string;
-			history: Array<{ percent: number }>;
-		}>;
+		const goals = (
+			(await callTool(token, 'list_goals', { project: projectSlug })) as {
+				items: Array<{ id: string; history: Array<{ percent: number }> }>;
+			}
+		).items;
 		const goal = goals.find((g) => g.id === goalId);
 		expect(goal?.history.at(-1)?.percent).toBe(45);
 	});
@@ -169,6 +172,64 @@ describe('MCP project progress + goal run activity', () => {
 		});
 		expect(res.status).toBe(200);
 		expect((await res.json()).data.summary).toContain('Onboarding shipped');
+	});
+
+	// The summary and the three columns are one artifact from one run: written together, read
+	// together, and sharing a single `updated_at`.
+	it('writes the activity columns alongside the summary in one call', async () => {
+		const identifier = (
+			await db.query<{ identifier: string }>(
+				`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
+				 VALUES ($1, $2, 9100, 'BILL-1', 'Ship the billing split', 'in_progress'::task_status,
+				         'medium'::task_priority, '[]'::jsonb)
+				 RETURNING identifier`,
+				[teamId, projectId],
+			)
+		).rows[0].identifier;
+
+		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
+			projectId,
+		});
+		const updated = (await callTool(agent.token, 'update_project_progress', {
+			project: projectSlug,
+			summary: '**Billing is the long pole.**',
+			actioned: [{ task: identifier, summary: 'Payments can now take live cards end to end.' }],
+			closed: [{ task: 'ZZ-404', summary: 'This task does not exist.' }],
+		})) as {
+			activity: { actioned: { identifier: string; title: string; summary: string }[] };
+			unknown_tasks?: string[];
+		};
+
+		expect(updated.activity.actioned[0].identifier).toBe(identifier);
+		expect(updated.activity.actioned[0].title).toBe('Ship the billing split');
+		// An identifier that does not resolve comes back rather than vanishing.
+		expect(updated.unknown_tasks).toEqual(['ZZ-404']);
+
+		const res = await app.request(`/api/projects/${projectSlug}/progress`, {
+			headers: authHeader(token),
+		});
+		const body = (await res.json()).data;
+		expect(body.summary).toContain('Billing is the long pole');
+		expect(body.activity.actioned[0].summary).toBe('Payments can now take live cards end to end.');
+		expect(body.activity.closed).toEqual([]);
+	});
+
+	// A caller refreshing only the summary must not blank the columns beneath it.
+	it('leaves the stored columns alone when no lists are passed', async () => {
+		const agent = await mintAgentToken(db, masterKeyManager, captainAgentId, teamId, null, {
+			projectId,
+		});
+		await callTool(agent.token, 'update_project_progress', {
+			project: projectSlug,
+			summary: '**Summary only.**',
+		});
+
+		const res = await app.request(`/api/projects/${projectSlug}/progress`, {
+			headers: authHeader(token),
+		});
+		const body = (await res.json()).data;
+		expect(body.summary).toContain('Summary only');
+		expect(body.activity.actioned.length).toBe(1);
 	});
 
 	it('surfaces a run that created a task and commented on it for the goal', async () => {
@@ -294,9 +355,11 @@ describe('MCP suggest_goal', () => {
 		expect(suggested.status).toBe('pending');
 
 		// A suggestion is NOT a goal yet — list_goals doesn't include it.
-		const before = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
-			title: string;
-		}>;
+		const before = (
+			(await callTool(token, 'list_goals', { project: projectSlug })) as {
+				items: Array<{ title: string }>;
+			}
+		).items;
 		expect(before.map((g) => g.title)).not.toContain('Reach 5k Instagram followers');
 
 		// It shows on the project's suggestions endpoint.
@@ -317,10 +380,11 @@ describe('MCP suggest_goal', () => {
 		});
 		expect(resolveRes.status).toBe(200);
 
-		const after = (await callTool(token, 'list_goals', { project: projectSlug })) as Array<{
-			title: string;
-			check_frequency: string;
-		}>;
+		const after = (
+			(await callTool(token, 'list_goals', { project: projectSlug })) as {
+				items: Array<{ title: string; check_frequency: string }>;
+			}
+		).items;
 		const goal = after.find((g) => g.title === 'Reach 5k Instagram followers');
 		expect(goal).toBeTruthy();
 		expect(goal?.check_frequency).toBe('weekly');

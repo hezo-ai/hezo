@@ -12,10 +12,10 @@ import {
 	projectSlugFor,
 } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 
 let app: Hono<Env>;
@@ -233,7 +233,7 @@ describe('GET queued-wakeups', () => {
 		// Container semantics: this project's container is stopped and a filler
 		// project's running container consumes the single slot. Per-agent busy
 		// state is independent of the container gate.
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
 		await seedRunningContainerProject(db, 'cap-covfill-get');
 		const sibling = await createTask('Covfill Busy Sibling');
@@ -250,7 +250,7 @@ describe('GET queued-wakeups', () => {
 
 		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 		await removeSeededContainerProject(db, 'cap-covfill-get');
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 		await clearRuns();
 	});
 
@@ -367,7 +367,7 @@ describe('POST run-now', () => {
 	it('409s when the container limit is reached', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
 		await seedRunningContainerProject(db, 'cap-covfill-runnow');
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
@@ -378,7 +378,7 @@ describe('POST run-now', () => {
 		expect(body.error.message).toContain('active-container limit');
 		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 		await removeSeededContainerProject(db, 'cap-covfill-runnow');
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 		await clearRuns();
 	});
 

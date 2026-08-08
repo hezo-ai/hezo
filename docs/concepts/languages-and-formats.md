@@ -29,9 +29,14 @@ language you don't speak is a bad way to start. See
 **After that**, in **Settings -> Languages & formats**.
 
 While you are signed out - at the unlock screen after a restart, or at the sign-in screen -
-there is a globe button in the top right, because those screens have no menu to reach
+there is a language button in the top right, because those screens have no menu to reach
 Settings through. Changing the language there applies to that browser only and tells you
 so; sign in to change it for everyone.
+
+Picking a language re-renders the picker itself straight away, so you can check it reads the
+way you expect before you commit to it. Nothing is saved at that point: the rest of the app,
+and your date and currency choices, change only when you press Continue or Save. Leave the
+screen without saving and everything stays as it was.
 
 ## It is a setting for the whole instance
 

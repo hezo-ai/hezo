@@ -130,6 +130,17 @@ async function callToolViaMcp(toolName: string, args: Record<string, unknown>): 
 	return JSON.parse(body.result.content[0].text);
 }
 
+/** Call a paged list tool and return just its rows. */
+async function callListViaMcp(
+	toolName: string,
+	args: Record<string, unknown>,
+): Promise<Array<Record<string, unknown>>> {
+	const page = (await callToolViaMcp(toolName, args)) as {
+		items: Array<Record<string, unknown>>;
+	};
+	return page.items;
+}
+
 describe('MCP endpoint: tool registration', () => {
 	it('lists all registered tools', async () => {
 		const res = await app.request('/mcp', {
@@ -188,51 +199,6 @@ describe('MCP endpoint: tool registration', () => {
 });
 
 describe('MCP tool: verifyTeamAccess (direct DB tests)', () => {
-	it('API key auth allows access to own team', () => {
-		const apiKeyAuth: AuthInfo = { type: AuthType.ApiKey, teamId };
-		expect(apiKeyAuth.teamId).toBe(teamId);
-	});
-
-	it('API key auth denies access to other team', () => {
-		const apiKeyAuth: AuthInfo = { type: AuthType.ApiKey, teamId };
-		expect(apiKeyAuth.teamId).not.toBe(teamBId);
-	});
-
-	it('agent auth allows access to own team', async () => {
-		const agentAuth: AuthInfo = {
-			type: AuthType.Agent,
-			memberId: agentId,
-			teamId,
-			runId: '00000000-0000-0000-0000-000000000001',
-			taskId: null,
-			projectId: '00000000-0000-0000-0000-000000000010',
-			crossProject: true,
-		};
-		expect(agentAuth.teamId).toBe(teamId);
-	});
-
-	it('agent auth denies access to other team', async () => {
-		const agentAuth: AuthInfo = {
-			type: AuthType.Agent,
-			memberId: agentBId,
-			teamId: teamBId,
-			runId: '00000000-0000-0000-0000-000000000002',
-			taskId: null,
-			projectId: '00000000-0000-0000-0000-000000000011',
-			crossProject: true,
-		};
-		expect(agentAuth.teamId).not.toBe(teamId);
-	});
-
-	it('admin superuser has access to any team', async () => {
-		const superuserAuth: AuthInfo = {
-			type: AuthType.Admin,
-			userId: 'test-user-id',
-			isSuperuser: true,
-		};
-		expect(superuserAuth.isSuperuser).toBe(true);
-	});
-
 	it('admin non-superuser needs membership check', async () => {
 		// Create a non-superuser who is NOT a member of teamB
 		const userRes = await db.query<{ id: string }>(
@@ -977,9 +943,207 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 
 		const listed = (await callToolViaMcp('list_project_docs', {
 			project: projectId,
-		})) as { files: Array<{ filename: string; description?: string }> };
-		const entry = listed.files.find((f) => f.filename === 'mcp-described.md');
+		})) as { items: Array<{ filename: string; description?: string }> };
+		const entry = listed.items.find((f) => f.filename === 'mcp-described.md');
 		expect(entry?.description).toBe('How we track and report campaign analytics each week.');
+	});
+
+	it('edit_project_doc changes one span and reports what landed', async () => {
+		const body = [
+			'# Spec',
+			'',
+			'## Storage',
+			'We use localStorage.',
+			'',
+			'## Routing',
+			'Hash.',
+		].join('\n');
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'editable.md',
+			content: body,
+			description: 'Editing target.',
+		});
+
+		const edited = (await callToolViaMcp('edit_project_doc', {
+			project: projectId,
+			filename: 'editable.md',
+			old_string: 'We use localStorage.',
+			new_string: 'We use IndexedDB.',
+			changelog: 'Switch the storage engine.',
+		})) as {
+			edited?: boolean;
+			replacements?: number;
+			content_length?: number;
+			hunk?: string;
+			warning?: string;
+			error?: string;
+		};
+		expect(edited.error).toBeUndefined();
+		expect(edited.edited).toBe(true);
+		expect(edited.replacements).toBe(1);
+		// The applied hunk is returned so the caller can verify without re-reading.
+		expect(edited.hunk).toContain('We use IndexedDB.');
+		// Content changed, so the changelog had a revision to land on.
+		expect(edited.warning).toBeUndefined();
+
+		const read = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'editable.md',
+		})) as { content: string };
+		expect(read.content).toContain('We use IndexedDB.');
+		expect(read.content).toContain('## Routing');
+		expect(read.content).not.toContain('localStorage');
+		expect(edited.content_length).toBe(read.content.length);
+
+		// Description survives an edit that never mentions it.
+		const listed = (await callToolViaMcp('list_project_docs', { project: projectId })) as {
+			items: Array<{ filename: string; description?: string }>;
+		};
+		expect(listed.items.find((f) => f.filename === 'editable.md')?.description).toBe(
+			'Editing target.',
+		);
+	});
+
+	it('edit_project_doc refuses an ambiguous or missing anchor, and a doc that does not exist', async () => {
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'ambiguous.md',
+			content: 'alpha\nrepeat\nbeta\nrepeat\ngamma',
+		});
+
+		const ambiguous = (await callToolViaMcp('edit_project_doc', {
+			project: projectId,
+			filename: 'ambiguous.md',
+			old_string: 'repeat',
+			new_string: 'changed',
+		})) as { error?: string; edited?: boolean };
+		expect(ambiguous.edited).toBeUndefined();
+		expect(ambiguous.error).toContain('matches 2 places');
+
+		// Nothing was written by the refused call.
+		const untouched = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'ambiguous.md',
+		})) as { content: string };
+		expect(untouched.content).toBe('alpha\nrepeat\nbeta\nrepeat\ngamma');
+
+		const allOfThem = (await callToolViaMcp('edit_project_doc', {
+			project: projectId,
+			filename: 'ambiguous.md',
+			old_string: 'repeat',
+			new_string: 'changed',
+			replace_all: true,
+		})) as { replacements?: number };
+		expect(allOfThem.replacements).toBe(2);
+
+		const missingDoc = (await callToolViaMcp('edit_project_doc', {
+			project: projectId,
+			filename: 'no-such-doc.md',
+			old_string: 'a',
+			new_string: 'b',
+		})) as { error?: string };
+		expect(missingDoc.error).toContain('not found');
+	});
+
+	it('write_project_doc rejects a truncated argument instead of storing a partial body', async () => {
+		const full = '# Spec\n\n'.concat('detail '.repeat(500));
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'integrity.md',
+			content: full,
+		});
+
+		// A runtime that caps tool-call argument size cuts `content` mid-stream.
+		// Declaring the true length is what turns that from a silent partial
+		// overwrite (which also wipes the doc's review comments) into a refusal.
+		const truncated = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'integrity.md',
+			content: full.slice(0, 100),
+			content_length: full.length,
+		})) as { error?: string; written?: boolean };
+		expect(truncated.written).toBeUndefined();
+		expect(truncated.error).toContain('truncated in transit');
+
+		const intact = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'integrity.md',
+		})) as { content: string };
+		expect(intact.content).toBe(full);
+
+		// A matching declaration writes normally and reports the stored size.
+		const ok = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'integrity.md',
+			content: full.slice(0, 100),
+			content_length: 100,
+		})) as { written?: boolean; content_length?: number };
+		expect(ok.written).toBe(true);
+		expect(ok.content_length).toBe(100);
+	});
+
+	it('write_project_doc refuses to blank an existing doc unless asked explicitly', async () => {
+		await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'blankable.md',
+			content: '# Real content that took work',
+		});
+
+		const refused = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'blankable.md',
+			content: '',
+		})) as { error?: string; written?: boolean };
+		expect(refused.written).toBeUndefined();
+		expect(refused.error).toContain('allow_empty');
+
+		const still = (await callToolViaMcp('read_project_doc', {
+			project: projectId,
+			filename: 'blankable.md',
+		})) as { content: string };
+		expect(still.content).toBe('# Real content that took work');
+
+		const allowed = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'blankable.md',
+			content: '',
+			allow_empty: true,
+		})) as { written?: boolean };
+		expect(allowed.written).toBe(true);
+	});
+
+	it('warns when a changelog has no revision to land on', async () => {
+		// First write of a doc: a revision holds the content as it was BEFORE a
+		// change, so a creation has nowhere to put a changelog. It used to be
+		// dropped in silence.
+		const created = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'changelog-warn.md',
+			content: '# One',
+			changelog: 'Initial draft.',
+		})) as { written?: boolean; warning?: string };
+		expect(created.written).toBe(true);
+		expect(created.warning).toContain('changelog');
+
+		// Description-only update: same situation, content is unchanged.
+		const descOnly = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'changelog-warn.md',
+			content: '# One',
+			description: 'Just the description.',
+			changelog: 'Tweaked the description.',
+		})) as { warning?: string };
+		expect(descOnly.warning).toContain('changelog');
+
+		// A real content change records it, so no warning.
+		const real = (await callToolViaMcp('write_project_doc', {
+			project: projectId,
+			filename: 'changelog-warn.md',
+			content: '# Two',
+			changelog: 'Renamed the heading.',
+		})) as { warning?: string };
+		expect(real.warning).toBeUndefined();
 	});
 
 	it('omits description from read_project_doc when unset', async () => {
@@ -1616,10 +1780,10 @@ describe('MCP tools: project arg accepts a slug or UUID', () => {
 	// must resolve that slug so a cross-project status query returns real data instead
 	// of coming back empty.
 	it('list_agents resolves a project slug to the same roster as the UUID', async () => {
-		const bySlug = (await callToolViaMcp('list_agents', { project: projectSlug })) as Array<{
+		const bySlug = (await callListViaMcp('list_agents', { project: projectSlug })) as Array<{
 			slug: string;
 		}>;
-		const byUuid = (await callToolViaMcp('list_agents', { project: projectId })) as Array<{
+		const byUuid = (await callListViaMcp('list_agents', { project: projectId })) as Array<{
 			slug: string;
 		}>;
 		expect(Array.isArray(bySlug)).toBe(true);
@@ -1628,7 +1792,7 @@ describe('MCP tools: project arg accepts a slug or UUID', () => {
 	});
 
 	it('list_tasks resolves a project slug and returns the seeded task', async () => {
-		const rows = (await callToolViaMcp('list_tasks', { project: projectSlug })) as Array<{
+		const rows = (await callListViaMcp('list_tasks', { project: projectSlug })) as Array<{
 			title: string;
 		}>;
 		expect(rows.map((t) => t.title)).toContain('Seed Task');
@@ -1692,7 +1856,7 @@ describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
 });
 
 describe('MCP tool: create_task sub-task depth', () => {
-	it('create_task caps sub-task depth at 2', async () => {
+	it('create_task caps sub-task depth at 3', async () => {
 		const root = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Depth root',
@@ -1716,13 +1880,21 @@ describe('MCP tool: create_task sub-task depth', () => {
 		})) as { id: string; error?: string };
 		expect(subSub.error).toBeUndefined();
 
+		const subSubSub = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Depth sub-sub-sub',
+			assignee_id: agentId,
+			parent_task_id: subSub.id,
+		})) as { id: string; error?: string };
+		expect(subSubSub.error).toBeUndefined();
+
 		const tooDeep = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Depth too deep',
 			assignee_id: agentId,
-			parent_task_id: subSub.id,
+			parent_task_id: subSubSub.id,
 		})) as { error?: string };
-		expect(tooDeep.error).toMatch(/2 levels deep/);
+		expect(tooDeep.error).toMatch(/3 levels deep/);
 	});
 
 	it('create_task resolves a parent passed by identifier (the agent-facing form)', async () => {
@@ -1848,13 +2020,14 @@ describe('MCP tool: update_task re-parenting', () => {
 		await newTask('MCP depth mover child', mover.id);
 		const root = await newTask('MCP depth root');
 		const mid = await newTask('MCP depth mid', root.id);
+		const deep = await newTask('MCP depth deep', mid.id);
 
 		const result = (await callToolViaMcp('update_task', {
 			project: projectId,
 			task_id: mover.identifier,
-			parent_task_id: mid.identifier,
+			parent_task_id: deep.identifier,
 		})) as { error?: string };
-		expect(result.error).toMatch(/2 levels deep/);
+		expect(result.error).toMatch(/3 levels deep/);
 	});
 
 	it('rejects an open task under a completed parent', async () => {
@@ -1899,14 +2072,14 @@ describe('MCP tool: update_task re-parenting', () => {
 
 describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard', () => {
 	it('list_tasks never returns the embedding column', async () => {
-		const rows = (await callToolViaMcp('list_tasks', {
-			project: projectId,
-		})) as Array<Record<string, unknown>>;
+		const rows = await callListViaMcp('list_tasks', { project: projectId });
 		expect(Array.isArray(rows)).toBe(true);
 		expect(rows.length).toBeGreaterThan(0);
 		for (const row of rows) {
 			expect(row).not.toHaveProperty('embedding');
-			expect(row).toHaveProperty('description');
+			// description is excerpted by default now, so the width of one page is
+			// bounded; the excerpt triple stands in for the raw column.
+			expect(row).toHaveProperty('description_excerpt');
 			expect(row).toHaveProperty('progress_summary');
 		}
 	});
@@ -1950,7 +2123,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			assignee_id: agentId,
 		})) as { id: string; identifier: string };
 
-		const comments = await callToolViaMcp('list_comments', {
+		const comments = await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: created.identifier,
 		});
@@ -2005,10 +2178,10 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const rows = (await callToolViaMcp('list_tasks', {
+		const rows = await callListViaMcp('list_tasks', {
 			project: projectId,
 			excerpt_chars: 50,
-		})) as Array<Record<string, unknown>>;
+		});
 		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
 		expect(target).toBeDefined();
 		expect(target).not.toHaveProperty('description');
@@ -2017,7 +2190,10 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(target.description_length).toBe(longBody.length);
 	});
 
-	it('list_tasks without excerpt_chars returns the full description', async () => {
+	it('list_tasks excerpts by default, returning a short description whole', async () => {
+		// Row width is bounded whether or not the caller asks: a page of long
+		// tickets must not be able to blow the result cap. A description under the
+		// default cap still comes back in full, just under the excerpt key.
 		const body = 'Single short body.';
 		const created = (await callToolViaMcp('create_task', {
 			project: projectId,
@@ -2026,15 +2202,15 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			assignee_id: agentId,
 		})) as { id: string };
 
-		const rows = (await callToolViaMcp('list_tasks', {
-			project: projectId,
-		})) as Array<Record<string, unknown>>;
+		const rows = await callListViaMcp('list_tasks', { project: projectId });
 		const target = rows.find((r) => r.id === created.id) as Record<string, unknown>;
-		expect(target.description).toBe(body);
-		expect(target).not.toHaveProperty('description_excerpt');
+		expect(target).not.toHaveProperty('description');
+		expect(target.description_excerpt).toBe(body);
+		expect(target.description_truncated).toBe(false);
+		expect(target.description_length).toBe(body.length);
 	});
 
-	it('list_comments caps at 50, walks backward via `before`, and truncates with excerpt_chars', async () => {
+	it('list_comments pages at 50, walks backward via `before`, and truncates with excerpt_chars', async () => {
 		const task = (await callToolViaMcp('create_task', {
 			project: projectId,
 			title: 'Comment pagination target',
@@ -2050,45 +2226,135 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			);
 		}
 
-		const first = (await callToolViaMcp('list_comments', {
+		const firstPage = (await callToolViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
-		})) as Array<Record<string, unknown>>;
+		})) as { items: Array<Record<string, unknown>>; has_more: boolean; next_cursor: string | null };
+		const first = firstPage.items;
 		expect(first.length).toBe(50);
+		// More remain, and the response says so and how to reach them - the gap
+		// this whole change exists to close.
+		expect(firstPage.has_more).toBe(true);
+		expect(firstPage.next_cursor).toBeTruthy();
 		expect((first[0].content as { text: string }).text).toBe('comment 59');
 
 		const oldest = first[first.length - 1] as { id: string };
-		const next = (await callToolViaMcp('list_comments', {
+		const next = await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
 			before: oldest.id,
-		})) as Array<Record<string, unknown>>;
+		});
 		expect(next.length).toBeGreaterThan(0);
 		expect(next.length).toBeLessThanOrEqual(50);
 		for (const row of next) {
 			expect(row.id).not.toBe(oldest.id);
 		}
 
-		const longText = 'x'.repeat(5000);
+		// The body opens with a short line followed by a blank line - the exact
+		// shape that used to collapse a 9400-character comment down to its 73-char
+		// preamble, because the excerpt cut at the FIRST paragraph break and
+		// applied excerpt_chars only as a secondary cap. The previous fixture here
+		// was 'x'.repeat(5000): a single paragraph with no blank line, so it never
+		// exercised that path and the defect shipped untested.
+		const preamble = 'Here is my review. I have read:';
+		const longText = `${preamble}\n\n${'detail '.repeat(1200)}`;
 		await db.query(
 			`INSERT INTO task_comments (task_id, content_type, content, created_at)
 			 VALUES ($1, 'text'::comment_content_type, $2::jsonb,
 			         now() + interval '1 hour')`,
 			[task.id, JSON.stringify({ text: longText })],
 		);
-		const truncated = (await callToolViaMcp('list_comments', {
+		const truncated = await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
 			excerpt_chars: 100,
-		})) as Array<Record<string, unknown>>;
+		});
 		const longRow = truncated[0] as {
+			id: string;
 			content: { text: string };
 			text_truncated?: boolean;
 			text_length?: number;
+			text_paging_hint?: string;
 		};
 		expect(longRow.content.text.length).toBeLessThanOrEqual(100);
+		// The budget is a floor to fill, not a ceiling applied after some other
+		// rule: the excerpt must run well past the short preamble.
+		expect(longRow.content.text.length).toBeGreaterThan(preamble.length);
 		expect(longRow.text_truncated).toBe(true);
 		expect(longRow.text_length).toBe(longText.length);
+		// A truncated row names its own recovery call - the excerpt sits in
+		// content.text, the same field a whole comment uses, so a reader who
+		// misses text_truncated would otherwise treat it as the entire comment.
+		expect(longRow.text_paging_hint).toContain('get_comment');
+
+		// get_comment is that recovery call, and it must actually serve the body.
+		const full = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: longRow.id,
+		})) as { content: { text: string }; truncated: boolean; total_bytes: number };
+		expect(full.content.text).toBe(longText);
+		expect(full.truncated).toBe(false);
+		expect(full.total_bytes).toBe(Buffer.byteLength(longText, 'utf8'));
+
+		// ...and it accepts the public_id form a thread citation uses.
+		const byPublicId = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: (longRow as unknown as { public_id: string }).public_id,
+		})) as { content: { text: string } };
+		expect(byPublicId.content.text).toBe(longText);
+	});
+
+	it('get_comment windows a very large body and refuses one outside the project', async () => {
+		const task = (await callToolViaMcp('create_task', {
+			project: projectId,
+			title: 'Windowed comment read',
+			assignee_id: agentId,
+		})) as { id: string };
+		// Comfortably past the 64KB result budget, so one read cannot serve it.
+		const huge = 'paragraph text '.repeat(8000);
+		const ins = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, content_type, content)
+			 VALUES ($1, 'text'::comment_content_type, $2::jsonb)
+			 RETURNING id`,
+			[task.id, JSON.stringify({ text: huge })],
+		);
+		const commentId = ins.rows[0].id;
+
+		const first = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: commentId,
+		})) as {
+			content: { text: string };
+			truncated: boolean;
+			next_offset: number | null;
+			total_bytes: number;
+			paging_hint?: string;
+		};
+		expect(first.truncated).toBe(true);
+		expect(first.next_offset).toBeGreaterThan(0);
+		expect(first.total_bytes).toBe(Buffer.byteLength(huge, 'utf8'));
+		expect(first.paging_hint).toContain('get_comment');
+
+		// Page to the end and reassemble - the whole body must be reachable.
+		let assembled = first.content.text;
+		let offset = first.next_offset;
+		for (let guard = 0; offset !== null && guard < 50; guard++) {
+			const next = (await callToolViaMcp('get_comment', {
+				project: projectId,
+				comment_id: commentId,
+				offset,
+			})) as { content: { text: string }; next_offset: number | null };
+			assembled += next.content.text;
+			offset = next.next_offset;
+		}
+		expect(offset).toBeNull();
+		expect(assembled).toBe(huge);
+
+		const missing = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: '00000000-0000-0000-0000-000000000000',
+		})) as { error?: string };
+		expect(missing.error).toContain('not found');
 	});
 
 	it('returns a structured result_too_large error when serialised output exceeds the byte cap', async () => {
@@ -2108,31 +2374,40 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 			});
 		}
 
+		// A page of fat tickets used to blow the cap and be discarded whole. The
+		// default excerpt bounds row width, so the ordinary call now succeeds.
+		const ok = (await callToolViaMcp('list_tasks', { project: fatProjectId })) as {
+			error?: string;
+			items?: Array<Record<string, unknown>>;
+		};
+		expect(ok.error).toBeUndefined();
+		expect(ok.items?.length).toBeGreaterThanOrEqual(8);
+		for (const row of ok.items ?? []) {
+			expect(row).toHaveProperty('description_excerpt');
+			expect(row).toHaveProperty('description_truncated');
+			expect(row).toHaveProperty('description_length');
+		}
+
+		// Opting out of the width bound is what can still overflow, and the guard
+		// then names remedies drawn from this tool's own parameters.
 		const result = (await callToolViaMcp('list_tasks', {
 			project: fatProjectId,
+			excerpt_chars: 100_000,
 		})) as {
 			error?: string;
 			tool?: string;
 			size_bytes?: number;
 			limit_bytes?: number;
 			hint?: string;
+			remedies?: string[];
 		};
 		expect(result.error).toBe('result_too_large');
 		expect(result.tool).toBe('list_tasks');
 		expect(result.size_bytes).toBeGreaterThan(result.limit_bytes ?? 0);
-		expect(result.hint).toContain('excerpt_chars');
-
-		const slim = (await callToolViaMcp('list_tasks', {
-			project: fatProjectId,
-			excerpt_chars: 200,
-		})) as Array<Record<string, unknown>>;
-		expect(Array.isArray(slim)).toBe(true);
-		expect(slim.length).toBeGreaterThanOrEqual(8);
-		for (const row of slim) {
-			expect(row).toHaveProperty('description_excerpt');
-			expect(row).toHaveProperty('description_truncated');
-			expect(row).toHaveProperty('description_length');
-		}
+		expect(result.hint).toContain('Split the work');
+		const remedies = (result.remedies ?? []).join(' ');
+		expect(remedies).toContain('cursor');
+		expect(remedies).toContain('excerpt_chars');
 	});
 });
 
@@ -2170,7 +2445,7 @@ describe('MCP reference params accept the human identifier, not only the UUID', 
 	it('list_tasks.assignee_id filters by an agent slug', async () => {
 		const captainId = await captainMemberId();
 		const mine = await insertTaskDirect(captainId, 'Captain task for slug filter');
-		const rows = (await callToolViaMcp('list_tasks', {
+		const rows = (await callListViaMcp('list_tasks', {
 			project: projectId,
 			assignee_id: 'captain', // slug, not member UUID
 		})) as Array<{ id: string; assignee_id: string }>;
@@ -2192,13 +2467,13 @@ describe('MCP reference params accept the human identifier, not only the UUID', 
 				[task.id, JSON.stringify({ text: `c${i}` }), i],
 			);
 		}
-		const all = (await callToolViaMcp('list_comments', {
+		const all = (await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
 		})) as Array<{ id: string; public_id: string }>;
 		expect(all.length).toBe(3);
 		const newest = all[0];
-		const older = (await callToolViaMcp('list_comments', {
+		const older = (await callListViaMcp('list_comments', {
 			project: projectId,
 			task_id: task.id,
 			before: newest.public_id, // cite by public_id, not the UUID

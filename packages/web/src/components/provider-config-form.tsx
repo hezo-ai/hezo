@@ -1,11 +1,13 @@
-import { AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
-import { Loader2 } from 'lucide-react';
+import { type AgentRuntime, AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
+import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
 	type AiProviderConfig,
 	useAiProviders,
 	useCreateAiProvider,
 } from '../hooks/use-ai-providers';
+import { useI18n } from '../lib/i18n';
+import { AgentCliPicker, providerHasCliChoice } from './agent-cli-picker';
 import { ApiKeyInstructions } from './api-key-instructions';
 import { SUBSCRIPTION_INSTRUCTIONS, SubscriptionInstructions } from './subscription-paste-form';
 import { Button } from './ui/button';
@@ -97,6 +99,7 @@ export function ProviderConfigForm({
 	showName = false,
 	submitLabel = 'Add provider',
 }: ProviderConfigFormProps) {
+	const { t } = useI18n();
 	const { data: configs } = useAiProviders();
 	const createProvider = useCreateAiProvider();
 	const info = AI_PROVIDER_INFO[provider];
@@ -108,6 +111,13 @@ export function ProviderConfigForm({
 	const [authJson, setAuthJson] = useState('');
 	const [baseUrl, setBaseUrl] = useState(info.local?.defaultBaseUrl ?? '');
 	const [error, setError] = useState<string | null>(null);
+	// null = follow the provider default, which is what the picker preselects.
+	// Only sent when the operator actually opened Advanced and picked something.
+	const [runtime, setRuntime] = useState<AgentRuntime | null>(null);
+	const [advancedOpen, setAdvancedOpen] = useState(false);
+	// A provider with one CLI has nothing to put behind the disclosure, so the
+	// whole Advanced affordance is omitted rather than opening onto an empty box.
+	const hasAdvanced = providerHasCliChoice(provider);
 
 	// Keep the name pinned to the generated default until the user edits it
 	// (also re-syncs once the async configs query resolves).
@@ -133,6 +143,7 @@ export function ProviderConfigForm({
 				label: showName ? name.trim() || undefined : undefined,
 				auth_method: authMethod,
 				...(isLocal ? { base_url: baseUrl.trim() } : {}),
+				...(runtime ? { runtime } : {}),
 			});
 			onDone();
 		} catch (err) {
@@ -223,6 +234,29 @@ export function ProviderConfigForm({
 						value={apiKey}
 						onChange={(e) => setApiKey(e.target.value)}
 					/>
+				</div>
+			)}
+
+			{hasAdvanced && (
+				<div className="flex flex-col gap-2.5 border-t border-border pt-3">
+					<button
+						type="button"
+						aria-expanded={advancedOpen}
+						onClick={() => setAdvancedOpen((open) => !open)}
+						className="flex items-center gap-1.5 self-start text-eyebrow text-text-2 hover:text-text-1"
+					>
+						{advancedOpen ? (
+							<ChevronDown className="w-3.5 h-3.5" />
+						) : (
+							<ChevronRight className="w-3.5 h-3.5" />
+						)}
+						{t('settings.provider.advanced')}
+					</button>
+					{advancedOpen && (
+						<div className="ml-1 border-l-2 border-border pl-3">
+							<AgentCliPicker provider={provider} value={runtime} onChange={setRuntime} />
+						</div>
+					)}
 				</div>
 			)}
 

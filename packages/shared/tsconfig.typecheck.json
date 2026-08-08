@@ -1,0 +1,17 @@
+// Typecheck config: `src` **and** `test`, with no emit.
+//
+// The build config next to this one carries `rootDir: "src"` and an `outDir`, so
+// a file outside `src` is a hard error there - which is what kept the test tree
+// out of `bun run typecheck` entirely. Same split, and same reason, as
+// `packages/server/tsconfig.typecheck.json`.
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"rootDir": "..",
+		"declaration": false,
+		"declarationMap": false,
+		"sourceMap": false
+	},
+	"include": ["src", "test"]
+}

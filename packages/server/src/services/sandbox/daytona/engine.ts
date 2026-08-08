@@ -1,0 +1,937 @@
+import { randomBytes } from 'node:crypto';
+import { statSync } from 'node:fs';
+import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
+import { trackBackground } from '../../../lib/background';
+import { logger } from '../../../logger';
+import { assertRegistryPullableImage, resolveDigestPinnedRef } from '../image-ref';
+import {
+	buildDiskUsageScript,
+	buildKillByEnvMarkerScript,
+	buildKillPidsScript,
+	buildKillTunnelClientsScript,
+	buildListHezoProcessesScript,
+	buildMemoryUsageScript,
+	parseCgroupMemory,
+	parseDfKilobytes,
+	parseHezoProcessList,
+} from '../proc-scripts';
+import type {
+	ContainerByteChannel,
+	ContainerConfig,
+	ContainerEngine,
+	ContainerInfo,
+	ContainerMemoryStats,
+	ContainerProcessInfo,
+	ExecConfig,
+	ExecResult,
+	ExecStartOpts,
+	ImageInfo,
+	NetworkInfo,
+	ProcessEnvMarker,
+	SandboxFiles,
+} from '../types';
+import {
+	type CreateSandboxSpec,
+	type DaytonaApi,
+	DaytonaApiError,
+	type DaytonaSandbox,
+} from './client';
+import {
+	asShellCommand,
+	renderDaytonaExec,
+	renderDaytonaExecScript,
+	renderStderrDrain,
+} from './command';
+import { daytonaSandboxFiles } from './files';
+
+const log = logger.child('daytona-engine');
+
+/**
+ * Labels Hezo stamps on every sandbox it creates.
+ *
+ * Daytona has no notion of a container name or of the image a sandbox was built
+ * from once the build is done, so both are carried as labels. That is what lets
+ * `findContainerByNamePrefix` and `inspectContainer().Config.Image` answer the
+ * same questions they answer on Docker.
+ */
+const NAME_LABEL = 'hezo.name';
+const IMAGE_LABEL = 'hezo.image';
+
+/**
+ * The container-side **directories** a Docker bind list would have brought into
+ * existence, from `host:container[:mode]` entries.
+ *
+ * Docker creates a bind's target as a side effect of create; a managed sandbox
+ * has no binds, so the adapter has to meet the same postcondition itself -
+ * "after createContainer, every declared mount target exists" - or the chown
+ * that follows, and every clone and worktree after it, fails on a missing path
+ * here and nowhere else.
+ *
+ * **Every bind is a directory now, and a file bind must never come back.** One
+ * used to be a file - the egress CA - and this is where that broke: a file bind
+ * can only be rendered here as "create its parent", so the directory appeared
+ * and the cert never did, leaving `NODE_EXTRA_CA_CERTS` pointing at nothing and
+ * `update-ca-certificates` installing nothing. It presented as TLS failing
+ * against an unknown issuer, on Daytona only, with nothing naming the cause. The
+ * CA now arrives through `SandboxFiles` (`provisionContainer`), which is the seam
+ * that can actually carry contents. Anything else a container needs the *bytes*
+ * of goes the same way; a bind can only ever mean "this directory exists".
+ *
+ * The file branch below stays because it is still the correct rendering of a
+ * file bind, and because getting it wrong is worse than not handling it: an
+ * earlier version guessed from a dot in the container path, read
+ * `/workspace/.previews` as a file, and created `/workspace` in its place - so
+ * the one target that had to be created was the one that never was. The host
+ * side answers it properly, since the path is real and exists by the time a
+ * container is created. An unreadable host path is treated as a directory,
+ * matching what Docker does with a missing bind source - which is also the trap:
+ * a file bind whose source is not on this host yet would `mkdir` a **directory**
+ * at the file's path, and every later write there fails with `EISDIR`.
+ */
+export function bindMountDirs(binds: readonly string[]): Set<string> {
+	const targets = new Set<string>();
+	for (const bind of binds) {
+		const parts = bind.split(':');
+		const [source, target] = parts;
+		if (!target) continue;
+		targets.add(isHostFile(source) ? target.slice(0, target.lastIndexOf('/')) : target);
+	}
+	return targets;
+}
+
+function isHostFile(hostPath: string | undefined): boolean {
+	if (!hostPath) return false;
+	try {
+		return statSync(hostPath).isFile();
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Disk (GB) requested when the caller states none. The image is a read-only
+ * lower layer and does not count against it.
+ *
+ * A fallback only - `HostConfig.DiskGb` is what a Hezo-provisioned container
+ * actually carries, from the instance setting and the project's override.
+ */
+const FALLBACK_DISK_GB = DEFAULT_CONTAINER_DISK_GB;
+/** vCPU per sandbox. */
+const DEFAULT_CPU = 2;
+
+/**
+ * Most memory this provider will give one sandbox, in GB.
+ *
+ * A request above it is **refused**, never quietly satisfied with less. The cap
+ * is a memory *guarantee* the run is sized against - `enforceContainerMemoryLimit`
+ * stops a container that exceeds it, and the whole capacity calculation divides
+ * host memory by it - so a container silently provisioned smaller would OOM
+ * partway through a run and read as an agent failure rather than as the
+ * misconfiguration it is. Failing at provision names the real problem.
+ */
+const MAX_MEMORY_GB = 8;
+
+/** Thrown when a project's memory cap exceeds what this provider can allocate. */
+export class DaytonaMemoryCapExceededError extends Error {
+	constructor(requestedGb: number) {
+		super(
+			`requested ${requestedGb} GB per container, but this sandbox service allocates at most ` +
+				`${MAX_MEMORY_GB} GB. Lower the project's memory limit or the instance-wide ` +
+				`default_ram_cap_per_container_gb setting - a container is never provisioned with ` +
+				`less memory than its cap requires.`,
+		);
+		this.name = 'DaytonaMemoryCapExceededError';
+	}
+}
+
+/**
+ * Thrown when the account has no room left for another sandbox.
+ *
+ * The provider answers a `400` whose body is a JSON blob naming a limit, and it
+ * reached the operator pasted verbatim into a task comment - a stack trace where
+ * a sentence was needed. It is also not a Hezo failure at all: the account is
+ * full, usually of *disk* rather than memory, which is the quota that binds
+ * first on a small plan and the one Hezo cannot see. Naming the lever matters
+ * more than naming the error, because the number of sandboxes that fit is
+ * `quota / disk-per-container`, and disk-per-container is a Hezo setting.
+ */
+export class DaytonaQuotaExceededError extends Error {
+	constructor(detail: string) {
+		super(
+			`this sandbox service account has no capacity left for another container: ${detail} ` +
+				'Remove sandboxes you no longer need from the provider dashboard, or lower ' +
+				"Settings > Containers > Disk per container - it decides how many fit in the account's " +
+				'quota at all. Hezo reclaims its own containers automatically once nothing is using them.',
+		);
+		this.name = 'DaytonaQuotaExceededError';
+	}
+}
+
+/** Bound on a single exec's stderr read-back. */
+const STDERR_TAIL_BYTES = 256 * 1024;
+
+/**
+ * Ceiling on the in-flight exec table.
+ *
+ * Daytona has no exec handle, so the `execCreate`/`execStart`/`execInspect`
+ * triad is reassembled here: `execCreate` records the spec against a minted id
+ * and `execInspect` consumes it. Callers that only need the side effect (the
+ * `/proc` kills) never inspect, so entries would accumulate without this. The
+ * map is insertion-ordered, so eviction drops the oldest - an exec old enough
+ * to be evicted has long since run.
+ */
+const MAX_TRACKED_EXECS = 512;
+
+interface TrackedExec {
+	containerId: string;
+	/** Fully rendered `sh -c '…'` command. */
+	command: string;
+	stderrPath: string;
+	workingDir?: string;
+	wantsStdout: boolean;
+	wantsStderr: boolean;
+	exitCode?: number;
+}
+
+/**
+ * `ContainerEngine` over Daytona's managed sandboxes.
+ *
+ * Everything provider-shaped lives here and in its two siblings (`client.ts`,
+ * `command.ts`) - no caller above the seam learns that Daytona exists. Four of
+ * its API's properties differ from Docker's enough to be worth naming, because
+ * each one is a place where a future backend will need its own answer rather
+ * than a shared one:
+ *
+ * 1. **Create starts the sandbox.** There is no created-but-stopped state, so
+ *    `startContainer` is a no-op on a sandbox that is already started.
+ * 2. **No per-exec user.** Daytona execs as root and ignores a user on the
+ *    request (daytonaio/daytona#4309), so a non-root user is rendered as
+ *    `runuser` - see `command.ts`.
+ * 3. **No stdout/stderr separation.** Recovered by redirecting stderr to a file
+ *    per exec and draining it bounded - see `command.ts`.
+ * 4. **No image store.** Sandboxes are built from Dockerfile text, so the
+ *    image-management methods have nothing to act on and are inert.
+ */
+export class DaytonaEngine implements ContainerEngine {
+	private readonly execs = new Map<string, TrackedExec>();
+	/**
+	 * Sandbox records, cached because every exec needs the toolbox URL and that
+	 * URL is fixed for a sandbox's lifetime. Invalidated explicitly on the
+	 * lifecycle transitions that change `state`, and dropped on removal - so it
+	 * is scoped to the sandbox's life rather than growing with it.
+	 */
+	private readonly sandboxes = new Map<string, DaytonaSandbox>();
+
+	constructor(private readonly client: DaytonaApi) {}
+
+	// ---- lifecycle ---------------------------------------------------------
+
+	/**
+	 * Nothing to do. Every host-side preparation the local daemon needs - an
+	 * extracted build context, a bundled-image prune, a published-tag refresh, a
+	 * bind-mount probe - is about images and mounts on *this* machine, and this
+	 * backend has neither: a sandbox is built from Dockerfile text on the
+	 * provider's machines and has no binds at all.
+	 *
+	 * Spelled out rather than left off the class, because the seam asks every
+	 * backend and "this provider genuinely has no host state" is an answer.
+	 * Startup asks unconditionally and learns nothing about which one replied.
+	 */
+	async prepareHost(_opts: { dataDir: string }): Promise<void> {}
+
+	ping(): Promise<boolean> {
+		return this.client.ping();
+	}
+
+	async createContainer(
+		name: string,
+		config: ContainerConfig,
+	): Promise<{ Id: string; Warnings: string[] }> {
+		const env: Record<string, string> = {};
+		for (const entry of config.Env ?? []) {
+			const eq = entry.indexOf('=');
+			if (eq > 0) env[entry.slice(0, eq)] = entry.slice(eq + 1);
+		}
+		// Rounded **up**: a cap of 1.5 GB provisioned as 1 GB is a container that
+		// OOMs below the limit its run was sized against.
+		const memoryGb = config.HostConfig.Memory
+			? Math.max(1, Math.ceil(config.HostConfig.Memory / 1024 ** 3))
+			: undefined;
+		if (memoryGb !== undefined && memoryGb > MAX_MEMORY_GB) {
+			throw new DaytonaMemoryCapExceededError(memoryGb);
+		}
+
+		// Refused here rather than left to the provider: a sandbox built `FROM` a
+		// local-only tag dies mid-build reporting a Docker Hub repository the
+		// operator never typed, which is several steps from the real cause (a dev
+		// instance switched to a managed backend while keeping the image reference
+		// only local Docker could resolve).
+		assertRegistryPullableImage(config.Image, 'Daytona');
+
+		// Daytona keys its build cache on a hash of the Dockerfile *text*, so a
+		// tag-pinned reference is byte-identical forever: the key never moves and
+		// the provider keeps serving the snapshot it first built. Pinning the
+		// digest is what makes that cache correct, not a nicety.
+		const image = await resolveDigestPinnedRef(config.Image);
+
+		const sandbox = await this.createSandboxOrExplainQuota({
+			dockerfileContent: `FROM ${image}\n`,
+			// The *requested* image is recorded, not the resolved digest, so
+			// `inspectContainer().Config.Image` answers the same question it
+			// answers on Docker.
+			labels: { ...config.Labels, [NAME_LABEL]: name, [IMAGE_LABEL]: config.Image },
+			env,
+			cpu: DEFAULT_CPU,
+			memory: memoryGb,
+			disk: config.HostConfig?.DiskGb ?? FALLBACK_DISK_GB,
+			// A backstop only: Hezo suspends idle containers itself, and this is
+			// what stops a sandbox billing forever if the server dies first.
+			autoStopInterval: DAYTONA_IDLE_STOP_MIN,
+			// Negative disables auto-delete. A stopped sandbox must survive so it
+			// can be resumed with its filesystem intact.
+			autoDeleteInterval: -1,
+		});
+		this.sandboxes.set(sandbox.id, sandbox);
+		// Create returns while the sandbox is still `creating`. Docker's create +
+		// start hands back something immediately usable, so the wait belongs here
+		// rather than at every call site: without it the caller's first
+		// `inspectContainer` reads `Running: false` on a sandbox that is merely
+		// coming up, and the container-death path fails the run out from under it.
+		await this.settle(sandbox.id);
+		// Docker's binds bring the run directories into existence as a side effect
+		// of create; a managed sandbox has no binds, so the same postcondition -
+		// "after createContainer, every declared mount target exists" - has to be
+		// met here. Doing it in the adapter rather than at the call site is what
+		// keeps the caller from ever learning which backend it is on: the chown
+		// that follows, and every clone and worktree after it, would otherwise
+		// fail on a missing path here and nowhere else.
+		await this.createMountTargets(sandbox.id, config);
+		return { Id: sandbox.id, Warnings: [] };
+	}
+
+	/** The container-side paths `config.HostConfig.Binds` would have created on Docker. */
+	private async createMountTargets(sandboxId: string, config: ContainerConfig): Promise<void> {
+		const targets = bindMountDirs(config.HostConfig.Binds ?? []);
+		// The per-run ssh socket dir is not a bind on any backend; it is created by
+		// provisioning on Docker and has to exist here too.
+		targets.add('/run/hezo');
+		const dirs = [...targets].filter((t) => t.startsWith('/'));
+		if (dirs.length === 0) return;
+		const exec = await this.execCreate(sandboxId, {
+			Cmd: ['mkdir', '-p', ...dirs],
+			User: 'root',
+			AttachStdout: false,
+			AttachStderr: false,
+		});
+		await this.execStart(exec);
+	}
+
+	async startContainer(containerId: string): Promise<void> {
+		// A stop that has been *accepted* but not finished leaves the sandbox in
+		// `stopping`, and starting from there is a hard 409 ("Sandbox state change
+		// in progress") - measured against the live API. Settling first is what
+		// makes stop-then-start work, which is exactly what the chat's resume path
+		// and the pool's resume rung both do.
+		const settled = await this.settle(containerId);
+		// Unlike Docker, create leaves the sandbox running - starting a started
+		// sandbox is an error there, so the state check is required rather than
+		// an optimization.
+		if (settled && isRunning(settled.state)) return;
+		await this.client.start(containerId);
+		this.sandboxes.delete(containerId);
+		await this.settle(containerId);
+	}
+
+	async stopContainer(containerId: string): Promise<void> {
+		const settled = await this.settle(containerId);
+		// Already at rest is the desired end state, not a failure - and it is the
+		// *common* case rather than a rare race, because the provider stops
+		// sandboxes on its own idle interval as well. Asking it to stop one that
+		// has already stopped answers `400 Sandbox is not in a stoppable state`,
+		// which surfaced to the operator as a red banner on a container that was
+		// doing exactly what it should. Mirrors the check `startContainer` makes.
+		if (!settled || !isRunning(settled.state)) {
+			this.sandboxes.delete(containerId);
+			return;
+		}
+		try {
+			await this.client.stop(containerId);
+		} catch (e) {
+			// The provider's own auto-stop can still land between the check above
+			// and this call, so the same answer is tolerated here - but only once
+			// the sandbox is confirmed to be at rest, since "not stoppable" is also
+			// what a sandbox mid-transition says.
+			if (!(e instanceof DaytonaApiError) || e.status !== 400) throw e;
+			const after = await this.fetch(containerId, { refresh: true });
+			if (after && isRunning(after.state)) throw e;
+		}
+		this.sandboxes.delete(containerId);
+		// Settle on the way out too, so the caller's next `inspectContainer` reads
+		// `stopped` rather than the transitional `stopping` - the difference
+		// between a suspended container and one that reads as dead.
+		await this.settle(containerId);
+	}
+
+	async removeContainer(containerId: string): Promise<void> {
+		await this.client.destroy(containerId);
+		this.sandboxes.delete(containerId);
+	}
+
+	async inspectContainer(containerId: string): Promise<ContainerInfo | null> {
+		const sandbox = await this.fetch(containerId, { refresh: true });
+		if (!sandbox) return null;
+		const running = isRunning(sandbox.state);
+		return {
+			Id: sandbox.id,
+			State: {
+				Status: dockerStatusFor(sandbox.state),
+				Running: running,
+				Pid: 0,
+				// Daytona reports no exit code. A sandbox that failed is surfaced as
+				// a nonzero one so the existing death-detection path reads it the
+				// same way it reads a crashed container.
+				ExitCode: isFailed(sandbox.state) ? 1 : 0,
+			},
+			Config: { Image: sandbox.labels?.[IMAGE_LABEL] ?? '' },
+			// What the provider actually allocated, which is the request rounded up to
+			// its whole-GB unit (see `createContainer`) and so never less than the
+			// ceiling that was asked for. Absent on a sandbox the API declines to
+			// describe, which reads as unknown rather than as unlimited.
+			HostConfig: {
+				MemoryBytes: sandbox.memory === undefined ? null : sandbox.memory * 1024 ** 3,
+			},
+		};
+	}
+
+	async listContainersByLabel(label: string): Promise<Array<{ Id: string; Names: string[] }>> {
+		const eq = label.indexOf('=');
+		const filter = eq > 0 ? { [label.slice(0, eq)]: label.slice(eq + 1) } : undefined;
+		const { items } = await this.client.listSandboxes(filter);
+		// A bare key has no server-side equivalent, so presence is filtered here.
+		const key = eq > 0 ? null : label;
+		return items
+			.filter((s) => (key ? s.labels?.[key] !== undefined : true))
+			.map((s) => ({ Id: s.id, Names: [`/${s.labels?.[NAME_LABEL] ?? s.id}`] }));
+	}
+
+	async findContainerByNamePrefix(prefix: string): Promise<ContainerInfo | null> {
+		const { items } = await this.client.listSandboxes();
+		const match = items.find((s) => (s.labels?.[NAME_LABEL] ?? '').startsWith(prefix));
+		return match ? this.inspectContainer(match.id) : null;
+	}
+
+	/**
+	 * Per-sandbox memory, read from the sandbox's own cgroup by the same script
+	 * `diskUsedBytes` uses for disk - the measurement is runtime-agnostic and only
+	 * its transport differs.
+	 *
+	 * Deliberately not the provider's telemetry API, which this replaced. That
+	 * endpoint answers `403` permanently on an ordinary account ("Telemetry
+	 * endpoints are disabled when Analytics API is configured"), so memory-cap
+	 * enforcement did not operate on this backend at all: `enforceContainerMemoryLimit`
+	 * saw no reading, took no action, and the provider's OOM kill was the only
+	 * thing bounding a run. It also reported a metric named by the collector rather
+	 * than the working set the Docker engine reports, so the same threshold meant
+	 * two different things depending on the backend.
+	 *
+	 * Returns null when the script cannot measure, which the caller already treats
+	 * as "no reading this tick" rather than as a sandbox using zero.
+	 */
+	async containerStats(containerId: string): Promise<ContainerMemoryStats | null> {
+		try {
+			return parseCgroupMemory(await this.runScript(containerId, buildMemoryUsageScript()));
+		} catch (e) {
+			log.warn(`memory reading unavailable for ${containerId}: ${(e as Error).message}`);
+			return null;
+		}
+	}
+
+	/**
+	 * No provider log stream, and nothing useful in one if there were: PID 1 is
+	 * `sleep infinity`, so a container's log is empty by construction. The
+	 * content the UI shows is provisioning and lifecycle output Hezo produces
+	 * itself, and the caller already handles a null response.
+	 */
+	async containerLogs(): Promise<Response | null> {
+		return null;
+	}
+
+	// ---- images and networks ----------------------------------------------
+
+	/**
+	 * Daytona builds from Dockerfile text and exposes no image store, so there is
+	 * nothing to query, pull or remove. Reporting the image as present is what
+	 * keeps `ensureImage` from attempting a pull that has no meaning here; the
+	 * build happens at sandbox create, from a digest-pinned `FROM`.
+	 */
+	async imageExists(): Promise<boolean> {
+		return true;
+	}
+
+	async inspectImage(): Promise<ImageInfo | null> {
+		return null;
+	}
+
+	async removeImage(): Promise<void> {}
+
+	async pullImage(): Promise<void> {}
+
+	/** Docker bridge networking has no analogue; the provider supplies its own. */
+	async inspectNetwork(): Promise<NetworkInfo | null> {
+		return null;
+	}
+
+	// ---- exec --------------------------------------------------------------
+
+	/**
+	 * Create, turning the provider's "you are full" refusal into advice.
+	 *
+	 * Absorbed here rather than at the call site because it is a fact about this
+	 * provider, and nothing above the seam may learn which backend is in use. The
+	 * shape is matched on the message text: the status is a plain `400`, shared
+	 * with every other bad request, so only the body distinguishes them.
+	 */
+	private async createSandboxOrExplainQuota(spec: CreateSandboxSpec): Promise<DaytonaSandbox> {
+		try {
+			return await this.client.createSandbox(spec);
+		} catch (e) {
+			const body = e instanceof DaytonaApiError ? e.body : '';
+			if (/limit exceeded|quota|insufficient/i.test(body)) {
+				let detail = body;
+				try {
+					const parsed = JSON.parse(body) as { message?: string };
+					if (parsed.message) detail = parsed.message.replace(/\s+/g, ' ').trim();
+				} catch {
+					// Not JSON - the raw body is still better than nothing.
+				}
+				throw new DaytonaQuotaExceededError(detail.endsWith('.') ? detail : `${detail}.`);
+			}
+			throw e;
+		}
+	}
+
+	async execCreate(containerId: string, config: ExecConfig): Promise<string> {
+		const id = `dtn-exec-${randomBytes(8).toString('hex')}`;
+		const stderrPath = `/tmp/.hezo-exec-${id}.err`;
+		this.track(id, {
+			containerId,
+			command: renderDaytonaExec({
+				cmd: config.Cmd,
+				env: config.Env,
+				user: config.User,
+				stderrPath,
+			}),
+			stderrPath,
+			workingDir: config.WorkingDir,
+			wantsStdout: config.AttachStdout,
+			wantsStderr: config.AttachStderr,
+		});
+		return id;
+	}
+
+	async execStart(execId: string, opts: ExecStartOpts = {}): Promise<ExecResult> {
+		const rec = this.execs.get(execId);
+		if (!rec) throw new Error(`unknown exec ${execId}`);
+		const sandbox = await this.fetch(rec.containerId);
+		if (!sandbox) throw new Error(`sandbox ${rec.containerId} not found`);
+
+		let stdout = '';
+		if (opts.onChunk) {
+			// Streaming keeps the never-retain contract: chunks are handed straight
+			// to the caller and nothing accumulates here.
+			const { exitCode } = await this.client.executeStreaming(
+				sandbox,
+				rec.command,
+				(line) => opts.onChunk?.({ stream: 'stdout', text: line }),
+				{ cwd: rec.workingDir, signal: opts.signal },
+			);
+			rec.exitCode = exitCode;
+		} else {
+			const res = await this.client.execute(sandbox, rec.command, {
+				cwd: rec.workingDir,
+				signal: opts.signal,
+			});
+			rec.exitCode = res.exitCode;
+			if (rec.wantsStdout) stdout = res.output;
+		}
+
+		// stderr is a file rather than a stream (see command.ts), so it is drained
+		// once the command has finished. On the streaming path that means stderr
+		// arrives as one chunk at the end instead of interleaved - the honest cost
+		// of a provider that merges the two streams.
+		const stderr = rec.wantsStderr ? await this.drainStderr(sandbox, rec) : '';
+		if (stderr && opts.onChunk) await opts.onChunk({ stream: 'stderr', text: stderr });
+		return { stdout, stderr: opts.onChunk ? '' : stderr };
+	}
+
+	/**
+	 * The tunnel's transport on Daytona: a PTY over WebSocket.
+	 *
+	 * The exec API has no stdin at all, so this is the only bidirectional channel
+	 * the provider offers. The PTY merges stdout and stderr - there is no split
+	 * to recover here as there is for a normal exec - so `onStderr` never fires
+	 * and diagnostics arrive interleaved on `onData`, which is harmless because
+	 * the tunnel client writes none.
+	 *
+	 * The command is handed to `openPty` rather than typed in afterwards. A PTY
+	 * starts a login shell, so the command is *typed into* it - the inverse of a
+	 * Docker exec, where the command is the exec - and everything the shell emits
+	 * around accepting it (its own echo, the prompt, bracketed-paste sequences)
+	 * would land on this channel as leading bytes. A framed protocol cannot
+	 * tolerate any of them, so the launch and the sync that hides them are one
+	 * operation; see `openPty` for what each source of noise is.
+	 *
+	 * That sync runs *here*, in the transport, and is not the only one: the framing
+	 * layer independently discards everything before the client's `TUNNEL_PREAMBLE`
+	 * (`tunnel/protocol.ts`). The two are not redundant - this one removes noise
+	 * that is specific to a PTY and would otherwise reach a decoder that cannot
+	 * survive it, while the preamble is a property of the protocol itself and holds
+	 * on any transport, including Docker's, where it doubles as the client's
+	 * "listeners are bound" signal.
+	 */
+	async openExecChannel(containerId: string, config: ExecConfig): Promise<ContainerByteChannel> {
+		const sandbox = await this.fetch(containerId);
+		if (!sandbox) throw new Error(`sandbox ${containerId} not found`);
+		const sessionId = `hezo-chan-${randomBytes(6).toString('hex')}`;
+		const pty = await this.client.openPty(
+			sandbox,
+			sessionId,
+			// `exec`ed by the launch line, so it replaces the shell rather than
+			// running under it - which is what stops a second prompt reaching the
+			// channel when the command ends.
+			asShellCommand(
+				renderDaytonaExecScript({
+					cmd: config.Cmd,
+					env: config.Env,
+					user: config.User,
+					stderrPath: `/tmp/.hezo-chan-${sessionId}.err`,
+				}),
+			),
+		);
+
+		const stderrPath = `/tmp/.hezo-chan-${sessionId}.err`;
+		return {
+			write: (data) => pty.send(data),
+			onData: (handler) => pty.onData(handler),
+			/**
+			 * The channel's stderr is a **file** here, not a stream: the PTY merges
+			 * both directions, so the launch line redirects stderr away to keep the
+			 * framed protocol clean. That left it written to a path nothing ever read,
+			 * and the tunnel's client writes its diagnostics there - `cannot listen on
+			 * 127.0.0.1:19080: EADDRINUSE` and every other reason it failed to start.
+			 * `run-tunnel.ts` calls its stderr handler "the one place a tunnel problem
+			 * is legible rather than just a dead stream", and on this backend it was
+			 * wired to a no-op, so the 30s bind timeout was the only signal and it said
+			 * nothing about the cause.
+			 *
+			 * Read on close rather than tailed live: one exec at the end costs nothing
+			 * on a channel that normally writes no stderr at all, and the moment the
+			 * caller needs it is exactly when the channel has gone.
+			 */
+			onStderr: (handler) => {
+				pty.onClose(() => {
+					trackBackground(
+						this.drainChannelStderr(sandbox, stderrPath)
+							.then((text) => {
+								if (text.trim()) handler(new TextEncoder().encode(text));
+							})
+							.catch(() => undefined),
+					);
+				});
+			},
+			onClose: (handler) => pty.onClose(handler),
+			close: () => pty.close(),
+		};
+	}
+
+	/**
+	 * Read back what a channel's command wrote to stderr, then remove the file.
+	 *
+	 * Separate from {@link drainStderr} only because that one is keyed on a
+	 * tracked exec record; the underlying read is the same, and both go through
+	 * `renderStderrDrain` so the tail bound is stated once.
+	 */
+	private async drainChannelStderr(sandbox: DaytonaSandbox, stderrPath: string): Promise<string> {
+		try {
+			const res = await this.client.execute(
+				sandbox,
+				renderStderrDrain(stderrPath, STDERR_TAIL_BYTES),
+			);
+			return res.output;
+		} catch {
+			// The sandbox may be gone with the channel; losing the diagnostic must
+			// never become a second failure on top of the first.
+			return '';
+		}
+	}
+
+	async execInspect(execId: string): Promise<{ ExitCode: number; Running: boolean; Pid: number }> {
+		const rec = this.execs.get(execId);
+		this.execs.delete(execId);
+		return { ExitCode: rec?.exitCode ?? 0, Running: false, Pid: 0 };
+	}
+
+	private async drainStderr(sandbox: DaytonaSandbox, rec: TrackedExec): Promise<string> {
+		try {
+			const res = await this.client.execute(
+				sandbox,
+				renderStderrDrain(rec.stderrPath, STDERR_TAIL_BYTES),
+			);
+			return res.output;
+		} catch (e) {
+			// Best-effort: a sandbox that died mid-exec cannot be read back, and
+			// losing the diagnostic must not turn into a failed exec on top of it.
+			log.warn(`stderr drain failed for ${sandbox.id}: ${(e as Error).message}`);
+			return '';
+		}
+	}
+
+	// ---- process management ------------------------------------------------
+
+	async killProcessesByEnvMarker(
+		containerId: string,
+		name: ProcessEnvMarker,
+		value: string,
+	): Promise<void> {
+		await this.runScript(containerId, buildKillByEnvMarkerScript(name, value));
+	}
+
+	killRunProcesses(containerId: string, runId: string): Promise<void> {
+		return this.killProcessesByEnvMarker(containerId, 'HEZO_HEARTBEAT_RUN_ID', runId);
+	}
+
+	async listHezoProcesses(containerId: string): Promise<ContainerProcessInfo[]> {
+		const out = await this.runScript(containerId, buildListHezoProcessesScript());
+		return parseHezoProcessList(out);
+	}
+
+	async killPids(containerId: string, pids: number[]): Promise<void> {
+		if (pids.length === 0) return;
+		await this.runScript(containerId, buildKillPidsScript(pids));
+	}
+
+	/**
+	 * The backend this exists for. A Daytona PTY does not kill what runs on it
+	 * when its socket closes - only deleting the session does - so a server that
+	 * died before its close path ran leaves a client holding this sandbox's tunnel
+	 * ports for as long as the sandbox lives.
+	 */
+	async killTunnelClients(containerId: string): Promise<void> {
+		await this.runScript(containerId, buildKillTunnelClientsScript());
+	}
+
+	/**
+	 * Disk used, via the same `df` script the Docker engine runs - the measurement
+	 * is runtime-agnostic and only its transport differs. Daytona exposes no disk
+	 * figure on its control plane, so there is nothing cheaper to prefer.
+	 */
+	async diskUsedBytes(containerId: string, path: string): Promise<number | null> {
+		try {
+			return parseDfKilobytes(await this.runScript(containerId, buildDiskUsageScript(path)));
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Null: these containers run on Daytona's machines, so the memory they consume
+	 * is not this host's to budget. The provider's own per-sandbox ceiling and the
+	 * operator's spend guard are what bound them instead.
+	 */
+	containerHostMemory(): null {
+		return null;
+	}
+
+	/**
+	 * {@link SandboxFiles} over the toolbox file API, rooted inside the sandbox.
+	 *
+	 * There is no bind mount here, so this is the only way a run's artefacts reach
+	 * the container at all - the prompt file, the runtime home and its
+	 * credentials, the tunnel config - and the only way its read-backs come out
+	 * again. The sandbox record is resolved once per call rather than per
+	 * operation: the toolbox base is per-sandbox, and looking it up on every read
+	 * would add a control-plane round trip to something that already costs one.
+	 */
+	files(containerId: string, containerRoot: string): SandboxFiles {
+		const load = async (): Promise<DaytonaSandbox> => {
+			const sandbox = await this.fetch(containerId);
+			if (!sandbox) throw new Error(`sandbox ${containerId} not found`);
+			return sandbox;
+		};
+		// A thin forwarding shell so each operation resolves the sandbox lazily -
+		// `files()` itself is synchronous by the interface's contract, and the
+		// sandbox may not be fetched yet when the caller asks for it.
+		const bound = async (): Promise<SandboxFiles> =>
+			daytonaSandboxFiles(this.client, await load(), containerRoot);
+		return {
+			exists: async (relPath: string) => (await bound()).exists(relPath),
+			read: async (relPath: string) => (await bound()).read(relPath),
+			readBytes: async (relPath: string) => (await bound()).readBytes(relPath),
+			size: async (relPath: string) => (await bound()).size(relPath),
+			remove: async (relPath: string) => (await bound()).remove(relPath),
+			removeDir: async (relPath: string) => (await bound()).removeDir(relPath),
+			findByName: async (relDir: string, name: string, maxDepth: number) =>
+				(await bound()).findByName(relDir, name, maxDepth),
+			write: async (
+				relPath: string,
+				contents: string,
+				opts?: { mode?: number; dirMode?: number },
+			) => (await bound()).write(relPath, contents, opts),
+			writeBytes: async (
+				relPath: string,
+				contents: Uint8Array,
+				opts?: { mode?: number; dirMode?: number },
+			) => (await bound()).writeBytes(relPath, contents, opts),
+			mkdir: async (relPath: string, opts?: { mode?: number }) =>
+				(await bound()).mkdir(relPath, opts),
+			list: async (relDir: string) => (await bound()).list(relDir),
+		};
+	}
+
+	/**
+	 * Run one of the shared `/proc` scripts. They run as root, which is Daytona's
+	 * default exec identity, so no elevation is requested - the scripts are
+	 * identical to the ones the Docker engine runs.
+	 */
+	private async runScript(containerId: string, script: string): Promise<string> {
+		const sandbox = await this.fetch(containerId);
+		if (!sandbox) return '';
+		const res = await this.client.execute(sandbox, `sh -c ${shQuote(script)}`);
+		return res.output;
+	}
+
+	// ---- internals ---------------------------------------------------------
+
+	private track(id: string, rec: TrackedExec): void {
+		if (this.execs.size >= MAX_TRACKED_EXECS) {
+			const oldest = this.execs.keys().next();
+			if (!oldest.done) this.execs.delete(oldest.value);
+		}
+		this.execs.set(id, rec);
+	}
+
+	/**
+	 * Wait for a sandbox to reach a resting state.
+	 *
+	 * Daytona's lifecycle calls return when the transition has been **accepted**,
+	 * not when it has happened: create answers `creating`, stop answers
+	 * `stopping`, and both settle a beat later (measured: create -> started in
+	 * ~0.7s warm, stop -> stopped in ~1.1s). Docker's equivalents do not behave
+	 * that way, so absorbing the difference is this adapter's job - leaking it
+	 * upward produced two real failures: a 409 on stop-then-start, and a
+	 * just-created sandbox reading `Running: false` to the container-death path.
+	 *
+	 * Unknown states are treated as **transitional**, deliberately. A new
+	 * transitional state that we proceeded through would resurface as the 409 this
+	 * exists to remove, whereas a new resting state costs one bounded wait and
+	 * logs itself, which is how we would find out about it.
+	 */
+	private async settle(
+		containerId: string,
+		timeoutMs = SETTLE_TIMEOUT_MS,
+	): Promise<DaytonaSandbox | null> {
+		const deadline = Date.now() + timeoutMs;
+		let sandbox = await this.fetch(containerId, { refresh: true });
+		while (sandbox && !isSettled(sandbox.state)) {
+			if (Date.now() >= deadline) {
+				log.warn(
+					`sandbox ${containerId} still in state "${sandbox.state}" after ${timeoutMs}ms; proceeding`,
+				);
+				return sandbox;
+			}
+			await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+			sandbox = await this.fetch(containerId, { refresh: true });
+		}
+		return sandbox;
+	}
+
+	private async fetch(
+		containerId: string,
+		opts: { refresh?: boolean } = {},
+	): Promise<DaytonaSandbox | null> {
+		if (!opts.refresh) {
+			const cached = this.sandboxes.get(containerId);
+			if (cached) return cached;
+		}
+		try {
+			const sandbox = await this.client.getSandbox(containerId);
+			if (sandbox) this.sandboxes.set(containerId, sandbox);
+			else this.sandboxes.delete(containerId);
+			return sandbox;
+		} catch (e) {
+			if (e instanceof DaytonaApiError && e.status === 404) {
+				this.sandboxes.delete(containerId);
+				return null;
+			}
+			throw e;
+		}
+	}
+}
+
+/** Kept local so `command.ts` stays the only place that renders an *exec*. */
+function shQuote(s: string): string {
+	return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Minutes of inactivity after which Daytona stops a sandbox on its own.
+ *
+ * Deliberately looser than Hezo's own fixed idle window: this is the backstop
+ * for a server that died holding sandboxes, not the mechanism. If it were equal
+ * the provider could stop a container in the same moment Hezo was handing it to
+ * the next run.
+ */
+const DAYTONA_IDLE_STOP_MIN = 10;
+
+/**
+ * How long a lifecycle call waits for the sandbox to reach a resting state, and
+ * how often it asks. Generous because a *cold* create builds the image (~31s
+ * measured) while a warm one settles in well under a second; the poll is only
+ * paid while something is actually in flight.
+ */
+const SETTLE_TIMEOUT_MS = 180_000;
+const SETTLE_POLL_MS = 500;
+
+function isRunning(state: string): boolean {
+	return state === 'started';
+}
+
+function isFailed(state: string): boolean {
+	return state === 'error' || state === 'build_failed';
+}
+
+/**
+ * Resting states - the ones Daytona stays in until something asks it to move.
+ * Everything else (`creating`, `starting`, `stopping`, `restoring`, …) is a
+ * transition in flight; see {@link DaytonaEngine.settle} for why the unknown
+ * case falls on the transitional side.
+ */
+function isSettled(state: string): boolean {
+	return (
+		isRunning(state) ||
+		isFailed(state) ||
+		state === 'stopped' ||
+		state === 'destroyed' ||
+		state === 'archived'
+	);
+}
+
+/**
+ * Map a Daytona state onto the Docker status string the rest of Hezo branches
+ * on. Only `running` and `exited` carry meaning downstream; the transitional
+ * states report as `created` so a sandbox mid-start is never mistaken for a
+ * dead one and failed out from under its run.
+ */
+function dockerStatusFor(state: string): string {
+	if (isRunning(state)) return 'running';
+	if (isFailed(state)) return 'exited';
+	switch (state) {
+		case 'stopped':
+		case 'paused':
+		case 'archived':
+		case 'destroyed':
+			return 'exited';
+		default:
+			return 'created';
+	}
+}

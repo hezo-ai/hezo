@@ -802,3 +802,91 @@ describe('loadConnectorsForRun excludes pending/revoked', () => {
 // Importing CommentContentType keeps the symbol used so test isolation imports
 // are obvious; it also confirms shared enum compiles with the new value.
 expect(CommentContentType.ConnectRequired).toBe('connect_required');
+
+/**
+ * The banner's data source. It is its own endpoint rather than a filter over the
+ * paginated connectors list because whether an operator learns a connector died
+ * must not depend on which page its row landed on. It reports only the
+ * working-to-broken case: a connector that never finished its first connect is a
+ * setup step the operator already knows about, and banner-ing it would turn the
+ * warning into permanent furniture.
+ */
+describe('GET /projects/:projectId/connectors/health', () => {
+	async function health(): Promise<{ degraded: { id: string; name: string }[]; count: number }> {
+		const res = await app.request(`/api/projects/${projectSlug}/connectors/health`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		return (await res.json()).data;
+	}
+
+	it('reports nothing while every connector is healthy', async () => {
+		const { row } = await createOrFetchConnector(db, {
+			name: 'health-ok',
+			displayName: 'Healthy',
+			mcpUrl: `${fake.url}/mcp`,
+			mcpTransport: 'http',
+			projectId: await projectIdOf(projectSlug),
+		});
+		await db.query(`UPDATE mcp_connections SET activated_at = now() WHERE id = $1`, [row.id]);
+
+		const body = await health();
+		expect(body.count).toBe(0);
+		expect(body.degraded).toEqual([]);
+	});
+
+	it('names a connector that was working and has stopped', async () => {
+		const { row } = await createOrFetchConnector(db, {
+			name: 'health-broken',
+			displayName: 'Broken',
+			mcpUrl: `${fake.url}/mcp`,
+			mcpTransport: 'http',
+			projectId: await projectIdOf(projectSlug),
+		});
+		await db.query(
+			`UPDATE mcp_connections SET activated_at = now(), auth_error = $1 WHERE id = $2`,
+			['token refresh: token endpoint error: invalid_grant', row.id],
+		);
+
+		const body = await health();
+		expect(body.degraded.map((c) => c.name)).toContain('health-broken');
+		expect(body.count).toBe(body.degraded.length);
+	});
+
+	it('ignores a connector that never finished its first connect, and a revoked one', async () => {
+		const pid = await projectIdOf(projectSlug);
+		const { row: neverConnected } = await createOrFetchConnector(db, {
+			name: 'health-never',
+			displayName: 'Never',
+			mcpUrl: `${fake.url}/mcp`,
+			mcpTransport: 'http',
+			projectId: pid,
+		});
+		// auth_error but no activated_at — a first-connect failure, not a regression.
+		await db.query(`UPDATE mcp_connections SET auth_error = 'discovery failed' WHERE id = $1`, [
+			neverConnected.id,
+		]);
+
+		const { row: revoked } = await createOrFetchConnector(db, {
+			name: 'health-revoked',
+			displayName: 'Revoked',
+			mcpUrl: `${fake.url}/mcp`,
+			mcpTransport: 'http',
+			projectId: pid,
+		});
+		await db.query(
+			`UPDATE mcp_connections SET activated_at = now(), auth_error = 'x', revoked_at = now()
+			 WHERE id = $1`,
+			[revoked.id],
+		);
+
+		const names = (await health()).degraded.map((c) => c.name);
+		expect(names).not.toContain('health-never');
+		expect(names).not.toContain('health-revoked');
+	});
+});
+
+async function projectIdOf(slug: string): Promise<string> {
+	const r = await db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [slug]);
+	return r.rows[0].id;
+}

@@ -1,4 +1,4 @@
-import type { AiProviderModel } from '@hezo/shared';
+import type { AgentRuntime, AiProviderModel } from '@hezo/shared';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -13,6 +13,12 @@ export interface AiProviderConfig {
 	status: string;
 	default_model: string | null;
 	metadata: Record<string, unknown>;
+	/**
+	 * The CLI this credential runs on, or null to follow the provider default.
+	 * Resolve it with `effectiveRuntime` before displaying — null is the common
+	 * case and still means a concrete runtime.
+	 */
+	runtime: AgentRuntime | null;
 	created_at: string;
 }
 
@@ -54,6 +60,8 @@ export function useCreateAiProvider() {
 			auth_method?: string;
 			/** Locally-hosted providers only (Ollama, LM Studio): the operator's server URL. */
 			base_url?: string;
+			/** Chosen CLI. Omit (or null) to follow the provider default. */
+			runtime?: AgentRuntime | null;
 		}) => api.post<AiProviderConfig>('/api/ai-providers', data),
 		onSuccess: invalidateAll,
 	});
@@ -129,11 +137,17 @@ export function useAllProviderModels(
 
 export function useUpdateAiProviderConfig(configId: string) {
 	return useMutation({
-		mutationFn: (data: { default_model?: string | null; label?: string }) =>
-			api.patch<{ updated: boolean; default_model?: string | null; label?: string }>(
-				`/api/ai-providers/${configId}`,
-				data,
-			),
+		mutationFn: (data: {
+			default_model?: string | null;
+			label?: string;
+			runtime?: AgentRuntime | null;
+		}) =>
+			api.patch<{
+				updated: boolean;
+				default_model?: string | null;
+				label?: string;
+				runtime?: AgentRuntime | null;
+			}>(`/api/ai-providers/${configId}`, data),
 		onSuccess: invalidateAll,
 	});
 }

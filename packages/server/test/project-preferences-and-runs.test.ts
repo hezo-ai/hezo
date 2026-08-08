@@ -298,10 +298,12 @@ describe('run log tools', () => {
 		const log = `HEAD${'x'.repeat(20)}TAILEND`;
 		const runId = await seedRun({ team: teamId, member: engineerId, task: taskId, log });
 
-		const runs = (await callToolAs(adminToken, 'list_task_runs', {
-			project: projectSlug,
-			task_id: taskId,
-		})) as unknown as Array<Record<string, unknown>>;
+		const runs = (
+			(await callToolAs(adminToken, 'list_task_runs', {
+				project: projectSlug,
+				task_id: taskId,
+			})) as unknown as { items: Array<Record<string, unknown>> }
+		).items;
 		const row = runs.find((r) => r.id === runId);
 		expect(row).toBeTruthy();
 		expect(row?.log_length).toBe(log.length);
@@ -372,7 +374,14 @@ describe('Coach review prompt', () => {
 			 FROM tasks WHERE id = $1`,
 			[taskId],
 		);
-		const prompt = await buildCoachReviewPrompt(db, 'SYS', taskRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(
+			db,
+			'SYS',
+			taskRow.rows[0],
+			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:1',
+		);
 		expect(prompt).toContain('### Agent Runs');
 		expect(prompt).toContain(runId);
 		expect(prompt).toMatch(/get_run_log/);

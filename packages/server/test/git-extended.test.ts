@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { cloneRepo } from '../src/services/git';
+import { cloneRepo, localGitLoc } from '../src/services/git';
 import { HostGitExecutor } from '../src/services/git-executor';
 
 const testDir = mkdtempSync(join(tmpdir(), 'hezo-test-git-extended-'));
@@ -10,7 +10,7 @@ const testDir = mkdtempSync(join(tmpdir(), 'hezo-test-git-extended-'));
 // Force the SSH transport to fail immediately so the clone fails without touching
 // the network — mirrors an unreachable ssh-agent / bridge in production.
 const exec = new HostGitExecutor({ GIT_SSH_COMMAND: 'false', GIT_TERMINAL_PROMPT: '0' });
-const loc = (p: string) => ({ hostPath: p, containerPath: p });
+const loc = (p: string) => localGitLoc(p);
 const MISSING = 'nonexistent-org-hezo-test/nonexistent-repo-xyz';
 
 afterAll(() => {
@@ -19,7 +19,7 @@ afterAll(() => {
 
 describe('cloneRepo', { timeout: 30_000 }, () => {
 	it('returns { success: false, error } when the transport is unreachable', async () => {
-		const result = await cloneRepo(exec, MISSING, loc(join(testDir, 'clone-fail')));
+		const result = await cloneRepo(exec, MISSING, loc(join(testDir, 'clone-fail')), null);
 
 		expect(result.success).toBe(false);
 		expect(typeof result.error).toBe('string');
@@ -28,13 +28,13 @@ describe('cloneRepo', { timeout: 30_000 }, () => {
 
 	it('does not throw on clone failure', async () => {
 		await expect(
-			cloneRepo(exec, MISSING, loc(join(testDir, 'clone-no-throw'))),
+			cloneRepo(exec, MISSING, loc(join(testDir, 'clone-no-throw')), null),
 		).resolves.not.toThrow();
 	});
 
 	it('does not leave a usable clone on failure', async () => {
 		const targetDir = join(testDir, 'clone-no-dir');
-		const result = await cloneRepo(exec, MISSING, loc(targetDir));
+		const result = await cloneRepo(exec, MISSING, loc(targetDir), null);
 
 		expect(result.success).toBe(false);
 		expect(existsSync(join(targetDir, '.git'))).toBe(false);

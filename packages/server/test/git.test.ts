@@ -12,11 +12,12 @@ import {
 	fetchRepo,
 	getOriginRemote,
 	getRemoteDefaultBranch,
+	isExpectedRemoteUrl,
 	isTransientMountError,
+	localGitLoc,
 	mergeDefaultIntoWorktree,
 	pruneWorktrees,
 	type RepoLoc,
-	remoteUrlMatchesRepo,
 	setOriginUrl,
 	type WorktreeLoc,
 } from '../src/services/git';
@@ -26,6 +27,7 @@ import {
 	type GitExecutor,
 	HostGitExecutor,
 } from '../src/services/git-executor';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 
 const testDir = join(tmpdir(), `hezo-test-git-${Date.now()}`);
 const bareRepoDir = join(testDir, 'bare.git');
@@ -34,8 +36,8 @@ const cloneDir = join(testDir, 'clone');
 // Production drives git inside the container; tests drive the same orchestration
 // against a host git where the host and container paths are the same temp dir.
 const exec = new HostGitExecutor();
-const repoLoc = (p: string): RepoLoc => ({ hostPath: p, containerPath: p });
-const wtLoc = (p: string): WorktreeLoc => ({ hostPath: p, containerPath: p });
+const repoLoc = (p: string): RepoLoc => localGitLoc(p);
+const wtLoc = (p: string): WorktreeLoc => localGitLoc(p);
 
 function run(cmd: string, cwd?: string) {
 	execSync(cmd, { cwd, stdio: 'pipe' });
@@ -69,21 +71,25 @@ afterAll(() => {
 
 // Records every exec so we can assert which git ops need the SSH bridge.
 class RecordingExecutor implements GitExecutor {
-	calls: Array<{ args: string[]; needsSsh: boolean }> = [];
+	/** Temp dirs, so host and container paths are the same string. */
+	files(containerPath: string) {
+		return hostSandboxFiles(containerPath);
+	}
+	calls: Array<{ args: string[]; needsNetwork: boolean }> = [];
 	async exec(args: string[], opts: GitExecOpts): Promise<GitExecResult> {
-		this.calls.push({ args, needsSsh: !!opts.needsSsh });
+		this.calls.push({ args, needsNetwork: !!opts.needsNetwork });
 		return { exitCode: 0, stdout: '', stderr: '' };
 	}
 }
 
 describe('transport ops request SSH, local ops do not', () => {
-	it('marks clone + fetch as needsSsh and worktree add as not', async () => {
+	it('marks clone + fetch as needsNetwork and worktree add as not', async () => {
 		const rec = new RecordingExecutor();
-		await cloneRepo(rec, 'owner/repo', repoLoc('/w/repo'));
+		await cloneRepo(rec, 'owner/repo', repoLoc('/w/repo'), null);
 		await fetchRepo(rec, repoLoc('/w/repo'));
 		await createWorktree(rec, repoLoc('/w/repo'), wtLoc('/wt/repo'), 'b');
 
-		const need = (sub: string) => rec.calls.find((c) => c.args[0] === sub)?.needsSsh;
+		const need = (sub: string) => rec.calls.find((c) => c.args[0] === sub)?.needsNetwork;
 		expect(need('clone')).toBe(true);
 		expect(need('fetch')).toBe(true);
 		expect(need('worktree')).toBe(false);
@@ -465,6 +471,10 @@ describe('ensureTaskWorktreeWithRetry retries transient mount ENOENT', () => {
 	// Wraps a real HostGitExecutor, failing the first `failFirst` `worktree add`
 	// calls with a scripted stderr and delegating everything else to real git.
 	class FlakyWorktreeAdd implements GitExecutor {
+		/** Temp dirs, so host and container paths are the same string. */
+		files(containerPath: string) {
+			return hostSandboxFiles(containerPath);
+		}
 		addCalls = 0;
 		constructor(
 			private readonly inner: GitExecutor,
@@ -571,25 +581,38 @@ describe('origin remote inspection and repair', () => {
 		GIT_CONFIG_SYSTEM: '/dev/null',
 	});
 
-	it('remoteUrlMatchesRepo accepts the URL forms that address the repo', () => {
+	it('isExpectedRemoteUrl accepts the HTTPS forms, credential or not', () => {
 		const id = 'hezo-ai/website';
-		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/website.git', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/website', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('ssh://git@github.com/hezo-ai/website.git', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website.git', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('https://user@github.com/hezo-ai/website.git', id)).toBe(true);
-		expect(remoteUrlMatchesRepo('HTTPS://GitHub.com/Hezo-AI/Website.git', id)).toBe(true);
+		expect(isExpectedRemoteUrl('https://github.com/hezo-ai/website.git', id)).toBe(true);
+		expect(isExpectedRemoteUrl('https://github.com/hezo-ai/website', id)).toBe(true);
+		expect(isExpectedRemoteUrl('https://user@github.com/hezo-ai/website.git', id)).toBe(true);
+		expect(isExpectedRemoteUrl('HTTPS://GitHub.com/Hezo-AI/Website.git', id)).toBe(true);
+		// The form Hezo writes: a placeholder, never a value.
+		expect(
+			isExpectedRemoteUrl(
+				'https://x-access-token:__HEZO_SECRET_OAUTH_GITHUB_ABC12345__@github.com/hezo-ai/website.git',
+				id,
+			),
+		).toBe(true);
 	});
 
-	it('remoteUrlMatchesRepo rejects other repos and other hosts', () => {
+	it('isExpectedRemoteUrl rejects the SSH forms, which is what migrates a live clone', () => {
+		// A pre-HTTPS clone points at the right repo over a transport that no longer
+		// works on a managed backend. Treating it as a match is what left it stranded;
+		// rejecting it is what makes repo-sync rewrite origin on the next sync.
 		const id = 'hezo-ai/website';
-		expect(remoteUrlMatchesRepo('git@github.com:hezo-ai/hezo.git', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('git@github.com:other/website.git', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('git@github.com:prefix-hezo-ai/website.git', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('git@gitlab.com:hezo-ai/website.git', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('https://github.com/hezo-ai/website/extra', id)).toBe(false);
-		expect(remoteUrlMatchesRepo('', id)).toBe(false);
+		expect(isExpectedRemoteUrl('git@github.com:hezo-ai/website.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('ssh://git@github.com/hezo-ai/website.git', id)).toBe(false);
+	});
+
+	it('isExpectedRemoteUrl rejects other repos and other hosts', () => {
+		const id = 'hezo-ai/website';
+		expect(isExpectedRemoteUrl('https://github.com/hezo-ai/hezo.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('https://github.com/other/website.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('https://github.com/prefix-hezo-ai/website.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('https://gitlab.com/hezo-ai/website.git', id)).toBe(false);
+		expect(isExpectedRemoteUrl('https://github.com/hezo-ai/website/extra', id)).toBe(false);
+		expect(isExpectedRemoteUrl('', id)).toBe(false);
 	});
 
 	it('getOriginRemote reads a configured origin and repairs via setOriginUrl', async () => {
@@ -616,12 +639,14 @@ describe('origin remote inspection and repair', () => {
 
 		// A transport-style failure gives no evidence either way.
 		const flaky: GitExecutor = {
+			files: (containerPath: string) => hostSandboxFiles(containerPath),
 			exec: async () => ({ exitCode: 1, stdout: '', stderr: 'docker exec transport died' }),
 		};
 		expect(await getOriginRemote(flaky, repoLoc(noOrigin))).toEqual({ status: 'indeterminate' });
 
 		// A zero-exit with no URL (a stubbed executor) is indeterminate too.
 		const silent: GitExecutor = {
+			files: (containerPath: string) => hostSandboxFiles(containerPath),
 			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
 		};
 		expect(await getOriginRemote(silent, repoLoc(noOrigin))).toEqual({ status: 'indeterminate' });

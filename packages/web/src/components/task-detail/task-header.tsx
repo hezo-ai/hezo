@@ -49,7 +49,7 @@ export function TaskHeader({
 }: TaskHeaderProps) {
 	// Ancestors come back root-first, excluding the current task, so the
 	// breadcrumb reads `Tasks → root → … → parent → current`. Sub-tasks are
-	// capped at two levels deep, so at most two ancestor links precede the
+	// capped at three levels deep, so at most three ancestor links precede the
 	// current identifier. They share the current task's project (sub-tasks
 	// inherit the parent's project), so the current task's slug is the right
 	// link target — for the task-list crumb too.

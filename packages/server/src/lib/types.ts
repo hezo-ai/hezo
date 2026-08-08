@@ -7,7 +7,7 @@ import type { AuthChallengeStore } from '../services/auth-challenges';
 import type { ChatChannelRegistry } from '../services/chat-channels';
 import type { ChatSessionManager } from '../services/chat-session-manager';
 import type { ContainerLogStreamer } from '../services/container-logs';
-import type { DockerClient } from '../services/docker';
+import type { ContainerEngine } from '../services/docker';
 import type { EgressProxy } from '../services/egress';
 import type { JobManager } from '../services/job-manager';
 import type { LogStreamBroker } from '../services/log-stream-broker';
@@ -53,7 +53,7 @@ export type Env = {
 		assetStore: AssetStore;
 		masterKeyManager: MasterKeyManager;
 		authChallenges: AuthChallengeStore;
-		docker: DockerClient;
+		docker: ContainerEngine;
 		wsManager: WebSocketManager;
 		events: DomainEventBus;
 		jobManager: JobManager;

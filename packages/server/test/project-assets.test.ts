@@ -1,11 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { upsertProjectAsset } from '../src/lib/asset-name';
 import type { Env } from '../src/lib/types';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createTestApp,
@@ -65,7 +67,7 @@ async function uploadProjectAsset(
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	if (folder !== undefined) fd.set('folder', folder);
 	return app.request(`/api/projects/${projectId}/assets`, {
 		method: 'POST',
@@ -82,7 +84,7 @@ async function uploadTaskAsset(filename: string, mime: string, bytes: Uint8Array
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	const res = await app.request(`/api/projects/${projectId}/tasks/${taskId}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },
@@ -100,7 +102,7 @@ async function uploadAssetViaMcp(
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	return app.request('/mcp/assets', {
 		method: 'POST',
 		headers: { ...authHeader(authToken) },
@@ -118,7 +120,7 @@ async function uploadAssetViaMcpForm(
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	for (const [k, v] of Object.entries(fields)) fd.set(k, v);
 	return app.request('/mcp/assets', {
 		method: 'POST',
@@ -591,9 +593,9 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 
 		// Visible to the agent through the existing read tools.
 		const list = (await callToolViaMcp(agentToken, 'list_project_assets', {})) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		expect(list.files.some((f) => f.filename === 'diagram.png')).toBe(true);
+		expect(list.items.some((f) => f.filename === 'diagram.png')).toBe(true);
 
 		const read = (await callToolViaMcp(agentToken, 'read_project_asset', {
 			filename: 'diagram.png',
@@ -601,9 +603,7 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		expect(read.binary).toBe(true);
 		// Binary contents come back as an absolute signed download URL the agent
 		// curls from inside its container — never a filesystem path.
-		expect(read.url).toMatch(
-			/^http:\/\/host\.docker\.internal:\d+\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/,
-		);
+		expect(read.url).toMatch(/^https?:\/\/[^/]+\/api\/assets\/[0-9a-f-]+\?exp=\d+&sig=/);
 	});
 
 	it('an external API key uploads via MCP (naming the project)', async () => {
@@ -619,7 +619,7 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		const png = buildPng(8);
 		const copy = new Uint8Array(png.byteLength);
 		copy.set(png);
-		fd.set('file', new File([copy.buffer], 'external.png', { type: 'image/png' }));
+		fd.set('file', new File([blobBytes(copy)], 'external.png', { type: 'image/png' }));
 		fd.set('project', projectId);
 		const res = await app.request('/mcp/assets', {
 			method: 'POST',
@@ -652,7 +652,7 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 
 	it('requires authentication', async () => {
 		const fd = new FormData();
-		fd.set('file', new File([buildPng(10)], 'nope.png', { type: 'image/png' }));
+		fd.set('file', new File([blobBytes(buildPng(10))], 'nope.png', { type: 'image/png' }));
 		const res = await app.request('/mcp/assets', { method: 'POST', body: fd });
 		expect(res.status).toBe(401);
 	});
@@ -672,7 +672,7 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		const png = buildPng(21);
 		const copy = new Uint8Array(png.byteLength);
 		copy.set(png);
-		fd.set('file', new File([copy.buffer], 'chart.png', { type: 'image/png' }));
+		fd.set('file', new File([blobBytes(copy)], 'chart.png', { type: 'image/png' }));
 		fd.set('folder', 'reports/q3');
 		const res = await app.request('/mcp/assets', {
 			method: 'POST',
@@ -813,6 +813,47 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 		});
 		expect(res.status).toBe(409);
 		expect((await res.json()).error.code).toBe('ASSET_ARCHIVED');
+	});
+
+	// The route pre-check above is a fast path, not the rule. This drives the
+	// helper directly — the way any future caller would — to prove the refusal
+	// lives inside the transaction that does the write, not at each call site.
+	it('refuses the upsert helper itself, leaving the row and its review intact', async () => {
+		const upload = await uploadProjectAsset(
+			'helper-guard.txt',
+			'text/plain',
+			new TextEncoder().encode('original bytes'),
+		);
+		const assetId = (await upload.json()).data.id as string;
+		await app.request(`/api/projects/${projectId}/assets/${assetId}/review-comments`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ comment: 'please revise', quote: 'original' }),
+		});
+		await db.query('UPDATE assets SET archived_at = now() WHERE id = $1', [assetId]);
+
+		const result = await upsertProjectAsset(db, {
+			assetId: randomUUID(),
+			teamId,
+			projectId,
+			contentType: 'text/plain',
+			byteSize: 9,
+			sha256: 'deadbeef',
+			desiredName: 'helper-guard.txt',
+			uploadedByMemberId: null,
+		});
+
+		expect(result.status).toBe('archived');
+		const row = await db.query<{ id: string; byte_size: string; archived_at: string | null }>(
+			'SELECT id, byte_size, archived_at FROM assets WHERE original_filename = $1 AND project_id = $2',
+			['helper-guard.txt', projectId],
+		);
+		expect(row.rows[0].id).toBe(assetId);
+		expect(Number(row.rows[0].byte_size)).toBe('original bytes'.length);
+		expect(row.rows[0].archived_at).not.toBeNull();
+		// A refused write must not consume the pending review either.
+		const review = await db.query('SELECT 1 FROM review_comments WHERE asset_id = $1', [assetId]);
+		expect(review.rows.length).toBe(1);
 	});
 
 	it('rejects a path deeper than 2 folder levels', async () => {
@@ -1211,7 +1252,7 @@ describe('asset sort order (REST + MCP)', () => {
 	async function uploadTo(pid: string, filename: string, seed: number): Promise<string> {
 		const fd = new FormData();
 		const bytes = buildPng(seed);
-		fd.set('file', new File([bytes.buffer], filename, { type: 'image/png' }));
+		fd.set('file', new File([blobBytes(bytes)], filename, { type: 'image/png' }));
 		const res = await app.request(`/api/projects/${pid}/assets`, {
 			method: 'POST',
 			headers: { ...authHeader(token) },
@@ -1233,9 +1274,9 @@ describe('asset sort order (REST + MCP)', () => {
 
 	async function mcpList(args: Record<string, unknown>): Promise<string[]> {
 		const out = (await callToolViaMcp(sortAgentToken, 'list_project_assets', args)) as {
-			files: Array<{ filename: string }>;
+			items: Array<{ filename: string }>;
 		};
-		return out.files.map((f) => f.filename);
+		return out.items.map((f) => f.filename);
 	}
 
 	beforeAll(async () => {

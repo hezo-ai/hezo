@@ -1,6 +1,6 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { AlertTriangle, ChevronsLeft, Globe, Info, Loader2 } from 'lucide-react';
+import { AlertTriangle, ChevronsLeft, Globe, Info } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
@@ -50,8 +50,10 @@ export function ProjectSidebar({
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
 	// `stopped` is the normal on-demand resting state — only genuine errors flag.
+	// Provisioning no longer flags either: a project gets a container whenever a
+	// run needs one, so a spinner here would be on more often than off and would
+	// mark as noteworthy the most ordinary thing the system does.
 	const containerFailed = health?.kind === 'error';
-	const containerProvisioning = health?.kind === 'provisioning' || health?.kind === 'rebuilding';
 
 	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);
 	const byCreatedAt = (a: { created_at: string }, b: { created_at: string }) =>
@@ -69,14 +71,7 @@ export function ProjectSidebar({
 		testId: 'project-sidebar-container',
 		label: (
 			<span className="inline-flex items-center gap-1.5">
-				<span>Container</span>
-				{containerProvisioning && (
-					<Loader2
-						data-testid="project-sidebar-container-spinner"
-						aria-hidden="true"
-						className="w-3 h-3 shrink-0 animate-spin text-info"
-					/>
-				)}
+				<span>Containers</span>
 				{containerFailed && (
 					<Tooltip content="Container failed — click for details" side="right">
 						<span
@@ -106,22 +101,26 @@ export function ProjectSidebar({
 		label: 'Git',
 		testId: 'project-sidebar-git',
 	};
-	// Connectors (this project's MCP servers + GitHub) also disclose under Settings.
+	// Connectors (this project's MCP servers + GitHub) and Skills (its scoped skills +
+	// globals) are top-level pages, not Settings sub-items: they're working surfaces the
+	// team reaches constantly, not configuration set once. Both exist on HQ too — neither
+	// route redirects internal projects away, unlike Git/Budget/Settings. They reuse the
+	// `settings.*` catalog keys the global settings nav already carries, rather than
+	// duplicating the same word into a `nav.*` key across all twelve catalogs.
 	const connectorsPage = {
 		to: '/projects/$projectId/connectors',
 		params: projectParams,
-		label: 'Connectors',
+		label: t('settings.connectors'),
 		testId: 'project-sidebar-connectors',
 	};
-	// Skills (this project's scoped skills + globals) disclose under Settings, below Connectors.
 	const skillsPage = {
 		to: '/projects/$projectId/skills',
 		params: projectParams,
-		label: 'Skills',
+		label: t('settings.skills'),
 		testId: 'project-sidebar-skills',
 	};
 	// Custom Prompt — the project-wide instruction block injected into every agent's
-	// prompt — discloses under Settings, alongside Skills.
+	// prompt — discloses under Settings, alongside Git.
 	const customPromptPage = {
 		to: '/projects/$projectId/custom-prompt',
 		params: projectParams,
@@ -129,14 +128,24 @@ export function ProjectSidebar({
 		testId: 'project-sidebar-custom-prompt',
 	};
 
-	// Progress (the project's goals + Captain-maintained summary) leads under Inbox; it's a
-	// normal-project concept, so HQ (internal) has none.
+	// Progress (the Captain-maintained summary + recent task activity) leads under Inbox; it's a
+	// normal-project concept, so HQ (internal) has none. Goals disclose beneath it — they are the
+	// optional layer on top of progress, not the other way round.
+	const goalsPage = {
+		to: '/projects/$projectId/progress/goals',
+		params: projectParams,
+		label: t('nav.goals'),
+		testId: 'project-sidebar-goals',
+	};
+	// The "no goals yet" nudge stays on the Progress row even though goals are what it is about:
+	// sub-items only render once their parent's route is active, so on the Goals row the nudge
+	// would only be visible to someone who had already navigated to it.
 	const progressPage = {
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress',
 		params: projectParams,
 		label: (
 			<span className="inline-flex items-center gap-1.5">
-				<span>Progress</span>
+				<span>{t('nav.progress')}</span>
 				{hasNoGoals && (
 					<Tooltip content="No goals yet — create one to focus the team" side="right">
 						<span
@@ -150,6 +159,7 @@ export function ProjectSidebar({
 			</span>
 		),
 		testId: 'project-sidebar-progress',
+		subItems: [goalsPage],
 	};
 
 	const projectPages = [
@@ -179,8 +189,9 @@ export function ProjectSidebar({
 			label: t('nav.assets'),
 		},
 		...(isInternal
-			? // HQ has no Settings — keep Container and Activity at the top level.
-				[containerPage, activityPage]
+			? // HQ has no Budget or Settings — Container and Activity stay at the top level,
+				// after Connectors and Skills.
+				[connectorsPage, skillsPage, containerPage, activityPage]
 			: [
 					{
 						to: '/projects/$projectId/budget',
@@ -188,21 +199,16 @@ export function ProjectSidebar({
 						label: t('nav.budget'),
 						testId: 'project-sidebar-budget',
 					},
+					connectorsPage,
+					skillsPage,
 					{
 						to: '/projects/$projectId/settings',
 						params: projectParams,
 						label: t('nav.settings'),
 						testId: 'project-sidebar-settings',
-						// Git, Connectors, Skills, Container and Activity disclose under Settings
+						// Git, Custom Prompt, Container and Activity disclose under Settings
 						// when it (or one of them) is the active route.
-						subItems: [
-							gitPage,
-							connectorsPage,
-							skillsPage,
-							customPromptPage,
-							containerPage,
-							activityPage,
-						],
+						subItems: [gitPage, customPromptPage, containerPage, activityPage],
 					},
 				]),
 	];
@@ -270,7 +276,7 @@ export function ProjectSidebar({
 					to="/projects/$projectId/dashboard"
 					params={projectParams}
 					data-testid="project-sidebar-dashboard"
-					className="min-w-0 flex-1 text-[13px] font-semibold text-text-1 truncate"
+					className="min-w-0 text-[13px] font-semibold text-text-1 truncate"
 				>
 					{project ? (
 						isInternal ? (

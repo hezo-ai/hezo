@@ -134,7 +134,13 @@ anywhere except the provider's own token endpoint. Only the short-lived **access
 exposed to a run, as a [placeholder](/docs/security/secret-protection) the agent puts in an
 `Authorization: Bearer` header; the [egress proxy](/docs/security/secret-protection)
 substitutes the real token and refreshes it automatically before it expires, so the
-connection stays live without you re-authorizing.
+connection stays live without you re-authorizing. Hezo also re-checks connectors on a
+timer, so a token is renewed even on an instance where nothing has run for a while.
+
+Refreshing can still fail - most often because the provider expired or revoked the
+underlying authorization, which no amount of retrying will fix. When that happens the
+connector is marked **Needs reconnect**; see
+[When a connector stops working](#when-a-connector-stops-working).
 
 ## Local (stdio) servers
 
@@ -179,7 +185,7 @@ and the global scope both define a connection of the same name, the project's ow
 
 Manage connections two ways:
 
-- **Project → Settings → Connectors** shows just that project's connectors. **Add** a
+- **Project → Connectors** shows just that project's connectors. **Add** a
   connector here - an MCP server (name + URL) or a REST API (base URL, allowed hosts,
   and where the credential goes) - and it's scoped to that project. For an MCP server,
   Hezo probes it for OAuth and opens the connect popup automatically, or you attach an
@@ -254,6 +260,31 @@ This only ever narrows access. An agent can't ask for *more* than it would get b
 and the request is skipped entirely once you've chosen the enabled methods yourself: your
 choice stands, and a later registration won't undo it. You can widen or narrow a connector
 at any time from the same control.
+
+## When a connector stops working
+
+A connector that was working can stop working on its own - typically because the provider
+expired the authorization behind it, or an administrator there revoked it. Nothing on your
+side changed, so the only way you would otherwise find out is by noticing that an agent's
+output had quietly got worse.
+
+Hezo surfaces it three ways instead:
+
+- A **banner at the top of every page in the project** naming what broke, linking straight
+  to the connector.
+- The connector's own row is marked **Needs reconnect** rather than **Connected**, with the
+  provider's explanation underneath and a **Reconnect** button beside it.
+- Agents see the connector as `degraded` rather than `active`, and are instructed to raise
+  it with you rather than work around it silently.
+
+Press **Reconnect** and complete the provider's authorization exactly as you did the first
+time. The connector is repaired in place - you keep its method allowlist, its credential
+record, and its history, and every agent picks it up again on its next run.
+
+Until you do, the connector's tools may still appear in agent tool lists, but calls through
+them fail. That is deliberate: withdrawing the tools mid-task would look to an agent like
+the integration had never existed, whereas a failing call plus a `degraded` status tells it
+what is actually wrong.
 
 ## Reconnecting a revoked connector
 

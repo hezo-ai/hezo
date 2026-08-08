@@ -87,6 +87,10 @@ beforeAll(async () => {
 	mcp = await startTestMcpHttpServer({ tls: { cert: leaf.cert, key: leaf.key } });
 
 	proxy = new EgressProxy({
+		// Upstreams in this suite are on loopback, which the destination
+		// guard blocks by default. Opt in so the guard under test elsewhere
+		// does not mask what these cases actually assert.
+		allowPrivateTargets: true,
 		db,
 		masterKeyManager,
 		ca,

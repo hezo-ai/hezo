@@ -50,7 +50,7 @@ bun run test
 ```
 
 Tests use Vitest with in-memory PGlite instances — no external database needed. See
-[`../AGENTS.md`](../AGENTS.md) for the full testing guide (the four tiers, how to run a
+[`../AGENTS.md`](../AGENTS.md) for the full testing guide (the five tiers, how to run a
 single file or test, and how to diagnose failures).
 
 ## Project structure

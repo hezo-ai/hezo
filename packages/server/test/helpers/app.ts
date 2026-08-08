@@ -21,11 +21,14 @@ import { loadAgentRoles } from '../../src/db/agent-roles';
 import type { Db } from '../../src/db/database';
 import { seedBuiltins } from '../../src/db/seed';
 import { DomainEventBus } from '../../src/events/bus';
+import { getHostMemory } from '../../src/lib/host-memory';
+import type { SandboxBackendInfo } from '../../src/lib/sandbox-backend-info';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
+import { getDefaultRamCapPerContainerGb } from '../../src/lib/system-meta';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
-import type { DockerClient } from '../../src/services/docker';
+import { createFakeDockerClient } from '../../src/services/fake-docker';
 import { JobManager } from '../../src/services/job-manager';
 import { LogStreamBroker } from '../../src/services/log-stream-broker';
 import { getMarketplaceTeam } from '../../src/services/marketplace';
@@ -33,14 +36,34 @@ import {
 	createProjectWithPlanningTask,
 	resolveProjectTaskPrefix,
 } from '../../src/services/project-create';
+import type { SandboxFiles } from '../../src/services/sandbox/files';
+import { SandboxBackendHolder } from '../../src/services/sandbox/holder';
+import type { ContainerEngine } from '../../src/services/sandbox/types';
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';
 import { seedTestAppTeamTemplate } from './app-team-template';
 import { createTestDbWithMigrations } from './db';
 
-const STUB_DOCKER_METHODS = {
+// Typed, so the compiler rejects an incomplete stub. AGENTS.md requires every
+// inline docker mock to extend this rather than hand-rolling a partial object;
+// that only holds if the base itself is complete.
+/**
+ * The two engine seams a run exercises regardless of what a test is asserting:
+ * it stages its prompt and runtime home through `files`, and it opens a tunnel
+ * through `openExecChannel` before the first agent exec. An inline mock that
+ * omits either fails with "not a function" from deep inside the runner, so
+ * spread this into any hand-built engine.
+ */
+export function stubEngineSeams(): Pick<ContainerEngine, 'files' | 'openExecChannel'> {
+	const stub = createStubDocker();
+	return { files: stub.files, openExecChannel: stub.openExecChannel };
+}
+
+const STUB_DOCKER_METHODS: ContainerEngine = {
 	ping: async () => true,
+	// No host state behind a stub; the real per-backend work lives in each adapter.
+	prepareHost: async () => {},
 	imageExists: async () => true,
 	pullImage: async () => {},
 	createContainer: async () => ({ Id: 'stub-container', Warnings: [] }),
@@ -51,26 +74,187 @@ const STUB_DOCKER_METHODS = {
 		Id: 'stub-container',
 		State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
 		Config: { Image: 'stub' },
+		// A stub provisions nothing, so it has no allocation to report. Overridden
+		// by any test that exercises the backfill.
+		HostConfig: { MemoryBytes: null },
 	}),
 	findContainerByNamePrefix: async () => null,
+	inspectImage: async () => null,
+	removeImage: async () => {},
+	listContainersByLabel: async () => [],
 	inspectNetwork: async () => ({ IPAM: { Config: [{ Gateway: '172.17.0.1' }] } }),
 	containerStats: async () => null,
-	containerLogs: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }),
+	containerLogs: async () => new Response(new Uint8Array()),
 	execCreate: async () => {
 		throw new Error('execCreate not mocked — pass a mock docker via RunnerDeps');
 	},
 	execStart: async () => ({ stdout: '', stderr: '' }),
 	execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+	// A channel that carries nothing. The tunnel treats a closed channel as
+	// fail-closed, so a stubbed engine simply never tunnels.
+	openExecChannel: async () => ({
+		write: () => {},
+		onData: () => {},
+		onStderr: () => {},
+		onClose: () => {},
+		close: () => {},
+	}),
 	killRunProcesses: async () => {},
 	killProcessesByEnvMarker: async () => {},
 	listHezoProcesses: async () => [],
 	killPids: async () => {},
+	killTunnelClients: async () => {},
+	diskUsedBytes: async () => null,
+	// Same answer the fake gives: a stub engine stands in for the local daemon.
+	containerHostMemory: () => getHostMemory(),
+	// Same bind-resolved view the fake engine gives, so a test that stages a file
+	// through the seam reads it back off disk exactly as a bind mount would.
+	files: (containerId: string, containerRoot: string) =>
+		createFakeDockerClient().files(containerId, containerRoot),
 };
 
-export function createStubDocker<T extends Record<string, unknown>>(
+/**
+ * The live test app's db + dataDir, so a `createStubDocker()` built anywhere in a
+ * spec can resolve container paths to the same workspace the app is using.
+ *
+ * Most specs construct their own scripted engine with `createStubDocker({...})`
+ * and no context, so threading it through every call site would mean touching
+ * every spec; the harness records it once instead.
+ */
+const testContexts: Array<{ db: Db; dataDir: string }> = [];
+
+/** Register a live app so any stub engine can resolve container paths against it. */
+function rememberTestContext(db: Db, dataDir: string): void {
+	testContexts.unshift({ db, dataDir });
+	// Bounded: a worker runs many files, and only the most recent few can still
+	// own a live container.
+	if (testContexts.length > 8) testContexts.length = 8;
+}
+
+/**
+ * A {@link SandboxFiles} that resolves against whichever registered app knows
+ * the container, deferring the choice to the operation so a context created
+ * after the engine still counts.
+ */
+function firstResolvableFiles(
+	candidates: Array<{ db: Db; dataDir: string }>,
+	containerId: string,
+	containerRoot: string,
+): SandboxFiles {
+	const pick = async (): Promise<SandboxFiles> => {
+		for (const candidate of candidates) {
+			try {
+				const row = await candidate.db.query<{ id: string }>(
+					'SELECT id FROM projects WHERE container_id = $1 LIMIT 1',
+					[containerId],
+				);
+				if (row.rows.length > 0) {
+					return createFakeDockerClient(candidate.db, candidate.dataDir).files(
+						containerId,
+						containerRoot,
+					);
+				}
+			} catch {
+				// A closed db from a finished spec - try the next one.
+			}
+		}
+		return createFakeDockerClient(candidates[0]?.db, candidates[0]?.dataDir).files(
+			containerId,
+			containerRoot,
+		);
+	};
+	return {
+		exists: async (p) => (await pick()).exists(p),
+		read: async (p) => (await pick()).read(p),
+		readBytes: async (p) => (await pick()).readBytes(p),
+		size: async (p) => (await pick()).size(p),
+		list: async (p) => (await pick()).list(p),
+		remove: async (p) => (await pick()).remove(p),
+		removeDir: async (p) => (await pick()).removeDir(p),
+		findByName: async (d, n, depth) => (await pick()).findByName(d, n, depth),
+		write: async (p, c, o) => (await pick()).write(p, c, o),
+		writeBytes: async (p, c, o) => (await pick()).writeBytes(p, c, o),
+		mkdir: async (p, o) => (await pick()).mkdir(p, o),
+	};
+}
+
+// `T extends object` rather than `Record<string, unknown>`: an interface type has
+// no index signature, so the narrower constraint rejected the perfectly ordinary
+// case of passing one stub engine in as the base for another.
+export function createStubDocker<T extends object>(
 	overrides: T = {} as T,
-): DockerClient & T {
-	return { ...STUB_DOCKER_METHODS, ...overrides } as unknown as DockerClient & T;
+	ctx?: { db?: Db; dataDir?: string },
+): ContainerEngine & T {
+	// `files` resolves the container's workspace the way a bind mount would, from
+	// the project row - so a test that stages a file through the seam reads it
+	// back off disk exactly as it did when the runner used `node:fs` directly.
+	// Try each live app in turn: a spec can stand up an isolated context
+	// alongside the file-level one, and only the app that actually owns the
+	// container can say where its workspace is.
+	const candidates =
+		ctx?.db && ctx?.dataDir ? [{ db: ctx.db, dataDir: ctx.dataDir }] : testContexts;
+	const files: ContainerEngine['files'] = (containerId, containerRoot) =>
+		firstResolvableFiles(candidates, containerId, containerRoot);
+	const merged = { ...STUB_DOCKER_METHODS, files, ...overrides } as ContainerEngine & T;
+	return withTunnelReadyStub(merged);
+}
+
+/**
+ * Answer the tunnel's port-readiness check, whatever the caller's exec stubs do.
+ *
+ * `startRunTunnel` will not hand a run its endpoints until the client's ports
+ * are listening, so an engine that never answers leaves every run and every chat
+ * turn waiting out the full timeout and then failing. Wrapping rather than
+ * merging is what makes that true for the many specs that replace `execCreate`
+ * and `execStart` wholesale - the same reason `withRunUserStub` wraps the
+ * run-user probe and the chowns instead of relying on a default.
+ *
+ * A stubbed container's tunnel comes up. A spec that wants the opposite drives
+ * `startRunTunnel` against its own engine (`sandbox-run-tunnel.test.ts`).
+ */
+function withTunnelReadyStub<T extends ContainerEngine>(engine: T): T {
+	const ready = new Set<string>();
+	let seq = 0;
+
+	const execCreate = async (
+		containerId: string,
+		config: Parameters<ContainerEngine['execCreate']>[1],
+	) => {
+		if ((config?.Cmd ?? []).some((part) => part.includes('/proc/net/tcp'))) {
+			const id = `__tunnel-ready-${seq++}`;
+			ready.add(id);
+			return id;
+		}
+		return engine.execCreate(containerId, config);
+	};
+	const execStart = async (execId: string, opts: Parameters<ContainerEngine['execStart']>[1]) => {
+		if (ready.delete(execId)) return { stdout: 'ready\n', stderr: '' };
+		return engine.execStart(execId, opts);
+	};
+
+	return {
+		...engine,
+		// Spy metadata is carried across, so a spec that asserts on
+		// `docker.execCreate.mock.calls` still sees the calls it made - wrapping
+		// must not cost a test its ability to inspect its own stub.
+		execCreate: preserveSpy(execCreate, engine.execCreate),
+		execStart: preserveSpy(execStart, engine.execStart),
+		execInspect: async (execId: string) => {
+			if (execId.startsWith('__tunnel-ready-')) return { ExitCode: 0, Running: false, Pid: 0 };
+			return engine.execInspect(execId);
+		},
+	} as T;
+}
+
+/** Copy a mock's own properties (`mock`, `mockClear`, …) onto the function wrapping it. */
+function preserveSpy<F extends (...args: never[]) => unknown>(wrapper: F, original: unknown): F {
+	if (typeof original !== 'function') return wrapper;
+	for (const key of Object.getOwnPropertyNames(original)) {
+		if (key === 'length' || key === 'name' || key === 'prototype') continue;
+		const descriptor = Object.getOwnPropertyDescriptor(original, key);
+		if (descriptor) Object.defineProperty(wrapper, key, descriptor);
+	}
+	return wrapper;
 }
 
 /**
@@ -82,7 +266,18 @@ export function createStubDocker<T extends Record<string, unknown>>(
  */
 export { encrypt };
 
-export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetStore } = {}) {
+export async function createTestApp(
+	opts: {
+		webUrl?: string;
+		assetStore?: AssetStore;
+		/**
+		 * Stand in a different engine - the managed-backend shape, say, whose
+		 * containers report no host memory. Defaults to the local-daemon stub.
+		 */
+		docker?: ContainerEngine;
+		sandboxBackendInfo?: SandboxBackendInfo;
+	} = {},
+) {
 	const db = await createTestDbWithMigrations();
 	const masterKeyManager = new MasterKeyManager();
 	const mnemonic = generateMnemonic();
@@ -93,7 +288,8 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 	await seedBuiltins(db, roleDocs);
 	await seedTestAppTeamTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
-	const docker = createStubDocker();
+	rememberTestContext(db, dataDir);
+	const docker = opts.docker ?? createStubDocker({}, { db, dataDir });
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -116,6 +312,11 @@ export async function createTestApp(opts: { webUrl?: string; assetStore?: AssetS
 		{
 			dataDir,
 			webUrl: opts.webUrl ?? '',
+			// A holder rather than the bare info: the backend is switchable at
+			// runtime, so the settings route needs something it can re-point.
+			sandboxHolder: opts.sandboxBackendInfo
+				? new SandboxBackendHolder({ engine: docker, info: opts.sandboxBackendInfo, dataDir })
+				: undefined,
 		},
 		docker,
 		wsManager,
@@ -185,7 +386,8 @@ export async function createUnsetTestApp() {
 	await seedBuiltins(db, roleDocs);
 	await seedTestAppTeamTemplate(db);
 	const dataDir = mkdtempSync(join(tmpdir(), 'hezo-test-'));
-	const docker = createStubDocker();
+	rememberTestContext(db, dataDir);
+	const docker = createStubDocker({}, { db, dataDir });
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -342,6 +544,44 @@ export async function mintAgentToken(
 export async function projectSlugFor(db: Db, teamId: string): Promise<string> {
 	const res = await createTestProject(db, teamId, { name: 'Work Project' });
 	return (await res.json()).data.slug;
+}
+
+/**
+ * Seed a project as already holding a running container, in **both**
+ * representations and complete.
+ *
+ * A fixture that writes only `projects.container_id` describes a container the
+ * pool has no record of, which production treats as one adopted from outside it:
+ * its allocation is unknown, so it cannot be shown to cover the project's memory
+ * cap and the next acquire replaces it. That is correct behaviour and the wrong
+ * fixture - a test that means "this project has its container" has to seed one
+ * that was provisioned, allocation and all, the same way `createStubDocker`
+ * starts from a complete stub rather than a hand-rolled partial.
+ *
+ * `memoryGb` defaults to the instance-wide cap, which is what a container
+ * provisioned by a project that never overrode it actually gets.
+ */
+export async function seedProjectContainer(
+	db: Db,
+	projectId: string,
+	containerId: string,
+	opts: { state?: string; memoryGb?: number; containerStatus?: string } = {},
+): Promise<void> {
+	const capGb = opts.memoryGb ?? (await getDefaultRamCapPerContainerGb(db));
+	await db.query(
+		`UPDATE projects SET container_id = $2, container_status = $3::container_status,
+		        container_error = NULL
+		  WHERE id = $1`,
+		[projectId, containerId, opts.containerStatus ?? 'running'],
+	);
+	await db.query(
+		`INSERT INTO container_pool_members (project_id, container_id, state, memory_bytes)
+		 VALUES ($1, $2, $3::container_pool_state, $4)
+		 ON CONFLICT (container_id) DO UPDATE
+		    SET project_id = EXCLUDED.project_id, state = EXCLUDED.state,
+		        memory_bytes = EXCLUDED.memory_bytes`,
+		[projectId, containerId, opts.state ?? 'idle', String(capGb * 1024 ** 3)],
+	);
 }
 
 /** Same as {@link projectSlugFor} but keyed by the team's slug. */

@@ -8,9 +8,10 @@
 // failures, and chip removal. Real pixel-perfect DnD affordances stay in
 // Playwright (decision-tree item 3).
 
-import { ATTACHMENT_MAX_BYTES } from '@hezo/shared';
+import { ATTACHMENT_EXTENSIONS, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { fireEvent, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
+import { ATTACHMENT_CATEGORIES } from '../src/components/file-attachments';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
@@ -137,7 +138,8 @@ test('each content type gets its own chip icon (image/audio/video/document/fallb
 		new File([new Uint8Array([1])], 'b.mp3', { type: 'audio/mpeg' }),
 		new File([new Uint8Array([1])], 'c.mp4', { type: 'video/mp4' }),
 		new File([new Uint8Array([1])], 'd.pdf', { type: 'application/pdf' }),
-		// text/markdown matches none of the icon branches → generic file icon.
+		// Chips render through the shared AssetIcon, so markdown gets the document
+		// glyph rather than the generic fallback.
 		new File([new Uint8Array([1])], 'e.md', { type: 'text/markdown' }),
 	];
 	fireEvent.drop(zone, dt(files));
@@ -153,6 +155,34 @@ test('each content type gets its own chip icon (image/audio/video/document/fallb
 	for (const name of ['a.png', 'b.mp3', 'c.mp4', 'd.pdf', 'e.md']) {
 		expect(text).toContain(name);
 	}
+});
+
+test('a zip uploads whatever content type the browser declared for it', async () => {
+	const { zone, container, findByTestId } = await renderTaskPage();
+
+	// Windows Chrome and Edge declare `application/x-zip-compressed`, which is not
+	// itself an allowlisted mime. The client used to re-derive a weaker copy of the
+	// server rule and rejected this before it ever left the browser; it now calls
+	// the same shared resolver the server does, which lets the extension decide.
+	const zip = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], 'bundle.zip', {
+		type: 'application/x-zip-compressed',
+	});
+	fireEvent.drop(zone, dt([zip]));
+
+	const chip = await findByTestId('comment-attachment-chip', undefined, { timeout: 15_000 });
+	expect(chip.textContent).toContain('bundle.zip');
+	expect(container.querySelectorAll('[data-testid="comment-attachment-error"]')).toHaveLength(0);
+});
+
+test('every allowlisted extension is listed in exactly one tooltip category', () => {
+	// The tooltip's type lists are derived from the shared allowlist so they can't
+	// drift, but the grouping is hand-written - this is what makes a newly
+	// allowlisted extension impossible to leave out of it.
+	const categorized = ATTACHMENT_CATEGORIES.flatMap((c) => c.extensions);
+	expect(new Set(categorized).size, 'an extension is listed in two categories').toBe(
+		categorized.length,
+	);
+	expect([...categorized].sort()).toEqual(Object.keys(ATTACHMENT_EXTENSIONS).sort());
 });
 
 test('client-side rejections (bad extension, oversize) become error chips without uploading', async () => {

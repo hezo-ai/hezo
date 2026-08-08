@@ -100,9 +100,9 @@ work they discover is part of the task they are already on: the sub-task keeps i
 assignee, thread, and status, but stays attached to the parent so the shape of the work
 is visible on the board.
 
-Nesting goes two levels deep. A task can have sub-tasks, and those can have sub-tasks of
-their own, but no further. That keeps the board readable and stops a plan turning into a
-tree nobody can hold in their head.
+Nesting goes three levels deep. A task can have sub-tasks, those can have sub-tasks of
+their own, and those can have one further level, but no deeper. That keeps the board
+readable and stops a plan turning into a tree nobody can hold in their head.
 
 A parent cannot be marked done while any of its sub-tasks is still open. Every sub-task
 has to reach done or cancelled first. This is deliberate: closing a parent over unfinished

@@ -12,6 +12,8 @@ export interface LogChunk {
 	stream: 'stdout' | 'stderr';
 	text: string;
 	replace?: boolean;
+	/** The replace text is only the log's tail. See {@link useLogStream}. */
+	trimmed?: boolean;
 }
 
 const DEFAULT_MAX_LINES = 5000;
@@ -88,6 +90,13 @@ export function useLogStream<M extends WsServerMessage>(
 			const chunk = extractRef.current(msg as M);
 			if (!chunk) return;
 			if (chunk.replace) {
+				// A snapshot the server had to cut down is only worth applying when we
+				// are holding nothing. The run view seeds the *whole* log from REST and
+				// then joins the room; applying the tail there replaced a complete log
+				// with its last 256 KB and rendered "earlier output trimmed" on the one
+				// view that already had the rest - until the next event re-seeded it,
+				// which is what made it look like a rendering glitch.
+				if (chunk.trimmed && linesRef.current.length > 0) return;
 				const replaced = parseSeedLogText(chunk.text).slice(-cap);
 				linesRef.current = replaced;
 				setLines(replaced);

@@ -59,8 +59,10 @@ New here? Start with the [Introduction](./docs/introduction.md) and
 Hezo ships as a **single self-contained binary** - nothing to compile, no runtime or
 dependencies to install, so you're up in seconds. The fastest way to get it is the
 one-line installer, which detects your OS and CPU architecture and downloads the
-matching [release binary](https://github.com/hezo-ai/hezo/releases/latest). Docker is
-the only prerequisite (agents run in isolated containers).
+matching [release binary](https://github.com/hezo-ai/hezo/releases/latest). A
+Docker-compatible runtime is the only prerequisite (agents run in isolated containers) -
+Docker, Colima, Rancher Desktop, OrbStack and Lima all work. See
+[Container runtimes](./docs/deployment/container-runtimes.md).
 
 **macOS / Linux**
 
@@ -108,14 +110,14 @@ then **Create stack**). **DigitalOcean** opens a short guide until its
 provider that takes cloud-init works too - see
 [One-click deploy](./docs/deployment/one-click.md).
 
-> Hezo runs each project's agents in a container on the host Docker socket, so it
-> needs a **real VM** - not a managed-container PaaS (Render, Railway, Cloud Run).
-> That's why these buttons target VM providers.
+> Hezo runs each project's agents in a container on the host's container-runtime
+> socket, so it needs a **real VM** - not a managed-container PaaS (Render, Railway,
+> Cloud Run). That's why these buttons target VM providers.
 
 ### Build from source
 
 Want to hack on Hezo or run an unreleased build? You'll need [Bun](https://bun.sh/)
-v1.3.14+ and Docker.
+v1.3.14+ and a Docker-compatible runtime.
 
 ```sh
 git clone https://github.com/hezo-ai/hezo.git
@@ -154,7 +156,7 @@ parts.
 - **Chat from anywhere** - run the CEO from [Telegram](./docs/chat/telegram.md), [Slack](./docs/chat/slack.md), and [Discord](./docs/chat/discord.md), as a [private assistant or a coworker](./docs/chat/overview.md#two-modes-assistant-and-coworker) in your team channels.
 - **Your data, in your storage** - [embedded Postgres](./docs/concepts/your-data.md), optional [hosted Postgres](./docs/deployment/configuration.md), local or [S3-compatible](./docs/deployment/configuration.md#storing-assets-in-s3-compatible-object-storage) [asset storage](./docs/concepts/assets.md#where-asset-files-live), data-preserving upgrades.
 - **Speaks your language** - the web app runs in [12 languages](./docs/concepts/languages-and-formats.md), picked from your browser on first run and set before anything else; [date and currency formats](./docs/concepts/languages-and-formats.md#date-and-currency-formats) are chosen independently, so ISO dates with German prose is a valid combination.
-- **Self-hosted & easy to run** - a [single binary](./docs/getting-started/installation.md), [deployable anywhere Docker runs](./docs/deployment/self-hosting.md), [one-click cloud-init](./docs/deployment/one-click.md), [secure remote access](./docs/deployment/secure-remote-access.md), [safe-rollback backups](./docs/deployment/backup-and-recovery.md), [in-app self-update](./docs/deployment/self-hosting.md#updating), a mobile-first web app.
+- **Self-hosted & easy to run** - a [single binary](./docs/getting-started/installation.md), [deployable anywhere a Docker-compatible runtime runs](./docs/deployment/self-hosting.md), [one-click cloud-init](./docs/deployment/one-click.md), [secure remote access](./docs/deployment/secure-remote-access.md), [safe-rollback backups](./docs/deployment/backup-and-recovery.md), [in-app self-update](./docs/deployment/self-hosting.md#updating), a mobile-first web app.
 
 ## Agents never hold your secrets
 

@@ -4,7 +4,7 @@
 // can't compute. So this lives in Playwright rather than a component test.
 
 import { expect, test } from './fixtures';
-import { waitForPageLoad } from './helpers';
+import { waitForPageLoad, waitForStableBox } from './helpers';
 
 test('documents sidebar stays pinned while the page scrolls on desktop', async ({
 	page,
@@ -34,7 +34,9 @@ test('documents sidebar stays pinned while the page scrolls on desktop', async (
 
 	const newDocButton = page.getByRole('button', { name: 'New document' });
 	await expect(newDocButton).toBeVisible();
-	const before = await newDocButton.boundingBox();
+	// Settled first - see waitForStableBox: measuring mid-render compares two
+	// different layouts and reads as a stickiness failure.
+	const before = await waitForStableBox(newDocButton);
 	expect(before).not.toBeNull();
 
 	// Scroll the shell scroller to the bottom.
@@ -90,7 +92,7 @@ test('sidebar search header stays fixed while the doc list itself scrolls', asyn
 	await expect(searchInput).toBeVisible();
 	await expect(page.getByText('doc-00.md')).toBeVisible();
 
-	const before = await searchInput.boundingBox();
+	const before = await waitForStableBox(searchInput);
 	expect(before).not.toBeNull();
 
 	// Scroll the list's own overflow-y-auto container to the bottom — the "doc

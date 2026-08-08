@@ -99,9 +99,11 @@ async function setup(opts: {
 	}) => Record<string, Record<string, unknown>>;
 	taskOverride?: Record<string, unknown>;
 	/** Container state the project index should report; Retry is gated on health. */
-	containerStatus?: string;
+	/** Seed a failed pool member, which is what "the container has an error"
+	 * means now that a project is not bound to one container. */
+	containerFailed?: boolean;
 }) {
-	const { seeded, retryCalls, comments, runs, taskOverride, containerStatus = 'running' } = opts;
+	const { seeded, retryCalls, comments, runs, taskOverride, containerFailed = false } = opts;
 	return renderApp({
 		initialPath: '/',
 		seed: async () => {
@@ -116,10 +118,17 @@ async function setup(opts: {
 			// Retry is gated on container health; default the project to running so
 			// the button is clickable, and let specs override to exercise the gate.
 			await getTestContext().db.query(
-				`UPDATE projects SET container_status = $1::container_status,
-				        container_id = COALESCE(container_id, 'retry-test-container') WHERE id = $2`,
-				[containerStatus, project.id],
+				`UPDATE projects SET container_status = 'running'::container_status,
+				        container_id = COALESCE(container_id, 'retry-test-container') WHERE id = $1`,
+				[project.id],
 			);
+			if (containerFailed) {
+				await getTestContext().db.query(
+					`INSERT INTO container_pool_members (project_id, container_id, state)
+					 VALUES ($1, 'retry-failed-container', 'error'::container_pool_state)`,
+					[project.id],
+				);
+			}
 
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
@@ -298,7 +307,7 @@ test('failed run-entry comment disables Retry while the container has an error',
 		retryCalls,
 		// An errored container needs fixing before a retry can succeed. (A merely
 		// stopped container no longer disables Retry — the runner lazy-starts it.)
-		containerStatus: 'error',
+		containerFailed: true,
 		comments: ({ task, agent }) => [
 			runComment('c1', task.id, FAILED_RUN_ID, agent, '2026-05-20T11:30:00Z'),
 		],

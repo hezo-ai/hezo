@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { AgentRuntime, type CostTokens, costCentsFromRate, type ModelRate } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { recoverOffStreamRunUsage } from '../src/services/agent-runner';
+import { hostSandboxFiles } from '../src/services/sandbox/files';
 
 /**
  * Covers the wiring between "the CLI wrote a usage file somewhere under the
@@ -38,11 +39,10 @@ describe('recoverOffStreamRunUsage', () => {
 	const onError = (msg: string): void => {
 		errors.push(msg);
 	};
-	const mount = (): { hostDir: string; containerDir: string; envEntry: string } => ({
-		hostDir: home,
-		containerDir: '/workspace/.hezo/subscription/run-1',
-		envEntry: `KIMI_CODE_HOME=${home}`,
-	});
+	// Recovery reads through the SandboxFiles seam now, rooted at the per-run
+	// home. Under Docker that root is the host side of the bind mount, which is
+	// what these tests seed.
+	const mount = () => hostSandboxFiles(home);
 
 	beforeEach(() => {
 		home = mkdtempSync(join(tmpdir(), 'hezo-offstream-'));
@@ -62,7 +62,7 @@ describe('recoverOffStreamRunUsage', () => {
 	const kimiRecord = (o: Record<string, unknown>): string => JSON.stringify(o);
 
 	describe('kimi', () => {
-		it('finds the session log nested under the run home and prices it', () => {
+		it('finds the session log nested under the run home and prices it', async () => {
 			seedKimiSessionLog(
 				[
 					kimiRecord({
@@ -80,7 +80,7 @@ describe('recoverOffStreamRunUsage', () => {
 				].join('\n'),
 			);
 
-			const usage = recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError);
+			const usage = await recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError);
 			expect(usage).not.toBeNull();
 			expect(usage?.inputTokens).toBe(1300 + 500);
 			expect(usage?.outputTokens).toBe(250);
@@ -88,7 +88,7 @@ describe('recoverOffStreamRunUsage', () => {
 			expect(errors).toEqual([]);
 		});
 
-		it('scrubs the session log after reading it', () => {
+		it('scrubs the session log after reading it', async () => {
 			// A wire log plausibly captures request headers, i.e. the Moonshot bearer,
 			// so it must not outlive the run on the host.
 			const path = seedKimiSessionLog(
@@ -100,28 +100,28 @@ describe('recoverOffStreamRunUsage', () => {
 				}),
 			);
 			expect(existsSync(path)).toBe(true);
-			recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError);
+			await recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError);
 			expect(existsSync(path)).toBe(false);
 		});
 
-		it('returns null when no session log was written (⇒ $0, not a failed run)', () => {
+		it('returns null when no session log was written (⇒ $0, not a failed run)', async () => {
 			// The run may have died before the CLI flushed anything.
 			mkdirSync(join(home, 'sessions'), { recursive: true });
-			expect(recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError)).toBeNull();
+			expect(await recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError)).toBeNull();
 			expect(errors).toEqual([]);
 		});
 
-		it('returns null when the sessions directory does not exist at all', () => {
-			expect(recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError)).toBeNull();
+		it('returns null when the sessions directory does not exist at all', async () => {
+			expect(await recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError)).toBeNull();
 			expect(errors).toEqual([]);
 		});
 
-		it('returns null, without throwing, when the log holds no usage records', () => {
+		it('returns null, without throwing, when the log holds no usage records', async () => {
 			seedKimiSessionLog('{"role":"assistant","content":"hi"}\nnot json\n');
-			expect(recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError)).toBeNull();
+			expect(await recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError)).toBeNull();
 		});
 
-		it('combines logs from multiple session dirs without double-counting', () => {
+		it('combines logs from multiple session dirs without double-counting', async () => {
 			// A resumed session or a subagent can leave more than one log under the
 			// run home; the extractor dedupes by record id, not by file.
 			seedKimiSessionLog(
@@ -151,13 +151,13 @@ describe('recoverOffStreamRunUsage', () => {
 				'sess-2',
 			);
 
-			const usage = recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError);
+			const usage = await recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError);
 			// r1 appears in both files and is counted once.
 			expect(usage?.inputTokens).toBe(300);
 			expect(usage?.outputTokens).toBe(30);
 		});
 
-		it('does not follow symlinks out of the run home', () => {
+		it('does not follow symlinks out of the run home', async () => {
 			// The depth cap only bounds the walk if symlinks are never followed.
 			const outside = mkdtempSync(join(tmpdir(), 'hezo-outside-'));
 			mkdirSync(join(outside, 'agents'), { recursive: true });
@@ -179,32 +179,32 @@ describe('recoverOffStreamRunUsage', () => {
 			// follow it.
 			expect(existsSync(join(link, 'agents', 'wire.jsonl'))).toBe(true);
 
-			expect(recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError)).toBeNull();
+			expect(await recoverOffStreamRunUsage(AgentRuntime.Kimi, mount(), price, onError)).toBeNull();
 			rmSync(outside, { recursive: true, force: true });
 		});
 	});
 
 	describe('grok', () => {
-		it('reads and scrubs the per-run debug file', () => {
+		it('reads and scrubs the per-run debug file', async () => {
 			const path = join(home, 'debug.log');
 			writeFileSync(
 				path,
 				'DEBUG session.process_conversation_turn{model_id="grok-4.5" request_id="r1" input_tokens=100 output_tokens=20 cache_read_tokens=10}: record',
 			);
-			const usage = recoverOffStreamRunUsage(AgentRuntime.Grok, mount(), price, onError);
+			const usage = await recoverOffStreamRunUsage(AgentRuntime.Grok, mount(), price, onError);
 			expect(usage?.inputTokens).toBe(100);
 			expect(usage?.outputTokens).toBe(20);
 			// The debug file holds the XAI_API_KEY in plaintext.
 			expect(existsSync(path)).toBe(false);
 		});
 
-		it('returns null when the debug file is absent', () => {
-			expect(recoverOffStreamRunUsage(AgentRuntime.Grok, mount(), price, onError)).toBeNull();
+		it('returns null when the debug file is absent', async () => {
+			expect(await recoverOffStreamRunUsage(AgentRuntime.Grok, mount(), price, onError)).toBeNull();
 		});
 	});
 
 	describe('every other runtime', () => {
-		it('returns null so the caller keeps the parser stream usage', () => {
+		it('returns null so the caller keeps the parser stream usage', async () => {
 			// Claude Code / Codex / Gemini / OpenCode all report usage on stdout; this
 			// path must not overwrite it.
 			for (const runtime of [
@@ -213,13 +213,16 @@ describe('recoverOffStreamRunUsage', () => {
 				AgentRuntime.Gemini,
 				AgentRuntime.OpenCode,
 			]) {
-				expect(recoverOffStreamRunUsage(runtime, mount(), price, onError), runtime).toBeNull();
+				expect(
+					await recoverOffStreamRunUsage(runtime, mount(), price, onError),
+					runtime,
+				).toBeNull();
 			}
 		});
 
-		it('returns null when there is no home mount at all', () => {
-			expect(recoverOffStreamRunUsage(AgentRuntime.Kimi, null, price, onError)).toBeNull();
-			expect(recoverOffStreamRunUsage(AgentRuntime.Grok, null, price, onError)).toBeNull();
+		it('returns null when there is no home mount at all', async () => {
+			expect(await recoverOffStreamRunUsage(AgentRuntime.Kimi, null, price, onError)).toBeNull();
+			expect(await recoverOffStreamRunUsage(AgentRuntime.Grok, null, price, onError)).toBeNull();
 		});
 	});
 });
