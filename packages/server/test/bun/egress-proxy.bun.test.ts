@@ -55,6 +55,10 @@ beforeAll(async () => {
 	// proxy runs with auth disabled. Authed CONNECT (407 without a token, a full
 	// MITM handshake with one) is covered in its own describe block below.
 	proxy = new EgressProxy({
+		// Upstreams in this suite are on loopback, which the destination
+		// guard blocks by default. Opt in so the guard under test elsewhere
+		// does not mask what these cases actually assert.
+		allowPrivateTargets: true,
 		db,
 		masterKeyManager,
 		ca,
@@ -293,8 +297,8 @@ describe('EgressProxy under Bun', () => {
 					{ socket: heldTunnel, servername: hostA, ca: [ca.cert], rejectUnauthorized: true },
 					() => resolve(heldTls?.getPeerCertificate().subjectaltname ?? ''),
 				);
-				heldTls.on('error', reject);
-				heldTls.setTimeout(20_000, () => heldTls?.destroy(new Error('held handshake timed out')));
+				heldTls?.on('error', reject);
+				heldTls?.setTimeout(20_000, () => heldTls?.destroy(new Error('held handshake timed out')));
 			});
 			expect(heldSan).toContain(hostA);
 
@@ -362,6 +366,10 @@ describe('EgressProxy per-run CONNECT auth under Bun', () => {
 
 	beforeAll(() => {
 		authProxy = new EgressProxy({
+			// Upstreams in this suite are on loopback, which the destination
+			// guard blocks by default. Opt in so the guard under test elsewhere
+			// does not mask what these cases actually assert.
+			allowPrivateTargets: true,
 			db,
 			masterKeyManager,
 			ca,
@@ -398,6 +406,109 @@ describe('EgressProxy per-run CONNECT auth under Bun', () => {
 			await authProxy.releaseRunProxy(runId);
 		}
 	}, 30_000);
+});
+
+// A proxy relays a response body; it does not get to re-frame one. The runtime
+// that receives an upstream response has already decoded its chunked framing,
+// so passing the upstream's `transfer-encoding` header through to the client
+// describes the body as something it no longer is, and leaves the runtime to
+// reconcile a header it did not choose against a body it did not frame. Node
+// happens to absorb that; this tier exists because Bun is the runtime in
+// production and nothing had ever asserted it.
+//
+// The symptom is not a truncated body but a stalled one: git's pkt-line parser
+// reads a mis-framed ref advertisement, finds no flush packet, and waits for
+// bytes that will never parse until its own low-speed floor abandons the clone
+// (`GIT_HTTP_LOW_SPEED_LIMIT` in git-executor.ts). It reports
+// `fatal: expected flush after ref listing` - and never says "proxy".
+describe('EgressProxy response framing under Bun', () => {
+	test('relays a chunked upstream response without re-framing it', async () => {
+		const upstream = await startChunkedUpstream(ca);
+		const upstreamPort = (upstream.address() as { port: number }).port;
+		const runId = `bun-run-${process.pid}-chunked`;
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await rawFetchHttpsThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				targetHost: 'localhost',
+				targetPort: upstreamPort,
+				path: '/chunked',
+				caCert: ca.cert,
+			});
+			expect(res.status).toBe(200);
+			// Decoded against whatever framing the response actually declares, so
+			// this fails on a body that is unframed under a `chunked` header and on
+			// one that has been framed twice - the two shapes a relayed
+			// `transfer-encoding` produces.
+			expect(res.body.equals(CHUNKED_BODY)).toBe(true);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+			await new Promise<void>((resolve) => upstream.close(() => resolve()));
+		}
+	}, 30_000);
+
+	test('relays a content-length upstream response byte for byte', async () => {
+		// The control for the case above: same body, framing the proxy has no
+		// reason to touch. A failure here would mean the fault is in the MITM
+		// pipe rather than in header relaying.
+		const upstream = await startFixedLengthUpstream(ca);
+		const upstreamPort = (upstream.address() as { port: number }).port;
+		const runId = `bun-run-${process.pid}-fixed`;
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await rawFetchHttpsThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				targetHost: 'localhost',
+				targetPort: upstreamPort,
+				path: '/fixed',
+				caCert: ca.cert,
+			});
+			expect(res.status).toBe(200);
+			expect(res.body.equals(CHUNKED_BODY)).toBe(true);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+			await new Promise<void>((resolve) => upstream.close(() => resolve()));
+		}
+	}, 30_000);
+});
+
+// The CONNECT bridge tears down its two sockets on `close`, and `destroy()`
+// discards whatever is still queued for write rather than flushing it. That is
+// harmless while the client keeps up and silently lossy the moment it does not
+// - and in production the client is the tunnel mux, which pauses its socket
+// whenever a stream runs out of credit, so falling behind is its designed
+// behaviour rather than an edge case.
+//
+// The proxy already knows this lesson: the 407 path uses a flushing `end()`
+// precisely because `destroy()` "had already torn down without flushing".
+describe('EgressProxy CONNECT bridge flush under Bun', () => {
+	test('delivers a whole response to a client that reads it slowly', async () => {
+		const upstream = await startBulkUpstream(ca);
+		const upstreamPort = (upstream.address() as { port: number }).port;
+		const runId = `bun-run-${process.pid}-slow-reader`;
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await rawFetchHttpsThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				targetHost: 'localhost',
+				targetPort: upstreamPort,
+				path: '/bulk',
+				caCert: ca.cert,
+				// Long enough for the upstream to finish and close while bytes are
+				// still queued on the client leg, which is the only state in which
+				// the teardown can discard anything.
+				stallReadingMs: 1_500,
+			});
+			expect(res.status).toBe(200);
+			expect(res.body.byteLength).toBe(BULK_BYTES);
+		} finally {
+			await proxy.releaseRunProxy(runId);
+			await new Promise<void>((resolve) => upstream.close(() => resolve()));
+		}
+	}, 60_000);
 });
 
 /** Reach into the proxy's per-run internal per-host server map for assertions. */
@@ -471,6 +582,73 @@ async function startHttpsBodyUpstream(rootCa: { cert: string; key: string }): Pr
 	return server;
 }
 
+/**
+ * Response body used by the framing cases, written as several segments.
+ *
+ * Segmented so the upstream produces a multi-chunk body rather than one whose
+ * framing a single write would hide, and labelled per segment so a mis-parse
+ * surfaces as a mismatch rather than as a plausible-looking prefix.
+ */
+const CHUNKED_SEGMENTS: readonly Buffer[] = Array.from({ length: 8 }, (_, i) =>
+	Buffer.from(`segment-${i}:${'.'.repeat(4000)}\n`),
+);
+const CHUNKED_BODY = Buffer.concat([...CHUNKED_SEGMENTS]);
+
+/** Larger than any socket buffer on the path, so a client that stops reading
+ * leaves bytes queued on the proxy's client leg rather than having them all
+ * absorbed in kernel buffers before the teardown runs. */
+const BULK_BYTES = 4 * 1024 * 1024;
+
+/** Upstream that declares its own chunked framing. Declared rather than left to
+ * the runtime to infer, because the assertion is about what a proxy does with
+ * an upstream's framing header - so the upstream has to state one. */
+async function startChunkedUpstream(rootCa: { cert: string; key: string }): Promise<HttpsServer> {
+	const { cert, key } = await mintCertFromCA(rootCa, 'localhost');
+	const server = createHttpsServer({ cert, key }, (_req, res) => {
+		res.writeHead(200, {
+			'content-type': 'application/x-git-upload-pack-advertisement',
+			'transfer-encoding': 'chunked',
+		});
+		for (const segment of CHUNKED_SEGMENTS) res.write(segment);
+		res.end();
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+	return server;
+}
+
+/** The control for the chunked case: same bytes under framing the proxy has no
+ * reason to touch, so a failure localises to the pipe rather than the header. */
+async function startFixedLengthUpstream(rootCa: {
+	cert: string;
+	key: string;
+}): Promise<HttpsServer> {
+	const { cert, key } = await mintCertFromCA(rootCa, 'localhost');
+	const server = createHttpsServer({ cert, key }, (_req, res) => {
+		res.writeHead(200, {
+			'content-type': 'application/x-git-upload-pack-advertisement',
+			'content-length': String(CHUNKED_BODY.byteLength),
+		});
+		res.end(CHUNKED_BODY);
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+	return server;
+}
+
+/** Upstream for the slow-reader case: enough bytes that the response cannot
+ * have drained by the time the upstream finishes and its socket closes. */
+async function startBulkUpstream(rootCa: { cert: string; key: string }): Promise<HttpsServer> {
+	const { cert, key } = await mintCertFromCA(rootCa, 'localhost');
+	const server = createHttpsServer({ cert, key }, (_req, res) => {
+		res.writeHead(200, {
+			'content-type': 'application/octet-stream',
+			'content-length': String(BULK_BYTES),
+		});
+		res.end(Buffer.alloc(BULK_BYTES, 'g'));
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+	return server;
+}
+
 interface HttpsProxyFetchOpts {
 	proxyHost: string;
 	proxyPort: number;
@@ -483,29 +661,122 @@ interface HttpsProxyFetchOpts {
 	caCert: string;
 }
 
+interface RawHttpsProxyFetchOpts {
+	proxyHost: string;
+	proxyPort: number;
+	targetHost: string;
+	targetPort: number;
+	path: string;
+	caCert: string;
+	/** Stop reading for this long after sending the request, so the response
+	 * backs up on the proxy's client leg while the upstream finishes.
+	 *
+	 * Applied to the CONNECT socket rather than the TLS socket riding on it: a
+	 * paused TLSSocket keeps pulling from the socket underneath into its own
+	 * buffer, so the bytes still leave the proxy and the backpressure being
+	 * asserted never materialises. */
+	stallReadingMs?: number;
+}
+
+/**
+ * Fetch through the MITM and return the response as bytes, decoded against
+ * whatever framing the response itself declares.
+ *
+ * Separate from {@link fetchHttpsThroughProxy}, which decodes to a string and
+ * so cannot distinguish a body from a body wrapped in framing. Decoding here is
+ * the assertion: a chunked header over an unframed body fails on a non-hex size
+ * line, and a twice-framed body fails on the byte comparison that follows.
+ */
+async function rawFetchHttpsThroughProxy(
+	opts: RawHttpsProxyFetchOpts,
+): Promise<{ status: number; headers: Record<string, string>; body: Buffer }> {
+	const tunnel = await openConnectTunnel(opts.proxyPort, opts.targetHost, {
+		targetPort: opts.targetPort,
+		proxyHost: opts.proxyHost,
+	});
+	return new Promise((resolve, reject) => {
+		const tls = tlsConnect(
+			{ socket: tunnel, servername: opts.targetHost, ca: [opts.caCert] },
+			() => {
+				tls.write(
+					`GET ${opts.path} HTTP/1.1\r\n` +
+						`Host: ${opts.targetHost}:${opts.targetPort}\r\n` +
+						'Connection: close\r\n\r\n',
+				);
+				if (opts.stallReadingMs) {
+					tunnel.pause();
+					setTimeout(() => tunnel.resume(), opts.stallReadingMs);
+				}
+			},
+		);
+		const chunks: Buffer[] = [];
+		tls.on('data', (chunk: Buffer) => chunks.push(chunk));
+		tls.on('end', () => {
+			try {
+				resolve(parseRawHttpResponse(Buffer.concat(chunks)));
+			} catch (e) {
+				reject(e);
+			}
+		});
+		tls.on('error', reject);
+		tls.setTimeout(30_000, () => tls.destroy(new Error('https fetch timed out')));
+	});
+}
+
+function parseRawHttpResponse(raw: Buffer): {
+	status: number;
+	headers: Record<string, string>;
+	body: Buffer;
+} {
+	const sep = raw.indexOf('\r\n\r\n');
+	if (sep === -1) throw new Error('response carried no header terminator');
+	const lines = raw.subarray(0, sep).toString('latin1').split('\r\n');
+	const status = Number(lines[0]?.split(' ')[1] ?? '0');
+	const headers: Record<string, string> = {};
+	for (const line of lines.slice(1)) {
+		const at = line.indexOf(':');
+		if (at === -1) continue;
+		headers[line.slice(0, at).trim().toLowerCase()] = line.slice(at + 1).trim();
+	}
+	const framed = raw.subarray(sep + 4);
+	const body = /chunked/i.test(headers['transfer-encoding'] ?? '')
+		? decodeChunkedBody(framed)
+		: framed;
+	return { status, headers, body };
+}
+
+/** Decode chunked framing, failing with the offset when the body is not framed
+ * the way its header claims. */
+function decodeChunkedBody(buf: Buffer): Buffer {
+	const out: Buffer[] = [];
+	let at = 0;
+	for (;;) {
+		const eol = buf.indexOf('\r\n', at);
+		if (eol === -1) throw new Error(`chunked body ended mid size-line at offset ${at}`);
+		const sizeLine = (buf.subarray(at, eol).toString('latin1').split(';')[0] ?? '').trim();
+		if (!/^[0-9a-fA-F]+$/.test(sizeLine)) {
+			throw new Error(
+				`chunked body carried a non-hex size line ${JSON.stringify(sizeLine.slice(0, 32))} at offset ${at}`,
+			);
+		}
+		const size = Number.parseInt(sizeLine, 16);
+		at = eol + 2;
+		if (size === 0) break;
+		if (at + size > buf.byteLength) {
+			throw new Error(`chunk of ${size} at offset ${at} runs past the body end`);
+		}
+		out.push(buf.subarray(at, at + size));
+		at += size + 2;
+	}
+	return Buffer.concat(out);
+}
+
 async function fetchHttpsThroughProxy(
 	opts: HttpsProxyFetchOpts,
 ): Promise<{ status: number; body: string }> {
-	const tunnel = await new Promise<ReturnType<typeof netConnect>>((resolve, reject) => {
-		const sock = netConnect({ host: opts.proxyHost, port: opts.proxyPort });
-		const onData = (chunk: Buffer) => {
-			const statusLine = chunk.toString().split('\r\n')[0] ?? '';
-			sock.removeListener('data', onData);
-			if (/^HTTP\/1\.[01] 200/.test(statusLine)) {
-				resolve(sock);
-			} else {
-				reject(new Error(`CONNECT failed: ${statusLine}`));
-			}
-		};
-		sock.on('connect', () => {
-			sock.write(
-				`CONNECT ${opts.targetHost}:${opts.targetPort} HTTP/1.1\r\n` +
-					`Host: ${opts.targetHost}:${opts.targetPort}\r\n\r\n`,
-			);
-		});
-		sock.on('data', onData);
-		sock.on('error', reject);
-		sock.setTimeout(20_000, () => sock.destroy(new Error('CONNECT timed out')));
+	const tunnel = await openConnectTunnel(opts.proxyPort, opts.targetHost, {
+		targetPort: opts.targetPort,
+		proxyHost: opts.proxyHost,
 	});
 
 	return new Promise((resolve, reject) => {
@@ -552,7 +823,7 @@ async function strictHandshakeThroughProxy(
 	caCert: string,
 	token?: string | null,
 ): Promise<string> {
-	const tunnel = await openConnectTunnel(proxyPort, targetHost, token);
+	const tunnel = await openConnectTunnel(proxyPort, targetHost, { token });
 	return new Promise<string>((resolve, reject) => {
 		const tls = tlsConnect(
 			{ socket: tunnel, servername: targetHost, ca: [caCert], rejectUnauthorized: true },
@@ -567,13 +838,22 @@ async function strictHandshakeThroughProxy(
 	});
 }
 
+interface ConnectTunnelOpts {
+	/** Defaults to 443, the port a name-only CONNECT implies. */
+	targetPort?: number;
+	token?: string | null;
+	proxyHost?: string;
+}
+
 async function openConnectTunnel(
 	proxyPort: number,
 	targetHost: string,
-	token?: string | null,
+	opts: ConnectTunnelOpts = {},
 ): Promise<ReturnType<typeof netConnect>> {
+	const targetPort = opts.targetPort ?? 443;
+	const authority = `${targetHost}:${targetPort}`;
 	return new Promise<ReturnType<typeof netConnect>>((resolve, reject) => {
-		const sock = netConnect({ host: '127.0.0.1', port: proxyPort });
+		const sock = netConnect({ host: opts.proxyHost ?? '127.0.0.1', port: proxyPort });
 		const onData = (chunk: Buffer) => {
 			const statusLine = chunk.toString().split('\r\n')[0] ?? '';
 			sock.removeListener('data', onData);
@@ -583,11 +863,11 @@ async function openConnectTunnel(
 				reject(new Error(`CONNECT failed: ${statusLine}`));
 			}
 		};
-		const auth = token
-			? `Proxy-Authorization: Basic ${Buffer.from(`run:${token}`).toString('base64')}\r\n`
+		const auth = opts.token
+			? `Proxy-Authorization: Basic ${Buffer.from(`run:${opts.token}`).toString('base64')}\r\n`
 			: '';
 		sock.on('connect', () => {
-			sock.write(`CONNECT ${targetHost}:443 HTTP/1.1\r\nHost: ${targetHost}:443\r\n${auth}\r\n`);
+			sock.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n${auth}\r\n`);
 		});
 		sock.on('data', onData);
 		sock.on('error', reject);

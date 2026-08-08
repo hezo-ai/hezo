@@ -5,6 +5,15 @@
 // one); skips silently otherwise.
 import { describe, expect, it } from 'bun:test';
 import pg from 'pg';
+
+// `connectionParameters` is a real property of pg's Client - it is what the
+// driver actually resolved the URL into - but @types/pg does not declare it.
+// Naming the shape here beats casting at each assertion, which would also
+// silence a genuine change to what the driver parses.
+type ClientWithParams = pg.Client & {
+	connectionParameters: { ssl?: unknown; host?: string; port?: number; database?: string };
+};
+
 import { PostgresDb } from '../../src/db/drivers/postgres';
 import { normalizePostgresUrl } from '../../src/db/postgres-url';
 
@@ -19,7 +28,10 @@ describe('sslmode resolution on the Bun runtime', () => {
 			{},
 		);
 		expect(tls).toBe('encrypted');
-		expect(new pg.Client({ connectionString: normalized }).connectionParameters.ssl).toEqual({
+		expect(
+			(new pg.Client({ connectionString: normalized }) as ClientWithParams).connectionParameters
+				.ssl,
+		).toEqual({
 			rejectUnauthorized: false,
 		});
 	});
@@ -30,7 +42,10 @@ describe('sslmode resolution on the Bun runtime', () => {
 			{},
 		);
 		expect(tls).toBe('verified');
-		expect(new pg.Client({ connectionString: normalized }).connectionParameters.ssl).toEqual({});
+		expect(
+			(new pg.Client({ connectionString: normalized }) as ClientWithParams).connectionParameters
+				.ssl,
+		).toEqual({});
 	});
 });
 

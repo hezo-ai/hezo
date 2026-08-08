@@ -2,7 +2,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
-import { detectPassiveTeammateAsks } from '../src/lib/mentions';
+import { detectPassiveTeammateAsks, detectUnlinkedTeammateAsks } from '../src/lib/mentions';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import {
@@ -15,15 +15,93 @@ import {
 
 // The screenshot case: an agent ends a comment with `@@admin — …` (the passive
 // mention form). It renders as a bare-word link, so it LOOKS like a ping, but @@
-// notifies no one — the handoff stalls. Two addressing forms, gated differently:
-// a LEADING-LINE `@@slug — …` always warns (opening a line with a teammate
+// notifies no one — the handoff stalls. The forms are gated differently: a
+// LEADING-LINE `@@slug — …` always warns (opening a line with a teammate
 // reference and a separator is the address shape, which is reserved for active
-// mentions — a genuine reference goes mid-sentence), while an EMPHASISED
-// `**@@slug**` warns only when its paragraph reads as an ask, since bold marks
-// attribution and headings as much as address.
+// mentions — a genuine reference goes mid-sentence), an ACTION-ASSIGNMENT line and
+// a NAME-BOUND SIGN-OFF GATE (`Ready for @@slug review.`) are self-gating (the
+// binding is the ask), while an EMPHASISED `**@@slug**` warns only when its
+// paragraph reads as an ask, since bold marks attribution and headings as much as
+// address. On top of those positional fast paths sits the general rule: any
+// `@@slug` whose OWN SENTENCE reads as a directed ask warns wherever the token
+// sits, which is what stops a new phrasing needing a new positional branch.
 
 describe('detectPassiveTeammateAsks', () => {
 	const slugs = ['architect', 'qa-engineer', 'engineer', 'admin'];
+
+	// The position-independent gate. Each of these carries an unmistakable ask
+	// signal while sitting in none of the recognised address positions — the exact
+	// gap that let a mid-paragraph "@@equity-analyst — please mark INV-86 done."
+	// through every check the system had.
+	describe('sentence-scoped ask gate (position-independent)', () => {
+		const roster = ['equity-analyst', 'risk-verifier', 'architect', 'engineer', 'admin'];
+
+		it('flags a mid-paragraph passive ask that opens no line and is not bold', () => {
+			const text =
+				'The JOBY deep-dive at assets/JOBY/stock-JOBY.md is verified and cleared for admin ' +
+				'presentation. @@equity-analyst — please mark INV-86 done.';
+			expect(detectPassiveTeammateAsks(text, roster)).toEqual(['equity-analyst']);
+		});
+
+		it('leaves a purely attributive mention in the same comment alone', () => {
+			// risk-verifier is credited, equity-analyst is asked. Only the ask warns.
+			const text =
+				'@@risk-verifier confirmed PASS on Revision 11 — all 13 sections.\n\n' +
+				'Cleared for presentation. @@equity-analyst — please mark INV-86 done.';
+			expect(detectPassiveTeammateAsks(text, roster)).toEqual(['equity-analyst']);
+		});
+
+		it('flags a mid-sentence question addressed to a teammate', () => {
+			expect(
+				detectPassiveTeammateAsks('The export looks off. @@architect can you confirm the schema?', [
+					'architect',
+				]),
+			).toEqual(['architect']);
+		});
+
+		it('does not flag a citation whose sentence happens to address the reader', () => {
+			// `you` belongs to the instruction, not to the teammate being credited —
+			// the referential frame ("as … noted") vetoes the gate.
+			expect(
+				detectPassiveTeammateAsks('As @@architect noted, you should keep the interface stable.', [
+					'architect',
+				]),
+			).toEqual([]);
+		});
+
+		it('does not flag possessive attribution alongside a second-person sentence', () => {
+			expect(
+				detectPassiveTeammateAsks("Incorporating @@engineer's findings, per @@architect.", [
+					'engineer',
+					'architect',
+				]),
+			).toEqual([]);
+		});
+
+		it('does not let an ask in a neighbouring sentence leak onto a reference', () => {
+			// Paragraph scope (what the old bold branch used) would have flagged this.
+			expect(
+				detectPassiveTeammateAsks(
+					'@@architect wrote the original brief. Please re-run the fixture yourself.',
+					['architect'],
+				),
+			).toEqual([]);
+		});
+
+		it('does not flag a Coach-style all-passive summary row', () => {
+			expect(
+				detectPassiveTeammateAsks('- @@engineer: always run the tests before marking done.', [
+					'engineer',
+				]),
+			).toEqual([]);
+		});
+
+		it('never flags a slug that is also actively mentioned', () => {
+			expect(
+				detectPassiveTeammateAsks('@engineer - please re-run it. Thanks @@engineer.', ['engineer']),
+			).toEqual([]);
+		});
+	});
 
 	it('flags the screenshot case: passive @@admin address with a second-person ask', () => {
 		expect(
@@ -327,6 +405,115 @@ describe('detectPassiveTeammateAsks', () => {
 			detectPassiveTeammateAsks('**@@admin** shipped the release.\n\nthanks, you all rock', slugs),
 		).toEqual([]);
 	});
+
+	describe('name-bound sign-off gate (mid-sentence, no addressing position)', () => {
+		// The passive twin of the bare-name gate in unlinked-mention-ask.test.ts. The
+		// shape both catch: the closing line of a review verdict that hands the next
+		// action to a named approver from INSIDE the sentence, so none of the
+		// address-position forms (bold, leading-line, action-assignment) can see it.
+		const signoffSlugs = ['captain', 'marketing-lead', 'architect', 'admin'];
+
+		it('flags the review-verdict screenshot case: "Ready for @@marketing-lead review."', () => {
+			// The exact stalled comment: an approving review verdict whose only handoff
+			// is a mid-sentence passive reference. It rendered as a delivered-looking
+			// chip, so the report read as routed - and the marketing-lead was never woken.
+			expect(
+				detectPassiveTeammateAsks(
+					'**Blocking findings:** None - the previous blocking finding is resolved.\n\n' +
+						'**Verdict:** APPROVED - the fix is correct and complete. Ready for ' +
+						'@@marketing-lead review.',
+					signoffSlugs,
+				),
+			).toEqual(['marketing-lead']);
+		});
+
+		it("leaves the same report's attribution references passive", () => {
+			// Same comment, the body line above the verdict: "as previously flagged by
+			// @@captain and @@marketing-lead" credits both and asks nothing, so neither
+			// is flagged for it - only the closing handoff is.
+			expect(
+				detectPassiveTeammateAsks(
+					'The commit body still states the wrong root cause, as previously flagged by ' +
+						'@@captain and @@marketing-lead. The `static/` copy is the correct fix regardless.',
+					signoffSlugs,
+				),
+			).toEqual([]);
+		});
+
+		it('flags the gate → name → object forms (needs/pending/for/awaiting)', () => {
+			expect(
+				detectPassiveTeammateAsks("The draft needs the @@marketing-lead's approval.", signoffSlugs),
+			).toEqual(['marketing-lead']);
+			expect(detectPassiveTeammateAsks('Left it pending @@captain review.', signoffSlugs)).toEqual([
+				'captain',
+			]);
+			expect(
+				detectPassiveTeammateAsks('Parked for @@architect sign-off before release.', signoffSlugs),
+			).toEqual(['architect']);
+			expect(
+				detectPassiveTeammateAsks('The ticket stays in review awaiting @@captain sign-off.', [
+					'captain',
+				]),
+			).toEqual(['captain']);
+		});
+
+		it('flags the name → pending-action forms (modal required)', () => {
+			for (const line of [
+				'@@captain to sign off next.',
+				'@@captain must approve before publication.',
+				'@@captain still needs to review the copy.',
+			]) {
+				expect(detectPassiveTeammateAsks(line, signoffSlugs)).toEqual(['captain']);
+			}
+		});
+
+		it('agrees with the bare-name detector on the same sentence', () => {
+			// The two spellings of one stranded handoff must warn alike - a passive
+			// `@@slug` wakes exactly as many people as a bare name (none), so a rule
+			// that fired on one and not the other would just teach the `@@` workaround.
+			for (const [bareText, passiveText] of [
+				['Ready for marketing-lead review.', 'Ready for @@marketing-lead review.'],
+				['Awaiting captain sign-off before merge.', 'Awaiting @@captain sign-off before merge.'],
+				['The architect must approve the copy.', 'The @@architect must approve the copy.'],
+			]) {
+				const bare = detectUnlinkedTeammateAsks(bareText, signoffSlugs);
+				expect(bare.length).toBeGreaterThan(0);
+				expect(detectPassiveTeammateAsks(passiveText, signoffSlugs)).toEqual(bare);
+			}
+		});
+
+		it('does NOT flag a granted/past sign-off (no pending gate, no modal)', () => {
+			expect(
+				detectPassiveTeammateAsks(
+					"The @@captain's approval was already granted last week.",
+					signoffSlugs,
+				),
+			).toEqual([]);
+			expect(
+				detectPassiveTeammateAsks('@@captain approved the plan on Monday.', signoffSlugs),
+			).toEqual([]);
+		});
+
+		it('does NOT flag a gate word with no passive name bound to it', () => {
+			expect(detectPassiveTeammateAsks('The draft is awaiting review.', signoffSlugs)).toEqual([]);
+		});
+
+		it('does NOT flag a name only actively @-mentioned in the same sign-off recap', () => {
+			// @captain already wakes, so the gate must not double-flag the passive echo.
+			expect(
+				detectPassiveTeammateAsks('@captain - this is awaiting @@captain sign-off.', signoffSlugs),
+			).toEqual([]);
+		});
+
+		it('does NOT flag a gate word narrated around a non-addressed passive reference', () => {
+			expect(
+				detectPassiveTeammateAsks(
+					'The doc went out for review last week; @@captain wrote the brief.',
+					signoffSlugs,
+				),
+			).toEqual([]);
+		});
+	});
 });
 
 describe('MCP create_comment / update_comment warn on passive-mention asks', () => {
@@ -491,6 +678,57 @@ describe('MCP create_comment / update_comment warn on passive-mention asks', () 
 		expect(result.warning).toBeDefined();
 		expect(result.warning).toContain('captain');
 		expect(result.warning).toContain('active mention');
+	});
+
+	it('warns on a review verdict whose only handoff is a mid-sentence sign-off gate (screenshot case)', async () => {
+		// The stalled comment: findings, then `Ready for @@captain review.` as the last
+		// sentence. Nothing opens a line with the name and nothing is bold, so every
+		// address-position form misses it - yet that sentence IS the handoff, and the
+		// passive marking meant the approver was never woken.
+		const taskId = await insertTask(architectId, 'Verdict with mid-sentence sign-off gate');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content:
+				'**Advisory findings:**\n\n- The PR description still references the old path; the ' +
+				'commit itself is correct, so this is cosmetic.\n\n**Blocking findings:** None - the ' +
+				'previous blocking finding is resolved.\n\n**Verdict:** APPROVED - the fix is correct ' +
+				'and complete. Ready for @@captain review.',
+		});
+		expect(result.warning).toBeDefined();
+		expect(result.warning).toContain('@@captain');
+		expect(result.warning).toContain('@captain');
+		expect(result.warning).toContain('sign-off gate');
+	});
+
+	it('does not warn when the same verdict routes with an active mention', async () => {
+		// The correct form of the comment above: the closing handoff is active, so the
+		// approver is genuinely woken and the advisory stays quiet.
+		const taskId = await insertTask(architectId, 'Verdict with active handoff');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content:
+				'**Verdict:** APPROVED - the fix is correct and complete.\n\n' +
+				'@captain - ready for your review.',
+		});
+		expect(result.warning).toBeUndefined();
 	});
 
 	it('warns on a line-leading passive @@admin address even with no ask intent', async () => {

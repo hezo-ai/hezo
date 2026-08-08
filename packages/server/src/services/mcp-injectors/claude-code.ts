@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { AiProvider } from '@hezo/shared';
+import { buildDocWriteGuardScript, DOC_WRITE_GUARD_FILENAME } from '../doc-write-guard';
 import { buildClaudeCodeSettings } from '../stop-hook-prompt';
 import type {
 	McpDescriptor,
@@ -63,25 +64,39 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 			for (const tool of d.disabledTools ?? []) deniedTools.push(`mcp__${d.name}__${tool}`);
 		}
 
+		// Blocking doc-write guard, emitted only when the project actually has docs
+		// to guard - with none, the settings file stays byte-identical to what it
+		// was before the guard existed.
+		const docSlugs = ctx.projectDocSlugs ?? [];
+		const guardHostPath = join(ctx.hostHomeDir, DOC_WRITE_GUARD_FILENAME);
+		const guardContainerPath = join(ctx.containerHomeDir, DOC_WRITE_GUARD_FILENAME);
+		const guardCommand = docSlugs.length > 0 ? `node ${guardContainerPath}` : null;
+
 		const settingsHostPath = join(ctx.hostHomeDir, 'settings.json');
 		const settingsContainerPath = join(ctx.containerHomeDir, 'settings.json');
-		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(ctx.provider ?? AiProvider.Anthropic, ctx.runModel, deniedTools), null, 2)}\n`;
+		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(ctx.provider ?? AiProvider.Anthropic, ctx.runModel, deniedTools, guardCommand), null, 2)}\n`;
 
 		const cliArgs: string[] = ['--settings', settingsContainerPath];
 		if (descriptors.length > 0) {
 			cliArgs.push('--mcp-config', JSON.stringify({ mcpServers }), '--strict-mcp-config');
 		}
 
-		return {
-			cliArgs,
-			envEntries: [],
-			files: [
-				{
-					hostPath: settingsHostPath,
-					mode: 0o600,
-					contents: settingsContents,
-				},
-			],
-		};
+		const files = [
+			{
+				hostPath: settingsHostPath,
+				mode: 0o600,
+				contents: settingsContents,
+			},
+		];
+		if (guardCommand) {
+			files.push({
+				hostPath: guardHostPath,
+				// Executed via `node <path>`, so it needs to be readable, not +x.
+				mode: 0o600,
+				contents: buildDocWriteGuardScript(docSlugs),
+			});
+		}
+
+		return { cliArgs, envEntries: [], files };
 	},
 };

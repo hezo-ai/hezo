@@ -70,6 +70,7 @@ async function startGateServer(opts: { reset: boolean }): Promise<void> {
 			HEZO_MASTER_KEY: '',
 			// Tests never phone home (matches the playwright.config.ts webServer).
 			HEZO_TELEMETRY_ENABLED: '0',
+			HEZO_SKIP_UPDATE_CHECK: '1',
 		},
 		stdio: 'ignore',
 	});

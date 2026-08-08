@@ -22,6 +22,7 @@ import {
 import { AdminApprovalsBanner } from './admin-approvals-banner';
 import { CreateTaskDialog } from './create-task-dialog';
 import { InfiniteScrollSentinel } from './infinite-scroll-sentinel';
+import { TaskMentionTooltipContent } from './task-mention-tooltip';
 import { TaskPriorityBadge } from './task-priority-badge';
 import { TaskRunDot } from './task-run-dot';
 import { TaskStatusBadge } from './task-status-badge';
@@ -128,6 +129,51 @@ function TaskListSection({
 				rowClassName={faded ? () => 'opacity-60' : undefined}
 			/>
 		</section>
+	);
+}
+
+/**
+ * Title cell: the ID column claims its full width (it never wraps), so the title
+ * is what gives - it truncates with an ellipsis. A tooltip carrying the full ID
+ * and title (the same card the task @mention link shows) makes that lossless.
+ *
+ * The tooltip is driven as a controlled Radix root rather than conditionally
+ * wrapping the span: the `<Tooltip>` stays mounted either way, so the measured
+ * node's ref never detaches. Truncation is measured on hover intent inside
+ * `onOpenChange`, which keeps a long list free of per-row ResizeObservers.
+ */
+function TaskTitleCell({ row }: { row: TaskRow }) {
+	const textRef = useRef<HTMLSpanElement>(null);
+	const [open, setOpen] = useState(false);
+	return (
+		<Tooltip
+			open={open}
+			onOpenChange={(next) => {
+				const el = textRef.current;
+				// Only open when the title is actually clipped; a fully visible title
+				// has nothing to reveal.
+				if (next && (!el || el.scrollWidth <= el.clientWidth + 1)) return;
+				setOpen(next);
+			}}
+			content={
+				<TaskMentionTooltipContent
+					identifier={row.identifier}
+					title={row.title}
+					status={row.status}
+				/>
+			}
+		>
+			<span className="font-medium inline-flex items-center gap-1.5 min-w-0 max-w-full">
+				{row.depth > 0 && (
+					<span className="text-text-3 shrink-0" aria-hidden="true">
+						↳
+					</span>
+				)}
+				<span ref={textRef} className="truncate">
+					{row.title}
+				</span>
+			</span>
+		</Tooltip>
 	);
 }
 
@@ -343,7 +389,12 @@ export function TaskList({ projectId }: TaskListProps) {
 			key: 'id',
 			header: 'ID',
 			width: '88px',
-			className: 'font-mono text-text-2',
+			// `whitespace-nowrap` lands on the <td> (DataTable appends col.className
+			// last). It stops the identifier breaking at its hyphen, and — because the
+			// table uses auto layout, where `width` is only a hint — it also raises the
+			// column's min-content width to the real content width (dot + any badges +
+			// identifier), so the wide Title column can no longer starve it.
+			className: 'font-mono text-text-2 whitespace-nowrap',
 			render: (row) => {
 				const lastRunFailed = isLastRunFailed(row.has_active_run, row.last_run_status);
 				return (
@@ -371,7 +422,7 @@ export function TaskList({ projectId }: TaskListProps) {
 								/>
 							</Tooltip>
 						)}
-						{row.identifier}
+						<span data-testid="task-identifier">{row.identifier}</span>
 					</span>
 				);
 			},
@@ -379,16 +430,14 @@ export function TaskList({ projectId }: TaskListProps) {
 		{
 			key: 'title',
 			header: 'Title',
-			render: (row) => (
-				<span className="font-medium inline-flex items-center gap-1.5 min-w-0">
-					{row.depth > 0 && (
-						<span className="text-text-3 shrink-0" aria-hidden="true">
-							↳
-						</span>
-					)}
-					<span className="truncate">{row.title}</span>
-				</span>
-			),
+			// The table uses auto layout, where a cell's min-content width is its
+			// widest unbreakable content — so a `truncate` (nowrap) title made this
+			// column demand the full title width, overflowing the table and starving
+			// the fixed-width columns instead of ellipsising. `max-w-0` drops that
+			// contribution and `w-full` claims whatever the other columns leave, which
+			// is what actually lets the ellipsis engage.
+			className: 'max-w-0 w-full',
+			render: (row) => <TaskTitleCell row={row} />,
 		},
 		...(projectId
 			? []

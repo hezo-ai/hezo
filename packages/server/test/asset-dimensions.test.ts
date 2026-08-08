@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createTestApp,
@@ -176,7 +176,7 @@ describe('asset image dimensions & inline image content', () => {
 			encoding: 'base64',
 		});
 		const list = await callTool(tk, 'list_project_assets', { project: projectId });
-		const files = list.files as Array<{ filename: string; width?: number; height?: number }>;
+		const files = list.items as Array<{ filename: string; width?: number; height?: number }>;
 		const entry = files.find((f) => f.filename === 'diagrams/listed.png');
 		expect(entry?.width).toBe(800);
 		expect(entry?.height).toBe(600);
@@ -190,7 +190,7 @@ describe('asset image dimensions & inline image content', () => {
 		const copy = new Uint8Array(bytes.byteLength);
 		copy.set(bytes);
 		const fd = new FormData();
-		fd.set('file', new File([copy], 'upload.png', { type: 'image/png' }));
+		fd.set('file', new File([blobBytes(copy)], 'upload.png', { type: 'image/png' }));
 		const res = await app.request(`/api/projects/${projectId}/assets`, {
 			method: 'POST',
 			headers: { ...authHeader(token) },

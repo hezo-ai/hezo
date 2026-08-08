@@ -7,8 +7,14 @@ section: Security
 # Container isolation
 
 Agents execute real, often AI-generated code. Hezo runs that code where it can't hurt
-you: **every project gets its own Docker container, and agents only ever run inside
-it** - never on your host directly.
+you: **every project gets its own container, and agents only ever run inside it** - never
+on your host directly. Hezo drives that through any
+[Docker-compatible runtime](/docs/deployment/container-runtimes); the isolation described
+here is the same whichever you use.
+
+This page is the security case for that boundary. For where those containers run and how
+to choose - your own Docker daemon or a managed service - see
+[Containers](/docs/containers/overview). Every property described here holds on either.
 
 ## A sandbox per project
 
@@ -19,26 +25,42 @@ work - the blast radius of anything going wrong is contained to a single project
 ## Containers run only when there is work
 
 A container starts automatically the moment an agent run or an assistant chat needs it,
-and stops again after sitting idle (15 minutes by default). A quiet instance runs zero
-containers. Two global limits in **Settings > Concurrency** bound what a burst of agent
+and stops again after sitting idle (a couple of minutes). A quiet instance runs zero
+containers. Two global limits in **Settings > Containers** bound what a burst of agent
 activity can consume:
 
-- **Maximum active containers** - how many project containers may run at the same time
-  (including the assistant chat's container). When unset, Hezo sizes it automatically
-  from the machine's memory: (RAM + swap), less 1 GB always kept free for the operating
-  system and Hezo itself, divided by the RAM cap below. Runs that would need another
-  container past the limit wait in the queue and start as containers go idle; the
-  assistant chat always starts.
+- **Total container memory** - how much memory all project containers may use at once.
+  The assistant chat's container runs on top of it, so a chat turn never waits behind
+  background work. When unset, Hezo sizes it automatically, and how depends on where
+  containers run: on [local Docker](/docs/containers/local-docker) it is derived from the
+  machine's memory (RAM + swap, less 1 GB always kept free for the operating system and
+  Hezo itself, less one container's worth for the assistant chat; swap counts in full,
+  since a container sits idle between runs), while on a
+  [managed service](/docs/containers/remote/overview) the containers are not on your
+  machine at all and the default is a flat starting figure you raise deliberately. A run
+  whose container will not fit in what is left waits in the queue and starts as memory
+  frees up; the assistant chat always starts. There is no separate limit on the *number*
+  of containers: how many fit follows from this budget and the RAM cap below, and a
+  project that raises its own cap simply takes a larger share.
 - **RAM cap per container** - the memory limit applied to every container (2 GB by
-  default; projects that need more can override it in their own settings). A container
-  over its cap is stopped, or has its biggest process killed by the kernel, instead of
-  taking down the whole server.
+  default; projects that need more can override it on their own Containers page). A
+  container over its cap is stopped, or has its biggest process killed by the kernel,
+  instead of taking down the whole server.
+
+A third setting on the same page, **Disk per container**, sizes each container's own
+filesystem where the container service allocates one - see
+[Containers](/docs/containers/overview#how-much-can-run-at-once).
 
 As a sizing rule of thumb, one working agent (its coding CLI plus the helper tools it
 spawns) typically uses 300-350 MB of memory, and the container cap bounds the total
-regardless of how many agents share it. The idle timeout is configurable on the same
-page; note that stopping an idle container also stops any dev or preview servers running
-inside it, and setting the timeout to 0 keeps containers always on.
+regardless of how many agents share it.
+
+Containers stop a couple of minutes after a project's last activity and start again on
+demand, so a quiet instance runs none. That window is fixed rather than configurable -
+its only job is to keep a container warm between one run and the next in the same
+project, which takes seconds, and there is no setting an operator could tune better than
+that. Because containers do not stay up between bursts, they are not a place to run a
+long-lived dev or preview server.
 
 From inside the container, agents **cannot** reach:
 
@@ -71,8 +93,9 @@ container starts with all capabilities dropped and only the few the workload nee
 back). A proper init process runs as PID 1 so exited helper processes are always cleaned up.
 
 One honest note on the boundary: a container shares your machine's Linux kernel, so it is a
-strong sandbox, not a virtual machine. On macOS and Windows, Docker Desktop already runs
-every container inside a lightweight VM; on a server, the usual and recommended setup is to
+strong sandbox, not a virtual machine. On macOS and Windows the runtime already runs every
+container inside a lightweight VM (Docker Desktop, Colima, Rancher Desktop, OrbStack and
+Lima all work this way); on a server, the usual and recommended setup is to
 run Hezo on its own VM or host. If you're running untrusted work, keep Hezo on a dedicated
 machine or VM - that is the boundary that isolates it from everything else.
 

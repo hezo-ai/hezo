@@ -518,8 +518,76 @@ export async function waitForPageLoad(page: Page, timeout = 15000) {
  * retries that re-enter the same worker. Use for project / task / doc names
  * that the test later looks up by name.
  */
+/**
+ * Wait until an element's box has stopped moving before measuring it.
+ *
+ * A sticky-position assertion reads a box, scrolls, and reads it again. Both
+ * reads have to be of the *same* layout - if anything above the element is still
+ * arriving (a late query resolving, a banner appearing), the second read differs
+ * from the first for a reason that has nothing to do with stickiness. The
+ * signature is unmistakable once seen: the element moves **down** the page after
+ * a downward scroll, which nothing about `position: sticky` can produce.
+ *
+ * That is a race, so the fix is to wait for the condition rather than to widen
+ * the bound - a looser threshold would hide a real layout regression and tell
+ * the next reader the assertion was always approximate.
+ *
+ * Settled means two identical readings `quietMs` apart. Cheap on a fast machine
+ * (one extra sample) and worth several hundred ms on a loaded CI runner, which
+ * is exactly where the race bites.
+ */
+export async function waitForStableBox(
+	locator: Locator,
+	opts: { quietMs?: number; timeoutMs?: number } = {},
+): Promise<{ x: number; y: number; width: number; height: number }> {
+	const quietMs = opts.quietMs ?? 150;
+	const deadline = Date.now() + (opts.timeoutMs ?? 10000);
+	let previous = await locator.boundingBox();
+	while (Date.now() < deadline) {
+		await locator.page().waitForTimeout(quietMs);
+		const current = await locator.boundingBox();
+		if (
+			previous &&
+			current &&
+			previous.x === current.x &&
+			previous.y === current.y &&
+			previous.width === current.width &&
+			previous.height === current.height
+		) {
+			return current;
+		}
+		previous = current;
+	}
+	const box = await locator.boundingBox();
+	if (!box) throw new Error('element has no bounding box after waiting for it to settle');
+	// Not a throw: a box that never stops moving is worth reporting, but the
+	// assertion that follows is still the thing the spec is about.
+	console.warn('waitForStableBox: box never settled; measuring anyway');
+	return box;
+}
+
 export function uniqueName(base: string): string {
 	return `${base} ${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Assert an element renders on a single text line (nowrap + height ≤ ~1.5 lines). */
+export async function expectSingleLine(locator: Locator): Promise<void> {
+	const metrics = await locator.evaluate((el) => {
+		const style = getComputedStyle(el);
+		const lineHeightPx = Number.parseFloat(style.lineHeight);
+		const fontSizePx = Number.parseFloat(style.fontSize);
+		return {
+			whiteSpace: style.whiteSpace,
+			height: el.getBoundingClientRect().height,
+			// line-height: normal resolves to "normal" in Chromium getComputedStyle,
+			// so fall back to a generous multiple of the font size.
+			oneLine: Number.isNaN(lineHeightPx) ? fontSizePx * 1.6 : lineHeightPx,
+		};
+	});
+	// nowrap is the single-line guarantee; the height check confirms it isn't
+	// silently spilling onto a second line. Two wrapped lines roughly double it.
+	expect(metrics.whiteSpace).toBe('nowrap');
+	expect(metrics.height).toBeLessThan(metrics.oneLine * 1.5);
 }
 
 export type HttpMethod = 'GET' | 'PATCH' | 'POST' | 'DELETE' | 'PUT';

@@ -1,20 +1,11 @@
 import { SecretCategory } from '@hezo/shared';
 import { Hono } from 'hono';
-import { validateSecretName } from '../lib/credential-placeholder';
+import { normalizeAllowedHosts, validateSecretName } from '../lib/credential-placeholder';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent } from '../middleware/auth';
 import { invalidateSecretsVault } from '../services/egress';
-
-/** Trim, lowercase, and drop empties so the egress allowlist match (which
- * lowercases the request host) sees clean entries. Mirrors the normalization
- * the request_credential fulfillment path applies, so both creation routes
- * store hosts identically. */
-function normalizeAllowedHosts(hosts: unknown): string[] {
-	if (!Array.isArray(hosts)) return [];
-	return hosts.map((h) => String(h).trim().toLowerCase()).filter((h) => h.length > 0);
-}
 
 export const secretsRoutes = new Hono<Env>();
 

@@ -19,6 +19,18 @@ export const AgentRuntime = {
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
+const AGENT_RUNTIME_VALUES: readonly string[] = Object.values(AgentRuntime);
+
+/**
+ * Narrow an untrusted value (a request body field, a DB enum column read back)
+ * to a runtime this binary knows. A stored runtime can outlive the label — the
+ * `agent_runtime` enum is append-only in Postgres — so reads go through this
+ * rather than a cast.
+ */
+export function isAgentRuntime(value: unknown): value is AgentRuntime {
+	return typeof value === 'string' && AGENT_RUNTIME_VALUES.includes(value);
+}
+
 /**
  * Reasoning/thinking effort level applied to an individual agent run.
  *
@@ -298,12 +310,40 @@ export const ATTACHMENT_EXTENSIONS = {
 	csv: 'text/plain',
 	yaml: 'text/plain',
 	yml: 'text/plain',
+	// Archive containers: a bundle of files handed to (or produced by) a team as
+	// one attachment. `.tar.gz` resolves through its `gz` extension and keeps its
+	// full double-extension name.
+	zip: 'application/zip',
+	tar: 'application/x-tar',
+	gz: 'application/gzip',
+	tgz: 'application/gzip',
+	'7z': 'application/x-7z-compressed',
+	rar: 'application/vnd.rar',
 } as const;
 export type AttachmentExtension = keyof typeof ATTACHMENT_EXTENSIONS;
 
 export const ATTACHMENT_MIME_ALLOWLIST: ReadonlySet<string> = new Set(
 	Object.values(ATTACHMENT_EXTENSIONS),
 );
+
+// Archive container types. Opaque to Hezo: nothing is ever extracted server-side,
+// so an archive is stored and served as bytes. Agents download one by signed URL
+// and unpack it inside their own container (`unzip`, `tar` and `7z` are pre-baked
+// in the agent image). Drives three decisions: the stored content type ignores what the
+// uploader declared (see `resolveAttachmentContentType`), the serve route never
+// sends one inline (see `assetContentDisposition`), and the web renders an
+// archive glyph for it.
+export const ASSET_ARCHIVE_MIME: ReadonlySet<string> = new Set([
+	'application/zip',
+	'application/x-tar',
+	'application/gzip',
+	'application/x-7z-compressed',
+	'application/vnd.rar',
+]);
+
+export function isArchiveAssetMime(mime: string): boolean {
+	return ASSET_ARCHIVE_MIME.has(mime);
+}
 
 // Content types that can carry active script and must never be served inline on
 // our own origin — a top-level navigation to one would execute as us (stored
@@ -321,7 +361,12 @@ export function assetContentDisposition(
 	forceDownload = false,
 ): 'inline' | 'attachment' {
 	if (forceDownload) return 'attachment';
-	return ASSET_INLINE_UNSAFE_MIME.has(contentType) ? 'attachment' : 'inline';
+	// Two distinct reasons never to render inline, each with its own table: a type
+	// that can carry active script (above), and an archive, which is an opaque
+	// container with nothing to display in a tab.
+	if (ASSET_INLINE_UNSAFE_MIME.has(contentType)) return 'attachment';
+	if (isArchiveAssetMime(contentType)) return 'attachment';
+	return 'inline';
 }
 
 // Content types that may carry active script yet are meant to render inline (an
@@ -527,13 +572,29 @@ export function isAllowedAttachmentMime(mime: string): boolean {
 }
 
 /**
+ * Content types whose stored value is always the extension's canonical type,
+ * ignoring what the uploader declared:
+ *
+ * - `text/plain` — storing the inert type is the point. Browsers send
+ *   `text/javascript` for `.js`, `application/json` for `.json`, `text/csv` for
+ *   `.csv`, … and the serving route's nosniff header prevents re-interpretation.
+ * - Archives — browsers disagree wildly on the declared type for one format. A
+ *   `.zip` arrives as `application/zip` (Firefox, Safari),
+ *   `application/x-zip-compressed` (Windows Chrome and Edge), `multipart/x-zip`,
+ *   or `application/octet-stream` depending on OS and browser, so the extension
+ *   is the only reliable signal. Deferring to it also *narrows* what can be
+ *   stored: an archive extension can only ever carry its own canonical type.
+ */
+const ATTACHMENT_EXTENSION_AUTHORITATIVE_MIME: ReadonlySet<string> = new Set([
+	'text/plain',
+	...ASSET_ARCHIVE_MIME,
+]);
+
+/**
  * Resolve the content type to store for an uploaded asset, or null when the
- * upload must be rejected. Extensions that map to text/plain always store
- * text/plain regardless of what the uploader declared (browsers send
- * `text/javascript` for `.js`, `application/json` for `.json`, `text/csv` for
- * `.csv`, … — storing the inert type is the point, and the serving route's
- * nosniff header prevents re-interpretation). Other extensions keep the
- * original posture: a declared allowlisted type wins, a blank or
+ * upload must be rejected. Extensions whose canonical type is authoritative
+ * (see above) always store that type. Other extensions keep the original
+ * posture: a declared allowlisted type wins, a blank or
  * `application/octet-stream` declaration falls back to the extension's
  * canonical type, and a specific disallowed declared type is rejected (a
  * `.png` claiming `application/x-msdownload` is suspicious).
@@ -545,7 +606,7 @@ export function resolveAttachmentContentType(
 	const ext = extensionOf(filename);
 	const extMime = ext ? ATTACHMENT_EXTENSIONS[ext as AttachmentExtension] : undefined;
 	if (extMime === undefined) return null;
-	if (extMime === 'text/plain') return 'text/plain';
+	if (ATTACHMENT_EXTENSION_AUTHORITATIVE_MIME.has(extMime)) return extMime;
 	const declared = declaredType === 'application/octet-stream' ? '' : declaredType;
 	const contentType = declared || extMime;
 	return isAllowedAttachmentMime(contentType) ? contentType : null;
@@ -991,9 +1052,46 @@ export interface GoalRunActivity {
 	commented_tasks: (GoalRunTaskRef & { comment_count: number })[];
 }
 
-/** The Captain-maintained project progress summary shown at the top of the Progress page. */
+/**
+ * The three recent-activity columns on the Progress page. Each is a *frozen snapshot* the
+ * Captain writes during a progress-update run: it picks the tasks and authors every summary
+ * line itself, so the lines read at project altitude (what was accomplished, what is being
+ * accomplished, what is outstanding) rather than restating the task's own fields.
+ *
+ * Identifier and title are captured at write time, so rendering needs no task lookup — a task
+ * deleted between runs simply renders its captured row until the next run drops it.
+ */
+export const PROGRESS_ACTIVITY_KINDS = ['actioned', 'created', 'closed'] as const;
+export type ProgressActivityKind = (typeof PROGRESS_ACTIVITY_KINDS)[number];
+
+/** Longest Captain-authored line stored per task. Enforced on write, so reads are bounded. */
+export const PROGRESS_ACTIVITY_SUMMARY_MAX = 200;
+/** Rows kept per column. The Captain is offered more candidates than this and picks. */
+export const PROGRESS_ACTIVITY_PER_COLUMN = 5;
+
+export interface ProgressActivityEntry {
+	/** Task identifier as captured at write time (e.g. `BE-42`); links to the task page. */
+	identifier: string;
+	/** Task title as captured at write time. */
+	title: string;
+	/** The Captain's one-line summary for this task, in its own words. */
+	summary: string;
+}
+
+export type ProgressActivity = Record<ProgressActivityKind, ProgressActivityEntry[]>;
+
+export function emptyProgressActivity(): ProgressActivity {
+	return { actioned: [], created: [], closed: [] };
+}
+
+/**
+ * The Captain-maintained project progress shown on the Progress page: a high-level summary
+ * (deliberately naming no task identifiers — the columns carry the specifics) plus the three
+ * activity columns. Both are written in the same progress-update run and share `updated_at`.
+ */
 export interface ProjectProgress {
 	summary: string;
+	activity: ProgressActivity;
 	updated_at: string | null;
 }
 
@@ -1066,6 +1164,18 @@ export const ChatSessionStatus = {
 	Running: 'running',
 	Crashed: 'crashed',
 	Stopped: 'stopped',
+	/**
+	 * The container stopped without losing its filesystem, and the session is
+	 * waiting to resume into it. Live, not terminal: the row still owns its
+	 * container and still blocks a second session.
+	 *
+	 * A chat session holds no long-lived process - each turn is its own exec and
+	 * continuity comes from `chat_conversations`/`chat_messages` - so nothing the
+	 * session needs is lost. What does not survive is the host-side half: the ssh
+	 * socket and egress proxy allocations, whose ports change, which is why resume
+	 * re-runs that half rather than being a no-op.
+	 */
+	Suspended: 'suspended',
 } as const;
 export type ChatSessionStatus = (typeof ChatSessionStatus)[keyof typeof ChatSessionStatus];
 
@@ -1372,18 +1482,46 @@ export const AiProviderStatus = {
 export type AiProviderStatus = (typeof AiProviderStatus)[keyof typeof AiProviderStatus];
 
 /**
- * Per-provider configuration that varies even when multiple providers share a
- * runtime. Each provider declares the CLI runtime it's driven through, any
- * static env entries (base URL, model defaults, …), and the env var that
- * carries the credential value for each supported auth method. Runtime-only
- * knobs (CLI binary, MCP injection, headless flags, effort mapping) live in
- * the `RUNTIME_*` maps below and are shared across every provider on that
- * runtime.
+ * The env one provider needs to run on ONE particular CLI: any static entries
+ * (base URL, model defaults, …) plus the env var that carries the credential
+ * value for each supported auth method. Agents that read a different var won't
+ * see the credential.
+ *
+ * A provider that can be driven by more than one CLI needs one of these per
+ * CLI, because the same credential lands in a different variable and alongside
+ * different static entries depending on which binary reads it — a Moonshot key
+ * is `ANTHROPIC_AUTH_TOKEN` next to an `ANTHROPIC_BASE_URL` for Claude Code,
+ * and `KIMI_MODEL_API_KEY` next to the `KIMI_MODEL_*` family for Kimi Code.
  */
-export interface ProviderRuntimeAdapter {
-	runtime: AgentRuntime;
+export interface ProviderRuntimeBinding {
 	staticEnv?: Readonly<Record<string, string>>;
 	credentialEnvByAuthMethod: Partial<Record<AiAuthMethod, string>>;
+}
+
+/**
+ * Per-provider configuration that varies even when multiple providers share a
+ * runtime. Each provider declares the CLI runtime it's driven through by
+ * default, that runtime's binding (inline, as the adapter's own fields), and
+ * optionally the other CLIs it can be driven by. Runtime-only knobs (CLI
+ * binary, MCP injection, headless flags, effort mapping) live in the
+ * `RUNTIME_*` maps below and are shared across every provider on that runtime.
+ *
+ * The provider-to-runtime relationship is one-to-MANY: an operator picks the
+ * CLI per credential (`ai_provider_configs.runtime`, null = this default), so
+ * nothing here may assume a provider implies a single runtime. Resolve a
+ * provider's env through {@link providerRuntimeBinding}, never by reading the
+ * adapter's own `staticEnv`/`credentialEnvByAuthMethod` directly — those are
+ * the DEFAULT runtime's binding and are wrong for any other choice.
+ */
+export interface ProviderRuntimeAdapter extends ProviderRuntimeBinding {
+	/** The CLI this provider runs on when the operator hasn't picked another. */
+	runtime: AgentRuntime;
+	/**
+	 * Other CLIs that can drive this provider, each carrying the env deltas that
+	 * CLI needs instead of the adapter's own. Absent means the provider runs on
+	 * exactly one CLI and the picker is hidden for it.
+	 */
+	alternateRuntimes?: Partial<Record<AgentRuntime, ProviderRuntimeBinding>>;
 }
 
 /**
@@ -1429,16 +1567,76 @@ export const GEMINI_RUNTIME_ENV = {
 } as const;
 
 /**
- * Moonshot's default coding model, shared by both ways of running Kimi: the
- * `kimi` provider (Claude Code against the Anthropic-compatible gateway) and the
- * `kimi_code` provider (Moonshot's own CLI). It is only a *default* — an agent or
- * task may select any model the provider catalog returns, which is why both
- * adapters let the run's selected model override it.
+ * Moonshot's default coding model, shared by both ways of running Kimi: Claude
+ * Code against the Anthropic-compatible gateway, and Moonshot's own CLI. Both
+ * bindings below carry it, and either Moonshot provider can be configured onto
+ * either binding. It is only a *default* — an agent or task may select any model
+ * the provider catalog returns, which is why both bindings let the run's
+ * selected model override it.
  *
  * Keep a `model_pricing` row for whatever this points at: runs are priced solely
  * from that table, so an unpriced model records $0.
  */
 export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code';
+
+/**
+ * Moonshot reached through Claude Code, against the Anthropic-compatible
+ * gateway — the same pattern as DeepSeek/Z.ai. `ENABLE_TOOL_SEARCH` and
+ * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` are Moonshot's documented Claude Code
+ * settings (https://platform.kimi.ai/docs/guide/agent-support).
+ *
+ * Declared once and shared by BOTH Moonshot providers: it is `kimi`'s default
+ * binding and `kimi_code`'s alternate. Two copies would drift the moment one
+ * side gained a setting, and the whole point of the pair is that the same key
+ * reaches the same upstream either way.
+ */
+const MOONSHOT_CLAUDE_CODE_BINDING: ProviderRuntimeBinding = {
+	staticEnv: {
+		ANTHROPIC_BASE_URL: 'https://api.moonshot.ai/anthropic',
+		ANTHROPIC_DEFAULT_OPUS_MODEL: KIMI_DEFAULT_MODEL,
+		ANTHROPIC_DEFAULT_SONNET_MODEL: KIMI_DEFAULT_MODEL,
+		ANTHROPIC_DEFAULT_HAIKU_MODEL: KIMI_DEFAULT_MODEL,
+		CLAUDE_CODE_SUBAGENT_MODEL: KIMI_DEFAULT_MODEL,
+		ENABLE_TOOL_SEARCH: 'false',
+		CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
+	},
+	credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+};
+
+/**
+ * Moonshot reached through Moonshot's own first-party CLI (`kimi`), at `/v1`
+ * (OpenAI-shaped) rather than at `/anthropic`. `kimi_code`'s default binding
+ * and `kimi`'s alternate.
+ *
+ * Credential delivery is the unusual part. Kimi Code deliberately does NOT read
+ * provider API keys from the shell environment; they are expected to live in
+ * `config.toml` under `[providers.<name>]`. The one documented exception is the
+ * `KIMI_MODEL_*` family, which IS shell-read and registers a temporary
+ * in-memory provider for the launch. Hezo uses that family so the key stays in
+ * env only — writing it into a config file the agent can read would breach the
+ * plaintext-secret rule (only the run CLI's own model-provider credential may
+ * be in-run, and only via env).
+ *
+ * `KIMI_MODEL_NAME` is what ACTIVATES the family, so it must always be set;
+ * `buildProviderEnv` overrides it with the run's selected model when there is
+ * one. `KIMI_MODEL_CAPABILITIES` must include `image_in` or the CLI's
+ * `downgradeUnsupportedMedia` step silently replaces every image part with
+ * "[image omitted: current model has no image input]" — which would break
+ * `read_project_asset`, the only path by which an agent ever sees an image.
+ * Capabilities resolve as a union of declared + auto-detected, so declaring can
+ * only add.
+ */
+const MOONSHOT_KIMI_CODE_BINDING: ProviderRuntimeBinding = {
+	staticEnv: {
+		KIMI_MODEL_PROVIDER_TYPE: 'kimi',
+		KIMI_MODEL_BASE_URL: 'https://api.moonshot.ai/v1',
+		KIMI_MODEL_NAME: KIMI_DEFAULT_MODEL,
+		KIMI_MODEL_CAPABILITIES: 'image_in,thinking',
+		KIMI_DISABLE_TELEMETRY: '1',
+		KIMI_CODE_NO_AUTO_UPDATE: '1',
+	},
+	credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_MODEL_API_KEY' },
+};
 
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
@@ -1494,61 +1692,27 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.OpenCode,
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENROUTER_API_KEY' },
 	},
-	// Kimi (Moonshot) runs through Claude Code against Moonshot's
-	// Anthropic-compatible endpoint — the same pattern as DeepSeek/Z.ai.
-	// ENABLE_TOOL_SEARCH and CLAUDE_CODE_AUTO_COMPACT_WINDOW are Moonshot's
-	// documented Claude Code settings
-	// (https://platform.kimi.ai/docs/guide/agent-support).
+	// The two Moonshot providers are the same upstream and the same key reached by
+	// two different CLIs, so each offers BOTH — they differ only in which one they
+	// default to. `kimi` defaults to Claude Code against the Anthropic-compatible
+	// gateway; `kimi_code` defaults to Moonshot's own CLI. Neither supersedes the
+	// other, and an operator can now switch a credential between them without
+	// re-adding it. (They exist as two providers only because runtime used to be
+	// pinned to provider; collapsing them is a separate change that would have to
+	// migrate existing rows.)
 	//
-	// This is one of TWO ways to run Kimi models; `kimi_code` below is the other,
-	// driving Moonshot's own CLI. Both are supported and neither supersedes the
-	// other — pick per agent (`model_override_provider`) or per task
+	// Selection precedence is unchanged: the credential's own runtime, else this
+	// default; pick per agent (`model_override_provider`) or per task
 	// (`tasks.runtime_type`).
 	[AiProvider.Kimi]: {
 		runtime: AgentRuntime.ClaudeCode,
-		staticEnv: {
-			ANTHROPIC_BASE_URL: 'https://api.moonshot.ai/anthropic',
-			ANTHROPIC_DEFAULT_OPUS_MODEL: KIMI_DEFAULT_MODEL,
-			ANTHROPIC_DEFAULT_SONNET_MODEL: KIMI_DEFAULT_MODEL,
-			ANTHROPIC_DEFAULT_HAIKU_MODEL: KIMI_DEFAULT_MODEL,
-			CLAUDE_CODE_SUBAGENT_MODEL: KIMI_DEFAULT_MODEL,
-			ENABLE_TOOL_SEARCH: 'false',
-			CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
-		},
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
+		...MOONSHOT_CLAUDE_CODE_BINDING,
+		alternateRuntimes: { [AgentRuntime.Kimi]: MOONSHOT_KIMI_CODE_BINDING },
 	},
-	// Kimi Code — the same Moonshot models reached through Moonshot's own
-	// first-party CLI (`kimi`) instead of Claude Code. Sibling of `kimi` above,
-	// not a replacement.
-	//
-	// Credential delivery is the unusual part. Kimi Code deliberately does NOT
-	// read provider API keys from the shell environment; they are expected to
-	// live in `config.toml` under `[providers.<name>]`. The one documented
-	// exception is the `KIMI_MODEL_*` family, which IS shell-read and registers a
-	// temporary in-memory provider for the launch. Hezo uses that family so the
-	// key stays in env only — writing it into a config file the agent can read
-	// would breach the plaintext-secret rule (only the run CLI's own
-	// model-provider credential may be in-run, and only via env).
-	//
-	// `KIMI_MODEL_NAME` is what ACTIVATES the family, so it must always be set;
-	// `buildProviderEnv` overrides it with the run's selected model when there is
-	// one. `KIMI_MODEL_CAPABILITIES` must include `image_in` or the CLI's
-	// `downgradeUnsupportedMedia` step silently replaces every image part with
-	// "[image omitted: current model has no image input]" — which would break
-	// `read_project_asset`, the only path by which an agent ever sees an image.
-	// Capabilities resolve as a union of declared + auto-detected, so declaring
-	// can only add.
 	[AiProvider.KimiCode]: {
 		runtime: AgentRuntime.Kimi,
-		staticEnv: {
-			KIMI_MODEL_PROVIDER_TYPE: 'kimi',
-			KIMI_MODEL_BASE_URL: 'https://api.moonshot.ai/v1',
-			KIMI_MODEL_NAME: KIMI_DEFAULT_MODEL,
-			KIMI_MODEL_CAPABILITIES: 'image_in,thinking',
-			KIMI_DISABLE_TELEMETRY: '1',
-			KIMI_CODE_NO_AUTO_UPDATE: '1',
-		},
-		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_MODEL_API_KEY' },
+		...MOONSHOT_KIMI_CODE_BINDING,
+		alternateRuntimes: { [AgentRuntime.ClaudeCode]: MOONSHOT_CLAUDE_CODE_BINDING },
 	},
 	// xAI Grok Build runs on its own first-party `grok` CLI (its own runtime),
 	// authenticated by XAI_API_KEY sent direct to api.x.ai (the sanctioned
@@ -1614,9 +1778,16 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 export function providerDirectUpstreamHosts(
 	provider: AiProvider,
 	configuredBaseUrl?: string | null,
+	runtime?: AgentRuntime | null,
 ): readonly string[] {
+	// Read the base URL off the RESOLVED runtime's binding: the two CLIs a
+	// Moonshot credential can run on name it differently (`ANTHROPIC_BASE_URL` vs
+	// `KIMI_MODEL_BASE_URL`), so checking only the Anthropic spelling would miss
+	// it entirely for a credential switched to the native CLI.
+	const binding = providerRuntimeBinding(provider, runtime ?? PROVIDER_TO_RUNTIME[provider]);
+	const staticEnv = binding?.staticEnv ?? PROVIDER_RUNTIME_ADAPTERS[provider]?.staticEnv;
 	const baseUrl =
-		configuredBaseUrl || PROVIDER_RUNTIME_ADAPTERS[provider].staticEnv?.ANTHROPIC_BASE_URL;
+		configuredBaseUrl || staticEnv?.ANTHROPIC_BASE_URL || staticEnv?.KIMI_MODEL_BASE_URL;
 	if (baseUrl) {
 		try {
 			return [new URL(baseUrl).hostname];
@@ -1659,16 +1830,23 @@ export function claudeCodeModelArg(provider: AiProvider, model: string): string 
  * cost (an Opus run should not judge with Opus), and Claude Code already owns a
  * sensible native subagent default there.
  */
-export function claudeCodeProviderUsesCustomEndpoint(provider: AiProvider): boolean {
-	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
-	if (adapter.runtime !== AgentRuntime.ClaudeCode) return false;
+export function claudeCodeProviderUsesCustomEndpoint(
+	provider: AiProvider,
+	runtime?: AgentRuntime | null,
+): boolean {
+	// The question is about the runtime the run actually uses, not the provider's
+	// default: a Moonshot credential switched onto Claude Code reaches a
+	// third-party Anthropic-compatible endpoint exactly like `kimi` does, and its
+	// judge/subagent models must track the run model the same way.
+	const resolved = runtime ?? PROVIDER_RUNTIME_ADAPTERS[provider]?.runtime;
+	if (resolved !== AgentRuntime.ClaudeCode) return false;
 	// Local providers reach a custom endpoint too, but carry it on the credential
 	// rather than in `staticEnv`, so the base-URL probe alone would miss them. The
 	// cost rationale for excluding Anthropic above does not apply here: local
 	// inference is free, so tracking the run's model costs nothing, and the pinned
 	// alternative would be a model the operator may not even have pulled.
 	if (isLocalAiProvider(provider)) return true;
-	return Boolean(adapter.staticEnv?.ANTHROPIC_BASE_URL);
+	return Boolean(providerRuntimeBinding(provider, resolved)?.staticEnv?.ANTHROPIC_BASE_URL);
 }
 
 /**
@@ -1703,6 +1881,73 @@ export function opencodeModelArg(provider: AiProvider, model: string): string {
 	return model.startsWith(`${key}/`) ? model : `${key}/${model}`;
 }
 
+/**
+ * Every CLI a provider can be driven by, DEFAULT FIRST. The order is the
+ * contract the picker renders in, so the first entry is always the one
+ * preselected for a credential that stores no explicit choice.
+ */
+export function providerRuntimes(provider: AiProvider): readonly AgentRuntime[] {
+	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+	if (!adapter) return [];
+	const alternates = Object.keys(adapter.alternateRuntimes ?? {}) as AgentRuntime[];
+	return [adapter.runtime, ...alternates.filter((r) => r !== adapter.runtime)];
+}
+
+/** Whether this provider can run on this CLI at all. Guards the stored choice. */
+export function providerSupportsRuntime(provider: AiProvider, runtime: AgentRuntime): boolean {
+	return providerRuntimes(provider).includes(runtime);
+}
+
+/**
+ * The CLI a stored credential runs on: its own explicit choice, else the
+ * provider's default. This is the ONE place that reading resolves, so the
+ * server's env composition and the UI's chip can never disagree about which
+ * runtime a credential is on.
+ *
+ * A stored runtime the provider no longer supports (the roster changed under an
+ * existing row) falls back to the default rather than producing a pairing with
+ * no env binding — an unrunnable credential should degrade to the working
+ * default, not fail the run.
+ */
+export function effectiveRuntime(
+	provider: AiProvider,
+	storedRuntime: AgentRuntime | null | undefined,
+): AgentRuntime | null {
+	if (storedRuntime && providerSupportsRuntime(provider, storedRuntime)) return storedRuntime;
+	return PROVIDER_TO_RUNTIME[provider] ?? null;
+}
+
+/**
+ * The env binding for running `provider` on `runtime`. Pass the RESOLVED
+ * runtime (the credential's own choice, else the provider default) — reading
+ * the adapter's own fields instead silently returns the default runtime's env,
+ * which for a switched credential means the key lands in the wrong variable and
+ * the CLI reports no credentials at all.
+ *
+ * Returns null for a pairing the provider doesn't support, so a stale stored
+ * runtime surfaces as an explicit failure rather than a half-built env bag.
+ */
+export function providerRuntimeBinding(
+	provider: AiProvider,
+	runtime: AgentRuntime,
+): ProviderRuntimeBinding | null {
+	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+	if (!adapter) return null;
+	if (runtime === adapter.runtime) {
+		return {
+			staticEnv: adapter.staticEnv,
+			credentialEnvByAuthMethod: adapter.credentialEnvByAuthMethod,
+		};
+	}
+	return adapter.alternateRuntimes?.[runtime] ?? null;
+}
+
+/**
+ * Each provider's DEFAULT runtime — what a credential runs on when it stores no
+ * explicit choice. Not "the runtime for this provider": a provider may support
+ * several (see {@link providerRuntimes}), so this must never be used to decide
+ * how an actual run is configured. Resolve that from the credential row.
+ */
 export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = Object.freeze(
 	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(
 		(acc, p) => {
@@ -1713,13 +1958,20 @@ export const PROVIDER_TO_RUNTIME: Record<AiProvider, AgentRuntime> = Object.free
 	),
 );
 
+/**
+ * Every provider that can run on a given CLI, including via a non-default
+ * choice. This is what a task-level `runtime_type` pin searches, so a Moonshot
+ * credential is a candidate for both `claude_code` and `kimi` regardless of
+ * which of the two providers it was added under.
+ */
 export const PROVIDERS_BY_RUNTIME: Record<AgentRuntime, readonly AiProvider[]> = Object.freeze(
 	(Object.keys(PROVIDER_RUNTIME_ADAPTERS) as AiProvider[]).reduce(
 		(acc, p) => {
-			const r = PROVIDER_RUNTIME_ADAPTERS[p].runtime;
-			const list = acc[r] ?? [];
-			list.push(p);
-			acc[r] = list;
+			for (const r of providerRuntimes(p)) {
+				const list = acc[r] ?? [];
+				if (!list.includes(p)) list.push(p);
+				acc[r] = list;
+			}
 			return acc;
 		},
 		{} as Record<AgentRuntime, AiProvider[]>,
@@ -1733,6 +1985,21 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.OpenCode]: 'opencode',
 	[AgentRuntime.Grok]: 'grok',
 	[AgentRuntime.Kimi]: 'kimi',
+};
+
+/**
+ * How each CLI is named to an operator. These are product names, so they are
+ * NOT translated — the same rule that keeps Captain, CEO and Hezo itself in
+ * English across every catalog. Rendered by the credential form's CLI picker
+ * and the provider list's CLI chip.
+ */
+export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
+	[AgentRuntime.ClaudeCode]: 'Claude Code',
+	[AgentRuntime.Codex]: 'Codex',
+	[AgentRuntime.Gemini]: 'Gemini CLI',
+	[AgentRuntime.OpenCode]: 'OpenCode',
+	[AgentRuntime.Grok]: 'Grok',
+	[AgentRuntime.Kimi]: 'Kimi Code',
 };
 
 /**
@@ -1782,7 +2049,7 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
  * Tools removed from a runtime's available set. Claude Code's built-in WebFetch
  * runs a preflight domain-safety check against an upstream that is unreachable
  * from inside a headless container, so it fails for every URL; agents fetch
- * pages with curl/wget instead. The runtime's native web-search tool is left
+ * pages with curl instead. The runtime's native web-search tool is left
  * intact. Other runtimes fetch through their own provider-side tooling, so they
  * disallow nothing.
  */
@@ -1791,7 +2058,39 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	// answered, so a model that drifts into plan mode parks there and exits 0 with
 	// only a plan written — a false success. Removing the tool forces the agent to
 	// act on the work directly.
-	[AgentRuntime.ClaudeCode]: ['--disallowedTools', 'WebFetch', 'ExitPlanMode'],
+	//
+	// The three below are removed because Hezo owns what they do, and each of them
+	// silently does nothing useful here rather than failing:
+	//
+	// - **EnterWorktree** switches the session's working directory into
+	//   `.claude/worktrees/<name>/`. Hezo prepares the worktree a run works in and
+	//   watches *that* for changes (`anyWorktreeChanged`, and the push path after
+	//   it), so an agent that moves itself writes where nothing is looking - the
+	//   work is invisible and the run grades as having produced nothing.
+	// - **CronCreate / CronDelete / CronList** schedule inside the session, and the
+	//   container is destroyed when the run ends. Anything scheduled past that
+	//   point is silently lost, and Hezo's own heartbeats and wakeups are the real
+	//   scheduler.
+	// - **ScheduleWakeup** only means anything in `/loop` dynamic mode, which a
+	//   one-shot `-p` run is not.
+	//
+	// Deliberately NOT removed, though a failed run made all three look guilty:
+	// the `Task*` family is the agent's own in-session checklist (what replaced
+	// TodoWrite) and persists nothing; `Skill` loads `.claude/skills/` from the
+	// project's own repo, which is a real capability; and `WebSearch` is proxied
+	// server-side so container egress does not affect it. They only misled an
+	// agent that had lost its Hezo tools entirely - a transport failure, fixed
+	// where transport failures belong.
+	[AgentRuntime.ClaudeCode]: [
+		'--disallowedTools',
+		'WebFetch',
+		'ExitPlanMode',
+		'EnterWorktree',
+		'CronCreate',
+		'CronDelete',
+		'CronList',
+		'ScheduleWakeup',
+	],
 	[AgentRuntime.Codex]: [],
 	[AgentRuntime.Gemini]: [],
 	[AgentRuntime.OpenCode]: [],
@@ -2205,3 +2504,82 @@ export const DEFAULT_LOCALE_SETTINGS: LocaleSettings = {
 	date_format: DateFormat.Mdy,
 	number_format: NumberFormat.DotComma,
 };
+
+/**
+ * Where agent containers run.
+ *
+ * Shared because both halves need the same answer: the server selects the
+ * backend and reports it, and the web app tells the operator which one is in use
+ * and which limits therefore apply. It lived as a hand-written `'docker' |
+ * 'daytona'` union in each package, which is two places to update for every new
+ * provider.
+ */
+export const SandboxBackend = {
+	/** The operator's own Docker daemon. Containers share the host's memory and disk. */
+	Docker: 'docker',
+	/** Daytona managed sandboxes. Containers run on the provider's machines. */
+	Daytona: 'daytona',
+} as const;
+export type SandboxBackend = (typeof SandboxBackend)[keyof typeof SandboxBackend];
+
+export const SANDBOX_BACKENDS: readonly SandboxBackend[] = Object.values(SandboxBackend);
+
+export function isSandboxBackend(value: string): value is SandboxBackend {
+	return (SANDBOX_BACKENDS as readonly string[]).includes(value);
+}
+
+/**
+ * The stand-in id for a container that is being provisioned but has no engine id
+ * yet.
+ *
+ * Everything about a container is keyed on the id the engine returns, and there
+ * is a real window before that: workspace preparation, resolving the base image,
+ * and - on a managed backend - the sandbox build itself, which is the longest
+ * part of a cold start. The project is already `creating` and the UI already
+ * says so, but the Containers page had nothing to list, so following "View
+ * container" from that notice landed on an empty page.
+ *
+ * A placeholder row closes that. It is deliberately **not** an engine id and
+ * nothing may treat it as one - {@link isProvisioningPlaceholder} is how both
+ * sides tell them apart, so the removal route refuses it and the UI does not
+ * offer Remove for a container that does not exist yet.
+ */
+export function provisioningContainerKey(projectId: string): string {
+	return `provisioning:${projectId}`;
+}
+
+export function isProvisioningPlaceholder(containerId: string): boolean {
+	return containerId.startsWith('provisioning:');
+}
+
+/**
+ * Whether a backend runs containers on this machine or on a third party's.
+ *
+ * This is the only thing about a backend that code outside its own adapter is
+ * allowed to know - everything else a provider does differently is that
+ * adapter's business. It matches how the docs are split (`docs/containers/
+ * local-docker.md` vs `docs/containers/remote/`), so the two cannot drift.
+ *
+ * A table rather than a predicate over a provider name, so adding a backend is a
+ * **compile error** until it declares which kind it is. The alternative -
+ * `=== SandboxBackend.Daytona` at each site - states a fact about one service
+ * where a property of the whole class is meant, and a new provider then silently
+ * inherits whichever branch the comparison happened to fall through to.
+ */
+export const SANDBOX_BACKEND_KIND: Record<SandboxBackend, 'local' | 'remote'> = {
+	[SandboxBackend.Docker]: 'local',
+	[SandboxBackend.Daytona]: 'remote',
+};
+
+/**
+ * Does this backend need an API key before it can be selected?
+ *
+ * True for every remote backend and false for the local daemon: a third-party
+ * container service is reached over the internet behind an account, so an API
+ * key is what makes it usable at all, while a local daemon is a socket on the
+ * host. That is a property of the class, not of any one provider - which is why
+ * this asks the kind rather than naming a service.
+ */
+export function sandboxBackendNeedsApiKey(backend: SandboxBackend): boolean {
+	return SANDBOX_BACKEND_KIND[backend] === 'remote';
+}

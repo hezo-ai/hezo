@@ -1,12 +1,18 @@
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { Loader2, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import { useShortcut } from '../../hooks/use-shortcut';
 import { useI18n } from '../../lib/i18n';
 import { dialogContentClassName, dialogOverlayClassName } from './dialog';
 import { kbdSizeClass, ShortcutKbd } from './shortcut-kbd';
 
 interface ConfirmDialogProps {
+	/**
+	 * Extra content between the description and the buttons - a field the
+	 * confirmation itself needs (a credential, a typed-name check). Optional: most
+	 * confirmations are a question and two buttons.
+	 */
+	children?: ReactNode;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	title: string;
@@ -35,6 +41,7 @@ export function ConfirmDialog({
 	variant = 'default',
 	onConfirm,
 	loading: externalLoading,
+	children,
 }: ConfirmDialogProps) {
 	const { t } = useI18n();
 	const [internalLoading, setInternalLoading] = useState(false);
@@ -79,6 +86,7 @@ export function ConfirmDialog({
 							{description}
 						</AlertDialog.Description>
 					)}
+					{children && <div className="flex flex-col gap-2 mb-3">{children}</div>}
 					<div className="flex justify-end gap-2">
 						<AlertDialog.Cancel
 							disabled={loading}

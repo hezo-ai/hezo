@@ -16,7 +16,14 @@ export interface LogStreamConfig {
 	streamId: string;
 	room: string;
 	buildMessage: (line: LogLine) => WsEvent;
-	buildSnapshot: (text: string) => WsEvent;
+	/**
+	 * Build the replace-snapshot a newly-subscribed client receives.
+	 *
+	 * `trimmed` says the text is only the tail (see {@link REPLAY_TAIL_CHARS}), so
+	 * a client that already seeded the *whole* log from REST can tell that
+	 * applying this would be a downgrade rather than a refresh.
+	 */
+	buildSnapshot: (text: string, trimmed: boolean) => WsEvent;
 	/**
 	 * Persistence callback. Receives only the text appended since the last
 	 * SUCCESSFUL flush (the delta), so implementations append it — they must
@@ -152,7 +159,8 @@ export class LogStreamBroker {
 			// Anything still queued belongs in the snapshot rather than arriving
 			// after it — the snapshot replaces the client's buffer wholesale.
 			this.flushBroadcast(entry);
-			send(entry.config.buildSnapshot(this.snapshotText(entry)));
+			const trimmed = entry.buffer.length > REPLAY_TAIL_CHARS;
+			send(entry.config.buildSnapshot(this.snapshotText(entry), trimmed));
 		}
 	}
 

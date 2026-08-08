@@ -5,12 +5,7 @@ import {
 	Check,
 	Copy,
 	ExternalLink,
-	FileAudio,
-	File as FileIcon,
-	FileText,
-	FileVideo,
 	History,
-	Image as ImageIcon,
 	ListPlus,
 	Loader2,
 	Lock,
@@ -32,7 +27,9 @@ import {
 	useChatConversations,
 	writeStoredThreadId,
 } from '../../hooks/use-chat';
+import { useCloseOnRouteChange } from '../../hooks/use-close-on-route-change';
 import { useContainerHealth } from '../../hooks/use-container-health';
+import { useCopyFeedback } from '../../hooks/use-copy-feedback';
 import { useDraggableFab } from '../../hooks/use-draggable-fab';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
 import { LONG_PRESS_MS, useLongPress } from '../../hooks/use-long-press';
@@ -40,6 +37,7 @@ import { useMediaQuery } from '../../hooks/use-media-query';
 import { useHqProject } from '../../hooks/use-projects';
 import { useUploadChatAttachment } from '../../hooks/use-upload-chat-attachment';
 import { copyToClipboard } from '../../lib/clipboard';
+import { AssetIcon } from '../asset-icon';
 import {
 	ATTACHMENT_ACCEPT,
 	AttachmentChips,
@@ -181,6 +179,20 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
 	}, [open, setOpen]);
+
+	// Navigating away only strands the reader in the BLOCKING presentations: the
+	// mobile full-screen panel and the desktop expanded view, both of which carry
+	// the backdrop below. The anchored desktop corner panel is a deliberately
+	// persistent companion — it doesn't cover the page, and it is meant to survive
+	// navigation — so it is excluded. Expanding is a view mode rather than a
+	// session, so desktop collapses back to anchored instead of closing, keeping
+	// the thread up while the page is unblocked. (`md` matches the backdrop's
+	// `md:hidden`.)
+	const isDesktop = useMediaQuery('(min-width: 768px)');
+	useCloseOnRouteChange(open && (!isDesktop || expanded), () => {
+		if (isDesktop) setExpanded(false);
+		else setOpen(false);
+	});
 
 	// Grow the composer with its content (capped by `max-h-32`, then it scrolls),
 	// and collapse it back to a single row when the draft is cleared on submit.
@@ -594,7 +606,6 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 							>
 								<HqContainerNotice
 									health={blockedHealth}
-									slug={hq.slug}
 									description="The CEO is unavailable until the HQ container is running."
 								/>
 							</div>
@@ -922,17 +933,7 @@ function MessageBubble({
 	);
 }
 
-/** Type-based icon for a sent attachment chip. */
-function attachmentIcon(contentType: string) {
-	const cls = 'h-3.5 w-3.5 shrink-0 text-text-3';
-	if (contentType.startsWith('image/')) return <ImageIcon className={cls} />;
-	if (contentType.startsWith('audio/')) return <FileAudio className={cls} />;
-	if (contentType.startsWith('video/')) return <FileVideo className={cls} />;
-	if (contentType === 'application/pdf' || contentType === 'text/plain') {
-		return <FileText className={cls} />;
-	}
-	return <FileIcon className={cls} />;
-}
+const SENT_ATTACHMENT_ICON_CLASSES = 'h-3.5 w-3.5 shrink-0 text-text-3';
 
 /**
  * Read-only linked chips for the files sent with a message, aligned under the
@@ -964,7 +965,7 @@ function SentAttachments({
 						data-testid="chat-message-attachment"
 						className={chipClasses}
 					>
-						{attachmentIcon(a.content_type)}
+						<AssetIcon contentType={a.content_type} className={SENT_ATTACHMENT_ICON_CLASSES} />
 						<span className="max-w-[160px] truncate">{assetBasename(a.original_filename)}</span>
 					</Link>
 				) : (
@@ -976,7 +977,7 @@ function SentAttachments({
 						data-testid="chat-message-attachment"
 						className={chipClasses}
 					>
-						{attachmentIcon(a.content_type)}
+						<AssetIcon contentType={a.content_type} className={SENT_ATTACHMENT_ICON_CLASSES} />
 						<span className="max-w-[160px] truncate">{assetBasename(a.original_filename)}</span>
 						<ExternalLink className="h-3 w-3 shrink-0 text-text-3" />
 					</a>
@@ -995,21 +996,10 @@ function SentAttachments({
  * reachable. `group-hover` is itself auto-scoped to `(hover: hover)` by Tailwind.
  */
 function MessageCopyButton({ text, align }: { text: string; align: 'start' | 'end' }) {
-	const [copied, setCopied] = useState(false);
-	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	useEffect(() => {
-		return () => {
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-		};
-	}, []);
+	const { copied, copy } = useCopyFeedback();
 
 	const handleCopy = async () => {
-		if (await copyToClipboard(text)) {
-			setCopied(true);
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
-		}
+		await copy(text);
 	};
 
 	return (

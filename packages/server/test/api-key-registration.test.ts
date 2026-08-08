@@ -160,9 +160,11 @@ describe('approval', () => {
 		expect((await approve(id)).status).toBe(200);
 
 		// list_projects spans every project across the instance.
-		const projects = toolPayload(
-			await mcp(keyToken, 'tools/call', { name: 'list_projects', arguments: {} }),
-		) as Json[];
+		const projects = (
+			toolPayload(await mcp(keyToken, 'tools/call', { name: 'list_projects', arguments: {} })) as {
+				items: Json[];
+			}
+		).items;
 		const slugs = projects.map((p) => p.slug);
 		expect(slugs).toContain(slugA);
 		expect(slugs).toContain(slugB);
@@ -199,7 +201,11 @@ describe('revocation', () => {
 		await approve(id);
 		// Sanity: works before revoke.
 		expect(
-			toolPayload(await mcp(keyToken, 'tools/call', { name: 'list_projects', arguments: {} })),
+			(
+				toolPayload(
+					await mcp(keyToken, 'tools/call', { name: 'list_projects', arguments: {} }),
+				) as { items: Json[] }
+			).items,
 		).toBeInstanceOf(Array);
 
 		const del = await app.request(`/api/api-keys/${id}`, {

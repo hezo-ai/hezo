@@ -28,13 +28,20 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { logger } from '../../logger';
-import { loadSecretValue } from '../oauth/token-resolver';
+import { loadSecretValue, refreshConnection, setConnectorAuthError } from '../oauth/token-resolver';
 import type { SaasConnectorConfig } from './connections';
 
 const log = logger.child('connector-methods');
 
 /** How long a discovery probe may take before we give up on the server. */
 const DISCOVERY_TIMEOUT_MS = 20_000;
+
+/**
+ * How close to expiry a token must be before a probe renews it first. Matches
+ * the egress path's own refresh window - a token outside it is fine to probe
+ * with, and refreshing anyway costs a provider round-trip for nothing.
+ */
+const PROBE_REFRESH_WINDOW_MS = 60_000;
 
 export interface MethodDiscoveryDeps {
 	db: Db;
@@ -58,6 +65,12 @@ export type MethodDiscoveryFailure =
 	/** The instance is locked, so the credential can't be decrypted. Transient:
 	 *  discovery works again after an unlock, and the refresh button retries. */
 	| 'locked'
+	/** The server rejected our credential (401/403). Distinct from `probe_failed`
+	 *  because the remedy is specific and human-only - reconnect the connector -
+	 *  and because the raw transport error for this case is actively unhelpful:
+	 *  the MCP SDK reports it as "Error POSTing to endpoint:" with the upstream's
+	 *  (usually empty) body appended, which says nothing about the token. */
+	| 'auth_failed'
 	/** The server refused, timed out, or spoke something other than MCP. */
 	| 'probe_failed';
 
@@ -101,11 +114,34 @@ async function buildProbeHeaders(
 	}
 
 	if (row.oauth_connection_id) {
-		const secretId = await deps.db.query<{ access_token_secret_id: string }>(
-			`SELECT access_token_secret_id FROM oauth_connections WHERE id = $1`,
-			[row.oauth_connection_id],
+		const conn = await deps.db.query<{
+			access_token_secret_id: string;
+			needs_refresh: boolean;
+		}>(
+			`SELECT access_token_secret_id,
+			        (expires_at IS NOT NULL
+			         AND expires_at <= now() + ($2 || ' milliseconds')::interval
+			         AND refresh_token_secret_id IS NOT NULL) AS needs_refresh
+			 FROM oauth_connections WHERE id = $1`,
+			[row.oauth_connection_id, String(PROBE_REFRESH_WINDOW_MS)],
 		);
-		const id = secretId.rows[0]?.access_token_secret_id;
+		// Renew an expiring token before probing, so the manual "Refresh methods"
+		// button stops failing against a token that was merely stale but perfectly
+		// renewable. Gated on expiry, NOT unconditional: `refreshConnection` does
+		// no expiry check of its own, so calling it every probe would burn a
+		// provider round-trip per click and - against a provider that rotates
+		// refresh tokens - rotate the grant each time. Its `inflight` dedup is what
+		// keeps this safe alongside a concurrent health sweep.
+		if (conn.rows[0]?.needs_refresh) {
+			await refreshConnection(deps, row.oauth_connection_id).catch(() => {
+				// A failed refresh is already recorded on the connector by the
+				// resolver. Fall through and probe anyway: the token may still be
+				// valid (the failure could be the provider's token endpoint rather
+				// than the grant), and the probe's own 401 handling gives the
+				// operator a better message than the refresh error would.
+			});
+		}
+		const id = conn.rows[0]?.access_token_secret_id;
 		if (id) {
 			const token = await loadSecretValue(deps, id);
 			if (token === null) return { ok: false, reason: 'locked' };
@@ -150,13 +186,38 @@ async function listRemoteTools(
 	} catch (streamableError) {
 		try {
 			return await attempt(new SSEClientTransport(target, { requestInit: { headers } }));
-		} catch {
+		} catch (sseError) {
 			// Report the Streamable-HTTP failure: it is the transport essentially
 			// every current server speaks, so its error is the one that explains
-			// what actually went wrong.
+			// what actually went wrong. The one exception is when only the SSE
+			// attempt carries an HTTP status - that status is the difference
+			// between "your token is dead" and an opaque transport string, so
+			// prefer whichever error can actually be classified.
+			if (httpStatusOf(streamableError) === null && httpStatusOf(sseError) !== null) {
+				throw sseError;
+			}
 			throw streamableError;
 		}
 	}
+}
+
+/**
+ * The HTTP status behind an MCP SDK transport error, when there is one.
+ *
+ * The SDK's `StreamableHTTPError` carries the status on `code` and renders a
+ * message of the form `Streamable HTTP error: Error POSTing to endpoint: <body>`
+ * - so when the upstream answers 401 with an empty body (which is what an
+ * expired OAuth grant looks like), the message ends at a bare colon and tells
+ * the operator nothing. The status is the only usable signal, and reading
+ * `(e as Error).message` threw it away.
+ */
+function httpStatusOf(e: unknown): number | null {
+	const code = (e as { code?: unknown })?.code;
+	if (typeof code === 'number' && code >= 100 && code < 600) return code;
+	// Some transports surface it as `response.status` instead.
+	const status = (e as { response?: { status?: unknown } })?.response?.status;
+	if (typeof status === 'number') return status;
+	return null;
 }
 
 /**
@@ -211,8 +272,24 @@ export async function discoverConnectorMethods(
 		tools = await listRemoteTools(row.config.url, built.headers);
 	} catch (e) {
 		const detail = (e as Error).message;
+		const status = httpStatusOf(e);
+		const rejectedCredential = status === 401 || status === 403;
 		const at = trigger === 'manual' ? log.warn : log.debug;
-		at.call(log, 'mcp method discovery failed', { connectorId, name: row.name, error: detail });
+		at.call(log, 'mcp method discovery failed', {
+			connectorId,
+			name: row.name,
+			status,
+			error: detail,
+		});
+		// A rejected credential is connector health, not a transient probe error:
+		// record it so the operator's banner lights up and the card offers a
+		// reconnect, rather than the knowledge dying in this one toast.
+		if (rejectedCredential) {
+			await setConnectorAuthError(deps, connectorId, `probe: HTTP ${status}`).catch((err) =>
+				log.debug('could not record connector auth error', { error: (err as Error).message }),
+			);
+			return { ok: false, reason: 'auth_failed', detail: `HTTP ${status}` };
+		}
 		return { ok: false, reason: 'probe_failed', detail };
 	}
 
@@ -243,6 +320,13 @@ export async function discoverConnectorMethods(
 			[JSON.stringify(methods), connectorId],
 		);
 	}
+
+	// The probe just authenticated successfully, which is direct evidence the
+	// stored credential works - so a stale `auth_error` from an earlier failure
+	// must not keep the connector reading as degraded (and the banner lit).
+	await setConnectorAuthError(deps, connectorId, null).catch((err) =>
+		log.debug('could not clear connector auth error', { error: (err as Error).message }),
+	);
 
 	log.info('mcp methods discovered', {
 		connectorId,

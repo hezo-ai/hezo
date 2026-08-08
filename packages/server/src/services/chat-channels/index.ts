@@ -19,6 +19,7 @@ export type {
 	InboundGroupMentionEvent,
 	ThreadContextMessage,
 } from './types';
+export { backfillChatWebhookSecrets } from './types';
 
 /**
  * Build the adapter-side ingest sink for socket-transport adapters (a webhook

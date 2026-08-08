@@ -4,7 +4,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
-import { seedRunningContainerProject, setMaxActiveContainersForTest } from './helpers/capacity';
+import { seedRunningContainerProject, setContainerCapacityForTest } from './helpers/capacity';
 
 // The manual "Run now" endpoint reuses the scheduled progress-update logic
 // (`dispatchProgressUpdateNow` → `tryDispatchProgressUpdate`). These cover the deterministic
@@ -39,17 +39,37 @@ function jsonHeaders() {
 	return { ...authHeader(token), 'content-type': 'application/json' };
 }
 
-describe('POST /projects/:projectId/goals/run-now', () => {
-	it('is a valid no-op (200, dispatched:false, reason:no_due_goals) when nothing is due', async () => {
-		const res = await app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+describe('POST /projects/:projectId/progress/run-now', () => {
+	// Goals are not a dependency of progress, and the button is explicit intent: pressing it with
+	// no goals at all still runs, rather than reporting "nothing due" as it used to. Runs against
+	// its own team/project so the launch it triggers can't perturb the capacity case below.
+	it('dispatches with no goals set, instead of no-opping', async () => {
+		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
+		const templateId = (await typesRes.json()).data.find(
+			(t: { name: string }) => t.name === 'App Team',
+		).id;
+		const teamRes = await createTestTeam(db, { name: 'No Goals Co', template_id: templateId });
+		const otherTeamId = (await teamRes.json()).data.id;
+		const projectRes = await createTestProject(db, otherTeamId, { name: 'No Goals Project' });
+		const otherSlug = (await projectRes.json()).data.slug;
+
+		const goals = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM goals g
+			 JOIN projects p ON p.id = g.project_id WHERE p.slug = $1`,
+			[otherSlug],
+		);
+		expect(goals.rows[0].c).toBe(0);
+
+		const res = await app.request(`/api/projects/${otherSlug}/progress/run-now`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: '{}',
 		});
 		expect(res.status).toBe(200);
 		const body = (await res.json()).data;
-		expect(body.dispatched).toBe(false);
-		expect(body.reason).toBe('no_due_goals');
+		// Either it launched, or it queued behind a transient conflict — never a "not due" no-op.
+		expect(body.dispatched === true || body.queued === true).toBe(true);
+		expect(body.reason).toBeUndefined();
 	});
 
 	it('queues the run (200, queued) when a goal is due but the container limit is reached', async () => {
@@ -68,10 +88,10 @@ describe('POST /projects/:projectId/goals/run-now', () => {
 		// A container that is down is no longer a transient conflict (the runner
 		// lazy-starts it); the queued path now comes from the container limit:
 		// cap 1, consumed by a filler project's running container.
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await seedRunningContainerProject(db, 'cap-goals-runnow');
 
-		const res = await app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+		const res = await app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: '{}',
@@ -96,14 +116,14 @@ describe('POST /projects/:projectId/goals/run-now', () => {
 		expect(queued.rows[0].payload.project_id).toBeTruthy();
 
 		// It surfaces via the project-scoped queued-run endpoint.
-		const list = await app.request(`/api/projects/${projectSlug}/goals/queued-run`, {
+		const list = await app.request(`/api/projects/${projectSlug}/progress/queued-run`, {
 			headers: authHeader(token),
 		});
 		expect(list.status).toBe(200);
 		expect((await list.json()).data.queued.id).toBe(body.wakeup_id);
 
 		// "Run now" again is idempotent — same wakeup, no second row.
-		const again = await app.request(`/api/projects/${projectSlug}/goals/run-now`, {
+		const again = await app.request(`/api/projects/${projectSlug}/progress/run-now`, {
 			method: 'POST',
 			headers: jsonHeaders(),
 			body: '{}',
@@ -117,20 +137,20 @@ describe('POST /projects/:projectId/goals/run-now', () => {
 
 		// Cancelling removes it from the queue.
 		const cancel = await app.request(
-			`/api/projects/${projectSlug}/goals/queued-run/${body.wakeup_id}/cancel`,
+			`/api/projects/${projectSlug}/progress/queued-run/${body.wakeup_id}/cancel`,
 			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
 		);
 		expect(cancel.status).toBe(200);
 		expect((await cancel.json()).data.cancelled).toBe(true);
 
-		const afterCancel = await app.request(`/api/projects/${projectSlug}/goals/queued-run`, {
+		const afterCancel = await app.request(`/api/projects/${projectSlug}/progress/queued-run`, {
 			headers: authHeader(token),
 		});
 		expect((await afterCancel.json()).data.queued).toBe(null);
 
 		// Cancelling an already-cancelled run is a 409.
 		const recancel = await app.request(
-			`/api/projects/${projectSlug}/goals/queued-run/${body.wakeup_id}/cancel`,
+			`/api/projects/${projectSlug}/progress/queued-run/${body.wakeup_id}/cancel`,
 			{ method: 'POST', headers: jsonHeaders(), body: '{}' },
 		);
 		expect(recancel.status).toBe(409);

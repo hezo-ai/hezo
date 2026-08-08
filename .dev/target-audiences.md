@@ -126,11 +126,15 @@ wrinkle:
   a shared constant for the built-in dev-template name in
   `packages/shared/src/constants.ts` (next to `DEFAULT_TEAM_TEMPLATE_NAME`,
   which stays `'Blank'`) and migrate tests to it as part of the rename.
+  **(Shipped: the rename to "App Team" landed and the literal `'Startup'` no
+  longer appears in tests, docs, or the marketplace. The shared-constant part
+  was not done — helpers still pass the literal `'App Team'`.)**
 - Docs: `docs/concepts/projects-and-teams.md` ("### Startup team", "Named
   **Startup** in the template picker"), `docs/concepts/team-structure.md`, and
   the `list_team_templates` tool description that surfaces in the generated
   `docs/reference/mcp-api.md` (edit the tool description in
-  `packages/server/src/mcp/tools.ts`, then `bun run build:docs`).
+  `packages/server/src/mcp/tools.ts`, then
+  `bun run --cwd packages/server build:docs`).
 
 ## Audience 2 — Influencer (new template)
 
@@ -261,7 +265,7 @@ Per new template (Influencer, Investor):
 8. **Docs (same PR as implementation):** new roster sections in
    `docs/concepts/projects-and-teams.md` and `docs/concepts/team-structure.md`;
    `.dev/architecture.md` §4 (template list); the `list_team_templates` tool
-   description + `bun run build:docs`. Guarding tests to keep green:
+   description + `bun run --cwd packages/server build:docs`. Guarding tests to keep green:
    `agent-roles.test.ts`, `resolve-partials.test.ts`,
    `agent-prompt-required-vars.test.ts`, `startup-seed-failure-paths.test.ts`,
    `docs-bundle.test.ts`, `mcp-reference.test.ts`.

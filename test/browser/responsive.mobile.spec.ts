@@ -1,3 +1,8 @@
+// Criteria #1 and #2 (real CSS layout + viewport-conditional behavior): this is
+// the mobile-layout guard the UX rules ask every UI change to keep green. It
+// compares scrollWidth against clientWidth for horizontal overflow, checks that
+// metadata stacks and that dialogs go near full-screen, at the `mobile` project's
+// 390px viewport. happy-dom lays nothing out and runs no media queries.
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';

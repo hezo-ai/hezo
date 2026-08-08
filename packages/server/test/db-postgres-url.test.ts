@@ -1,4 +1,9 @@
 import pg from 'pg';
+
+// See the note in test/bun/database-pg-driver.bun.test.ts: real at runtime,
+// undeclared by @types/pg.
+type ClientWithParams = pg.Client & { connectionParameters: { ssl?: unknown } };
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	describeTlsPosture,
@@ -15,7 +20,7 @@ const BASE = 'postgres://u:p@db.example:5432/hezo';
  * server.
  */
 function resolvedSsl(url: string): unknown {
-	return new pg.Client({ connectionString: url }).connectionParameters.ssl;
+	return (new pg.Client({ connectionString: url }) as ClientWithParams).connectionParameters.ssl;
 }
 
 describe('normalizePostgresUrl', () => {

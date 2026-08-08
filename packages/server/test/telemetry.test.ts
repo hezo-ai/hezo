@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { HeartbeatRunStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { getSystemMeta } from '../src/lib/system-meta';
@@ -14,9 +17,11 @@ describe('telemetry', () => {
 	let teamId: string;
 	let projectId: string;
 	let memberId: string;
+	let dataDir: string;
 
 	beforeAll(async () => {
 		ctx = await createTestContext();
+		dataDir = mkdtempSync(join(tmpdir(), 'hezo-telemetry-'));
 		// Reuse the seeded HQ team / project / a member for valid FKs.
 		teamId = (await ctx.db.query<{ id: string }>(`SELECT id FROM teams LIMIT 1`)).rows[0].id;
 		projectId = (
@@ -34,7 +39,7 @@ describe('telemetry', () => {
 	afterAll(() => destroyTestContext(ctx));
 
 	it('aggregates new tasks and runs into the payload (counts + tokens, no money)', async () => {
-		const before = await buildTelemetryPayload(ctx.db);
+		const before = await buildTelemetryPayload(ctx.db, dataDir);
 
 		await ctx.db.query(
 			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, updated_at)
@@ -48,7 +53,7 @@ describe('telemetry', () => {
 			[teamId, memberId, HeartbeatRunStatus.Succeeded],
 		);
 
-		const after = await buildTelemetryPayload(ctx.db);
+		const after = await buildTelemetryPayload(ctx.db, dataDir);
 
 		expect(after.tasks_total).toBe(before.tasks_total + 1);
 		expect(after.tasks_done).toBe(before.tasks_done + 1);
@@ -66,14 +71,70 @@ describe('telemetry', () => {
 	});
 
 	it('generates a stable, persisted instance id (idempotent)', async () => {
-		const first = await getOrCreateInstanceId(ctx.db);
-		const second = await getOrCreateInstanceId(ctx.db);
+		const first = await getOrCreateInstanceId(ctx.db, dataDir);
+		const second = await getOrCreateInstanceId(ctx.db, dataDir);
 		expect(first).toBe(second);
 		expect(first).toMatch(/^[0-9a-f-]{36}$/);
 		expect(await getSystemMeta(ctx.db, INSTANCE_ID_KEY)).toBe(first);
 
-		const payload = await buildTelemetryPayload(ctx.db);
+		const payload = await buildTelemetryPayload(ctx.db, dataDir);
 		expect(payload.instance_id).toBe(first);
+	});
+
+	it('survives a wiped database — the id lives in the data dir, not in pgdata', async () => {
+		// The bug this pins: `--reset` renames pgdata aside, so a DB-resident id was
+		// minted afresh on the next boot. Every container the previous life created
+		// keeps the OLD `hezo.instance` label, the sweep queries the new one, and
+		// they become unreapable forever - on a managed backend, billing forever.
+		const before = await getOrCreateInstanceId(ctx.db, dataDir);
+
+		// Exactly what a reset leaves behind: the same data dir, an empty database.
+		await ctx.db.query(`DELETE FROM system_meta WHERE key = $1`, [INSTANCE_ID_KEY]);
+
+		const after = await getOrCreateInstanceId(ctx.db, dataDir);
+		expect(after).toBe(before);
+		// ...and the database copy is put back, so telemetry and an operator reading
+		// system_meta both see the live value rather than nothing.
+		expect(await getSystemMeta(ctx.db, INSTANCE_ID_KEY)).toBe(before);
+	});
+
+	it('adopts the id an existing instance already had, rather than minting a new one', async () => {
+		// The upgrade path, and the dangerous one: an instance that predates the file
+		// has a live id in the database and live containers labelled with it. Minting
+		// here would orphan all of them on the first boot after upgrading - the exact
+		// failure the file exists to prevent.
+		const fresh = mkdtempSync(join(tmpdir(), 'hezo-telemetry-upgrade-'));
+		const existing = '11111111-2222-4333-8444-555555555555';
+		await ctx.db.query(
+			`INSERT INTO system_meta (key, value) VALUES ($1, $2)
+			 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+			[INSTANCE_ID_KEY, existing],
+		);
+
+		const resolved = await getOrCreateInstanceId(ctx.db, fresh);
+
+		expect(resolved).toBe(existing);
+		expect(readFileSync(join(fresh, 'instance-id'), 'utf8').trim()).toBe(existing);
+	});
+
+	it('re-derives rather than trusting a truncated id file', async () => {
+		// A half-written file would otherwise become a container label that matches
+		// nothing, which is the same leak by another route.
+		const fresh = mkdtempSync(join(tmpdir(), 'hezo-telemetry-corrupt-'));
+		writeFileSync(join(fresh, 'instance-id'), 'not-a-uuid\n');
+		await ctx.db.query(`DELETE FROM system_meta WHERE key = $1`, [INSTANCE_ID_KEY]);
+
+		const resolved = await getOrCreateInstanceId(ctx.db, fresh);
+
+		expect(resolved).toMatch(/^[0-9a-f-]{36}$/);
+		expect(readFileSync(join(fresh, 'instance-id'), 'utf8').trim()).toBe(resolved);
+	});
+
+	it('writes the id file host-owner only', async () => {
+		const fresh = mkdtempSync(join(tmpdir(), 'hezo-telemetry-mode-'));
+		await ctx.db.query(`DELETE FROM system_meta WHERE key = $1`, [INSTANCE_ID_KEY]);
+		await getOrCreateInstanceId(ctx.db, fresh);
+		expect(existsSync(join(fresh, 'instance-id'))).toBe(true);
 	});
 
 	it('POSTs the payload to the endpoint as JSON', async () => {
@@ -81,7 +142,7 @@ describe('telemetry', () => {
 			.spyOn(globalThis, 'fetch')
 			.mockResolvedValue(new Response(null, { status: 204 }));
 		try {
-			await reportTelemetry(ctx.db, { endpoint: 'https://collect.test/api/telemetry' });
+			await reportTelemetry(ctx.db, { endpoint: 'https://collect.test/api/telemetry', dataDir });
 			expect(fetchSpy).toHaveBeenCalledOnce();
 			const [url, init] = fetchSpy.mock.calls[0];
 			expect(url).toBe('https://collect.test/api/telemetry');
@@ -98,7 +159,7 @@ describe('telemetry', () => {
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
 		try {
 			await expect(
-				reportTelemetry(ctx.db, { endpoint: 'https://collect.test/api/telemetry' }),
+				reportTelemetry(ctx.db, { endpoint: 'https://collect.test/api/telemetry', dataDir }),
 			).resolves.toBeUndefined();
 		} finally {
 			fetchSpy.mockRestore();

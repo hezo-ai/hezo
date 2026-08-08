@@ -6,7 +6,7 @@ import type { ContainerProcessInfo } from './docker';
  * Docker can't kill an exec'd process, so a server restart/crash strands every
  * in-flight exec's process tree inside the (deliberately warm-surviving)
  * project containers. At startup `JobManager.sweepDanglingContainerProcesses`
- * scans each running container (`DockerClient.listHezoProcesses`) and applies
+ * scans each running container (`ContainerEngine.listHezoProcesses`) and applies
  * the policy here: kill everything a previous server lifetime left behind
  * EXCEPT background processes belonging to runs that completed successfully —
  * an agent may intentionally leave e.g. a dev server running on the project's

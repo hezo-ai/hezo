@@ -297,7 +297,9 @@ describe('API key is instance-wide (MCP surface)', () => {
 			}),
 		});
 		const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
-		return JSON.parse(body.result.content[0].text);
+		// list_agents pages: the roster rows live under `items`.
+		const page = JSON.parse(body.result.content[0].text) as { items?: unknown };
+		return page.items ?? page;
 	}
 
 	beforeAll(async () => {

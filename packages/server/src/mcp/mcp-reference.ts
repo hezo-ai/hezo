@@ -10,7 +10,7 @@ import { HEZO_DOCS_URL } from '@hezo/shared';
  * exactly the registered tools, so a new tool cannot ship undocumented.
  *
  * The page is written to disk by `scripts/build-mcp-reference.ts` (run as part of
- * `bun run build:docs`) and committed, because the public docs site renders the
+ * `bun run --cwd packages/server build:docs`) and committed, because the public docs site renders the
  * committed `docs/**​/*.md` files directly.
  */
 
@@ -63,7 +63,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_teams: {
 		category: 'Teams',
 		returns:
-			'An array of team rows (`id`, `name`, `slug`, `description`, …). An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).',
+			'Team rows (`id`, `name`, `slug`, `description`, …) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).',
 	},
 	get_team: {
 		category: 'Teams',
@@ -79,7 +79,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_projects: {
 		category: 'Projects',
 		returns:
-			'An array of project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `description`, `is_internal`, `created_at`, `updated_at`). With `excerpt_chars`, `description` is truncated and `description_truncated`/`description_length` companions are added.',
+			'Project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `is_internal`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` comes back as an excerpt (default 500 chars) with `description_truncated`/`description_length` companions; raise or lower it with `excerpt_chars`.',
 		auth: 'An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.',
 	},
 	create_project: {
@@ -97,12 +97,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_team_templates: {
 		category: 'Projects',
 		returns:
-			'An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).',
+			'Local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).',
 	},
 	list_marketplace_teams: {
 		category: 'Projects',
 		returns:
-			'`{ teams }` - every marketplace team available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.',
+			'Marketplace teams available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.',
 		auth: 'CEO or a team Captain.',
 	},
 	get_marketplace_team: {
@@ -126,7 +126,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_project_progress: {
 		category: 'Projects',
 		returns:
-			'`{ summary, updated_at }` after replacing the project’s progress summary (shown at the top of the Progress page). Returns `{ error }` if the project is HQ/internal (no progress summary) or the call is not from within an agent run.',
+			'`{ summary, activity, updated_at }` after replacing the Progress page - the summary and the three activity columns (`activity.actioned` / `.created` / `.closed`, each up to 5 entries of `{ identifier, title, summary }`). Adds `unknown_tasks` listing any identifier that does not resolve in the project, so a mistyped task is reported rather than silently dropped. Omitting all three lists leaves the stored columns untouched. Returns `{ error }` if the project is HQ/internal (no Progress page) or the call is not from within an agent run.',
 		auth: 'Captain only, and only from within a progress-update agent run.',
 	},
 
@@ -134,7 +134,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_tasks: {
 		category: 'Tasks',
 		returns:
-			'Up to 50 task rows ordered newest-first, each including `project_name`. With `excerpt_chars`, `description` and `rules` are replaced with excerpts plus `_truncated`/`_length` companions.',
+			'Task rows ordered newest-first, each including `project_name`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` and `rules` come back as excerpts (default 500 chars) plus `_truncated`/`_length` companions; read a task in full with `get_task`.',
 	},
 	get_task: {
 		category: 'Tasks',
@@ -145,7 +145,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Tasks',
 		returns:
 			'The created task row (it may carry an advisory `warning` string, e.g. when the description backticks a Hezo reference such as an `assets/<path>` - flagged even before that asset exists). Returns `{ error }` on a validation failure.',
-		auth: 'An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 2.',
+		auth: 'An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 3.',
 	},
 	create_tasks: {
 		category: 'Tasks',
@@ -157,7 +157,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Tasks',
 		returns:
 			'The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.',
-		auth: '`done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 2, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
+		auth: '`done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
 	},
 	add_task_blocker: {
 		category: 'Tasks',
@@ -172,12 +172,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_task_runs: {
 		category: 'Tasks',
 		returns:
-			"An array of up to 50 run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Metadata only - fetch a run's log with `get_run_log`.",
+			"Run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Metadata only - fetch a run's log with `get_run_log`.",
 	},
 	get_run_log: {
 		category: 'Tasks',
 		returns:
-			"`{ id, status, exit_code, task_id, log, length, truncated }` for one run - `log` is the tail of the container log capped at `excerpt_chars` (default 12000); `truncated` flags dropped earlier output. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.",
+			"`{ id, status, exit_code, task_id, log, length, truncated }` for one run. By default `log` is the **tail** of the container log capped at `excerpt_chars` (default 12000), and `truncated` flags dropped earlier output. Pass `offset` (start at 0) to read forward from the beginning instead: the result then also carries `offset`, `returned_chars`, and `next_offset`, and you page until `next_offset` is null. The tail default cannot reach the start of a long log, so use `offset` for a run that failed during setup, clone, or install. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.",
 	},
 
 	// Goals
@@ -203,17 +203,23 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_comments: {
 		category: 'Comments & reactions',
 		returns:
-			'Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).',
+			'Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000), with `text_truncated`/`text_length` companions and a `text_paging_hint` naming the follow-up call. The excerpt is written into `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment; read the full body with `get_comment`.',
+	},
+	get_comment: {
+		category: 'Comments & reactions',
+		returns:
+			'One comment row in the same shape `list_comments` returns (plus `task_identifier`), with the body served whole rather than excerpted. For a text comment the result also carries a byte window - `offset`, `returned_bytes`, `total_bytes`, `next_offset`, `truncated` - and the windowed text sits in `content.text`; when `truncated` is true, call again with `offset` set to `next_offset` until `next_offset` is null. Structured comments (system/option/task_link) are returned whole with no window. Accepts either the comment UUID or its `public_id`. Returns `{ error }` if no such comment exists in the project.',
+		auth: "Scoped to the caller's project: a comment is only readable through the project whose team owns its task, the same boundary `list_comments` enforces.",
 	},
 	create_comment: {
 		category: 'Comments & reactions',
 		returns:
-			"The created comment row (`id`, `public_id`, `created_at`, …), optionally with an advisory `warning` string. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.",
+			"The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.",
 	},
 	update_comment: {
 		category: 'Comments & reactions',
 		returns:
-			'The updated comment row, optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
+			'The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
 		auth: 'An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.',
 	},
 	add_reaction: {
@@ -230,7 +236,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_agents: {
 		category: 'Agents & hiring',
 		returns:
-			'An array of agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`).',
+			'Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.',
 	},
 	create_hire_proposal: {
 		category: 'Agents & hiring',
@@ -267,13 +273,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	get_agent_system_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ title, slug, system_prompt }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template.',
+			'`{ title, slug, system_prompt, offset, returned_bytes, total_bytes, next_offset, truncated }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template. A prompt larger than the cap comes back as a byte window - page it with `offset` until `next_offset` is null.',
 		auth: 'Any agent or the admin in the same team.',
 	},
 	get_agent_system_prompts: {
 		category: 'Agent prompts & context',
 		returns:
-			'An array of per-item results: `{ index, ok: true, title, slug, system_prompt }` or `{ index, ok: false, agent_id, error }`. Up to 50 items; each `mode` is `placeholders` (default), `preview`, or `raw`.',
+			'`{ items, start_index, returned, total, next_index }`, where `items` are per-item results: `{ index, ok: true, title, slug, system_prompt }` or `{ index, ok: false, agent_id, error }`. Up to 50 items per call; each `mode` is `placeholders` (default), `preview`, or `raw`. Only the prompts that fit under the cap are returned - when `next_index` is non-null, call again with the same `items` and `start_index` set to it, and repeat until it is null. A single prompt too large on its own comes back truncated with `truncated: true` rather than stalling the cursor.',
 		auth: 'Any agent or the admin in the same team.',
 	},
 	update_agent_system_prompt: {
@@ -326,6 +332,24 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns: '`{ title, slug, team_context }`, or `{ error }` if the agent is not in the team.',
 		auth: 'Any agent or the admin in the same team.',
 	},
+	get_agent_team_contexts: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ items, start_index, returned, total, next_index }`, where `items` are per-item results: `{ index, ok: true, agent_id, title, slug, team_context }` or `{ index, ok: false, agent_id, error }`. Up to 50 items per call. Only the contexts that fit under the cap are returned - when `next_index` is non-null, call again with the same `items` and `start_index` set to it, and repeat until it is null.',
+		auth: 'Any agent or the admin in the same team.',
+	},
+	set_agent_team_contexts: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. A bad agent_id fails only its own item; the rest of the batch still applies.',
+		auth: "The team's Captain only.",
+	},
+	set_agent_summaries: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. Files a single team-coherence review for the whole batch rather than one per agent.',
+		auth: 'Any agent or the admin in the same team (the Captain is the expected caller).',
+	},
 	set_agent_reports_to: {
 		category: 'Agents & hiring',
 		returns:
@@ -337,7 +361,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_approvals: {
 		category: 'Approvals',
 		returns:
-			'An array of pending approval rows (`id`, `team_id`, `type`, `status`, `requested_by_member_id`, `resolution_note`, `resolved_at`, `created_at`, `payload`). `excerpt_chars` truncates long string fields inside `payload`.',
+			'Pending approval rows (`id`, `team_id`, `type`, `status`, `requested_by_member_id`, `resolution_note`, `resolved_at`, `created_at`, `payload`) newest-first. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Long string fields inside `payload` come back truncated at `excerpt_chars` (default 500) with `_truncated`/`_length` companions.',
 	},
 	resolve_approval: {
 		category: 'Approvals',
@@ -349,7 +373,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_skills: {
 		category: 'Skills & search',
 		returns:
-			'`{ skills: [{ id, name, slug, description, tags, created_at, updated_at }] }`. Pass `tags` (comma-separated) to filter.',
+			'Skill rows (`id`, `name`, `slug`, `description`, `tags`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Pass `tags` (comma-separated) to filter. A project skill shadows a global one of the same slug.',
 	},
 	get_skill: {
 		category: 'Skills & search',
@@ -392,17 +416,17 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_connectors: {
 		category: 'MCP connections',
 		returns:
-			'An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.',
+			'An array of connector rows with a derived `oauth_status` (`active` | `degraded` | `pending` | `failed` | `revoked` | `none`) and, for an OAuth-backed connector that is `active` or `degraded`, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). `degraded` means the connector was connected and its stored token has stopped working - a human must reconnect it, so report it rather than retrying around it. Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.',
 	},
 	test_connector: {
 		category: 'MCP connections',
 		returns:
-			'`{ ok, status, mcp_url, secret_name, token_prefix, token_length, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.',
+			'`{ ok, status, mcp_url, secret_name, token_sent, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. `token_sent` is a boolean - no part of the token value is ever returned, and any occurrence of it in `body_excerpt` / `www_authenticate` is redacted in case the upstream echoes what it was sent. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.',
 	},
 	add_connector: {
 		category: 'MCP connections',
 		returns:
-			'`{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project.',
+			'`{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project. A connector that already carries a credential (a completed OAuth connection or an attached API key) cannot be re-pointed from here: changing its `kind` or `config` returns `{ error, connector_id, hint }` and leaves the row untouched, since re-binding a credentialed connector is a human-only operation on the Connectors page. Re-registering it at its existing configuration still succeeds.',
 	},
 	remove_connector: {
 		category: 'MCP connections',
@@ -414,7 +438,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_project_docs: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the overall \"what this is\" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"Markdown project doc entries (`id`, `filename`, `description`, `content_length`, `created_at`, `updated_at`), where `description` is the overall \"what this is\" summary (`''` if unset) and `content_length` is the doc's size so you can tell before opening it whether `read_project_doc` will need more than one window. Bodies are not returned here. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_doc: {
 		category: 'Project docs & assets',
@@ -426,31 +450,41 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			"`{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first - archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's overall \"what this is\" summary - one or two sentences describing the doc's stable purpose, not its current contents (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history - put update/status notes there, not in the document body.",
 	},
+	edit_project_doc: {
+		category: 'Project docs & assets',
+		returns:
+			"`{ edited: true, id, filename, replacements, content_length, hunk }` - `hunk` is the applied change with surrounding context and line numbers, and `content_length` the doc's new size, so you can confirm what landed without reading the doc back. Returns `{ error }` if the doc does not exist (create one with write_project_doc), is archived, or `old_string` is empty, unchanged, absent, or matches more than one place without `replace_all` - the ambiguous case is refused rather than guessing which match you meant. Prefer this over write_project_doc for any change to an existing doc: the argument scales with the edit rather than the document, which keeps a large doc clear of a runtime's tool-call argument-size cap. Like any content-changing write it records a revision and clears the doc's pending review comments. A `warning` is returned when a supplied `changelog` had no revision to land on.",
+	},
 	archive_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.',
+			'`{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history. While archived it is read-only: no writes and no revision restores until unarchive_project_doc restores it.',
 		auth: 'Archival is the agent-facing soft delete; hard deletion of docs is admin-only in the web app.',
 	},
 	unarchive_project_doc: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found.',
+			'`{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore a doc because it is genuinely back in use, not merely to get around the archived-write refusal.',
 	},
 	list_project_assets: {
 		category: 'Project docs & assets',
 		returns:
-			"`{ files: [{ id, filename, content_type, created_at, width?, height? }] }` - the project asset files; raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
+			"Project asset entries (`id`, `filename`, `content_type`, `created_at`, `width?`, `height?`); raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.",
 	},
 	read_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			"For a text asset, `{ filename, content_type, content }`. For a raster image (PNG/JPEG/GIF/WebP) at or under ~4 MB, the image is returned inline as an MCP image content block alongside a text block of `{ filename, content_type, byte_size, binary: true, width, height, url }` so a vision-capable model can see it - pass `include_image: false` (or exceed the size cap) for that metadata alone with no image block. Other binary assets return `{ filename, content_type, byte_size, binary: true, url }` - a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. Either shape also carries `review_comments: [{ id, quote?, occurrence?, comment, created_at }]` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact `quote` snippet (`occurrence` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns `{ error }` if not found - match the full path, folder prefix included - or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
+			"For a text asset, `{ filename, content_type, content }`. For a raster image (PNG/JPEG/GIF/WebP) at or under ~4 MB, the image is returned inline as an MCP image content block alongside a text block of `{ filename, content_type, byte_size, binary: true, width, height, url }` so a vision-capable model can see it - pass `include_image: false` (or exceed the size cap) for that metadata alone with no image block. Other binary assets - PDFs, media, and archives (`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z`, `.rar`) - return `{ filename, content_type, byte_size, binary: true, url }` - a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. An archive is unpacked in the run container after download. Either shape also carries `review_comments: [{ id, quote?, occurrence?, comment, created_at }]` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact `quote` snippet (`occurrence` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns `{ error }` if not found - match the full path, folder prefix included - or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).",
 	},
 	write_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ written: true, id, reference: "assets/<path>", byte_size, width?, height? }` (raster images also report their pixel `width`/`height`), or `{ error }`. Accepts any type a human can upload: text formats (`.html`, `.svg`, `.txt`, `.md`, and `.sh`/`.py`/`.js`/`.ts`/`.json`/`.csv`/`.yaml`/`.yml` stored as plain text) with the default `encoding: "utf8"`, and binary formats (`.png`, `.jpg`, `.gif`, `.webp`, `.pdf`, media, …) with `encoding: "base64"` - a non-text type written without base64 is rejected, as is invalid or truncated base64 (a runtime argument-size cap can cut a large base64 `content` mid-stream - pass `byte_size` (the file’s exact byte length) so a short decode is rejected, or upload large binaries via a multipart POST to `/mcp/assets` with a `path` field and optional `overwrite=true`, which streams the bytes with no argument limit). Also errors if the type is unsupported, the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) - read them first and make all edits in one consolidated write.',
+			'`{ written: true, id, reference: "assets/<path>", byte_size, width?, height? }` (raster images also report their pixel `width`/`height`), or `{ error }`. Accepts any type a human can upload: text formats (`.html`, `.svg`, `.txt`, `.md`, and `.sh`/`.py`/`.js`/`.ts`/`.json`/`.csv`/`.yaml`/`.yml` stored as plain text) with the default `encoding: "utf8"`, and binary formats (`.png`, `.jpg`, `.gif`, `.webp`, `.pdf`, media, archives such as `.zip`/`.tar`/`.tar.gz`/`.7z`, …) with `encoding: "base64"` - a non-text type written without base64 is rejected, as is invalid or truncated base64 (a runtime argument-size cap can cut a large base64 `content` mid-stream - pass `byte_size` (the file’s exact byte length) so a short decode is rejected, or upload large binaries via a multipart POST to `/mcp/assets` with a `path` field and optional `overwrite=true`, which streams the bytes with no argument limit). Also errors if the type is unsupported, the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) - read them first and make all edits in one consolidated write.',
+	},
+	edit_project_asset: {
+		category: 'Project docs & assets',
+		returns:
+			'`{ edited: true, id, reference: "assets/<path>", replacements, byte_size, hunk }` - `hunk` is the applied change with surrounding context and line numbers, so you can confirm what landed without reading the asset back. TEXT assets only (HTML, SVG, markdown, plain text, scripts); a binary asset returns `{ error }` naming its content type, and must be rewritten whole with write_project_asset. Also returns `{ error }` if the asset does not exist, is archived, the result exceeds 10 MB, or `old_string` is empty, unchanged, absent, or matches more than one place without `replace_all`. Prefer this over write_project_asset for any change to an existing text asset: the argument scales with the edit rather than the file, which matters most for the assets that get tweaked (a self-contained interactive HTML mockup re-sent whole is exactly the payload a runtime argument-size cap truncates). Like any overwrite it clears the asset\'s pending review comments.',
 	},
 	move_project_asset: {
 		category: 'Project docs & assets',
@@ -465,20 +499,20 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	archive_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.',
+			'`{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving. While archived it is read-only: it cannot be overwritten, moved, renamed, or reviewed until unarchive_project_asset restores it.',
 		auth: 'Archival is the agent-facing soft delete; hard deletion of assets is admin-only in the web app.',
 	},
 	unarchive_project_asset: {
 		category: 'Project docs & assets',
 		returns:
-			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found.',
+			'`{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore an asset because it is genuinely back in use, not merely to get around the archived-write refusal.',
 	},
 
 	// Costs
 	get_costs: {
 		category: 'Costs',
 		returns:
-			'With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }`; with `group_by: "day"`, an array of `{ day, total_cents }`; otherwise `{ total_cents, entry_count }`.',
+			'With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, entry_count }`.',
 	},
 
 	// Onboarding
@@ -588,7 +622,8 @@ export function generateMcpReference(
 		'',
 		'<!-- GENERATED FILE - do not edit by hand. Source: packages/server/src/mcp/mcp-reference.ts',
 		'     (generator + per-tool metadata) and the live MCP tool registry. Regenerate with',
-		'     `bun run build:docs`; mcp-reference.test.ts fails if this file is stale. -->',
+		'     `bun run --cwd packages/server build:docs`; mcp-reference.test.ts fails if this file',
+		'     is stale. -->',
 		'',
 		'# MCP API reference',
 		'',
@@ -617,17 +652,36 @@ export function generateMcpReference(
 		'  **Authorization** below.',
 		'- **Errors:** a handled failure comes back as `{ "error": "<message>" }` in the tool',
 		'  result (the HTTP response itself stays successful).',
-		'- **Result size:** a tool result is capped at 64 KB (higher for a few',
-		'  full-resource inspection tools, e.g. `get_agent_system_prompts`); over the',
-		'  cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a',
-		'  single-resource `get_*`, `before` pagination, or `excerpt_chars`.',
-		'  `read_project_doc` never returns that error for a big doc: it returns a UTF-8',
-		'  byte window with a `next_offset` cursor so you can page the rest (see its',
-		'  entry below).',
-		'- **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long',
-		'  text fields, adding `_truncated`/`_length` companions.',
-		'- **Pagination (`before`):** `list_comments` walks older items by passing the oldest',
-		'  `id` you have seen as `before`.',
+		'- **Paging is the norm, in one of three shapes.** A read that can return many rows,',
+		'  or content with no size ceiling, always returns a bounded slice plus the cursor to',
+		'  continue. A response carrying `has_more: true`, `next_cursor`, `next_offset`, or',
+		'  `next_index` is telling you it is partial - keep calling until the cursor is null or',
+		'  `has_more` is false. Treating the first page as the whole set is the one failure',
+		'  mode none of these shapes can protect you from.',
+		'  - **Lists** take `limit` (default 50, ceiling 200) and an opaque `cursor`, and return',
+		'    `{ items, next_cursor, has_more }`. Pass back the `next_cursor` you were given;',
+		'    do not construct or parse one. `list_comments` also still accepts `before`',
+		'    (a comment `id` or `public_id`) to resume from a comment you already know.',
+		'  - **Large single content** (`read_project_doc`, `get_agent_system_prompt`,',
+		'    `get_run_log`) takes `offset` plus `max_bytes` and returns a UTF-8 window with',
+		'    `next_offset`. Note `get_run_log` defaults to the log **tail**; pass `offset: 0`',
+		'    to read a run that failed early, since the tail cannot reach the start.',
+		'  - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus',
+		'    `next_index`; call again with the same `items` and `start_index` set to it.',
+		'- **Result size:** a tool result is capped at 64 KB (higher for a few full-resource',
+		'  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is',
+		'  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The',
+		'  `remedies` are built from the parameters that tool actually declares, so follow',
+		'  them rather than guessing - and when the tool takes a batch, they name the exact',
+		'  item count to retry with. Split the work and retry; do not fall back to one call',
+		'  per item, and do not narrow what you cover to whatever fits in one call.',
+		'- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts',
+		'  with `_truncated`/`_length` companions, so one page cannot be dominated by a few',
+		'  large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops',
+		'  mid-sentence; always check the `_truncated` companion rather than judging from',
+		'  whether the text reads as complete. To get the whole value, call the matching',
+		'  single-item read - `get_task` for a task, `get_comment` for a comment,',
+		'  `read_project_doc` for a doc - not a larger `excerpt_chars`.',
 		'- **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the',
 		"  egress proxy substitutes the real value only for the secret's `allowed_hosts`.",
 		'- **Write tools:** tools marked _Write tool_ persist data - a successful call from an',

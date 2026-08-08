@@ -1,7 +1,7 @@
 import { HeartbeatRunStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { DoorOpen, Loader2, RotateCw } from 'lucide-react';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { type ContainerHealth, useContainerHealth } from '../../hooks/use-container-health';
 import { formatElapsed } from '../../hooks/use-elapsed-duration';
 import {
@@ -194,7 +194,13 @@ export function RunCommentBody({
 	// out of width, so a narrow mobile viewport never forces the header — and
 	// with it the whole page — wider than the screen. Only a single segment
 	// longer than the full row width truncates (max-w-full).
-	const summaryRow = (
+	//
+	// `trailing` (the expand chevron, when this row is a toggle) rides inside the
+	// timestamp segment rather than at the end of the row: the row keeps `flex-1`
+	// so the Retry variant's full-width button stays one big click target, which
+	// would otherwise strand the chevron against the far right edge, detached from
+	// everything it toggles.
+	const summaryRow = (trailing?: ReactNode) => (
 		<span className="flex flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
 			<Link
 				to="/projects/$projectId/agents/$agentId"
@@ -247,24 +253,39 @@ export function RunCommentBody({
 					)}
 				</span>
 			)}
-			{publicId ? (
-				<CommentTimestampLink
-					publicId={publicId}
-					createdAt={createdAt}
-					className="whitespace-nowrap max-w-full truncate"
-				/>
-			) : (
-				<RelativeTime
-					iso={createdAt}
-					className="text-[11px] text-text-3 whitespace-nowrap max-w-full truncate"
-				/>
-			)}
+			<span className="inline-flex items-center gap-1 min-w-0 max-w-full">
+				{publicId ? (
+					<CommentTimestampLink
+						publicId={publicId}
+						createdAt={createdAt}
+						className="whitespace-nowrap"
+					/>
+				) : (
+					<RelativeTime
+						iso={createdAt}
+						className="text-[11px] text-text-3 whitespace-nowrap min-w-0 truncate"
+					/>
+				)}
+				{trailing}
+			</span>
 		</span>
 	);
 
+	const chevron = (
+		<svg
+			aria-hidden="true"
+			className={`w-3 h-3 shrink-0 text-text-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+			viewBox="0 0 16 16"
+			fill="currentColor"
+		>
+			<path d="M6 3l5 5-5 5V3z" />
+		</svg>
+	);
+
 	// The expand/collapse toggle. `flex-1` is added only when a sibling Retry
-	// button shares the row; without it the markup stays byte-identical to the
-	// pre-Retry header, so a non-retryable run's clickable geometry is unchanged.
+	// button shares the row, so the whole header stays one click target; the
+	// chevron rides with the timestamp either way (see summaryRow) rather than
+	// being pushed to the stretched button's far edge.
 	// `max-w-full` is load-bearing: a <button> shrink-wraps to its content's
 	// max-content width (form controls ignore block-level auto-fill), so without
 	// it the nowrap header segments widen the button — and the whole page —
@@ -276,19 +297,11 @@ export function RunCommentBody({
 			aria-expanded={expanded}
 			aria-controls={logRegionId}
 			data-testid="run-comment-header"
-			className={`flex max-w-full items-center gap-2 min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer${
+			className={`flex max-w-full items-center min-h-[26px] min-w-0 text-left -mx-1 px-1 rounded-md hover:bg-surface-3 cursor-pointer${
 				canRetry && taskId ? ' flex-1' : ''
 			}`}
 		>
-			{summaryRow}
-			<svg
-				aria-hidden="true"
-				className={`w-3 h-3 shrink-0 text-text-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
-				viewBox="0 0 16 16"
-				fill="currentColor"
-			>
-				<path d="M6 3l5 5-5 5V3z" />
-			</svg>
+			{summaryRow(chevron)}
 		</button>
 	);
 
@@ -299,7 +312,7 @@ export function RunCommentBody({
 					// Actively running/queued: the log is force-shown, so the header is a
 					// static (non-collapsible) summary with no toggle.
 					<div className="flex items-center min-h-[26px] min-w-0" data-testid="run-comment-header">
-						{summaryRow}
+						{summaryRow()}
 					</div>
 				) : canRetry && taskId ? (
 					<div className="flex items-center gap-1 min-w-0">

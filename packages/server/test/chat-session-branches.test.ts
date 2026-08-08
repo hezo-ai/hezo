@@ -8,14 +8,10 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import { ChatSessionManager } from '../src/services/chat-session-manager';
-import {
-	ContainerConnectivityStatus,
-	type ProbeResult,
-} from '../src/services/container-connectivity-status';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker } from './helpers/app';
+import { createStubDocker, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -78,10 +74,10 @@ async function seedProvider(ctx: ServerTestContext): Promise<void> {
 
 async function markHqRunning(ctx: ServerTestContext): Promise<string> {
 	const proj = await ctx.db.query<{ id: string }>(
-		`UPDATE projects SET container_id = 'hq-container', container_status = 'running'
-		 WHERE team_id = $1 AND is_internal = true RETURNING id`,
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
 		[DEFAULT_TEAM_ID],
 	);
+	await seedProjectContainer(ctx.db, proj.rows[0].id, 'hq-container');
 	return proj.rows[0].id;
 }
 
@@ -170,87 +166,6 @@ describe('ChatSessionManager — startSession failure branches', () => {
 			`SELECT runtime_type FROM chat_sessions ORDER BY started_at DESC LIMIT 1`,
 		);
 		expect(session.rows[0].runtime_type).toBe('claude_code');
-		await manager.stop();
-	});
-});
-
-describe('ChatSessionManager — connectivity gate abort', () => {
-	let ctx: ServerTestContext;
-	beforeAll(async () => {
-		ctx = await createTestContext();
-	});
-	afterAll(async () => {
-		await destroyTestContext(ctx);
-	});
-	beforeEach(async () => {
-		await ctx.db.query('DELETE FROM chat_messages');
-		await ctx.db.query('DELETE FROM chat_sessions');
-		await ctx.db.query('DELETE FROM chat_conversations');
-		await ctx.db.query('DELETE FROM ai_provider_configs');
-		await markHqRunning(ctx);
-		await seedProvider(ctx);
-	});
-
-	test('aborts the session with operator guidance when egress is unreachable from containers', async () => {
-		// Wire egressProxy + CA + a connectivity status pinned to mcp-unreachable.
-		// startSession re-probes (maxAge 0) and, since the probe re-confirms the bad
-		// status, throws the guidance error — which the catch arm records as crashed.
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		status.set('mcp-unreachable', '127.0.0.1');
-		const probe = async (): Promise<ProbeResult> => ({
-			status: 'mcp-unreachable',
-			bindHost: '127.0.0.1',
-		});
-		let proxyAllocated = false;
-		const egressProxy = {
-			allocateRunProxy: async () => {
-				proxyAllocated = true;
-				return { proxyHost: 'h', proxyPort: 1 };
-			},
-			releaseRunProxy: async () => undefined,
-		};
-		const { manager } = makeManager(ctx, replyDocker(), {
-			egressProxy,
-			egressCAPath: '/tmp/ca.crt',
-			connectivityStatus: status,
-			connectivityProbe: probe,
-		});
-
-		await expect(manager.sendTurn({ text: 'hello' })).rejects.toThrow(
-			/Egress proxy unreachable from agent containers/,
-		);
-		// The gate aborts before the proxy is ever allocated.
-		expect(proxyAllocated).toBe(false);
-		// The session row was created then marked crashed by the catch arm.
-		const session = await ctx.db.query<{ status: string; error: string }>(
-			`SELECT status, error FROM chat_sessions ORDER BY started_at DESC LIMIT 1`,
-		);
-		expect(session.rows[0].status).toBe(ChatSessionStatus.Crashed);
-		expect(session.rows[0].error).toContain('Egress proxy unreachable');
-	});
-
-	test('fails open and completes the turn when connectivity is ok', async () => {
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		status.set('ok', '127.0.0.1');
-		const probe = async (): Promise<ProbeResult> => ({ status: 'ok', bindHost: '127.0.0.1' });
-		const egressProxy = {
-			allocateRunProxy: async () => ({ proxyHost: 'host.docker.internal', proxyPort: 24000 }),
-			releaseRunProxy: async () => undefined,
-		};
-		const { manager } = makeManager(ctx, replyDocker(), {
-			egressProxy,
-			egressCAPath: '/tmp/ca.crt',
-			connectivityStatus: status,
-			connectivityProbe: probe,
-		});
-		const { assistantMessageId } = await manager.sendTurn({ text: 'hello' });
-		await poll(async () => {
-			const r = await ctx.db.query<{ status: string }>(
-				'SELECT status FROM chat_messages WHERE id = $1',
-				[assistantMessageId],
-			);
-			return r.rows[0]?.status === ChatMessageStatus.Complete;
-		});
 		await manager.stop();
 	});
 });

@@ -1,3 +1,5 @@
+import { CONTAINER_META_LOG_LABEL, CONTAINER_META_LOG_SEPARATOR } from '@hezo/shared';
+import { Link } from '@tanstack/react-router';
 import { Boxes, ChevronDown, ChevronRight, Cpu, Sparkles, Terminal, Wrench } from 'lucide-react';
 import { type ComponentType, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Markdown, { type Components } from 'react-markdown';
@@ -8,6 +10,7 @@ import {
 	type LogBlock,
 	parseAgentLog,
 	type ResultBlock,
+	type RunnerBlock,
 	type SessionBlock,
 	type SystemBlock,
 	type TextBlock,
@@ -93,6 +96,8 @@ function BlockView({
 			return <DoneView block={block} />;
 		case 'system':
 			return <SystemView block={block} />;
+		case 'runner':
+			return <RunnerView block={block} />;
 	}
 }
 
@@ -102,6 +107,43 @@ function SystemView({ block }: { block: SystemBlock }) {
 		<pre className={`whitespace-pre-wrap break-words font-mono text-xs ${color}`}>
 			{block.lines.join('\n')}
 		</pre>
+	);
+}
+
+/**
+ * Runner lines, styled like the system ones they sit beside.
+ *
+ * One element per line rather than a single joined `<pre>`, because the line
+ * naming the run's container carries a link: its id goes to that container's
+ * page, which is where the disk, memory, error and container log all are. Shown
+ * truncated the same way the Containers list shows it, while the link and the
+ * raw log both carry the full engine id.
+ */
+function RunnerView({ block }: { block: RunnerBlock }) {
+	const color = block.stream === 'stderr' ? 'text-danger-soft-fg' : 'text-text-3';
+	return (
+		<div className={`font-mono text-xs ${color}`} data-testid="log-runner-block">
+			{block.lines.map((line) => (
+				<div key={line.id} className="whitespace-pre-wrap break-words">
+					{line.container ? (
+						<>
+							{CONTAINER_META_LOG_LABEL}
+							<Link
+								to="/settings/containers/$containerId"
+								params={{ containerId: line.container.id }}
+								className="underline underline-offset-2 hover:text-text-1"
+								data-testid="log-container-link"
+							>
+								{line.container.id.slice(0, 12)}
+							</Link>
+							{line.container.details && CONTAINER_META_LOG_SEPARATOR + line.container.details}
+						</>
+					) : (
+						line.text
+					)}
+				</div>
+			))}
+		</div>
 	);
 }
 

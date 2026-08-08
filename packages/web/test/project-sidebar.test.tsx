@@ -37,10 +37,15 @@ test('the project menu leads with Dashboard, lists the project pages, and has a 
 	expect(within(nav).getByRole('link', { name: 'Documents' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Assets' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Settings' })).toBeTruthy();
-	// Git, Container and Activity now nest under Settings — hidden until it (or
-	// one of them) is the active route.
+	// Connectors and Skills are top-level pages, not Settings sub-items: they're
+	// reachable without first opening Settings.
+	expect(within(nav).getByRole('link', { name: 'Connectors' })).toBeTruthy();
+	expect(within(nav).getByRole('link', { name: 'Skills' })).toBeTruthy();
+	// Git, Custom Prompt, Containers and Activity do nest under Settings — hidden
+	// until it (or one of them) is the active route.
 	expect(within(nav).queryByRole('link', { name: 'Git' })).toBeNull();
-	expect(within(nav).queryByRole('link', { name: 'Container' })).toBeNull();
+	expect(within(nav).queryByRole('link', { name: 'Custom Prompt' })).toBeNull();
+	expect(within(nav).queryByRole('link', { name: 'Containers' })).toBeNull();
 	expect(within(nav).queryByRole('link', { name: 'Activity' })).toBeNull();
 
 	// A Team section lists the team's agents (presented as the project's own).
@@ -54,7 +59,7 @@ test('the project menu leads with Dashboard, lists the project pages, and has a 
 	expect(queryByTestId('project-sidebar-back')).toBeNull();
 });
 
-test('Git, Container and Activity nest under Settings, disclosed when Settings is the active route', async () => {
+test('Git, Custom Prompt, Container and Activity nest under Settings, disclosed when Settings is the active route', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { container, findByTestId, router } = await renderApp({
@@ -73,10 +78,15 @@ test('Git, Container and Activity nest under Settings, disclosed when Settings i
 	});
 	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 	expect(within(getNav(container)).queryByRole('link', { name: 'Git' })).toBeNull();
-	expect(within(getNav(container)).queryByRole('link', { name: 'Container' })).toBeNull();
+	expect(within(getNav(container)).queryByRole('link', { name: 'Custom Prompt' })).toBeNull();
+	expect(within(getNav(container)).queryByRole('link', { name: 'Containers' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Activity' })).toBeNull();
+	// Connectors and Skills are not part of that disclosure — they render on a
+	// non-settings page because they sit at the top level.
+	expect(within(getNav(container)).getByRole('link', { name: 'Connectors' })).toBeTruthy();
+	expect(within(getNav(container)).getByRole('link', { name: 'Skills' })).toBeTruthy();
 
-	// Selecting Settings discloses Git, Container and Activity beneath it.
+	// Selecting Settings discloses Git, Custom Prompt, Container and Activity beneath it.
 	await router.navigate({
 		to: '/projects/$projectId/settings',
 		params: { projectId: projectSlug },
@@ -84,11 +94,12 @@ test('Git, Container and Activity nest under Settings, disclosed when Settings i
 	await waitFor(() =>
 		expect(within(getNav(container)).getByRole('link', { name: 'Git' })).toBeTruthy(),
 	);
-	expect(within(getNav(container)).getByRole('link', { name: 'Container' })).toBeTruthy();
+	expect(within(getNav(container)).getByRole('link', { name: 'Custom Prompt' })).toBeTruthy();
+	expect(within(getNav(container)).getByRole('link', { name: 'Containers' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Activity' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Settings' })).toBeTruthy();
 
-	// Clicking into Container keeps the disclosure open — its route doesn't
+	// Clicking into Containers keeps the disclosure open — its route doesn't
 	// fuzzy-match Settings, so a parent-only check would collapse it on navigation.
 	await router.navigate({
 		to: '/projects/$projectId/container',
@@ -97,7 +108,7 @@ test('Git, Container and Activity nest under Settings, disclosed when Settings i
 	await waitFor(() =>
 		expect(within(getNav(container)).getByRole('link', { name: 'Activity' })).toBeTruthy(),
 	);
-	expect(within(getNav(container)).getByRole('link', { name: 'Container' })).toBeTruthy();
+	expect(within(getNav(container)).getByRole('link', { name: 'Containers' })).toBeTruthy();
 });
 
 test('the Team section is always expanded — no collapse/expand toggle', async () => {
@@ -293,7 +304,7 @@ test('creating a goal clears the sidebar "no goals yet" dot', async () => {
 	// Create a goal from the Progress page's "New goal" button. The sidebar persists across
 	// project routes, so its dot reflects the new goal once the project index invalidates.
 	await router.navigate({
-		to: '/projects/$projectId/goals',
+		to: '/projects/$projectId/progress/goals',
 		params: { projectId: projectSlug },
 	});
 	await user.click(await findByTestId('goals-empty-create', undefined, { timeout: 15_000 }));
@@ -312,7 +323,11 @@ test('creating a goal clears the sidebar "no goals yet" dot', async () => {
 	});
 });
 
-test('the Container nav item shows a provisioning spinner while the container is creating', async () => {
+test('the Containers nav item stays unmarked while a container is being created', async () => {
+	// This used to render a spinner. A project now gets a container whenever a run
+	// needs one, so "creating" is the most ordinary thing the system does - marking
+	// it made the menu flag routine work as noteworthy, several times an hour. Only
+	// an error, which does not resolve on its own, marks the row now.
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { findByTestId, queryByTestId, router } = await renderApp({
@@ -321,7 +336,6 @@ test('the Container nav item shows a provisioning spinner while the container is
 			ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Operations' });
 			projectSlug = project.slug;
-			// A container mid-provision: the sidebar should surface a live spinner.
 			await getTestContext().db.query(
 				`UPDATE projects SET container_status = 'creating'::container_status WHERE id = $1`,
 				[project.id],
@@ -329,19 +343,15 @@ test('the Container nav item shows a provisioning spinner while the container is
 		},
 	});
 
-	// The Container item discloses on its own route; its label carries the spinner.
+	// The Containers item discloses on its own route.
 	await router.navigate({
 		to: '/projects/$projectId/container',
 		params: { projectId: projectSlug },
 	});
 	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-container', undefined, { timeout: 15_000 });
 
-	const spinner = await findByTestId('project-sidebar-container-spinner', undefined, {
-		timeout: 15_000,
-	});
-	expect(spinner.className).toContain('animate-spin');
-	expect(spinner.className).toContain('text-info');
-	// Provisioning is not a failure — no error indicator alongside it.
+	expect(queryByTestId('project-sidebar-container-spinner')).toBeNull();
 	expect(queryByTestId('project-sidebar-container-error')).toBeNull();
 });
 
@@ -368,11 +378,12 @@ test('the Container nav item shows no spinner once the container is running', as
 	});
 	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 
-	// Once the Container item is disclosed (and healthy), no spinner or error icon.
+	// Once the Containers item is disclosed and healthy it carries no marker.
+	// Provisioning no longer marks it at all - a project gets a container whenever
+	// a run needs one - so an error is the only thing left that can flag it.
 	const nav = getNav(container);
-	await waitFor(() => expect(within(nav).getByRole('link', { name: 'Container' })).toBeTruthy(), {
+	await waitFor(() => expect(within(nav).getByRole('link', { name: 'Containers' })).toBeTruthy(), {
 		timeout: 15_000,
 	});
-	expect(queryByTestId('project-sidebar-container-spinner')).toBeNull();
 	expect(queryByTestId('project-sidebar-container-error')).toBeNull();
 });

@@ -1,10 +1,14 @@
 import {
+	type AgentRuntime,
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
 	type AiProvider,
 	AiProviderStatus,
 	ALL_AI_PROVIDERS,
+	isAgentRuntime,
 	parseProviderModels,
+	providerRuntimes,
+	providerSupportsRuntime,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
@@ -26,6 +30,32 @@ import { validateSubscriptionBlob } from '../services/subscription-auth';
 const log = logger.child('routes');
 
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
+
+type RuntimeChoice = { ok: true; value: AgentRuntime | null } | { ok: false; error: string };
+
+/**
+ * Validate an operator-supplied CLI choice against the provider's own roster.
+ * Null and undefined both mean "follow the provider default" and are always
+ * accepted, so a client that has never heard of the field keeps working.
+ *
+ * Rejecting an unsupported pairing here is what keeps an unrunnable credential
+ * out of the database: the column is a bare enum (which pairings are valid is a
+ * TypeScript table that moves when a provider gains a CLI), so this route is the
+ * only place the two are checked against each other.
+ */
+function parseRuntimeChoice(provider: AiProvider, raw: unknown): RuntimeChoice {
+	if (raw === undefined || raw === null || raw === '') return { ok: true, value: null };
+	if (!isAgentRuntime(raw)) {
+		return { ok: false, error: `Unknown runtime "${String(raw)}"` };
+	}
+	if (!providerSupportsRuntime(provider, raw)) {
+		return {
+			ok: false,
+			error: `${AI_PROVIDER_INFO[provider]?.name ?? provider} cannot run on "${raw}". Supported: ${providerRuntimes(provider).join(', ')}`,
+		};
+	}
+	return { ok: true, value: raw };
+}
 
 export const aiProvidersRoutes = new Hono<Env>();
 
@@ -57,6 +87,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		label?: string;
 		auth_method?: string;
 		base_url?: string;
+		runtime?: string | null;
 	}>();
 
 	if (!body.provider || !VALID_PROVIDERS.has(body.provider)) {
@@ -77,6 +108,11 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 	const authMethod = (body.auth_method as AiAuthMethod) || AiAuthMethod.ApiKey;
 
 	const info = AI_PROVIDER_INFO[provider];
+
+	const runtimeChoice = parseRuntimeChoice(provider, body.runtime);
+	if (!runtimeChoice.ok) {
+		return err(c, 'INVALID_RUNTIME', runtimeChoice.error, 400);
+	}
 
 	// A locally-hosted runner authenticates only if the operator turned auth on, so
 	// the key is optional here; `encrypted_credential` is NOT NULL, so an omitted
@@ -166,6 +202,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 			authMethod,
 			body.label?.trim(),
 			baseUrl ? { base_url: baseUrl } : {},
+			runtimeChoice.value,
 		);
 
 		return ok(c, { id: configId }, 201);
@@ -254,7 +291,8 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	}
 });
 
-// Update a provider config — `label` (rename) and/or `default_model`
+// Update a provider config — `label` (rename), `default_model`, and/or `runtime`
+// (the CLI this credential runs on; null clears it back to the provider default)
 aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
@@ -262,10 +300,15 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 	const db = c.get('db');
 	const configId = c.req.param('configId');
 
-	const body = await c.req.json<{ default_model?: string | null; label?: string }>();
+	const body = await c.req.json<{
+		default_model?: string | null;
+		label?: string;
+		runtime?: string | null;
+	}>();
 	const hasLabel = 'label' in body;
 	const hasModel = 'default_model' in body;
-	if (!hasLabel && !hasModel) {
+	const hasRuntime = 'runtime' in body;
+	if (!hasLabel && !hasModel && !hasRuntime) {
 		return err(c, 'INVALID_REQUEST', 'Nothing to update', 400);
 	}
 
@@ -281,10 +324,31 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 				? body.default_model.trim() || null
 				: null;
 
+	// The CLI choice is only meaningful against this config's own provider, which
+	// the request doesn't carry — read it first so an unsupported pairing 404s or
+	// 400s here rather than being written and failing at run time.
+	let runtime: AgentRuntime | null = null;
+	if (hasRuntime) {
+		const owner = await db.query<{ provider: AiProvider }>(
+			`SELECT provider FROM ai_provider_configs WHERE id = $1`,
+			[configId],
+		);
+		const ownerProvider = owner.rows[0]?.provider;
+		if (!ownerProvider) {
+			return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
+		}
+		const parsed = parseRuntimeChoice(ownerProvider, body.runtime);
+		if (!parsed.ok) {
+			return err(c, 'INVALID_RUNTIME', parsed.error, 400);
+		}
+		runtime = parsed.value;
+	}
+
 	try {
 		const updated = await updateAiProviderConfig(db, configId, {
 			...(hasLabel ? { label } : {}),
 			...(hasModel ? { defaultModel: model } : {}),
+			...(hasRuntime ? { runtime } : {}),
 		});
 		if (!updated) {
 			return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
@@ -300,6 +364,7 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		updated: true,
 		...(hasLabel ? { label } : {}),
 		...(hasModel ? { default_model: model } : {}),
+		...(hasRuntime ? { runtime } : {}),
 	});
 });
 

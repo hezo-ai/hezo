@@ -1,3 +1,7 @@
+// Criterion #1 (real CSS layout): bottom-pinned scroll is asserted by comparing
+// live scrollTop/scrollHeight/clientHeight across an expand/collapse cycle.
+// happy-dom reports 0 for all three, so a component test could not tell a pinned
+// viewer from an unscrolled one.
 import { expect, test } from './fixtures';
 
 test('log viewer preserves bottom-pinned scroll across expand/collapse cycles', async ({

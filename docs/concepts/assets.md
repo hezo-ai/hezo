@@ -24,7 +24,8 @@ to navigate: related files for one deliverable grouped in a well-named folder, d
 names where order matters, and a dedicated folder (such as `scripts/`) for reusable helper
 scripts that future agent runs can pick up and reuse. Script and text files (`.sh`, `.py`,
 `.js`, `.ts`, `.json`, `.csv`, `.yaml`/`.yml`) are storable assets, kept and served as plain
-text.
+text. Archives (`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z`, `.rar`) are storable too, which is
+the way to hand over a whole bundle of files as one item.
 
 Agents can also **move and copy** assets between folders, and you can move one yourself from
 its card's **Move to folder** action. Note that moving an asset changes its `assets/<path>`
@@ -33,13 +34,18 @@ reference - older comments citing the old path show it as plain text.
 ## Uploads
 
 Drag files onto the **Assets** page to add them to the library: mockups, screenshots,
-diagrams, images, PDFs, scripts, audio, or video, up to 10 MB each. Uploads are always
-individual files - folders can't be uploaded from your computer; files simply land in
+diagrams, images, PDFs, scripts, audio, video, or an archive, up to 10 MB each. Uploads are
+always individual files - folders can't be uploaded from your computer; files simply land in
 whichever library folder is open. You can also attach files directly to a task or a comment -
 drag them onto the comment box or use its **Upload** button - so a screenshot or a
 reference document sits right next to the discussion it belongs to -
 those attachments are filed in the library under an **uploads** folder, in a subfolder named
 after the task, so each task's files stay grouped without any manual sorting.
+
+Zipping a folder is how you upload one: an archive counts as a single file, so a design
+export or a set of logs travels as one attachment. Hezo never opens an archive - it is stored
+and handed back exactly as you uploaded it, and clicking it downloads rather than previewing.
+An agent that needs what's inside downloads it into its own container and unpacks it there.
 
 ## Agent-generated assets
 
@@ -47,7 +53,11 @@ Agents don't just consume assets - they create them. An agent can write an inter
 **HTML** mockup, an **SVG** diagram, a plain-text export, a **script**, or a **markdown**
 deliverable such as a blog post or report straight into the library (`write_project_asset`
 over Hezo's [MCP server](/docs/mcp/hezo-mcp-server)) and read any asset back later - folder
-paths included (`scripts/deploy-check.sh`). Agents can also write **binary** deliverables the
+paths included (`scripts/deploy-check.sh`). To change part of a text asset, such as tweaking a
+line in an HTML mockup, an agent uses `edit_project_asset` rather than re-sending the whole
+file. Large text assets are read back a window at a time, so a mockup too big for one read is
+still fully reachable, and `list_project_assets` reports each asset's size so an agent knows in
+advance. Agents can also write **binary** deliverables the
 same way (a rendered **image**, chart, screenshot, **PDF**, or media file), so a picture an
 agent generates lands in the library and shows up inline, ready for you to review, without any
 manual download-and-re-upload step. Generated deliverables live here rather than
@@ -80,7 +90,7 @@ directory by default, or any **S3-compatible bucket** when one is configured (se
 [Storing assets in S3-compatible object storage](/docs/deployment/configuration)). Either
 way, everyone (you in the browser, and agents through their tools) reads assets through
 Hezo's signed URLs, so a bucket never needs to be publicly accessible and agents never
-depend on server disk paths. The active backend is shown under **Settings → General →
+depend on server disk paths. The active backend is shown under **Settings → Storage →
 Asset storage**.
 
 ## Archiving & deleting assets
@@ -91,6 +101,13 @@ reserved and any existing `assets/<path>` links keep resolving. Agents archive s
 (it's the only way they can "delete" - asking an agent to delete an asset means it archives
 it), and you can archive one yourself from its card's **Archive** action. Nothing is lost:
 restore it at any time.
+
+**While archived, an asset is read-only.** It can't be overwritten, moved, or renamed -
+by you or by an agent - until it is restored. An agent that tries to save over an archived
+path is told to restore it first rather than quietly replacing the retired file, and the
+path stays reserved the whole time, so nothing else can take it. Archiving and restoring
+are both recorded in the project's [activity log](/docs/security/activity-log), and when an
+agent does either, the entry names the task and run it came from.
 
 The Assets page shows **active** items by default. The filter button (funnel icon) next to
 "Showing active items" switches the view to **Archived** or **All** - archived cards render

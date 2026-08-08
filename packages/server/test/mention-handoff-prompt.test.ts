@@ -491,6 +491,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 			parent_task_id: parent.id,
 			created_by_run_id: run.rows[0].id,
 		});
@@ -508,6 +509,7 @@ describe('spawned-from prompt line', () => {
 				priority: 'medium',
 				project_id: projectId,
 				rules: null,
+				progress_summary: null,
 				parent_task_id: parent.id,
 				created_by_run_id: run.rows[0].id,
 			},
@@ -554,6 +556,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 			parent_task_id: null,
 			created_by_run_id: run.rows[0].id,
 		});
@@ -571,6 +574,7 @@ describe('spawned-from prompt line', () => {
 				priority: 'medium',
 				project_id: projectId,
 				rules: null,
+				progress_summary: null,
 				parent_task_id: null,
 				created_by_run_id: run.rows[0].id,
 			},
@@ -591,6 +595,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 			parent_task_id: null,
 			created_by_run_id: null,
 		});
@@ -636,9 +641,15 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 	it('loads exactly the latest N comments in chronological order (drops older ones)', async () => {
 		const total = RECENT_COMMENTS_LIMIT + 3;
 		const task = await createTaskWithNComments(total);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
-			limit: RECENT_COMMENTS_LIMIT,
-		});
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{
+				limit: RECENT_COMMENTS_LIMIT,
+			},
+		);
 
 		expect(recent.length).toBe(RECENT_COMMENTS_LIMIT);
 		// Only the newest RECENT_COMMENTS_LIMIT survive, oldest-first within that window.
@@ -652,9 +663,15 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 	it('renders the Recent Comments block with the list_comments pointer and omits older comments', async () => {
 		const total = RECENT_COMMENTS_LIMIT + 3;
 		const task = await createTaskWithNComments(total);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
-			limit: RECENT_COMMENTS_LIMIT,
-		});
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{
+				limit: RECENT_COMMENTS_LIMIT,
+			},
+		);
 
 		const prompt = buildTaskPrompt(
 			'System prompt',
@@ -716,9 +733,15 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 		expect(wakeCtx?.excerpt).toContain('no emdashes');
 		expect(wakeCtx?.commentId).toBe(commentId);
 
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
-			limit: RECENT_COMMENTS_LIMIT,
-		});
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{
+				limit: RECENT_COMMENTS_LIMIT,
+			},
+		);
 		const prompt = buildTaskPrompt(
 			'System prompt',
 			{
@@ -771,9 +794,15 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 			comment_id: commentId,
 		};
 		const mentionCtx = await loadMentionContext(db, architectMemberId, teamId, payload);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
-			limit: RECENT_COMMENTS_LIMIT,
-		});
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{
+				limit: RECENT_COMMENTS_LIMIT,
+			},
+		);
 
 		const prompt = buildTaskPrompt(
 			'System prompt',

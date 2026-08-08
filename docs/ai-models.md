@@ -18,8 +18,8 @@ and your agents run on the models you choose.
 | **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
 | **Google** | Gemini | Gemini | API key or subscription |
 | **xAI** | Grok | Grok Build | API key |
-| **Kimi** (Moonshot) | Kimi | Claude Code | API key |
-| **Kimi Code** (Moonshot) | Kimi | Kimi Code | API key |
+| **Kimi** (Moonshot) | Kimi | Claude Code, or Kimi Code | API key |
+| **Kimi Code** (Moonshot) | Kimi | Kimi Code, or Claude Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 | **OpenRouter** | Many, via one account | OpenCode | API key |
@@ -33,20 +33,36 @@ Kimi, DeepSeek, and Z.ai run through Claude Code against their Anthropic-compati
 endpoints; OpenRouter runs through the **OpenCode** CLI; and Ollama and LM Studio run
 through Claude Code against your own machine.
 
+Where the Runtime column lists more than one, you choose which one that credential runs on.
+The first is the default, and you never have to pick: adding a key without touching the
+setting runs it on the default.
+
+### Choosing the agent CLI
+
+When a provider can be run by more than one command-line agent, the choice lives under
+**Advanced** in the add-provider form, below the API key. Providers that offer only one CLI
+have no Advanced section at all.
+
+You can also change it later without re-entering the key: on **Settings > AI providers**,
+click the CLI name next to the provider and pick another. Existing agents pick up the change
+on their next run.
+
+Today only Moonshot's two entries offer a choice. Nothing about a provider you have already
+added changes unless you change it.
+
 ### Two ways to run Kimi
 
-Moonshot's models are available through either of two entries in the provider list, and you
-can add both:
+Moonshot's models can be run by either of two command-line agents:
 
-- **Kimi** runs them through **Claude Code**, pointed at Moonshot's Anthropic-compatible
-  endpoint.
-- **Kimi Code** runs them through **Kimi Code**, Moonshot's own command-line agent.
+- **Claude Code**, pointed at Moonshot's Anthropic-compatible endpoint.
+- **Kimi Code**, Moonshot's own command-line agent.
 
 They use the same account, the same API key and the same models - only the harness differs.
-Neither replaces the other, so if you already run Kimi, adding Kimi Code changes nothing
-about your existing setup. Pick between them per agent (in the agent's settings) or per task
-(by pinning the task's runtime); otherwise whichever provider you have marked as default is
-used.
+The provider list carries two entries for Moonshot, **Kimi** and **Kimi Code**, which differ
+only in which of the two they start on; either can be switched to the other afterwards, so
+you no longer need a second credential to try the other harness. Pick between them per
+credential (the Advanced setting above), per agent (in the agent's settings) or per task (by
+pinning the task's runtime); otherwise whichever provider you have marked as default is used.
 
 ## Local models
 

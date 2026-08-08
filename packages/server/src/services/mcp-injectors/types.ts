@@ -10,6 +10,17 @@ import type { AiProvider } from '@hezo/shared';
  */
 export type McpDescriptor = McpHttpDescriptor | McpStdioDescriptor;
 
+/**
+ * The name the built-in Hezo server is registered under.
+ *
+ * Shared because two sides have to agree on it: the runner emits the
+ * descriptor, and the stream parser looks for *this* server in the runtime's
+ * startup report to tell "Hezo is reachable" from "the agent has no Hezo tools
+ * at all". A literal in both places would let them drift, and the failure that
+ * causes is silent - the parser simply never finds the server it is checking.
+ */
+export const HEZO_MCP_SERVER_NAME = 'hezo';
+
 interface McpDescriptorBase {
 	/** Stable identifier used as the MCP server name in the runtime config. */
 	name: string;
@@ -116,6 +127,18 @@ export interface McpAdapterContext {
 	 * {@link judgeModelForProvider}). Absent/null falls back to the constant.
 	 */
 	runModel?: string | null;
+	/**
+	 * Filenames of the project's active project docs. Runtimes with a blockable
+	 * pre-tool hook bake these into a guard script so a `Write`/`Edit` aimed at a
+	 * path that shadows a project doc is refused before it happens - the docs are
+	 * database records, and writing one to disk silently changes nothing while
+	 * leaving the real doc stale.
+	 *
+	 * Baked in rather than fetched at hook time so the guard needs no network,
+	 * credentials or tool access from inside the container. Empty or absent means
+	 * no guard is emitted at all.
+	 */
+	projectDocSlugs?: readonly string[];
 }
 
 export interface RuntimeMcpAdapter {

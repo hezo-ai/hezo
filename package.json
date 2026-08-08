@@ -42,6 +42,8 @@
 		"dev": "bun run scripts/dev.ts",
 		"release": "bun run scripts/release.ts",
 		"test": "bun run scripts/test.ts",
+		"test:live": "bun run --cwd packages/server test:live",
+		"test:daytona": "bun run --cwd packages/server test:live test/live/daytona.live.test.ts",
 		"typecheck": "turbo typecheck",
 		"prepare": "husky"
 	},

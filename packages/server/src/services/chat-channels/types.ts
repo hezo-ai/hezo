@@ -1,4 +1,5 @@
 import type { ChatChannel, ChatMessageStatus } from '@hezo/shared';
+import { decrypt, encrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 
@@ -205,6 +206,37 @@ export async function decryptBotToken(
 	return decrypt(encrypted, key);
 }
 
+/**
+ * Resolve a row's webhook secret, preferring the encrypted column and falling
+ * back to the legacy plaintext one (migration 050).
+ *
+ * The fallback is the whole reason a live instance survives the upgrade: the
+ * platform already holds a webhook URL containing this value, so it cannot be
+ * rotated or invalidated on the operator's behalf. `backfillChatWebhookSecrets`
+ * converts the row on the next unlock and nulls the plaintext; until then, and
+ * whenever the instance is locked, the legacy value still authenticates.
+ */
+function resolveWebhookSecret(
+	row: { webhook_secret: string | null; webhook_secret_encrypted: string | null },
+	getKey: () => Buffer | null,
+): string | null {
+	// `getKey` is a thunk, not a value: a row that has not been converted yet has
+	// nothing to decrypt, and this runs on the inbound-webhook path where the
+	// master key is not otherwise needed.
+	if (row.webhook_secret_encrypted) {
+		const key = getKey();
+		if (key) {
+			try {
+				return decrypt(row.webhook_secret_encrypted, key);
+			} catch {
+				// Ciphertext that will not open under the current key is unusable; fall
+				// through to the legacy column rather than throwing on every webhook.
+			}
+		}
+	}
+	return row.webhook_secret;
+}
+
 /** Load a channel's config row, or null when unconfigured. */
 export async function loadChannelConfig(
 	deps: ChatChannelAdapterDeps,
@@ -215,9 +247,10 @@ export async function loadChannelConfig(
 		enabled: boolean;
 		bot_token_secret: string | null;
 		webhook_secret: string | null;
+		webhook_secret_encrypted: string | null;
 		metadata: Record<string, unknown>;
 	}>(
-		`SELECT channel, enabled, bot_token_secret, webhook_secret, metadata
+		`SELECT channel, enabled, bot_token_secret, webhook_secret, webhook_secret_encrypted, metadata
 		 FROM chat_channel_configs WHERE channel = $1`,
 		[channel],
 	);
@@ -227,7 +260,37 @@ export async function loadChannelConfig(
 		channel: row.channel,
 		enabled: row.enabled,
 		botTokenSecret: row.bot_token_secret,
-		webhookSecret: row.webhook_secret,
+		webhookSecret: resolveWebhookSecret(row, () => deps.masterKeyManager.getKey()),
 		metadata: row.metadata ?? {},
 	};
+}
+
+/**
+ * Re-encode any legacy plaintext `webhook_secret` into `webhook_secret_encrypted`
+ * and null the plaintext. Runs on unlock (`startup.ts`), the first moment the
+ * master key exists — migration 050 cannot do it, since migrations run at boot
+ * while the instance is still locked.
+ *
+ * Idempotent and self-terminating: the `WHERE` matches only un-converted rows,
+ * so after the first pass it updates nothing on every subsequent unlock.
+ */
+export async function backfillChatWebhookSecrets(deps: {
+	db: Db;
+	masterKeyManager: MasterKeyManager;
+}): Promise<number> {
+	const key = deps.masterKeyManager.getKey();
+	if (!key) return 0;
+	const pending = await deps.db.query<{ channel: ChatChannel; webhook_secret: string }>(
+		`SELECT channel, webhook_secret FROM chat_channel_configs
+		 WHERE webhook_secret IS NOT NULL AND webhook_secret_encrypted IS NULL`,
+	);
+	for (const row of pending.rows) {
+		await deps.db.query(
+			`UPDATE chat_channel_configs
+			 SET webhook_secret_encrypted = $1, webhook_secret = NULL, updated_at = now()
+			 WHERE channel = $2`,
+			[encrypt(row.webhook_secret, key), row.channel],
+		);
+	}
+	return pending.rows.length;
 }

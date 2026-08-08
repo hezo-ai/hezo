@@ -16,7 +16,7 @@ async function patchStatus(
 	});
 }
 
-test('the admin can close and re-open a task via themed modal', async () => {
+test('the admin can cancel and re-open a task via themed modal', async () => {
 	const seeded = { projectSlug: '', taskId: '', identifier: '' };
 	const { findByTestId, findByText, queryByTestId, router, user } = await renderApp({
 		initialPath: '/',
@@ -39,13 +39,21 @@ test('the admin can close and re-open a task via themed modal', async () => {
 	// seconds under the full-suite fork-pool load on CI runners, well past
 	// Testing Library's 1s default.
 	const closeButton = await findByTestId('task-close-button', undefined, { timeout: 10_000 });
+	// The control cancels the task, so it has to say so - "Close task" read like
+	// completion while setting `cancelled`.
+	expect(closeButton.textContent).toContain('Cancel task');
 	await user.click(closeButton);
 
 	const dialog = await findByTestId('confirm-dialog');
 	expect(dialog).toBeTruthy();
-	await findByText('Close this task?');
+	await findByText('Cancel this task?');
 
 	const confirm = await findByTestId('confirm-dialog-confirm');
+	// The dismiss button must not also read "Cancel" - both buttons name their
+	// outcome, so dropping the cancelLabel override is a regression.
+	expect(confirm.textContent).toContain('Cancel task');
+	await findByText('Keep task');
+
 	await user.click(confirm);
 
 	await findByTestId('task-reopen-button', undefined, { timeout: 5_000 });

@@ -6,7 +6,8 @@ section: Reference
 
 <!-- GENERATED FILE - do not edit by hand. Source: packages/server/src/mcp/mcp-reference.ts
      (generator + per-tool metadata) and the live MCP tool registry. Regenerate with
-     `bun run build:docs`; mcp-reference.test.ts fails if this file is stale. -->
+     `bun run --cwd packages/server build:docs`; mcp-reference.test.ts fails if this file
+     is stale. -->
 
 # MCP API reference
 
@@ -35,17 +36,36 @@ connect, authenticate, and register for access, see
   **Authorization** below.
 - **Errors:** a handled failure comes back as `{ "error": "<message>" }` in the tool
   result (the HTTP response itself stays successful).
-- **Result size:** a tool result is capped at 64 KB (higher for a few
-  full-resource inspection tools, e.g. `get_agent_system_prompts`); over the
-  cap you get `{ "error": "result_too_large", … }`. Narrow it with filters, a
-  single-resource `get_*`, `before` pagination, or `excerpt_chars`.
-  `read_project_doc` never returns that error for a big doc: it returns a UTF-8
-  byte window with a `next_offset` cursor so you can page the rest (see its
-  entry below).
-- **Excerpts (`excerpt_chars`):** list tools accept `excerpt_chars` to truncate long
-  text fields, adding `_truncated`/`_length` companions.
-- **Pagination (`before`):** `list_comments` walks older items by passing the oldest
-  `id` you have seen as `before`.
+- **Paging is the norm, in one of three shapes.** A read that can return many rows,
+  or content with no size ceiling, always returns a bounded slice plus the cursor to
+  continue. A response carrying `has_more: true`, `next_cursor`, `next_offset`, or
+  `next_index` is telling you it is partial - keep calling until the cursor is null or
+  `has_more` is false. Treating the first page as the whole set is the one failure
+  mode none of these shapes can protect you from.
+  - **Lists** take `limit` (default 50, ceiling 200) and an opaque `cursor`, and return
+    `{ items, next_cursor, has_more }`. Pass back the `next_cursor` you were given;
+    do not construct or parse one. `list_comments` also still accepts `before`
+    (a comment `id` or `public_id`) to resume from a comment you already know.
+  - **Large single content** (`read_project_doc`, `get_agent_system_prompt`,
+    `get_run_log`) takes `offset` plus `max_bytes` and returns a UTF-8 window with
+    `next_offset`. Note `get_run_log` defaults to the log **tail**; pass `offset: 0`
+    to read a run that failed early, since the tail cannot reach the start.
+  - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus
+    `next_index`; call again with the same `items` and `start_index` set to it.
+- **Result size:** a tool result is capped at 64 KB (higher for a few full-resource
+  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is
+  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The
+  `remedies` are built from the parameters that tool actually declares, so follow
+  them rather than guessing - and when the tool takes a batch, they name the exact
+  item count to retry with. Split the work and retry; do not fall back to one call
+  per item, and do not narrow what you cover to whatever fits in one call.
+- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts
+  with `_truncated`/`_length` companions, so one page cannot be dominated by a few
+  large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops
+  mid-sentence; always check the `_truncated` companion rather than judging from
+  whether the text reads as complete. To get the whole value, call the matching
+  single-item read - `get_task` for a task, `get_comment` for a comment,
+  `read_project_doc` for a doc - not a larger `excerpt_chars`.
 - **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the
   egress proxy substitutes the real value only for the secret's `allowed_hosts`.
 - **Write tools:** tools marked _Write tool_ persist data - a successful call from an
@@ -57,11 +77,16 @@ connect, authenticate, and register for access, see
 
 _Read-only._
 
-List teams accessible to the caller. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team.
+List teams accessible to the caller, by name. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
-**Parameters:** none.
+**Parameters:**
 
-**Returns:** An array of team rows (`id`, `name`, `slug`, `description`, …). An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
+
+**Returns:** Team rows (`id`, `name`, `slug`, `description`, …) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. An API key, the instance CEO, and an agent run with cross-team scope get every team; an ordinary agent run gets only its own team; a board user gets the teams they belong to (all teams for a superuser).
 
 ### `get_team`
 
@@ -100,16 +125,19 @@ Create a new team (superuser only)
 
 _Write tool._
 
-Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a progress-update run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) - link sparingly. This overwrites the whole summary, so include everything that should remain.
+Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `summary` | `string` | Yes | Markdown summary of project progress. Lead with the key points in **bold**, then a short narrative of done / in-progress / to-do. Link only a few key tickets by identifier; keep it a summary. |
+| `summary` | `string` | Yes | Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference ticket identifiers - the activity columns carry the specific tasks. |
+| `actioned` | `object[]` | No | Up to 5 tasks being worked on right now, most significant first. Omit all three lists to leave the columns as they are. |
+| `created` | `object[]` | No | Up to 5 tasks newly filed, most significant first. Omit all three lists to leave the columns as they are. |
+| `closed` | `object[]` | No | Up to 5 tasks recently finished, most significant first. Omit all three lists to leave the columns as they are. |
 
-**Returns:** `{ summary, updated_at }` after replacing the project’s progress summary (shown at the top of the Progress page). Returns `{ error }` if the project is HQ/internal (no progress summary) or the call is not from within an agent run.
+**Returns:** `{ summary, activity, updated_at }` after replacing the Progress page - the summary and the three activity columns (`activity.actioned` / `.created` / `.closed`, each up to 5 entries of `{ identifier, title, summary }`). Adds `unknown_tasks` listing any identifier that does not resolve in the project, so a mistyped task is reported rather than silently dropped. Omitting all three lists leaves the stored columns untouched. Returns `{ error }` if the project is HQ/internal (no Progress page) or the call is not from within an agent run.
 
 **Authorization:** Captain only, and only from within a progress-update agent run.
 
@@ -156,21 +184,31 @@ Kick off the initial team-coherence/setup run for a project you created via crea
 
 _Read-only._
 
-List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire.
+List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "App Team") live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
-**Parameters:** none.
+**Parameters:**
 
-**Returns:** An array of local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
+
+**Returns:** Local templates (`id`, `name`, `description`, `is_builtin`, `agent_types[]` where each entry has `slug`, `name`, `role_description`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Only the built-in Blank template and custom saved templates appear here - the default specialist rosters live in the marketplace (`get_marketplace_team`).
 
 ### `list_marketplace_teams`
 
 _Read-only._
 
-Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent).
+Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent). Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
-**Parameters:** none.
+**Parameters:**
 
-**Returns:** `{ teams }` - every marketplace team available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
+
+**Returns:** Marketplace teams available to this instance, each with `slug`, `name`, `description`, `summary`, `version`, and `roster_count`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Search keywords are omitted. Fetch one team’s full roster and prompts with `get_marketplace_team`.
 
 **Authorization:** CEO or a team Captain.
 
@@ -230,15 +268,17 @@ Add ONE role from a marketplace team to a project's team. CEO-only. Use this whe
 
 _Read-only._
 
-List projects. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.
+List projects, by name. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. description comes back as an excerpt capped at `excerpt_chars` (default 500); read a project's full description with get_team or the project's own docs. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `excerpt_chars` | `integer` | No | When set, truncates description and adds description_truncated/_length |
+| `excerpt_chars` | `integer` | No | Cap for the description excerpt, with description_truncated/_length companions (default 500). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `description`, `is_internal`, `created_at`, `updated_at`). With `excerpt_chars`, `description` is truncated and `description_truncated`/`description_length` companions are added.
+**Returns:** Project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `is_internal`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` comes back as an excerpt (default 500 chars) with `description_truncated`/`description_length` companions; raise or lower it with `excerpt_chars`.
 
 **Authorization:** An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.
 
@@ -263,7 +303,7 @@ Save the user's preferred widget order for the project dashboard. Pass the full 
 
 _Read-only._
 
-List a project's tasks. Returns up to 50 tasks ordered by creation date (newest first). Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.
+List a project's tasks, newest first. Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. description and rules come back as excerpts capped at `excerpt_chars` (default 500) so one page cannot be dominated by a few long tickets - read a task's full text with get_task.
 
 **Parameters:**
 
@@ -273,9 +313,11 @@ List a project's tasks. Returns up to 50 tasks ordered by creation date (newest 
 | `status` | `string` | No | Filter by status (comma-separated) |
 | `assignee_id` | `string` | No | Filter by assignee - an agent slug (e.g. "engineer") or a member UUID |
 | `assignee_slug` | `string` | No | Filter by assignee agent slug (alternative to assignee_id) |
-| `excerpt_chars` | `integer` | No | When set, replaces description and rules with first-paragraph excerpts capped at this many characters, plus _truncated and _length companion fields |
+| `excerpt_chars` | `integer` | No | Cap for the description and rules excerpts, with _truncated and _length companion fields (default 500). Use get_task for a task's full text. |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Up to 50 task rows ordered newest-first, each including `project_name`. With `excerpt_chars`, `description` and `rules` are replaced with excerpts plus `_truncated`/`_length` companions.
+**Returns:** Task rows ordered newest-first, each including `project_name`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` and `rules` come back as excerpts (default 500 chars) plus `_truncated`/`_length` companions; read a task in full with `get_task`.
 
 ### `get_task`
 
@@ -296,7 +338,7 @@ Get task details, including the ticket's declared blockers (upstream - what this
 
 _Write tool._
 
-Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
+Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, and those one further level, but no deeper (depth is capped at 3). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
 
 **Parameters:**
 
@@ -308,14 +350,14 @@ Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-lev
 | `priority` | `string` | No | Priority: low, medium, high, urgent |
 | `assignee_id` | `string` | No | Assignee member ID |
 | `assignee_slug` | `string` | No | Assignee agent slug (alternative to assignee_id) |
-| `parent_task_id` | `string` | No | Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, but no deeper - depth is capped at 2. |
+| `parent_task_id` | `string` | No | Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3. |
 | `runtime_type` | `string` | No | Pin this task to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default. |
 | `blocked_by_task_ids` | `string[]` | No | Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied. |
 | `goal_id` | `string` | No | UUID of the project goal this task advances. Links the task to the goal for traceability; it does not gate or change how the task runs. (Captain) set this when filing work to move a goal forward. |
 
 **Returns:** The created task row (it may carry an advisory `warning` string, e.g. when the description backticks a Hezo reference such as an `assets/<path>` - flagged even before that asset exists). Returns `{ error }` on a validation failure.
 
-**Authorization:** An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 2.
+**Authorization:** An agent caller may only assign to itself or a direct subordinate; sub-task depth is capped at 3.
 
 ### `create_tasks`
 
@@ -355,11 +397,11 @@ Update an task. Agents can use this to change status, update progress, set rules
 | `rules` | `string` | No | How-to-work-on guardrails for this ticket - approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead. |
 | `branch_name` | `string` | No | Git branch name for this task |
 | `runtime_type` | `string` | No | Override the AI runtime for this task (claude_code, codex, gemini). Pass an empty string to clear. |
-| `parent_task_id` | `string` \| `null` | No | Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 2. An open task cannot be nested under a parent that is already done or cancelled. |
+| `parent_task_id` | `string` \| `null` | No | Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 3. An open task cannot be nested under a parent that is already done or cancelled. |
 
 **Returns:** The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.
 
-**Authorization:** `done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 2, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
+**Authorization:** `done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
 
 ### `add_task_blocker`
 
@@ -397,7 +439,7 @@ Remove a blocker between two tasks. Call this when a dependency that was previou
 
 _Read-only._
 
-List the agent runs (container executions) recorded for a task, newest first (up to 50). Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only - fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left).
+List the agent runs (container executions) recorded for a task, newest first. Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only - fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left). Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -405,14 +447,16 @@ List the agent runs (container executions) recorded for a task, newest first (up
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of up to 50 run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Metadata only - fetch a run's log with `get_run_log`.
+**Returns:** Run rows for the task, newest-first: `id`, `status`, `exit_code`, `started_at`, `finished_at`, `invocation_command`, `log_length` (characters), plus `agent_title`/`agent_slug`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Metadata only - fetch a run's log with `get_run_log`.
 
 ### `get_run_log`
 
 _Read-only._
 
-Fetch the container log for a single agent run (a run_id from list_task_runs). Returns the run's log capped to the most recent excerpt_chars characters (default 12000 - the tail, where the outcome and any errors are) with truncated/length flags so you can tell when earlier output was dropped. Team-scoped: the run must belong to the project you're acting in.
+Fetch the container log for a single agent run (a run_id from list_task_runs). Team-scoped: the run must belong to the project you're acting in. By default returns the most recent excerpt_chars characters (default 12000 - the tail, where the outcome and any errors usually are). To read a run that failed EARLY, pass offset (start at 0) and page forward with next_offset until it is null: the tail default would otherwise hide the start of the log, which is where a setup, clone, or install failure appears.
 
 **Parameters:**
 
@@ -420,9 +464,11 @@ Fetch the container log for a single agent run (a run_id from list_task_runs). R
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `run_id` | `string` | Yes | Run ID (UUID) from list_task_runs |
-| `excerpt_chars` | `integer` | No | Max characters to return from the END of the log (default 12000). |
+| `excerpt_chars` | `integer` | No | Max characters to return from the END of the log (default 12000). Ignored when `offset` is set. |
+| `offset` | `integer` | No | Byte offset to read forward from, instead of the tail. Pass 0 to start at the beginning of the log, then pass back `next_offset` until it is null. Snapped down to a UTF-8 character boundary. |
+| `max_bytes` | `integer` | No | Max bytes of log to return in this window when paging with `offset` (default and ceiling is the read budget). |
 
-**Returns:** `{ id, status, exit_code, task_id, log, length, truncated }` for one run - `log` is the tail of the container log capped at `excerpt_chars` (default 12000); `truncated` flags dropped earlier output. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.
+**Returns:** `{ id, status, exit_code, task_id, log, length, truncated }` for one run. By default `log` is the **tail** of the container log capped at `excerpt_chars` (default 12000), and `truncated` flags dropped earlier output. Pass `offset` (start at 0) to read forward from the beginning instead: the result then also carries `offset`, `returned_chars`, and `next_offset`, and you page until `next_offset` is null. The tail default cannot reach the start of a long log, so use `offset` for a run that failed during setup, clone, or install. Returns `{ error }` for a malformed `run_id` or a run outside the resolved project's team.
 
 ## Goals
 
@@ -460,6 +506,8 @@ List a project's goals (the objectives the Captain tracks). Each goal has a titl
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `include_archived` | `boolean` | No | Include archived goals (default false). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
 **Returns:** An array of the project's goal rows, each with `project_name`/`project_slug` and an embedded `history[]` of recent progress snapshots (`{ t, percent, health }`). Archived goals are excluded unless `include_archived` is true.
 
@@ -485,11 +533,30 @@ Record your current assessment of a goal's progress. Only the Captain does this,
 
 ## Comments & reactions
 
+### `get_comment`
+
+_Read-only._
+
+Read one comment in full by its id (the UUID from a list_comments row, or its public_id slug). list_comments returns long text comments as excerpts capped at `excerpt_chars`; this is the single-item read that serves the whole body, so reach for it whenever a row comes back with `text_truncated: true`. Very long comments come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null. Structured comments (system/option/task_link) are returned whole.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `comment_id` | `string` | Yes | Comment UUID or public_id (e.g. "20261009112345"). Both forms from a list_comments row work. |
+| `offset` | `integer` | No | Byte offset to start reading the comment text from (default 0). To page a comment too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character. |
+| `max_bytes` | `integer` | No | Max bytes of comment text to return in this window (default and ceiling is the read budget, so a normal-size comment comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short. |
+
+**Returns:** One comment row in the same shape `list_comments` returns (plus `task_identifier`), with the body served whole rather than excerpted. For a text comment the result also carries a byte window - `offset`, `returned_bytes`, `total_bytes`, `next_offset`, `truncated` - and the windowed text sits in `content.text`; when `truncated` is true, call again with `offset` set to `next_offset` until `next_offset` is null. Structured comments (system/option/task_link) are returned whole with no window. Accepts either the comment UUID or its `public_id`. Returns `{ error }` if no such comment exists in the project.
+
+**Authorization:** Scoped to the caller's project: a comment is only readable through the project whose team owns its task, the same boundary `list_comments` enforces.
+
 ### `list_comments`
 
 _Read-only._
 
-List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.
+List comments for an task, newest first. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. (`before`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at `excerpt_chars` (default 2000); structured comments (system/option/task_link) are always returned whole. A truncated row sets `text_truncated: true` alongside `text_length` and a `text_paging_hint` naming the exact follow-up call - the excerpt sits in `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment. Read the full body with `get_comment`; raising `excerpt_chars` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.
 
 **Parameters:**
 
@@ -497,10 +564,12 @@ List comments for an task. Returns up to 50 most-recent comments (newest first).
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `task_id` | `string` | Yes | Task identifier or UUID |
-| `before` | `string` | No | A comment id (UUID) or public_id - return only comments created before that one |
-| `excerpt_chars` | `integer` | No | When set, truncates content.text on text-typed comments to this many characters and adds text_truncated/text_length |
+| `before` | `string` | No | A comment id (UUID) or public_id - return only comments created before that one. Prefer `cursor` for straight paging; this is for resuming from a comment you already know. |
+| `excerpt_chars` | `integer` | No | Cap for content.text on text-typed comments, with text_truncated/text_length companions (default 2000). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** Up to 50 comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Pass `before` to walk older; `excerpt_chars` truncates text comments (adds `text_truncated`/`text_length`).
+**Returns:** Comment rows newest-first, each with `id`, `public_id`, `task_id`, `author_member_id`, `author_api_key_id`, `parent_comment_id`, `content_type`, `content`, `chosen_option`, `created_at`, `author_type`, `author_name`, `reactions[]`, and `attachments[]`. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `before` still walks back from a comment you already know. Text comments come back truncated at `excerpt_chars` (default 2000), with `text_truncated`/`text_length` companions and a `text_paging_hint` naming the follow-up call. The excerpt is written into `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment; read the full body with `get_comment`.
 
 ### `add_reaction`
 
@@ -551,7 +620,7 @@ Add a comment to an task. In content, reference teammates with @<agent-slug>. Re
 | `content` | `string` | Yes | Comment text |
 | `parent_comment_id` | `string` | No | The comment you are replying to - its id (UUID) or its public_id. Setting this wakes that comment's author with source=reply and renders this comment as "replying to ..." in the UI. |
 
-**Returns:** The created comment row (`id`, `public_id`, `created_at`, …), optionally with an advisory `warning` string. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.
+**Returns:** The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.
 
 ### `update_comment`
 
@@ -568,7 +637,7 @@ Edit the text of a comment you posted earlier in THIS run - use it to fix a mist
 | `comment_id` | `string (uuid)` | Yes | UUID of the comment to edit, as returned by create_comment or list_comments. |
 | `content` | `string` | Yes | The replacement comment text (overwrites the existing body). |
 
-**Returns:** The updated comment row, optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
+**Returns:** The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
 
 **Authorization:** An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.
 
@@ -578,15 +647,17 @@ Edit the text of a comment you posted earlier in THIS run - use it to fix a mist
 
 _Read-only._
 
-List the agents on a project's team
+List the agents on a project's team, by title. Each row carries `reports_to` (the manager's member ID, null when unset) plus `reports_to_slug`/`reports_to_title` - this is the structural reporting line that gates delegation, so it is what to read when auditing the org chart for orphans (`reports_to` null) or cycles. Do NOT infer reporting lines from an agent's team_context prose: that prose is a rendered description which can itself be stale, and is exactly what a coherence review is meant to check against this field. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`).
+**Returns:** Agent rows (`id`, `agent_type_id`, `title`, `slug`, `daily_budget_cents`, `weekly_budget_cents`, `monthly_budget_cents`, `runtime_status`, `admin_status`) ordered by title, each with `reports_to` (manager member ID, null when unset) plus `reports_to_slug`/`reports_to_title`. `reports_to` is the structural line that gates delegation, so it is the field to audit for orphans and cycles - not an agent’s team_context prose, which is a rendered description that can itself be stale. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false.
 
 ### `update_hire_proposal`
 
@@ -697,7 +768,7 @@ Retire (disable) or reinstate (enable) an agent on a project's team. Callable by
 
 _Read-only._
 
-Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default - `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context - so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.
+Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default - `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context - so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt. A prompt too large for one read comes back as a byte window: when `next_offset` is non-null, call again with `offset` set to it until it is null. To read several prompts, use get_agent_system_prompts rather than looping this tool.
 
 **Parameters:**
 
@@ -706,8 +777,10 @@ Read an agent's system prompt. Accessible by any agent or the admin in the same 
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
 | `placeholders` | `boolean` | No | When true (default) substitutes `{{…}}` placeholders with real team/team values. When false returns the raw stored template - needed when reading before update_agent_system_prompt so placeholders survive the round-trip. |
+| `offset` | `integer` | No | Byte offset to start reading the prompt from (default 0). Pass back `next_offset` to page a prompt too large for one read. Snapped down to a UTF-8 character boundary. |
+| `max_bytes` | `integer` | No | Max bytes of prompt text to return in this window (default and ceiling is the read budget, so a normal-size prompt comes back whole). |
 
-**Returns:** `{ title, slug, system_prompt }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template.
+**Returns:** `{ title, slug, system_prompt, offset, returned_bytes, total_bytes, next_offset, truncated }`, or `{ error }` if the agent is not in the team. By default `{{…}}` placeholders are resolved; pass `placeholders: false` for the raw stored template. A prompt larger than the cap comes back as a byte window - page it with `offset` until `next_offset` is null.
 
 **Authorization:** Any agent or the admin in the same team.
 
@@ -715,7 +788,7 @@ Read an agent's system prompt. Accessible by any agent or the admin in the same 
 
 _Read-only._
 
-Read multiple agent system prompts in one call (max 50). Per-item `mode` chooses the resolution depth: `placeholders` (default) substitutes `{{…}}` with real values and stops, matching get_agent_system_prompt's default; `preview` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; `raw` returns the stored template untouched. Use this to compare prompts across the team in one round-trip - e.g. Captain auditing how team_context renders for every agent. SIZE: this tool has a raised 128KB result cap (a fully-resolved `preview` prompt is large), but still batch multiple items only as `raw`/`placeholders` and fetch previews one at a time so a multi-`preview` call can't exceed even the raised cap (result_too_large). For a single prompt, use get_agent_system_prompt.
+Read multiple agent system prompts in one call (max 50). Per-item `mode` chooses the resolution depth: `placeholders` (default) substitutes `{{…}}` with real values and stops, matching get_agent_system_prompt's default; `preview` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; `raw` returns the stored template untouched. Use this to compare prompts across the team in one round-trip - e.g. Captain auditing how team_context renders for every agent. PAGING: batch as many items as you like in any mode. The result carries as many prompts as fit under the cap plus `next_index`; when it is non-null, call again with the SAME `items` and `start_index` set to it, and repeat until it is null. Do not split the roster into single-item calls. For one prompt, use get_agent_system_prompt.
 
 **Parameters:**
 
@@ -723,8 +796,9 @@ Read multiple agent system prompts in one call (max 50). Per-item `mode` chooses
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `items` | `object[]` | Yes | Up to 50 items. |
+| `start_index` | `integer` | No | Index into `items` to resume from (default 0). Pass back the `next_index` from the previous call, with the same `items`, to fetch the prompts that did not fit. |
 
-**Returns:** An array of per-item results: `{ index, ok: true, title, slug, system_prompt }` or `{ index, ok: false, agent_id, error }`. Up to 50 items; each `mode` is `placeholders` (default), `preview`, or `raw`.
+**Returns:** `{ items, start_index, returned, total, next_index }`, where `items` are per-item results: `{ index, ok: true, title, slug, system_prompt }` or `{ index, ok: false, agent_id, error }`. Up to 50 items per call; each `mode` is `placeholders` (default), `preview`, or `raw`. Only the prompts that fit under the cap are returned - when `next_index` is non-null, call again with the same `items` and `start_index` set to it, and repeat until it is null. A single prompt too large on its own comes back truncated with `truncated: true` rather than stalling the cursor.
 
 **Authorization:** Any agent or the admin in the same team.
 
@@ -849,6 +923,40 @@ Save the team-relationships context for an agent (≤6000 chars, plain prose, se
 
 **Authorization:** The team's Captain only.
 
+### `set_agent_team_contexts`
+
+_Write tool._
+
+Save team-relationships contexts for MULTIPLE agents in one call (max 50) - the preferred way during a coherence review, which rewrites every affected agent's context together. Same rules and caller as set_agent_team_context (the Captain of the same team); each content is ≤6000 chars of plain second-person prose. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_team_context in a loop.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `updates` | `object[]` | Yes | Up to 50 context updates. |
+
+**Returns:** `{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. A bad agent_id fails only its own item; the rest of the batch still applies.
+
+**Authorization:** The team's Captain only.
+
+### `set_agent_summaries`
+
+_Write tool._
+
+Save short human-readable summaries for MULTIPLE agents in one call (max 50) - the preferred way during a coherence review, which rewrites every affected agent's summary together. Same rules and callers as set_agent_summary (any agent in the same team, or the admin); each summary is ≤1000 chars, a single plain-prose paragraph. Files a SINGLE team-coherence review for the whole batch rather than one per agent. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_summary in a loop.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `updates` | `object[]` | Yes | Up to 50 summary updates. |
+
+**Returns:** `{ items, updated, total }`, where `items` are per-item results: `{ index, agent_id, slug, ok: true }` or `{ index, agent_id, ok: false, error }`. Files a single team-coherence review for the whole batch rather than one per agent.
+
+**Authorization:** Any agent or the admin in the same team (the Captain is the expected caller).
+
 ### `get_agent_team_context`
 
 _Read-only._
@@ -863,6 +971,24 @@ Read an agent's stored team-relationships context. Useful for the Captain when r
 | `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
 
 **Returns:** `{ title, slug, team_context }`, or `{ error }` if the agent is not in the team.
+
+**Authorization:** Any agent or the admin in the same team.
+
+### `get_agent_team_contexts`
+
+_Read-only._
+
+Read the stored team-relationships context for MULTIPLE agents in one call (max 50). This is the read a coherence review wants: regenerating one agent's context requires seeing its siblings', so fetch the whole roster at once rather than calling get_agent_team_context per agent. Contexts are capped at 6000 chars each, so a normal roster comes back whole. PAGING: the result carries as many contexts as fit under the cap plus `next_index`; when it is non-null, call again with the SAME `items` and `start_index` set to it, and repeat until it is null. Accessible by any agent or the admin in the same team.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `items` | `object[]` | Yes | Up to 50 items. |
+| `start_index` | `integer` | No | Index into `items` to resume from (default 0). Pass back the `next_index` from the previous call, with the same `items`. |
+
+**Returns:** `{ items, start_index, returned, total, next_index }`, where `items` are per-item results: `{ index, ok: true, agent_id, title, slug, team_context }` or `{ index, ok: false, agent_id, error }`. Up to 50 items per call. Only the contexts that fit under the cap are returned - when `next_index` is non-null, call again with the same `items` and `start_index` set to it, and repeat until it is null.
 
 **Authorization:** Any agent or the admin in the same team.
 
@@ -888,16 +1014,18 @@ Replace your long-term chat memory - the durable notes carried into every turn o
 
 _Read-only._
 
-List pending approvals. Pass excerpt_chars (e.g. 500) to truncate long fields inside payload (e.g. skill-proposal content); omit for full payload.
+List pending approvals, newest first. Long string fields inside payload (e.g. skill-proposal content) come back truncated at `excerpt_chars` (default 500) with *_truncated/_length companions, so one page cannot be dominated by a single large proposal - read a proposal in full from the approval itself. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `excerpt_chars` | `integer` | No | When set, truncates long string fields inside payload (e.g. skill-proposal content) and adds *_truncated/_length companions |
+| `excerpt_chars` | `integer` | No | Cap for long string fields inside payload, with *_truncated/_length companions (default 500). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of pending approval rows (`id`, `team_id`, `type`, `status`, `requested_by_member_id`, `resolution_note`, `resolved_at`, `created_at`, `payload`). `excerpt_chars` truncates long string fields inside `payload`.
+**Returns:** Pending approval rows (`id`, `team_id`, `type`, `status`, `requested_by_member_id`, `resolution_note`, `resolved_at`, `created_at`, `payload`) newest-first. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Long string fields inside `payload` come back truncated at `excerpt_chars` (default 500) with `_truncated`/`_length` companions.
 
 ### `resolve_approval`
 
@@ -959,7 +1087,7 @@ Full-text keyword search across the team skills database, tasks, project docs, a
 
 _Read-only._
 
-List the team's skills database - the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand.
+List the team's skills database - the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand. Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -967,8 +1095,10 @@ List the team's skills database - the manifest of reusable team know-how (MCP se
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `tags` | `string` | No | Filter by tag (comma-separated) |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** `{ skills: [{ id, name, slug, description, tags, created_at, updated_at }] }`. Pass `tags` (comma-separated) to filter.
+**Returns:** Skill rows (`id`, `name`, `slug`, `description`, `tags`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. Pass `tags` (comma-separated) to filter. A project skill shadows a global one of the same slug.
 
 ### `get_skill`
 
@@ -1082,21 +1212,23 @@ Fetch a remote agent skill file (Markdown describing how to use a third-party MC
 
 _Read-only._
 
-List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider's REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.
+List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider's REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.
+**Returns:** An array of connector rows with a derived `oauth_status` (`active` | `degraded` | `pending` | `failed` | `revoked` | `none`) and, for an OAuth-backed connector that is `active` or `degraded`, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). `degraded` means the connector was connected and its stored token has stopped working - a human must reconnect it, so report it rather than retrying around it. Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.
 
 ### `test_connector`
 
 _Read-only._
 
-Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP's tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".
+Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP's tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?". A 401 here means the stored credential is no longer accepted: report it to the human with an active @admin comment asking them to reconnect the connector. You do not need this call when oauth_status already says "degraded" - that answer is known.
 
 **Parameters:**
 
@@ -1105,7 +1237,7 @@ Test an MCP connector end-to-end from the server side. Resolves the stored OAuth
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `connector_id` | `string` | Yes | connector id or name (both shown by list_connectors) |
 
-**Returns:** `{ ok, status, mcp_url, secret_name, token_prefix, token_length, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.
+**Returns:** `{ ok, status, mcp_url, secret_name, token_sent, www_authenticate, body_excerpt, hint }` from a direct server-side probe of the MCP URL. `token_sent` is a boolean - no part of the token value is ever returned, and any occurrence of it in `body_excerpt` / `www_authenticate` is redacted in case the upstream echoes what it was sent. Returns `{ error }` if the connector is missing, not `saas`, or its token cannot be decrypted.
 
 ### `add_connector`
 
@@ -1122,7 +1254,7 @@ Register a connector for your project - a SaaS HTTP MCP server (`saas`), a local
 | `kind` | `saas` \| `local` \| `api` | Yes | saas = HTTP MCP, local = stdio MCP, api = direct REST API (no MCP server) |
 | `config` | `object` | Yes | For saas: { url, headers? }. For local: { command, args?, env?, package? }. For api: { base_url, allowed_hosts: string[], auth: { placement: "header"\|"query", name, scheme? }, docs_url? }. |
 
-**Returns:** `{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project.
+**Returns:** `{ id, install_status, note }`, or `{ error }` if `config.url` (saas) / `config.command` (local) is missing. Upserts by `name` within your project. A connector that already carries a credential (a completed OAuth connection or an attached API key) cannot be re-pointed from here: changing its `kind` or `config` returns `{ error, connector_id, hint }` and leaves the row untouched, since re-binding a credentialed connector is a human-only operation on the Connectors page. Re-registering it at its existing configuration still succeeds.
 
 ### `remove_connector`
 
@@ -1145,7 +1277,7 @@ Remove one of your project's registered MCP connections. Only connectors owned b
 
 _Read-only._
 
-List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its `filename` and a one-line `description` (what the doc is / when to read it, '' if unset). Archived (soft-deleted) docs are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).
+List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its `filename`, a one-line `description` (what the doc is / when to read it, '' if unset), and `content_length` - the doc's size, so you can tell before opening it whether read_project_doc will need more than one window. Bodies are not returned here; read one with read_project_doc. Archived (soft-deleted) docs are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -1153,14 +1285,16 @@ List project documentation files (PRD, spec, implementation plan, etc.). Each en
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default - archived items are excluded), 'archived' (only archived), or 'all'. |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** `{ files: [{ id, filename, description, updated_at }] }` - the markdown project docs, where `description` is the overall "what this is" summary (`''` if unset). The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
+**Returns:** Markdown project doc entries (`id`, `filename`, `description`, `content_length`, `created_at`, `updated_at`), where `description` is the overall "what this is" summary (`''` if unset) and `content_length` is the doc's size so you can tell before opening it whether `read_project_doc` will need more than one window. Bodies are not returned here. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived docs excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 
 ### `list_project_assets`
 
 _Read-only._
 
-List the project's assets - files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.
+List the project's assets - files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Every entry carries `byte_size`, so you can tell before opening one whether read_project_asset will need more than one window. Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.
 
 **Parameters:**
 
@@ -1169,14 +1303,16 @@ List the project's assets - files in the assets library (UI mockups, wireframes,
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default - archived items are excluded), 'archived' (only archived), or 'all'. |
 | `sort` | `newest` \| `oldest` \| `alphabetical` | No | Order of the returned assets: 'newest' (default - most recently created first), 'oldest', or 'alphabetical' (by filename, A→Z). |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** `{ files: [{ id, filename, content_type, created_at, width?, height? }] }` - the project asset files; raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
+**Returns:** Project asset entries (`id`, `filename`, `content_type`, `created_at`, `width?`, `height?`); raster images (PNG/JPEG/GIF/WebP) also carry pixel `width`/`height`. `filename` is the full path and may carry a folder prefix up to 2 levels (e.g. `launch/images/hero.png`). Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. The `filter` param defaults to `'active'` (archived assets excluded); with `'archived'` or `'all'` each entry also carries `archived: boolean`.
 
 ### `write_project_asset`
 
 _Write tool._
 
-Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) - MUST pass encoding: "base64" with the file's bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime's argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file's exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin's feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.
+Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file's bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime's argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file's exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin's feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.
 
 **Parameters:**
 
@@ -1188,13 +1324,13 @@ Save a file to the project assets library so a human can open it AND other agent
 | `encoding` | `utf8` \| `base64` | No | utf8 (default) for text assets; base64 for binary assets (images, PDFs, media) - required for any non-text type |
 | `byte_size` | `integer` | No | For a base64 binary: the file's exact byte length. When provided, the decoded content is checked against it and a truncated upload (a runtime capping the tool-call argument size, cutting `content` mid-stream) is rejected instead of silently stored. Strongly recommended for binaries. |
 
-**Returns:** `{ written: true, id, reference: "assets/<path>", byte_size, width?, height? }` (raster images also report their pixel `width`/`height`), or `{ error }`. Accepts any type a human can upload: text formats (`.html`, `.svg`, `.txt`, `.md`, and `.sh`/`.py`/`.js`/`.ts`/`.json`/`.csv`/`.yaml`/`.yml` stored as plain text) with the default `encoding: "utf8"`, and binary formats (`.png`, `.jpg`, `.gif`, `.webp`, `.pdf`, media, …) with `encoding: "base64"` - a non-text type written without base64 is rejected, as is invalid or truncated base64 (a runtime argument-size cap can cut a large base64 `content` mid-stream - pass `byte_size` (the file’s exact byte length) so a short decode is rejected, or upload large binaries via a multipart POST to `/mcp/assets` with a `path` field and optional `overwrite=true`, which streams the bytes with no argument limit). Also errors if the type is unsupported, the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) - read them first and make all edits in one consolidated write.
+**Returns:** `{ written: true, id, reference: "assets/<path>", byte_size, width?, height? }` (raster images also report their pixel `width`/`height`), or `{ error }`. Accepts any type a human can upload: text formats (`.html`, `.svg`, `.txt`, `.md`, and `.sh`/`.py`/`.js`/`.ts`/`.json`/`.csv`/`.yaml`/`.yml` stored as plain text) with the default `encoding: "utf8"`, and binary formats (`.png`, `.jpg`, `.gif`, `.webp`, `.pdf`, media, archives such as `.zip`/`.tar`/`.tar.gz`/`.7z`, …) with `encoding: "base64"` - a non-text type written without base64 is rejected, as is invalid or truncated base64 (a runtime argument-size cap can cut a large base64 `content` mid-stream - pass `byte_size` (the file’s exact byte length) so a short decode is rejected, or upload large binaries via a multipart POST to `/mcp/assets` with a `path` field and optional `overwrite=true`, which streams the bytes with no argument limit). Also errors if the type is unsupported, the path is invalid (max 2 folder levels), the content exceeds 10 MB, or an archived asset holds the path (unarchive it first or pick another path). Re-saving the same path overwrites it; matching is path-exact. Overwriting deletes ALL pending review comments on the asset (the admin feedback returned by read_project_asset) - read them first and make all edits in one consolidated write.
 
 ### `read_project_asset`
 
 _Read-only._
 
-Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.
+Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/check.sh") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media, archives) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). An archive (.zip, .tar, .tar.gz/.tgz, .7z) is downloaded that same way and then unpacked in your container - `unzip`, `tar` and `7z` are preinstalled. If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. Large text assets come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null (`list_project_assets` reports each asset's `byte_size`, so you can tell in advance whether that will be needed). For markdown project docs use read_project_doc instead.
 
 **Parameters:**
 
@@ -1204,8 +1340,28 @@ Read a project asset's contents by path (e.g. "ui-mockups.html" or "scripts/chec
 | `filename` | `string` | Yes | Asset path to read (e.g. "ui-mockups.html", "launch/images/hero.png") |
 | `filter` | `active` \| `archived` \| `all` | No | Which archive states to consider: 'active' (default - archived items are excluded), 'archived' (only archived), or 'all'. |
 | `include_image` | `boolean` | No | For raster images (PNG/JPEG/GIF/WebP): when true (default) the image is returned inline so a vision-capable model can see it. Pass false to get metadata only (dimensions + download URL) and skip the pixels. |
+| `offset` | `integer` | No | For a text asset: byte offset to start reading from (default 0). To page an asset too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character. Ignored for binary assets, which return a download URL instead. |
+| `max_bytes` | `integer` | No | For a text asset: max bytes of content to return in this window (default and ceiling is the read budget, so a normal-size asset comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short. |
 
-**Returns:** For a text asset, `{ filename, content_type, content }`. For a raster image (PNG/JPEG/GIF/WebP) at or under ~4 MB, the image is returned inline as an MCP image content block alongside a text block of `{ filename, content_type, byte_size, binary: true, width, height, url }` so a vision-capable model can see it - pass `include_image: false` (or exceed the size cap) for that metadata alone with no image block. Other binary assets return `{ filename, content_type, byte_size, binary: true, url }` - a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. Either shape also carries `review_comments: [{ id, quote?, occurrence?, comment, created_at }]` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact `quote` snippet (`occurrence` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns `{ error }` if not found - match the full path, folder prefix included - or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
+**Returns:** For a text asset, `{ filename, content_type, content }`. For a raster image (PNG/JPEG/GIF/WebP) at or under ~4 MB, the image is returned inline as an MCP image content block alongside a text block of `{ filename, content_type, byte_size, binary: true, width, height, url }` so a vision-capable model can see it - pass `include_image: false` (or exceed the size cap) for that metadata alone with no image block. Other binary assets - PDFs, media, and archives (`.zip`, `.tar`, `.tar.gz`/`.tgz`, `.7z`, `.rar`) - return `{ filename, content_type, byte_size, binary: true, url }` - a signed download URL valid for 24h; fetch it with plain `curl` (no auth header), and re-call the tool for a fresh one if it expires. An archive is unpacked in the run container after download. Either shape also carries `review_comments: [{ id, quote?, occurrence?, comment, created_at }]` when the admin has left pending review feedback on the asset: on a text asset (markdown, plain text) a comment anchors to an exact `quote` snippet (`occurrence` disambiguates repeats); a comment without a quote applies to the whole file. Any write to the asset's path deletes all of its review comments, so capture them before writing. Returns `{ error }` if not found - match the full path, folder prefix included - or if the asset's archive state doesn't match `filter` (default `'active'`, so archived assets need `filter: 'archived'` or `'all'`; an archived read carries `archived: true`).
+
+### `edit_project_asset`
+
+_Write tool._
+
+Replace one span of a TEXT project asset (HTML, SVG, markdown, plain text, a script), leaving the rest untouched. Prefer this over write_project_asset for any change to an existing text asset: it sends only the text you are changing, so the argument stays proportional to the edit rather than to the file - which matters most for exactly the assets that get tweaked, like a self-contained interactive HTML mockup, where re-sending the whole file risks a runtime's tool-call argument-size cap cutting it mid-stream. Binary assets (images, PDFs, media, archives) cannot be edited this way; rewrite them with write_project_asset. `old_string` must match the current text EXACTLY, including indentation and line breaks: read the asset first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the asset's new `byte_size`, so you can confirm what landed without reading it again. Like any overwrite this clears the asset's pending review comments, so capture those first.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `filename` | `string` | Yes | Asset path to edit (e.g. "ui-mockups.html", "launch/notes.md") |
+| `old_string` | `string` | Yes | The exact text to replace, copied verbatim from the asset (including indentation and line breaks). Must be unique in the asset unless replace_all is set. |
+| `new_string` | `string` | Yes | The text to put in its place. May be empty to delete the span. |
+| `replace_all` | `boolean` | No | Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous. |
+
+**Returns:** `{ edited: true, id, reference: "assets/<path>", replacements, byte_size, hunk }` - `hunk` is the applied change with surrounding context and line numbers, so you can confirm what landed without reading the asset back. TEXT assets only (HTML, SVG, markdown, plain text, scripts); a binary asset returns `{ error }` naming its content type, and must be rewritten whole with write_project_asset. Also returns `{ error }` if the asset does not exist, is archived, the result exceeds 10 MB, or `old_string` is empty, unchanged, absent, or matches more than one place without `replace_all`. Prefer this over write_project_asset for any change to an existing text asset: the argument scales with the edit rather than the file, which matters most for the assets that get tweaked (a self-contained interactive HTML mockup re-sent whole is exactly the payload a runtime argument-size cap truncates). Like any overwrite it clears the asset's pending review comments.
 
 ### `move_project_asset`
 
@@ -1252,7 +1408,7 @@ Archive a project asset - the reversible soft delete, and the ONLY way an agent 
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Asset path to archive - the full path exactly as list_project_assets returns it (e.g. "drafts/old-v1.md") |
 
-**Returns:** `{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving.
+**Returns:** `{ archived: true, reference: "assets/<path>", changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the asset is not found. The archived asset leaves listings and default reads but keeps its path reserved; existing `assets/<path>` references keep resolving. While archived it is read-only: it cannot be overwritten, moved, renamed, or reviewed until unarchive_project_asset restores it.
 
 **Authorization:** Archival is the agent-facing soft delete; hard deletion of assets is admin-only in the web app.
 
@@ -1269,7 +1425,7 @@ Restore an archived project asset to active. It reappears in list_project_assets
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Asset path to restore (the same path it was archived under) |
 
-**Returns:** `{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found.
+**Returns:** `{ archived: false, reference: "assets/<path>", changed }` (`changed: false` when it was already active), or `{ error }` if the asset is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore an asset because it is genuinely back in use, not merely to get around the archived-write refusal.
 
 ### `read_project_doc`
 
@@ -1293,7 +1449,7 @@ Read a markdown project doc by filename (e.g. "spec.md") - the high-level projec
 
 _Write tool._
 
-Write a project documentation file. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
+Write a project documentation file, replacing its whole body. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so never author or edit one with the Write/Edit file tools or a shell redirect - a markdown file you save to disk persists nothing, is invisible to every teammate, and leaves the real doc stale. To change PART of an existing doc, prefer edit_project_doc: this tool sends the entire body, so a large doc means a large argument, and a runtime that caps tool-call argument size can cut `content` mid-stream. Pass `content_length` (the exact character count of `content`) so a truncated argument is rejected rather than silently overwriting the doc and wiping its review comments. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
 
 **Parameters:**
 
@@ -1304,8 +1460,29 @@ Write a project documentation file. Project docs are markdown only - the filenam
 | `content` | `string` | Yes | File content (markdown) |
 | `description` | `string` | No | An overall summary of what this doc is and when to read it, in no more than one or two sentences (e.g. "How we track and report campaign analytics each week"). Describe its stable purpose, not its current contents: do NOT list the sections, findings, dates, counts, or latest revisions here (those belong in the body and the `changelog`), so the description stays steady across updates. Shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is without opening it. It is NOT the changelog and NOT part of the body. Omit to leave any existing description unchanged. |
 | `changelog` | `string` | No | Markdown summary of what changed in THIS update and why - recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content. |
+| `content_length` | `integer` | No | The exact character count of `content`. When provided, a mismatch is rejected instead of stored, so an argument the runtime truncated mid-stream cannot silently overwrite the doc with a partial body (which would also delete every pending review comment on it). Strongly recommended for anything large. |
+| `allow_empty` | `boolean` | No | Permit an empty `content` to blank an existing non-empty doc. Off by default, because an empty body is far more often a truncated argument than an intent - and blanking also deletes every pending review comment. To retire a doc, call archive_project_doc instead. |
 
 **Returns:** `{ written: true, id, filename }`, or `{ error }` if the filename is not `.md` or the doc is archived (unarchive first - archived docs are read-only). Make all edits in one consolidated write: a content-changing write deletes ALL pending review comments on the doc (read them first) and records a document revision, so many partial writes lose review context and bury the revision history. The optional `description` sets the doc's overall "what this is" summary - one or two sentences describing the doc's stable purpose, not its current contents (shown in the Documents list and doc header; omit to leave it unchanged). The optional `changelog` is stored as that revision's changelog and shown in the document's history - put update/status notes there, not in the document body.
+
+### `edit_project_doc`
+
+_Write tool._
+
+Replace one span of a project doc, leaving the rest untouched. Prefer this over write_project_doc for any change to an existing doc: it sends only the text you are changing, so the argument stays proportional to the edit rather than to the document, which keeps a large doc out of reach of a runtime's tool-call argument-size cap. These docs live in the database, not the filesystem - the Write/Edit file tools target disk and will not touch them. `old_string` must match the current text EXACTLY, including indentation and line breaks: read the doc first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the doc's new `content_length`, so you can confirm what landed without reading the doc again. Like any content-changing write this records a revision and clears the doc's pending review comments, so capture those first.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `filename` | `string` | Yes | Markdown filename to edit (e.g. "spec.md") |
+| `old_string` | `string` | Yes | The exact text to replace, copied verbatim from the doc (including indentation and line breaks). Must be unique in the doc unless replace_all is set. |
+| `new_string` | `string` | Yes | The text to put in its place. May be empty to delete the span. |
+| `replace_all` | `boolean` | No | Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous. |
+| `changelog` | `string` | No | Markdown summary of what changed in THIS edit and why - recorded as the revision's changelog. Put update/status notes here, never in the document body. |
+
+**Returns:** `{ edited: true, id, filename, replacements, content_length, hunk }` - `hunk` is the applied change with surrounding context and line numbers, and `content_length` the doc's new size, so you can confirm what landed without reading the doc back. Returns `{ error }` if the doc does not exist (create one with write_project_doc), is archived, or `old_string` is empty, unchanged, absent, or matches more than one place without `replace_all` - the ambiguous case is refused rather than guessing which match you meant. Prefer this over write_project_doc for any change to an existing doc: the argument scales with the edit rather than the document, which keeps a large doc clear of a runtime's tool-call argument-size cap. Like any content-changing write it records a revision and clears the doc's pending review comments. A `warning` is returned when a supplied `changelog` had no revision to land on.
 
 ### `archive_project_doc`
 
@@ -1320,7 +1497,7 @@ Archive a project doc - the reversible soft delete, and the ONLY way an agent re
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Doc filename to archive (e.g. "old-plan.md") |
 
-**Returns:** `{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history.
+**Returns:** `{ archived: true, filename, changed }` (`changed: false` when it was already archived - the call is idempotent), or `{ error }` if the file is not found. The archived doc leaves listings, search, and agent-run context but keeps its filename reserved and its revision history. While archived it is read-only: no writes and no revision restores until unarchive_project_doc restores it.
 
 **Authorization:** Archival is the agent-facing soft delete; hard deletion of docs is admin-only in the web app.
 
@@ -1337,7 +1514,7 @@ Restore an archived project doc to active. It reappears in list_project_docs and
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `filename` | `string` | Yes | Doc filename to restore (e.g. "old-plan.md") |
 
-**Returns:** `{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found.
+**Returns:** `{ archived: false, filename, changed }` (`changed: false` when it was already active), or `{ error }` if the file is not found. Restoring is recorded in the project activity log, naming the task and run it came from - so restore a doc because it is genuinely back in use, not merely to get around the archived-write refusal.
 
 ## Costs
 
@@ -1345,7 +1522,7 @@ Restore an archived project doc to active. It reappears in list_project_docs and
 
 _Read-only._
 
-Get the cost summary for a project
+Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns `limit` days (default 50) plus `next_cursor`/`has_more`, and when `has_more` is true you call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -1353,8 +1530,10 @@ Get the cost summary for a project
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `group_by` | `agent` \| `day` | No | Group costs by |
+| `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
+| `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }`; with `group_by: "day"`, an array of `{ day, total_cents }`; otherwise `{ total_cents, entry_count }`.
+**Returns:** With `group_by: "agent"`, an array of `{ member_id, agent_title, total_cents }` (bounded by the roster). With `group_by: "day"`, day rows `{ day, total_cents }` newest-first Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. - that set grows for the life of the project, so it is the one grouping that pages. Otherwise `{ total_cents, entry_count }`.
 
 ## Onboarding
 

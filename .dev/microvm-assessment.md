@@ -48,7 +48,7 @@ interface seam today; the test double (`services/fake-docker.ts`) is cast
    agent CLI runs (`agent-runner.ts`), **all git** (`git-executor.ts` — the
    host runs no git), MCP server installs (`mcp-installer.ts`), run-user
    detection/chown (`container-user.ts`), CA trust and MTU setup
-   (`containers.ts`), CEO chat (`ceo-session-manager.ts`). Exec supports
+   (`containers.ts`), CEO chat (`chat-session-manager.ts`). Exec supports
    per-call `User:` deprivileging (root for chowns, `node` for agent work).
 3. **Filesystem plane** — exactly four bind mounts, assembled in
    `containers.ts` `provisionContainer`: `workspace:/workspace:rw`,

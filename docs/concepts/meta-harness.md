@@ -77,11 +77,13 @@ Everything runs from one self-contained server process:
 
 ### Where agents run
 
-Each project gets its own **Docker container** - a private workspace with the project's
+Each project gets its own **container** - a private workspace with the project's
 code and tools. Agents execute inside it, never on your host directly. All their
 outbound traffic is forced through the egress proxy, and the keys used to sign commits
 or reach your model never enter the container. See
-[Container isolation](/docs/security/container-isolation).
+[Container isolation](/docs/security/container-isolation) for the security case, and
+[Containers](/docs/containers/overview) for where they run: your own Docker daemon by
+default, or a managed sandbox service, switchable at any time.
 
 ### How a model becomes an agent
 
@@ -98,10 +100,11 @@ heartbeat) paired with a model - and you can give any agent its own model. See
   oversee everything from **HQ**.
 - Work flows as **tasks** on a board, each with a description, optional rules, and a
   living progress summary.
-- A project also sets **goals** (the outcomes those tasks add up to), and the Captain
-  re-checks each on a schedule, recording progress and health so you can see where things
-  stand. See
-  [Goals & progress](/docs/concepts/goals).
+- Every project has a **Progress** page the Captain rewrites on its own cadence - a high-level
+  summary plus the tasks recently worked, filed and finished. See
+  [Progress & project status](/docs/concepts/progress). A project can also set **goals** (the
+  outcomes those tasks add up to), which the Captain re-checks on a schedule, recording progress
+  and health. See [Goals](/docs/concepts/goals).
 - Knowledge lives alongside the work: **documents** (markdown PRDs, specs, and research,
   with version history) and an **assets** library (uploads and agent-generated files, with
   HTML previews). See [Documents & long-term memory](/docs/concepts/documents-and-memory)

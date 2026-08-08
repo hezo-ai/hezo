@@ -1,13 +1,12 @@
 import { CommentContentType } from '@hezo/shared';
 import { Check, Copy, CornerDownRight, Reply } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
 import {
 	type Comment,
 	type CommentSkeleton,
 	skeletonNeedsBody,
 	useCommentBody,
 } from '../../hooks/use-comments';
-import { copyToClipboard } from '../../lib/clipboard';
+import { useCopyFeedback } from '../../hooks/use-copy-feedback';
 import { defaultAvatarForSlug } from '../../lib/default-avatars';
 import { AgentLink } from '../agent-link';
 import {
@@ -28,21 +27,10 @@ import { Avatar, avatarColorFromString } from '../ui/avatar';
  * check for 1.5s as confirmation (mirrors the log-viewer copy affordance).
  */
 function CopyCommentButton({ text }: { text: string }) {
-	const [copied, setCopied] = useState(false);
-	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	useEffect(() => {
-		return () => {
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-		};
-	}, []);
+	const { copied, copy } = useCopyFeedback();
 
 	const handleCopy = async () => {
-		if (await copyToClipboard(text)) {
-			setCopied(true);
-			if (timeoutRef.current) clearTimeout(timeoutRef.current);
-			timeoutRef.current = setTimeout(() => setCopied(false), 1500);
-		}
+		await copy(text);
 	};
 
 	return (

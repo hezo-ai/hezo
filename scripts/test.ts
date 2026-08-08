@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { resolve } from 'node:path';
 import {
 	TEST_CONTAINER_LABEL_KEY,
@@ -27,7 +28,27 @@ process.env[TEST_CONTAINERS_ENV] = '1';
 // packages/shared/src/crypto/auth.ts); `??=` lets an explicit override win.
 process.env.HEZO_TEST_SCRYPT_LOG_N ??= '1';
 
-const defaultConcurrency = 10;
+/**
+ * Worker count, derived from the machine rather than hardcoded.
+ *
+ * Every worker is a forked process that boots its own PGlite (a WASM Postgres)
+ * and re-loads the module graph, so a worker is CPU- and memory-hungry rather
+ * than IO-bound. Running more of them than there are cores does not overlap
+ * anything — it just adds context switching and memory pressure, and on a
+ * 2-core CI runner or a 4-core laptop the old flat 10 was a ~2.5x
+ * oversubscription that made the suite slower, not faster.
+ *
+ * Clamped to [2, 10]. The ceiling keeps behaviour identical on machines that
+ * were already big enough for the previous default, so this can only reduce
+ * worker counts, never raise them; the floor keeps some parallelism on a
+ * single-core box. `--concurrency` still overrides.
+ */
+const MIN_CONCURRENCY = 2;
+const MAX_CONCURRENCY = 10;
+const defaultConcurrency = Math.min(
+	MAX_CONCURRENCY,
+	Math.max(MIN_CONCURRENCY, availableParallelism()),
+);
 
 const program = new Command()
 	.name('test')

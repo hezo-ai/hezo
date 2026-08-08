@@ -24,6 +24,7 @@ import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
 	assertNoUnansweredAdminMentions,
+	MAX_SUB_TASK_DEPTH,
 	resolveParentAssignment,
 } from '../lib/task-relationships';
 import {
@@ -977,6 +978,10 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/ancestors', async (c) => {
 		title: string;
 		depth: number;
 	}>(
+		// Bounded by the depth cap rather than a literal, so raising the cap cannot
+		// silently truncate a breadcrumb. The deepest legal task sits
+		// MAX_SUB_TASK_DEPTH edges below its root, and every row shallower than the
+		// cap recurses, so the walk reaches that root exactly.
 		`WITH RECURSIVE chain AS (
 			SELECT id, parent_task_id, identifier, title, 0 AS depth
 			FROM tasks WHERE id = $1 AND team_id = $2
@@ -984,10 +989,10 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/ancestors', async (c) => {
 			SELECT i.id, i.parent_task_id, i.identifier, i.title, c.depth + 1
 			FROM tasks i
 			JOIN chain c ON c.parent_task_id = i.id
-			WHERE i.team_id = $2 AND c.depth < 3
+			WHERE i.team_id = $2 AND c.depth < $3
 		)
 		SELECT id, identifier, title, depth FROM chain ORDER BY depth DESC`,
-		[taskId, teamId],
+		[taskId, teamId, MAX_SUB_TASK_DEPTH],
 	);
 	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Task not found', 404);
 	return ok(

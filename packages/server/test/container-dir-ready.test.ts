@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ensureContainerDirReady } from '../src/services/container-user';
-import type { DockerClient } from '../src/services/docker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 
 /**
  * A docker mock that scripts a sequence of exit codes for the readiness probe
@@ -29,7 +29,7 @@ function scriptedDocker(opts: { exitCodes?: number[]; throwOnExec?: boolean }) {
 			const code = idx < exitCodes.length ? exitCodes[idx] : exitCodes[exitCodes.length - 1];
 			return { ExitCode: code, Running: false, Pid: 0 };
 		},
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 
 	return { docker, scripts };
 }

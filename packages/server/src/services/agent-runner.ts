@@ -1,13 +1,5 @@
-import {
-	type Dirent,
-	existsSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
 import {
 	AgentRuntime,
 	AiAuthMethod,
@@ -18,12 +10,16 @@ import {
 	type CostTokens,
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
+	effectiveRuntime,
+	formatContainerMetaLogLine,
 	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
+	type ProgressActivityKind,
 	providerDirectUpstreamHosts,
+	providerRuntimeBinding,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_DISALLOWED_TOOLS_ARGS,
@@ -44,8 +40,15 @@ import { appendRunLogChunks, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
+import { describeSignalExit, signalFromExitCode } from '../lib/exit-code';
 import { withProjectGitLock } from '../lib/git-lock';
-import { detectUnlinkedTeammateAsks, extractMentionSlugs } from '../lib/mentions';
+import {
+	detectPassiveTeammateAsks,
+	detectUnlinkedTeammateAsks,
+	detectUnlinkedTeammateReferences,
+	extractMentionSlugs,
+	extractPassiveMentionSlugs,
+} from '../lib/mentions';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { signAgentJwt } from '../middleware/auth';
@@ -65,13 +68,6 @@ import { BackgroundTerminationDetector } from './background-termination';
 import { checkOverBudget, recordRunCost } from './budget';
 import { postAgentComment, resolveWarnableSlugs } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
-import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
-import {
-	CONNECTIVITY_STALE_MS,
-	type ContainerConnectivityStatus,
-	type ProbeResult,
-	shouldAbortForConnectivity,
-} from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerRunUser,
@@ -79,43 +75,73 @@ import {
 	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
-import { ensureProjectContainerRunning } from './containers';
-import type { DockerClient, ExecLogChunk } from './docker';
+import { acquireRunContainer, PoolCapacityError } from './containers';
+import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
-import { type EgressProxy, formatEgressProxyUrl } from './egress';
+import { buildEgressProxyEnv, type EgressProxy } from './egress';
 import {
 	clearPushErrors,
+	describeUnpushedWork,
 	ensurePushHook,
 	ensureTaskWorktreeWithRetry,
+	fastForwardFromRecovery,
 	fastForwardLocalDefault,
 	fetchRepo,
+	findUnpushedWork,
 	getWorktreeHead,
 	mergeDefaultIntoWorktree,
 	type RepoLoc,
 	readPushErrors,
 	seedInitialCommitIfEmpty,
+	type UnpushedWorkScan,
 	type WorktreeLoc,
+	worktreeChangedPaths,
 	worktreeHasChanges,
+	worktreeTracksPath,
 } from './git';
-import { ContainerGitExecutor, GIT_SSH_COMMAND_VALUE, type GitExecutor } from './git-executor';
+import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
-import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from './mcp-injectors';
+import {
+	HEZO_MCP_SERVER_NAME,
+	MCP_ADAPTERS,
+	type McpDescriptor,
+	validateInjection,
+} from './mcp-injectors';
+import { retryOrEscalateLostRun } from './orphan-detector';
 import type { PricingService } from './pricing';
+import type { ProgressActivityCandidates } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { ensureProjectRepos } from './repo-sync';
+import { projectContainerMemoryGb } from './run-concurrency';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
 	ensureRuntimeHomeDir,
 	getContainerSubscriptionRoot as getContainerSubscriptionRootImpl,
+	getHostSubscriptionBase,
 	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
-	mkdirTraversable,
 	type RuntimeHomeMount,
+	SUBSCRIPTION_DIR_MODE,
 	SUBSCRIPTION_LAYOUTS,
 	type SubscriptionMount as SubscriptionMountImpl,
+	subscriptionFiles,
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
+import { createBundleVault } from './sandbox/bundle-vault';
+import type { RunEndpoints } from './sandbox/endpoints';
+import { ExecStreamLostError } from './sandbox/errors';
+import type { SandboxFiles } from './sandbox/files';
+import { dockerSandboxHandle } from './sandbox/handle';
+import { setPoolMemberDiskUsage, setPoolMemberUnpushedFlag } from './sandbox/pool-db';
+import {
+	releaseRecoveryBundle,
+	restoreRecoveryBundle,
+	saveRecoveryBundle,
+} from './sandbox/recovery';
+import { type RunTunnel, startRunTunnel } from './sandbox/tunnel/run-tunnel';
+import { buildTunnelHostPolicy } from './sandbox/tunnel/split-routing';
+import { collectFinishedWorktrees } from './sandbox/worktree-gc';
 import { type BridgeRunnerArgs, buildBridgeRunnerArgv, type SshAgentServer } from './ssh-agent';
 import { validateSubscriptionBlob } from './subscription-auth';
 import { recordStatusChange } from './task-events';
@@ -187,11 +213,17 @@ export interface RunResult {
 	heartbeatRunId?: string;
 	/** The run ended by hitting its wall-clock time limit; drives an automatic same-task continuation. */
 	timedOut?: boolean;
+	/**
+	 * The run never started because the instance was at its container-memory
+	 * budget. Not a failure: the wakeup is re-queued and dispatched again, and no
+	 * failure ping is posted.
+	 */
+	requeued?: boolean;
 }
 
 export interface RunnerDeps {
 	db: Db;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	masterKeyManager: MasterKeyManager;
 	serverPort: number;
 	dataDir: string;
@@ -203,14 +235,6 @@ export interface RunnerDeps {
 	egressCAPath?: string | null;
 	/** When present, a container the runner lazy-starts resubscribes its log stream. */
 	containerLogStreamer?: ContainerLogStreamer;
-	/** Latest container→host connectivity outcome. When present and the egress
-	 * proxy is unreachable from containers, the run aborts instead of silently
-	 * falling through to direct egress. Absent → fail open (back-compat). */
-	connectivityStatus?: ContainerConnectivityStatus;
-	/** Probe used to (re)confirm connectivity at run time. Auto-rebinds against the
-	 * live bind host, so a stale loopback result self-heals. Required alongside
-	 * `connectivityStatus` for the gate to run; absent → fail open. */
-	connectivityProbe?: () => Promise<ProbeResult>;
 	/** Runtime model pricing; when present, the parser computes run cost from it. */
 	pricing?: PricingService;
 }
@@ -235,19 +259,26 @@ export function buildProviderEnv(
 	credential: AiProviderCredential,
 	runModel?: string | null,
 ): string[] {
-	const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
+	// Everything below keys off the runtime the credential actually runs on, not
+	// the provider's default: a provider can be configured onto any of several
+	// CLIs, and each wants a different static bag and a different variable for the
+	// key. Reading the adapter's own fields would build the default runtime's env
+	// for a switched credential, which fails as "no credentials found" rather than
+	// as anything diagnosable.
+	const runtime = effectiveRuntime(provider, credential.runtime);
+	const binding = runtime ? providerRuntimeBinding(provider, runtime) : null;
 	const out: string[] = [];
-	if (adapter.runtime === AgentRuntime.ClaudeCode) {
+	if (runtime === AgentRuntime.ClaudeCode) {
 		for (const [key, value] of Object.entries(CLAUDE_CODE_QUIET_ENV)) {
 			out.push(`${key}=${value}`);
 		}
 	}
-	if (adapter.runtime === AgentRuntime.Gemini) {
+	if (runtime === AgentRuntime.Gemini) {
 		for (const [key, value] of Object.entries(GEMINI_RUNTIME_ENV)) {
 			out.push(`${key}=${value}`);
 		}
 	}
-	if (adapter.staticEnv) {
+	if (binding?.staticEnv) {
 		// For a third-party Anthropic-compatible provider (DeepSeek/Z.ai/Kimi), the
 		// Claude Code subagent default should track the run's own selected model
 		// rather than the hardcoded `CLAUDE_CODE_SUBAGENT_MODEL` constant — so a
@@ -257,7 +288,7 @@ export function buildProviderEnv(
 		// or its runs price to $0 — see the pricing table.)
 		const trimmedModel = runModel?.trim();
 		const subagentOverride =
-			trimmedModel && claudeCodeProviderUsesCustomEndpoint(provider)
+			trimmedModel && claudeCodeProviderUsesCustomEndpoint(provider, runtime)
 				? claudeCodeModelArg(provider, trimmedModel)
 				: null;
 		// Kimi Code selects its model from `KIMI_MODEL_NAME`, not only from
@@ -266,9 +297,8 @@ export function buildProviderEnv(
 		// run's selected model has to land there rather than only on the CLI flag.
 		// The staticEnv value (KIMI_DEFAULT_MODEL) stays the fallback when the run
 		// pins nothing.
-		const kimiModelOverride =
-			trimmedModel && adapter.runtime === AgentRuntime.Kimi ? trimmedModel : null;
-		for (const [key, value] of Object.entries(adapter.staticEnv)) {
+		const kimiModelOverride = trimmedModel && runtime === AgentRuntime.Kimi ? trimmedModel : null;
+		for (const [key, value] of Object.entries(binding.staticEnv)) {
 			if (subagentOverride && key === 'CLAUDE_CODE_SUBAGENT_MODEL') {
 				out.push(`${key}=${subagentOverride}`);
 			} else if (kimiModelOverride && key === 'KIMI_MODEL_NAME') {
@@ -282,7 +312,7 @@ export function buildProviderEnv(
 	// per-install, so it cannot sit in `staticEnv` like the hosted third-party
 	// Anthropic-compatible providers above. It rides on the credential instead and
 	// is stamped here.
-	if (credential.baseUrl && adapter.runtime === AgentRuntime.ClaudeCode) {
+	if (credential.baseUrl && runtime === AgentRuntime.ClaudeCode) {
 		out.push(`ANTHROPIC_BASE_URL=${credential.baseUrl}`);
 		// These runners authenticate (when they authenticate at all) from
 		// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
@@ -290,7 +320,7 @@ export function buildProviderEnv(
 		// and get sent to the operator's local server. Blank it explicitly.
 		out.push('ANTHROPIC_API_KEY=');
 	}
-	const varName = adapter.credentialEnvByAuthMethod[credential.authMethod];
+	const varName = binding?.credentialEnvByAuthMethod[credential.authMethod];
 	if (varName) out.push(`${varName}=${credential.value}`);
 	return out;
 }
@@ -359,12 +389,17 @@ export function getHostPromptPath(
 	projectId: string,
 	heartbeatRunId: string,
 ): string {
-	return join(
-		getWorkspacePath(dataDir, teamId, projectId),
-		'.hezo',
-		'prompts',
-		`${heartbeatRunId}.txt`,
-	);
+	return join(getWorkspacePath(dataDir, teamId, projectId), getPromptRelPath(heartbeatRunId));
+}
+
+/**
+ * The prompt file's path *relative to the workspace root*, which is the form a
+ * {@link SandboxFiles} takes. The absolute host path above is derived from it
+ * rather than the other way round, so the two can never disagree about where
+ * the file is - the bug a second hand-written join would eventually introduce.
+ */
+export function getPromptRelPath(heartbeatRunId: string): string {
+	return join('.hezo', 'prompts', `${heartbeatRunId}.txt`);
 }
 
 // Basename of the Grok `--debug-file`, written into the per-run home mount so it
@@ -386,27 +421,6 @@ const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
 // walk.
 const KIMI_SESSION_LOG_MAX_DEPTH = 8;
 
-/** Collect every `wire.jsonl` beneath `root`, depth-bounded and best-effort. */
-function findKimiSessionLogs(root: string, depth = 0): string[] {
-	if (depth > KIMI_SESSION_LOG_MAX_DEPTH) return [];
-	let entries: Dirent[];
-	try {
-		entries = readdirSync(root, { withFileTypes: true });
-	} catch {
-		return [];
-	}
-	const out: string[] = [];
-	for (const entry of entries) {
-		const full = join(root, entry.name);
-		// `withFileTypes` reports a symlink as neither file nor directory, so
-		// following one is opt-in — and we never opt in. That is what makes the
-		// depth cap sufficient to bound this walk.
-		if (entry.isDirectory()) out.push(...findKimiSessionLogs(full, depth + 1));
-		else if (entry.isFile() && entry.name === KIMI_SESSION_LOG_BASENAME) out.push(full);
-	}
-	return out;
-}
-
 /**
  * Recover a run's token usage for the runtimes that report none on stdout.
  *
@@ -425,49 +439,42 @@ function findKimiSessionLogs(root: string, depth = 0): string[] {
  * usage. Best-effort throughout: a missing or unreadable log yields null (⇒ $0
  * rather than a failed run), and the home mount is removed at cleanup regardless.
  */
-export function recoverOffStreamRunUsage(
+export async function recoverOffStreamRunUsage(
 	runtimeType: AgentRuntime,
-	homeMount: RuntimeHomeMount | null,
+	files: SandboxFiles | null,
 	priceFn: ((model: string | undefined, tokens: CostTokens) => number) | undefined,
 	onError: (msg: string) => void,
-): AgentRunUsage | null {
-	if (!homeMount) return null;
+): Promise<AgentRunUsage | null> {
+	if (!files) return null;
 	if (runtimeType === AgentRuntime.Grok) {
-		const debugPath = join(homeMount.hostDir, GROK_DEBUG_BASENAME);
 		try {
-			if (!existsSync(debugPath)) return null;
-			return extractGrokUsageFromDebugLog(readFileSync(debugPath, 'utf8'), priceFn);
+			if (!(await files.exists(GROK_DEBUG_BASENAME))) return null;
+			return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME), priceFn);
 		} catch (e) {
 			onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
 			return null;
 		} finally {
-			try {
-				rmSync(debugPath, { force: true });
-			} catch {
-				// The whole home mount is removed at cleanup; a failed scrub here is not fatal.
-			}
+			await files.remove(GROK_DEBUG_BASENAME);
 		}
 	}
 	if (runtimeType === AgentRuntime.Kimi) {
-		const logPaths = findKimiSessionLogs(join(homeMount.hostDir, 'sessions'));
+		const logPaths = await files.findByName(
+			'sessions',
+			KIMI_SESSION_LOG_BASENAME,
+			KIMI_SESSION_LOG_MAX_DEPTH,
+		);
 		if (logPaths.length === 0) return null;
 		try {
 			// The home dir is per-run, so in practice there is exactly one session.
 			// Concatenating tolerates a resumed or sub-agent session without
 			// double-counting: the extractor dedupes by record identity, not by file.
-			const contents = logPaths.map((p) => readFileSync(p, 'utf8')).join('\n');
+			const contents = (await Promise.all(logPaths.map((p) => files.read(p)))).join('\n');
 			return extractKimiUsageFromSessionLog(contents, priceFn);
 		} catch (e) {
 			onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
 			return null;
 		} finally {
-			for (const p of logPaths) {
-				try {
-					rmSync(p, { force: true });
-				} catch {
-					// See above — cleanup removes the mount regardless.
-				}
-			}
+			for (const p of logPaths) await files.remove(p);
 		}
 	}
 	return null;
@@ -528,6 +535,23 @@ export interface RuntimeInvocationInput {
 	sshSocketContainerPath: string | null;
 	bridge: BridgeRunnerArgs | null;
 	egress: EgressEnvDescriptor | null;
+	/**
+	 * How the container addresses Hezo. Passed in rather than derived so the run
+	 * path can hand over the tunnel's loopback endpoints without this function
+	 * learning that a tunnel exists.
+	 */
+	endpoints: RunEndpoints;
+	/**
+	 * The project's connector MCP servers.
+	 *
+	 * Passed in rather than loaded here because the caller needs them *before*
+	 * this runs: the tunnel's split-routing policy has to name the connector hosts
+	 * so they reach the egress proxy, where the per-connector method allowlist is
+	 * enforced. Resolving them once and handing them down also keeps the policy
+	 * and the descriptors describing the same set - two loads a moment apart could
+	 * disagree, and the one that silently lost a host would be the policy.
+	 */
+	connectorDescriptors: McpDescriptor[];
 	/** Caller-specific env entries (e.g. HEZO_TASK_ID for a run). */
 	extraEnv?: string[];
 }
@@ -562,53 +586,79 @@ export async function buildRuntimeInvocation(
 		sshSocketContainerPath,
 		bridge,
 		egress,
+		endpoints,
+		connectorDescriptors,
 		extraEnv = [],
 	} = input;
 
-	const subscriptionMount = buildSubscriptionMount(
+	const subscriptionMount = await buildSubscriptionMount(
 		deps.dataDir,
 		runTeamId,
 		projectId,
 		resourceId,
 		provider,
 		credential,
+		deps.docker,
+		containerId,
 	);
 
 	const adapter = MCP_ADAPTERS[runtimeType];
 	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
-		? ensureRuntimeHomeDir(
+		? await ensureRuntimeHomeDir(
 				provider,
 				deps.dataDir,
 				runTeamId,
 				projectId,
 				resourceId,
 				subscriptionMount,
+				deps.docker,
+				containerId,
 			)
 		: null;
 
 	const mcpDescriptors: McpDescriptor[] = [
 		{
 			kind: 'http',
-			name: 'hezo',
-			url: `http://host.docker.internal:${deps.serverPort}/mcp`,
+			name: HEZO_MCP_SERVER_NAME,
+			url: `${endpoints.hezoBaseUrl}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...(await loadConnectorDescriptors(deps.db, projectId)),
+		...connectorDescriptors,
 	];
+
+	// Active project-doc filenames, baked into the runtime's doc-write guard so it
+	// can refuse a filesystem write aimed at one without needing any tool access
+	// of its own. Advisory: a failed lookup just means no guard on this run.
+	const projectDocSlugs = await deps.db
+		.query<{ slug: string }>(
+			`SELECT slug FROM documents
+			 WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL`,
+			[projectId],
+		)
+		.then((r) => r.rows.map((row) => row.slug))
+		.catch(() => [] as string[]);
 
 	const mcpInjection = adapter.build(mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
 		runModel: modelOverride,
+		projectDocSlugs,
 	});
 	validateInjection(adapter, mcpInjection);
 
+	// Through SandboxFiles, rooted at the subscription base: the container reads
+	// these, so on a backend whose container is not on this machine the write has
+	// to go through the provider's file API. `dirMode` is what keeps the
+	// other-execute bit the non-root run-user needs to traverse down to this leaf,
+	// which a strict process umask would otherwise strip.
+	const runtimeFiles = subscriptionFiles(deps.docker, containerId);
+	const subscriptionBase = getHostSubscriptionBase(deps.dataDir, runTeamId, projectId);
 	for (const file of mcpInjection.files) {
-		// mkdirTraversable (not a bare mkdir mode) so a strict process umask can't strip
-		// the other-execute bit the non-root run-user needs to traverse to this leaf.
-		mkdirTraversable(dirname(file.hostPath));
-		writeFileSync(file.hostPath, file.contents, { mode: file.mode });
+		await runtimeFiles.write(relative(subscriptionBase, file.hostPath), file.contents, {
+			mode: file.mode,
+			dirMode: SUBSCRIPTION_DIR_MODE,
+		});
 	}
 
 	// The host (root in production) just wrote the per-run config dir + files at
@@ -639,10 +689,11 @@ export async function buildRuntimeInvocation(
 		...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
 		...mcpInjection.envEntries,
 	];
+	// The agent socket is for commit *signing* (`ssh-keygen -Y sign`), which is
+	// local. Git transport is HTTPS and needs no ssh at all, so there is no
+	// `GIT_SSH_COMMAND` to set alongside it any more.
 	if (sshSocketContainerPath) {
 		env.push(`SSH_AUTH_SOCK=${sshSocketContainerPath}`);
-		// Fail fast on a stalled git transport instead of hanging on OS TCP defaults.
-		env.push(`GIT_SSH_COMMAND=${GIT_SSH_COMMAND_VALUE}`);
 	}
 	// Configure git author/committer identity and SSH commit signing from the
 	// team's connected GitHub account + Ed25519 key, so in-container commits
@@ -654,36 +705,19 @@ export async function buildRuntimeInvocation(
 		})),
 	);
 	if (egress) {
-		// Per-run token rides the userinfo so every client sends it as
-		// Proxy-Authorization; the proxy 407s any caller without it. A non-null
-		// token here means auth is on (the default).
-		const proxyUrl = formatEgressProxyUrl(egress.host, egress.port, egress.token);
-		const noProxyHosts = [
-			egress.host,
-			'localhost',
-			'127.0.0.1',
-			// The Hezo MCP endpoint and agent asset URLs are served from the host at
-			// `host.docker.internal:<serverPort>`. MCP auth there is a real per-run JWT
-			// and asset URLs are HMAC-signed, so there is no `__HEZO_SECRET_*__`
-			// placeholder to substitute — routing them through the proxy buys nothing
-			// and adds a hop on every (potentially multi-MB) binary read. Keep them
-			// direct, matching the documented contract (`lib/asset-urls.ts`,
-			// architecture § Asset storage). Connector MCP servers live on their own
-			// remote hosts (reached via HTTPS CONNECT) and still traverse the proxy.
-			'host.docker.internal',
+		env.push(
+			// The same entries every in-container git op gets, from the same builder -
+			// a run's agent CLI and its `git clone` reach the proxy identically.
 			// For a locally-hosted provider the upstream is the operator's own machine,
 			// known only from the config's stored base URL — pass it so that host
 			// bypasses the MITM proxy like any other model-provider endpoint.
-			...providerDirectUpstreamHosts(provider, credential.baseUrl),
-		];
-		const noProxy = [...new Set(noProxyHosts)].join(',');
-		env.push(
-			`HTTP_PROXY=${proxyUrl}`,
-			`http_proxy=${proxyUrl}`,
-			`HTTPS_PROXY=${proxyUrl}`,
-			`https_proxy=${proxyUrl}`,
-			`NO_PROXY=${noProxy}`,
-			`no_proxy=${noProxy}`,
+			// The resolved runtime, not the provider's default: a credential switched
+			// onto another CLI can reach a different upstream, so the direct-host list
+			// has to be read off the pairing that will actually run.
+			...buildEgressProxyEnv(
+				egress,
+				providerDirectUpstreamHosts(provider, credential.baseUrl, runtimeType),
+			),
 			// Defense-in-depth: make Node's *built-in* global fetch/undici honor the
 			// proxy env vars for any Node process the agent spawns that doesn't set
 			// its own dispatcher. Node ≥24 gates this behind NODE_USE_ENV_PROXY; it
@@ -711,11 +745,18 @@ export async function buildRuntimeInvocation(
 			//     trust store, into which the container's start-up
 			//     `update-ca-certificates` installs the egress CA.
 			`NODE_USE_ENV_PROXY=1`,
-			// Rely on update-ca-certificates for curl/git; do not set SSL_CERT_FILE to
-			// the egress CA alone — that replaces the system trust store and breaks TLS.
+			// `NODE_EXTRA_CA_CERTS` is *additive* — Node keeps its bundled roots and
+			// adds this one, so a direct TLS peer still verifies.
+			//
+			// `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` are deliberately NOT set, for the
+			// same reason `SSL_CERT_FILE` is not: they **replace** the trust bundle
+			// rather than adding to it. That is harmless only while every TLS peer is
+			// the MITM proxy. Under split routing curl or git talking to a direct host
+			// would check a real public certificate against a bundle holding only the
+			// Hezo CA, and fail. Both rely instead on the `update-ca-certificates` run
+			// at provision, which installs the CA *into* the system trust store so
+			// both kinds of certificate verify.
 			`NODE_EXTRA_CA_CERTS=${egress.containerCAPath}`,
-			`CURL_CA_BUNDLE=${egress.containerCAPath}`,
-			`GIT_SSL_CAINFO=${egress.containerCAPath}`,
 		);
 	}
 
@@ -773,6 +814,11 @@ async function buildRunContext(
 	egress: EgressEnvDescriptor | null,
 	runUser: ContainerRunUser,
 	progressUpdate: ProgressUpdateContext | null,
+	endpoints: RunEndpoints,
+	// Loaded before the tunnel starts, because the tunnel's split-routing policy
+	// needs the connector hosts and the tunnel is up before this runs. Passed in
+	// rather than re-queried so a run resolves them exactly once.
+	connectorDescriptors: McpDescriptor[],
 ): Promise<RunContext> {
 	// The run is scoped to the project's team (the "run team"). For normal agents
 	// this equals the agent's home team; for instance agents (CEO/Coach) that
@@ -851,7 +897,7 @@ async function buildRunContext(
 			task as TaskInfo,
 			runTeamId,
 			deps.masterKeyManager,
-			deps.serverPort,
+			endpoints.hezoBaseUrl,
 		);
 	} else {
 		// Every task run gets the latest few comments inline as a head-start; the shared
@@ -860,7 +906,7 @@ async function buildRunContext(
 			deps.db,
 			(task as TaskInfo).id,
 			deps.masterKeyManager,
-			deps.serverPort,
+			endpoints.hezoBaseUrl,
 			{ limit: RECENT_COMMENTS_LIMIT },
 		);
 		basePrompt = buildTaskPrompt(resolvedPrompt, task as TaskInfo, wakeupPayload, {
@@ -880,6 +926,8 @@ async function buildRunContext(
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
 	const { env, cmd, execCmd, subscriptionMount, homeMount } = await buildRuntimeInvocation({
+		endpoints,
+		connectorDescriptors,
 		deps,
 		runTeamId,
 		projectId: project.id,
@@ -922,20 +970,32 @@ export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
 /**
  * Reasons the runner tags on a run's AbortSignal. A bare abort — a user cancel via
  * `cancelTask`, server shutdown, or the stale-dispatch reaper — carries none.
+ *
+ * `tunnel_lost` is the runner's own: the container reaches Hezo only through the
+ * run tunnel, so a tunnel that dies mid-run leaves the agent unable to read a
+ * task, post a comment, or record anything at all. The container is still alive,
+ * so no `container_*` transition fires and nothing else would notice.
  */
-export type RunAbortReason = ContainerExitAbortReason | 'run_timeout';
+export type RunAbortReason = ContainerExitAbortReason | 'run_timeout' | 'tunnel_lost';
+
+const RUN_ABORT_REASONS: readonly string[] = [
+	'container_error',
+	'container_stopped',
+	'run_timeout',
+	'tunnel_lost',
+];
 
 function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
 	const reason = signal?.reason as unknown;
-	if (reason === 'container_error' || reason === 'container_stopped' || reason === 'run_timeout')
-		return reason;
+	if (typeof reason === 'string' && RUN_ABORT_REASONS.includes(reason))
+		return reason as RunAbortReason;
 	return null;
 }
 
 /**
  * Terminal status for an aborted run: a wall-clock timeout is `TimedOut` (and drives an
- * automatic same-task continuation — see `JobManager.onAgentComplete`), container death is
- * `Failed`, and a bare abort (user cancel / shutdown) is `Cancelled`.
+ * automatic same-task continuation — see `JobManager.onAgentComplete`), container death and
+ * a lost tunnel are `Failed`, and a bare abort (user cancel / shutdown) is `Cancelled`.
  */
 function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 	if (reason === 'run_timeout') return HeartbeatRunStatus.TimedOut;
@@ -946,6 +1006,12 @@ function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 /** Error string stamped on an aborted run row — a friendly line for a timeout, else the raw reason. */
 function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	if (reason === 'run_timeout') return 'run reached its time limit';
+	if (reason === 'tunnel_lost')
+		return (
+			'the run tunnel to the container closed mid-run, so the agent lost its Hezo tools, ' +
+			'the egress proxy and the ssh agent - the run was failed rather than left to finish ' +
+			'with no way to record anything'
+		);
 	return reason ?? undefined;
 }
 
@@ -973,6 +1039,19 @@ async function createSyntheticOnDemandWakeup(
 	return r.rows[0].id;
 }
 
+/**
+ * Told that a run exists, and given a way to be told where it landed.
+ *
+ * The two are separate calls because the order is fixed: a run has a row - and
+ * is therefore cancellable - before the pool has decided which container it will
+ * execute in. A caller keeping an in-memory registry needs the run from the
+ * first moment and the placement as soon as it is known, or a
+ * container-scoped cancellation cannot aim at the right runs.
+ */
+export type RunRegistrationHook = (
+	heartbeatRunId: string,
+) => ((containerId: string) => void) | void;
+
 export async function runAgent(
 	deps: RunnerDeps,
 	agent: AgentInfo,
@@ -980,7 +1059,7 @@ export async function runAgent(
 	project: ProjectInfo,
 	wakeupPayload?: Record<string, unknown>,
 	signal?: AbortSignal,
-	onRunRegistered?: (heartbeatRunId: string) => void,
+	onRunRegistered?: RunRegistrationHook,
 	wakeupId?: string,
 	progressUpdate?: ProgressUpdateContext | null,
 ): Promise<RunResult> {
@@ -1011,7 +1090,7 @@ export async function runAgent(
 		extractTriggeredBy(wakeupPayload),
 		progressUpdate ? HeartbeatRunKind.ProgressUpdate : HeartbeatRunKind.Task,
 	);
-	onRunRegistered?.(heartbeatRunId);
+	const onContainerAcquired = onRunRegistered?.(heartbeatRunId);
 	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
 	const streamId = `run:${heartbeatRunId}`;
 
@@ -1032,7 +1111,7 @@ export async function runAgent(
 			stream: line.stream,
 			text: line.text,
 		}),
-		buildSnapshot: (text) => ({
+		buildSnapshot: (text, trimmed) => ({
 			type: WsMessageType.RunLog,
 			projectId: project.id,
 			runId: heartbeatRunId,
@@ -1040,6 +1119,7 @@ export async function runAgent(
 			stream: 'stdout',
 			text,
 			replace: true,
+			trimmed,
 		}),
 		onFlush: async (delta) => {
 			// Append only the new log text as chunk rows (never rewrite the whole
@@ -1082,10 +1162,28 @@ export async function runAgent(
 		};
 	};
 
+	/**
+	 * The signal the run actually executes under: the caller's, plus the run's own
+	 * fatal conditions.
+	 *
+	 * The caller owns an `AbortSignal` it can cancel or time out; the runner has
+	 * one condition of its own that is just as terminal and that nothing could
+	 * previously act on - the tunnel dying, which leaves a perfectly healthy
+	 * container with no route to Hezo. Deriving rather than reaching into the
+	 * caller's controller keeps ownership where it is, and forwarding
+	 * `signal.reason` verbatim keeps `runAbortReason` reading exactly what it read
+	 * before for every case that already existed.
+	 */
+	const runAbort = new AbortController();
+	if (signal) {
+		if (signal.aborted) runAbort.abort(signal.reason);
+		else signal.addEventListener('abort', () => runAbort.abort(signal.reason), { once: true });
+	}
+
 	const finalizeAbort = async (): Promise<RunResult> => {
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
-		const reason = runAbortReason(signal);
+		const reason = runAbortReason(runAbort.signal);
 		const status = abortedRunStatus(reason);
 		await updateHeartbeatRun(
 			deps.db,
@@ -1108,47 +1206,13 @@ export async function runAgent(
 		};
 	};
 
-	// Containers run on demand: start (or provision) the project's container for
-	// this run rather than requiring it to already be up. ensureProjectContainerRunning
-	// inspects Docker live — a stale `running` row whose container is gone is
-	// repaired by re-provisioning — and serializes per project, so concurrent runs
-	// dispatching into the same stopped project start exactly one container.
-	if (project.container_status !== ContainerStatus.Running) {
-		emit('stdout', '[runner] Starting the project container…\n');
-	}
-	let containerId: string;
-	try {
-		containerId = await ensureProjectContainerRunning(
-			{
-				db: deps.db,
-				docker: deps.docker,
-				dataDir: deps.dataDir,
-				wsManager: deps.wsManager,
-				masterKeyManager: deps.masterKeyManager,
-				logs: deps.logs,
-				containerLogStreamer: deps.containerLogStreamer,
-				sshAgentServer: deps.sshAgentServer,
-				egressCAPath: deps.egressCAPath,
-			},
-			project.id,
-		);
-	} catch (e) {
-		const message = e instanceof Error ? e.message : String(e);
-		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
-		return finalizeFailure(
-			`Could not start the project container: ${message}. See the Container page for logs.`,
-		);
-	}
-	// The run may have been aborted (e.g. timed out) while a slow provision ran.
-	if (signal?.aborted) return finalizeAbort();
-	const runningProject: RunningProjectInfo = {
-		...project,
-		container_id: containerId,
-		container_status: ContainerStatus.Running,
-	};
-
 	let provider: AiProvider;
 	let runtimeType: AgentRuntime;
+	// Null on the agent-override path: the override names only a provider, and
+	// which CLI that provider runs on is a property of the credential, resolved
+	// below once one is loaded. The task-pinned path already resolved against a
+	// specific credential, so it constrains the lookup to a matching one.
+	let requiredRuntime: AgentRuntime | null = null;
 	if (agent.model_override_provider) {
 		provider = agent.model_override_provider;
 		const adapter = PROVIDER_RUNTIME_ADAPTERS[provider];
@@ -1167,41 +1231,187 @@ export async function runAgent(
 		}
 		runtimeType = resolved.runtime;
 		provider = resolved.provider;
+		requiredRuntime = resolved.runtime;
 	}
 
-	const credential = await getProviderCredentialAndModel(deps.db, deps.masterKeyManager, provider);
+	const credential = await getProviderCredentialAndModel(
+		deps.db,
+		deps.masterKeyManager,
+		provider,
+		requiredRuntime,
+	);
 	if (!credential) {
 		return finalizeFailure(
 			`No ${provider} credential configured. Add one in Settings > AI Providers.`,
 		);
+	}
+	// The agent-override path chose a provider without knowing which CLI its
+	// credential is set to run on, so settle that now — otherwise an override onto
+	// a provider whose credential was switched would launch the default binary
+	// with the other binary's env.
+	if (!requiredRuntime) {
+		runtimeType = effectiveRuntime(provider, credential.runtime) ?? runtimeType;
 	}
 
 	const modelOverride = agent.model_override_model ?? credential.defaultModel ?? null;
 
 	if (signal?.aborted) return finalizeAbort();
 
-	const layout = SUBSCRIPTION_LAYOUTS[provider];
-	let releaseCredentialLock: (() => void) | null = null;
-	if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
-		// Records the true wait so the run comment reads honestly while blocked.
+	/**
+	 * Hand the run back to the queue instead of failing it.
+	 *
+	 * The instance is at its memory budget - a state the dispatcher's own gate
+	 * already tests for, and which a moment later may not hold. Failing here would
+	 * burn the agent's turn and post a failure ping for what is a scheduling race,
+	 * so the run stays `queued` (it was never marked running) with the wait
+	 * recorded, and the caller re-queues the wakeup.
+	 */
+	const finalizeRequeue = async (reason: string): Promise<RunResult> => {
+		emit('stdout', `[runner] ${reason} - returning this run to the queue.\n`);
+		await deps.logs.end(streamId);
 		await deps.db.query(
 			`UPDATE heartbeat_runs SET queued_reason = $1
 			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
-			['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
+			['waiting for container capacity', heartbeatRunId, HeartbeatRunStatus.Queued],
 		);
-		releaseCredentialLock = await acquireCredentialLock(credential.configId);
-	}
+		return {
+			success: false,
+			exitCode: -1,
+			stderr: reason,
+			durationMs: Date.now() - startTime,
+			heartbeatRunId,
+			requeued: true,
+		};
+	};
 
-	// Everything past the lock runs inside a try/finally so the credential lock is
-	// always released — including when setup (sockets, proxy, context, worktrees,
-	// file writes) throws before the exec block. Leaking it would queue every later
-	// run on this credential forever. Release is idempotent, so the explicit cleanup
-	// paths below don't double-free.
+	// Containers run on demand, and this run claims one **for itself**: the pool
+	// ladder reuses a warm container that last served this task, else any warm
+	// one, else resumes a suspended one, else provisions. What it never returns is
+	// a container another run is using - that one-run-per-container rule is the
+	// whole reason a memory blowout can no longer take down every sibling run in
+	// the project. Serialized per project, so concurrent dispatches into the same
+	// project cannot both provision.
+	//
+	// Claimed **after** the provider, runtime and credential are resolved, and not
+	// before: those three resolve to a `finalizeFailure` on an instance that is
+	// simply misconfigured (no credential, an override naming a retired provider),
+	// which is a normal state rather than an exceptional one. Claiming first meant
+	// every such wakeup provisioned a container and returned without giving it
+	// back - and a leaked claim is unrecoverable, since the ladder skips a busy
+	// member, the idle pass never stops one, and its memory counts against the
+	// instance budget forever. On a credential-less instance that walked the budget
+	// to exhaustion one wakeup at a time.
+	if (project.container_status !== ContainerStatus.Running) {
+		emit('stdout', '[runner] Starting the project container…\n');
+	}
+	let containerId: string;
+	let releaseContainer: () => Promise<void> = async () => undefined;
 	try {
-		await markHeartbeatRunRunning(deps.db, heartbeatRunId, runBroadcast, {
-			aiProviderConfigId: credential.configId,
-			provider,
-		});
+		const acquired = await acquireRunContainer(
+			{
+				db: deps.db,
+				docker: deps.docker,
+				dataDir: deps.dataDir,
+				wsManager: deps.wsManager,
+				masterKeyManager: deps.masterKeyManager,
+				logs: deps.logs,
+				containerLogStreamer: deps.containerLogStreamer,
+				sshAgentServer: deps.sshAgentServer,
+				// A run that has to provision its container clones through the
+				// provisioning bridge, which needs this to substitute the remote's
+				// credential placeholder — the run's own allocation comes later and is
+				// a different one.
+				egressProxy: deps.egressProxy,
+				egressCAPath: deps.egressCAPath,
+			},
+			project.id,
+			task?.id ?? null,
+		);
+		containerId = acquired.containerId;
+		releaseContainer = acquired.release;
+		// Before anything can go wrong inside it: from here on this run can be
+		// ended by its container dying, and only a caller that knows where it
+		// landed can tell that apart from a sibling container dying.
+		onContainerAcquired?.(containerId);
+		// Which container served this run, and the size it actually had. Written
+		// into the log rather than rendered from the run row because the member row
+		// is destroyed when the container is - the log is what still answers months
+		// later. The viewer turns the id into a link to that container's page.
+		if (acquired.allocation) {
+			emit(
+				'stdout',
+				`[runner] ${formatContainerMetaLogLine({ containerId, ...acquired.allocation })}\n`,
+			);
+		}
+	} catch (e) {
+		if (e instanceof PoolCapacityError) {
+			// Not a failure: the instance is at its memory budget, which the gate
+			// already knew and which a moment from now may not be true. Requeue so
+			// the run is dispatched again rather than burning the agent's turn on a
+			// transient capacity race - the contract PoolCapacityError documents.
+			return finalizeRequeue(e.message);
+		}
+		const message = e instanceof Error ? e.message : String(e);
+		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
+		return finalizeFailure(
+			`Could not start the project container: ${message} See Settings > Containers for its log.`,
+		);
+	}
+	// The run may have been aborted (e.g. timed out) while a slow provision ran.
+	if (signal?.aborted) {
+		await releaseContainer();
+		return finalizeAbort();
+	}
+	const runningProject: RunningProjectInfo = {
+		...project,
+		container_id: containerId,
+		container_status: ContainerStatus.Running,
+	};
+
+	// Everything past the claim runs inside a try/finally so every run-scoped
+	// resource is always released — including when setup (sockets, proxy, tunnel,
+	// context, worktrees, file writes) throws before the exec block. Leaking the
+	// credential lock would queue every later run on this credential forever;
+	// leaking the claim strands the container itself, which nothing reclaims.
+	//
+	// The three below are declared out here for the same reason, and each was
+	// genuinely stranded by a throw between its acquisition and the point
+	// `cleanupRunArtifacts` becomes reachable — `buildRunContext` is the realistic
+	// thrower, and it sits directly between them. Each leak is quiet in its own
+	// way: a live tunnel counts as activity on every backend, so the container
+	// never goes idle and bills instead of erroring, and on a managed backend its
+	// client keeps the run's three loopback ports, so the *next* run on that
+	// pooled container dies with EADDRINUSE having lost MCP and egress entirely.
+	// The ssh socket and the egress allocation each hold a host port.
+	//
+	// Every release here is idempotent, so the explicit cleanup paths below do not
+	// double-free.
+	let releaseCredentialLock: (() => void) | null = null;
+	let runTunnel: RunTunnel | null = null;
+	let sshSocketAllocated = false;
+	let egressProxyAllocated = false;
+	try {
+		const layout = SUBSCRIPTION_LAYOUTS[provider];
+		if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
+			// Records the true wait so the run comment reads honestly while blocked.
+			await deps.db.query(
+				`UPDATE heartbeat_runs SET queued_reason = $1
+				 WHERE id = $2 AND status = $3::heartbeat_run_status`,
+				['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
+			);
+			releaseCredentialLock = await acquireCredentialLock(credential.configId);
+		}
+
+		await markHeartbeatRunRunning(
+			deps.db,
+			heartbeatRunId,
+			runBroadcast,
+			{ aiProviderConfigId: credential.configId, provider },
+			// Recorded here rather than at insert because the container is acquired
+			// after the row exists. It is what lets a container's death fail exactly
+			// the runs that were on it (see `failProjectRuns`).
+			containerId,
+		);
 
 		// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
 		// since a run has no friendly identifier of its own.
@@ -1213,9 +1423,14 @@ export async function runAgent(
 		// `node` user, which makes those chowns a harmless no-op.
 		const runUser = await resolveContainerRunUser(deps.docker, containerId);
 
+		// Both legs are allocated on the host first, then handed to the tunnel as
+		// targets. Only after it is up are the container-facing descriptors built,
+		// from its endpoints - so nothing here ever names an address the container
+		// would have to reach by route.
 		let sshSocketContainerPath: string | null = null;
 		let sshSocketHostPath: string | null = null;
-		let bridge: BridgeRunnerArgs | null = null;
+		let sshHostTcpPort = 0;
+		let sshTokenHex: string | null = null;
 		if (deps.sshAgentServer) {
 			sshSocketHostPath = getRunSocketPath(deps.dataDir, heartbeatRunId);
 			const allocated = await deps.sshAgentServer.allocateRunSocket(
@@ -1224,53 +1439,17 @@ export async function runAgent(
 				sshSocketHostPath,
 			);
 			sshSocketContainerPath = `/run/hezo/${heartbeatRunId}.sock`;
-			bridge = {
-				socketPath: sshSocketContainerPath,
-				socketUser: runUser.name,
-				tokenHex: allocated.tokenHex,
-				hostName: 'host.docker.internal',
-				hostPort: allocated.tcpHostPort,
-			};
+			sshHostTcpPort = allocated.tcpHostPort;
+			sshTokenHex = allocated.tokenHex;
+			sshSocketAllocated = true;
 		}
 
-		let egressEnv: EgressEnvDescriptor | null = null;
+		let egressHost: { host: string; port: number; token: string | null } | null = null;
 		let egressAllocated = false;
 		if (deps.egressProxy && deps.egressCAPath) {
 			// Egress proxy is mandatory: agents may have placeholder secrets in
 			// their env. Failing fast prevents real secrets from leaking through
 			// a fall-through path. If allocation fails, the run aborts.
-			//
-			// Allocation only proves the host-side bind succeeded — not that the
-			// container can REACH the proxy. On a misconfigured native-Linux Docker
-			// host the proxy binds fine but containers can't connect, and the agent
-			// falls through to direct egress (`--noproxy`), defeating secret
-			// substitution, allowed_hosts, and audit. Gate on the captured
-			// connectivity outcome and abort with operator guidance when the proxy is
-			// known-unreachable. Fail OPEN on ok/skipped/unknown (and when no status
-			// holder is wired) so Docker Desktop and tests are unaffected.
-			if (deps.connectivityStatus && deps.connectivityProbe) {
-				// Re-confirm a BAD cached outcome before blocking (maxAge 0): the probe
-				// auto-rebinds against the live bind host, so a stale/race-poisoned
-				// loopback result self-heals instead of blocking for the whole staleness
-				// window. A good cached outcome short-circuits on the normal staleness.
-				const cached = deps.connectivityStatus.get().status;
-				const maxAge = shouldAbortForConnectivity(cached) ? 0 : CONNECTIVITY_STALE_MS;
-				const status = await deps.connectivityStatus.ensureFresh(deps.connectivityProbe, maxAge);
-				if (shouldAbortForConnectivity(status)) {
-					// Release the ssh socket allocated just above; the credential lock is
-					// freed by the outer finally.
-					if (deps.sshAgentServer && sshSocketHostPath) {
-						await deps.sshAgentServer.releaseRunSocket(heartbeatRunId).catch(() => {});
-					}
-					const guidance = formatContainerConnectivityMessage(status, {
-						serverPort: deps.serverPort,
-						containerBindHost: deps.connectivityStatus.get().bindHost,
-					});
-					return finalizeFailure(
-						`Egress proxy unreachable from agent containers — aborting to avoid leaking secrets via direct egress.\n\n${guidance}`,
-					);
-				}
-			}
 			const allocated = await deps.egressProxy.allocateRunProxy(heartbeatRunId, {
 				teamId: agent.team_id,
 				agentId: agent.id,
@@ -1278,13 +1457,76 @@ export async function runAgent(
 				label: runLabel,
 			});
 			egressAllocated = true;
-			egressEnv = {
+			egressProxyAllocated = true;
+			egressHost = {
 				host: allocated.proxyHost,
 				port: allocated.proxyPort,
-				containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
 				token: allocated.token,
 			};
 		}
+
+		// Loaded before the tunnel because its split-routing policy needs the
+		// connector hosts: the per-connector method allowlist is enforced *at the
+		// proxy*, so a connector routed direct would skip its policy check even when
+		// no secret is involved. They resolve from the db and the project alone -
+		// only the `hezo` descriptor needs the tunnel's endpoints, and that one is
+		// container loopback and never proxied - so nothing here waits on the
+		// tunnel. Threaded into `buildRunContext` after, so a run resolves them once.
+		const connectorDescriptors = await loadConnectorDescriptors(deps.db, project.id);
+
+		// The tunnel is how a container reaches Hezo - the only how, on every
+		// backend. Started here because it needs both allocations above: there is
+		// nothing to point the ssh and proxy targets at until they exist.
+		const tunnel: RunTunnel = await startRunTunnel({
+			engine: deps.docker,
+			containerId,
+			runUser,
+			files: deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT),
+			configRelPath: join('.hezo', 'tunnel', `${heartbeatRunId}.json`),
+			configContainerPath: `/workspace/.hezo/tunnel/${heartbeatRunId}.json`,
+			addresses: {
+				mcp: { host: '127.0.0.1', port: deps.serverPort },
+				ssh: { host: '127.0.0.1', port: sshHostTcpPort },
+				proxy: egressHost
+					? { host: egressHost.host, port: egressHost.port }
+					: { host: '127.0.0.1', port: 0 },
+			},
+			policy: await buildTunnelHostPolicy(deps.db, connectorDescriptors),
+		});
+		runTunnel = tunnel;
+		// The tunnel is the container's only path to Hezo, so losing it mid-run
+		// leaves the agent with no MCP tools, no egress proxy and no ssh agent for
+		// the rest of its budget - and it cannot even call `report_no_work`, which
+		// is itself an MCP tool. Fail the run at once and say why, rather than let
+		// it run on to be recorded as having produced no output.
+		tunnel.onClosed((why) => {
+			emit(
+				'stderr',
+				`\n[runner] ${why} — failing the run: the container can no longer reach Hezo\n`,
+			);
+			if (!runAbort.signal.aborted) runAbort.abort('tunnel_lost');
+		});
+		const endpoints: RunEndpoints = tunnel.endpoints;
+
+		const bridge: BridgeRunnerArgs | null =
+			sshSocketContainerPath && sshTokenHex
+				? {
+						socketPath: sshSocketContainerPath,
+						socketUser: runUser.name,
+						tokenHex: sshTokenHex,
+						hostName: endpoints.sshHost,
+						hostPort: endpoints.sshPort,
+					}
+				: null;
+
+		const egressEnv: EgressEnvDescriptor | null = egressHost
+			? {
+					host: endpoints.proxyHost,
+					port: endpoints.proxyPort,
+					containerCAPath: '/usr/local/share/ca-certificates/hezo-egress.crt',
+					token: egressHost.token,
+				}
+			: null;
 
 		const context = await buildRunContext(
 			deps,
@@ -1302,14 +1544,15 @@ export async function runAgent(
 			egressEnv,
 			runUser,
 			progressUpdate ?? null,
+			endpoints,
+			connectorDescriptors,
 		);
 
-		const hostPromptPath = getHostPromptPath(
-			deps.dataDir,
-			project.team_id,
-			project.id,
-			heartbeatRunId,
-		);
+		// Rooted at the workspace, which is what makes the prompt path relative and
+		// so switchable; the absolute form is still needed for the env var the
+		// container reads it from.
+		const workspaceFiles = deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT);
+		const promptRelPath = getPromptRelPath(heartbeatRunId);
 
 		const pricing = deps.pricing;
 		const priceFn = pricing
@@ -1321,8 +1564,12 @@ export async function runAgent(
 			const mount = context.subscriptionMount;
 			if (!mount?.rotates) return;
 			try {
-				if (existsSync(mount.hostAuthFile)) {
-					const rotated = readFileSync(mount.hostAuthFile, 'utf8');
+				// Through SandboxFiles: the *container* rewrote this file during the
+				// run, so a backend whose container is not on this machine has to
+				// read it back through the provider's file API rather than off disk.
+				const mountFiles = deps.docker.files(containerId, mount.containerDir);
+				if (await mountFiles.exists(mount.authFileRelative)) {
+					const rotated = await mountFiles.read(mount.authFileRelative);
 					if (!rotated || rotated === credential.value) return;
 					// The CLI rewrites this file on every run: a rotated credential on
 					// success, but an empty "tombstone" (blank tokens) when the refresh
@@ -1363,13 +1610,29 @@ export async function runAgent(
 					log.error(`Run ${heartbeatRunId} artifact cleanup step '${label}' failed:`, e);
 				}
 			};
+			// First, and unconditionally: a live channel counts as activity on every
+			// backend, so a tunnel left open keeps the container from ever going
+			// idle - a bill rather than an error, with nothing to surface it.
+			await step('close-tunnel', () => tunnel?.close());
 			await step('persist-rotated-auth', persistRotatedAuth);
-			await step('remove-prompt', () => rmSync(hostPromptPath, { force: true }));
-			await step('remove-home-mount', () => {
-				const dirToRemove = context.subscriptionMount?.hostDir ?? context.homeMount?.hostDir;
-				if (dirToRemove) {
-					rmSync(dirToRemove, { recursive: true, force: true });
-				}
+			await step('remove-prompt', () => workspaceFiles.remove(promptRelPath));
+			// The tunnel's config, for the same reason as the prompt: a pooled
+			// container serves run after run, so one file per run accumulates there
+			// forever. It carries hostnames only - never a secret value - so this is
+			// housekeeping rather than a scrub, but on a container with a 3 GB disk
+			// budget nothing gets to grow without a bound.
+			await step('remove-tunnel-config', () =>
+				workspaceFiles.remove(join('.hezo', 'tunnel', `${heartbeatRunId}.json`)),
+			);
+			await step('remove-home-mount', async () => {
+				// Removing the per-run home was never tidiness - it holds the provider
+				// credential, so this is a scrub. It goes through the seam because on a
+				// managed backend the directory is inside the sandbox, where a host
+				// `rmSync` would silently no-op while looking like it worked.
+				const dirToRemove =
+					context.subscriptionMount?.containerDir ?? context.homeMount?.containerDir;
+				if (!dirToRemove) return;
+				await deps.docker.files(containerId, dirToRemove).removeDir('.');
 			});
 			await step('release-ssh-socket', async () => {
 				if (deps.sshAgentServer) {
@@ -1381,15 +1644,20 @@ export async function runAgent(
 					await deps.egressProxy.releaseRunProxy(heartbeatRunId);
 				}
 			});
+			// Back into the pool, warm and idle, with this task recorded so the
+			// task's next run gets the container whose worktree is already built.
+			// Released here rather than only on the success path: a container held
+			// by a failed run is a container no other run can ever have.
+			await step('release-pool-container', () => releaseContainer());
 		};
 
-		if (signal?.aborted) {
+		if (runAbort.signal.aborted) {
 			await cleanupRunArtifacts();
 			return finalizeAbort();
 		}
 
 		try {
-			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+			if (runAbort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
 			// Progress-update runs only call MCP tools; they need no code worktree.
 			const prep = task
@@ -1400,6 +1668,7 @@ export async function runAgent(
 						heartbeatRunId,
 						bridge,
 						runUser,
+						egressEnv,
 						emit,
 						signal,
 					)
@@ -1408,13 +1677,17 @@ export async function runAgent(
 						designatedRepo: null as RepoRow | null,
 						worktrees: [] as WorktreeRef[],
 						clones: [] as RepoLoc[],
+						branch: null as string | null,
 						executor: null as GitExecutor | null,
+						recoveryFailed: new Set<string>(),
 					};
 
-			if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+			if (runAbort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-			mkdirSync(dirname(hostPromptPath), { recursive: true });
-			writeFileSync(hostPromptPath, context.taskPrompt);
+			// Through SandboxFiles rather than a host write: the container reads this
+			// file, so on a backend whose container is not on this machine the write
+			// has to go through the provider's file API. Nothing else about it changes.
+			await workspaceFiles.write(promptRelPath, context.taskPrompt);
 
 			const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
 			const promptSuffix = context.promptAsArg
@@ -1428,15 +1701,6 @@ export async function runAgent(
 			);
 
 			emit('stdout', `${invocationCommand}\n`);
-
-			const execId = await deps.docker.execCreate(containerId, {
-				Cmd: context.execCmd,
-				Env: context.env,
-				WorkingDir: prep.workingDir,
-				User: runUser.name,
-				AttachStdout: true,
-				AttachStderr: true,
-			});
 
 			// Scanned incrementally rather than over a retained transcript: the raw
 			// exec output is the full stream-json stream and never kept (see
@@ -1453,19 +1717,28 @@ export async function runAgent(
 				currentUsage = parser.getUsage();
 			};
 
-			await deps.docker.execStart(execId, { signal, onChunk });
+			// Unelevated: the agent writes into the bind-mounted worktree, and those
+			// files must stay owned by the run user rather than root.
+			const execOutcome = await dockerSandboxHandle(deps.docker, containerId, runUser).exec({
+				cmd: context.execCmd,
+				env: context.env,
+				workingDir: prep.workingDir,
+				// The derived signal, so a tunnel that dies mid-run tears the exec down
+				// instead of leaving it to burn the rest of the budget toolless.
+				signal: runAbort.signal,
+				onChunk,
+			});
 			const tail = parser.flush();
 			if (tail) emit('stdout', tail);
-			const execInfo = await deps.docker.execInspect(execId);
 			const durationMs = Date.now() - startTime;
-			const exitedClean = execInfo.ExitCode === 0;
+			const exitedClean = execOutcome.exitCode === 0;
 
 			// Report auto-pushes that were denied during the run. The post-commit hook
 			// is deliberately non-fatal, so without this the human sees a run that
 			// "succeeded" while its commits never left the container — the exact shape
 			// of a repo the connected GitHub account can read but not write.
 			for (const clone of prep.clones) {
-				const pushErrors = readPushErrors(clone);
+				const pushErrors = await readPushErrors(clone);
 				if (!pushErrors) continue;
 				emit(
 					'stderr',
@@ -1475,12 +1748,50 @@ export async function runAgent(
 				);
 			}
 
+			// Whether committed work is about to be left behind in this container only.
+			//
+			// Decided on a REF COMPARISON, not on the push-error log above: that log is
+			// append-only within a run and cleared at prep, so a push that failed at
+			// commit 3 and succeeded at commit 5 leaves a non-empty log with nothing
+			// actually unpushed. `findUnpushedWork` asks the authoritative question -
+			// is the local `hezo/<task>` tip reachable from a remote-tracking ref -
+			// which the log cannot answer.
+			//
+			// Three things follow from a positive finding, and all of them matter only
+			// once a project has more than one container (nothing fails at pool size 1,
+			// which is why no existing test caught this): the run is not a success, the
+			// commits are copied out to the bundle vault so a later run on a DIFFERENT
+			// container can pick them up, and the container is pinned against suspend
+			// and destroy for as long as it holds the only copy.
+			const unpushed =
+				prep.executor && prep.branch && prep.clones.length > 0
+					? await findUnpushedWork(prep.executor, prep.clones, prep.branch)
+					: { work: [], complete: false };
+			// The vault decides the PIN; `origin` decides the RUN. Separating the two is
+			// the point of the vault: a copy Hezo holds means the container is no longer
+			// the only place the work exists, so it may be released - but the work still
+			// has not reached the human's git host, so the run must still fail and say
+			// so. Conflating them would let a vaulted run read as a success.
+			const stranded = await vaultUnpushedWork(deps, project, containerId, unpushed, prep, emit);
+			await setPoolMemberUnpushedFlag(
+				deps.db,
+				containerId,
+				// `complete: false` means the check could not answer, so it may neither
+				// fail the run nor release a pin an earlier run set.
+				stranded ? true : unpushed.work.length > 0 ? false : unpushed.complete ? false : null,
+			);
+			const unpushedError =
+				unpushed.work.length > 0 ? describeUnpushedWork(unpushed.work) : undefined;
+
 			// Grok and Kimi Code emit no usage on their streams; recover it from the
 			// file each writes into the per-run home mount, then scrub that file (both
 			// can carry the provider credential). Falls back to null (⇒ $0) if the log
 			// is missing/unparseable; the home mount is removed at cleanup anyway.
-			const runUsage = recoverOffStreamRunUsage(runtimeType, context.homeMount, priceFn, (msg) =>
-				log.error(`Run ${heartbeatRunId}: ${msg}`),
+			const runUsage = await recoverOffStreamRunUsage(
+				runtimeType,
+				context.homeMount ? deps.docker.files(containerId, context.homeMount.containerDir) : null,
+				priceFn,
+				(msg) => log.error(`Run ${heartbeatRunId}: ${msg}`),
 			);
 
 			// A clean exit is only a real success if the run produced persisted
@@ -1507,9 +1818,20 @@ export async function runAgent(
 					'SELECT produced_output, reported_no_work, no_work_reason FROM heartbeat_runs WHERE id = $1',
 					[heartbeatRunId],
 				);
+				const hezoWrite = flagged.rows[0]?.produced_output ?? false;
+				// A dirty worktree counts as output **only** if the run could reach Hezo
+				// at all. Without that qualifier a run whose MCP server never connected -
+				// so it could not read a task, post a comment, or even call
+				// `report_no_work`, all of which are MCP tools - graded as a success on
+				// the strength of a scratch file, with no Hezo-side record of anything.
+				// A terminal error captured from the runtime's own report is exactly the
+				// signal for "nothing this run did was persisted anywhere Hezo can see".
+				const reachedHezo = hezoWrite || parser.getTerminalError() === null;
 				producedOutput =
-					(flagged.rows[0]?.produced_output ?? false) ||
-					(prep.executor !== null && (await anyWorktreeChanged(prep.executor, prep.worktrees)));
+					hezoWrite ||
+					(reachedHezo &&
+						prep.executor !== null &&
+						(await anyWorktreeChanged(prep.executor, prep.worktrees)));
 				reportedNoWork = flagged.rows[0]?.reported_no_work ?? false;
 				noWorkReason = flagged.rows[0]?.no_work_reason ?? null;
 			}
@@ -1523,19 +1845,23 @@ export async function runAgent(
 			//       via postAgentComment (admin inbox / agent wakeup), flipping the run
 			//       to a success. This is the deterministic backstop to the completeness
 			//       stop-hook judge (best-effort, model-dependent).
-			//   (2) an UNLINKED bold/leading-line address that reads like an ask
-			//       (`**slug** — … when you resume …`) — the wakes-no-one trap. We do NOT
-			//       auto-deliver or rewrite the agent's words to force a wake (that guesses
-			//       intent and overreaches). create_comment already warns the agent
-			//       interactively, but the final-message path skips that check, so surface
-			//       the same warning in the run log; the handoff is left undelivered.
-			//   (3) a plain DIRECT ANSWER (no mention, no ask) to a human who addressed
-			//       this agent by replying to or @-mentioning it — the exact "give me the
-			//       link" case. The human asked and expects the answer in the thread, but
-			//       the agent left it only in its final message, so post it verbatim as a
-			//       reply to the waking comment. Scoped to human-originated reply/mention
-			//       wakes where the run posted no comment of its own, so it never turns a
-			//       routine work-summary into thread noise.
+			//   (2) a NAME-ONLY address that reads like an ask — the unlinked bold/
+			//       leading-line form (`**slug** — … when you resume …`) or the passive
+			//       `@@slug` one (`Ready for @@slug review.`) — the wakes-no-one trap in
+			//       both its spellings. We do NOT auto-deliver or rewrite the agent's words
+			//       to force a wake (that guesses intent and overreaches). create_comment
+			//       already warns the agent interactively on both, but the final-message
+			//       path skips that check, so surface the same warning in the run log; the
+			//       handoff is left undelivered.
+			//   (3) a plain DIRECT ANSWER (no mention, no ask) to whoever addressed this
+			//       agent by replying to or @-mentioning it — the "give me the link" case,
+			//       and the review-handoff one where a teammate @-mentions the reviewer and
+			//       the verdict ends up only in the final message. The asker expects the
+			//       answer in the thread, so post it verbatim as a reply to the waking
+			//       comment. Scoped to wakes where the run posted no comment of its own, so
+			//       it never turns a routine work-summary into thread noise; agent-authored
+			//       wakes qualify only via an active mention, which is also what makes the
+			//       delivery non-looping (see the branch itself).
 			// Best-effort: a failure here must never throw out of the run-completion path.
 			// Runs on every runtime, including OpenCode, which has no stop-hook judge.
 			if (exitedClean && task) {
@@ -1543,10 +1869,19 @@ export async function runAgent(
 					const finalMessage = parser.getFinalAssistantMessage();
 					if (finalMessage?.trim()) {
 						const activeMentions = extractMentionSlugs(finalMessage);
-						// Unlinked bold/leading-line asks, scoped to the run team's roster +
-						// HQ instance agents + @admin (the slugs a mention here can wake).
+						// Name-only asks — a handoff written in a form that wakes nobody —
+						// scoped to the run team's roster + HQ instance agents + @admin (the
+						// slugs a mention here can wake). Both spellings count: the bare/bold
+						// name (`**slug** — …`) and the passive `@@slug`, which renders as a
+						// delivered-looking chip and is the likelier of the two to end a
+						// verdict report ("Ready for @@marketing-lead review.").
 						const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
-						const unlinkedAsks = detectUnlinkedTeammateAsks(finalMessage, roster);
+						const nameOnlyAsks = Array.from(
+							new Set([
+								...detectUnlinkedTeammateAsks(finalMessage, roster),
+								...detectPassiveTeammateAsks(finalMessage, roster),
+							]),
+						);
 						// A run woken by a human addressing this agent directly (reply to its
 						// comment / @-mention) is expected to answer in the thread. The waking
 						// comment id lets us both check its author is human (not an agent — we
@@ -1557,7 +1892,7 @@ export async function runAgent(
 							(wakeupPayload?.source === WakeupSource.Reply ||
 								wakeupPayload?.source === WakeupSource.Mention) &&
 							wakingCommentId !== null;
-						if (activeMentions.length > 0 || unlinkedAsks.length > 0 || directQuestionWake) {
+						if (activeMentions.length > 0 || nameOnlyAsks.length > 0 || directQuestionWake) {
 							// Text comments this run posted, with their task, used to skip a mention
 							// it already delivered (the same extractor fireCommentWakeups uses) and to
 							// tell whether it already answered this task's thread (case 3).
@@ -1570,7 +1905,7 @@ export async function runAgent(
 								for (const slug of extractMentionSlugs(c.content)) delivered.add(slug);
 							}
 
-							if (activeMentions.length > 0 || unlinkedAsks.length > 0) {
+							if (activeMentions.length > 0 || nameOnlyAsks.length > 0) {
 								// (1) Deliver stranded active mentions verbatim.
 								const undeliveredActive = activeMentions.filter((slug) => !delivered.has(slug));
 								if (undeliveredActive.length > 0) {
@@ -1598,21 +1933,33 @@ export async function runAgent(
 									);
 								}
 
-								// (2) Warn about a stranded bold-name ask — do NOT deliver or rewrite.
-								const strandedAsks = unlinkedAsks.filter((slug) => !delivered.has(slug));
+								// (2) Warn about a stranded name-only ask — do NOT deliver or rewrite.
+								const strandedAsks = nameOnlyAsks.filter((slug) => !delivered.has(slug));
 								if (strandedAsks.length > 0) {
 									const named = strandedAsks.map((s) => `**${s}**`).join(', ');
 									const fixes = strandedAsks.map((s) => `@${s}`).join(', ');
 									emit(
 										'stdout',
-										`\n[runner] WARNING: this run's final message addresses ${named} by name only, with no active @-mention — a bare or bold name, or a sign-off gate like "awaiting <name> sign-off", renders as text and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
+										`\n[runner] WARNING: this run's final message addresses ${named} without an active @-mention — a bare or bold name, a passive @@<name>, or a sign-off gate like "awaiting <name> sign-off" / "ready for <name> review", renders as inert text or a delivered-looking chip and wakes no one, so the handoff was NOT delivered. Post a comment with an active mention (${fixes}) to reach them.\n`,
 									);
 								}
 							} else if (directQuestionWake && !posted.rows.some((c) => c.task_id === task.id)) {
-								// (3) A human asked directly and the run posted no comment on this task —
-								// the answer is stranded in the final message. Deliver it only when the
-								// waking comment was authored by a human/admin (author not in
-								// member_agents), never for agent-to-agent replies/mentions.
+								// (3) Someone addressed this agent directly and the run posted no comment
+								// on this task — the answer is stranded in the final message. Deliver it
+								// when the ask was unambiguous: any human/admin reply or mention, or a
+								// TEAMMATE'S ACTIVE @-MENTION. That last case is the review-handoff one —
+								// a teammate @-mentions the reviewer, the reviewer does the whole review
+								// and ends the run with its verdict only in the final message, so the
+								// ticket sits in `review` with nobody woken. An agent's *reply* wake stays
+								// excluded as the routine chatter it usually is.
+								//
+								// Admitting agent mentions is safe for a structural reason, not a
+								// heuristic one: this branch only runs when the final message carries no
+								// active mention, so a comment auto-delivered here can never produce a
+								// Mention wakeup — fireCommentWakeups will at most fire an explicit
+								// *reply* wakeup on it. The next hop therefore arrives as
+								// Reply-authored-by-an-agent, which this branch skips, so two agents can
+								// never auto-deliver back and forth at each other.
 								const asker = await deps.db.query<{ from_agent: boolean }>(
 									`SELECT EXISTS (
 										SELECT 1 FROM member_agents ma WHERE ma.id = tc.author_member_id
@@ -1620,7 +1967,11 @@ export async function runAgent(
 									 FROM task_comments tc WHERE tc.id = $1`,
 									[wakingCommentId],
 								);
-								if (asker.rows.length > 0 && asker.rows[0].from_agent === false) {
+								const askerRow = asker.rows[0];
+								const askIsDeliverable =
+									askerRow !== undefined &&
+									(askerRow.from_agent === false || wakeupPayload?.source === WakeupSource.Mention);
+								if (askIsDeliverable) {
 									await postAgentComment({
 										db: deps.db,
 										wsManager: deps.wsManager,
@@ -1650,6 +2001,130 @@ export async function runAgent(
 				}
 			}
 
+			// Structural "no-wake exit" backstop — the one check in this file that
+			// reads no prose at all.
+			//
+			// The two guardrails above and create_comment's advisories all classify
+			// TEXT, so each new phrasing that strands a handoff needs new vocabulary.
+			// This one asks a question the system can answer from its own state: did
+			// this run end having woken NOBODY, on a task it left open, after naming a
+			// teammate in a form that notifies no one? That combination is what a
+			// stranded handoff actually IS, whatever words carried it.
+			//
+			// It also covers the structural hole the net above cannot reach: that net
+			// only inspects the run's FINAL MESSAGE, and create_comment only inspects
+			// one comment at a time, so nothing looks at what a run achieved in
+			// aggregate — which is exactly where a passively-addressed ask posted as a
+			// comment lives.
+			//
+			// Warn-only, deliberately: the standing posture is that the system never
+			// fabricates a wake from a non-`@` signal.
+			if (exitedClean && task) {
+				try {
+					const fresh = await deps.db.query<{ status: string }>(
+						'SELECT status::text AS status FROM tasks WHERE id = $1',
+						[task.id],
+					);
+					const status = fresh.rows[0]?.status;
+					const stillOpen =
+						Boolean(status) && !(TERMINAL_TASK_STATUSES as readonly string[]).includes(status);
+					if (stillOpen) {
+						const posted = await deps.db.query<{
+							content: unknown;
+							parent_comment_id: string | null;
+						}>(
+							`SELECT content, parent_comment_id FROM task_comments
+							 WHERE created_by_run_id = $1 AND content_type = 'text'`,
+							[heartbeatRunId],
+						);
+						// A wake is an active `@`-mention or a reply (which wakes the parent
+						// author). agent_wakeup_requests carries no created_by_run_id, so this
+						// is derived from the run's own comments rather than queried directly.
+						const wokeSomeone = posted.rows.some(
+							(c) => extractMentionSlugs(c.content).length > 0 || c.parent_comment_id !== null,
+						);
+						if (!wokeSomeone) {
+							const finalMessage = parser.getFinalAssistantMessage() ?? '';
+							const outward = [...posted.rows.map((c) => c.content), finalMessage];
+							const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
+							const named = new Set<string>();
+							for (const text of outward) {
+								for (const slug of extractPassiveMentionSlugs(text)) {
+									if (roster.includes(slug)) named.add(slug);
+								}
+								for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
+							}
+							if (named.size > 0) {
+								const list = Array.from(named);
+								const namedList = list.map((s) => `**${s}**`).join(', ');
+								const fixes = list.map((s) => `@${s}`).join(', ');
+								emit(
+									'stdout',
+									`\n[runner] WARNING: this run woke no one. It named ${namedList} without an ` +
+										`active @-mention and left ${task.identifier} open, so whoever acts next was ` +
+										`never notified. If you were handing the work over, post a comment with an ` +
+										`active mention (${fixes}); if you were only referring to them, no action ` +
+										`is needed.\n`,
+								);
+							}
+						}
+					}
+				} catch (e) {
+					log.error(`Run ${heartbeatRunId} no-wake exit check failed:`, e);
+				}
+			}
+
+			// Stray-project-doc net. Project docs live in the database, and every
+			// prompt says so, but an agent that reaches for the Write tool anyway
+			// gets no error: writing a fresh path SUCCEEDS, so the DB doc silently
+			// stays stale and a shadow copy lands in the repo. This is the
+			// deterministic backstop for that - it reaches every runtime, including
+			// the ones with no blockable tool hook at all.
+			//
+			// Warn, never auto-ingest: the file's relationship to the doc is a guess
+			// (newer? older? a partial draft?), and guessing wrong overwrites real
+			// work. Same posture as the name-only-ask branch above.
+			//
+			// Scope is deliberately narrow: an untracked `.md` whose basename matches
+			// an ACTIVE project-doc slug in this project. A tracked file of the same
+			// name is a genuine repo file (a repo may legitimately carry its own
+			// spec.md) and is left alone. A doc-shaped file with a name no doc uses
+			// is not flagged - that would be guesswork, and this net is worth more
+			// being trusted than being exhaustive.
+			if (exitedClean && project && prep.executor && prep.worktrees.length > 0) {
+				try {
+					const slugs = await deps.db.query<{ slug: string }>(
+						`SELECT slug FROM documents
+						 WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL`,
+						[project.id],
+					);
+					const docSlugs = new Set(slugs.rows.map((r) => r.slug.toLowerCase()));
+					if (docSlugs.size > 0) {
+						const strays: string[] = [];
+						for (const wt of prep.worktrees) {
+							const changed = await worktreeChangedPaths(prep.executor, wt.loc);
+							for (const p of changed) {
+								const base = p.split('/').pop() ?? p;
+								if (!base.toLowerCase().endsWith('.md')) continue;
+								if (!docSlugs.has(base.toLowerCase())) continue;
+								if (await worktreeTracksPath(prep.executor, wt.loc, p)) continue;
+								strays.push(p);
+							}
+						}
+						if (strays.length > 0) {
+							emit(
+								'stderr',
+								`\n[runner] WARNING: this run wrote ${strays.join(', ')} to the repo, but ${
+									strays.length === 1 ? 'that filename is' : 'those filenames are'
+								} a project doc - project docs live in the database, not the filesystem, so the file changed nothing anyone will read and the real doc is now stale. Re-apply the change with write_project_doc (or edit_project_doc for part of one) and drop the file from the worktree.\n`,
+							);
+						}
+					}
+				} catch (e) {
+					log.error(`Run ${heartbeatRunId} stray-project-doc check failed:`, e);
+				}
+			}
+
 			// A clean exit where the runtime force-terminated still-running background
 			// work is NOT a success: the run abandoned unfinished work (e.g. a
 			// deep-research Workflow that never got to synthesize its report) even
@@ -1659,7 +2134,10 @@ export async function runAgent(
 				exitedClean && runtimeType === AgentRuntime.ClaudeCode && backgroundTermination.finish();
 
 			const success =
-				exitedClean && (producedOutput || reportedNoWork) && !backgroundWorkTerminated;
+				exitedClean &&
+				(producedOutput || reportedNoWork) &&
+				!backgroundWorkTerminated &&
+				!unpushedError;
 			const backgroundError = backgroundWorkTerminated
 				? 'run ended with background tasks still running — the runtime terminated the unfinished work before it completed, so the run abandoned incomplete work'
 				: undefined;
@@ -1667,15 +2145,51 @@ export async function runAgent(
 				exitedClean && !producedOutput && !reportedNoWork && !backgroundWorkTerminated
 					? 'run produced no output (no code changes, comments, tasks, documents, or other writes)'
 					: undefined;
+			// A process a signal destroyed reports nothing at all: it emits no terminal
+			// event for the parser to capture, and the two errors above are gated on a
+			// clean exit. Without this the run row's error is empty and the only trace
+			// of an out-of-memory kill is a bare `Killed` in the log.
+			//
+			// The memory cap is read only once a signal is in hand, so a run that exits
+			// normally pays no extra query.
+			const signalError =
+				(signalFromExitCode(execOutcome.exitCode)
+					? describeSignalExit(execOutcome.exitCode, {
+							memoryLimitGib: await projectContainerMemoryGb(deps.db, project.id),
+						})
+					: null) ?? undefined;
 			// A failed run's terminal error (e.g. a provider billing/auth rejection)
 			// otherwise lives only in the log; surface it on the run row so the board
 			// shows why the run failed instead of a bare "failed".
 			const terminalError = success ? null : parser.getTerminalError();
-			if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
+			// Ordered by what the human has to act on. Stranded commits come first
+			// because they are the only one where the fix is time-sensitive: the work
+			// exists in exactly one container.
+			//
+			// `terminalError` outranks `noOutputError` because it is the *cause* and
+			// the other is the symptom: a run whose MCP server never connected, or
+			// whose provider rejected the credential, produced no output precisely
+			// because of that - and reporting "produced no output" first sends the
+			// reader after the model instead of the transport.
+			//
+			// `signalError` outranks `terminalError` by that same rule one rung up:
+			// nothing the runtime reported mid-stream caused the kernel to destroy the
+			// process, and the kill is the later and dispositive fact. Demoting the
+			// terminal error costs the log nothing, because both of its writers already
+			// push their own line into the stream as they detect it.
+			//
+			// Its position relative to `backgroundError` and `noOutputError` is
+			// arbitrary - both are gated on a clean exit and so cannot co-occur with a
+			// signal. It stays below `unpushedError` deliberately, at the accepted cost
+			// that a run that committed and was then killed reports the stranded
+			// commits and leaves the signal to the exit-code column.
+			if (unpushedError) emit('stderr', `\n[runner] ${unpushedError}\n`);
+			else if (backgroundError) emit('stderr', `\n[runner] ${backgroundError}\n`);
+			else if (signalError) emit('stderr', `\n[runner] ${signalError}\n`);
+			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
 			else if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 			else if (reportedNoWork && !producedOutput)
 				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
-			else if (terminalError) emit('stderr', `\n[runner] ${terminalError}\n`);
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -1683,9 +2197,15 @@ export async function runAgent(
 				heartbeatRunId,
 				{
 					status: success ? HeartbeatRunStatus.Succeeded : HeartbeatRunStatus.Failed,
-					exitCode: execInfo.ExitCode,
+					exitCode: execOutcome.exitCode,
 					durationMs,
-					error: backgroundError ?? noOutputError ?? terminalError ?? undefined,
+					error:
+						unpushedError ??
+						backgroundError ??
+						signalError ??
+						terminalError ??
+						noOutputError ??
+						undefined,
 					// Grok's usage comes from the debug log (runUsage); every other
 					// runtime reports it on the stream (parser.getUsage()).
 					usage: runUsage ?? parser.getUsage(),
@@ -1697,13 +2217,25 @@ export async function runAgent(
 			);
 
 			await cleanupRunArtifacts();
-			return { success, exitCode: execInfo.ExitCode, stderr: '', durationMs, heartbeatRunId };
+			return { success, exitCode: execOutcome.exitCode, stderr: '', durationMs, heartbeatRunId };
 		} catch (error) {
 			const durationMs = Date.now() - startTime;
 			const isAbort = (error as Error).name === 'AbortError';
-			const reason = runAbortReason(signal);
+			const reason = runAbortReason(runAbort.signal);
 			const errorMessage = abortErrorMessage(reason) ?? (error as Error).message;
-			const status = isAbort ? abortedRunStatus(reason) : HeartbeatRunStatus.Failed;
+			// The **signal** decides the status, not the shape of the thrown error.
+			// Only Docker's exec reliably rejects with an `AbortError` when its
+			// attach is torn down; a managed backend's exec may reject with
+			// anything or resolve outright, and keying on the error name there
+			// recorded a timed-out run as `failed` while still stamping it with the
+			// timeout's own message - measured against the live Daytona API. An
+			// error with no abort reason behind it is a genuine failure; a bare
+			// abort (user cancel, shutdown) is still `cancelled`.
+			const status = reason
+				? abortedRunStatus(reason)
+				: isAbort
+					? HeartbeatRunStatus.Cancelled
+					: HeartbeatRunStatus.Failed;
 
 			// Aborting the exec only tears down its attach stream — Docker leaves the
 			// agent CLI running in the container, so a user-terminated or timed-out run
@@ -1741,6 +2273,35 @@ export async function runAgent(
 				runBroadcast,
 			);
 
+			// A lost output stream is the infrastructure losing the run, not the agent
+			// failing it: the channel carrying stdout died while the command was still
+			// going. That is the same class as the run's driver dying, which already
+			// has a bounded retry that carries the previous attempt's log tail
+			// forward and escalates to an approval once it stops being worth
+			// retrying - so it takes that path instead of burning the agent's turn on
+			// a transport fault. Best-effort: a failure to queue the retry must not
+			// replace the real error.
+			if (error instanceof ExecStreamLostError) {
+				await (async () => {
+					// Counted the same way the orphan detector counts it, so repeated
+					// transport losses on one agent converge on the same ceiling rather
+					// than retrying forever.
+					const bumped = await deps.db.query<{ process_loss_retry_count: number }>(
+						`UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1
+						 WHERE id = $1 RETURNING process_loss_retry_count`,
+						[heartbeatRunId],
+					);
+					await retryOrEscalateLostRun(deps.db, {
+						runId: heartbeatRunId,
+						memberId: agent.id,
+						teamId: runTeamId,
+						priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
+					});
+				})().catch((e) =>
+					log.error(`Run ${heartbeatRunId}: could not queue a transport retry:`, e),
+				);
+			}
+
 			await cleanupRunArtifacts();
 			return {
 				success: false,
@@ -1753,6 +2314,30 @@ export async function runAgent(
 		}
 	} finally {
 		releaseCredentialLock?.();
+		// These outlive every explicit cleanup path above, so this is the only
+		// release that covers a throw in setup. All idempotent, so the success
+		// path's own releases - including the one that records task affinity - are
+		// not undone here. Each is isolated: a failed release must not stop the
+		// others, since between them they hold a container, two host ports and an
+		// exec that keeps the container awake.
+		for (const [label, release] of [
+			['tunnel', () => runTunnel?.close()],
+			[
+				'ssh-socket',
+				() => (sshSocketAllocated ? deps.sshAgentServer?.releaseRunSocket(heartbeatRunId) : null),
+			],
+			[
+				'egress-proxy',
+				() => (egressProxyAllocated ? deps.egressProxy?.releaseRunProxy(heartbeatRunId) : null),
+			],
+			['pool-container', () => releaseContainer()],
+		] as const) {
+			try {
+				await release();
+			} catch (e) {
+				log.error(`Run ${heartbeatRunId} final release of '${label}' failed:`, e);
+			}
+		}
 	}
 }
 
@@ -1786,6 +2371,92 @@ async function anyWorktreeChanged(
 	return false;
 }
 
+/**
+ * Copy a run's undelivered commits into the bundle vault, and drop stored bundles
+ * whose work has since reached the remote.
+ *
+ * Returns whether any clone is **still** the only place its commits exist - which
+ * is exactly the condition the container pin encodes. A clone whose work was
+ * vaulted is not stranded (Hezo holds a copy); a clone whose bundle could not be
+ * built, was too large, or could not be moved is, and the pin keeps its container
+ * alive until a later run gets the work out.
+ *
+ * Both halves report into the run log rather than throwing: this runs at finalize,
+ * where the run is already being failed for the unpushed work itself, and a
+ * recovery failure must sharpen that error rather than replace it with a stack.
+ */
+async function vaultUnpushedWork(
+	deps: RunnerDeps,
+	project: { id: string },
+	containerId: string,
+	unpushed: UnpushedWorkScan,
+	prep: {
+		executor: GitExecutor | null;
+		clones: RepoLoc[];
+		branch: string | null;
+		recoveryFailed: Set<string>;
+	},
+	emit: (stream: 'stdout' | 'stderr', text: string) => void,
+): Promise<boolean> {
+	// No executor means no clone was prepared, so the scan found nothing and there
+	// is nothing to copy - but an unanswerable scan still may not clear a pin.
+	if (!prep.executor || !prep.branch) return unpushed.work.length > 0;
+	const vault = createBundleVault(deps.dataDir);
+	let stranded = false;
+
+	for (const item of unpushed.work) {
+		const repoName = basename(item.repo.containerPath);
+		const key = { projectId: project.id, repoName, branch: item.branch };
+		const saved = await saveRecoveryBundle(
+			vault,
+			deps.docker.files(containerId, item.repo.containerPath),
+			prep.executor,
+			item.repo,
+			key,
+		);
+		if (saved.ok) {
+			emit(
+				'stderr',
+				`[system] ${repoName}: kept a recovery copy of ${item.commits} unpushed ` +
+					`commit(s) on ${item.branch} — a later run will pick them up, but they are ` +
+					`still not on the remote.\n`,
+			);
+		} else {
+			stranded = true;
+			emit(
+				'stderr',
+				`[system] ${repoName}: could not keep a recovery copy (${saved.reason}) — this ` +
+					`container is held open because it has the only copy of ${item.commits} ` +
+					`commit(s) on ${item.branch}.\n`,
+			);
+		}
+	}
+
+	// The invalidation half. A clone that answered "nothing unpushed" has its work
+	// on the remote, so any bundle stored for it is a stale copy of safe work -
+	// the one condition under which the vault drops anything.
+	if (unpushed.complete) {
+		const withWork = new Set(unpushed.work.map((w) => w.repo.containerPath));
+		for (const clone of prep.clones) {
+			if (withWork.has(clone.containerPath)) continue;
+			// "This clone has nothing unpushed" only implies "the work reached
+			// origin" when this clone actually *has* the work. If a stored bundle
+			// could not be applied, the commits live solely in that bundle and the
+			// scan is trivially clean here - dropping it then destroys the only
+			// remaining copy, which is the precise failure the vault exists to
+			// prevent. Keep it and let a later run, on a container where the restore
+			// works, be the one that clears it.
+			if (prep.recoveryFailed.has(clone.containerPath)) continue;
+			await releaseRecoveryBundle(vault, {
+				projectId: project.id,
+				repoName: basename(clone.containerPath),
+				branch: prep.branch,
+			});
+		}
+	}
+	return stranded;
+}
+
 async function prepareWorktrees(
 	deps: RunnerDeps,
 	project: RunningProjectInfo,
@@ -1793,6 +2464,13 @@ async function prepareWorktrees(
 	heartbeatRunId: string,
 	bridge: BridgeRunnerArgs | null,
 	runUser: ContainerRunUser,
+	/**
+	 * The run's egress proxy as the container reaches it. Prep clones and
+	 * fetches authenticate with a placeholder only the proxy can substitute, so
+	 * without this a private repo is refused upstream as a bad token — the same
+	 * failure a provisioning clone hits without its own allocation.
+	 */
+	egress: EgressEnvDescriptor | null,
 	emit: (stream: 'stdout' | 'stderr', text: string) => void,
 	signal?: AbortSignal,
 ): Promise<{
@@ -1801,7 +2479,16 @@ async function prepareWorktrees(
 	worktrees: WorktreeRef[];
 	/** Each prepared repo's clone — where the auto-push hook records failed pushes. */
 	clones: RepoLoc[];
+	/** The task branch every prepared worktree is on, or null when no repo was prepared. */
+	branch: string | null;
 	executor: GitExecutor | null;
+	/**
+	 * Clones (by container path) that had a stored recovery bundle which could
+	 * **not** be applied. Carried to finalize because it is the one thing that
+	 * makes "this clone has nothing unpushed" uninformative: the commits exist,
+	 * they are just not here - so the vault must not drop its copy.
+	 */
+	recoveryFailed: Set<string>;
 }> {
 	const emitSystem = (stream: 'stdout' | 'stderr', text: string) =>
 		emit(stream, `[system] ${text}\n`);
@@ -1819,20 +2506,34 @@ async function prepareWorktrees(
 			designatedRepo: null,
 			worktrees: [],
 			clones: [],
+			branch: null,
 			executor: null,
+			recoveryFailed: new Set<string>(),
 		};
 	}
 
 	return withProjectGitLock(project.id, async () => {
+		// Declared before the first early return: it is a pure function of the task,
+		// and every exit from here reports which branch the run's work is on.
+		const branchName = `hezo/${task.identifier}`;
+		// Repos whose stored recovery bundle could not be applied this run. See the
+		// field's docstring on the return type - it is what stops finalize reading
+		// "nothing unpushed here" as "the work reached origin".
+		const recoveryFailed = new Set<string>();
 		// All git runs inside the project container; the host only does the bind-mount
-		// filesystem checks. SSH-transport ops authenticate through the run's bridge.
-		// The team's git identity (+ signing) is passed so the worktree catch-up merge
-		// can record a (verified) merge commit; the run team owns this, matching the
-		// agent's own in-container commits.
+		// filesystem checks. Remote ops authenticate over HTTPS with a placeholder the
+		// egress proxy substitutes, so they carry the run's proxy env — the same
+		// entries the agent CLI gets, from the same builder. The team's git identity
+		// (+ signing) is passed so the worktree catch-up merge can record a (verified)
+		// merge commit; the run team owns this, matching the agent's own in-container
+		// commits.
 		const gitIdentityEnv = await buildGitIdentityEnv(deps.db, deps.masterKeyManager, {
 			projectId: project.id,
 			teamId: project.team_id,
 		});
+		const gitPrepEnv = egress
+			? [...gitIdentityEnv, ...buildEgressProxyEnv(egress)]
+			: gitIdentityEnv;
 		// The run id doubles as the exec scope marker so an abandoned prep op's
 		// git/ssh/bridge tree stays killable; the agent CLI hasn't started yet, so
 		// a prep-abort marker kill can only hit prep's own processes.
@@ -1842,7 +2543,7 @@ async function prepareWorktrees(
 			bridge,
 			runUser,
 			heartbeatRunId,
-			gitIdentityEnv,
+			gitPrepEnv,
 			signal,
 		);
 
@@ -1867,7 +2568,9 @@ async function prepareWorktrees(
 				designatedRepo: null,
 				worktrees: [],
 				clones: [],
+				branch: branchName,
 				executor,
+				recoveryFailed,
 			};
 		}
 
@@ -1887,15 +2590,16 @@ async function prepareWorktrees(
 		// the run-user) can populate it. No-op when the run-user is root.
 		await chownToRunUser(deps.docker, project.container_id, runUser, [containerWorktreeRoot]);
 
-		const branchName = `hezo/${task.identifier}`;
-		const repoLocOf = (name: string): RepoLoc => ({
-			hostPath: join(workspaceRoot, name),
-			containerPath: `${CONTAINER_WORKSPACE_ROOT}/${name}`,
-		});
-		const wtLocOf = (name: string): WorktreeLoc => ({
-			hostPath: join(taskWorktreeRoot, name),
-			containerPath: `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${name}`,
-		});
+		// Addressed inside the container, with the seam rooted there. A host path
+		// would only line up while the container is on this machine.
+		const repoLocOf = (name: string): RepoLoc => {
+			const containerPath = `${CONTAINER_WORKSPACE_ROOT}/${name}`;
+			return { containerPath, files: deps.docker.files(project.container_id, containerPath) };
+		};
+		const wtLocOf = (name: string): WorktreeLoc => {
+			const containerPath = `${CONTAINER_WORKTREES_ROOT}/${task.identifier}/${name}`;
+			return { containerPath, files: deps.docker.files(project.container_id, containerPath) };
+		};
 
 		const worktreeErrors = new Map<string, string>();
 		for (const repo of repos.rows) {
@@ -1903,7 +2607,7 @@ async function prepareWorktrees(
 			const repoName = repoNameFromIdentifier(repo.repo_identifier);
 			const repoLoc = repoLocOf(repoName);
 
-			if (!existsSync(join(repoLoc.hostPath, '.git'))) {
+			if (!(await repoLoc.files.exists('.git'))) {
 				worktreeErrors.set(repo.id, 'repo is not cloned');
 				emitSystem('stderr', `(skipping worktree for ${repoName} — not cloned)`);
 				continue;
@@ -1915,8 +2619,8 @@ async function prepareWorktrees(
 			// worktree. Idempotent and best-effort (never throws). Clearing the hook's
 			// error log here scopes what the run reports at finalize to this run's own
 			// failed pushes.
-			ensurePushHook(repoLoc);
-			clearPushErrors(repoLoc);
+			await ensurePushHook(repoLoc);
+			await clearPushErrors(repoLoc);
 
 			// Bootstrap a connected repo that has no commits yet: `git worktree add`
 			// can't branch off an unborn HEAD, so an empty remote would otherwise fail
@@ -1945,6 +2649,35 @@ async function prepareWorktrees(
 			const ffWarn = await fastForwardLocalDefault(executor, repoLoc);
 			if (ffWarn) emitSystem('stderr', `${repoName}: ${ffWarn}`);
 
+			// Recover commits an earlier run left in a DIFFERENT container because its
+			// push was denied. This is the half of the durability story that only
+			// matters once a project has more than one container: without it, run 2
+			// silently starts from a remote that never received run 1's work.
+			//
+			// Strictly after the origin fetch above: the stored bundle is a delta whose
+			// prerequisites are the remote tips, so git refuses to apply it to a clone
+			// that has not caught up. That ordering is enforced by git, not just by
+			// this comment.
+			const recovered = await restoreRecoveryBundle(
+				createBundleVault(deps.dataDir),
+				deps.docker.files(project.container_id, repoLoc.containerPath),
+				executor,
+				repoLoc,
+				{ projectId: project.id, repoName, branch: branchName },
+			);
+			if (!recovered.ok) {
+				// A bundle exists for this branch and this clone does not have its
+				// commits. Recorded so finalize does not mistake "nothing unpushed
+				// here" for "the work is safely on origin" and drop the only copy.
+				recoveryFailed.add(repoLoc.containerPath);
+				emitSystem('stderr', `${repoName}: ${recovered.reason}`);
+			} else if (recovered.bytes !== null) {
+				emitSystem(
+					'stdout',
+					`${repoName}: recovered commits an earlier run could not push (${recovered.bytes} bytes)`,
+				);
+			}
+
 			emitSystem('stdout', `git worktree ${repoName}...`);
 			const wt = await ensureTaskWorktreeWithRetry(
 				executor,
@@ -1965,6 +2698,17 @@ async function prepareWorktrees(
 				if (wt.created) {
 					emitSystem('stdout', `git worktree add ${repoName} @ ${branchName}`);
 				}
+				// Bring any recovered commits onto the task branch itself. Fetching them
+				// above made them present (so nothing is lost); this is what makes them
+				// the agent's starting point rather than a ref it would have to know to
+				// look for. Fast-forward only, and non-fatal either way.
+				const replayed = await fastForwardFromRecovery(executor, wtLocOf(repoName), branchName);
+				if (replayed.warning) {
+					emitSystem('stderr', `${repoName}: ${replayed.warning}`);
+				} else if (replayed.merged) {
+					emitSystem('stdout', `${repoName}: replayed recovered commits onto ${branchName}`);
+				}
+
 				// Catch the task branch up to the freshly-fetched trunk so a resumed run
 				// starts from current default instead of forcing the agent to merge by
 				// hand. A merge failure is non-fatal — the worktree is still usable and
@@ -1984,7 +2728,9 @@ async function prepareWorktrees(
 				designatedRepo: null,
 				worktrees: [],
 				clones: [],
+				branch: branchName,
 				executor,
+				recoveryFailed,
 			};
 		}
 
@@ -2011,12 +2757,71 @@ async function prepareWorktrees(
 			if (worktreeErrors.has(repo.id)) continue;
 			const repoName = repoNameFromIdentifier(repo.repo_identifier);
 			const loc = wtLocOf(repoName);
-			if (!existsSync(join(loc.hostPath, '.git'))) continue;
+			if (!(await loc.files.exists('.git'))) continue;
 			worktrees.push({ loc, headBefore: await getWorktreeHead(executor, loc) });
 			clones.push(repoLocOf(repoName));
 		}
 
-		return { workingDir, designatedRepo: primary ?? null, worktrees, clones, executor };
+		// Reclaim the worktrees of finished tasks before the agent starts. Worktrees
+		// are deliberately kept after a run (a task gets many runs and reusing its
+		// worktree is the common case), so a container that serves twenty tasks
+		// accumulates twenty worktrees and their node_modules. On the operator's own
+		// daemon that only costs disk; a managed sandbox has a few GB in total, and
+		// package caches cannot be moved onto the shared store, so this is the only
+		// lever on that budget.
+		//
+		// Bounded per repo so a long backlog costs a predictable amount per run, and
+		// best-effort: reclaimed disk is never worth failing a run over. Only tasks
+		// that are terminal or gone are touched, and committed work survives on the
+		// `hezo/<identifier>` branch ref regardless.
+		try {
+			const gc = await collectFinishedWorktrees(
+				deps.db,
+				executor,
+				project.id,
+				clones,
+				undefined,
+				undefined,
+				// Never this run's own worktree: a run on a closed task (a comment,
+				// a mention, a Coach review) would otherwise have prep delete the
+				// directory it just set as the working directory.
+				task.identifier,
+			);
+			if (gc.removed.length > 0) {
+				emitSystem(
+					'stdout',
+					`(reclaimed ${gc.removed.length} finished task worktree(s)${gc.deferred ? ', more remain for the next run' : ''})`,
+				);
+			}
+		} catch (e) {
+			log.error(`Run ${heartbeatRunId}: worktree GC failed:`, e);
+		}
+
+		// Measure what the container is using *after* the GC above, so the figure
+		// the pool recycles on reflects the disk that is actually unavailable
+		// rather than what a reclaim was about to free. A container at the ceiling
+		// is replaced on the next acquire instead of reused, because one that fills
+		// up mid-run fails that run partway through.
+		//
+		// Null means the measurement could not be taken, which leaves the previous
+		// figure alone - reporting an unmeasurable container as empty would defeat
+		// the rung entirely.
+		try {
+			const used = await deps.docker.diskUsedBytes(project.container_id, CONTAINER_WORKSPACE_ROOT);
+			if (used !== null) await setPoolMemberDiskUsage(deps.db, project.container_id, used);
+		} catch (e) {
+			log.error(`Run ${heartbeatRunId}: disk measurement failed:`, e);
+		}
+
+		return {
+			workingDir,
+			designatedRepo: primary ?? null,
+			worktrees,
+			clones,
+			branch: branchName,
+			executor,
+			recoveryFailed,
+		};
 	});
 }
 
@@ -2111,7 +2916,7 @@ export async function loadAgentAttachmentsForComments(
 	db: Db,
 	commentIds: string[],
 	masterKeyManager: MasterKeyManager,
-	serverPort: number,
+	assetOrigin: string,
 ): Promise<Map<string, AgentAttachment[]>> {
 	if (commentIds.length === 0) return new Map();
 	const rows = await db.query<{
@@ -2136,7 +2941,7 @@ export async function loadAgentAttachmentsForComments(
 			original_filename: row.original_filename,
 			content_type: row.content_type,
 			byte_size: row.byte_size,
-			url: await signAgentAssetUrl(row.id, masterKeyManager, serverPort),
+			url: await signAgentAssetUrl(row.id, masterKeyManager, assetOrigin),
 		});
 		out.set(row.comment_id, list);
 	}
@@ -2176,7 +2981,7 @@ export async function loadCommentHistory(
 	db: Db,
 	taskId: string,
 	masterKeyManager: MasterKeyManager,
-	serverPort: number,
+	assetOrigin: string,
 	opts: { limit?: number } = {},
 ): Promise<RenderableComment[]> {
 	const { limit } = opts;
@@ -2205,7 +3010,7 @@ export async function loadCommentHistory(
 		db,
 		ordered.map((c) => c.id),
 		masterKeyManager,
-		serverPort,
+		assetOrigin,
 	);
 
 	return ordered.map((c) => ({
@@ -2306,13 +3111,72 @@ export interface ProgressUpdateGoal {
 }
 
 export interface ProgressUpdateContext {
+	/** Due goals. May be empty — a progress-update run does not require goals. */
 	goals: ProgressUpdateGoal[];
+	/**
+	 * Deterministically-selected candidate tasks for the Progress page's three columns. Optional
+	 * so a caller that only wants the goal half (tests, previews) need not build them.
+	 */
+	activityCandidates?: ProgressActivityCandidates;
+}
+
+/** One candidate column rendered into the prompt, with the question its lines must answer. */
+const ACTIVITY_COLUMN_PROMPTS: {
+	kind: ProgressActivityKind;
+	heading: string;
+	answers: string;
+}[] = [
+	{
+		kind: 'actioned',
+		heading: 'Recently actioned (being worked now)',
+		answers: 'what is being accomplished here, and how far it has got',
+	},
+	{
+		kind: 'created',
+		heading: 'Recently created (newly filed)',
+		answers: 'what this sets out to accomplish, and why it is outstanding',
+	},
+	{
+		kind: 'closed',
+		heading: 'Recently closed (finished)',
+		answers: 'what was accomplished - the outcome that matters to the project',
+	},
+];
+
+/**
+ * Render the candidate tasks for one column as compact prompt lines. Tolerates a missing or
+ * partial candidates object — this is a pure formatter, and a column with nothing in it should
+ * render as "nothing yet" rather than throw.
+ */
+function renderActivityCandidates(candidates?: Partial<ProgressActivityCandidates>): string[] {
+	const parts: string[] = [];
+	for (const col of ACTIVITY_COLUMN_PROMPTS) {
+		const rows = candidates?.[col.kind] ?? [];
+		parts.push(`### ${col.heading}`);
+		parts.push(`Each line answers: *${col.answers}.*`);
+		if (rows.length === 0) {
+			parts.push('- (nothing yet - omit this column)');
+		} else {
+			for (const r of rows) {
+				const meta = [r.status, r.actor].filter(Boolean).join(' · ');
+				parts.push(
+					`- \`${r.identifier}\` ${r.title}${meta ? ` — ${meta}` : ''}` +
+						(r.excerpt ? `\n  > ${r.excerpt.replace(/\s+/g, ' ').trim()}` : ''),
+				);
+			}
+		}
+		parts.push('');
+	}
+	return parts;
 }
 
 /**
- * The user-message body for a Captain progress-update run. Lists every due goal with its current
- * estimate and instructs the Captain to assess each and call `update_goal_progress`. No task is
- * attached — the run exists only to refresh goal status.
+ * The user-message body for a Captain progress-update run. No task is attached.
+ *
+ * The run's primary job is refreshing the project's **Progress page** — the high-level summary and
+ * the three activity columns — which happens on every progress-update run whether or not the
+ * project has goals. Goal assessment is the *second* section and is emitted only when goals are
+ * actually due, so a project that has never set one still gets a maintained Progress page.
  */
 export function buildProgressUpdatePrompt(
 	systemPrompt: string,
@@ -2320,38 +3184,71 @@ export function buildProgressUpdatePrompt(
 ): string {
 	const parts = [systemPrompt, '', '---', '', '## Progress Update', ''];
 	parts.push(
-		`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} due for a progress check. ` +
-			'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
-			'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
-			'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
-			'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
-			'the goal stands and the next step needed. The blurb renders as markdown on the Progress page — ' +
-			'reference tasks by their identifier (e.g. `HM-51`, which auto-links) and link PRs or other URLs ' +
-			'as markdown links (e.g. `[PR #502](https://github.com/owner/repo/pull/502)`). Do not lower a ' +
-			'percentage without explaining why in the blurb. A goal at 100% is not finished for tracking ' +
-			'purposes: progress can drop back below 100 if the measurement is no longer met, and some goals ' +
-			'are never-ending and measured continuously forever — so re-assess a 100% goal exactly like any ' +
-			'other and record your honest current estimate, even if that means lowering it (with the reason ' +
-			'in the blurb). When a goal needs a push, you can either comment on an existing in-flight ticket ' +
-			'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
-			'concrete next step is actually missing — existing backlog or in-flight work often already ' +
-			'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
-			'refuse it); if work must be redone, file a new ticket that references the old one by identifier. ' +
-			'Finally, call `update_project_progress` once to refresh the project progress summary shown at the ' +
-			'top of the Progress page: a concise markdown blurb leading with the key points in **bold**, then ' +
-			'a short narrative of what is done, in progress, and still to do (link only a few key tickets).',
+		"Refresh this project's Progress page. Call `update_project_progress` **once**, with a " +
+			'`summary` and the three activity columns (`actioned`, `created`, `closed`). The summary and ' +
+			'the columns sit at two different levels and must not repeat each other.',
 	);
 	parts.push('');
-	for (const g of ctx.goals) {
-		parts.push(`### ${g.title}  \`${g.id}\``);
-		parts.push(
-			`- Current: ${g.progress_percent}% · health ${g.health} · checked ${g.check_frequency}` +
-				(g.target_date ? ` · deadline ${g.target_date}` : ''),
-		);
-		if (g.status_blurb) parts.push(`- Last status: ${g.status_blurb}`);
-		parts.push(`- Achieved when: ${g.measurement || 'Not specified.'}`);
-		if (g.actions) parts.push(`- Suggested actions: ${g.actions}`);
+	parts.push(
+		'**The summary** is the high-level read: where the project stands, what has taken place, and ' +
+			'what is being planned. Lead with the key points in **bold**, then a short narrative. Do ' +
+			'**not** name individual tickets in it — no identifiers at all — because the columns below ' +
+			'already link the specific work. It overwrites the whole summary, so include everything that ' +
+			'should remain.',
+	);
+	parts.push('');
+	parts.push(
+		'**The columns** are that specific work: up to 5 tasks each, chosen from the candidates below, ' +
+			'each with a one-line summary you write yourself. Pitch every line at what it means for the ' +
+			'project — what was accomplished, what is being accomplished, or what is outstanding. Do ' +
+			"**not** paste the task's own progress summary or the first line of its description, and do " +
+			'not narrate mechanics (branches, CI, who commented when, review round-trips). A reader ' +
+			'should be able to read the three columns top to bottom and come away knowing where the ' +
+			"project stands. Drop any candidate that is not worth a reader's attention rather than " +
+			'padding a column to five, and omit a column entirely if it has nothing in it.',
+	);
+	parts.push('');
+	parts.push('## Candidate tasks');
+	parts.push('');
+	parts.push(...renderActivityCandidates(ctx.activityCandidates));
+
+	// Goals are an optional layer on top of progress: this section only exists when some are due.
+	if (ctx.goals.length > 0) {
+		parts.push('---');
 		parts.push('');
+		parts.push('## Goals due for a check');
+		parts.push('');
+		parts.push(
+			`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} also due for a progress check. ` +
+				'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
+				'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
+				'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
+				'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
+				"the goal stands and the next step needed. The blurb renders as markdown on the goal's own page — " +
+				'reference tasks by their identifier (e.g. `HM-51`, which auto-links) and link PRs or other URLs ' +
+				'as markdown links (e.g. `[PR #502](https://github.com/owner/repo/pull/502)`). Do not lower a ' +
+				'percentage without explaining why in the blurb. A goal at 100% is not finished for tracking ' +
+				'purposes: progress can drop back below 100 if the measurement is no longer met, and some goals ' +
+				'are never-ending and measured continuously forever — so re-assess a 100% goal exactly like any ' +
+				'other and record your honest current estimate, even if that means lowering it (with the reason ' +
+				'in the blurb). When a goal needs a push, you can either comment on an existing in-flight ticket ' +
+				'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
+				'concrete next step is actually missing — existing backlog or in-flight work often already ' +
+				'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
+				'refuse it); if work must be redone, file a new ticket that references the old one by identifier.',
+		);
+		parts.push('');
+		for (const g of ctx.goals) {
+			parts.push(`### ${g.title}  \`${g.id}\``);
+			parts.push(
+				`- Current: ${g.progress_percent}% · health ${g.health} · checked ${g.check_frequency}` +
+					(g.target_date ? ` · deadline ${g.target_date}` : ''),
+			);
+			if (g.status_blurb) parts.push(`- Last status: ${g.status_blurb}`);
+			parts.push(`- Achieved when: ${g.measurement || 'Not specified.'}`);
+			if (g.actions) parts.push(`- Suggested actions: ${g.actions}`);
+			parts.push('');
+		}
 	}
 	return parts.join('\n');
 }
@@ -2412,7 +3309,7 @@ export function buildTaskPrompt(
 		parts.push(renderCommentHistory(recentComments, { wakingCommentId: ctx.wakingCommentId }));
 		parts.push('');
 		parts.push(
-			'These are only the most recent comments. Before you start, call `list_comments` to read the full thread — earlier comments may carry instructions that change this task.',
+			'These are only the most recent comments, and they are shown here in full. Before you start, call `list_comments` to read the full thread — earlier comments may carry instructions that change this task. Note `list_comments` excerpts long comments: a row with `text_truncated: true` is showing only the first `excerpt_chars` of its body in `content.text`, so read that comment with `get_comment` before acting on it rather than assuming the excerpt is the whole thing.',
 		);
 	}
 
@@ -2421,8 +3318,13 @@ export function buildTaskPrompt(
 		parts.push('');
 		parts.push(`## Retry Attempt ${wakeupPayload.retry_count}/${wakeupPayload.max_retries}`);
 		parts.push('The previous attempt FAILED. Analyze the error and try a different approach.');
-		if (pf.exit_code !== undefined && pf.exit_code !== null)
-			parts.push(`**Exit code:** ${pf.exit_code}`);
+		if (pf.exit_code !== undefined && pf.exit_code !== null) {
+			// A bare number gives the retrying agent nothing to analyse; naming the
+			// signal tells it the previous attempt was destroyed rather than that it
+			// returned an error, which is a different thing to try differently.
+			const signal = typeof pf.exit_code === 'number' ? signalFromExitCode(pf.exit_code) : null;
+			parts.push(`**Exit code:** ${pf.exit_code}${signal ? ` (killed by ${signal.name})` : ''}`);
+		}
 		if (pf.stderr_tail) parts.push(`**Error output:**\n\`\`\`\n${pf.stderr_tail}\n\`\`\``);
 		if (pf.stdout_tail) parts.push(`**Last output:**\n\`\`\`\n${pf.stdout_tail}\n\`\`\``);
 	}
@@ -2716,9 +3618,9 @@ export async function buildCoachReviewPrompt(
 	task: TaskInfo,
 	teamId: string,
 	masterKeyManager: MasterKeyManager,
-	serverPort: number,
+	assetOrigin: string,
 ): Promise<string> {
-	const comments = await loadCommentHistory(db, task.id, masterKeyManager, serverPort);
+	const comments = await loadCommentHistory(db, task.id, masterKeyManager, assetOrigin);
 	const runLog = await loadRunSummaries(db, task.id, teamId);
 
 	const involvedAgents = await db.query<{
@@ -2916,13 +3818,16 @@ async function markHeartbeatRunRunning(
 	runId: string,
 	broadcast: HeartbeatRunBroadcast,
 	adapter: { aiProviderConfigId: string | null; provider: AiProvider | null },
+	containerId: string | null,
 ): Promise<void> {
 	// Stamp the resolved AI adapter config on the run so recordRunCostAndEnforce
-	// can attribute the run's cost to it without re-resolving.
+	// can attribute the run's cost to it without re-resolving, and the container
+	// so a container's death can fail only the runs it was actually carrying.
 	const result = await db.query<{ id: string }>(
 		`UPDATE heartbeat_runs
 		    SET status = $1::heartbeat_run_status, started_at = now(),
-		        ai_provider_config_id = $4, provider = $5::ai_provider
+		        ai_provider_config_id = $4, provider = $5::ai_provider,
+		        container_id = $6
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
 		[
@@ -2931,6 +3836,7 @@ async function markHeartbeatRunRunning(
 			HeartbeatRunStatus.Queued,
 			adapter.aiProviderConfigId,
 			adapter.provider,
+			containerId,
 		],
 	);
 	if (result.rows.length > 0) {

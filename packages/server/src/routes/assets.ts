@@ -19,7 +19,11 @@ import {
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { AssetNotFoundError, AttachmentTooLargeError } from '../assets/store';
-import { insertAssetWithUniqueName, upsertProjectAsset } from '../lib/asset-name';
+import {
+	archivedAssetHolderId,
+	insertAssetWithUniqueName,
+	upsertProjectAsset,
+} from '../lib/asset-name';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
@@ -41,6 +45,10 @@ import { logger } from '../logger';
 const log = logger.child('routes');
 
 export const assetsRoutes = new Hono<Env>();
+
+/** Refusal text for an overwrite aimed at a path an archived asset still holds. */
+const archivedOverwriteMessage = (name: string) =>
+	`Asset 'assets/${name}' exists but is archived — unarchive it first to overwrite it, or upload under a different path.`;
 
 /**
  * Validate an uploaded file, write its bytes to disk, and insert an `assets` row.
@@ -123,21 +131,11 @@ export async function storeUploadedAsset(
 	const store = c.get('assetStore');
 
 	// An archived asset keeps its path reserved; overwriting it would silently
-	// resurrect (and clobber) soft-deleted content — reject before writing any
-	// bytes, matching write_project_asset.
-	if (opts?.overwrite) {
-		const archivedHolder = await db.query<{ id: string }>(
-			'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 AND archived_at IS NOT NULL',
-			[projectId, desiredName],
-		);
-		if (archivedHolder.rows.length > 0) {
-			return err(
-				c,
-				'ASSET_ARCHIVED',
-				`Asset 'assets/${desiredName}' exists but is archived — unarchive it first to overwrite it, or upload under a different path.`,
-				409,
-			);
-		}
+	// resurrect (and clobber) soft-deleted content. `upsertProjectAsset` refuses
+	// it transactionally, but check up front too so 10 MB of bytes (possibly an
+	// S3 PUT) aren't spent on a doomed request.
+	if (opts?.overwrite && (await archivedAssetHolderId(db, projectId, desiredName))) {
+		return err(c, 'ASSET_ARCHIVED', archivedOverwriteMessage(desiredName), 409);
 	}
 
 	const assetId = randomUUID();
@@ -172,6 +170,12 @@ export async function storeUploadedAsset(
 				width: dims?.width ?? null,
 				height: dims?.height ?? null,
 			});
+			if (result.status === 'archived') {
+				// Archived between the pre-flight above and here. The bytes we just
+				// stored have no row pointing at them, so drop them.
+				await store.delete(projectId, assetId).catch(() => {});
+				return err(c, 'ASSET_ARCHIVED', archivedOverwriteMessage(desiredName), 409);
+			}
 			// The prior blob at this path is now orphaned (the row points at the new
 			// assetId); drop it rather than leak it.
 			if (result.replacedAssetId) {
@@ -190,10 +194,10 @@ export async function storeUploadedAsset(
 				);
 			}
 			asset = {
-				id: result.id,
-				content_type: result.content_type,
-				byte_size: result.byte_size,
-				original_filename: result.original_filename,
+				id: result.asset.id,
+				content_type: result.asset.content_type,
+				byte_size: result.asset.byte_size,
+				original_filename: result.asset.original_filename,
 			};
 		} else {
 			asset = await insertAssetWithUniqueName(db, {
@@ -482,6 +486,17 @@ assetsRoutes.patch('/projects/:projectId/assets/:assetId', async (c) => {
 			});
 		}
 	} else {
+		// An archived asset is frozen, so it can't be moved or renamed either —
+		// matching move_project_asset, which refuses an archived source. The web
+		// app hides the Move action on archived cards; this is the real rule.
+		if (found.rows[0].archived_at !== null) {
+			return err(
+				c,
+				'ASSET_ARCHIVED',
+				`Asset 'assets/${found.rows[0].original_filename}' is archived - restore it first to move or rename it.`,
+				409,
+			);
+		}
 		if (typeof body.folder !== 'string') {
 			return err(c, 'INVALID_REQUEST', 'folder is required (empty string = library root)', 400);
 		}

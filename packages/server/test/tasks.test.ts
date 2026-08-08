@@ -777,14 +777,25 @@ describe('sub-task depth + ancestors', () => {
 		expect(subSubViaSubRoute.body.data.parent_task_id).toBe(sub2.id);
 	});
 
-	it('rejects depth-3 creation via POST /tasks with parent_task_id', async () => {
+	it('allows creating a depth-3 sub-task (the deepest legal level)', async () => {
 		const root = (await createTask()).body.data;
 		const sub = (await createSub(root.id)).body.data;
 		const subSub = (await createSub(sub.id)).body.data;
 
-		const tooDeep = await createTask(subSub.id);
+		const subSubSub = await createTask(subSub.id);
+		expect(subSubSub.res.status).toBe(201);
+		expect(subSubSub.body.data.parent_task_id).toBe(subSub.id);
+	});
+
+	it('rejects depth-4 creation via POST /tasks with parent_task_id', async () => {
+		const root = (await createTask()).body.data;
+		const sub = (await createSub(root.id)).body.data;
+		const subSub = (await createSub(sub.id)).body.data;
+		const subSubSub = (await createSub(subSub.id)).body.data;
+
+		const tooDeep = await createTask(subSubSub.id);
 		expect(tooDeep.res.status).toBe(400);
-		expect(tooDeep.body.error.message).toMatch(/2 levels deep/);
+		expect(tooDeep.body.error.message).toMatch(/3 levels deep/);
 	});
 
 	it('resolves a parent_task_id passed by identifier (not just UUID)', async () => {
@@ -820,14 +831,15 @@ describe('sub-task depth + ancestors', () => {
 		expect((await res.json()).error.message).toMatch(/parent task/i);
 	});
 
-	it('rejects depth-3 creation via POST /tasks/:id/sub-tasks', async () => {
+	it('rejects depth-4 creation via POST /tasks/:id/sub-tasks', async () => {
 		const root = (await createTask()).body.data;
 		const sub = (await createSub(root.id)).body.data;
 		const subSub = (await createSub(sub.id)).body.data;
+		const subSubSub = (await createSub(subSub.id)).body.data;
 
-		const tooDeep = await createSub(subSub.id);
+		const tooDeep = await createSub(subSubSub.id);
 		expect(tooDeep.res.status).toBe(400);
-		expect(tooDeep.body.error.message).toMatch(/2 levels deep/);
+		expect(tooDeep.body.error.message).toMatch(/3 levels deep/);
 	});
 
 	it('returns ancestors in root-first order, excluding the current task', async () => {
@@ -860,6 +872,17 @@ describe('sub-task depth + ancestors', () => {
 		expect(subSubAncestors).toHaveLength(2);
 		expect(subSubAncestors[0].id).toBe(root.id);
 		expect(subSubAncestors[1].id).toBe(sub.id);
+
+		// The deepest legal task: the ancestor walk is bounded by the depth cap, so
+		// this is the level a bound that lagged the cap would silently truncate.
+		const subSubSub = (await createSub(subSub.id)).body.data;
+		const deepestRes = await app.request(
+			`/api/projects/${projectSlug}/tasks/${subSubSub.id}/ancestors`,
+			{ headers: authHeader(token) },
+		);
+		expect(deepestRes.status).toBe(200);
+		const deepestAncestors = (await deepestRes.json()).data;
+		expect(deepestAncestors.map((a: { id: string }) => a.id)).toEqual([root.id, sub.id, subSub.id]);
 	});
 
 	it('resolves identifier-based path for ancestors', async () => {

@@ -237,7 +237,6 @@ function WelcomeCard({ onCreate }: { onCreate: () => void }) {
 			{hq && blockedHealth ? (
 				<HqContainerNotice
 					health={blockedHealth}
-					slug={hq.slug}
 					description="Setting up Hezo. You can create your first project once the HQ container is running."
 				/>
 			) : (

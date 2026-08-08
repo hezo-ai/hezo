@@ -33,9 +33,9 @@ import {
 	shellQuoteArg,
 	type TaskInfo,
 } from '../src/services/agent-runner';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { ReactionGroup } from '../src/services/reactions';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -166,7 +166,7 @@ function readPromptFromExec(opts: { Env: string[] }): string {
 	return readFileSync(getHostPromptPath(dataDir, teamId, projectId, runId), 'utf8');
 }
 
-function promptCaptureDocker(capture: { prompt: string; env: string[] }): DockerClient {
+function promptCaptureDocker(capture: { prompt: string; env: string[] }): ContainerEngine {
 	const base = createStubDocker({
 		execCreate: async (_id: string, opts: any) => {
 			capture.prompt = readPromptFromExec(opts);
@@ -182,10 +182,10 @@ function promptCaptureDocker(capture: { prompt: string; env: string[] }): Docker
 			return { stdout: 'ok', stderr: '' };
 		},
 	});
-	return withRunUserStub(base as unknown as DockerClient);
+	return withRunUserStub(base as unknown as ContainerEngine);
 }
 
-function baseDeps(docker: DockerClient): RunnerDeps {
+function baseDeps(docker: ContainerEngine): RunnerDeps {
 	return {
 		db,
 		docker,
@@ -227,7 +227,7 @@ describe('runAgent — progress-update run (no task)', () => {
 		expect(result.success).toBe(true);
 
 		expect(capture.prompt).toContain('## Progress Update');
-		expect(capture.prompt).toContain('1 goal is due for a progress check');
+		expect(capture.prompt).toContain('1 goal is also due for a progress check');
 		expect(capture.prompt).toContain('### Ship v2  `goal-1`');
 		expect(capture.prompt).toContain('deadline 2026-08-01');
 		expect(capture.prompt).toContain('- Last status: Going fine');
@@ -508,11 +508,49 @@ describe('prompt builders (direct)', () => {
 				},
 			],
 		});
-		expect(prompt).toContain('2 goals are due for a progress check');
+		expect(prompt).toContain('2 goals are also due for a progress check');
 		expect(prompt).toContain('- Achieved when: Not specified.');
 		expect(prompt).not.toContain('- Last status: \n');
 		expect(prompt).toContain('deadline 2026-12-31');
 		expect(prompt).toContain('- Suggested actions: Push');
+	});
+
+	// The run is progress-first: the Progress page rebuild and its candidates lead, and the goal
+	// section only exists when goals are actually due. A project with none still gets a full prompt.
+	it('buildProgressUpdatePrompt leads with the Progress page and omits the goal section entirely', () => {
+		const prompt = buildProgressUpdatePrompt('SYS', {
+			goals: [],
+			activityCandidates: {
+				actioned: [
+					{
+						identifier: 'PA-1',
+						title: 'Card payments',
+						status: 'in_progress',
+						actor: 'Engineer',
+						at: '2026-01-01T00:00:00Z',
+						excerpt: 'Cards clear in staging.',
+					},
+				],
+				created: [],
+				closed: [],
+			},
+		});
+		expect(prompt).toContain('Refresh this project');
+		expect(prompt).toContain('## Candidate tasks');
+		expect(prompt).toContain('`PA-1` Card payments');
+		expect(prompt).toContain('Cards clear in staging.');
+		// Empty columns say so rather than being dropped silently.
+		expect(prompt).toContain('(nothing yet - omit this column)');
+		// No goals due: the whole goal section is absent, not an empty heading.
+		expect(prompt).not.toContain('## Goals due for a check');
+		expect(prompt).not.toContain('update_goal_progress');
+	});
+
+	// A partial or absent candidates object must render, not throw — it is a pure formatter.
+	it('buildProgressUpdatePrompt tolerates a context with no candidates', () => {
+		const prompt = buildProgressUpdatePrompt('SYS', { goals: [] });
+		expect(prompt).toContain('## Candidate tasks');
+		expect(prompt).toContain('(nothing yet - omit this column)');
 	});
 
 	it('buildTaskPrompt renders the retry block with exit code and output tails', () => {
@@ -775,7 +813,12 @@ describe('context loaders (direct edge cases)', () => {
 	});
 
 	it('loadAgentAttachmentsForComments short-circuits on an empty id list', async () => {
-		const out = await loadAgentAttachmentsForComments(db, [], masterKeyManager, 3000);
+		const out = await loadAgentAttachmentsForComments(
+			db,
+			[],
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 		expect(out.size).toBe(0);
 	});
 });

@@ -4,17 +4,21 @@ import type { ContainerHealth } from '../hooks/use-container-health';
 
 /**
  * Shared waiting/blocked panel shown wherever a feature depends on the HQ
- * container being up — the CEO chat and the create-project flow. Mirrors the
- * container status banner's states (rebuilding / provisioning / stopped /
- * error) and always offers a link to the HQ container page for diagnostics.
+ * container being up — the CEO chat, the create-project flow and the home
+ * welcome card. Mirrors the container health states (rebuilding / provisioning /
+ * stopped / error) and always offers a way through to the container itself.
+ *
+ * It takes no project slug: the diagnostics it points at live on the global
+ * Containers page now, where HQ's container is listed as itself with its own
+ * log. It used to link to the project's container page, which this change
+ * reduced to per-project settings - so "View container" led somewhere that shows
+ * no container.
  */
 export function HqContainerNotice({
 	health,
-	slug,
 	description,
 }: {
 	health: Exclude<ContainerHealth, { kind: 'healthy' }>;
-	slug: string;
 	description: string;
 }) {
 	const pending = health.kind === 'rebuilding' || health.kind === 'provisioning';
@@ -35,8 +39,8 @@ export function HqContainerNotice({
 				<p className="text-[13px] text-text-2">{description}</p>
 			</div>
 			<Link
-				to="/projects/$projectId/container"
-				params={{ projectId: slug }}
+				to="/settings/containers"
+				params={{}}
 				data-testid="hq-container-notice-link"
 				className="inline-flex items-center gap-1 text-[13px] font-medium text-accent hover:underline"
 			>

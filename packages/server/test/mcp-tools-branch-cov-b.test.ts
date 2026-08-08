@@ -430,10 +430,10 @@ describe('agent system prompts', () => {
 		const r = (await admin('get_agent_system_prompts', {
 			project: projectSlug,
 			items: [{ agent_id: 'engineer' }, { agent_id: 'nobody' }],
-		})) as unknown as Array<Record<string, unknown>>;
-		expect(r).toHaveLength(2);
-		expect(r[0].ok).toBe(true);
-		expect(r[1].ok).toBe(false);
+		})) as unknown as { items: Array<Record<string, unknown>> };
+		expect(r.items).toHaveLength(2);
+		expect(r.items[0].ok).toBe(true);
+		expect(r.items[1].ok).toBe(false);
 	});
 
 	it('update_agent_system_prompt enforces caller, target, and variables', async () => {

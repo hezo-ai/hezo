@@ -45,6 +45,17 @@ export const queryKeys = {
 	runLogUsage: (olderThanDays: number) => ['instance', 'database', 'run-log-usage', olderThanDays],
 	/** Asset storage backend metadata (server-side redacted) for the General settings page. */
 	assetStorageInfo: () => ['instance', 'asset-storage'],
+	/** Sandbox backend metadata (server-side redacted) for the Storage settings page. */
+	sandboxBackendInfo: () => ['instance', 'sandbox-backend'],
+	/**
+	 * Every container the instance is running, and one of them.
+	 *
+	 * Instance-scoped rather than under a project: a container belongs to a
+	 * project but the list crosses all of them, and keying it per project is what
+	 * made the old UI able to describe only one container at a time.
+	 */
+	containers: () => ['instance', 'containers'],
+	container: (containerId: string) => ['instance', 'containers', containerId],
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */
 	instanceMentionsResolve: (key: KeyParam) => ['instance', 'mentions', 'resolve', key],
 	/**
@@ -311,6 +322,9 @@ export const queryKeys = {
 			'detail',
 			connectorId,
 		],
+		// Nested under the project's `connectors` key so any connector mutation's
+		// invalidation (revoke, reconnect, api-key) refreshes the health banner too.
+		connectorHealth: (slug: string) => ['projects', slug, 'connectors', 'health'],
 		connectorMethods: (slug: string, connectorId: string | null) => [
 			'projects',
 			slug,

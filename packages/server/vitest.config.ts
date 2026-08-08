@@ -7,7 +7,12 @@ export default defineConfig({
 		include: ['test/**/*.test.ts'],
 		// test/bun/** runs under Bun's native runner (`bun test`), not vitest —
 		// it imports `bun:test` and exercises the production Bun runtime.
-		exclude: [...configDefaults.exclude, 'test/bun/**'],
+		//
+		// test/live/** provisions sandboxes on a paid provider. Excluded here rather
+		// than guarded inside the specs so there is no arrangement of environment
+		// variables under which a normal run or CI can start billing; `vitest.live.config.ts`
+		// is the only thing that includes it, and only `bun run test:daytona` uses that.
+		exclude: [...configDefaults.exclude, 'test/bun/**', 'test/live/**'],
 		setupFiles: ['test/setup.ts'],
 		testTimeout: 60000,
 		hookTimeout: 60000,

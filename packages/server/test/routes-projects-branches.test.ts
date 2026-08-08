@@ -12,7 +12,7 @@ import { authHeader, createTestApp, createTestProject, createTestTeam } from './
  * don't reach: the requireAdminEquivalent denial arms on the create/intake
  * routes, the missing-name validation, the Blank/template/source baseline arms
  * of POST /project-intakes, the description-only PATCH set, the icon-bearing
- * row in the GET /projects index, and the container/stop "no container id" arm.
+ * row in the GET /projects index.
  */
 
 let app: Hono<Env>;
@@ -188,17 +188,5 @@ describe('GET /projects — icon_url present on a project with an icon', () => {
 		// And a project with no icon stays null.
 		const noIcon = list.find((p) => p.id !== projectId && p.icon_url === null);
 		expect(noIcon).toBeTruthy();
-	});
-});
-
-describe('container/stop — no container id arm', () => {
-	it('sets status to stopped immediately when the project has no container', async () => {
-		// projectId has container_id NULL by default (createTestProject provisions none).
-		const res = await app.request(`/api/projects/${projectSlug}/container/stop`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.container_status).toBe('stopped');
 	});
 });

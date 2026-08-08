@@ -54,6 +54,10 @@ beforeAll(async () => {
 	// proxy runs with auth disabled (CONNECT auth has dedicated coverage in
 	// egress-proxy.bun.test.ts).
 	proxy = new EgressProxy({
+		// Upstreams in this suite are on loopback, which the destination
+		// guard blocks by default. Opt in so the guard under test elsewhere
+		// does not mask what these cases actually assert.
+		allowPrivateTargets: true,
 		db,
 		masterKeyManager,
 		ca,
@@ -396,6 +400,56 @@ describe('EgressProxy streaming + teardown under Bun', () => {
 			const warned = lines.filter((l) => l.includes(FAILURE_LINE));
 			expect(warned.length).toBe(1);
 			expect(warned[0]).toContain('[warn]');
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 40_000);
+
+	test('an upstream failure never logs a secret substituted into the query string', async () => {
+		// The case above puts the placeholder in a *header*, which the failure
+		// logger never touches — so it passed while the URL path leaked. The
+		// forwarded path is post-substitution, and it rode into `failureMeta` as
+		// `meta.path`, meaning any agent-inducible upstream failure (DNS, refused,
+		// TLS, mid-stream reset) wrote a live credential to the server log.
+		const dead = createHttpsServer({});
+		await new Promise<void>((r) => dead.listen(0, '127.0.0.1', () => r()));
+		const deadPort = (dead.address() as { port: number }).port;
+		await new Promise<void>((r) => dead.close(() => r()));
+
+		const secretValue = 'sk-live-must-never-be-logged-9f2c';
+		await insertSecret('URL_LEAK_CHECK', secretValue, ['localhost']);
+		const runId = `url-leak-${process.pid}`;
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+
+		try {
+			let response = '';
+			const lines = await captureLogs(async () => {
+				const tls = await tunnelTo(allocated.proxyPort, 'localhost', deadPort);
+				const done = new Promise<void>((resolve) => {
+					tls.on('data', (c: Buffer) => {
+						response += c.toString();
+						if (response.includes('\r\n\r\n')) resolve();
+					});
+					tls.on('close', () => resolve());
+					tls.on('error', () => resolve());
+				});
+				tls.write(
+					`GET /v1/things?api_key=__HEZO_SECRET_URL_LEAK_CHECK__ HTTP/1.1\r\n` +
+						`Host: localhost:${deadPort}\r\n\r\n`,
+				);
+				await done;
+				tls.destroy();
+			});
+
+			expect(response).toContain('502');
+			const warned = lines.filter((l) => l.includes(FAILURE_LINE));
+			expect(warned.length).toBe(1);
+			// The whole point: the value is absent, and the inert placeholder is
+			// present — the log keeps its diagnostic value without the credential.
+			expect(warned[0]).not.toContain(secretValue);
+			expect(warned[0]).toContain('__HEZO_SECRET_URL_LEAK_CHECK__');
+			// Belt and braces: nothing else emitted during the exchange carries it.
+			expect(lines.join('\n')).not.toContain(secretValue);
 		} finally {
 			await proxy.releaseRunProxy(runId);
 		}

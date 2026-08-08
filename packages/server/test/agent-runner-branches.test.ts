@@ -112,6 +112,8 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.Anthropic, {
 			value: 'sk-ant-123',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
+			runtime: null,
 		});
 		// Claude Code quiet flags are prepended for ClaudeCode-runtime providers.
 		expect(env).toContain('DISABLE_TELEMETRY=1');
@@ -129,6 +131,8 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.Anthropic, {
 			value: 'oauth-token-abc',
 			authMethod: AiAuthMethod.Subscription,
+			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toContain('CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abc');
 		expect(env.some((e) => e.startsWith('ANTHROPIC_API_KEY='))).toBe(false);
@@ -141,6 +145,8 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.OpenAI, {
 			value: 'whatever',
 			authMethod: AiAuthMethod.Subscription,
+			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toEqual([]);
 	});
@@ -149,6 +155,8 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.DeepSeek, {
 			value: 'ds-key',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
+			runtime: null,
 		});
 		// DeepSeek runs on Claude Code → quiet env present.
 		expect(env).toContain('DISABLE_TELEMETRY=1');
@@ -163,6 +171,8 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.Kimi, {
 			value: 'kimi-key',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
+			runtime: null,
 		});
 		// Kimi now runs on Claude Code against Moonshot's Anthropic-compatible endpoint
 		// → quiet env present, plus the Moonshot base URL + model defaults.
@@ -179,6 +189,8 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.OpenRouter, {
 			value: 'or-key',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
+			runtime: null,
 		});
 		// OpenRouter runs on the OpenCode runtime, not Claude Code → no DISABLE_* flags.
 		expect(env.some((e) => e.startsWith('DISABLE_TELEMETRY='))).toBe(false);
@@ -189,6 +201,8 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.OpenAI, {
 			value: 'sk-openai',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toEqual(['OPENAI_API_KEY=sk-openai']);
 	});
@@ -197,6 +211,8 @@ describe('buildProviderEnv', () => {
 		const env = buildProviderEnv(AiProvider.Google, {
 			value: 'AIza-google',
 			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
+			runtime: null,
 		});
 		// Gemini runs headless in /workspace, which the CLI treats as untrusted unless
 		// told otherwise; the runtime env trusts it so --yolo keeps auto-approving.
@@ -303,7 +319,7 @@ describe('buildProgressUpdatePrompt', () => {
 	it('uses singular phrasing and renders all optional fields for one goal', () => {
 		const out = buildProgressUpdatePrompt('SYS', { goals: [goal()] });
 		expect(out.startsWith('SYS')).toBe(true);
-		expect(out).toContain('1 goal is due for a progress check');
+		expect(out).toContain('1 goal is also due for a progress check');
 		// The status_blurb guidance tells the Captain it renders as markdown and to link PRs.
 		expect(out).toContain('The blurb renders as markdown');
 		expect(out).toContain('[PR #502](https://github.com/owner/repo/pull/502)');
@@ -324,7 +340,7 @@ describe('buildProgressUpdatePrompt', () => {
 				goal({ id: 'g2', title: 'Second', target_date: null, status_blurb: '', actions: '' }),
 			],
 		});
-		expect(out).toContain('2 goals are due for a progress check');
+		expect(out).toContain('2 goals are also due for a progress check');
 		// No deadline / last-status / suggested-actions lines on any goal.
 		expect(out).not.toContain('deadline');
 		expect(out).not.toContain('- Last status: ');
@@ -507,7 +523,12 @@ describe('buildTaskPrompt', () => {
 // --------------------------------------------------------------------------
 describe('loadAgentAttachmentsForComments', () => {
 	it('returns an empty map for no comment ids without querying', async () => {
-		const out = await loadAgentAttachmentsForComments(db, [], masterKeyManager, 3100);
+		const out = await loadAgentAttachmentsForComments(
+			db,
+			[],
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 		expect(out.size).toBe(0);
 	});
 
@@ -529,7 +550,12 @@ describe('loadAgentAttachmentsForComments', () => {
 			assetId,
 		]);
 
-		const out = await loadAgentAttachmentsForComments(db, [commentId], masterKeyManager, 3100);
+		const out = await loadAgentAttachmentsForComments(
+			db,
+			[commentId],
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 		const list = out.get(commentId) as AgentAttachment[];
 		expect(list).toBeDefined();
 		expect(list.length).toBe(1);
@@ -537,7 +563,7 @@ describe('loadAgentAttachmentsForComments', () => {
 		expect(list[0].content_type).toBe('image/png');
 		expect(list[0].byte_size).toBe(2048);
 		expect(list[0].url).toMatch(
-			new RegExp(`^http://host\\.docker\\.internal:3100/api/assets/${assetId}\\?exp=\\d+&sig=`),
+			new RegExp(`^http://127\\.0\\.0\\.1:47081/api/assets/${assetId}\\?exp=\\d+&sig=`),
 		);
 
 		await db.query('DELETE FROM comment_attachments WHERE comment_id = $1', [commentId]);
@@ -864,6 +890,8 @@ describe('buildCoachReviewPrompt', () => {
 				progress_summary: null,
 			}),
 			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
 		);
 		expect(out).toContain('## Review Completed Ticket: ');
 		expect(out).toContain('No description provided.');
@@ -932,7 +960,7 @@ describe('buildCoachReviewPrompt', () => {
 			}),
 			teamId,
 			masterKeyManager,
-			3100,
+			'http://127.0.0.1:47081',
 		);
 
 		expect(out).toContain('### Rules');

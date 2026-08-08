@@ -12,10 +12,10 @@ import {
 	projectSlugFor,
 } from './helpers/app';
 import {
-	clearMaxActiveContainersForTest,
+	clearContainerCapacityForTest,
 	removeSeededContainerProject,
 	seedRunningContainerProject,
-	setMaxActiveContainersForTest,
+	setContainerCapacityForTest,
 } from './helpers/capacity';
 
 let app: Hono<Env>;
@@ -236,7 +236,7 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		await clearRuns();
 		// Container semantics: this project's container is stopped and a filler
 		// project's running container consumes the single slot.
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
 		await seedRunningContainerProject(db, 'cap-filler-get');
 		await insertQueuedWakeup(agentB, taskId);
@@ -246,7 +246,7 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		expect(body.data.dispatch.instance_at_capacity).toBe(true);
 		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 		await removeSeededContainerProject(db, 'cap-filler-get');
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 	});
 
 	it('a project whose container is already running is never at capacity', async () => {
@@ -254,12 +254,12 @@ describe('GET /teams/:teamId/tasks/:taskId/queued-wakeups', () => {
 		await clearRuns();
 		// Even with the limit fully consumed by this project's own container, a
 		// run into it needs no new container slot.
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await insertQueuedWakeup(agentB, taskId);
 
 		const { body } = await listQueued(taskId);
 		expect(body.data.dispatch.instance_at_capacity).toBe(false);
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 	});
 
 	it('flags run_now_blocked per source when the task has an open dependency', async () => {
@@ -349,7 +349,7 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', (
 	it('returns 409 and records instance_at_capacity when the container limit is reached', async () => {
 		await clearWakeups(taskId);
 		await clearRuns();
-		await setMaxActiveContainersForTest(db, 1);
+		await setContainerCapacityForTest(db, 1);
 		await db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [projectId]);
 		await seedRunningContainerProject(db, 'cap-filler-runnow');
 		const wakeupId = await insertQueuedWakeup(agentB, taskId);
@@ -365,7 +365,7 @@ describe('POST /teams/:teamId/tasks/:taskId/queued-wakeups/:wakeupId/run-now', (
 		expect(row.rows[0].last_skipped_reason).toBe('instance_at_capacity');
 		await db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [projectId]);
 		await removeSeededContainerProject(db, 'cap-filler-runnow');
-		await clearMaxActiveContainersForTest(db);
+		await clearContainerCapacityForTest(db);
 		await clearRuns();
 	});
 

@@ -1,6 +1,7 @@
 import { Link, useLocation } from '@tanstack/react-router';
 import { ChevronDown, LogOut } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
 import { logout } from '../lib/auth';
 import { type MessageKey, useI18n } from '../lib/i18n';
@@ -24,7 +25,7 @@ const ADMIN_ITEMS: NavItem[] = [
 	{ to: '/settings/admin-password', labelKey: 'settings.adminPassword' },
 	{ to: '/settings/users', labelKey: 'settings.users' },
 	{ to: '/settings/chatbox', labelKey: 'settings.chatbox' },
-	{ to: '/settings/concurrency', labelKey: 'settings.concurrency' },
+	{ to: '/settings/containers', labelKey: 'settings.concurrency' },
 	{ to: '/settings/skills', labelKey: 'settings.skills' },
 	{ to: '/settings/connectors', labelKey: 'settings.connectors' },
 	{ to: '/settings/chat-channels', labelKey: 'settings.chatChannels' },
@@ -88,11 +89,9 @@ export function SettingsSidebar() {
 	const items = me?.is_superuser ? [...PUBLIC_ITEMS, ...ADMIN_ITEMS] : PUBLIC_ITEMS;
 	const current = items.find((i) => isActive(i.to, pathname)) ?? items[0];
 
-	// Collapse the mobile dropdown on any route change.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the deliberate trigger
-	useEffect(() => {
-		setOpen(false);
-	}, [pathname]);
+	// Collapse the mobile dropdown on any route change — every item in it is a nav
+	// link, and the panel covers the page one just opened.
+	useCloseOnRouteChange(open, () => setOpen(false));
 
 	const handleLogout = useCallback(() => {
 		setOpen(false);

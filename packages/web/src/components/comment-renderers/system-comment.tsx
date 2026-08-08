@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 import { repoWebUrl } from '../../lib/github';
-import { useI18n } from '../../lib/i18n';
+import { Trans, useI18n } from '../../lib/i18n';
 import type {
 	SystemContent,
 	SystemDescriptionChangeContent,
@@ -49,8 +49,10 @@ export function SystemComment({ comment, projectId }: Props) {
 	);
 
 	if (content && isTaskLink(content) && projectId) {
+		// The sentence gained a clause, so stack the timestamp under it on mobile
+		// rather than letting it wrap mid-clause (same idiom as RunFailedBody).
 		return (
-			<div className="flex items-baseline gap-2 leading-[26px]">
+			<div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]">
 				<TaskLinkSystemBody comment={comment} content={content} projectId={projectId} />
 				{timestamp}
 			</div>
@@ -109,6 +111,7 @@ function StatusChangeBody({
 	projectId?: string;
 	timestamp: React.ReactNode;
 }) {
+	const { t } = useI18n();
 	const from = typeof content.from === 'string' ? content.from : '';
 	const to = typeof content.to === 'string' ? content.to : '';
 	const cascade = typeof content.cascade === 'string' ? content.cascade : null;
@@ -133,11 +136,15 @@ function StatusChangeBody({
 					{triggeredIdentifier}
 				</Link>
 			) : (
-				<span className="text-xs text-text-2">{triggeredIdentifier || 'a blocker'}</span>
+				<span className="text-xs text-text-2">
+					{triggeredIdentifier || t('comment.autoUnblockedFallback')}
+				</span>
 			);
 		return (
 			<div className="flex items-baseline gap-2 leading-[26px]" data-testid="status-change-cascade">
-				<span className="text-xs text-text-2">Auto-unblocked — {triggerNode} closed</span>
+				<span className="text-xs text-text-2">
+					<Trans k="comment.autoUnblocked" vars={{ trigger: triggerNode }} />
+				</span>
 				{timestamp}
 			</div>
 		);
@@ -146,8 +153,14 @@ function StatusChangeBody({
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]">
 			<span className="text-xs text-text-2">
-				{actorName} changed status from <em className="italic">{formatTaskStatus(from)}</em> to{' '}
-				<em className="italic">{formatTaskStatus(to)}</em>
+				<Trans
+					k="comment.statusChanged"
+					vars={{
+						actor: actorName,
+						from: <em className="italic">{formatTaskStatus(from)}</em>,
+						to: <em className="italic">{formatTaskStatus(to)}</em>,
+					}}
+				/>
 			</span>
 			<ActorBadge actorType={comment.author_type} name={actorName} />
 			{timestamp}
@@ -188,19 +201,13 @@ function ParentChangeBody({
 
 	const body =
 		from && to ? (
-			<>
-				{actorName} moved this task from {from} to {to}
-			</>
+			<Trans k="comment.parentMoved" vars={{ actor: actorName, from, to }} />
 		) : to ? (
-			<>
-				{actorName} nested this task under {to}
-			</>
+			<Trans k="comment.parentNested" vars={{ actor: actorName, to }} />
 		) : from ? (
-			<>
-				{actorName} promoted this task to top level (was under {from})
-			</>
+			<Trans k="comment.parentPromotedFrom" vars={{ actor: actorName, from }} />
 		) : (
-			<>{actorName} promoted this task to top level</>
+			<Trans k="comment.parentPromoted" vars={{ actor: actorName }} />
 		);
 
 	return (
@@ -307,11 +314,12 @@ function RunFailedBody({
 	projectId?: string;
 	timestamp: React.ReactNode;
 }) {
+	const { t } = useI18n();
 	const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
 	const status = typeof content.status === 'string' ? content.status : 'failed';
 	const error =
 		typeof content.error === 'string' && content.error.length > 0 ? content.error : null;
-	const statusLabel = status === 'timed_out' ? 'timed out' : 'failed';
+	const timedOut = status === 'timed_out';
 	const agentNode =
 		agentSlug && projectId ? (
 			<Link
@@ -323,8 +331,18 @@ function RunFailedBody({
 				@{agentSlug}
 			</Link>
 		) : (
-			<span className="text-xs text-text-2">agent</span>
+			<span className="text-xs text-text-2">{t('comment.runAgentFallback')}</span>
 		);
+	// Four keys rather than two with a {status} var: the status word inflects with
+	// the sentence in several of these languages, so a shared template would force
+	// a wrong agreement somewhere.
+	const key = error
+		? timedOut
+			? 'comment.runTimedOutWithError'
+			: 'comment.runFailedWithError'
+		: timedOut
+			? 'comment.runTimedOut'
+			: 'comment.runFailed';
 	return (
 		<div
 			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
@@ -332,8 +350,13 @@ function RunFailedBody({
 		>
 			<span className="text-xs text-text-2 inline-flex items-baseline gap-1.5 flex-wrap">
 				<span>
-					Run for {agentNode} {statusLabel}
-					{error ? <span className="text-text-3">: {error}</span> : null}.
+					<Trans
+						k={key}
+						vars={{
+							agent: agentNode,
+							error: error ? <span className="text-text-3">{error}</span> : null,
+						}}
+					/>
 				</span>
 			</span>
 			{timestamp}
@@ -366,7 +389,9 @@ function RepoDesignatedBody({
 	);
 	return (
 		<div className="flex items-baseline gap-2 leading-[26px]" data-testid="repo-designated-comment">
-			<span className="text-xs text-text-2">Repository {repoNode} set as the designated repo.</span>
+			<span className="text-xs text-text-2">
+				<Trans k="comment.repoDesignated" vars={{ repo: repoNode }} />
+			</span>
 			{timestamp}
 		</div>
 	);
@@ -381,11 +406,13 @@ function TaskLinkSystemBody({
 	content: SystemTaskLinkContent;
 	projectId: string;
 }) {
+	const { t } = useI18n();
 	const sourceIdentifier = content.source_identifier ?? '';
 	const sourceProjectSlug = content.source_project_slug ?? '';
 	const actorName = content.actor_name ?? comment.author_name ?? 'Admin';
 	const actorKind = content.actor_kind ?? null;
 	const actorSlug = content.actor_slug ?? null;
+	const sourceCommentPublicId = content.source_comment_public_id ?? null;
 
 	const linkClass = 'text-xs text-info-soft-fg hover:underline';
 	const textClass = 'text-xs text-text-2';
@@ -407,6 +434,25 @@ function TaskLinkSystemBody({
 			<span className={textClass}>{sourceIdentifier}</span>
 		);
 
+	// The mention lived in a comment, so point at that comment rather than only at
+	// its task. Same target as CommentRefLink, styled for a grey event row instead
+	// of a mention. A description-sourced link has no anchor and stays as it was.
+	const commentNode =
+		sourceCommentPublicId && sourceIdentifier && sourceProjectSlug ? (
+			<Link
+				to="/projects/$projectId/tasks/$taskId"
+				params={{
+					projectId: sourceProjectSlug,
+					taskId: sourceIdentifier.toLowerCase(),
+				}}
+				hash={`comment-${sourceCommentPublicId}`}
+				className={linkClass}
+				data-testid="task-link-source-comment"
+			>
+				{t('comment.linkedFromCommentLabel')}
+			</Link>
+		) : null;
+
 	const actorNode =
 		actorKind === 'agent' && actorSlug ? (
 			<Link
@@ -423,7 +469,10 @@ function TaskLinkSystemBody({
 
 	return (
 		<span className={textClass}>
-			Linked from {sourceNode} by {actorNode}
+			<Trans
+				k={commentNode ? 'comment.linkedFromComment' : 'comment.linkedFrom'}
+				vars={{ comment: commentNode, source: sourceNode, actor: actorNode }}
+			/>
 			<ActorBadge actorType={comment.author_type} name={actorName} className="ml-1" />
 		</span>
 	);

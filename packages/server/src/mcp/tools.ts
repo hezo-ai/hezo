@@ -19,9 +19,11 @@ import {
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	ConnectorAccess,
+	ConnectorStatus,
 	ConnectorTransport,
 	CredentialInputType,
 	CredentialKind,
+	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DASHBOARD_WIDGET_IDS,
 	DEFAULT_TEAM_ID,
@@ -39,6 +41,8 @@ import {
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
+	PROGRESS_ACTIVITY_PER_COLUMN,
+	PROGRESS_ACTIVITY_SUMMARY_MAX,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
 	requiredSystemPromptVarsError,
@@ -55,11 +59,11 @@ import { LocalAssetStore } from '../assets/drivers/local';
 import type { AssetStore } from '../assets/store';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { readRunLogTail, runLogLengthSql } from '../db/run-log-chunks';
+import { readRunLogTail, readRunLogWindow, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
-import { upsertProjectAsset } from '../lib/asset-name';
+import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
@@ -93,6 +97,7 @@ import {
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { isUniqueViolation } from '../lib/sql';
+import { applyStringEdit } from '../lib/string-edit';
 import {
 	assertChildrenAllClosed,
 	assertNoOutstandingActivity,
@@ -112,6 +117,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
 import {
+	buildWakeReceipt,
 	fireCommentWakeups,
 	postAgentComment,
 	resolveWarnableSlugs,
@@ -128,7 +134,7 @@ import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
 	getDocument,
-	listDocuments,
+	listDocumentSummaries,
 	setDocumentArchived,
 	upsertDocument,
 } from '../services/documents';
@@ -147,6 +153,11 @@ import {
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
+import { setConnectorAuthError } from '../services/oauth/token-resolver';
+import {
+	buildProgressActivitySnapshot,
+	type ProgressActivityInput,
+} from '../services/project-activity';
 import { createProjectWithTeam } from '../services/project-create';
 import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
@@ -180,10 +191,43 @@ import {
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
+import {
+	type ContentWindow,
+	DEFAULT_LIST_LIMIT,
+	decodeCursor,
+	type KeysetRow,
+	keysetOrderBy,
+	keysetPredicate,
+	listPagingArgs,
+	pagedList,
+	parseListLimit,
+	utf8FloorBoundary,
+	windowContent,
+} from './paging';
+
+/**
+ * Minimal row shape the keyset pager needs. List tools select far more columns;
+ * this only pins the two the cursor is built from.
+ */
+type ListRow = KeysetRow & Record<string, unknown>;
 
 const log = logger.child('mcp');
 
 export const authContext = new AsyncLocalStorage<AuthInfo>();
+
+/**
+ * Origin the current MCP caller reached Hezo on, e.g. `http://127.0.0.1:47081`.
+ *
+ * Agent-facing asset download URLs have to be absolute and dialable *by the
+ * caller*, and the caller is inside a container whose only route to Hezo is its
+ * own tunnel - on a loopback port allocated for that tunnel, which the server
+ * does not otherwise know. Reading it off the request is what makes it correct
+ * without a registry to keep in sync: the tunnel forwards the container's
+ * request verbatim, so the `Host` header already carries exactly the address the
+ * container used. An out-of-container API-key caller gets the origin it really
+ * reached, which is strictly better than the host-shaped guess this replaced.
+ */
+export const callerOriginContext = new AsyncLocalStorage<string>();
 
 export interface ToolDef {
 	name: string;
@@ -232,15 +276,19 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'update_agent_system_prompts',
 	'set_agent_status',
 	'set_agent_summary',
+	'set_agent_summaries',
 	'set_team_summary',
 	'set_agent_team_context',
+	'set_agent_team_contexts',
 	'set_agent_reports_to',
 	'write_project_asset',
+	'edit_project_asset',
 	'move_project_asset',
 	'copy_project_asset',
 	'archive_project_asset',
 	'unarchive_project_asset',
 	'write_project_doc',
+	'edit_project_doc',
 	'archive_project_doc',
 	'unarchive_project_doc',
 	'update_chat_memory',
@@ -269,12 +317,9 @@ function isErrorResult(result: unknown): boolean {
  * scoping (the task's team plus the HQ instance agents) and includes @admin.
  */
 async function buildUnlinkedMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectUnlinkedTeammateReferences(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `**${s}**`).join(', ');
@@ -291,17 +336,15 @@ async function buildUnlinkedMentionWarning(
  * Returns a warning when a comment addresses a teammate with the PASSIVE mention
  * form (@@slug) yet the surrounding text reads like an ask — the passive form
  * links but notifies no one, so an intended handoff stalls silently. Only an
- * addressing use paired with a directed-ask signal is flagged (see
+ * addressing use paired with a directed-ask signal, or a name bound directly to a
+ * sign-off/approval gate ("Ready for @@slug review"), is flagged (see
  * detectPassiveTeammateAsks), so a deliberate passive reference is left alone.
  * Same scoping as buildUnlinkedMentionWarning; best-effort and non-blocking.
  */
 async function buildPassiveMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectPassiveTeammateAsks(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `@@${s}`).join(', ');
@@ -311,8 +354,11 @@ async function buildPassiveMentionWarning(
 		`notifies no one, so no wakeup or admin-inbox alert was created. If you need them to ` +
 		`act on this ticket, edit this comment or post a follow-up with an active mention ` +
 		`(${fixes}). If you only meant to refer to them, keep the passive form but move the ` +
-		`reference inside the sentence: a line that opens with a teammate reference and a ` +
-		`dash is an address, and the address form is reserved for active mentions.`
+		`reference out of the handoff position: a line that opens with a teammate reference and ` +
+		`a dash is an address, and a name bound to a sign-off gate ("ready for <name> review", ` +
+		`"awaiting <name> sign-off", "<name> to approve") hands them the next action - both ` +
+		`shapes are reserved for active mentions, so a plain reference belongs inside a ` +
+		`sentence that asks for nothing.`
 	);
 }
 
@@ -326,12 +372,9 @@ async function buildPassiveMentionWarning(
  * best-effort and non-blocking.
  */
 async function buildNarratedMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectNarratedActiveMentions(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `@${s}`).join(', ');
@@ -569,6 +612,9 @@ const SKILL_COLUMNS = `id, name, slug, description, content, source_url,
 const APPROVAL_COLUMNS = `id, team_id, type, status, requested_by_member_id,
 	resolution_note, resolved_at, created_at, payload`;
 
+/** APPROVAL_COLUMNS qualified with the `a` alias, for the keyset-paged read. */
+const APPROVAL_COLUMNS_ALIASED = APPROVAL_COLUMNS.replace(/[A-Za-z_][A-Za-z_0-9]*/g, 'a.$&');
+
 // Cap MCP tool result payloads at 64 000 bytes, comfortably under a typical agent
 // runtime's tool-result limit (e.g. the Claude Code harness's ~25k-token ceiling).
 // An oversized result is discarded whole and replaced with a `result_too_large`
@@ -585,14 +631,159 @@ export const MCP_RESULT_BYTE_LIMIT = 64_000;
 // `result_too_large`; the generic cap still guards every list/query tool against
 // context bloat. Keyed by tool name; falls back to MCP_RESULT_BYTE_LIMIT.
 export const MCP_RESULT_BYTE_LIMIT_OVERRIDES: Readonly<Record<string, number>> = {
+	get_agent_system_prompt: 131_072,
 	get_agent_system_prompts: 131_072,
 };
+
+/**
+ * Tools taking an array of work items, keyed by the argument holding it.
+ *
+ * Used by the `result_too_large` guard to turn an overflow into a concrete
+ * "retry with at most N items" instruction. Without it the guard can only
+ * offer generic advice, and the only generic remedy that fits a batch tool is
+ * "fetch a single resource" - which collapses one call into N and is almost
+ * never what the cap was asking for.
+ */
+export const MCP_BATCH_ARRAY_PARAMS: Readonly<Record<string, string>> = {
+	create_tasks: 'items',
+	get_agent_system_prompts: 'items',
+	update_agent_system_prompts: 'updates',
+};
+
+/**
+ * Fraction of the theoretical fit to actually suggest on a batch retry. Rows
+ * vary in size, so proposing exactly `limit / size` of the batch would put the
+ * retry right at the cap and risk a second rejection.
+ */
+const BATCH_RETRY_SAFETY = 0.8;
+
+/**
+ * Remedies for an oversized result, built from what the called tool actually
+ * declares rather than from a fixed list.
+ *
+ * A fixed list is worse than no list: it names parameters the tool may not
+ * have, and an agent that discards the inapplicable ones is left with whatever
+ * remains, however bad. That is the exact path that turned one overflowing
+ * batch read into ten single reads.
+ */
+export function oversizeRemedies(
+	name: string,
+	schema: Record<string, z.ZodType>,
+	args: Record<string, unknown>,
+	sizeBytes: number,
+	byteLimit: number,
+): string[] {
+	const remedies: string[] = [];
+
+	const batchParam = MCP_BATCH_ARRAY_PARAMS[name];
+	const batch = batchParam ? args[batchParam] : undefined;
+	if (batchParam && Array.isArray(batch) && batch.length > 1) {
+		const safe = Math.max(
+			1,
+			Math.floor((batch.length * byteLimit * BATCH_RETRY_SAFETY) / sizeBytes),
+		);
+		const calls = Math.ceil(batch.length / safe);
+		remedies.push(
+			`Split the batch and retry: you sent ${batch.length} items in \`${batchParam}\`, so retry as ${calls} calls of at most ${safe}. Do NOT fall back to one item per call - that is ${batch.length} round trips for work that fits in ${calls}.`,
+		);
+	}
+
+	if ('cursor' in schema) {
+		remedies.push('Lower `limit` and page with `cursor` until `has_more` is false.');
+	}
+	if ('offset' in schema) {
+		remedies.push('Lower `max_bytes` and page with `offset` until `next_offset` is null.');
+	}
+	if ('before' in schema) {
+		remedies.push('Page backwards with `before`.');
+	}
+	if ('excerpt_chars' in schema) {
+		remedies.push('Pass `excerpt_chars: 300` to truncate long fields.');
+	}
+	const filters = ['status', 'assignee_slug', 'assignee_id', 'filter', 'type', 'project'].filter(
+		(f) => f in schema && args[f] === undefined,
+	);
+	if (filters.length > 0) {
+		remedies.push(`Narrow the query with ${filters.map((f) => `\`${f}\``).join(' / ')}.`);
+	}
+
+	if (remedies.length === 0) {
+		remedies.push(
+			'This tool exposes no narrowing parameter - request less of the underlying resource, or read it through a tool that pages.',
+		);
+	}
+	return remedies;
+}
 
 // Headroom reserved for the JSON result envelope (field names, pretty-print
 // indentation, string-escaping inflation of newlines/quotes/backslashes, and any
 // review_comments) when read_project_doc sizes a content window under its effective
 // result cap, so the serialized window stays under the byte guard.
 const DOC_READ_ENVELOPE_RESERVE = 4_096;
+
+/**
+ * Byte budget a *chunked* batch result aims to fill, as distinct from the cap
+ * that decides whether a result is admitted at all.
+ *
+ * The two are not the same number, and conflating them is a real failure we hit:
+ * chunking to the raised `MCP_RESULT_BYTE_LIMIT_OVERRIDES` value (128 KB) let a
+ * batch return ~125 KB, which is roughly 31k tokens - over the ~25k-token
+ * tool-result ceiling a runtime like the Claude Code harness enforces. The
+ * chunker had "succeeded" into a result the client could not accept, so the
+ * harness spilled it to a file and the agent spent several turns writing a
+ * script to slice it back out.
+ *
+ * A raised per-tool cap exists so a single inherently-large resource is not
+ * rejected outright. It is the wrong target when we control how many items to
+ * include: there, aim under the generic cap, which was picked to sit
+ * comfortably inside a runtime's token ceiling. The envelope reserve comes off
+ * the top so the serialized wrapper still fits.
+ */
+const MCP_BATCH_CHUNK_TARGET_BYTES = MCP_RESULT_BYTE_LIMIT - DOC_READ_ENVELOPE_RESERVE;
+
+/**
+ * Default cap for the long free-text columns a list route returns per row.
+ *
+ * Paging bounds a list's row *count*; this bounds its row *width*. Without it a
+ * page of 50 tasks carrying unbounded description and rules can exceed the
+ * result cap at any page size, and the whole page is discarded rather than
+ * trimmed. Wide enough to triage from, and the single-item `get_*` read still
+ * serves the full text.
+ */
+const DEFAULT_TASK_EXCERPT_CHARS = 500;
+
+/**
+ * Default cap for a comment's text in a listing. Higher than the task default:
+ * a thread is read to follow a conversation, so an over-tight excerpt costs a
+ * round trip per comment, which is the failure this whole convention is here to
+ * avoid. The full text is one `get_comment` read away, and every truncated row
+ * carries a `text_paging_hint` naming that call.
+ *
+ * This comment used to claim the full text was reachable "via `before`/`cursor`
+ * on a narrower page". It never was: neither parameter widens the excerpt, so
+ * the only escape was guessing an `excerpt_chars` above `text_length`. Keep any
+ * recovery path named here true - `get_comment` exists precisely because two
+ * surfaces promised a single-item read that did not.
+ */
+const DEFAULT_COMMENT_EXCERPT_CHARS = 2_000;
+
+/**
+ * Warn when a caller supplied a `changelog` that had nowhere to land.
+ *
+ * A revision captures the content as it was BEFORE a change, so only a
+ * content-changing write records one: a doc's creation and a description-only
+ * update do not. The changelog used to be discarded in silence, which is worse
+ * than refusing it - the agent goes on believing its note is in the document's
+ * history, and so does the next reader who does not find it there.
+ */
+function changelogNotRecordedWarning(changelog: unknown, recorded: boolean): { warning?: string } {
+	if (recorded) return {};
+	if (typeof changelog !== 'string' || changelog.trim() === '') return {};
+	return {
+		warning:
+			"The `changelog` was not recorded: a revision captures the content as it was before a change, so only a content-changing write gets one - a doc's first write and a description-only update do not. Nothing else about this write was affected.",
+	};
+}
 
 // Inline-image cap for read_project_asset. A raster asset at or under this many
 // bytes is returned as an actual MCP image content block (base64) so a
@@ -619,35 +810,48 @@ export interface Excerpt {
 }
 
 /**
- * Excerpt the leading paragraph of `text`, capped at `maxChars` with a
- * word-boundary cut. Returns `null` excerpt for null/empty input.
+ * How much of the budget a boundary must preserve to be worth cutting at.
+ * Below this the boundary is ignored and the excerpt runs to the full budget,
+ * so a tidy cut never costs more than half the text the caller asked for.
+ */
+const EXCERPT_BOUNDARY_FLOOR = 0.5;
+
+/** Index of the last paragraph break in `s`, or -1 when there is none. */
+function lastParagraphBreak(s: string): number {
+	const re = /\n[ \t]*\n/g;
+	let idx = -1;
+	for (let m = re.exec(s); m !== null; m = re.exec(s)) idx = m.index;
+	return idx;
+}
+
+/**
+ * Excerpt the leading `maxChars` of `text`, cut at a paragraph break where one
+ * is available and at a word boundary otherwise.
+ *
+ * `maxChars` is the budget to fill, NOT a ceiling applied after some other rule.
+ * An earlier version cut at the FIRST paragraph break and only then applied
+ * `maxChars` (it even sliced `firstPara` rather than `text`, so it could never
+ * look past that break), which meant a 9400-character comment whose opening
+ * line was followed by a blank line came back as 73 characters - grammatically
+ * complete prose that read as a finished short comment rather than an excerpt,
+ * and was acted on as one: an agent concluded a review had never been submitted
+ * and asked for it to be redone. A boundary is now preferred only when it keeps
+ * most of the budget; otherwise the excerpt runs to the budget.
+ *
+ * Returns `null` excerpt for null input.
  */
 export function excerpt(text: string | null | undefined, maxChars: number): Excerpt {
 	if (text == null) return { excerpt: null, truncated: false, length: 0 };
 	const length = text.length;
 	if (length === 0) return { excerpt: '', truncated: false, length: 0 };
-	const firstPara = text.split(/\n\s*\n/, 1)[0] ?? text;
-	if (firstPara.length <= maxChars) {
-		return { excerpt: firstPara, truncated: firstPara !== text, length };
-	}
-	const slice = firstPara.slice(0, maxChars);
+	if (length <= maxChars) return { excerpt: text, truncated: false, length };
+	const slice = text.slice(0, maxChars);
+	const floor = maxChars * EXCERPT_BOUNDARY_FLOOR;
+	const para = lastParagraphBreak(slice);
+	if (para > floor) return { excerpt: slice.slice(0, para), truncated: true, length };
 	const lastSpace = slice.lastIndexOf(' ');
-	const cut = lastSpace > maxChars * 0.5 ? slice.slice(0, lastSpace) : slice;
+	const cut = lastSpace > floor ? slice.slice(0, lastSpace) : slice;
 	return { excerpt: cut, truncated: true, length };
-}
-
-/**
- * Largest index <= `end` that does not fall inside a multi-byte UTF-8 codepoint,
- * so a Buffer slice taken at this index never splits a character. UTF-8
- * continuation bytes match 0b10xxxxxx; back off them onto the preceding lead byte.
- * Used to window read_project_doc content on codepoint boundaries: applied to the
- * window start (slice includes it, keeping the whole leading codepoint) and to the
- * window end (slice excludes it, dropping a partial trailing codepoint).
- */
-function utf8FloorBoundary(buf: Buffer, end: number): number {
-	let e = Math.max(0, Math.min(end, buf.length));
-	while (e > 0 && e < buf.length && (buf[e] & 0xc0) === 0x80) e--;
-	return e;
 }
 
 /**
@@ -764,7 +968,8 @@ function tool(
 					tool: name,
 					size_bytes: sizeBytes,
 					limit_bytes: byteLimit,
-					hint: 'Narrow the query - add filters, fetch a single resource via get_*, paginate with `before` (where supported), or pass `excerpt_chars: 300` to truncate long fields.',
+					hint: 'This result exceeded the cap and was discarded whole - nothing was returned. Split the work and retry; do not narrow what you cover to whatever fits in one call.',
+					remedies: oversizeRemedies(name, schema, args, sizeBytes, byteLimit),
 				},
 				null,
 				2,
@@ -965,6 +1170,28 @@ const projectArg = () =>
 		);
 
 /**
+ * One activity column on `update_project_progress`. The three columns differ only in which tasks
+ * belong in them and what their line should answer, so the shape is declared once here.
+ */
+const progressActivityArg = (which: string, answers: string) =>
+	z
+		.array(
+			z.object({
+				task: z.string().describe('Task identifier, e.g. BE-2. Must exist in this project.'),
+				summary: z
+					.string()
+					.describe(
+						`One line, in your own words, answering: ${answers}. Pitch it at what this means for the project, not a log of what happened inside the task. Do not paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Write a complete sentence and keep it under ${PROGRESS_ACTIVITY_SUMMARY_MAX} characters - the Progress page renders the line in full, and anything longer is trimmed back to its last complete sentence.`,
+					),
+			}),
+		)
+		.max(PROGRESS_ACTIVITY_PER_COLUMN)
+		.optional()
+		.describe(
+			`Up to ${PROGRESS_ACTIVITY_PER_COLUMN} tasks ${which}, most significant first. Omit all three lists to leave the columns as they are.`,
+		);
+
+/**
  * Standard `filter` entry for doc/asset tools that can see archived items.
  * Defaults to 'active' so archived (soft-deleted) items stay invisible unless
  * a call explicitly asks for 'archived' or 'all'.
@@ -1011,43 +1238,54 @@ export function registerTools(
 	// callers (reference generation, tests) that register without running
 	// handlers or with a plain local data dir.
 	const assets = assetStore ?? new LocalAssetStore(dataDir);
-	// Port for agent-facing download URLs (host.docker.internal origin).
-	const agentPort = serverPort ?? 0;
+	// Fallback origin for agent-facing download URLs, used only by callers that
+	// register the tools without dispatching a request (reference generation,
+	// tests). A live tool call reads the caller's own origin off its request -
+	// see `callerOriginContext`.
+	const registeredOrigin = `http://127.0.0.1:${serverPort ?? 0}`;
+	const agentOrigin = () => callerOriginContext.getStore() ?? registeredOrigin;
 
 	// Teams
 	tool(
 		server,
 		'list_teams',
-		'List teams accessible to the caller. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team.',
-		{},
-		async (_args, db, auth) => {
+		`List teams accessible to the caller, by name. An API key and the instance CEO (cross-team session) get every team in the instance; an ordinary agent run gets only its own team. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		{ ...listPagingArgs() },
+		async (args, db, auth) => {
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const byName = { column: 'name', direction: 'asc', cast: 'text' } as const;
 			// The instance CEO chat session acts across every team (cross-team gated
 			// at mint time), so it discovers the whole roster — not just HQ. An
 			// approved API key is admin-equivalent and spans the instance too.
+			const all = async (extraJoin: string, extraWhere: string, base: unknown[]) => {
+				const params = [...base];
+				const keyset = keysetPredicate('c', cursor, params, byName);
+				const where = [extraWhere, keyset].filter(Boolean).join(' AND ');
+				const r = await db.query<ListRow>(
+					`SELECT c.* FROM teams c ${extraJoin}
+					 ${where ? `WHERE ${where}` : ''}
+					 ORDER BY ${keysetOrderBy('c', byName)} LIMIT ${limit + 1}`,
+					params,
+				);
+				return pagedList(r.rows, limit, 'list_teams', { column: 'name' });
+			};
 			if (auth.type === AuthType.ApiKey || (auth.type === AuthType.Agent && auth.crossTeam)) {
-				const r = await db.query('SELECT * FROM teams ORDER BY name');
-				return r.rows;
+				return all('', '', []);
 			}
 			if (auth.type === AuthType.Agent) {
-				const r = await db.query('SELECT * FROM teams WHERE id = $1', [auth.teamId]);
-				return r.rows;
+				return all('', 'c.id = $1', [auth.teamId]);
 			}
 			if (auth.type === AuthType.Admin) {
-				if (auth.isSuperuser) {
-					const r = await db.query('SELECT * FROM teams ORDER BY name');
-					return r.rows;
-				}
-				const r = await db.query(
-					`SELECT c.* FROM teams c
-					 JOIN members m ON m.team_id = c.id
-					 JOIN member_users mu ON mu.id = m.id
-					 WHERE mu.user_id = $1
-					 ORDER BY c.name`,
+				if (auth.isSuperuser) return all('', '', []);
+				return all(
+					`JOIN members m ON m.team_id = c.id
+					 JOIN member_users mu ON mu.id = m.id`,
+					'mu.user_id = $1',
 					[auth.userId],
 				);
-				return r.rows;
 			}
-			return [];
+			return pagedList([], limit, 'list_teams', { column: 'name' });
 		},
 		db,
 	);
@@ -1097,7 +1335,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_tasks',
-		"List a project's tasks. Returns up to 50 tasks ordered by creation date (newest first). Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Pass excerpt_chars (e.g. 300) to truncate description and rules to triage-sized excerpts; omit for full content.",
+		`List a project's tasks, newest first. Omit \`project\` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. description and rules come back as excerpts capped at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}) so one page cannot be dominated by a few long tickets - read a task's full text with get_task.`,
 		{
 			project: projectArg(),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
@@ -1115,12 +1353,15 @@ export function registerTools(
 				.positive()
 				.optional()
 				.describe(
-					'When set, replaces description and rules with first-paragraph excerpts capped at this many characters, plus _truncated and _length companion fields',
+					`Cap for the description and rules excerpts, with _truncated and _length companion fields (default ${DEFAULT_TASK_EXCERPT_CHARS}). Use get_task for a task's full text.`,
 				),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
+			const limit = parseListLimit(args.limit);
+			const empty = pagedList([], limit, 'list_tasks');
 			const conditions = ['i.project_id = $1'];
 			const params: unknown[] = [scope.projectId];
 			let idx = 2;
@@ -1135,7 +1376,7 @@ export function registerTools(
 				? ((await resolveAssigneeId(db, scope.teamId, args.assignee_id as string)) ?? undefined)
 				: undefined;
 			// An assignee_id that resolves to nobody (unknown slug/id) matches nothing.
-			if (args.assignee_id && !assigneeId) return [];
+			if (args.assignee_id && !assigneeId) return empty;
 			if (!assigneeId && args.assignee_slug) {
 				const agent = await db.query<{ id: string }>(
 					`SELECT ma.id FROM member_agents ma
@@ -1143,7 +1384,7 @@ export function registerTools(
 					 WHERE ma.slug = $1 AND m.team_id = $2`,
 					[args.assignee_slug, scope.teamId],
 				);
-				if (agent.rows.length === 0) return [];
+				if (agent.rows.length === 0) return empty;
 				assigneeId = agent.rows[0].id;
 			}
 			if (assigneeId) {
@@ -1151,20 +1392,25 @@ export function registerTools(
 				params.push(assigneeId);
 				idx++;
 			}
-			const r = await db.query(
+			const keyset = keysetPredicate('i', decodeCursor(args.cursor as string | undefined), params);
+			if (keyset) conditions.push(keyset);
+			const orderBy = keysetOrderBy('i');
+			// limit + 1 is the has_more probe: the extra row answers "is there another
+			// page" exactly, without a COUNT(*) over a table that only grows.
+			const r = await db.query<ListRow>(
 				`SELECT ${TASK_COLUMNS}, p.name AS project_name
 				 FROM tasks i JOIN projects p ON p.id = i.project_id
 				 WHERE ${conditions.join(' AND ')}
-				 ORDER BY i.created_at DESC LIMIT 50`,
+				 ORDER BY ${orderBy} LIMIT ${limit + 1}`,
 				params,
 			);
-			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return r.rows;
-			return r.rows.map((row) => {
-				let next = applyExcerpt(row as Record<string, unknown>, 'description', max);
+			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_TASK_EXCERPT_CHARS;
+			const rows = r.rows.map((row) => {
+				let next = applyExcerpt(row as unknown as Record<string, unknown>, 'description', max);
 				next = applyExcerpt(next, 'rules', max);
-				return next;
+				return next as unknown as ListRow;
 			});
+			return pagedList(rows, limit, 'list_tasks');
 		},
 		db,
 	);
@@ -1215,7 +1461,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_task',
-		"Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, but no deeper (depth is capped at 2). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
+		"Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, and those one further level, but no deeper (depth is capped at 3). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
 		{
 			project: projectArg(),
 			title: z.string().describe('Task title'),
@@ -1230,7 +1476,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, but no deeper - depth is capped at 2.',
+					'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3.',
 				),
 			runtime_type: z
 				.string()
@@ -1389,13 +1635,26 @@ export function registerTools(
 		{
 			project: projectArg(),
 			include_archived: z.boolean().optional().describe('Include archived goals (default false).'),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			return listGoals(db, scope.projectId, {
+			const limit = parseListLimit(args.limit);
+			const all = await listGoals(db, scope.projectId, {
 				includeArchived: args.include_archived === true,
 			});
+			// Goals are admin-authored objectives - a handful per project, and the
+			// service orders them by a composite (archived, created_at) the keyset
+			// predicate cannot express. Slicing the resolved set keeps the envelope
+			// uniform without pushing a cursor into a query that would not benefit.
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? all.findIndex((g) => g.id === cursor.id) + 1 : 0;
+			return pagedList(
+				all.slice(from, from + limit + 1) as unknown as ListRow[],
+				limit,
+				'list_goals',
+			);
 		},
 		db,
 	);
@@ -1455,14 +1714,17 @@ export function registerTools(
 	tool(
 		server,
 		'update_project_progress',
-		"Replace the project's progress summary shown at the top of the Progress page. Only the Captain does this, and only from within a progress-update run. Keep it a concise summary, not a backlog: lead with the key points in **bold**, then a short narrative of what is done, what is in progress, and what is still to do. You may reference a few of the most relevant tickets by their bare identifier (e.g. BE-2) - link sparingly. This overwrites the whole summary, so include everything that should remain.",
+		"Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.",
 		{
 			project: projectArg(),
 			summary: z
 				.string()
 				.describe(
-					'Markdown summary of project progress. Lead with the key points in **bold**, then a short narrative of done / in-progress / to-do. Link only a few key tickets by identifier; keep it a summary.',
+					'Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference ticket identifiers - the activity columns carry the specific tasks.',
 				),
+			actioned: progressActivityArg('being worked on right now', 'what is being accomplished'),
+			created: progressActivityArg('newly filed', 'what it sets out to accomplish, and why'),
+			closed: progressActivityArg('recently finished', 'what was accomplished'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -1471,13 +1733,28 @@ export function registerTools(
 				return { error: 'update_project_progress can only be called from within an agent run' };
 			}
 			try {
-				return await updateProjectProgress(
+				// Omitting all three lists leaves the stored snapshot alone, so a caller refreshing
+				// only the summary never blanks the columns.
+				const lists = {
+					actioned: args.actioned as ProgressActivityInput[] | undefined,
+					created: args.created as ProgressActivityInput[] | undefined,
+					closed: args.closed as ProgressActivityInput[] | undefined,
+				};
+				const hasLists = Object.values(lists).some((l) => l !== undefined);
+				const snapshot = hasLists
+					? await buildProgressActivitySnapshot(db, scope.projectId, lists)
+					: null;
+				const result = await updateProjectProgress(
 					db,
 					scope.teamId,
 					scope.projectId,
 					args.summary as string,
 					wsManager,
+					snapshot?.activity,
 				);
+				// Report unresolvable identifiers rather than dropping the rows silently, so the
+				// Captain learns it named a task that does not exist in this project.
+				return snapshot?.unknown.length ? { ...result, unknown_tasks: snapshot.unknown } : result;
 			} catch (e) {
 				if (e instanceof ProjectProgressError) return { error: e.message };
 				throw e;
@@ -1507,7 +1784,7 @@ export function registerTools(
 							.string()
 							.optional()
 							.describe(
-								'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2"), UUID, or a zero-based index token referencing an earlier item in this same call (e.g. "#0" = first item). Sub-tasks can themselves have sub-tasks, but no deeper - depth is capped at 2.',
+								'Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2"), UUID, or a zero-based index token referencing an earlier item in this same call (e.g. "#0" = first item). Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3.',
 							),
 						runtime_type: z
 							.string()
@@ -1603,7 +1880,7 @@ export function registerTools(
 				.nullable()
 				.optional()
 				.describe(
-					'Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 2. An open task cannot be nested under a parent that is already done or cancelled.',
+					'Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 3. An open task cannot be nested under a parent that is already done or cancelled.',
 				),
 		},
 		async (args, db, auth) => {
@@ -1955,21 +2232,39 @@ export function registerTools(
 	tool(
 		server,
 		'list_agents',
-		"List the agents on a project's team",
+		`List the agents on a project's team, by title. Each row carries \`reports_to\` (the manager's member ID, null when unset) plus \`reports_to_slug\`/\`reports_to_title\` - this is the structural reporting line that gates delegation, so it is what to read when auditing the org chart for orphans (\`reports_to\` null) or cycles. Do NOT infer reporting lines from an agent's team_context prose: that prose is a rendered description which can itself be stale, and is exactly what a coherence review is meant to check against this field. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const r = await db.query(
+			const limit = parseListLimit(args.limit);
+			const byTitle = { column: 'title', direction: 'asc', cast: 'text', idAlias: 'm' } as const;
+			const params: unknown[] = [scope.teamId];
+			const keyset = keysetPredicate(
+				'ma',
+				decodeCursor(args.cursor as string | undefined),
+				params,
+				byTitle,
+			);
+			const r = await db.query<ListRow>(
+				// reports_to is the column delegation is actually gated on, and the
+				// only way to detect an orphan or a cycle. The manager's slug/title
+				// ride along because agents address each other by slug, so without
+				// them every caller pays a second lookup per row to resolve the id.
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
 				        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
-				        ma.runtime_status, ma.admin_status
-				 FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.team_id = $1 ORDER BY ma.title`,
-				[scope.teamId],
+				        ma.runtime_status, ma.admin_status,
+				        ma.reports_to, mgr.slug AS reports_to_slug, mgr.title AS reports_to_title
+				 FROM members m JOIN member_agents ma ON ma.id = m.id
+				 LEFT JOIN member_agents mgr ON mgr.id = ma.reports_to
+				 WHERE m.team_id = $1${keyset ? ` AND ${keyset}` : ''}
+				 ORDER BY ${keysetOrderBy('ma', byTitle)} LIMIT ${limit + 1}`,
+				params,
 			);
-			return r.rows;
+			return pagedList(r.rows, limit, 'list_agents', { column: 'title' });
 		},
 		db,
 	);
@@ -2391,9 +2686,9 @@ export function registerTools(
 	tool(
 		server,
 		'list_team_templates',
-		'List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "Startup" team) live in the marketplace, not here. Use when recommending a team structure to hire.',
-		{},
-		async (_args, db) => {
+		`List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "App Team") live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		{ ...listPagingArgs() },
+		async (args, db) => {
 			const r = await db.query<{
 				id: string;
 				name: string;
@@ -2420,7 +2715,17 @@ export function registerTools(
 				 GROUP BY ct.id
 				 ORDER BY ct.is_builtin DESC, ct.name ASC`,
 			);
-			return r.rows;
+			// Ordered by a composite (is_builtin, name) the keyset predicate cannot
+			// express, and bounded by however many templates an operator has saved,
+			// so the cursor anchors on row identity.
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? r.rows.findIndex((t) => t.id === cursor.id) + 1 : 0;
+			return pagedList(
+				r.rows.slice(from, from + limit + 1) as unknown as ListRow[],
+				limit,
+				'list_team_templates',
+			);
 		},
 		db,
 	);
@@ -2428,22 +2733,28 @@ export function registerTools(
 	tool(
 		server,
 		'list_marketplace_teams',
-		'Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent).',
-		{},
-		async () => {
+		`Browse the team marketplace: every ready-made team available to this instance, with its name, description, summary, role count, and version. Callable by the CEO or a team Captain. Use it before staffing a team - the marketplace carries proven, fully-written roles, so check whether one already covers the role you need (then pull its prompt with get_marketplace_team) instead of authoring a system prompt from scratch. You can take a whole roster (apply_marketplace_team) or lift out a single role (apply_marketplace_agent). Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		{ ...listPagingArgs() },
+		async (args) => {
 			const catalog = await getMarketplaceCatalog();
 			// `keywords` is search vocabulary for the New Project picker - long, and
 			// noise in an agent's context. Deliberately omitted.
-			return {
-				teams: catalog.map((t) => ({
-					slug: t.slug,
-					name: t.name,
-					description: t.description,
-					summary: t.summary,
-					version: t.version,
-					roster_count: t.roster_count,
-				})),
-			};
+			const teams = catalog.map((t) => ({
+				slug: t.slug,
+				name: t.name,
+				description: t.description,
+				summary: t.summary,
+				version: t.version,
+				roster_count: t.roster_count,
+			}));
+			// A marketplace team is identified by slug, not a row id.
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? teams.findIndex((t) => t.slug === cursor.id) + 1 : 0;
+			return pagedList(teams.slice(from, from + limit + 1), limit, 'list_marketplace_teams', {
+				column: 'name',
+				idKey: 'slug',
+			});
 		},
 		db,
 	);
@@ -2586,58 +2897,69 @@ export function registerTools(
 	tool(
 		server,
 		'list_projects',
-		'List projects. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. Pass excerpt_chars (e.g. 300) to truncate description; omit for full content.',
+		`List projects, by name. With CEO cross-team access (or as superuser) returns every project across the instance; a board user gets the projects on teams they belong to; an agent run gets its own project. description comes back as an excerpt capped at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}); read a project's full description with get_team or the project's own docs. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			excerpt_chars: z
 				.number()
 				.int()
 				.positive()
 				.optional()
-				.describe('When set, truncates description and adds description_truncated/_length'),
+				.describe(
+					`Cap for the description excerpt, with description_truncated/_length companions (default ${DEFAULT_TASK_EXCERPT_CHARS}).`,
+				),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
-			const max = args.excerpt_chars as number | undefined;
-			const withExcerpt = (rows: Record<string, unknown>[]) =>
-				max == null ? rows : rows.map((row) => applyExcerpt(row, 'description', max));
+			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_TASK_EXCERPT_CHARS;
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const byName = { column: 'name', direction: 'asc', cast: 'text' } as const;
+			const page = (rows: ListRow[]) =>
+				pagedList(
+					rows.map((row) => applyExcerpt(row, 'description', max) as ListRow),
+					limit,
+					'list_projects',
+					{ column: 'name' },
+				);
+			const PROJECT_COLS = `p.id, p.team_id, p.name, p.slug, p.task_prefix, p.description,
+			        p.is_internal, p.created_at, p.updated_at`;
 
 			const instanceWide =
 				(auth.type === AuthType.Agent && auth.crossTeam) ||
 				(auth.type === AuthType.Admin && auth.isSuperuser) ||
 				auth.type === AuthType.ApiKey;
 			if (instanceWide) {
-				const r = await db.query<Record<string, unknown>>(
-					`SELECT p.id, p.team_id,
-					        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
-					        p.created_at, p.updated_at
-					 FROM projects p
-					 ORDER BY p.name`,
+				const params: unknown[] = [];
+				const keyset = keysetPredicate('p', cursor, params, byName);
+				const r = await db.query<ListRow>(
+					`SELECT ${PROJECT_COLS} FROM projects p
+					 ${keyset ? `WHERE ${keyset}` : ''}
+					 ORDER BY ${keysetOrderBy('p', byName)} LIMIT ${limit + 1}`,
+					params,
 				);
-				return withExcerpt(r.rows);
+				return page(r.rows);
 			}
 
 			if (auth.type === AuthType.Admin) {
-				const r = await db.query<Record<string, unknown>>(
-					`SELECT DISTINCT p.id, p.team_id,
-					        p.name, p.slug, p.task_prefix, p.description, p.is_internal,
-					        p.created_at, p.updated_at
-					 FROM projects p
+				const params: unknown[] = [auth.userId];
+				const keyset = keysetPredicate('p', cursor, params, byName);
+				const r = await db.query<ListRow>(
+					`SELECT DISTINCT ${PROJECT_COLS} FROM projects p
 					 JOIN members m ON m.team_id = p.team_id
 					 JOIN member_users mu ON mu.id = m.id
-					 WHERE mu.user_id = $1
-					 ORDER BY p.name`,
-					[auth.userId],
+					 WHERE mu.user_id = $1${keyset ? ` AND ${keyset}` : ''}
+					 ORDER BY ${keysetOrderBy('p', byName)} LIMIT ${limit + 1}`,
+					params,
 				);
-				return withExcerpt(r.rows);
+				return page(r.rows);
 			}
 
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const r = await db.query<Record<string, unknown>>(
-				`SELECT id, team_id, name, slug, task_prefix, description, is_internal, created_at, updated_at
-				 FROM projects WHERE id = $1`,
-				[scope.projectId],
-			);
-			return withExcerpt(r.rows);
+			const r = await db.query<ListRow>(`SELECT ${PROJECT_COLS} FROM projects p WHERE p.id = $1`, [
+				scope.projectId,
+			]);
+			return page(r.rows);
 		},
 		db,
 	);
@@ -2645,8 +2967,111 @@ export function registerTools(
 	// Comments
 	tool(
 		server,
+		'get_comment',
+		'Read one comment in full by its id (the UUID from a list_comments row, or its public_id slug). list_comments returns long text comments as excerpts capped at `excerpt_chars`; this is the single-item read that serves the whole body, so reach for it whenever a row comes back with `text_truncated: true`. Very long comments come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null. Structured comments (system/option/task_link) are returned whole.',
+		{
+			project: projectArg(),
+			comment_id: z
+				.string()
+				.describe(
+					'Comment UUID or public_id (e.g. "20261009112345"). Both forms from a list_comments row work.',
+				),
+			offset: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					'Byte offset to start reading the comment text from (default 0). To page a comment too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of comment text to return in this window (default and ceiling is the read budget, so a normal-size comment comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short.',
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const raw = args.comment_id as string;
+			// Join through tasks and pin team + project, so a comment is only
+			// readable from a project the caller already has access to - the same
+			// boundary list_comments enforces, without making the caller pass the
+			// task id it would have to look up first.
+			const r = await db.query<Record<string, unknown>>(
+				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.author_api_key_id,
+				        ic.parent_comment_id,
+				        ic.content_type, ic.content, ic.chosen_option, ic.created_at,
+				        t.identifier AS task_identifier,
+				        CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
+				        COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name
+				 FROM task_comments ic
+				 JOIN tasks t ON t.id = ic.task_id
+				 LEFT JOIN members m ON m.id = ic.author_member_id
+				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
+				 LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
+				 WHERE (ic.id::text = $1 OR ic.public_id = $1)
+				   AND t.team_id = $2 AND t.project_id = $3
+				 LIMIT 1`,
+				[raw, scope.teamId, scope.projectId],
+			);
+			if (r.rows.length === 0) return { error: `Comment not found: ${raw}` };
+			const row = r.rows[0];
+			const commentId = row.id as string;
+			const viewerMemberId = await resolveReactorMemberId(db, auth, scope.teamId);
+			const reactionsByComment = await loadReactionsForTask(
+				db,
+				row.task_id as string,
+				viewerMemberId,
+			);
+			const attachmentsByComment = await loadAgentAttachmentsForComments(
+				db,
+				[commentId],
+				masterKeyManager,
+				agentOrigin(),
+			);
+			const base = {
+				...row,
+				reactions: reactionsByComment.get(commentId) ?? [],
+				attachments: attachmentsByComment.get(commentId) ?? [],
+			};
+			const content = row.content as { text?: string } | null;
+			const text = content?.text;
+			if (row.content_type !== CommentContentType.Text || typeof text !== 'string') {
+				return base;
+			}
+			// Window the body for the same reason read_project_doc does: a comment
+			// has no length ceiling, and returning it whole would trip the generic
+			// result_too_large guard with no way to reach the rest.
+			return windowContent({
+				text,
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Comment is larger than one read. Returned bytes ${start}-${end} of ${total}. Call get_comment again with offset: ${end}; repeat until next_offset is null.`,
+				// `w` is spread BEFORE `content` on purpose: ContentWindow carries its
+				// own `content` string, but a comment's `content` is an object whose
+				// `text` holds the body, so the window's copy has to lose. The window's
+				// offset/next_offset/truncated/paging_hint fields still come through.
+				build: (w: ContentWindow) => ({
+					...base,
+					...w,
+					content: { ...content, text: w.content },
+				}),
+			});
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'list_comments',
-		"List comments for an task. Returns up to 50 most-recent comments (newest first). Pass before (a comment ID) to walk older. Pass excerpt_chars (e.g. 500) to truncate long text comments; structured comments (system/option/task_link) are always returned whole. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.",
+		`List comments for an task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -2654,7 +3079,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'A comment id (UUID) or public_id - return only comments created before that one',
+					'A comment id (UUID) or public_id - return only comments created before that one. Prefer `cursor` for straight paging; this is for resuming from a comment you already know.',
 				),
 			excerpt_chars: z
 				.number()
@@ -2662,13 +3087,15 @@ export function registerTools(
 				.positive()
 				.optional()
 				.describe(
-					'When set, truncates content.text on text-typed comments to this many characters and adds text_truncated/text_length',
+					`Cap for content.text on text-typed comments, with text_truncated/text_length companions (default ${DEFAULT_COMMENT_EXCERPT_CHARS}).`,
 				),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
+			const limit = parseListLimit(args.limit);
 			const conditions = ['ic.task_id = $1'];
 			const params: unknown[] = [taskId];
 			if (args.before) {
@@ -2677,6 +3104,8 @@ export function registerTools(
 					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE (id::text = $${params.length} OR public_id = $${params.length}) AND task_id = $1 LIMIT 1)`,
 				);
 			}
+			const keyset = keysetPredicate('ic', decodeCursor(args.cursor as string | undefined), params);
+			if (keyset) conditions.push(keyset);
 			const r = await db.query<Record<string, unknown>>(
 				`SELECT ic.id, ic.public_id, ic.task_id, ic.author_member_id, ic.author_api_key_id,
 				        ic.parent_comment_id,
@@ -2688,7 +3117,7 @@ export function registerTools(
 				 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
 				 LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
 				 WHERE ${conditions.join(' AND ')}
-				 ORDER BY ic.created_at DESC, ic.id DESC LIMIT 50`,
+				 ORDER BY ${keysetOrderBy('ic')} LIMIT ${limit + 1}`,
 				params,
 			);
 			const viewerMemberId = await resolveReactorMemberId(db, auth, teamId);
@@ -2698,28 +3127,34 @@ export function registerTools(
 				db,
 				commentIds,
 				masterKeyManager,
-				agentPort,
+				agentOrigin(),
 			);
 			const enriched: Record<string, unknown>[] = r.rows.map((row) => ({
 				...row,
 				reactions: reactionsByComment.get(row.id as string) ?? [],
 				attachments: attachmentsByComment.get(row.id as string) ?? [],
 			}));
-			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return enriched;
-			return enriched.map((row) => {
+			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_COMMENT_EXCERPT_CHARS;
+			const rows = enriched.map((row) => {
 				if (row.content_type !== CommentContentType.Text) return row;
 				const content = row.content as { text?: string } | null;
 				const text = content?.text;
 				if (typeof text !== 'string' || text.length <= max) return row;
 				const ex = excerpt(text, max);
+				// The excerpt is written back into `content.text`, the same key that
+				// carries a full body, so nothing about the string itself says it is
+				// partial. Name the recovery call on the row - a sibling boolean is
+				// easy to miss, and a reader who misses it treats the excerpt as the
+				// whole comment.
 				return {
 					...row,
 					content: { ...content, text: ex.excerpt },
 					text_truncated: ex.truncated,
 					text_length: ex.length,
+					text_paging_hint: `Showing the first ${ex.excerpt?.length ?? 0} of ${ex.length} characters. Call get_comment(comment_id: "${row.id}") for the full body.`,
 				};
 			});
+			return pagedList(rows as ListRow[], limit, 'list_comments');
 		},
 		db,
 	);
@@ -2727,27 +3162,37 @@ export function registerTools(
 	tool(
 		server,
 		'list_task_runs',
-		"List the agent runs (container executions) recorded for a task, newest first (up to 50). Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only - fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left).",
+		`List the agent runs (container executions) recorded for a task, newest first. Each row is one run: which agent ran, its status and exit code, when it started/finished, the invocation command, and the log length. Metadata only - fetch a run's actual container log with get_run_log(run_id). Useful for reviewing HOW a task was worked (e.g. the Coach checking what an agent actually did, beyond the comments it left). Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
-			const r = await db.query<Record<string, unknown>>(
+			const limit = parseListLimit(args.limit);
+			const params: unknown[] = [taskId, teamId];
+			const runKeyset = { column: 'started_at' } as const;
+			const keyset = keysetPredicate(
+				'hr',
+				decodeCursor(args.cursor as string | undefined),
+				params,
+				runKeyset,
+			);
+			const r = await db.query<ListRow>(
 				`SELECT hr.id, hr.status, hr.exit_code, hr.started_at, hr.finished_at,
 				        hr.invocation_command, ${runLogLengthSql('hr.id')} AS log_length,
 				        ma.title AS agent_title, ma.slug AS agent_slug
 				 FROM heartbeat_runs hr
 				 LEFT JOIN member_agents ma ON ma.id = hr.member_id
-				 WHERE hr.task_id = $1 AND hr.team_id = $2
-				 ORDER BY hr.started_at DESC
-				 LIMIT 50`,
-				[taskId, teamId],
+				 WHERE hr.task_id = $1 AND hr.team_id = $2${keyset ? ` AND ${keyset}` : ''}
+				 ORDER BY ${keysetOrderBy('hr', runKeyset)}
+				 LIMIT ${limit + 1}`,
+				params,
 			);
-			return r.rows;
+			return pagedList(r.rows, limit, 'list_task_runs', { column: 'started_at' });
 		},
 		db,
 	);
@@ -2755,7 +3200,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_run_log',
-		"Fetch the container log for a single agent run (a run_id from list_task_runs). Returns the run's log capped to the most recent excerpt_chars characters (default 12000 - the tail, where the outcome and any errors are) with truncated/length flags so you can tell when earlier output was dropped. Team-scoped: the run must belong to the project you're acting in.",
+		"Fetch the container log for a single agent run (a run_id from list_task_runs). Team-scoped: the run must belong to the project you're acting in. By default returns the most recent excerpt_chars characters (default 12000 - the tail, where the outcome and any errors usually are). To read a run that failed EARLY, pass offset (start at 0) and page forward with next_offset until it is null: the tail default would otherwise hide the start of the log, which is where a setup, clone, or install failure appears.",
 		{
 			project: projectArg(),
 			run_id: z.string().describe('Run ID (UUID) from list_task_runs'),
@@ -2764,7 +3209,25 @@ export function registerTools(
 				.int()
 				.positive()
 				.optional()
-				.describe('Max characters to return from the END of the log (default 12000).'),
+				.describe(
+					'Max characters to return from the END of the log (default 12000). Ignored when `offset` is set.',
+				),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Byte offset to read forward from, instead of the tail. Pass 0 to start at the beginning of the log, then pass back `next_offset` until it is null. Snapped down to a UTF-8 character boundary.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of log to return in this window when paging with `offset` (default and ceiling is the read budget).',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -2785,18 +3248,45 @@ export function registerTools(
 			);
 			if (r.rows.length === 0) return { error: `Run not found in this project: ${runId}` };
 			const run = r.rows[0];
-			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
-			// Read the tail from storage rather than aggregating the whole log and
-			// slicing it here: a run's log reaches 10 MB and this returns ~12 KB.
-			const tail = await readRunLogTail(db, run.id, max);
-			return {
+			const meta = {
 				id: run.id,
 				status: run.status,
 				exit_code: run.exit_code,
 				task_id: run.task_id,
+			};
+			// Either read is a window over storage rather than an aggregate of the
+			// whole log: a run's log reaches 10 MB and either mode returns ~12 KB.
+			const offset = args.offset as number | undefined;
+			if (offset !== undefined) {
+				const max = (args.max_bytes as number | undefined) ?? 12_000;
+				const w = await readRunLogWindow(db, run.id, offset, max);
+				return {
+					...meta,
+					log: w.text,
+					offset: w.offset,
+					returned_chars: w.text.length,
+					length: w.length,
+					next_offset: w.nextOffset,
+					truncated: w.offset > 0 || w.nextOffset !== null,
+					...(w.nextOffset !== null
+						? {
+								paging_hint: `Log is larger than one read. Returned characters ${w.offset}-${w.offset + w.text.length} of ${w.length}. Call get_run_log again with offset: ${w.nextOffset}; repeat until next_offset is null.`,
+							}
+						: {}),
+				};
+			}
+			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
+			const tail = await readRunLogTail(db, run.id, max);
+			return {
+				...meta,
 				log: tail.text,
 				length: tail.length,
 				truncated: tail.truncated,
+				...(tail.truncated
+					? {
+							paging_hint: `This is the last ${tail.text.length} of ${tail.length} characters. Earlier output was NOT returned - if the run failed early, call get_run_log again with offset: 0 and page forward with next_offset to reach the start.`,
+						}
+					: {}),
 			};
 		},
 		db,
@@ -2955,7 +3445,7 @@ export function registerTools(
 			// comment the agent posts and one auto-delivered from a stranded final
 			// message are byte-identical. RETURNING * includes public_id (the
 			// comment-link slug), so the agent gets it back without a list_comments.
-			const row = await postAgentComment({
+			const { row, woke } = await postAgentComment({
 				db,
 				wsManager,
 				teamId,
@@ -2977,6 +3467,7 @@ export function registerTools(
 					authorMemberId,
 					authorApiKeyId,
 					wsManager,
+					{ kind: 'comment', commentPublicId: row.public_id },
 				).catch((e) => log.error('Failed to record task links from comment:', e)),
 			);
 			// An agent that addresses a teammate by bold/bare name (no @ prefix)
@@ -2985,6 +3476,11 @@ export function registerTools(
 			// already-persisted comment on this check.
 			if (authorMemberId) {
 				const commentText = args.content as string;
+				// One roster read per write, shared by the receipt and all three mention
+				// advisories. They each used to resolve it themselves, so a single
+				// create_comment ran the identical query three times (four once the
+				// receipt was added) - see "Budget the DB round trips a request costs".
+				const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 				const [
 					teammateWarning,
 					passiveWarning,
@@ -2992,15 +3488,15 @@ export function registerTools(
 					backtickWarning,
 					terminalAskWarning,
 				] = await Promise.all([
-					buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildUnlinkedMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for unlinked teammate references:', e);
 						return null;
 					}),
-					buildPassiveMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildPassiveMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for passive teammate asks:', e);
 						return null;
 					}),
-					buildNarratedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildNarratedMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for narrated active mentions:', e);
 						return null;
 					}),
@@ -3022,7 +3518,13 @@ export function registerTools(
 				]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
-				if (warning) return { ...row, warning };
+				// The receipt ships on every write, warning or not: it is a fact about what
+				// the comment delivered, not an advisory that fires when a heuristic guessed
+				// right. An agent that meant to ask sees `woke: []` with the teammate it
+				// addressed sitting in `named_not_woken`.
+				const wake = buildWakeReceipt(commentText, woke, knownSlugs);
+				if (warning) return { ...row, wake, warning };
+				return { ...row, wake };
 			}
 			return row;
 		},
@@ -3090,7 +3592,7 @@ export function registerTools(
 			// a mention or a task link that was previously backticked and inert —
 			// fires for the first time. That is what makes "fix it by editing"
 			// behave the same as posting it correctly the first time.
-			await fireCommentWakeups({
+			const woke = await fireCommentWakeups({
 				db,
 				taskId,
 				teamId,
@@ -3101,7 +3603,10 @@ export function registerTools(
 				authorRunId: auth.runId,
 				parentCommentId: row.parent_comment_id,
 				wsManager,
-			}).catch((e) => log.error('Failed to fire wakeups for edited comment:', e));
+			}).catch((e) => {
+				log.error('Failed to fire wakeups for edited comment:', e);
+				return [] as string[];
+			});
 			trackBackground(
 				recordTaskLinks(
 					db,
@@ -3111,28 +3616,26 @@ export function registerTools(
 					auth.memberId,
 					apiKeyIdFromAuth(auth),
 					wsManager,
+					{ kind: 'comment', commentPublicId: r.rows[0].public_id },
 				).catch((e) => log.error('Failed to record task links from edited comment:', e)),
 			);
+			// One roster read, shared by the receipt and the three mention advisories.
+			const knownSlugs = await resolveWarnableSlugs(db, teamId, auth.memberId);
+			const wake = buildWakeReceipt(args.content as string, woke, knownSlugs);
 			const [teammateWarning, passiveWarning, narratedWarning, backtickWarning] = await Promise.all(
 				[
-					buildUnlinkedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for unlinked teammate references:', e);
-							return null;
-						},
-					),
-					buildPassiveMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for passive teammate asks:', e);
-							return null;
-						},
-					),
-					buildNarratedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for narrated active mentions:', e);
-							return null;
-						},
-					),
+					buildUnlinkedMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for unlinked teammate references:', e);
+						return null;
+					}),
+					buildPassiveMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for passive teammate asks:', e);
+						return null;
+					}),
+					buildNarratedMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for narrated active mentions:', e);
+						return null;
+					}),
 					buildBacktickedEntityWarning(db, teamId, scope.projectId, args.content as string).catch(
 						(e) => {
 							log.error('Failed to check edited comment for backticked entity references:', e);
@@ -3144,8 +3647,8 @@ export function registerTools(
 			const warning = [teammateWarning, passiveWarning, narratedWarning, backtickWarning]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
-			if (warning) return { ...r.rows[0], warning };
-			return r.rows[0];
+			if (warning) return { ...r.rows[0], wake, warning };
+			return { ...r.rows[0], wake };
 		},
 		db,
 	);
@@ -3657,7 +4160,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_approvals',
-		'List pending approvals. Pass excerpt_chars (e.g. 500) to truncate long fields inside payload (e.g. skill-proposal content); omit for full payload.',
+		`List pending approvals, newest first. Long string fields inside payload (e.g. skill-proposal content) come back truncated at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}) with *_truncated/_length companions, so one page cannot be dominated by a single large proposal - read a proposal in full from the approval itself. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			excerpt_chars: z
@@ -3666,21 +4169,28 @@ export function registerTools(
 				.positive()
 				.optional()
 				.describe(
-					'When set, truncates long string fields inside payload (e.g. skill-proposal content) and adds *_truncated/_length companions',
+					`Cap for long string fields inside payload, with *_truncated/_length companions (default ${DEFAULT_TASK_EXCERPT_CHARS}).`,
 				),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const r = await db.query<Record<string, unknown>>(
-				`SELECT ${APPROVAL_COLUMNS} FROM approvals
-				 WHERE team_id = $1 AND status = $2::approval_status
-				 ORDER BY created_at DESC`,
-				[scope.teamId, ApprovalStatus.Pending],
+			const limit = parseListLimit(args.limit);
+			const params: unknown[] = [scope.teamId, ApprovalStatus.Pending];
+			const keyset = keysetPredicate('a', decodeCursor(args.cursor as string | undefined), params);
+			const r = await db.query<ListRow>(
+				`SELECT ${APPROVAL_COLUMNS_ALIASED} FROM approvals a
+				 WHERE a.team_id = $1 AND a.status = $2::approval_status${keyset ? ` AND ${keyset}` : ''}
+				 ORDER BY ${keysetOrderBy('a')} LIMIT ${limit + 1}`,
+				params,
 			);
-			const max = args.excerpt_chars as number | undefined;
-			if (max == null) return r.rows;
-			return r.rows.map((row) => excerptApprovalPayload(row, max));
+			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_TASK_EXCERPT_CHARS;
+			return pagedList(
+				r.rows.map((row) => excerptApprovalPayload(row, max)),
+				limit,
+				'list_approvals',
+			);
 		},
 		db,
 	);
@@ -3749,10 +4259,11 @@ export function registerTools(
 	tool(
 		server,
 		'get_costs',
-		'Get the cost summary for a project',
+		`Get the cost summary for a project. Ungrouped returns a single total. group_by: 'agent' returns one row per agent (bounded by the roster). group_by: 'day' returns one row per day, newest first - that set grows for as long as the project runs, so it is paged: it returns \`limit\` days (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`, and when \`has_more\` is true you call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			group_by: z.enum(['agent', 'day']).optional().describe('Group costs by'),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3767,12 +4278,24 @@ export function registerTools(
 				return r.rows;
 			}
 			if (args.group_by === 'day') {
-				const r = await db.query(
+				// Cost rows accumulate for the life of the project, so the day grouping
+				// is the one branch here without a natural ceiling. It keys on the day
+				// itself: the grouping makes it unique, so no id tiebreak is needed.
+				const limit = parseListLimit(args.limit);
+				const cursor = decodeCursor(args.cursor as string | undefined);
+				const params: unknown[] = [scope.projectId];
+				let dayFilter = '';
+				if (cursor) {
+					params.push(cursor.value);
+					dayFilter = ` AND date_trunc('day', ce.created_at)::date < $${params.length}::date`;
+				}
+				const r = await db.query<{ day: string; total_cents: number }>(
 					`SELECT date_trunc('day', ce.created_at)::date AS day, sum(ce.amount_cents)::int AS total_cents
-				 FROM cost_entries ce WHERE ce.project_id = $1 GROUP BY day ORDER BY day`,
-					[scope.projectId],
+				 FROM cost_entries ce WHERE ce.project_id = $1${dayFilter}
+				 GROUP BY day ORDER BY day DESC LIMIT ${limit + 1}`,
+					params,
 				);
-				return r.rows;
+				return pagedList(r.rows, limit, 'get_costs', { column: 'day', idKey: 'day' });
 			}
 			const r = await db.query(
 				`SELECT sum(amount_cents)::int AS total_cents, count(*)::int AS entry_count FROM cost_entries WHERE project_id = $1`,
@@ -3787,7 +4310,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompt',
-		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default - `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context - so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt.",
+		"Read an agent's system prompt. Accessible by any agent or the admin in the same team. Returns the resolved role doc by default - `{{…}}` placeholders substituted with the real team name, manager, skills, project docs, and team context - so you can see what the agent actually says about itself with real values. Pass placeholders=false to get the raw stored template with `{{…}}` placeholders intact; only do this when you intend to edit the prompt and need a safe round-trip back through update_agent_system_prompt. A prompt too large for one read comes back as a byte window: when `next_offset` is non-null, call again with `offset` set to it until it is null. To read several prompts, use get_agent_system_prompts rather than looping this tool.",
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
@@ -3797,6 +4320,22 @@ export function registerTools(
 				.default(true)
 				.describe(
 					'When true (default) substitutes `{{…}}` placeholders with real team/team values. When false returns the raw stored template - needed when reading before update_agent_system_prompt so placeholders survive the round-trip.',
+				),
+			offset: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Byte offset to start reading the prompt from (default 0). Pass back `next_offset` to page a prompt too large for one read. Snapped down to a UTF-8 character boundary.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'Max bytes of prompt text to return in this window (default and ceiling is the read budget, so a normal-size prompt comes back whole).',
 				),
 		},
 		async (args, db, auth) => {
@@ -3830,7 +4369,22 @@ export function registerTools(
 						mode: 'placeholders',
 					})
 				: raw;
-			return { ...agent.rows[0], system_prompt };
+			// A resolved prompt grows with shared guidance and can outgrow the cap on
+			// its own; window it so the single-resource read an agent falls back to is
+			// never the one that fails.
+			return windowContent({
+				text: system_prompt,
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompt ?? MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Prompt is larger than one read. Returned bytes ${start}-${end} of ${total}. Call get_agent_system_prompt again with offset: ${end}; repeat until next_offset is null.`,
+				build: (w: ContentWindow) => {
+					const { content, ...rest } = w;
+					return { ...agent.rows[0], system_prompt: content, ...rest };
+				},
+			});
 		},
 		db,
 	);
@@ -3838,7 +4392,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_agent_system_prompts',
-		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip - e.g. Captain auditing how team_context renders for every agent. SIZE: this tool has a raised 128KB result cap (a fully-resolved \`preview\` prompt is large), but still batch multiple items only as \`raw\`/\`placeholders\` and fetch previews one at a time so a multi-\`preview\` call can't exceed even the raised cap (result_too_large). For a single prompt, use get_agent_system_prompt.`,
+		`Read multiple agent system prompts in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). Per-item \`mode\` chooses the resolution depth: \`placeholders\` (default) substitutes \`{{…}}\` with real values and stops, matching get_agent_system_prompt's default; \`preview\` additionally appends the resolver's runtime blocks (Project State, Team Context, Teammates, Working Guidelines) minus the per-run Run Context, matching the web UI's preview panel; \`raw\` returns the stored template untouched. Use this to compare prompts across the team in one round-trip - e.g. Captain auditing how team_context renders for every agent. PAGING: batch as many items as you like in any mode. The result carries as many prompts as fit under the cap plus \`next_index\`; when it is non-null, call again with the SAME \`items\` and \`start_index\` set to it, and repeat until it is null. Do not split the roster into single-item calls. For one prompt, use get_agent_system_prompt.`,
 		{
 			project: projectArg(),
 			items: z
@@ -3856,6 +4410,14 @@ export function registerTools(
 				.min(1)
 				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
 				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} items.`),
+			start_index: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Index into `items` to resume from (default 0). Pass back the `next_index` from the previous call, with the same `items`, to fetch the prompts that did not fit.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -3867,31 +4429,87 @@ export function registerTools(
 			}
 
 			const items = args.items as Array<{ agent_id: string; mode?: SystemPromptMode }>;
-			const results = await Promise.all(
-				items.map(async (item, index) => {
-					try {
-						const out = await fetchAgentSystemPromptForBatch(
-							db,
-							teamId,
-							item.agent_id,
-							item.mode ?? 'placeholders',
-						);
-						return { index, ok: true as const, ...out };
-					} catch (e) {
-						if (e instanceof AgentSystemPromptError) {
-							return { index, ok: false as const, agent_id: item.agent_id, error: e.message };
-						}
-						log.error('Unexpected error in get_agent_system_prompts:', e);
-						return {
-							index,
-							ok: false as const,
-							agent_id: item.agent_id,
-							error: e instanceof Error ? e.message : 'internal_error',
-						};
+			const startIndex = Math.min((args.start_index as number | undefined) ?? 0, items.length);
+			const byteLimit =
+				MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompts ?? MCP_RESULT_BYTE_LIMIT;
+			const budget = MCP_BATCH_CHUNK_TARGET_BYTES;
+
+			const resolveItem = async (item: (typeof items)[number], index: number) => {
+				try {
+					const out = await fetchAgentSystemPromptForBatch(
+						db,
+						teamId,
+						item.agent_id,
+						item.mode ?? 'placeholders',
+					);
+					return { index, ok: true as const, ...out };
+				} catch (e) {
+					if (e instanceof AgentSystemPromptError) {
+						return { index, ok: false as const, agent_id: item.agent_id, error: e.message };
 					}
-				}),
+					log.error('Unexpected error in get_agent_system_prompts:', e);
+					return {
+						index,
+						ok: false as const,
+						agent_id: item.agent_id,
+						error: e instanceof Error ? e.message : 'internal_error',
+					};
+				}
+			};
+
+			// Resolve the whole requested tail in parallel (as before), then emit only
+			// the prefix that fits under the cap and hand back a cursor for the rest.
+			// A prompt is a single DB read, so resolving a few extra is far cheaper
+			// than the round trip an agent pays to discover the page boundary.
+			const resolved = await Promise.all(
+				items.slice(startIndex).map((item, i) => resolveItem(item, startIndex + i)),
 			);
-			return results;
+
+			const page: unknown[] = [];
+			let used = 0;
+			let nextIndex: number | null = null;
+			for (const [i, entry] of resolved.entries()) {
+				const cost = Buffer.byteLength(JSON.stringify(entry), 'utf8');
+				// Always emit at least one entry so the cursor cannot stall. A single
+				// oversized `preview` is truncated to a window rather than dropped -
+				// otherwise this index would never advance and the caller would loop.
+				if (page.length > 0 && used + cost > budget) {
+					nextIndex = startIndex + i;
+					break;
+				}
+				if (page.length === 0 && cost > budget && entry.ok) {
+					const buf = Buffer.from(entry.system_prompt, 'utf8');
+					const keep = buf.subarray(0, utf8FloorBoundary(buf, budget - 2_048));
+					page.push({
+						...entry,
+						system_prompt: keep.toString('utf8'),
+						truncated: true,
+						returned_bytes: keep.length,
+						total_bytes: buf.length,
+						truncation_hint: `This prompt alone exceeds the result cap. Read the rest with get_agent_system_prompt (agent_id: "${entry.agent_id}"), which pages via offset/next_offset.`,
+					});
+					used = budget;
+					continue;
+				}
+				page.push(entry);
+				used += cost;
+			}
+			if (nextIndex === null && startIndex + page.length < items.length) {
+				nextIndex = startIndex + page.length;
+			}
+
+			return {
+				items: page,
+				start_index: startIndex,
+				returned: page.length,
+				total: items.length,
+				next_index: nextIndex,
+				...(nextIndex !== null
+					? {
+							paging_hint: `Returned prompts ${startIndex}-${startIndex + page.length - 1} of ${items.length}. Call get_agent_system_prompts again with the same items and start_index: ${nextIndex}; repeat until next_index is null.`,
+						}
+					: {}),
+			};
 		},
 		db,
 	);
@@ -3965,7 +4583,7 @@ export function registerTools(
 				),
 			);
 
-			return { applied: true, document_id: doc.id };
+			return { applied: true, document_id: doc.row.id };
 		},
 		db,
 	);
@@ -4048,7 +4666,7 @@ export function registerTools(
 					changeSummary: u.change_summary,
 					authorMemberId: callerMemberId,
 				});
-				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.id });
+				results.push({ index: i, agent_id: u.agent_id, slug, ok: true, document_id: doc.row.id });
 				applied.push({ slug, change_summary: u.change_summary });
 			}
 
@@ -4144,7 +4762,7 @@ export function registerTools(
 				);
 			}
 
-			return { applied: true, document_id: doc.id, length: (args.content as string).length };
+			return { applied: true, document_id: doc.row.id, length: (args.content as string).length };
 		},
 		db,
 	);
@@ -4341,6 +4959,142 @@ export function registerTools(
 
 	tool(
 		server,
+		'set_agent_team_contexts',
+		`Save team-relationships contexts for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's context together. Same rules and caller as set_agent_team_context (the Captain of the same team); each content is ≤6000 chars of plain second-person prose. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_team_context in a loop.`,
+		{
+			project: projectArg(),
+			updates: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
+						content: z
+							.string()
+							.trim()
+							.min(1, 'content must be non-empty')
+							.max(6000, 'content too long (max 6000)')
+							.describe('The new team_context for this agent, ≤6000 chars'),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} context updates.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
+				return { error: 'Access denied: only the Captain can update agent team contexts' };
+			}
+
+			const updates = args.updates as Array<{ agent_id: string; content: string }>;
+			const results: Array<Record<string, unknown>> = [];
+			for (let i = 0; i < updates.length; i++) {
+				const u = updates[i];
+				const agentId = await resolveAgentId(db, teamId, u.agent_id);
+				const r = agentId
+					? await db.query<{ id: string; slug: string }>(
+							`UPDATE member_agents SET team_context = $1, updated_at = now()
+							 WHERE id = $2 AND id IN (
+							   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
+							 )
+							 RETURNING id, slug`,
+							[u.content.trim(), agentId, teamId],
+						)
+					: null;
+				if (!agentId || !r || r.rows.length === 0) {
+					results.push({
+						index: i,
+						agent_id: u.agent_id,
+						ok: false,
+						error: 'Agent not found in this team',
+					});
+					continue;
+				}
+				results.push({ index: i, agent_id: agentId, slug: r.rows[0].slug, ok: true });
+			}
+			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'set_agent_summaries',
+		`Save short human-readable summaries for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's summary together. Same rules and callers as set_agent_summary (any agent in the same team, or the admin); each summary is ≤1000 chars, a single plain-prose paragraph. Files a SINGLE team-coherence review for the whole batch rather than one per agent. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_summary in a loop.`,
+		{
+			project: projectArg(),
+			updates: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
+						summary: z
+							.string()
+							.trim()
+							.min(1, 'summary must be non-empty')
+							.max(1000, 'summary too long (max 1000)')
+							.describe('The new summary for this agent, ≤1000 chars'),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} summary updates.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
+				return { error: 'Access denied' };
+			}
+
+			const updates = args.updates as Array<{ agent_id: string; summary: string }>;
+			const results: Array<Record<string, unknown>> = [];
+			for (let i = 0; i < updates.length; i++) {
+				const u = updates[i];
+				const agentId = await resolveAgentId(db, teamId, u.agent_id);
+				const r = agentId
+					? await db.query<{ id: string; slug: string }>(
+							`UPDATE member_agents SET summary = $1, updated_at = now()
+							 WHERE id = $2 AND id IN (
+							   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
+							 )
+							 RETURNING id, slug`,
+							[u.summary.trim(), agentId, teamId],
+						)
+					: null;
+				if (!agentId || !r || r.rows.length === 0) {
+					results.push({
+						index: i,
+						agent_id: u.agent_id,
+						ok: false,
+						error: 'Agent not found in this team',
+					});
+					continue;
+				}
+				results.push({ index: i, agent_id: agentId, slug: r.rows[0].slug, ok: true });
+			}
+
+			// One review for the batch, not one per agent - the singular tool files
+			// its own, so a loop over it would queue N coalescing events for what is
+			// a single roster-wide edit.
+			if (results.some((r) => r.ok)) {
+				trackBackground(
+					enqueueTeamCoherenceReviewTask(db, teamId, 'summary_updated').catch((e) =>
+						log.error('Failed to enqueue team coherence review after summary batch:', e),
+					),
+				);
+			}
+
+			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'set_agent_reports_to',
 		"Set or change the manager an agent reports to - the structural reporting line in the org chart that gates delegation. Work can only be assigned to/from an agent along this line, so an agent whose manager is unset can't be delegated to or hand work down. Use this to wire up reporting structure (e.g. after hiring specialists, point them at their lead) or fix it during a coherence review. Pass the target agent and its new manager (both by slug or member ID); pass an empty reports_to to clear the line. Callable by the team's Captain or an HQ instance agent (CEO/Coach) acting in the team. The Captain, CEO, and Coach have fixed reporting lines (Captain → CEO; CEO/Coach → admin) that cannot be changed.",
 		{
@@ -4469,6 +5223,104 @@ export function registerTools(
 
 	tool(
 		server,
+		'get_agent_team_contexts',
+		`Read the stored team-relationships context for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}). This is the read a coherence review wants: regenerating one agent's context requires seeing its siblings', so fetch the whole roster at once rather than calling get_agent_team_context per agent. Contexts are capped at 6000 chars each, so a normal roster comes back whole. PAGING: the result carries as many contexts as fit under the cap plus \`next_index\`; when it is non-null, call again with the SAME \`items\` and \`start_index\` set to it, and repeat until it is null. Accessible by any agent or the admin in the same team.`,
+		{
+			project: projectArg(),
+			items: z
+				.array(
+					z.object({
+						agent_id: z.string().describe('Target agent member ID or slug'),
+					}),
+				)
+				.min(1)
+				.max(MAX_BATCH_AGENT_SYSTEM_PROMPTS)
+				.describe(`Up to ${MAX_BATCH_AGENT_SYSTEM_PROMPTS} items.`),
+			start_index: z
+				.number()
+				.int()
+				.min(0)
+				.optional()
+				.describe(
+					'Index into `items` to resume from (default 0). Pass back the `next_index` from the previous call, with the same `items`.',
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (auth.type !== AuthType.Agent && auth.type !== AuthType.Admin) {
+				return { error: 'Access denied' };
+			}
+
+			const items = args.items as Array<{ agent_id: string }>;
+			const startIndex = Math.min((args.start_index as number | undefined) ?? 0, items.length);
+
+			const resolveItem = async (item: { agent_id: string }, index: number) => {
+				// The team-scoped query is the authorization check, keeping an HQ
+				// agent (resolveAgentId's fallback) out of this team's results.
+				const agentId = await resolveAgentId(db, teamId, item.agent_id);
+				const r = agentId
+					? await db.query<{ title: string; slug: string; team_context: string }>(
+							`SELECT ma.title, ma.slug, ma.team_context
+							 FROM member_agents ma JOIN members m ON m.id = ma.id
+							 WHERE ma.id = $1 AND m.team_id = $2`,
+							[agentId, teamId],
+						)
+					: null;
+				if (!agentId || !r || r.rows.length === 0) {
+					return {
+						index,
+						ok: false as const,
+						agent_id: item.agent_id,
+						error: 'Agent not found in this team',
+					};
+				}
+				return { index, ok: true as const, agent_id: agentId, ...r.rows[0] };
+			};
+
+			const resolved = await Promise.all(
+				items.slice(startIndex).map((item, i) => resolveItem(item, startIndex + i)),
+			);
+
+			// Same chunking contract as get_agent_system_prompts: emit the prefix
+			// that fits and hand back a cursor for the rest, always at least one
+			// entry so the cursor cannot stall.
+			const page: unknown[] = [];
+			let used = 0;
+			let nextIndex: number | null = null;
+			for (const [i, entry] of resolved.entries()) {
+				const cost = Buffer.byteLength(JSON.stringify(entry), 'utf8');
+				if (page.length > 0 && used + cost > MCP_BATCH_CHUNK_TARGET_BYTES) {
+					nextIndex = startIndex + i;
+					break;
+				}
+				page.push(entry);
+				used += cost;
+			}
+			if (nextIndex === null && startIndex + page.length < items.length) {
+				nextIndex = startIndex + page.length;
+			}
+
+			return {
+				items: page,
+				start_index: startIndex,
+				returned: page.length,
+				total: items.length,
+				next_index: nextIndex,
+				...(nextIndex !== null
+					? {
+							paging_hint: `Returned contexts ${startIndex}-${startIndex + page.length - 1} of ${items.length}. Call get_agent_team_contexts again with the same items and start_index: ${nextIndex}; repeat until next_index is null.`,
+						}
+					: {}),
+			};
+		},
+		db,
+	);
+
+	tool(
+		server,
 		'set_agent_status',
 		"Retire (disable) or reinstate (enable) an agent on a project's team. Callable by the team's Captain or by the CEO running in the team. Disabling stops the agent from being scheduled and unassigns it from every open task; enabling resumes scheduling. The change is fully reversible and preserves all of the agent's history, so this is the right way to remove a role the team no longer needs (e.g. after a coherence review). The Captain and the instance agents (CEO/Coach) cannot be disabled this way. Confirm with the admin before retiring an agent.",
 		{
@@ -4561,32 +5413,39 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_docs',
-		"List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its `filename` and a one-line `description` (what the doc is / when to read it, '' if unset). Archived (soft-deleted) docs are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag).",
+		`List project documentation files (PRD, spec, implementation plan, etc.). Each entry carries its \`filename\`, a one-line \`description\` (what the doc is / when to read it, '' if unset), and \`content_length\` - the doc's size, so you can tell before opening it whether read_project_doc will need more than one window. Bodies are not returned here; read one with read_project_doc. Archived (soft-deleted) docs are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an \`archived\` flag). Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const filter = toArchiveFilter(args.filter);
-			const docs = await listDocuments(db, {
+			const limit = parseListLimit(args.limit);
+			// Summaries, not documents: the full-body read would ship every doc in
+			// the project to render a list of filenames.
+			const docs = await listDocumentSummaries(db, {
 				type: DocumentType.ProjectDoc,
 				teamId: scope.teamId,
 				projectId: scope.projectId,
 				includeArchived: filter !== ArchiveFilter.Active,
 			});
-			return {
-				files: docs
-					.filter((d) => matchesArchiveFilter(d.archived_at, filter))
-					.map((d) => ({
-						id: d.id,
-						filename: d.slug,
-						description: d.description,
-						updated_at: d.updated_at,
-						...(filter !== ArchiveFilter.Active ? { archived: d.archived_at !== null } : {}),
-					})),
-			};
+			const visible = docs
+				.filter((d) => matchesArchiveFilter(d.archived_at, filter))
+				.map((d) => ({
+					id: d.id,
+					filename: d.slug,
+					description: d.description,
+					content_length: d.content_length,
+					created_at: d.created_at,
+					updated_at: d.updated_at,
+					...(filter !== ArchiveFilter.Active ? { archived: d.archived_at !== null } : {}),
+				}));
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? visible.findIndex((d) => d.id === cursor.id) + 1 : 0;
+			return pagedList(visible.slice(from, from + limit + 1), limit, 'list_project_docs');
 		},
 		db,
 	);
@@ -4595,20 +5454,26 @@ export function registerTools(
 	const assetPathError = (raw: string) =>
 		`Invalid asset path '${raw}': up to ${ASSET_MAX_FOLDER_DEPTH} folder levels, each segment starting with a letter or digit (e.g. "launch/images/hero.png").`;
 
+	/** Refusal copy for a write aimed at a path an archived asset still holds. */
+	const archivedAssetWriteError = (filename: string) =>
+		`Asset 'assets/${filename}' exists but is archived - call unarchive_project_asset first to overwrite it, or write under a different path.`;
+
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets - files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.",
+		"List the project's assets - files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Every entry carries `byte_size`, so you can tell before opening one whether read_project_asset will need more than one window. Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.",
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
 			sort: assetSortArg(),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const filter = toArchiveFilter(args.filter);
 			const sort = toAssetSortOrder(args.sort);
+			const limit = parseListLimit(args.limit);
 			const where =
 				filter === ArchiveFilter.Active
 					? ' AND archived_at IS NULL'
@@ -4620,33 +5485,118 @@ export function registerTools(
 				original_filename: string;
 				content_type: string;
 				created_at: string;
+				byte_size: string | number;
 				width: number | null;
 				height: number | null;
 				archived_at: string | null;
 			}>(
-				`SELECT id, original_filename, content_type, created_at, width, height, archived_at
+				`SELECT id, original_filename, content_type, created_at, byte_size, width, height, archived_at
 				 FROM assets WHERE project_id = $1${where}
 				 ORDER BY ${assetSortOrderBy(sort)}`,
 				[scope.projectId],
 			);
-			return {
-				files: assets.rows.map((a) => ({
-					id: a.id,
-					filename: a.original_filename,
-					content_type: a.content_type,
-					created_at: a.created_at,
-					...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {}),
-					...(filter !== ArchiveFilter.Active ? { archived: a.archived_at !== null } : {}),
-				})),
-			};
+			// The caller picks the sort (newest / oldest / alphabetical), so the
+			// cursor anchors on row identity rather than a fixed sort column.
+			const rows = assets.rows.map((a) => ({
+				id: a.id,
+				filename: a.original_filename,
+				content_type: a.content_type,
+				created_at: a.created_at,
+				// A size hint, for the same reason list_project_docs carries
+				// content_length: without it a caller cannot tell before opening an
+				// asset whether read_project_asset will need more than one window.
+				byte_size: Number(a.byte_size),
+				...(a.width !== null && a.height !== null ? { width: a.width, height: a.height } : {}),
+				...(filter !== ArchiveFilter.Active ? { archived: a.archived_at !== null } : {}),
+			}));
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? rows.findIndex((a) => a.id === cursor.id) + 1 : 0;
+			return pagedList(rows.slice(from, from + limit + 1), limit, 'list_project_assets');
 		},
 		db,
 	);
 
+	/**
+	 * Store a blob at an asset path and reconcile everything that hangs off it:
+	 * the row upsert, dropping the blob it superseded, clearing any pending
+	 * review comments, and the two broadcasts the web app listens for.
+	 *
+	 * Shared by write_project_asset and edit_project_asset so the edit path
+	 * cannot drift from the write path. Each of these steps fails quietly if
+	 * forgotten - a leaked blob costs storage with nothing pointing at it, and a
+	 * missed broadcast leaves a stale review pane open in front of a user.
+	 */
+	const storeAssetBlob = async (opts: {
+		db: Db;
+		teamId: string;
+		projectId: string;
+		filename: string;
+		blob: Blob;
+		contentType: string;
+		width: number | null;
+		height: number | null;
+		uploadedByMemberId: string | null;
+	}): Promise<
+		| { error: string }
+		// The archived variant is turned into an `error` below, so callers get the
+		// stored-successfully shape and keep their narrowing.
+		| { result: Exclude<Awaited<ReturnType<typeof upsertProjectAsset>>, { status: 'archived' }> }
+	> => {
+		const { db: adb, teamId, projectId, filename, blob, contentType } = opts;
+		const assetId = crypto.randomUUID();
+		const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
+		let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
+		try {
+			result = await upsertProjectAsset(adb, {
+				assetId,
+				teamId,
+				projectId,
+				contentType,
+				byteSize,
+				sha256,
+				desiredName: filename,
+				uploadedByMemberId: opts.uploadedByMemberId,
+				width: opts.width,
+				height: opts.height,
+			});
+		} catch (e) {
+			await assets.delete(projectId, assetId).catch(() => {});
+			throw e;
+		}
+		if (result.status === 'archived') {
+			// Archived between the pre-flight and the upsert — the bytes we just
+			// stored have no row pointing at them.
+			await assets.delete(projectId, assetId).catch(() => {});
+			return { error: archivedAssetWriteError(filename) };
+		}
+		if (result.replacedAssetId) {
+			await assets.delete(projectId, result.replacedAssetId).catch(() => {});
+		}
+		if (result.wipedReviewComments) {
+			// The overwrite consumed the pending review (wiped inside the upsert's
+			// transaction) — tell viewers so their comment panes clear live.
+			broadcastCommentFamilyChange(
+				wsManager,
+				teamId,
+				projectId,
+				'asset_review_comments',
+				'DELETE',
+				{ asset_id: result.replacedAssetId, cleared: true },
+			);
+		}
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
+			id: result.asset.id,
+			team_id: teamId,
+			project_id: projectId,
+			original_filename: result.asset.original_filename,
+		});
+		return { result };
+	};
+
 	tool(
 		server,
 		'write_project_asset',
-		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) - MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
+		'Save a file to the project assets library so a human can open it AND other agents (your teammates and your own future runs) can read it back with read_project_asset - including a binary deliverable or generation output you produced (a rendered image, chart, diagram, screenshot, PDF, dataset, or media file). This is how such a file reaches both the admin and the next agent: a file left on the ephemeral container disk vanishes when the run ends and is invisible to everyone else, so anything a later step or teammate will reuse belongs here. Text formats (.html, .svg, .txt, .md, plus script/text formats stored as plain text: .sh, .py, .js, .ts, .json, .csv, .yaml, .yml) are written with the default encoding "utf8". Binary formats - any type a human can upload (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, archives such as .zip/.tar/.tar.gz/.7z, …) - MUST pass encoding: "base64" with the file\'s bytes base64-encoded in `content`. For a LARGE binary, upload it instead via a multipart/form-data POST to `/mcp/assets` (fields `file` and `path` for the full destination path, plus optional `overwrite=true` to replace an existing asset in place, same Bearer auth): base64 in a JSON-RPC tool call can be silently truncated by a runtime\'s argument-size cap, whereas the multipart endpoint streams the bytes; the result is identical and shows up in list_project_assets / read_project_asset. When you DO write a binary through this tool, pass `byte_size` (the file\'s exact byte length) so a truncated `content` is rejected instead of stored corrupt. The filename may include a folder path up to 2 levels deep (e.g. "scripts/deploy-check.sh" or "launch/images/hero.png") - folders spring into existence with their first asset. Re-saving the same path overwrites it, so the reference stays stable; overwrite matching is PATH-EXACT ("x.html" and "blog/x.html" are different assets - after a move, write to the new full path or you will fork the file). IMPORTANT: any write to an existing path deletes ALL of its pending review comments (the admin\'s feedback returned by read_project_asset) - capture every comment in your context before the first write, and make all desired edits in one consolidated write. Returns the reference string to drop into a comment as `assets/<path>` (no backticks). HTML opens interactively in a new tab; markdown renders with a rich preview and a view-source toggle; images render inline in the assets library. Use a markdown asset for a standalone deliverable opened from the assets library; use write_project_doc for project context docs (specs, PRDs, research). Mockups and other deliverables belong here, never committed to the source repo.',
 		{
 			project: projectArg(),
 			filename: z
@@ -4686,7 +5636,7 @@ export function registerTools(
 			if (!contentType || !isAllowedAttachmentMime(contentType)) {
 				return {
 					error:
-						'Unsupported asset type. Allowed: text formats (.html, .svg, .txt, .md, and .sh/.py/.js/.ts/.json/.csv/.yaml/.yml stored as plain text) written with encoding "utf8"; and binary formats (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, …) written with encoding "base64".',
+						'Unsupported asset type. Allowed: text formats (.html, .svg, .txt, .md, and .sh/.py/.js/.ts/.json/.csv/.yaml/.yml stored as plain text) written with encoding "utf8"; and binary formats (.png, .jpg, .jpeg, .gif, .webp, .pdf, .mp3, .mp4, .webm, and archives .zip/.tar/.gz/.tgz/.7z/.rar, …) written with encoding "base64".',
 				};
 			}
 
@@ -4743,15 +5693,11 @@ export function registerTools(
 			}
 
 			// An archived asset keeps its path reserved; overwriting it would
-			// silently resurrect (and clobber) soft-deleted content.
-			const archivedHolder = await db.query<{ id: string }>(
-				'SELECT id FROM assets WHERE project_id = $1 AND original_filename = $2 AND archived_at IS NOT NULL',
-				[projectId, filename],
-			);
-			if (archivedHolder.rows.length > 0) {
-				return {
-					error: `Asset 'assets/${filename}' exists but is archived - call unarchive_project_asset first to overwrite it, or write under a different path.`,
-				};
+			// silently resurrect (and clobber) soft-deleted content. The upsert
+			// refuses it transactionally too — this pre-flight just avoids spending
+			// the blob write on a doomed call.
+			if (await archivedAssetHolderId(db, projectId, filename)) {
+				return { error: archivedAssetWriteError(filename) };
 			}
 
 			// Capture raster-image pixel dimensions so read_project_asset /
@@ -4759,56 +5705,25 @@ export function registerTools(
 			const dims = isRasterImageMime(contentType)
 				? readImageDimensions(Buffer.from(await blob.arrayBuffer()))
 				: null;
-			const assetId = crypto.randomUUID();
-			const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
 			const uploadedBy = auth.type === AuthType.Agent ? auth.memberId : null;
-			let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
-			try {
-				result = await upsertProjectAsset(db, {
-					assetId,
-					teamId,
-					projectId,
-					contentType,
-					byteSize,
-					sha256,
-					desiredName: filename,
-					uploadedByMemberId: uploadedBy,
-					width: dims?.width ?? null,
-					height: dims?.height ?? null,
-				});
-			} catch (e) {
-				await assets.delete(projectId, assetId).catch(() => {});
-				throw e;
-			}
-			if (result.replacedAssetId) {
-				await assets.delete(projectId, result.replacedAssetId).catch(() => {});
-			}
-			if (result.wipedReviewComments) {
-				// The overwrite consumed the pending review (wiped inside the upsert's
-				// transaction) — tell viewers so their comment panes clear live.
-				broadcastCommentFamilyChange(
-					wsManager,
-					teamId,
-					projectId,
-					'asset_review_comments',
-					'DELETE',
-					{
-						asset_id: result.replacedAssetId,
-						cleared: true,
-					},
-				);
-			}
-			broadcastRowChange(wsManager, wsRoom.team(teamId), 'assets', 'INSERT', {
-				id: result.id,
-				team_id: teamId,
-				project_id: projectId,
-				original_filename: result.original_filename,
+			const stored = await storeAssetBlob({
+				db,
+				teamId,
+				projectId,
+				filename,
+				blob,
+				contentType,
+				width: dims?.width ?? null,
+				height: dims?.height ?? null,
+				uploadedByMemberId: uploadedBy,
 			});
+			if ('error' in stored) return stored;
+			const result = stored.result;
 			return {
 				written: true,
-				id: result.id,
-				reference: `assets/${result.original_filename}`,
-				byte_size: result.byte_size,
+				id: result.asset.id,
+				reference: `assets/${result.asset.original_filename}`,
+				byte_size: result.asset.byte_size,
 				...(dims ? { width: dims.width, height: dims.height } : {}),
 			};
 		},
@@ -4818,7 +5733,7 @@ export function registerTools(
 	tool(
 		server,
 		'read_project_asset',
-		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. For markdown project docs use read_project_doc instead.",
+		"Read a project asset's contents by path (e.g. \"ui-mockups.html\" or \"scripts/check.sh\") - the files that list_project_assets returns (UI mockups, wireframes, SVG diagrams, text exports, scripts, markdown deliverables). Use the full path exactly as listed, folder prefix included. Text-based assets (HTML, SVG, plain text, markdown) come back inline as `content`. Raster images (PNG/JPEG/GIF/WebP) come back with their pixel `width`/`height` AND the image itself inline, so a vision-capable model can see it to review it - pass `include_image: false` to skip the pixels and get metadata only, and images above ~4 MB return metadata + `url` only. Other binary assets (PDFs, media, archives) are not inlined; the response gives a signed download `url` - fetch it with a plain `curl -fsSL '<url>' -o /tmp/<filename>` (no auth header needed; the URL is valid for 24h, re-call this tool for a fresh one). An archive (.zip, .tar, .tar.gz/.tgz, .7z) is downloaded that same way and then unpacked in your container - `unzip`, `tar` and `7z` are preinstalled. If an admin has left review comments on the asset they come back as `review_comments`: for text assets (markdown, plain text) each anchors to an exact `quote` (with `occurrence` = 0-based Nth match of that snippet); a comment without a quote applies to the whole file. Capture them all before any write_project_asset to the path - overwriting deletes every review comment. Archived assets are not readable by default - set filter: 'archived' or 'all' to read one. Large text assets come back one byte-window at a time: when `truncated` is true, call again with `offset` set to the returned `next_offset` and keep going until `next_offset` is null (`list_project_assets` reports each asset's `byte_size`, so you can tell in advance whether that will be needed). For markdown project docs use read_project_doc instead.",
 		{
 			project: projectArg(),
 			filename: z
@@ -4830,6 +5745,22 @@ export function registerTools(
 				.optional()
 				.describe(
 					'For raster images (PNG/JPEG/GIF/WebP): when true (default) the image is returned inline so a vision-capable model can see it. Pass false to get metadata only (dimensions + download URL) and skip the pixels.',
+				),
+			offset: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					'For a text asset: byte offset to start reading from (default 0). To page an asset too large for one read, pass back the `next_offset` from the previous call. Snapped down to a UTF-8 character boundary so a window never begins mid-character. Ignored for binary assets, which return a download URL instead.',
+				),
+			max_bytes: z
+				.number()
+				.int()
+				.positive()
+				.optional()
+				.describe(
+					'For a text asset: max bytes of content to return in this window (default and ceiling is the read budget, so a normal-size asset comes back whole). Clamped to the budget; the returned slice ends on a UTF-8 character boundary, so it can come back a few bytes short.',
 				),
 		},
 		async (args, db, auth) => {
@@ -4911,14 +5842,20 @@ export function registerTools(
 							width = dims.width;
 							height = dims.height;
 							// Self-heal: persist so future reads / list_project_assets
-							// don't re-parse this pre-existing asset's blob.
-							await db
-								.query('UPDATE assets SET width = $1, height = $2 WHERE id = $3', [
-									dims.width,
-									dims.height,
-									asset.id,
-								])
-								.catch(() => {});
+							// don't re-parse this pre-existing asset's blob. Skipped on an
+							// archived row — nothing writes an archived asset, and an
+							// invariant with a carve-out is one no reader can rely on. The
+							// dimensions are still reported; only the caching is skipped,
+							// and archived reads are rare (explicitly opted into).
+							if (!archived) {
+								await db
+									.query('UPDATE assets SET width = $1, height = $2 WHERE id = $3', [
+										dims.width,
+										dims.height,
+										asset.id,
+									])
+									.catch(() => {});
+							}
 						}
 					}
 				}
@@ -4928,7 +5865,7 @@ export function registerTools(
 					byte_size: byteSize,
 					binary: true,
 					...(width !== null && height !== null ? { width, height } : {}),
-					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentPort),
+					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentOrigin()),
 					...(archived ? { archived: true } : {}),
 					...reviewField,
 				};
@@ -4950,12 +5887,119 @@ export function registerTools(
 			}
 
 			const buf = await assets.read(projectId, asset.id);
+			// Window the body exactly as read_project_doc does. Returned whole, a
+			// text asset over the result cap tripped the generic result_too_large
+			// guard - and because this tool declared no narrowing parameter, the
+			// guard's advice fell through to "read it through a tool that pages",
+			// of which there is none for an asset. That was a dead end, and the
+			// likeliest asset to hit it is the self-contained interactive HTML
+			// mockup the UI Designer is told to produce.
+			return windowContent({
+				text: buf.toString('utf-8'),
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Asset is larger than one read. Returned bytes ${start}-${end} of ${total}. Call read_project_asset again with offset: ${end}; repeat until next_offset is null.`,
+				build: (w: ContentWindow) => ({
+					filename: asset.original_filename,
+					content_type: asset.content_type,
+					...w,
+					...(archived ? { archived: true } : {}),
+					...reviewField,
+				}),
+			});
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'edit_project_asset',
+		"Replace one span of a TEXT project asset (HTML, SVG, markdown, plain text, a script), leaving the rest untouched. Prefer this over write_project_asset for any change to an existing text asset: it sends only the text you are changing, so the argument stays proportional to the edit rather than to the file - which matters most for exactly the assets that get tweaked, like a self-contained interactive HTML mockup, where re-sending the whole file risks a runtime's tool-call argument-size cap cutting it mid-stream. Binary assets (images, PDFs, media, archives) cannot be edited this way; rewrite them with write_project_asset. `old_string` must match the current text EXACTLY, including indentation and line breaks: read the asset first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the asset's new `byte_size`, so you can confirm what landed without reading it again. Like any overwrite this clears the asset's pending review comments, so capture those first.",
+		{
+			project: projectArg(),
+			filename: z
+				.string()
+				.describe('Asset path to edit (e.g. "ui-mockups.html", "launch/notes.md")'),
+			old_string: z
+				.string()
+				.describe(
+					'The exact text to replace, copied verbatim from the asset (including indentation and line breaks). Must be unique in the asset unless replace_all is set.',
+				),
+			new_string: z
+				.string()
+				.describe('The text to put in its place. May be empty to delete the span.'),
+			replace_all: z
+				.boolean()
+				.optional()
+				.describe(
+					'Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous.',
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId, projectId } = scope;
+			const filename = normalizeAssetPath(args.filename as string);
+			if (filename === null) return { error: assetPathError(args.filename as string) };
+
+			const found = await db.query<{
+				id: string;
+				content_type: string;
+				archived_at: string | null;
+			}>(
+				`SELECT id, content_type, archived_at FROM assets
+				 WHERE project_id = $1 AND original_filename = $2`,
+				[projectId, filename],
+			);
+			if (found.rows.length === 0) {
+				return {
+					error: `Asset '${filename}' not found. edit_project_asset changes an existing asset; create a new one with write_project_asset.`,
+				};
+			}
+			const asset = found.rows[0];
+			if (asset.archived_at !== null) return { error: archivedAssetWriteError(filename) };
+			if (!isTextAssetMime(asset.content_type)) {
+				return {
+					error: `Asset '${filename}' is ${asset.content_type}, which is binary - there is no text span to edit. Rewrite it with write_project_asset instead.`,
+				};
+			}
+
+			const current = (await assets.read(projectId, asset.id)).toString('utf-8');
+			const edited = applyStringEdit(
+				current,
+				args.old_string as string,
+				args.new_string as string,
+				{ replaceAll: args.replace_all === true },
+			);
+			if (!edited.ok) return { error: edited.error };
+
+			const blob = new Blob([edited.content], { type: asset.content_type });
+			if (blob.size > ATTACHMENT_MAX_BYTES) {
+				return { error: 'Asset exceeds 10 MB.' };
+			}
+			const stored = await storeAssetBlob({
+				db,
+				teamId,
+				projectId,
+				filename,
+				blob,
+				contentType: asset.content_type,
+				// Text assets carry no pixel dimensions.
+				width: null,
+				height: null,
+				uploadedByMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+			});
+			if ('error' in stored) return stored;
 			return {
-				filename: asset.original_filename,
-				content_type: asset.content_type,
-				content: buf.toString('utf-8'),
-				...(archived ? { archived: true } : {}),
-				...reviewField,
+				edited: true,
+				id: stored.result.asset.id,
+				reference: `assets/${stored.result.asset.original_filename}`,
+				replacements: edited.replacements,
+				byte_size: stored.result.asset.byte_size,
+				hunk: edited.hunk,
 			};
 		},
 		db,
@@ -5149,6 +6193,10 @@ export function registerTools(
 			assetId: asset.id,
 			filename,
 			archived,
+			// Attribution: an agent restoring an asset so it can overwrite it is
+			// exactly what the operator needs to trace back to a run.
+			taskId: auth.type === AuthType.Agent ? auth.taskId : null,
+			runId: auth.type === AuthType.Agent ? auth.runId : null,
 		});
 		broadcastRowChange(wsManager, wsRoom.team(scope.teamId), 'assets', 'UPDATE', {
 			id: asset.id,
@@ -5252,58 +6300,25 @@ export function registerTools(
 
 			// Window the body so the serialized result stays under this tool's cap,
 			// letting an agent page an arbitrarily large doc via offset/next_offset
-			// instead of tripping the generic result_too_large guard. Byte units keep
-			// next_offset exact; utf8FloorBoundary keeps every window on a codepoint
-			// boundary (the cap is bytes, but String.slice cuts UTF-16 units).
-			const effectiveLimit =
-				MCP_RESULT_BYTE_LIMIT_OVERRIDES.read_project_doc ?? MCP_RESULT_BYTE_LIMIT;
-			const buf = Buffer.from(doc.content, 'utf8');
-			const total = buf.length;
-			const start = utf8FloorBoundary(
-				buf,
-				Math.max(0, Math.min((args.offset as number | undefined) ?? 0, total)),
-			);
-			const requested = (args.max_bytes as number | undefined) ?? effectiveLimit;
-			let budget = Math.min(requested, effectiveLimit - DOC_READ_ENVELOPE_RESERVE);
-			let end = utf8FloorBoundary(buf, start + budget);
-
-			const build = (e: number) => {
-				const nextOffset = e < total ? e : null;
-				return {
+			// instead of tripping the generic result_too_large guard. The windowing
+			// itself is the shared convention (mcp/paging.ts); only the result shape
+			// and the continuation sentence are this tool's own.
+			return windowContent({
+				text: doc.content,
+				offset: args.offset as number | undefined,
+				maxBytes: args.max_bytes as number | undefined,
+				limit: MCP_RESULT_BYTE_LIMIT_OVERRIDES.read_project_doc ?? MCP_RESULT_BYTE_LIMIT,
+				reserve: DOC_READ_ENVELOPE_RESERVE,
+				hint: ({ start, end, total }) =>
+					`Doc is larger than one read. Returned bytes ${start}-${end} of ${total}. Call read_project_doc again with offset: ${end}; repeat until next_offset is null.`,
+				build: (w: ContentWindow) => ({
 					filename: doc.slug,
 					...descriptionField,
-					content: buf.subarray(start, e).toString('utf8'),
-					offset: start,
-					returned_bytes: e - start,
-					total_bytes: total,
-					next_offset: nextOffset,
-					truncated: start > 0 || e < total,
-					...(nextOffset !== null
-						? {
-								paging_hint: `Doc is larger than one read. Returned bytes ${start}-${e} of ${total}. Call read_project_doc again with offset: ${e}; repeat until next_offset is null.`,
-							}
-						: {}),
+					...w,
 					...archivedField,
 					...reviewCommentsField,
-				};
-			};
-
-			let result = build(end);
-			// A byte-accurate content window can still serialize larger than its byte
-			// count (JSON escaping inflates newlines/quotes, and review_comments add
-			// bytes). Measure with the same serialization the wrapper guard uses and
-			// trim the window until it fits. Terminates because the budget strictly
-			// shrinks; if the metadata alone (huge review_comments) exceeds the cap,
-			// content trims to empty and the generic guard reports result_too_large.
-			while (
-				end > start &&
-				Buffer.byteLength(JSON.stringify(result, null, 2), 'utf8') > effectiveLimit
-			) {
-				budget = Math.max(0, Math.floor(budget * 0.9) - 1);
-				end = utf8FloorBoundary(buf, start + budget);
-				result = build(end);
-			}
-			return result;
+				}),
+			});
 		},
 		db,
 	);
@@ -5311,7 +6326,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		"Write a project documentation file. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
+		"Write a project documentation file, replacing its whole body. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so never author or edit one with the Write/Edit file tools or a shell redirect - a markdown file you save to disk persists nothing, is invisible to every teammate, and leaves the real doc stale. To change PART of an existing doc, prefer edit_project_doc: this tool sends the entire body, so a large doc means a large argument, and a runtime that caps tool-call argument size can cut `content` mid-stream. Pass `content_length` (the exact character count of `content`) so a truncated argument is rejected rather than silently overwriting the doc and wiping its review comments. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Markdown filename to write (e.g. "spec.md")'),
@@ -5328,38 +6343,62 @@ export function registerTools(
 				.describe(
 					"Markdown summary of what changed in THIS update and why - recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content.",
 				),
+			content_length: z
+				.number()
+				.int()
+				.nonnegative()
+				.optional()
+				.describe(
+					'The exact character count of `content`. When provided, a mismatch is rejected instead of stored, so an argument the runtime truncated mid-stream cannot silently overwrite the doc with a partial body (which would also delete every pending review comment on it). Strongly recommended for anything large.',
+				),
+			allow_empty: z
+				.boolean()
+				.optional()
+				.describe(
+					'Permit an empty `content` to blank an existing non-empty doc. Off by default, because an empty body is far more often a truncated argument than an intent - and blanking also deletes every pending review comment. To retire a doc, call archive_project_doc instead.',
+				),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			if (!isMarkdownDocSlug(args.filename as string)) {
+			const filename = args.filename as string;
+			if (!isMarkdownDocSlug(filename)) {
 				return {
 					error:
 						'Project docs must be markdown (.md). Non-markdown files belong in the assets library, referenced as assets/<filename>.',
 				};
 			}
-			// An archived doc is read-only; writing would silently resurrect it.
-			const prior = await getDocument(db, {
+			const content = args.content as string;
+			// A runtime can cap tool-call argument size and cut `content` mid-stream.
+			// The asset writer already defends against exactly this; docs did not, so
+			// a truncated body was stored silently - and, because a content-changing
+			// write wipes the doc's pending review comments, it destroyed the admin's
+			// feedback on the way past. Check before anything is written.
+			const declaredLength = args.content_length as number | undefined;
+			if (declaredLength !== undefined && content.length !== declaredLength) {
+				return {
+					error: `\`content\` arrived as ${content.length} characters but content_length=${declaredLength} was declared - the argument was truncated in transit (a runtime can cap the tool-call argument size, cutting \`content\` mid-stream). Nothing was written. Retry, and for a large doc prefer edit_project_doc, which sends only the span you are changing.`,
+				};
+			}
+			const docScope = {
 				type: DocumentType.ProjectDoc,
 				teamId: scope.teamId,
 				projectId: scope.projectId,
-				slug: args.filename as string,
-			});
-			if (prior?.archived_at) {
-				return {
-					error: `Doc '${args.filename}' is archived - call unarchive_project_doc first, or write under a different filename.`,
-				};
+				slug: filename,
+			} as const;
+			if (content.trim() === '' && args.allow_empty !== true) {
+				const prior = await getDocument(db, docScope);
+				if (prior && prior.content.trim() !== '') {
+					return {
+						error: `Refusing to blank '${filename}' (currently ${prior.content.length} characters) with empty content - that would also delete every pending review comment on it. An empty body is usually a truncated argument rather than an intent. If you really mean to empty it, pass allow_empty: true; if you mean to retire it, call archive_project_doc.`,
+					};
+				}
 			}
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const callerApiKeyId = apiKeyIdFromAuth(auth);
 			const doc = await upsertDocument(db, wsManager, {
-				scope: {
-					type: DocumentType.ProjectDoc,
-					teamId: scope.teamId,
-					projectId: scope.projectId,
-					slug: args.filename as string,
-				},
-				content: args.content as string,
+				scope: docScope,
+				content,
 				description: args.description as string | undefined,
 				changeSummary: args.changelog as string | undefined,
 				authorMemberId: callerMemberId,
@@ -5370,7 +6409,119 @@ export function registerTools(
 					actorApiKeyId: callerApiKeyId,
 				},
 			});
-			return { written: true, id: doc.id, filename: doc.slug };
+			// An archived doc is read-only; writing would silently resurrect it. The
+			// refusal comes from upsertDocument itself, so no caller can forget it.
+			if (doc.status === 'archived') {
+				return {
+					error: `Doc '${filename}' is archived - call unarchive_project_doc first, or write under a different filename.`,
+				};
+			}
+			// `content_length` back out so the caller can compare against what it
+			// sent without a re-read - the same check `content_length` performs on
+			// the way in, available even when that argument was omitted.
+			return {
+				written: true,
+				id: doc.row.id,
+				filename: doc.row.slug,
+				content_length: doc.row.content.length,
+				...changelogNotRecordedWarning(args.changelog, doc.changelogRecorded),
+			};
+		},
+		db,
+	);
+
+	// `edit_` rather than `update_`: the REST/MCP verb table maps PATCH to
+	// `update_`, but the project-doc family already reads `read_`/`write_`, and
+	// `edit_project_doc` sits with those far more legibly than `update_` would.
+	// The resource noun still matches its REST route exactly, which is the half
+	// of the naming rule that actually has to hold.
+	tool(
+		server,
+		'edit_project_doc',
+		"Replace one span of a project doc, leaving the rest untouched. Prefer this over write_project_doc for any change to an existing doc: it sends only the text you are changing, so the argument stays proportional to the edit rather than to the document, which keeps a large doc out of reach of a runtime's tool-call argument-size cap. These docs live in the database, not the filesystem - the Write/Edit file tools target disk and will not touch them. `old_string` must match the current text EXACTLY, including indentation and line breaks: read the doc first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the doc's new `content_length`, so you can confirm what landed without reading the doc again. Like any content-changing write this records a revision and clears the doc's pending review comments, so capture those first.",
+		{
+			project: projectArg(),
+			filename: z.string().describe('Markdown filename to edit (e.g. "spec.md")'),
+			old_string: z
+				.string()
+				.describe(
+					'The exact text to replace, copied verbatim from the doc (including indentation and line breaks). Must be unique in the doc unless replace_all is set.',
+				),
+			new_string: z
+				.string()
+				.describe('The text to put in its place. May be empty to delete the span.'),
+			replace_all: z
+				.boolean()
+				.optional()
+				.describe(
+					'Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous.',
+				),
+			changelog: z
+				.string()
+				.optional()
+				.describe(
+					"Markdown summary of what changed in THIS edit and why - recorded as the revision's changelog. Put update/status notes here, never in the document body.",
+				),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const filename = args.filename as string;
+			const docScope = {
+				type: DocumentType.ProjectDoc,
+				teamId: scope.teamId,
+				projectId: scope.projectId,
+				slug: filename,
+			} as const;
+			const prior = await getDocument(db, docScope);
+			if (!prior) {
+				return {
+					error: `Doc '${filename}' not found. edit_project_doc changes an existing doc; create a new one with write_project_doc.`,
+				};
+			}
+			if (prior.archived_at !== null) {
+				return {
+					error: `Doc '${filename}' is archived - call unarchive_project_doc first.`,
+				};
+			}
+			const edited = applyStringEdit(
+				prior.content,
+				args.old_string as string,
+				args.new_string as string,
+				{
+					replaceAll: args.replace_all === true,
+				},
+			);
+			if (!edited.ok) return { error: edited.error };
+
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const callerApiKeyId = apiKeyIdFromAuth(auth);
+			const doc = await upsertDocument(db, wsManager, {
+				scope: docScope,
+				content: edited.content,
+				changeSummary: args.changelog as string | undefined,
+				authorMemberId: callerMemberId,
+				authorApiKeyId: callerApiKeyId,
+				audit: {
+					events,
+					actorType: actorTypeFromAuth(auth),
+					actorApiKeyId: callerApiKeyId,
+				},
+			});
+			if (doc.status === 'archived') {
+				return {
+					error: `Doc '${filename}' is archived - call unarchive_project_doc first.`,
+				};
+			}
+			return {
+				edited: true,
+				id: doc.row.id,
+				filename: doc.row.slug,
+				replacements: edited.replacements,
+				content_length: doc.row.content.length,
+				hunk: edited.hunk,
+				...changelogNotRecordedWarning(args.changelog, doc.changelogRecorded),
+			};
 		},
 		db,
 	);
@@ -5402,6 +6553,10 @@ export function registerTools(
 				events,
 				actorType: actorTypeFromAuth(auth),
 				actorApiKeyId: apiKeyIdFromAuth(auth),
+				// Attribution: an agent restoring a doc so it can overwrite it is
+				// exactly what the operator needs to trace back to a run.
+				taskId: auth.type === AuthType.Agent ? auth.taskId : null,
+				runId: auth.type === AuthType.Agent ? auth.runId : null,
 			},
 		);
 		if (!result) return { error: `File '${args.filename}' not found` };
@@ -5540,10 +6695,11 @@ export function registerTools(
 	tool(
 		server,
 		'list_skills',
-		"List the team's skills database - the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand.",
+		`List the team's skills database - the manifest of reusable team know-how (MCP server usage, integration steps, conventions, how agents coordinate). Returns each skill's name, slug, and description; call get_skill to load a skill's full body on demand. Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{
 			project: projectArg(),
 			tags: z.string().optional().describe('Filter by tag (comma-separated)'),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -5563,14 +6719,22 @@ export function registerTools(
 
 			// Project row before global so the de-dupe keeps the project's shadowing copy.
 			query += ' ORDER BY name, project_id NULLS LAST';
-			const result = await db.query<{ slug: string }>(query, params);
+			const result = await db.query<ListRow & { slug: string }>(query, params);
 			const seen = new Set<string>();
+			// De-dupe must run over the whole set before paging: shadowed globals are
+			// dropped here, so slicing first would leave short pages and could hide a
+			// project skill behind the global it shadows.
 			const skills = result.rows.filter((r) => {
 				if (seen.has(r.slug)) return false;
 				seen.add(r.slug);
 				return true;
 			});
-			return { skills };
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? skills.findIndex((s) => s.id === cursor.id) + 1 : 0;
+			return pagedList(skills.slice(from, from + limit + 1), limit, 'list_skills', {
+				column: 'name',
+			});
 		},
 		db,
 	);
@@ -5705,9 +6869,10 @@ export function registerTools(
 	tool(
 		server,
 		'list_connectors',
-		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
+		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
 		{
 			project: projectArg(),
+			...listPagingArgs(),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -5755,25 +6920,16 @@ export function registerTools(
 				 ORDER BY mc.name ASC, (mc.project_id IS NULL) ASC`,
 				[scope.projectId],
 			);
-			// Derive a single oauth_status field that's the load-bearing signal
-			// for whether the connector is usable by agents on subsequent runs.
-			const cfg = (row: { config: Record<string, unknown> }): boolean => {
-				const c = row.config as { dcr?: unknown };
-				return !!c?.dcr;
-			};
 			// A project connector shadows a global one of the same name (the run sees
 			// the same set — see loadConnectorsForRun). Rows are ordered project
 			// first, so keep the first occurrence per name.
 			const byName = new Map<string, (typeof r.rows)[number]>();
 			for (const row of r.rows) if (!byName.has(row.name)) byName.set(row.name, row);
-			return [...byName.values()].map((row) => {
-				let oauth_status: 'active' | 'pending' | 'failed' | 'revoked' | 'none';
-				if (row.kind !== 'saas') oauth_status = 'none';
-				else if (row.revoked_at) oauth_status = 'revoked';
-				else if (row.auth_error && !row.activated_at) oauth_status = 'failed';
-				else if (row.oauth_connection_id && row.activated_at) oauth_status = 'active';
-				else if (cfg(row) || row.created_by_task_id) oauth_status = 'pending';
-				else oauth_status = 'none';
+			const connectors = [...byName.values()].map((row) => {
+				// oauth_status is the load-bearing signal for whether the connector is
+				// usable by agents on subsequent runs. Derived by the shared ladder so
+				// it cannot drift from what the operator sees on the Connections page.
+				const oauth_status = connectorOAuthStatus(row);
 
 				// An active OAuth-backed connector can also authenticate raw REST calls
 				// to the provider's API: expose the secret's placeholder (never its
@@ -5790,8 +6946,14 @@ export function registerTools(
 					discovered_methods,
 					...rest
 				} = row;
+				// `degraded` keeps its rest_auth block: the placeholder and host scoping
+				// are unchanged facts about the credential, and dropping them would make
+				// the REST fallback vanish mid-task with no explanation. oauth_status
+				// alone carries the news that the token needs reconnecting.
 				const rest_auth =
-					oauth_status === 'active' && oauth_secret_name && (oauth_allowed_hosts?.length ?? 0) > 0
+					(oauth_status === ConnectorStatus.Active || oauth_status === ConnectorStatus.Degraded) &&
+					oauth_secret_name &&
+					(oauth_allowed_hosts?.length ?? 0) > 0
 						? {
 								placeholder: credentialPlaceholder(oauth_secret_name),
 								allowed_hosts: oauth_allowed_hosts ?? [],
@@ -5856,6 +7018,15 @@ export function registerTools(
 						: null,
 				};
 			});
+			// Shadowed duplicates are dropped above, so page the de-duped set.
+			const limit = parseListLimit(args.limit);
+			const cursor = decodeCursor(args.cursor as string | undefined);
+			const from = cursor ? connectors.findIndex((c) => c.id === cursor.id) + 1 : 0;
+			return pagedList(
+				connectors.slice(from, from + limit + 1) as unknown as ListRow[],
+				limit,
+				'list_connectors',
+			);
 		},
 		db,
 	);
@@ -5863,7 +7034,7 @@ export function registerTools(
 	tool(
 		server,
 		'test_connector',
-		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server (bypassing the agent container and its egress proxy entirely). Returns the upstream status code, response excerpt, and the secret name + masked-token-prefix used. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
+		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?". A 401 here means the stored credential is no longer accepted: report it to the human with an active @admin comment asking them to reconnect the connector. You do not need this call when oauth_status already says "degraded" - that answer is known.',
 		{
 			project: projectArg(),
 			connector_id: z.string().describe('connector id or name (both shown by list_connectors)'),
@@ -5897,7 +7068,6 @@ export function registerTools(
 
 			let bearerToken: string | null = null;
 			let secretName: string | null = null;
-			let tokenPrefix: string | null = null;
 			if (connector.oauth_connection_id) {
 				const secret = await db.query<{ name: string; encrypted_value: string }>(
 					`SELECT s.name, s.encrypted_value FROM oauth_connections oc
@@ -5925,7 +7095,6 @@ export function registerTools(
 					};
 				}
 				secretName = secret.rows[0].name;
-				tokenPrefix = bearerToken.slice(0, 8);
 			}
 
 			const headers: Record<string, string> = { Accept: 'application/json' };
@@ -5940,20 +7109,49 @@ export function registerTools(
 					error: `network probe failed: ${(e as Error).message}`,
 					mcp_url: config.url,
 					secret_name: secretName,
-					token_prefix: tokenPrefix,
+					token_sent: bearerToken !== null,
 				};
 			}
 			const bodyText = await probeRes.text().catch(() => '');
 			const wwwAuth = probeRes.headers.get('WWW-Authenticate') ?? null;
+			// The upstream may reflect the credential we just sent it (an echo route,
+			// or an error quoting the Authorization header). This response crosses the
+			// agent boundary, so scrub the token out of anything we relay. Nothing
+			// derived from the token value itself is returned either — a prefix plus an
+			// exact length is a partial credential disclosure, and the diagnostic
+			// question ("was a token attached?") is answered by `token_sent`.
+			const redact = (s: string): string =>
+				bearerToken ? s.split(bearerToken).join('[redacted]') : s;
+			// The probe just learned first-hand whether the stored credential is
+			// still accepted. Record it so that knowledge reaches the operator's
+			// banner and the card's reconnect button instead of living only in this
+			// tool result, where the previous incident left it: an agent saw the
+			// 401, wrote it into a report as a "known gap", and the connector stayed
+			// broken for days. Only meaningful when a token was actually sent.
+			// A non-auth failure (a 500, a timeout) says nothing about the credential,
+			// so it leaves whatever health is already recorded alone.
+			const credentialVerdict =
+				probeRes.status === 401 || probeRes.status === 403
+					? `probe: HTTP ${probeRes.status}`
+					: probeRes.ok
+						? null
+						: undefined;
+			if (bearerToken && credentialVerdict !== undefined) {
+				await setConnectorAuthError(
+					{ db, masterKeyManager },
+					connector.id,
+					credentialVerdict,
+				).catch(() => {});
+			}
+
 			return {
 				ok: probeRes.ok,
 				status: probeRes.status,
 				mcp_url: config.url,
 				secret_name: secretName,
-				token_prefix: tokenPrefix,
-				token_length: bearerToken?.length ?? 0,
-				www_authenticate: wwwAuth,
-				body_excerpt: bodyText.slice(0, 400),
+				token_sent: bearerToken !== null,
+				www_authenticate: redact(wwwAuth ?? '') || null,
+				body_excerpt: redact(bodyText.slice(0, 400)),
 				hint:
 					probeRes.status === 401
 						? bearerToken
@@ -6012,6 +7210,18 @@ export function registerTools(
 			// api behaves like saas for install state (nothing to install — it's a
 			// direct REST call); only local needs an installer pass.
 			const initialStatus = kind === 'local' ? 'pending' : 'installed';
+			// A connector carrying a credential (a completed OAuth flow, or an
+			// attached API key) may NOT be re-pointed by an agent. Without this the
+			// upsert rewrote `config` — the destination URL — while leaving
+			// `oauth_connection_id` attached, and `test_connector` would then resolve
+			// that token and send it, in plaintext and off the egress proxy, to a host
+			// the agent chose. Re-binding a credentialed connector is a widening of
+			// access and stays human-only (Connectors page), like every other widening.
+			//
+			// The guard is the `WHERE` on the DO UPDATE rather than a preceding SELECT
+			// so it is atomic: a check-then-upsert could be raced by a concurrent OAuth
+			// completion. An unchanged re-registration still succeeds, so an agent
+			// re-declaring a connector it already owns is a no-op, not an error.
 			const r = await db.query<{
 				id: string;
 				install_status: string;
@@ -6024,9 +7234,29 @@ export function registerTools(
 				     install_status = EXCLUDED.install_status,
 				     install_error = NULL,
 				     updated_at = now()
+				 WHERE (mcp_connections.oauth_connection_id IS NULL
+				        AND mcp_connections.api_key_secret_id IS NULL)
+				    OR (mcp_connections.kind = EXCLUDED.kind
+				        AND mcp_connections.config IS NOT DISTINCT FROM EXCLUDED.config)
 				 RETURNING id, install_status::text AS install_status`,
 				[name, kind, JSON.stringify(config), initialStatus, scope.projectId],
 			);
+			if (r.rows.length === 0) {
+				// The DO UPDATE was suppressed: the row exists and is credentialed.
+				const existing = await db.query<{ id: string; has_oauth: boolean }>(
+					`SELECT id, oauth_connection_id IS NOT NULL AS has_oauth
+					 FROM mcp_connections
+					 WHERE project_id = $1 AND name = $2`,
+					[scope.projectId, name],
+				);
+				return {
+					error: `connector ${name} already exists and has a credential attached (${
+						existing.rows[0]?.has_oauth ? 'OAuth connection' : 'API key'
+					}); its configuration cannot be changed from here`,
+					connector_id: existing.rows[0]?.id ?? null,
+					hint: 'Re-pointing a credentialed connector is a human-only operation - ask an admin to change it on the Connectors page, or register a new connector under a different name.',
+				};
+			}
 			const note =
 				kind === 'local'
 					? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'

@@ -7,7 +7,7 @@ import {
 	useNavigate,
 } from '@tanstack/react-router';
 import { ChevronsRight, RefreshCw } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '../components/app-header';
 import { ChatWidget } from '../components/chat/chat-widget';
 import { GlobalSearchDialog } from '../components/global-search-dialog';
@@ -29,6 +29,7 @@ import { UpdateBanner } from '../components/update-banner';
 import { ScrollContentContext } from '../contexts/scroll-content-context';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
+import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
 import { useProjectMenuCollapsed } from '../hooks/use-project-menu-collapsed';
 import { useAllVisibleProjects, useHqProject, useProjectsIndex } from '../hooks/use-projects';
@@ -223,6 +224,12 @@ function ShellLayout() {
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [chatOpen, setChatOpen] = useState(false);
 
+	// The drawer is shell chrome, not route content: it renders outside the
+	// <Outlet /> below and so survives navigation. It holds nothing but nav links,
+	// so leaving it open after one is followed parks a full-screen panel over the
+	// page it just opened. Must be called before the `bare` early return.
+	useCloseOnRouteChange(drawerOpen, () => setDrawerOpen(false));
+
 	// Bare routes (e.g. the standalone document preview) render full-viewport
 	// without the header, project rail, or mobile drawer.
 	if (bare) return <Outlet />;
@@ -243,6 +250,11 @@ interface ShellChromeProps {
 
 function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
+	// Also shell chrome, and also a full-screen modal. Picking a result closes the
+	// palette on its own way out (`search-results.tsx` calls `onSelect` from the
+	// row's Link), but that only covers navigations the palette itself started —
+	// anything else leaves it stacked over the new page.
+	useCloseOnRouteChange(searchOpen, () => setSearchOpen(false));
 	const active = useActiveProject();
 	const hq = useHqProject();
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
@@ -309,6 +321,44 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 		if (hash) return;
 		mainRef.current?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
 	}, [pathname, hash]);
+
+	// Publish the shell scroller's own visible height as `--shell-scrollport-h` on
+	// <main>, for the sticky panels rendered inside it (the doc list, the document
+	// preview, the asset review rail). Each of those has to cap its height at the
+	// scrollport or its top rides up on scroll — a sticky box taller than its
+	// scrollport has too little room in its grid cell to stay pinned.
+	//
+	// They used to compute that cap themselves, as `100vh` minus a literal for the
+	// chrome above <main>, and every one of them was wrong. The literals disagreed
+	// (4rem, 3.75rem, 2rem), one still subtracted an h-10 header this app has not
+	// had since it went to h-12, and one never subtracted the header at all. Worse,
+	// the premise is false whenever the shell grows a row: an UpdateBanner sits
+	// between the header and the content well, so <main> starts 47px further down
+	// and every panel overhangs the fold by exactly that much.
+	//
+	// Measuring is the only honest answer — CSS cannot name an ancestor scroller's
+	// height, and the container-query unit that could (`100cqh`) needs
+	// `container-type: size` on <main>, whose layout containment would make it the
+	// containing block for the `position: fixed` descendants inside it. So a
+	// ResizeObserver, the same shape as `--pill-center-x` below. A layout effect,
+	// not an effect: the value is read during layout, so it has to land before
+	// paint or the first frame uses the declared fallback in index.css.
+	useLayoutEffect(() => {
+		if (!mainEl) return;
+		const measure = () => {
+			// clientHeight, not the border box: it excludes a horizontal scrollbar,
+			// which is exactly the area a pinned panel actually has.
+			mainEl.style.setProperty('--shell-scrollport-h', `${mainEl.clientHeight}px`);
+		};
+		measure();
+		// Every input that changes the answer — a banner appearing or being
+		// dismissed, the mobile URL bar collapsing, the on-screen keyboard, a window
+		// resize — moves <main>'s own box, so observing it alone is sufficient.
+		if (typeof ResizeObserver === 'undefined') return;
+		const ro = new ResizeObserver(measure);
+		ro.observe(mainEl);
+		return () => ro.disconnect();
+	}, [mainEl]);
 
 	// Expose the horizontal centre of the registered content column (relative to
 	// the pill anchor) as `--pill-center-x`, so the pills sit over the content the
@@ -387,7 +437,15 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 					)}
 					{/* Collapsed: a slim expand tab docked to the project rail's right
 					    edge, flush under the app header. Desktop-only — below lg the
-					    project menu is a drawer, so there is nothing to collapse. */}
+					    project menu is a drawer, so there is nothing to collapse.
+					    z-50 is load-bearing, not decorative: collapsed, <main> starts at
+					    the rail's right edge, so this tab shares its top-left corner with
+					    whatever <main> stickies there — today ContainerStatusBanner (z-40)
+					    and BudgetBanner (z-30), which sit in this same stacking context.
+					    Anything at or below their z-index gets painted over and the tab
+					    silently vanishes, stranding the user with no way to re-expand.
+					    Keep this above every sticky banner; the only other z-50 is the
+					    mobile drawer, which is lg:hidden and never coexists with it. */}
 					{menuProjectSlug && menuCollapsed && (
 						<Tooltip content="Expand menu" side="right">
 							<button
@@ -395,7 +453,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 								aria-label="Expand menu"
 								data-testid="project-sidebar-expand"
 								onClick={() => setMenuCollapsed(false)}
-								className="absolute left-[60px] top-0 z-20 hidden h-[22px] w-7 items-center justify-center rounded-br-[9px] border border-l-0 border-t-0 border-border bg-surface text-text-2 shadow-sm transition-colors hover:text-text-1 lg:flex"
+								className="absolute left-[60px] top-0 z-50 hidden h-[22px] w-7 items-center justify-center rounded-br-[9px] border border-l-0 border-t-0 border-border bg-surface text-text-2 shadow-sm transition-colors hover:text-text-1 lg:flex"
 							>
 								<ChevronsRight className="h-4 w-4" aria-hidden="true" />
 							</button>

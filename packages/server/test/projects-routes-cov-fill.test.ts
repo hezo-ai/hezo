@@ -4,6 +4,7 @@ import { LocalAssetStore } from '../src/assets/drivers/local';
 import { signProjectIconUrl } from '../src/lib/project-icon-urls';
 import { signAdminJwt } from '../src/middleware/auth';
 import { buildApp } from '../src/startup';
+import { blobBytes } from './helpers';
 import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
@@ -22,7 +23,7 @@ function pngWithDimensions(width: number, height: number): Buffer {
 
 function iconForm(bytes: Buffer, type = 'image/png'): FormData {
 	const fd = new FormData();
-	fd.set('file', new Blob([bytes], { type }), 'icon.png');
+	fd.set('file', new Blob([blobBytes(bytes)], { type }), 'icon.png');
 	return fd;
 }
 
@@ -561,132 +562,6 @@ describe('project icon lifecycle', () => {
 			projectId,
 		]);
 		expect(rows.rows.length).toBe(0);
-	});
-});
-
-describe('container lifecycle routes', () => {
-	it('400s container start when no container is provisioned', async () => {
-		await ctx.db.query('UPDATE projects SET container_id = NULL WHERE id = $1', [projectId]);
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/container/start`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.code).toBe('NO_CONTAINER');
-	});
-
-	it('starts a provisioned container and marks the project running', async () => {
-		await ctx.db.query(
-			`UPDATE projects SET container_id = 'stub-container-cov', container_status = 'stopped'::container_status WHERE id = $1`,
-			[projectId],
-		);
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/container/start`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.container_status).toBe(ContainerStatus.Running);
-
-		const stored = await ctx.db.query<{ container_status: string }>(
-			'SELECT container_status FROM projects WHERE id = $1',
-			[projectId],
-		);
-		expect(stored.rows[0].container_status).toBe(ContainerStatus.Running);
-	});
-
-	it('500s with DOCKER_ERROR when the docker daemon rejects the start', async () => {
-		// A sibling app over the same DB whose docker client fails startContainer.
-		// The logged start-failure warning is this test's asserted error path.
-		const failingApp = buildApp(
-			ctx.db,
-			ctx.masterKeyManager,
-			{ dataDir: ctx.dataDir, webUrl: '' },
-			createStubDocker({
-				startContainer: async () => {
-					throw new Error('daemon unreachable');
-				},
-			}),
-		);
-		const res = await failingApp.request(`/api/projects/${projectSlug}/container/start`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(500);
-		const body = await res.json();
-		expect(body.error.code).toBe('DOCKER_ERROR');
-		expect(body.error.message).toContain('daemon unreachable');
-	});
-
-	it('stop with no container just marks the project stopped', async () => {
-		await ctx.db.query('UPDATE projects SET container_id = NULL WHERE id = $1', [projectId]);
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/container/stop`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.container_status).toBe(ContainerStatus.Stopped);
-
-		const stored = await ctx.db.query<{ container_status: string }>(
-			'SELECT container_status FROM projects WHERE id = $1',
-			[projectId],
-		);
-		expect(stored.rows[0].container_status).toBe(ContainerStatus.Stopped);
-	});
-
-	it('stop with a container cancels running agent tasks and transitions to stopping', async () => {
-		await ctx.db.query(
-			`UPDATE projects SET container_id = 'stub-container-cov', container_status = 'running'::container_status WHERE id = $1`,
-			[projectId],
-		);
-
-		// A running agent task: an open execution lock held by the Captain.
-		const captain = await ctx.db.query<{ id: string }>(
-			`SELECT ma.id FROM member_agents ma
-			 JOIN members m ON m.id = ma.id
-			 WHERE m.team_id = $1 AND ma.slug = 'captain' LIMIT 1`,
-			[teamId],
-		);
-		const captainId = captain.rows[0].id;
-		const task = await ctx.db.query<{ id: string }>(
-			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title, status, priority, labels)
-			 VALUES ($1, $2, $3, next_project_task_number($2), 'CVF-LOCK-1', 'Locked task', 'in_progress'::task_status, 'medium'::task_priority, '[]'::jsonb)
-			 RETURNING id`,
-			[teamId, projectId, captainId],
-		);
-		await ctx.db.query(`INSERT INTO execution_locks (task_id, member_id) VALUES ($1, $2)`, [
-			task.rows[0].id,
-			captainId,
-		]);
-
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/container/stop`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.container_status).toBe(ContainerStatus.Stopping);
-	});
-
-	it('rebuild flips the project to creating and reprovisions to running', async () => {
-		const res = await ctx.app.request(`/api/projects/${projectSlug}/container/rebuild`, {
-			method: 'POST',
-			headers: authHeader(token),
-		});
-		expect(res.status).toBe(200);
-		expect((await res.json()).data.container_status).toBe(ContainerStatus.Creating);
-
-		// Wait for the background rebuild job (stub docker) to finish so later tests
-		// and teardown never race its DB writes.
-		let status = ContainerStatus.Creating as string;
-		for (let i = 0; i < 300; i++) {
-			const row = await ctx.db.query<{ container_status: string }>(
-				'SELECT container_status FROM projects WHERE id = $1',
-				[projectId],
-			);
-			status = row.rows[0].container_status;
-			if (status !== ContainerStatus.Creating) break;
-			await new Promise((r) => setTimeout(r, 50));
-		}
-		expect(status).toBe(ContainerStatus.Running);
 	});
 });
 

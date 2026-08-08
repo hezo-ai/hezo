@@ -1,7 +1,7 @@
 import {
 	ATTACHMENT_MAX_BYTES,
 	isAllowedAttachmentExtension,
-	isAllowedAttachmentMime,
+	resolveAttachmentContentType,
 } from '@hezo/shared';
 import { useMutation } from '@tanstack/react-query';
 import { ApiError, api } from '../lib/api';
@@ -20,7 +20,9 @@ export function useUploadChatAttachment() {
 			if (!isAllowedAttachmentExtension(file.name)) {
 				throw new ApiError('INVALID_TYPE', `Unsupported file extension: ${file.name}`, 400);
 			}
-			if (file.type && !isAllowedAttachmentMime(file.type)) {
+			// See useUploadAttachment: the shared resolver is the single copy of this
+			// rule, so the client and the server agree on every declared type.
+			if (resolveAttachmentContentType(file.name, file.type) === null) {
 				throw new ApiError('INVALID_TYPE', `Unsupported content type: ${file.type}`, 400);
 			}
 			if (file.size > ATTACHMENT_MAX_BYTES) {

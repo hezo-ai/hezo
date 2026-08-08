@@ -6,10 +6,17 @@ import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	stubEngineSeams,
+} from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
 
 // The handoff-delivery guardrail: when a run ends (clean exit) with a reply in
@@ -88,7 +95,7 @@ afterAll(async () => {
 // Mirror agent-runner.test.ts's mock: flip produced_output during exec (what the
 // MCP write layer does mid-run) when `producesOutput`, and stream whatever the
 // test's execStart emits via onChunk.
-function createMockDocker(overrides: Record<string, unknown> = {}): DockerClient {
+function createMockDocker(overrides: Record<string, unknown> = {}): ContainerEngine {
 	const {
 		execStart: execStartOverride,
 		producesOutput = false,
@@ -102,7 +109,11 @@ function createMockDocker(overrides: Record<string, unknown> = {}): DockerClient
 	const innerExecStart =
 		(execStartOverride as ((...a: unknown[]) => unknown) | undefined) ??
 		(async () => ({ stdout: 'done', stderr: '' }));
-	const base = {
+	// Built on createStubDocker rather than hand-rolled: a literal cast through
+	// `as unknown as ContainerEngine` silently omits whatever the interface grows
+	// next, and the compiler cannot say so. That is how six specs came to call a
+	// method that did not exist on their engine.
+	const base = createStubDocker({
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
@@ -129,7 +140,10 @@ function createMockDocker(overrides: Record<string, unknown> = {}): DockerClient
 			}
 			return innerExecStart(...args);
 		},
-	} as unknown as DockerClient;
+		// The run stages its prompt and runtime home through the engine seam, so an
+		// inline engine needs the same bind-resolving view the shared stub gives.
+		...stubEngineSeams(),
+	});
 	return withRunUserStub(base);
 }
 
@@ -142,7 +156,7 @@ function makeTask() {
 		id: taskId,
 		identifier: 'HC-1',
 		title: 'Handoff Task',
-		description: null,
+		description: '',
 		status: 'backlog',
 		priority: 'medium',
 		project_id: projectId,
@@ -183,7 +197,7 @@ function streamResult(finalMessage: string, isError = false) {
 	};
 }
 
-function makeDeps(docker: DockerClient): RunnerDeps {
+function makeDeps(docker: ContainerEngine): RunnerDeps {
 	return {
 		db,
 		docker,
@@ -192,6 +206,18 @@ function makeDeps(docker: DockerClient): RunnerDeps {
 		dataDir: '/tmp/test-data-handoff',
 		logs: new LogStreamBroker(),
 	};
+}
+
+/**
+ * `RunResult.heartbeatRunId` is optional - a run that never got as far as
+ * registering has none - so narrow it here rather than at a dozen call sites.
+ * A missing id in these tests means the run did not start, which is a failure
+ * worth naming rather than a comment query returning nothing.
+ */
+function runIdOf(result: { heartbeatRunId?: string }): string {
+	const id = result.heartbeatRunId;
+	if (!id) throw new Error('run produced no heartbeat run id');
+	return id;
 }
 
 async function textComments(runId: string) {
@@ -245,7 +271,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		);
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-		const runId = result.heartbeatRunId;
+		const runId = runIdOf(result);
 
 		// The no-op run became a success because the guardrail produced a comment.
 		expect(result.success).toBe(true);
@@ -310,7 +336,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 		// Exactly one comment — the one the agent posted; the guardrail added none.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(JSON.stringify(comments.rows[0].content)).toContain('awaiting your call');
 	});
@@ -322,7 +348,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 	});
 
@@ -337,7 +363,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(false);
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 	});
 
@@ -362,7 +388,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(result.success).toBe(true);
 
 		// The guardrail fired even though the run already produced output.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(JSON.stringify(comments.rows[0].content)).toContain(`@${otherSlug}`);
 
@@ -402,7 +428,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(result.success).toBe(true);
 
 		// The runner did NOT rewrite the message or auto-deliver it: no comment posted.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 
 		// No teammate was force-woken.
@@ -450,7 +476,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 
 		// Not delivered, not rewritten (the "agent posts it itself" posture): no
 		// comment posted, no teammate force-woken.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 		const wakeups = await db.query(
 			`SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'`,
@@ -459,6 +485,49 @@ describe('runAgent handoff-delivery guardrail', () => {
 		expect(wakeups.rows.length).toBe(0);
 
 		// Surfaced as a run-log warning naming the teammate and the active-mention fix.
+		const run = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].log_text).toContain('wakes no one');
+		expect(run.rows[0].log_text).toContain(`@${otherSlug}`);
+	});
+
+	it('warns about a stranded PASSIVE "Ready for @@<slug> review" verdict but does not deliver or wake', async () => {
+		const other = await db.query<{ id: string; slug: string }>(
+			`SELECT ma.id, ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const { id: otherId, slug: otherSlug } = other.rows[0];
+		await db.query(`DELETE FROM agent_wakeup_requests WHERE member_id = $1`, [otherId]);
+
+		// The passive spelling of the same stranded handoff. `@@<slug>` renders as a
+		// delivered-looking chip, so the verdict reads as routed while waking nobody —
+		// the net has to treat it exactly like the bare name above, or the `@@` form
+		// becomes the way around the check.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(
+					`**Verdict:** APPROVED — the fix is correct and complete. Ready for @@${otherSlug} review.`,
+				),
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+
+		// Not delivered, not rewritten, nobody force-woken.
+		const comments = await textComments(runIdOf(result));
+		expect(comments.rows.length).toBe(0);
+		const wakeups = await db.query(
+			`SELECT 1 FROM agent_wakeup_requests WHERE member_id = $1 AND source = 'mention'`,
+			[otherId],
+		);
+		expect(wakeups.rows.length).toBe(0);
+
 		const run = await db.query<{ log_text: string }>(
 			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
@@ -514,7 +583,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 
 		// Exactly one comment — the agent's own active ask; the guardrail added none.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 
 		// And no stranded-handoff warning, because the ask was already delivered.
@@ -567,7 +636,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		);
 		expect(result.success).toBe(true);
 
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(comments.rows[0].author_member_id).toBe(agentId);
 		expect(JSON.stringify(comments.rows[0].content)).toContain(link);
@@ -613,7 +682,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 			wakeupId,
 		);
 		expect(result.success).toBe(true);
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(comments.rows[0].parent_comment_id).toBe(mention);
 	});
@@ -676,7 +745,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 			wakeupId,
 		);
 		// Exactly the one comment the run posted itself — no auto-delivered echo.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(1);
 		expect(JSON.stringify(comments.rows[0].content)).toContain('Posted it here');
 	});
@@ -721,8 +790,66 @@ describe('runAgent handoff-delivery guardrail', () => {
 		);
 		expect(result.success).toBe(true);
 		// Agent-to-agent chatter is not auto-posted — the run left no comment.
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
+	});
+
+	it("delivers a stranded verdict to a teammate's @-mention as a reply", async () => {
+		// The review-handoff failure: a teammate @-mentions the reviewer asking for
+		// sign-off, the reviewer does the whole review and ends the run with its
+		// verdict only in the final message. Nothing wakes the asker and the ticket
+		// sits in `review` until a human notices.
+		const other = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const otherId = other.rows[0].id;
+		const ask = await seedComment(otherId, 'ready for review — please sign off');
+		const wakeupPayload = {
+			source: WakeupSource.Mention,
+			task_id: taskId,
+			comment_id: ask,
+		};
+		const wakeupId = await createWakeupRow(
+			WakeupSource.Mention,
+			wakeupPayload,
+			`mention-agent:${ask}`,
+		);
+
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: false,
+				execStart: streamResult('Verdict: PASS. All 14 reports are accurate.'),
+			}),
+		);
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			wakeupPayload,
+			undefined,
+			undefined,
+			wakeupId,
+		);
+		expect(result.success).toBe(true);
+		const comments = await textComments(runIdOf(result));
+		expect(comments.rows.length).toBe(1);
+		expect(comments.rows[0].parent_comment_id).toBe(ask);
+		expect(JSON.stringify(comments.rows[0].content)).toContain('Verdict: PASS');
+
+		// The loop guard, asserted structurally: the delivered comment carries no
+		// active mention, so it can only ever produce a *reply* wakeup — never a
+		// Mention one, which is the only kind that would let the next hop
+		// auto-deliver back. Two agents therefore cannot ping-pong here.
+		const wakeups = await db.query<{ source: string }>(
+			`SELECT source FROM agent_wakeup_requests WHERE payload->>'comment_id' = $1`,
+			[comments.rows[0].id],
+		);
+		expect(wakeups.rows.every((w) => w.source !== WakeupSource.Mention)).toBe(true);
 	});
 
 	it('does not warn on a bold teammate name used without ask intent', async () => {
@@ -744,12 +871,103 @@ describe('runAgent handoff-delivery guardrail', () => {
 
 		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
 		expect(result.success).toBe(true);
-		const comments = await textComments(result.heartbeatRunId);
+		const comments = await textComments(runIdOf(result));
 		expect(comments.rows.length).toBe(0);
 		const run = await db.query<{ log_text: string }>(
 			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
 			[result.heartbeatRunId],
 		);
 		expect(run.rows[0].log_text).not.toContain('wakes no one');
+	});
+});
+
+// The structural backstop, which reads no prose at all: a run that ends having
+// woken NOBODY, on a task it left open, after naming a teammate in a form that
+// notifies no one. It exists because the guardrails above only inspect the FINAL
+// MESSAGE and create_comment only inspects one comment at a time, so nothing
+// looked at what a run achieved in aggregate — which is where a passively
+// addressed ask posted as a comment lives.
+describe('no-wake exit check', () => {
+	async function otherAgent(): Promise<{ id: string; slug: string }> {
+		const r = await db.query<{ id: string; slug: string }>(
+			`SELECT ma.id, ma.slug FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		return r.rows[0];
+	}
+
+	async function logFor(runId: string): Promise<string> {
+		const r = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[runId],
+		);
+		return r.rows[0].log_text;
+	}
+
+	it('warns when a run wakes no one on an open task while naming a teammate', async () => {
+		const { slug } = await otherAgent();
+		await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [taskId]);
+		// Deliberately carries NO ask vocabulary — none of the phrase-based
+		// detectors fire on it, which is exactly what this check is for.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(`Analysis complete, alongside @@${slug}'s earlier notes.`),
+			}),
+		);
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+
+		const log = await logFor(runIdOf(result));
+		expect(log).toContain('woke no one');
+		expect(log).toContain(`@${slug}`);
+	});
+
+	it('stays silent when the run actually woke someone', async () => {
+		const { slug } = await otherAgent();
+		await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [taskId]);
+		// An active mention is auto-delivered as a real comment by the guardrail
+		// above, so the run HAS woken someone and this check must not fire.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(`@${slug} - please re-run the fixture.`),
+			}),
+		);
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+		expect(await logFor(runIdOf(result))).not.toContain('woke no one');
+	});
+
+	it('stays silent when the task was closed', async () => {
+		const { slug } = await otherAgent();
+		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [taskId]);
+		// A terminal task routes through the status cascade, so naming a teammate
+		// in the wrap-up is attribution and not a stranded handoff.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult(`Shipped. Thanks to @@${slug} for the review.`),
+			}),
+		);
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+		expect(await logFor(runIdOf(result))).not.toContain('woke no one');
+		await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [taskId]);
+	});
+
+	it('stays silent when the run names nobody', async () => {
+		await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [taskId]);
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: true,
+				execStart: streamResult('Rebuilt the index and re-ran the import. No errors.'),
+			}),
+		);
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(true);
+		expect(await logFor(runIdOf(result))).not.toContain('woke no one');
 	});
 });

@@ -1,6 +1,7 @@
-import { isMarkdownAssetMime } from '@hezo/shared';
+import { isArchiveAssetMime, isMarkdownAssetMime } from '@hezo/shared';
 import {
 	Code,
+	FileArchive,
 	FileAudio,
 	File as FileIcon,
 	FileText,
@@ -8,7 +9,12 @@ import {
 	Image as ImageIcon,
 } from 'lucide-react';
 
-/** MIME-matched file-type glyph shared by the asset grid and the asset viewer. */
+/**
+ * MIME-matched file-type glyph. The single glyph source for every surface that
+ * shows an asset: the asset grid, the asset viewer, comment-attachment thumbs
+ * and the composer's pending-upload chips (the latter two pass a smaller
+ * `className`). Add a type here, not in a local copy.
+ */
 export function AssetIcon({
 	contentType,
 	className = 'h-8 w-8 text-text-3',
@@ -19,6 +25,7 @@ export function AssetIcon({
 	if (contentType.startsWith('audio/')) return <FileAudio className={className} />;
 	if (contentType.startsWith('video/')) return <FileVideo className={className} />;
 	if (contentType === 'text/html') return <Code className={className} />;
+	if (isArchiveAssetMime(contentType)) return <FileArchive className={className} />;
 	if (
 		contentType === 'application/pdf' ||
 		contentType === 'text/plain' ||

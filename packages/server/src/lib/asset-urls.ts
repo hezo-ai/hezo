@@ -30,18 +30,22 @@ export async function signAssetUrl(
 export const AGENT_ASSET_URL_TTL_SECONDS = 24 * 60 * 60;
 
 /**
- * Absolute, signed download URL usable from inside an agent container. Agents
- * reach the host over `host.docker.internal:<serverPort>` — the same origin as
- * the MCP endpoint — which the per-run egress proxy exempts via NO_PROXY, so a
- * plain `curl <url>` works with no proxy or auth header.
+ * Absolute, signed download URL usable from inside an agent container.
+ *
+ * `origin` is the Hezo origin *that caller* reaches — its tunnel's loopback MCP
+ * port, the same origin the MCP endpoint is on for it, which the egress proxy
+ * exempts via NO_PROXY. So a plain `curl <url>` works with no proxy and no auth
+ * header. It is passed in rather than derived from the server's own port
+ * because the port is per-tunnel: only the caller's own request knows it (see
+ * `mcp/tools.ts` → `callerOriginContext`).
  */
 export async function signAgentAssetUrl(
 	assetId: string,
 	masterKeyManager: MasterKeyManager,
-	serverPort: number,
+	origin: string,
 ): Promise<string> {
 	const path = await signAssetUrl(assetId, masterKeyManager, AGENT_ASSET_URL_TTL_SECONDS);
-	return `http://host.docker.internal:${serverPort}${path}`;
+	return `${origin.replace(/\/+$/, '')}${path}`;
 }
 
 export async function verifyAssetUrl(

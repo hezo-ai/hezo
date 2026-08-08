@@ -191,20 +191,21 @@ test('a rejected move shows the server error and leaves the breadcrumb unchanged
 			const project = await seedProject(ws, { name: 'Rejection Project' });
 			projectSlug = project.slug;
 
-			// A three-level chain: the deepest task cannot take another child.
+			// A chain at the full nesting depth: the deepest task cannot take another
+			// child, so selecting it as a parent must be rejected by the server.
+			const subTask = async (parentId: string, title: string) => {
+				const res = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${parentId}/sub-tasks`, {
+					method: 'POST',
+					headers: ws.headers,
+					body: JSON.stringify({ title, assignee_id: engineer.id }),
+				});
+				return (await res.json()).data;
+			};
+
 			const root = await seedTask(ws, project, { title: 'Chain Root', assignee_id: engineer.id });
-			const midRes = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${root.id}/sub-tasks`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({ title: 'Chain Mid', assignee_id: engineer.id }),
-			});
-			const mid = (await midRes.json()).data;
-			const deepRes = await apiBase(`/api/projects/${ws.internalSlug}/tasks/${mid.id}/sub-tasks`, {
-				method: 'POST',
-				headers: ws.headers,
-				body: JSON.stringify({ title: 'Chain Deep', assignee_id: engineer.id }),
-			});
-			deepIdentifier = (await deepRes.json()).data.identifier;
+			const mid = await subTask(root.id, 'Chain Mid');
+			const lower = await subTask(mid.id, 'Chain Lower');
+			deepIdentifier = (await subTask(lower.id, 'Chain Deep')).identifier;
 
 			const mover = await seedTask(ws, project, {
 				title: 'Rejected Mover',
@@ -244,7 +245,7 @@ test('a rejected move shows the server error and leaves the breadcrumb unchanged
 		if (!el) throw new Error('error not rendered');
 		return el as HTMLElement;
 	});
-	expect(error.textContent).toMatch(/2 levels deep/);
+	expect(error.textContent).toMatch(/3 levels deep/);
 
 	// The field is response-driven, so a rejection must leave the task where it
 	// was rather than showing an optimistic move that never happened.

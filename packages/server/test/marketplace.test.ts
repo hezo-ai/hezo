@@ -247,7 +247,7 @@ describe('POST /api/projects/:projectId/marketplace-team with a role subset', ()
 		});
 		return (await res.json()).data.slug as string;
 	}
-	function addRoles(projectSlug: string, body: Record<string, unknown>): Promise<Response> {
+	async function addRoles(projectSlug: string, body: Record<string, unknown>): Promise<Response> {
 		return app.request(`/api/projects/${projectSlug}/marketplace-team`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

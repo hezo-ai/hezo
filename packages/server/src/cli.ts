@@ -32,6 +32,23 @@ export interface HezoConfig {
 	 * `lib/asset-storage-info.ts`) and never passed into `buildApp`.
 	 */
 	assetStorageUrl?: string;
+	/**
+	 * Where agent containers run (`--sandbox-backend` / `HEZO_SANDBOX_BACKEND`):
+	 * `docker` (default, the local daemon) or a managed sandbox service. Selecting
+	 * a managed backend Hezo cannot reach is **fatal at startup** - it never falls
+	 * back to local Docker, because an instance that silently degraded would look
+	 * healthy while running somewhere the operator did not choose.
+	 */
+	sandboxBackend?: string;
+	/**
+	 * Daytona API key (`--daytona-api-key` / `HEZO_DAYTONA_API_KEY`), required
+	 * when `sandboxBackend` is `daytona`. Used only by trusted server code to
+	 * reach the provider control plane - it is never placed in an agent
+	 * container, and never logged (see `redactSandboxApiUrl`).
+	 */
+	daytonaApiKey?: string;
+	/** Daytona API base URL, for a regional or self-hosted endpoint. */
+	daytonaApiUrl?: string;
 	masterKey?: { unlockKeyHex: string; publicKeyHex: string };
 	webUrl: string;
 	reset: boolean;
@@ -48,14 +65,14 @@ export interface HezoConfig {
 	 */
 	autoInstallUpdates: boolean;
 	/**
-	 * Interface the egress proxy and SSH bridge bind to so agent containers can
-	 * reach them. Defaults to `127.0.0.1` (loopback — works with Docker Desktop,
-	 * which tunnels `host.docker.internal` to host loopback). On native-Linux
-	 * Docker a container reaches the host via the bridge gateway IP, where a
-	 * loopback bind is unreachable, so set `0.0.0.0` (or the bridge gateway IP)
-	 * and firewall-restrict the port range to the docker bridge.
+	 * Explicit path to the container runtime's Unix socket (`--docker-socket` /
+	 * `HEZO_DOCKER_SOCKET`). Unset by default, in which case the startup preflight
+	 * discovers it: `DOCKER_HOST`, then the docker CLI's current context, then the
+	 * well-known path for each supported runtime (Docker Engine/Desktop, Colima,
+	 * Rancher Desktop, OrbStack, Lima, rootless Docker). Set it only when the
+	 * daemon listens somewhere none of those cover.
 	 */
-	containerBindHost: string;
+	dockerSocket?: string;
 	/**
 	 * Require a per-run token on every request to the egress proxy. On by
 	 * default: each run's `HTTP(S)_PROXY` URL carries a random token that the
@@ -67,6 +84,15 @@ export interface HezoConfig {
 	 * placeholders). `--no-egress-proxy-auth` / `HEZO_EGRESS_PROXY_AUTH=0`.
 	 */
 	egressProxyAuth: boolean;
+	/**
+	 * Permit proxied agent egress to loopback / link-local / private addresses.
+	 * Off by default: the egress proxy runs in the host's network namespace, so
+	 * without the guard an agent could tunnel to Hezo's own API, its database, or
+	 * any host-bound daemon. Enable only when an MCP server or git remote the
+	 * agents legitimately need lives on the LAN.
+	 * `--egress-allow-private-targets` / `HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`.
+	 */
+	egressAllowPrivateTargets: boolean;
 	/**
 	 * Anonymous daily usage telemetry. On by default (opt-out): once a day the
 	 * server POSTs aggregate counts (projects, tasks, tokens, AI-provider mix,
@@ -597,17 +623,45 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 /** Injectable seams for {@link runUninstall} — real Docker cleanup by default. */
 export interface UninstallDeps {
 	/**
-	 * Remove the Docker containers Hezo provisioned. Returns the count removed, or
-	 * `null` when Docker was unreachable. Defaults to the real Docker path;
-	 * overridden in tests so they never touch a live daemon.
+	 * Remove the containers Hezo provisioned. Returns the count removed, or `null`
+	 * when the backend was unreachable. Defaults to the real path; overridden in
+	 * tests so they never touch a live daemon or a real provider account.
 	 */
-	removeContainers?: () => Promise<number | null>;
+	removeContainers?: (opts: SandboxBackendOptions) => Promise<number | null>;
 }
 
-async function defaultRemoveProvisionedContainers(): Promise<number | null> {
-	const { DockerClient } = await import('./services/docker.js');
+/** What uninstall needs to reach the backend the instance was running on. */
+export interface SandboxBackendOptions {
+	backend?: string;
+	daytonaApiKey?: string;
+	daytonaApiUrl?: string;
+	/** Carried through for the same reason startup carries it: a pinned socket is pinned because discovery misses it. */
+	dockerSocket?: string;
+}
+
+/**
+ * Remove the containers, on whichever backend the instance used.
+ *
+ * Hard-wired to local Docker before, which meant uninstalling a managed-backend
+ * instance removed the data directory and left the provider's sandboxes running.
+ * Nothing then reaps them either: the orphan sweep lives in the server that was
+ * just deleted, so they bill until somebody notices in a dashboard.
+ *
+ * An unreachable backend answers `null` rather than aborting - the data directory
+ * is the thing the operator asked to remove, and refusing to do that because a
+ * provider is down would be the wrong trade.
+ */
+async function defaultRemoveProvisionedContainers(
+	opts: SandboxBackendOptions,
+): Promise<number | null> {
+	const { openSandboxBackend } = await import('./services/sandbox/open.js');
 	const { removeProvisionedContainers } = await import('./services/uninstall.js');
-	return removeProvisionedContainers(new DockerClient());
+	try {
+		const { engine } = await openSandboxBackend(opts);
+		return await removeProvisionedContainers(engine);
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -644,6 +698,14 @@ export async function runUninstall(
 		)
 		.option('--data-dir <path>', 'Data directory to remove (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
 		.option('--yes', 'Confirm removal — required; without it nothing is deleted')
+		// The instance's own backend, so its containers are removed wherever they
+		// actually ran. Defaults to Docker, matching the server's default.
+		.option(
+			'--sandbox-backend <name>',
+			'Backend the instance ran containers on: docker (default) or daytona (env: HEZO_SANDBOX_BACKEND)',
+		)
+		.option('--daytona-api-key <key>', 'Daytona API key (env: HEZO_DAYTONA_API_KEY)')
+		.option('--daytona-api-url <url>', 'Daytona API base URL (env: HEZO_DAYTONA_API_URL)')
 		.parse(argv.slice(3), { from: 'user' });
 
 	const opts = program.opts();
@@ -690,12 +752,23 @@ export async function runUninstall(
 	// the database we are about to delete, so skipping this orphans them. Never
 	// fatal — Docker may already be stopped.
 	const removeContainers = deps.removeContainers ?? defaultRemoveProvisionedContainers;
+	const backendOpts: SandboxBackendOptions = {
+		backend: process.env.HEZO_SANDBOX_BACKEND ?? opts.sandboxBackend,
+		daytonaApiKey: process.env.HEZO_DAYTONA_API_KEY ?? opts.daytonaApiKey,
+		daytonaApiUrl: process.env.HEZO_DAYTONA_API_URL ?? opts.daytonaApiUrl,
+		dockerSocket: process.env.HEZO_DOCKER_SOCKET ?? opts.dockerSocket,
+	};
+	const managed = (backendOpts.backend ?? 'docker') !== 'docker';
 	try {
-		const removed = await removeContainers();
+		const removed = await removeContainers(backendOpts);
 		if (removed === null) {
 			console.log(
-				'→ Docker not reachable; skipping container cleanup. Remove any leftovers with: ' +
-					'docker rm -f $(docker ps -aq --filter label=hezo.team)',
+				managed
+					? '→ Sandbox provider not reachable; skipping container cleanup. Remove any ' +
+							'leftover sandboxes from the provider dashboard - nothing else will, since ' +
+							'the sweep that would have lived in this instance is going away with it.'
+					: '→ Docker not reachable; skipping container cleanup. Remove any leftovers with: ' +
+							'docker rm -f $(docker ps -aq --filter label=hezo.team)',
 			);
 		} else if (removed > 0) {
 			console.log(`→ Removed ${removed} Hezo container(s).`);
@@ -745,6 +818,18 @@ export function parseConfig(
 			'S3-compatible object storage for asset files (s3://ACCESS_KEY:SECRET@endpoint/bucket[/prefix]?region=…&pathStyle=…). Works with AWS S3, MinIO, R2, Spaces, B2, and any other S3-compatible store. Omit to store assets on the local filesystem under the data directory. (env: HEZO_ASSET_STORAGE_URL)',
 		)
 		.option(
+			'--sandbox-backend <name>',
+			'Where agent containers run: docker (default, the local daemon) or daytona (a managed sandbox service). Selecting a managed backend that cannot be reached is fatal at startup - Hezo never falls back to local Docker. (env: HEZO_SANDBOX_BACKEND)',
+		)
+		.option(
+			'--daytona-api-key <key>',
+			'Daytona API key, required when --sandbox-backend is daytona (env: HEZO_DAYTONA_API_KEY)',
+		)
+		.option(
+			'--daytona-api-url <url>',
+			'Daytona API base URL, for a regional or self-hosted endpoint. Defaults to the public API. (env: HEZO_DAYTONA_API_URL)',
+		)
+		.option(
 			'--master-key <phrase>',
 			'The 12-word master key phrase for setup/unlock (env: HEZO_MASTER_KEY)',
 		)
@@ -761,12 +846,16 @@ export function parseConfig(
 			'Skip removal of old containers on rebuild/teardown/provision — useful for inspecting crashed containers via `docker logs` / `docker inspect`. Subsequent rebuilds will fail with a name conflict until the operator removes them manually. (env: HEZO_KEEP_OLD_CONTAINERS)',
 		)
 		.option(
-			'--container-bind-host <host>',
-			'Interface the egress proxy and SSH bridge bind to so agent containers can reach them. Default 127.0.0.1 (works with Docker Desktop). On native-Linux Docker set 0.0.0.0 (or the bridge gateway IP) and firewall-restrict the egress port range to the docker bridge. (env: HEZO_CONTAINER_BIND_HOST)',
+			'--docker-socket <path>',
+			"Path to the container runtime's Unix socket. By default Hezo finds it automatically: DOCKER_HOST, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set this only when the daemon listens somewhere none of those cover. Unix sockets only - tcp:// and npipe:// are not supported. (env: HEZO_DOCKER_SOCKET)",
 		)
 		.option(
 			'--no-egress-proxy-auth',
 			"Disable per-run egress proxy authentication. On by default: each run's HTTP(S)_PROXY URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client cannot send proxy credentials — the secret red line still holds (an unauthenticated caller only ships unsubstituted placeholders). (env: HEZO_EGRESS_PROXY_AUTH=0)",
+		)
+		.option(
+			'--egress-allow-private-targets',
+			"Allow agent egress through the proxy to reach loopback, link-local and private (RFC1918) addresses. Blocked by default: the proxy runs on the host, so without the guard an agent could tunnel to Hezo's own API, its database, or any host-bound daemon. Enable only when an MCP server or git remote your agents genuinely need lives on the LAN. (env: HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1)",
 		)
 		.option(
 			'--auto-install-updates',
@@ -831,6 +920,9 @@ export function parseConfig(
 		dataDir: resolveDataDir(pick('HEZO_DATA_DIR', cli.dataDir) ?? DEFAULT_DATA_DIR),
 		databaseUrl,
 		assetStorageUrl: pick('HEZO_ASSET_STORAGE_URL', cli.assetStorageUrl),
+		sandboxBackend: pick('HEZO_SANDBOX_BACKEND', cli.sandboxBackend),
+		daytonaApiKey: pick('HEZO_DAYTONA_API_KEY', cli.daytonaApiKey),
+		daytonaApiUrl: pick('HEZO_DAYTONA_API_URL', cli.daytonaApiUrl),
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
 		webUrl: pick('HEZO_WEB_URL', cli.webUrl) ?? '',
 		reset,
@@ -841,10 +933,14 @@ export function parseConfig(
 		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
 		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
 		autoInstallUpdates: pickBool('HEZO_AUTO_INSTALL_UPDATES', cli.autoInstallUpdates),
-		containerBindHost: pick('HEZO_CONTAINER_BIND_HOST', cli.containerBindHost) ?? '127.0.0.1',
+		dockerSocket: pick('HEZO_DOCKER_SOCKET', cli.dockerSocket),
 		// Egress-proxy auth defaults ON. The env var (when set) wins; otherwise
 		// `--no-egress-proxy-auth` sets cli.egressProxyAuth=false, absent it is true.
 		egressProxyAuth: pickOpen('HEZO_EGRESS_PROXY_AUTH', cli.egressProxyAuth),
+		egressAllowPrivateTargets: pickBool(
+			'HEZO_EGRESS_ALLOW_PRIVATE_TARGETS',
+			cli.egressAllowPrivateTargets,
+		),
 		telemetry: {
 			enabled: telemetryEnabled,
 			endpoint:

@@ -203,15 +203,25 @@ describe('PATCH tasks: the depth cap counts the moving sub-tree', () => {
 		expect((await patch(leaf.id, { parent_task_id: mid.id })).status).toBe(200);
 	});
 
-	it('rejects a leaf onto a third-level task', async () => {
+	it('allows a leaf onto a third-level task', async () => {
 		const root = await createTask(projectSlug, 'Depth root B');
 		const mid = await createTask(projectSlug, 'Depth mid B', root.id);
 		const deep = await createTask(projectSlug, 'Depth deep B', mid.id);
 		const leaf = await createTask(projectSlug, 'Depth leaf B');
 
-		const res = await patch(leaf.id, { parent_task_id: deep.id });
+		expect((await patch(leaf.id, { parent_task_id: deep.id })).status).toBe(200);
+	});
+
+	it('rejects a leaf onto a fourth-level task', async () => {
+		const root = await createTask(projectSlug, 'Depth root B2');
+		const mid = await createTask(projectSlug, 'Depth mid B2', root.id);
+		const deep = await createTask(projectSlug, 'Depth deep B2', mid.id);
+		const deeper = await createTask(projectSlug, 'Depth deeper B2', deep.id);
+		const leaf = await createTask(projectSlug, 'Depth leaf B2');
+
+		const res = await patch(leaf.id, { parent_task_id: deeper.id });
 		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toMatch(/2 levels deep/);
+		expect((await res.json()).error.message).toMatch(/3 levels deep/);
 	});
 
 	it('allows a task carrying children onto a root', async () => {
@@ -224,15 +234,16 @@ describe('PATCH tasks: the depth cap counts the moving sub-tree', () => {
 
 	// The case the create-time check alone would wave through: it only ever asks
 	// how deep the destination is, because a new task carries nothing.
-	it('rejects a task carrying children onto a sub-task', async () => {
+	it('rejects a task carrying children onto a third-level task', async () => {
 		const mover = await createTask(projectSlug, 'Subtree mover D');
 		await createTask(projectSlug, 'Subtree child D', mover.id);
 		const root = await createTask(projectSlug, 'Subtree root D');
 		const mid = await createTask(projectSlug, 'Subtree mid D', root.id);
+		const deep = await createTask(projectSlug, 'Subtree deep D', mid.id);
 
-		const res = await patch(mover.id, { parent_task_id: mid.id });
+		const res = await patch(mover.id, { parent_task_id: deep.id });
 		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toMatch(/2 levels deep/);
+		expect((await res.json()).error.message).toMatch(/3 levels deep/);
 		expect(await parentOf(mover.id)).toBeNull();
 	});
 

@@ -1,5 +1,5 @@
-import { WsMessageType } from '@hezo/shared';
-import type { DockerClient } from './docker';
+import { WsMessageType, wsRoom } from '@hezo/shared';
+import type { ContainerEngine } from './docker';
 import { DockerFrameDecoder } from './docker-frames';
 import type { LogStreamBroker } from './log-stream-broker';
 
@@ -10,20 +10,48 @@ interface StreamState {
 
 const CONTAINER_LOG_CAP_BYTES = 64 * 1024;
 
-function containerStreamId(projectId: string): string {
-	return `container:${projectId}`;
+/**
+ * The id of a container's log stream - **one per container, never one per
+ * producer.**
+ *
+ * Provisioning output and the follow stream on the container's own stdout both
+ * write here. They used to be two streams (`provision:<id>` and `container:<id>`)
+ * sharing one room, and that broke on replay: `LogStreamBroker.replay` sends a
+ * snapshot for *every* stream in the room, both snapshots carry `replace: true`
+ * and the same `containerId`, so a client applied both and the last one won.
+ *
+ * The follow stream is empty by construction - PID 1 is `sleep infinity`, and a
+ * managed backend has no container log to follow at all (`DaytonaEngine.
+ * containerLogs` returns null by design). So its empty snapshot landed second
+ * and wiped the provisioning trace, which is the only content the log ever had.
+ * A container that had finished coming up read as "No output was captured".
+ *
+ * One stream makes that structurally impossible: the room is 1:1 with the
+ * stream, so there is no second snapshot to clobber the first.
+ */
+export function containerStreamId(containerId: string): string {
+	return `container:${containerId}`;
 }
 
 export class ContainerLogStreamer {
 	private streams = new Map<string, StreamState>();
 
+	/**
+	 * Follow one container's logs.
+	 *
+	 * Keyed on the **container**, not its project: a project holds as many
+	 * containers as it has concurrent runs, and a project-keyed stream merged
+	 * their output into one and served it as whichever container the page was
+	 * showing. `projectId` rides along on the message purely so a client can link
+	 * back to the project - it is no longer what identifies the stream.
+	 */
 	subscribe(
 		projectId: string,
 		containerId: string,
 		logs: LogStreamBroker,
-		docker: DockerClient,
+		docker: ContainerEngine,
 	): void {
-		const existing = this.streams.get(projectId);
+		const existing = this.streams.get(containerId);
 		if (existing) {
 			existing.refCount++;
 			return;
@@ -31,43 +59,77 @@ export class ContainerLogStreamer {
 
 		const abortController = new AbortController();
 		const state: StreamState = { abortController, refCount: 1 };
-		this.streams.set(projectId, state);
+		this.streams.set(containerId, state);
 
-		logs.begin({
-			streamId: containerStreamId(projectId),
-			room: `container-logs:${projectId}`,
-			buildMessage: (line) => ({
-				type: WsMessageType.ContainerLog,
-				projectId,
-				stream: line.stream,
-				text: line.text,
-			}),
-			buildSnapshot: (text) => ({
-				type: WsMessageType.ContainerLog,
-				projectId,
-				stream: 'stdout',
-				text,
-				replace: true,
-			}),
-			capBytes: CONTAINER_LOG_CAP_BYTES,
-		});
+		// Join the container's stream rather than restart it. `begin` allocates a
+		// fresh buffer, so beginning again here would throw away the provisioning
+		// trace already in it - which on a managed backend is the entire log, since
+		// the follow stream below has nothing to add. The provisioner opens the
+		// stream for a container it created; this opens it for one adopted at
+		// startup, where nothing else has.
+		if (!logs.isActive(containerStreamId(containerId))) {
+			logs.begin({
+				streamId: containerStreamId(containerId),
+				room: wsRoom.containerLogs(containerId),
+				buildMessage: (line) => ({
+					type: WsMessageType.ContainerLog,
+					containerId,
+					projectId,
+					stream: line.stream,
+					text: line.text,
+				}),
+				buildSnapshot: (text, trimmed) => ({
+					type: WsMessageType.ContainerLog,
+					containerId,
+					projectId,
+					stream: 'stdout',
+					text,
+					replace: true,
+					trimmed,
+				}),
+				capBytes: CONTAINER_LOG_CAP_BYTES,
+			});
+		}
 
-		this.startStreaming(projectId, containerId, logs, docker, abortController).catch(() => {
-			this.streams.delete(projectId);
-			void logs.end(containerStreamId(projectId));
+		this.startStreaming(containerId, logs, docker, abortController).catch(() => {
+			this.streams.delete(containerId);
 		});
 	}
 
-	unsubscribe(projectId: string, logs?: LogStreamBroker): void {
-		const state = this.streams.get(projectId);
+	/**
+	 * Stop following, when the last viewer goes.
+	 *
+	 * **The broker stream is deliberately left open.** It holds the container's
+	 * log, which outlives every tab that watched it: ending it here meant closing
+	 * the Containers page discarded the provisioning trace, so re-opening the page
+	 * showed an empty log for a container that had come up fine. {@link end} is
+	 * what closes it, on the one event that makes the log meaningless - the
+	 * container being destroyed - which is also what bounds the map.
+	 */
+	unsubscribe(containerId: string, _logs?: LogStreamBroker): void {
+		const state = this.streams.get(containerId);
 		if (!state) return;
 
 		state.refCount--;
 		if (state.refCount <= 0) {
 			state.abortController.abort();
-			this.streams.delete(projectId);
-			if (logs) void logs.end(containerStreamId(projectId));
+			this.streams.delete(containerId);
 		}
+	}
+
+	/** Whether a follow stream is currently attached to this container. */
+	isFollowing(containerId: string): boolean {
+		return this.streams.has(containerId);
+	}
+
+	/** Drop a destroyed container's stream, flushing whatever it still held. */
+	async end(containerId: string, logs: LogStreamBroker): Promise<void> {
+		const state = this.streams.get(containerId);
+		if (state) {
+			state.abortController.abort();
+			this.streams.delete(containerId);
+		}
+		await logs.end(containerStreamId(containerId));
 	}
 
 	stopAll(logs?: LogStreamBroker): void {
@@ -79,13 +141,12 @@ export class ContainerLogStreamer {
 	}
 
 	private async startStreaming(
-		projectId: string,
 		containerId: string,
 		logs: LogStreamBroker,
-		docker: DockerClient,
+		docker: ContainerEngine,
 		abortController: AbortController,
 	): Promise<void> {
-		const streamId = containerStreamId(projectId);
+		const streamId = containerStreamId(containerId);
 		const res = await docker.containerLogs(
 			containerId,
 			{ follow: true, tail: 200, stdout: true, stderr: true },
@@ -119,7 +180,7 @@ export class ContainerLogStreamer {
 			throw e;
 		} finally {
 			reader.releaseLock();
-			this.streams.delete(projectId);
+			this.streams.delete(containerId);
 		}
 	}
 }

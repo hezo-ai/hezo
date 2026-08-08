@@ -70,6 +70,7 @@ describe('buildProviderEnv for a local provider', () => {
 			value: 'ollama',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: 'http://host.docker.internal:11434',
+			runtime: null,
 		});
 		expect(env).toContain('ANTHROPIC_BASE_URL=http://host.docker.internal:11434');
 		// Claude Code prefers ANTHROPIC_API_KEY over ANTHROPIC_AUTH_TOKEN, so an
@@ -85,6 +86,7 @@ describe('buildProviderEnv for a local provider', () => {
 			value: 'ollama',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env.some((e) => e.startsWith('ANTHROPIC_BASE_URL='))).toBe(false);
 		expect(env.some((e) => e === 'ANTHROPIC_API_KEY=')).toBe(false);
@@ -96,6 +98,7 @@ describe('buildProviderEnv for a local provider', () => {
 			value: 'ds-key',
 			authMethod: AiAuthMethod.ApiKey,
 			baseUrl: null,
+			runtime: null,
 		});
 		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic');
 		expect(env.filter((e) => e.startsWith('ANTHROPIC_BASE_URL=')).length).toBe(1);

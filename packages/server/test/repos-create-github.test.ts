@@ -63,6 +63,16 @@ beforeAll(async () => {
 				clone_url: 'https://github.com/octo-repo/already-taken.git',
 				ssh_url: 'git@github.com:octo-repo/already-taken.git',
 			},
+			{
+				id: 556,
+				name: 'already-public',
+				full_name: 'octo-repo/already-public',
+				owner: { login: 'octo-repo' },
+				private: false,
+				default_branch: 'main',
+				clone_url: 'https://github.com/octo-repo/already-public.git',
+				ssh_url: 'git@github.com:octo-repo/already-public.git',
+			},
 		],
 	});
 
@@ -116,6 +126,69 @@ describe('POST /api/projects/:projectId/repos with mode=create', () => {
 			projectId,
 		]);
 		expect(repoRows.rows).toHaveLength(0);
+	});
+
+	it('names the existing repo as private, which is why the picker never showed it', async () => {
+		// The case that actually confuses people: the name is held by a repo they
+		// cannot see, so "create" looks like the only option and the collision reads
+		// as a bug in Hezo. "Already exists" alone is the least useful true thing to
+		// say about it.
+		const res = await app.request(`/api/projects/${projectId}/repos`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				mode: 'create',
+				owner: 'octo-repo',
+				name: 'already-taken',
+				private: false,
+				oauth_connection_id: oauthConnectionId,
+			}),
+		});
+		expect(res.status).toBe(409);
+		const message = (await res.json()).error.message as string;
+		expect(message).toContain('It is private');
+		expect(message).toContain('repository picker');
+		// And it says what to do instead of only what went wrong.
+		expect(message).toContain('Link that repository instead');
+	});
+
+	it('says so plainly when the existing repo is public', async () => {
+		const res = await app.request(`/api/projects/${projectId}/repos`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				mode: 'create',
+				owner: 'octo-repo',
+				name: 'already-public',
+				private: true,
+				oauth_connection_id: oauthConnectionId,
+			}),
+		});
+		expect(res.status).toBe(409);
+		const message = (await res.json()).error.message as string;
+		expect(message).toContain('It is public');
+		expect(message).not.toContain('It is private');
+	});
+
+	it('refuses before creating anything, rather than reading it off the failure', async () => {
+		// The 422 path still exists as the race backstop, but it depends on GitHub's
+		// error prose still matching and can say nothing about what is in the way.
+		// Asking first is what makes the answer deterministic - and it is why no
+		// POST reaches the create endpoint at all.
+		const before = sim.state.repos.length;
+		const res = await app.request(`/api/projects/${projectId}/repos`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				mode: 'create',
+				owner: 'octo-repo',
+				name: 'already-taken',
+				private: true,
+				oauth_connection_id: oauthConnectionId,
+			}),
+		});
+		expect(res.status).toBe(409);
+		expect(sim.state.repos.length).toBe(before);
 	});
 });
 

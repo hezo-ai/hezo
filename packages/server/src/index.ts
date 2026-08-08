@@ -20,11 +20,10 @@ import { canAuthAccessTeam, verifyToken } from './middleware/auth';
 import { getActiveRuntime, setActiveRuntime, shutdownRuntime } from './runtime-control';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
-import { DockerClient } from './services/docker';
-import { evaluateDockerPreflight, formatDockerPreflightMessage } from './services/docker-preflight';
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import { formatPortInUseMessage, probePort } from './services/port-preflight';
+import { SandboxBackendError } from './services/sandbox/errors';
 import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
@@ -159,18 +158,24 @@ if (!globalThis.__hezoPortProbed) {
 	}
 }
 
-// Docker is a hard prerequisite — every agent runs in a per-project container.
-// Detect a missing or unreachable daemon at launch and exit with actionable
-// guidance (install link / start instructions) rather than booting a server
-// that can't run a single agent. HEZO_SKIP_DOCKER swaps in the in-process fake
-// docker for UI/dev work and tests, so the gate is skipped when it is set.
-if (!process.env.HEZO_SKIP_DOCKER) {
-	const availability = await evaluateDockerPreflight(new DockerClient());
-	if (availability !== 'ok') {
-		log.error(`\n${formatDockerPreflightMessage(availability)}\n`);
-		process.exit(1);
-	}
-}
+// The container backend's preflight is deliberately NOT here.
+//
+// A daemon check at this point can only read the launch flag - the database is
+// not open yet - but the backend actually in use comes from the **stored**
+// setting, which the flag merely seeds (`resolveStartupBackend`). Gating here
+// therefore failed an instance switched to a managed backend from the Containers
+// page: it exited 1 on the next restart, printing Docker install guidance for a
+// backend it would never use.
+//
+// `openSandboxBackend` inside `startup()` is the single preflight for whichever
+// backend is selected, and it carries the same install/start guidance. It throws
+// `SandboxBackendError`, which the catch below turns into the same fatal exit.
+//
+// It also owns **socket resolution** for Docker-compatible runtimes (Colima,
+// Rancher Desktop, OrbStack, rootless): walking the candidate sockets and
+// recording the winner has to happen before any `DockerClient` is used, and the
+// Docker branch of that preflight is the first place that is both after the
+// backend is known and before an engine is handed out.
 
 /** Bumped on each module load so stale async startup completions are ignored after HMR. */
 let startupGeneration = 0;
@@ -196,7 +201,7 @@ let serveFetch: (
 let wsManager: WebSocketManager | null = null;
 let dbRef: Db | null = null;
 let mkmRef: MasterKeyManager | null = null;
-let dockerRef: import('./services/docker').DockerClient | null = null;
+let dockerRef: import('./services/sandbox/types').ContainerEngine | null = null;
 let logsRef: LogStreamBroker | null = null;
 let containerLogStreamerRef: ContainerLogStreamer | null = null;
 
@@ -275,7 +280,8 @@ void (async () => {
 			err instanceof MigrationFailedError ||
 			err instanceof ExternalDbError ||
 			err instanceof ExternalMigrationFailedError ||
-			err instanceof AssetStorageError
+			err instanceof AssetStorageError ||
+			err instanceof SandboxBackendError
 		) {
 			log.error(`\n${err.message}\n`);
 			// Under `Restart=always` this exit is immediately undone, so without a

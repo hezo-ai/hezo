@@ -1,18 +1,8 @@
 import { assetBasename } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { File, FileAudio, FileText, FileVideo, Image as ImageIcon } from 'lucide-react';
 import type { CommentAttachment } from '../hooks/use-comments';
+import { AssetIcon } from './asset-icon';
 import { Tooltip } from './ui/tooltip';
-
-function iconFor(contentType: string) {
-	if (contentType.startsWith('image/')) return <ImageIcon className="h-4 w-4" />;
-	if (contentType.startsWith('audio/')) return <FileAudio className="h-4 w-4" />;
-	if (contentType.startsWith('video/')) return <FileVideo className="h-4 w-4" />;
-	if (contentType === 'application/pdf' || contentType === 'text/plain') {
-		return <FileText className="h-4 w-4" />;
-	}
-	return <File className="h-4 w-4" />;
-}
 
 const THUMB_CLASSES =
 	'flex h-9 w-9 items-center justify-center rounded-sm border border-border bg-surface-3 text-text-3 hover:border-border-strong hover:text-text-1';
@@ -40,7 +30,7 @@ export function CommentAttachmentThumb({
 					data-filename={basename}
 					className={THUMB_CLASSES}
 				>
-					{iconFor(attachment.content_type)}
+					<AssetIcon contentType={attachment.content_type} className="h-4 w-4" />
 				</Link>
 			) : (
 				<a
@@ -52,7 +42,7 @@ export function CommentAttachmentThumb({
 					data-filename={basename}
 					className={THUMB_CLASSES}
 				>
-					{iconFor(attachment.content_type)}
+					<AssetIcon contentType={attachment.content_type} className="h-4 w-4" />
 				</a>
 			)}
 		</Tooltip>
