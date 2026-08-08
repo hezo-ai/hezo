@@ -82,22 +82,51 @@ export function clearRefreshFns(): void {
 	failures.clear();
 }
 
+export interface RefreshSweepOptions {
+	/**
+	 * How far ahead of expiry to refresh. The egress path uses the default 60s —
+	 * it runs constantly, so anything wider just adds work per request. The
+	 * periodic health sweep passes a horizon wider than its own tick, so a token
+	 * expiring *between* ticks is renewed before it lapses rather than after.
+	 */
+	horizonMs?: number;
+	/**
+	 * Cap on candidates per call. Required for the periodic sweep: with a wide
+	 * horizon the candidate set is no longer naturally tiny, and each candidate
+	 * costs a provider round-trip plus a decrypt on the process-wide DB handle.
+	 */
+	limit?: number;
+	/** Concurrent refreshes in flight. Bounds the burst a wide horizon can cause. */
+	concurrency?: number;
+}
+
 /**
- * Refresh any oauth_connections (instance-wide) that are expiring within
- * `REFRESH_WINDOW_MS`. Called from the egress proxy's load-secrets path
- * before substitution so that no expired token is ever handed out.
+ * Refresh any oauth_connections (instance-wide) expiring within the horizon.
  *
- * Tokens without a refresh_token, or whose provider has no registered
- * refresh function, are passed through untouched (the substitution will
- * still happen with the stale token; the upstream call may fail with 401,
- * which is caught upstream).
+ * Two callers, deliberately configured differently. The egress proxy's
+ * load-secrets path calls it before substitution so no expired token is ever
+ * handed out - unbounded and narrow-horizoned, because it runs constantly and
+ * the candidate set is naturally tiny. The periodic health sweep calls it with a
+ * wide horizon and a limit, because on an idle instance the egress path never
+ * runs at all: a token could lapse and nothing would notice until an agent run
+ * happened to touch it, by which point the operator's first signal was a
+ * degraded deliverable.
+ *
+ * Tokens without a refresh_token, or whose provider has no registered refresh
+ * function, are passed through untouched (the substitution will still happen
+ * with the stale token; the upstream call may fail with 401, caught upstream).
  *
  * Concurrent calls for the same connection coalesce — only one refresh
- * round-trip to the provider fires at a time.
+ * round-trip to the provider fires at a time. That coalescing is what makes the
+ * two callers safe to overlap: for a provider that rotates refresh tokens, two
+ * simultaneous refreshes would invalidate each other and kill the connection.
  */
-export async function refreshExpiringTokens(deps: ConnectionStoreDeps): Promise<void> {
+export async function refreshExpiringTokens(
+	deps: ConnectionStoreDeps,
+	opts: RefreshSweepOptions = {},
+): Promise<void> {
 	const now = Date.now();
-	const cutoff = new Date(now + REFRESH_WINDOW_MS);
+	const cutoff = new Date(now + (opts.horizonMs ?? REFRESH_WINDOW_MS));
 
 	const candidates = await deps.db.query<{
 		id: string;
@@ -109,21 +138,31 @@ export async function refreshExpiringTokens(deps: ConnectionStoreDeps): Promise<
 		 FROM oauth_connections
 		 WHERE expires_at IS NOT NULL
 		   AND expires_at <= $1
-		   AND refresh_token_secret_id IS NOT NULL`,
-		[cutoff],
+		   AND refresh_token_secret_id IS NOT NULL
+		 -- Deterministic order is load-bearing once a LIMIT exists: without it the
+		 -- same arbitrary N rows can come back every tick and the rest never
+		 -- refresh at all. Soonest-to-expire first is also the right priority.
+		 ORDER BY expires_at ASC
+		 LIMIT $2`,
+		[cutoff, opts.limit ?? null],
 	);
 
 	if (candidates.rows.length === 0) return;
 
-	await Promise.all(
-		candidates.rows
-			.filter((r) => r.has_refresh && (refreshFns.has(r.provider) || genericRefreshFn != null))
-			// A connection whose last refresh failed stays out of the sweep until its
-			// backoff elapses — silently, since logging every suppressed retry would
-			// reproduce the flood this exists to stop.
-			.filter((r) => (failures.get(r.id)?.nextAttemptAt ?? 0) <= now)
-			.map((r) => refreshConnection(deps, r.id)),
-	);
+	const due = candidates.rows
+		.filter((r) => r.has_refresh && (refreshFns.has(r.provider) || genericRefreshFn != null))
+		// A connection whose last refresh failed stays out of the sweep until its
+		// backoff elapses — silently, since logging every suppressed retry would
+		// reproduce the flood this exists to stop.
+		.filter((r) => (failures.get(r.id)?.nextAttemptAt ?? 0) <= now);
+
+	// Chunked rather than one unbounded Promise.all: each refresh is a provider
+	// round-trip plus a secret read and decrypt, and those decrypts queue behind
+	// the single serialized DB handle the whole process shares.
+	const concurrency = Math.max(1, opts.concurrency ?? due.length);
+	for (let i = 0; i < due.length; i += concurrency) {
+		await Promise.all(due.slice(i, i + concurrency).map((r) => refreshConnection(deps, r.id)));
+	}
 }
 
 export async function refreshConnection(
@@ -229,6 +268,30 @@ async function clearConnectorAuthError(
 		`UPDATE mcp_connections SET auth_error = NULL, updated_at = now()
 		 WHERE oauth_connection_id = $1 AND auth_error IS NOT NULL`,
 		[connectionId],
+	);
+}
+
+/**
+ * Record (or clear) a connector's health directly by connector id.
+ *
+ * `auth_error` is what the derived status reads to decide a connector is
+ * `degraded`, which is what lights the operator's banner - so every path that
+ * discovers a credential is no longer accepted must write it, not just the token
+ * refresh. Discovery probes and `test_connector` both learn this first-hand and
+ * used to throw the knowledge away.
+ *
+ * `IS DISTINCT FROM` on both sides: under MVCC a no-op UPDATE still leaves a
+ * dead tuple, and this runs on paths that can repeat every few minutes.
+ */
+export async function setConnectorAuthError(
+	deps: ConnectionStoreDeps,
+	connectorId: string,
+	reason: string | null,
+): Promise<void> {
+	await deps.db.query(
+		`UPDATE mcp_connections SET auth_error = $1, updated_at = now()
+		 WHERE id = $2 AND auth_error IS DISTINCT FROM $1`,
+		[reason, connectorId],
 	);
 }
 

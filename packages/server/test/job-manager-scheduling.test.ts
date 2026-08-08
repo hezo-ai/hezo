@@ -11,6 +11,7 @@ import { waitForBackground } from '../src/lib/background';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { clearRefreshFns, registerRefreshFn } from '../src/services/oauth/token-resolver';
 import type { PricingService } from '../src/services/pricing';
 import { authHeader, createStubDocker, createTestProject, createTestTeam } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
@@ -38,6 +39,7 @@ interface JmInternals {
 	processWakeups(): Promise<void>;
 	processScheduledHeartbeats(): Promise<void>;
 	processBudgetResumes(): Promise<void>;
+	sweepConnectorHealth(): Promise<void>;
 	activateAgent(
 		memberId: string,
 		teamId: string,
@@ -1002,5 +1004,45 @@ describe('JobManager scheduling & dispatch', () => {
 			expect(spy.mock.calls.length).toBe(count);
 			manager.shutdown();
 		});
+	});
+});
+
+/**
+ * The `connector-health` cron. Its substantive bounds (limit, soonest-first
+ * ordering, concurrency) are covered against `refreshExpiringTokens` itself in
+ * `oauth-token-resolver.test.ts`; what belongs here is the wrapper's own guard.
+ */
+describe('connector-health sweep', () => {
+	it('does nothing while the vault is locked', async () => {
+		// Every candidate would otherwise fail to decrypt its refresh token and log
+		// a warning - once per connection, every five minutes, for as long as the
+		// instance stays locked.
+		let refreshed = 0;
+		const conn = await ctx.db.query<{ id: string }>(
+			`INSERT INTO secrets (name, encrypted_value) VALUES ('SWEEP_LOCKED_TOK', 'enc') RETURNING id`,
+		);
+		await ctx.db.query(
+			`INSERT INTO oauth_connections
+			   (provider, provider_account_id, provider_account_label,
+			    access_token_secret_id, refresh_token_secret_id, expires_at)
+			 VALUES ('sweep-locked', 'acct', 'Locked', $1, $1, now() - interval '1 hour')`,
+			[conn.rows[0].id],
+		);
+		registerRefreshFn('sweep-locked', async () => {
+			refreshed++;
+			return { accessToken: 'new' };
+		});
+
+		try {
+			const manager = createJobManager({
+				masterKeyManager: {
+					getKey: () => null,
+				} as unknown as JobManagerDeps['masterKeyManager'],
+			});
+			await internals(manager).sweepConnectorHealth();
+			expect(refreshed).toBe(0);
+		} finally {
+			clearRefreshFns();
+		}
 	});
 });

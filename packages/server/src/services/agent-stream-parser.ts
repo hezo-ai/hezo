@@ -1063,6 +1063,7 @@ function createGrokParser(): AgentStreamParser {
 	let terminalError: string | null = null;
 	let thoughtBuf = '';
 	let textBuf = '';
+	let finalMessage: string | null = null;
 
 	const flushThought = (out: string[]): void => {
 		if (thoughtBuf.trim()) out.push(formatThinking(thoughtBuf));
@@ -1070,7 +1071,16 @@ function createGrokParser(): AgentStreamParser {
 	};
 	const flushText = (out: string[]): void => {
 		const t = textBuf.trim();
-		if (t) out.push(t);
+		if (t) {
+			out.push(t);
+			// Grok streams assistant text as `text` deltas and has no `result`
+			// event, so the flushed buffer IS the run's final message. Capturing
+			// it is what makes the runner's handoff-delivery net work here at all
+			// — and it matters more on Grok than anywhere else, because Grok is
+			// also one of the two runtimes whose hooks cannot host the
+			// completeness judge, so the net is its only guardrail.
+			finalMessage = t;
+		}
 		textBuf = '';
 	};
 
@@ -1109,6 +1119,7 @@ function createGrokParser(): AgentStreamParser {
 		renderEvent,
 		() => null,
 		() => terminalError,
+		() => finalMessage,
 	);
 }
 

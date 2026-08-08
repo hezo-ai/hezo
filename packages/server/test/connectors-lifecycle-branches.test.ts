@@ -77,10 +77,19 @@ describe('statusOf precedence', () => {
 		expect(statusOf({ ...base, auth_error: 'boom' })).toBe('failed');
 	});
 
-	it('active when oauth + activated_at are both present (auth_error after activation does not flip to failed)', () => {
+	it('active when oauth + activated_at are both present', () => {
+		expect(statusOf({ ...base, oauth_connection_id: 'oc', activated_at: 'now' })).toBe('active');
+	});
+
+	it('degraded, not active, once an activated connector records an auth_error', () => {
+		// This case used to assert `active`, which is the defect: `auth_error` means
+		// both "the first connect attempt errored" and "a token that used to work
+		// has stopped refreshing", and only the first had a status. A connector
+		// whose OAuth grant expired therefore kept reporting Connected to the
+		// operator, to agents, and to the connect card.
 		expect(
 			statusOf({ ...base, oauth_connection_id: 'oc', activated_at: 'now', auth_error: 'stale' }),
-		).toBe('active');
+		).toBe('degraded');
 	});
 
 	it('pending when nothing is set', () => {

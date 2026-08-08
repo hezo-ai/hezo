@@ -299,6 +299,23 @@ const TELEMETRY_CRON = process.env.HEZO_TELEMETRY_CRON ?? '0 0 5 * * *';
 // agent's budget with no event — this sweep notices and lifts the reactive
 // pause so the heartbeat scheduler (which skips paused agents) resumes it.
 const BUDGET_RESUME_CRON = process.env.HEZO_BUDGET_RESUME_CRON ?? '*/30 * * * * *';
+// Re-refresh OAuth tokens on the clock, not only when an agent run happens to
+// make a proxied call. `refreshExpiringTokens` is otherwise reached ONLY from the
+// egress substitution path, so on an idle instance nothing renews a token and
+// nothing notices when a grant dies - the operator's first signal was a run log
+// mentioning a "known gap". Five minutes rather than seconds: the watched state
+// (a token nearing expiry, a grant the provider killed) changes on the scale of
+// an hour, each candidate costs a provider round-trip, and the resolver's own
+// failure backoff already tops out at 15 minutes, so it - not this cadence - is
+// what bounds retries against a permanently dead connection.
+const CONNECTOR_HEALTH_CRON = process.env.HEZO_CONNECTOR_HEALTH_CRON ?? '0 */5 * * * *';
+/** Connections re-checked per tick — a bound, not a target; ordered soonest-to-
+ *  expire, so the next tick continues where this one stopped. */
+const CONNECTOR_HEALTH_BATCH_LIMIT = 25;
+/** Simultaneous provider round-trips per tick. */
+const CONNECTOR_HEALTH_CONCURRENCY = 5;
+/** Must exceed the tick, or a token expiring between ticks lapses before renewal. */
+const CONNECTOR_HEALTH_HORIZON_MS = 10 * 60_000;
 // Container status reconciliation and orphaned-run detection. These run on a
 // fixed wall-clock tick rather than reacting to an event, so they keep firing
 // even while nothing is happening. The defaults (1s / 30s) keep the dashboard
@@ -657,6 +674,11 @@ export class JobManager {
 			cron: BUDGET_RESUME_CRON,
 			log: cronLog,
 			onTick: () => this.guarded('budget-resume', () => this.processBudgetResumes()),
+		});
+		this.cron.createJob('connector-health', {
+			cron: CONNECTOR_HEALTH_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('connector-health', () => this.sweepConnectorHealth()),
 		});
 		this.cron.createJob('db-maintenance', {
 			cron: DB_MAINTENANCE_CRON,
@@ -3449,6 +3471,31 @@ export class JobManager {
 		await runLogCompactionTick(this.deps.db, {
 			backend: this.deps.storageBackend ?? 'embedded',
 		});
+	}
+
+	/**
+	 * Keep OAuth-backed connectors alive, and notice promptly when one dies.
+	 *
+	 * This is both halves of the same tick: a connection whose refresh succeeds
+	 * has its `auth_error` cleared, so a provider blip that degraded twenty
+	 * connectors un-degrades them here with no human action; one whose refresh
+	 * fails has the reason recorded, which is what turns the connector `degraded`
+	 * and lights the operator's project banner.
+	 */
+	private async sweepConnectorHealth(): Promise<void> {
+		// Nothing to refresh while the vault is locked, and attempting it would log
+		// a "could not decrypt refresh token" warning per candidate every 5 minutes
+		// for as long as the instance stays locked.
+		if (!this.deps.masterKeyManager.getKey()) return;
+		const { refreshExpiringTokens } = await import('./oauth/token-resolver');
+		await refreshExpiringTokens(
+			{ db: this.deps.db, masterKeyManager: this.deps.masterKeyManager },
+			{
+				horizonMs: CONNECTOR_HEALTH_HORIZON_MS,
+				limit: CONNECTOR_HEALTH_BATCH_LIMIT,
+				concurrency: CONNECTOR_HEALTH_CONCURRENCY,
+			},
+		);
 	}
 
 	/**

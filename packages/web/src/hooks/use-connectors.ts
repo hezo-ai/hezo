@@ -1,4 +1,10 @@
-import type { McpMethodInfo, MethodAccessSummary } from '@hezo/shared';
+import {
+	type ConnectorStatus,
+	connectorNeedsHuman,
+	connectorStatus,
+	type McpMethodInfo,
+	type MethodAccessSummary,
+} from '@hezo/shared';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { api, nextOffsetPageParam } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -49,23 +55,10 @@ export interface Connector {
 	requested_access?: 'read' | 'write' | null;
 }
 
-export type ConnectorStatus = 'pending' | 'active' | 'failed' | 'revoked';
-
-export function connectorStatus(c: Connector): ConnectorStatus {
-	if (c.revoked_at) return 'revoked';
-	if (c.auth_error && !c.activated_at) return 'failed';
-	if (c.oauth_connection_id && c.activated_at) return 'active';
-	// API-key connectors (provider exposes no OAuth) store a pasted key in the
-	// vault and reference it via api_key_secret_id; active once stamped.
-	if (c.api_key_secret_id && c.activated_at) return 'active';
-	// Local (stdio) connectors authenticate via credential placeholders
-	// (__HEZO_SECRET_*__ — e.g. a username/password login that fetches a token),
-	// not OAuth. There is no oauth_connection_id/activated_at handshake to
-	// complete, so a non-revoked, non-failed local row is connected the moment it
-	// exists — never leave it stuck on "Pending connect" offering an OAuth flow.
-	if (c.kind === 'local') return 'active';
-	return 'pending';
-}
+// The ladder lives in @hezo/shared so the web, the server and the
+// `list_connectors` MCP tool cannot disagree on what "connected" means. Both are
+// re-exported here so the existing importers keep their import path.
+export { type ConnectorStatus, connectorStatus };
 
 export function useConnector(projectId: string, connectorId: string | undefined) {
 	return useQuery({
@@ -79,8 +72,10 @@ export function useConnector(projectId: string, connectorId: string | undefined)
 		refetchInterval: (query) => {
 			const data = query.state.data as Connector | undefined;
 			if (!data) return 10_000;
-			const status = connectorStatus(data);
-			return status === 'pending' || status === 'failed' ? 10_000 : false;
+			// Keep polling in every state a human is actively trying to fix -
+			// `degraded` included, since that is precisely when they are clicking
+			// Reconnect and waiting for the card to go green.
+			return connectorNeedsHuman(connectorStatus(data)) ? 10_000 : false;
 		},
 	});
 }
@@ -132,6 +127,24 @@ export interface CreateConnectorPayload {
 	name: string;
 	kind: 'saas' | 'local' | 'api';
 	config: Record<string, unknown>;
+}
+
+export interface ConnectorHealth {
+	/** Connectors that were working and whose credential has stopped being accepted. */
+	degraded: { id: string; name: string; display_name: string | null }[];
+	count: number;
+}
+
+/**
+ * Broken-connector count for the project banner. Its own endpoint rather than a
+ * filter over the paginated connectors list: whether an operator finds out a
+ * connector died must not depend on which page its row landed on.
+ */
+export function useConnectorHealth(projectId: string) {
+	return useQuery({
+		queryKey: queryKeys.projects.connectorHealth(projectId),
+		queryFn: () => api.get<ConnectorHealth>(`/api/projects/${projectId}/connectors/health`),
+	});
 }
 
 export function useConnectors(

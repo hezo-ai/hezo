@@ -2937,14 +2937,19 @@ agent's words or auto-deliver it (guessing intent to force a wake overreaches). 
 already warns the agent interactively when it posts such a comment; the final-message path skips
 that check, so the runner surfaces the **same warning in the run log** and leaves the handoff
 undelivered.
-(3) a **plain direct answer** (no mention, no ask) to a human who addressed this agent by
-**replying to** or **@-mentioning** it — the "give me the link" case, where the human asked and
-expects the answer in the thread but the agent left it only in its final message. When the run
-was woken by a `WakeupSource.Reply`/`Mention` whose waking comment was authored by a human/admin
-(author not in `member_agents`, so agent-to-agent chatter is excluded) and the run posted no
-comment of its own on the task, the final message is delivered verbatim as a reply threaded under
-the waking comment (`postAgentComment` with `parentCommentId`), flipping the no-op run to success.
-Runs on **every** runtime including OpenCode (which has no judge at all).
+(3) a **plain direct answer** (no mention, no ask) to whoever addressed this agent by
+**replying to** or **@-mentioning** it — the "give me the link" case, and the review-handoff one
+where a teammate `@`-mentions a reviewer and the verdict ends up only in the final message. When
+the run was woken by a `WakeupSource.Reply`/`Mention` and posted no comment of its own on the
+task, the final message is delivered verbatim as a reply threaded under the waking comment
+(`postAgentComment` with `parentCommentId`), flipping the no-op run to success. A human/admin
+author qualifies on either wake source; an **agent** author qualifies only via `Mention`, so
+routine agent-to-agent reply chatter is still excluded. That split is also the loop guard, and it
+is structural rather than heuristic: this branch only runs when the final message carries no
+active mention, so an auto-delivered comment can never produce a `Mention` wakeup —
+`fireCommentWakeups` will at most fire an explicit *reply* wakeup on it, which arrives as
+`Reply`-authored-by-an-agent and is skipped. Two agents therefore cannot auto-deliver back and
+forth. Runs on **every** runtime including OpenCode and Grok (neither of which can host a judge).
 
 **No-wake exit check.** The net above and the advisories below all classify *text*, so each new
 phrasing that strands a handoff needs new vocabulary. Sitting after the net is one check that
@@ -3353,7 +3358,17 @@ upstream 401s. A failed refresh now backs off per connection (30 s doubling to a
 ceiling, cleared on success) so a structurally broken connection can't re-attempt on every
 proxied request, and records the reason on the backing connector's `mcp_connections.auth_error`
 (cleared on the next success) so it surfaces on the Connectors page rather than only in the
-log. Deleting a project (or its team) purges the project's
+log. A **`connector-health` cron** (`job-manager.ts`, every 5 min, bounded to 25 connections
+per tick at concurrency 5, ordered soonest-to-expire, skipped entirely while the vault is
+locked) calls the same `refreshExpiringTokens` with a 10-minute horizon — wider than its own
+tick, so a token expiring *between* ticks is renewed rather than lapsing. Without it nothing
+refreshes on an idle instance, because the egress path only runs when an agent makes a
+proxied call: a grant could die and the first signal would be a degraded deliverable. The
+sweep is also the recovery path — a provider blip that broke twenty connectors un-breaks them
+on the next tick with no human action. Because it invalidates the secrets vault from *outside*
+the substitution path, `loadAllSecrets` carries a **generation counter**: a load captures it
+before reading and refuses to publish its snapshot if an invalidation raced it, which would
+otherwise serve a rotated-away token for the 5 s TTL. Deleting a project (or its team) purges the project's
 connections and their token secrets (access, refresh, and client secret) before the cascade,
 so no encrypted token orphans in the vault.
 
@@ -3442,8 +3457,31 @@ per-project-unique vault secret name — an agent registers the tool with `add_c
 (placeholder in `config.env`) and provides the value via `request_credential`, so two
 projects' credentials for one service never collide in the instance-global vault. The
 connectors UI treats a non-revoked, non-failed local row as **connected the
-moment it exists** (`statusOf`/`connectorStatus` short-circuit `kind='local'` to `active`)
+moment it exists** (the shared ladder short-circuits `kind='local'` to `active`)
 rather than showing it a meaningless "Pending connect" OAuth affordance.
+
+**Connector status is one shared ladder.** `connectorStatus` / `connectorOAuthStatus`
+(`@hezo/shared`, `mcp/connector-status.ts`) derive a connector's state from its columns, and
+the server (`statusOf`), the web hook, and `list_connectors` all call it — previously each
+reimplemented the ladder, and the copies were not equivalent. `auth_error` is overloaded: it
+means both "the first connect attempt errored" and "a token that used to work has stopped
+refreshing", and the old ladder could only express the first (`auth_error && !activated_at`),
+so a working-to-broken regression was **definitionally invisible** and a connector with a dead
+OAuth grant kept reporting `active` everywhere. `Degraded` (`activated_at` set *and*
+`auth_error` set) names the second case; no column was added, since `activated_at` is exactly
+the "it worked once" marker. Consequences: `register_connector` no longer early-returns
+`{reused:true}` on such a row, so the connect card is posted; `rest_auth` is still emitted
+(the placeholder and host scoping are unchanged facts, and withdrawing them would make the
+REST fallback vanish mid-task); `loadConnectorsForRun` still injects the connector, so a call
+fails visibly rather than the tool silently disappearing; and the project layout renders a
+`ConnectorHealthBanner` off `GET /api/projects/:projectId/connectors/health`. `SHARED_INSTRUCTIONS`
+tells agents `degraded` is not a Hezo bug and must be raised with `@admin`, and stop-hook rule
+13 blocks a run that discovered a broken integration and filed it as a "known gap" instead.
+Health is written through one seam, `setConnectorAuthError` — the token refresh, the method
+-discovery probe (which now refreshes before probing and maps a 401/403 to an `auth_failed`
+result instead of an opaque SDK transport string), and `test_connector` all record through it,
+and every success path clears it. **Known limitation:** an API-key connector can never become
+`degraded`, because the only writer keys on `oauth_connection_id`.
 
 **GitHub's row is roster-aware.** GitHub is not an `mcp_connections` row until someone
 connects it (`POST …/connectors/ensure` materializes it), so the project Connectors page

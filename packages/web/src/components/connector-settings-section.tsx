@@ -47,6 +47,14 @@ export function ConnectorSettingsSection({
 	const [showApiKey, setShowApiKey] = useState(initialApiKeyOpen);
 	const [methodsOpen, setMethodsOpen] = useState(false);
 
+	// A `degraded` connector has completed the handshake at least once, so its
+	// cached method catalog is real and the allowlist stays editable — telling
+	// the operator to "connect this server to list its methods" would be both
+	// wrong and a step backwards from what they already configured. The API-key
+	// form below is deliberately NOT gated on this: swapping to a pasted key is a
+	// legitimate way to recover a connector whose OAuth grant has died.
+	const hasConnected = status === 'active' || status === 'degraded';
+
 	// Only fetch the method catalog once the section is actually opened — a
 	// connectors page can hold dozens of cards and none of them need it closed.
 	const methodsQuery = useConnectorMethods(projectId, connector.id, open);
@@ -138,7 +146,7 @@ export function ConnectorSettingsSection({
 							<span className="text-xs text-text-3">
 								Method access applies to hosted MCP servers only.
 							</span>
-						) : status !== 'active' ? (
+						) : !hasConnected ? (
 							<>
 								<Badge color="neutral">All</Badge>
 								<span className="text-xs text-text-3">
@@ -190,7 +198,7 @@ export function ConnectorSettingsSection({
 						)}
 						<MethodsHint
 							kind={connector.kind}
-							active={status === 'active'}
+							active={hasConnected}
 							total={summary.total}
 							writeDisabled={summary.writeDisabled}
 							listedAt={methodsQuery.data?.methods_listed_at ?? connector.methods_listed_at ?? null}

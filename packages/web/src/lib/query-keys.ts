@@ -321,6 +321,9 @@ export const queryKeys = {
 			'detail',
 			connectorId,
 		],
+		// Nested under the project's `connectors` key so any connector mutation's
+		// invalidation (revoke, reconnect, api-key) refreshes the health banner too.
+		connectorHealth: (slug: string) => ['projects', slug, 'connectors', 'health'],
 		connectorMethods: (slug: string, connectorId: string | null) => [
 			'projects',
 			slug,

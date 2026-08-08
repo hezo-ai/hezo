@@ -1853,13 +1853,15 @@ export async function runAgent(
 			//       already warns the agent interactively on both, but the final-message
 			//       path skips that check, so surface the same warning in the run log; the
 			//       handoff is left undelivered.
-			//   (3) a plain DIRECT ANSWER (no mention, no ask) to a human who addressed
-			//       this agent by replying to or @-mentioning it — the exact "give me the
-			//       link" case. The human asked and expects the answer in the thread, but
-			//       the agent left it only in its final message, so post it verbatim as a
-			//       reply to the waking comment. Scoped to human-originated reply/mention
-			//       wakes where the run posted no comment of its own, so it never turns a
-			//       routine work-summary into thread noise.
+			//   (3) a plain DIRECT ANSWER (no mention, no ask) to whoever addressed this
+			//       agent by replying to or @-mentioning it — the "give me the link" case,
+			//       and the review-handoff one where a teammate @-mentions the reviewer and
+			//       the verdict ends up only in the final message. The asker expects the
+			//       answer in the thread, so post it verbatim as a reply to the waking
+			//       comment. Scoped to wakes where the run posted no comment of its own, so
+			//       it never turns a routine work-summary into thread noise; agent-authored
+			//       wakes qualify only via an active mention, which is also what makes the
+			//       delivery non-looping (see the branch itself).
 			// Best-effort: a failure here must never throw out of the run-completion path.
 			// Runs on every runtime, including OpenCode, which has no stop-hook judge.
 			if (exitedClean && task) {
@@ -1942,10 +1944,22 @@ export async function runAgent(
 									);
 								}
 							} else if (directQuestionWake && !posted.rows.some((c) => c.task_id === task.id)) {
-								// (3) A human asked directly and the run posted no comment on this task —
-								// the answer is stranded in the final message. Deliver it only when the
-								// waking comment was authored by a human/admin (author not in
-								// member_agents), never for agent-to-agent replies/mentions.
+								// (3) Someone addressed this agent directly and the run posted no comment
+								// on this task — the answer is stranded in the final message. Deliver it
+								// when the ask was unambiguous: any human/admin reply or mention, or a
+								// TEAMMATE'S ACTIVE @-MENTION. That last case is the review-handoff one —
+								// a teammate @-mentions the reviewer, the reviewer does the whole review
+								// and ends the run with its verdict only in the final message, so the
+								// ticket sits in `review` with nobody woken. An agent's *reply* wake stays
+								// excluded as the routine chatter it usually is.
+								//
+								// Admitting agent mentions is safe for a structural reason, not a
+								// heuristic one: this branch only runs when the final message carries no
+								// active mention, so a comment auto-delivered here can never produce a
+								// Mention wakeup — fireCommentWakeups will at most fire an explicit
+								// *reply* wakeup on it. The next hop therefore arrives as
+								// Reply-authored-by-an-agent, which this branch skips, so two agents can
+								// never auto-deliver back and forth at each other.
 								const asker = await deps.db.query<{ from_agent: boolean }>(
 									`SELECT EXISTS (
 										SELECT 1 FROM member_agents ma WHERE ma.id = tc.author_member_id
@@ -1953,7 +1967,11 @@ export async function runAgent(
 									 FROM task_comments tc WHERE tc.id = $1`,
 									[wakingCommentId],
 								);
-								if (asker.rows.length > 0 && asker.rows[0].from_agent === false) {
+								const askerRow = asker.rows[0];
+								const askIsDeliverable =
+									askerRow !== undefined &&
+									(askerRow.from_agent === false || wakeupPayload?.source === WakeupSource.Mention);
+								if (askIsDeliverable) {
 									await postAgentComment({
 										db: deps.db,
 										wsManager: deps.wsManager,
