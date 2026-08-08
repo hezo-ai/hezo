@@ -102,11 +102,27 @@ is a first-class catalog of role templates (built-in + custom); `team_templates`
 `reports_to_slug`, per-template config overrides). `projects` carries `task_prefix`,
 container config, dev ports, the designated repo, `is_internal` (only HQ), and a nullable
 `archived_at` soft-delete stamp (NULL = active). Archiving a project (superuser-only
-`POST /projects/:id/archive`, from the settings page) sets `archived_at`, stops the
-container, and cancels in-flight runs; the `GET /projects` index filters to active by
-default (`?filter=active|archived|all`, mirroring the docs/assets soft-delete), so an
-archived project drops out of the left rail while keeping its tasks/history. Unarchiving
-(`POST /projects/:id/unarchive`) clears the stamp and restores rail visibility.
+`POST /projects/:id/archive`, from the settings page) sets `archived_at`, cancels in-flight
+runs, and **tears its containers down** — `teardownContainer(..., { removeWorkspace: false })`,
+the same path project deletion takes minus the workspace, which survives so unarchiving finds
+the repo clone and any unpushed commits intact. It deliberately does not merely *stop* the
+container: a stopped container is a `suspended` pool member, which is a resume rung on the
+pool ladder, so the next wakeup brought it straight back and in the meantime it sat on the
+global Containers page unreapable (the orphan sweep counts a suspended member as referenced,
+and `planIdleShutdown` keeps one warm member per project by design). Retirement is therefore
+enforced on both sides: every dispatch query filters `archived_at`
+(`activateAgent`'s task select and its `payload.task_id` path, `tryDispatchProgressUpdate`,
+and the startup self-heal / restart / mount-repair passes), and `acquireRunContainer` +
+`ensureProjectContainerRunning` throw `ProjectArchivedError` as the last line rather than
+silently provisioning. `JobManager.retireArchivedProjectContainers` runs once at startup to
+tear down containers left behind by an instance that archived under the old behaviour.
+`CONTAINER_LISTING_SQL` is deliberately *not* filtered by `archived_at` — an archived project
+drops off the Containers page because it holds no container, not because the page hides one
+that still costs memory. The `GET /projects` index filters to active by default
+(`?filter=active|archived|all`, mirroring the docs/assets soft-delete), so an archived project
+drops out of the left rail while keeping its tasks/history. Unarchiving
+(`POST /projects/:id/unarchive`) clears the stamp and restores rail visibility; there is no
+container to restart by then, and the next run provisions a fresh one.
 
 **Rail order.** `projects.display_order` (INTEGER NOT NULL) is the operator's own ordering
 of the project rail, ascending — 1 is the topmost avatar. Every project listing sorts

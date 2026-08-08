@@ -65,6 +65,7 @@ import {
 	type StaleIdleMember,
 	stopContainerGracefully,
 	syncAllContainerStatuses,
+	teardownContainer,
 	verifyContainerWorkspace,
 	wakeAgentsWithPendingWork,
 	withContainerLifecycleLock,
@@ -341,6 +342,11 @@ const CONTAINER_IDLE_STOP_CRON = process.env.HEZO_CONTAINER_IDLE_STOP_CRON ?? '1
 /** Containers stopped per idle-stop tick — a bound, not a target; the next
  * tick continues where this one stopped. */
 const IDLE_STOP_BATCH_LIMIT = 10;
+
+/** Archived projects retired per boot. A backlog only shrinks, so a later boot
+ * finishes what this one did not; the bound is there so a teardown that keeps
+ * failing cannot turn every startup into a full engine sweep. */
+const ARCHIVED_RETIREMENT_SCAN_LIMIT = 25;
 const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * * * * *';
 
 /**
@@ -985,6 +991,10 @@ export class JobManager {
 			);
 		}
 
+		// Ahead of every other container pass: the ones below adopt, restart and
+		// re-provision from the same rows, so a retired project must be emptied
+		// before they look at it.
+		await this.retireArchivedProjectContainers(docker);
 		await this.selfHealErroredContainers(docker);
 		await this.restartStoppedRunningContainers(docker);
 		await this.repairStaleContainerMounts(docker);
@@ -1106,6 +1116,64 @@ export class JobManager {
 	}
 
 	/**
+	 * Tear down containers still held by an already-archived project.
+	 *
+	 * Archiving used to stop the project's newest container and leave it as a
+	 * `suspended` pool member, so instances upgrading to the teardown behaviour
+	 * carry containers no code path will ever reach again: the orphan sweep counts
+	 * a suspended member as referenced, and the idle-stop cron deliberately keeps
+	 * one warm member per project. They sit on the Containers page reading
+	 * "Stopped" and, on a managed backend, are billed for.
+	 *
+	 * A startup pass rather than a cron: the set is finite and only shrinks, so
+	 * there is nothing to watch for once it has run. Bounded anyway - a broken
+	 * teardown must not turn every boot into an unbounded engine sweep.
+	 */
+	private async retireArchivedProjectContainers(docker: ContainerEngine): Promise<void> {
+		const { db } = this.deps;
+
+		const reachable = await docker.ping();
+		if (!reachable) {
+			log.warn('Docker not reachable at startup; skipping archived-project container retirement');
+			return;
+		}
+
+		const stale = await db.query<{ id: string; slug: string; team_id: string }>(
+			`SELECT p.id, p.slug, p.team_id
+			 FROM projects p
+			 WHERE p.archived_at IS NOT NULL
+			   AND (p.container_id IS NOT NULL
+			        OR EXISTS (SELECT 1 FROM container_pool_members m WHERE m.project_id = p.id))
+			 LIMIT $1`,
+			[ARCHIVED_RETIREMENT_SCAN_LIMIT],
+		);
+
+		for (const project of stale.rows) {
+			try {
+				// The workspace stays, exactly as it does on the archive route: these
+				// projects are still restorable, and their unpushed commits live there.
+				await teardownContainer(
+					this.buildContainerDeps(),
+					project.id,
+					project.slug,
+					project.team_id,
+					{
+						removeWorkspace: false,
+					},
+				);
+				log.info(
+					`Retired container(s) left behind by archived project ${ref(project.slug, project.id)}`,
+				);
+			} catch (err) {
+				log.warn(
+					`Failed to retire containers for archived project ${ref(project.slug, project.id)}:`,
+					err,
+				);
+			}
+		}
+	}
+
+	/**
 	 * Bring projects whose DB says container_status = running back to actually-
 	 * running. Covers the host-reboot / Docker-restart case where the server
 	 * never got to mark the container as stopped. Missing containers are
@@ -1136,7 +1204,8 @@ export class JobManager {
 			        p.container_id, p.container_status, p.docker_base_image, p.dev_ports
 			 FROM projects p
 			 JOIN teams c ON c.id = p.team_id
-			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL`,
+			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL
+			   AND p.archived_at IS NULL`,
 			[ContainerStatus.Running],
 		);
 
@@ -1230,7 +1299,8 @@ export class JobManager {
 			        p.container_id, p.container_status, p.docker_base_image, p.dev_ports
 			 FROM projects p
 			 JOIN teams c ON c.id = p.team_id
-			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL`,
+			 WHERE p.container_status = $1::container_status AND p.container_id IS NOT NULL
+			   AND p.archived_at IS NULL`,
 			[ContainerStatus.Running],
 		);
 
@@ -1348,8 +1418,12 @@ export class JobManager {
 			`SELECT p.id, p.team_id, p.slug, c.slug AS team_slug
 			 FROM projects p
 			 JOIN teams c ON c.id = p.team_id
-			 WHERE p.container_status = $1::container_status
-			    OR (p.container_status IS NULL AND p.container_id IS NULL)`,
+			 WHERE (p.container_status = $1::container_status
+			        OR (p.container_status IS NULL AND p.container_id IS NULL))
+			   -- A null status with a null container id is exactly what an archived
+			   -- project is left in, so without this the self-heal adopted a retired
+			   -- project's container back by name and re-listed it.
+			   AND p.archived_at IS NULL`,
 			[ContainerStatus.Error],
 		);
 
@@ -1965,14 +2039,19 @@ export class JobManager {
 		const payloadTaskId =
 			typeof wakeupPayload?.task_id === 'string' ? wakeupPayload.task_id : undefined;
 		if (payloadTaskId) {
+			// Joined to the project so an archived one is filtered here rather than
+			// discovered further down: an archived project has no container and may
+			// not be given one, so a wakeup naming a task inside it can only fail.
 			const payloadTask = await db.query<TaskRow>(
-				`SELECT id, identifier, title, description, status, priority, project_id, rules, progress_summary, assignee_id, runtime_type, parent_task_id, created_by_run_id
-				 FROM tasks WHERE id = $1${isInstanceAgent ? '' : ' AND team_id = $2'}`,
+				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
+				 FROM tasks i
+				 JOIN projects ap ON ap.id = i.project_id AND ap.archived_at IS NULL
+				 WHERE i.id = $1${isInstanceAgent ? '' : ' AND i.team_id = $2'}`,
 				isInstanceAgent ? [payloadTaskId] : [payloadTaskId, teamId],
 			);
 			if (payloadTask.rows.length === 0) {
 				log.debug(
-					`Payload task ${payloadTaskId} not found for agent ${ref(agent.rows[0].slug, memberId)}`,
+					`Payload task ${payloadTaskId} not found, or its project is archived, for agent ${ref(agent.rows[0].slug, memberId)}`,
 				);
 				if (wakeupId) {
 					await db.query(
@@ -2059,6 +2138,11 @@ export class JobManager {
 			const tasks = await db.query<TaskRow>(
 				`SELECT i.id, i.identifier, i.title, i.description, i.status, i.priority, i.project_id, i.rules, i.progress_summary, i.assignee_id, i.runtime_type, i.parent_task_id, i.created_by_run_id
 				 FROM tasks i
+				 -- An archived project's tasks are not actionable: it has no container
+				 -- and may not be given one. Filtered in the selection rather than
+				 -- rejected after it, so the agent falls into the ordinary "nothing to
+				 -- do" branch below instead of failing a wakeup every heartbeat.
+				 JOIN projects ap ON ap.id = i.project_id AND ap.archived_at IS NULL
 				 WHERE i.assignee_id = $1${teamClause}
 				   AND i.status NOT IN (${termList})
 				   AND NOT EXISTS (
@@ -2643,7 +2727,9 @@ export class JobManager {
 	): Promise<TryProgressUpdateResult> {
 		const { db, docker, masterKeyManager, serverPort } = this.deps;
 
-		// The Captain's project is its team's single non-internal project.
+		// The Captain's project is its team's single non-internal project - unless it
+		// has been archived, in which case the Captain has no project to report on
+		// and a progress run would only ask for a container it cannot have.
 		const project = await db.query<{
 			id: string;
 			slug: string;
@@ -2657,7 +2743,7 @@ export class JobManager {
 			`SELECT p.id, p.slug, p.team_id, c.slug AS team_slug,
 			        p.container_id, p.container_status, p.designated_repo_id, p.is_internal
 			 FROM projects p JOIN teams c ON c.id = p.team_id
-			 WHERE p.team_id = $1 AND p.is_internal = false
+			 WHERE p.team_id = $1 AND p.is_internal = false AND p.archived_at IS NULL
 			 LIMIT 1`,
 			[teamId],
 		);
