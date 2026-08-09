@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.41.1 - 2026-08-09
+
+### Bug Fixes
+
+- **mentions:** render passive mentions muted, and judge no-wake per task ([#921](https://github.com/hezo-ai/hezo/pull/921))
+- **web:** reconnect on foreground instead of flashing "Connection lost" ([#920](https://github.com/hezo-ai/hezo/pull/920))
+- **projects:** make archiving a project actually retire it ([#919](https://github.com/hezo-ai/hezo/pull/919))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.41.0...0.41.1
+
 ## 0.41.0 - 2026-08-08
 
 ### Features
