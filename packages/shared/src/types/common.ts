@@ -47,6 +47,26 @@ export const AgentEffort = {
 } as const;
 export type AgentEffort = (typeof AgentEffort)[keyof typeof AgentEffort];
 
+/**
+ * Which feature set an agent's generated avatar draws from. Not an identity
+ * claim about the agent - purely which pixel-art hair, face and build the
+ * generator composes. `Neutral` means "not stated", and the generator resolves
+ * it from the avatar seed so the face is still stable.
+ *
+ * Marketplace roles ship an explicit value; a name-derived guess
+ * (`inferGender`) is only used for a bespoke hire nobody authored.
+ */
+export const AgentGender = {
+	Female: 'f',
+	Male: 'm',
+	Neutral: 'n',
+} as const;
+export type AgentGender = (typeof AgentGender)[keyof typeof AgentGender];
+
+export function isAgentGender(value: unknown): value is AgentGender {
+	return value === 'f' || value === 'm' || value === 'n';
+}
+
 export const EFFORT_ORDER: Record<AgentEffort, number> = {
 	[AgentEffort.Minimal]: 0,
 	[AgentEffort.Low]: 1,
