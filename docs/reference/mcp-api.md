@@ -1092,7 +1092,7 @@ Propose a new skill for the team's skills database (reusable team know-how: MCP 
 
 _Read-only._
 
-Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first.
+Full-text keyword search across the team skills database, tasks, project docs, task comments, and project assets. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first. Assets match on their library path, folders included, so any segment of "launch/hero-image.png" finds it; textual assets (.md, .txt, .html, .svg, and the script/data formats stored as plain text such as .py, .js, .json, .csv, .yaml) also match on their content, while binary ones (images, PDFs, media, archives) match on path alone. Use it to find work product an earlier run produced before rebuilding it; an asset hit returns its path, which you pass to read_project_asset. An asset saved before this search existed matches on path until it is next written. Archived items are excluded.
 
 **Parameters:**
 
@@ -1100,10 +1100,10 @@ Full-text keyword search across the team skills database, tasks, project docs, a
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `query` | `string` | Yes | Search query (keywords) |
-| `scope` | `all` \| `tasks` \| `skills` \| `project_docs` \| `comments` | No | Limit search to specific content type (default: all) |
+| `scope` | `all` \| `tasks` \| `skills` \| `project_docs` \| `comments` \| `assets` | No | Limit search to specific content type (default: all) |
 | `limit` | `number` | No | Max results per type (default: 10) |
 
-**Returns:** `{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.
+**Returns:** `{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, comments, and assets. A bare task number or full identifier resolves directly to that task, ranked first. An asset result carries `assetFilename` (its library path) and `assetContentType`; pass the path to read_project_asset. Assets match on any segment of their path, and textual ones on their content as well.
 
 ### `list_skills`
 

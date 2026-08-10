@@ -640,7 +640,32 @@ no folder table, `UNIQUE(project_id, original_filename)` keys the full path, and
 move on a rename. Task-thread attachment uploads (`POST …/tasks/:taskId/assets`) auto-file
 under `uploads/<task-identifier>` (`taskUploadsFolder` in `@hezo/shared`: the task identifier
 e.g. `IN-42` sanitized to one segment, so the folder stays stable across renames), while direct
-library uploads land in the folder the uploader chose. Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
+library uploads land in the folder the uploader chose. **Assets are full-text searchable** (migration 055), and they are the one searchable entity
+whose content SQL cannot reach: the bytes live in the asset store, so unlike `documents`,
+`tasks`, `task_comments` and `skills` — whose `search_tsv` reads a sibling column — an
+asset's text has to be extracted at write time. `assets.search_text` holds it (NULL for a
+binary type, `''` for a text asset that yielded nothing), capped at
+`ASSET_SEARCH_TEXT_MAX_BYTES` (256 KB) by `lib/asset-search-text.ts`, which also strips NUL
+and other C0 controls, drops a UTF-8 BOM, drops any non-whitespace run over 128 chars, and
+reduces `text/html`/`image/svg+xml` to their visible text. Those scrubs are load-bearing
+rather than cosmetic: `search_tsv` is a GENERATED column computed inside the INSERT, so a
+NUL (rejected by Postgres `text`) or a lexeme over 2 KB fails the **asset write**, not just
+the search. `InsertAssetInput.searchText` is deliberately **required**, so a new write path
+cannot silently skip indexing; the extraction itself sits inside `storeUploadedAsset`
+(`routes/assets.ts`, reusing the one `arrayBuffer()` it already takes for raster dimensions)
+and `storeAssetBlob` (`mcp/tools.ts`, covering `write_project_asset` + `edit_project_asset`),
+while `copy_project_asset` carries the source row's column across. `move_project_asset` and
+the folder PATCH need no code at all — they touch `original_filename`, which the generated
+column re-derives. `search_tsv` indexes the filename at weight A **twice, raw and
+regexp-normalized**, because Postgres' parser emits `launch/hero-image.png` as a single
+`file` lexeme (so `hero`/`image`/`png` would all miss) while the ASCII-only normalization
+alone would destroy a non-ASCII name (`résumé-final.pdf` → `r sum final pdf`); `search_text`
+follows at weight B. There is **no backfill**: an asset written before 055 is filename-
+searchable immediately (the ADD COLUMN rewrite computes its tsvector) and gains content
+search the next time it is saved. `search_text` is a plain column, so it travels in logical
+backups and a restore stays searchable without re-reading blobs; it must never enter a list
+projection (`routes-assets-branches.test.ts` guards it — the assets list route is
+unpaginated). Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
 `PATCH /api/projects/:id/assets/:assetId` (the web Move dialog, human-only) reorganize
 metadata only, erroring on destination collision. **Archival is the agent-facing soft
 delete** (docs and assets both carry `archived_at` + `archived_by_member_id`, migration
@@ -4622,7 +4647,8 @@ shapes.
 - **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
   `execution-locks`, `queued-wakeups`, `chat` (live realtime chat session — today the CEO).
 - **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
-  `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
+  `comments`, `mentions`, `assets`, `inbox`, `search` (full-text over tasks, comments,
+  project docs, assets and skills).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
   `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below).
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`

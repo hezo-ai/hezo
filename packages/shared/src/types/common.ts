@@ -189,10 +189,19 @@ export type CommentContentType = (typeof CommentContentType)[keyof typeof Commen
  * command palette. `SearchResult` carries navigation hints so a cross-project hit
  * can be linked to its underlying page.
  */
-export const SEARCH_SCOPES = ['all', 'tasks', 'skills', 'project_docs', 'comments'] as const;
+// Append, never reorder: this order renders directly into the generated
+// `docs/reference/mcp-api.md` enum table for `full_text_search`.
+export const SEARCH_SCOPES = [
+	'all',
+	'tasks',
+	'skills',
+	'project_docs',
+	'comments',
+	'assets',
+] as const;
 export type SearchScope = (typeof SEARCH_SCOPES)[number];
 
-export const SEARCH_RESULT_TYPES = ['task', 'skill', 'project_doc', 'comment'] as const;
+export const SEARCH_RESULT_TYPES = ['task', 'skill', 'project_doc', 'comment', 'asset'] as const;
 export type SearchResultType = (typeof SEARCH_RESULT_TYPES)[number];
 
 /**
@@ -219,6 +228,10 @@ export interface SearchResult {
 	commentPublicId?: string;
 	/** Document slug/filename for the documents route (project docs). */
 	docSlug?: string;
+	/** Asset library path (`original_filename`, folders included) for the asset viewer route (assets). */
+	assetFilename?: string;
+	/** Asset MIME, so the palette draws the same per-type glyph as the assets grid (assets). */
+	assetContentType?: string;
 }
 
 /**

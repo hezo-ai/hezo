@@ -238,6 +238,28 @@ describe('GET /projects/:projectId/assets', () => {
 		expect(active?.url).toMatch(/^\/api\/assets\//);
 		expect(archived?.archived_at).not.toBeNull();
 	});
+
+	it('never returns the search-index columns', async () => {
+		// This list route is unpaginated, so it returns every asset in the project.
+		// `search_text` holds up to 256 KB per row: one `a.*` would ship megabytes.
+		// Nothing but this test enforces the row-width rule here.
+		const upload = await uploadProject(
+			'width-guard.txt',
+			'text/plain',
+			new TextEncoder().encode('indexed body'),
+		);
+		expect(upload.status).toBe(201);
+
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/assets`, {
+			headers: authHeader(ctx.token),
+		});
+		const assets = (await res.json()).data as Array<Record<string, unknown>>;
+		expect(assets.length).toBeGreaterThan(0);
+		for (const row of assets) {
+			expect(Object.keys(row)).not.toContain('search_text');
+			expect(Object.keys(row)).not.toContain('search_tsv');
+		}
+	});
 });
 
 describe('DELETE /projects/:projectId/assets/:assetId', () => {

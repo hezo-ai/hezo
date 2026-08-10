@@ -398,7 +398,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	full_text_search: {
 		category: 'Skills & search',
 		returns:
-			'`{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.',
+			'`{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, comments, and assets. A bare task number or full identifier resolves directly to that task, ranked first. An asset result carries `assetFilename` (its library path) and `assetContentType`; pass the path to read_project_asset. Assets match on any segment of their path, and textual ones on their content as well.',
 	},
 
 	// Credentials & connectors
