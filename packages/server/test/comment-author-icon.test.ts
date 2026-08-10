@@ -12,10 +12,11 @@ import {
 	mintAgentToken,
 } from './helpers/app';
 
-// A comment's author avatar: human authors resolve to their user_icons image and
-// agent authors to their agent_icons image, both returned as a signed
-// `author_icon_url` on the comments feed (skeleton + full). Regression guard for
-// the admin avatar never rendering in the thread.
+// A comment's author avatar: a human author resolves to their user_icons image,
+// returned as a signed `author_icon_url` on the comments feed (skeleton + full).
+// An agent has no uploaded image and ships `author_avatar_spec` instead, whose
+// sprite is drawn client-side. Regression guard for the admin avatar never
+// rendering in the thread.
 
 let app: Hono<Env>;
 let db: Db;

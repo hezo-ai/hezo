@@ -123,21 +123,13 @@ test('an unread admin mention renders as a mention row linking to the comment wi
 	expect(link.getAttribute('href')).toContain('#comment-');
 });
 
-test('a mention row shows the authoring agent’s uploaded avatar before their name', async () => {
-	const ref = { agentId: '' };
+test('a mention row shows the authoring agent’s generated avatar before their name', async () => {
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Mention Avatar Home' });
 			const task = await seedTask(ws, project, { title: 'Avatar Ticket' });
-			const author = ws.agents.find((a) => a.slug === 'architect') ?? ws.agents[0];
-			ref.agentId = author.id;
-			await getTestContext().db.query(
-				`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height)
-				 VALUES ($1, 'image/png', $2, 3, 512, 512)`,
-				[author.id, Buffer.from([0x89, 0x50, 0x4e])],
-			);
 			await seedAdminMention(ws, task, '@admin please confirm the rollout window.');
 		},
 	});
@@ -147,23 +139,18 @@ test('a mention row shows the authoring agent’s uploaded avatar before their n
 	const row = await findByTestId('home-needs-you-row', undefined, { timeout: 20_000 });
 	const img = row.querySelector<HTMLImageElement>('img');
 	expect(img).not.toBeNull();
-	expect(img?.getAttribute('src') ?? '').toContain(`/api/agents/${ref.agentId}/icon`);
+	// An agent has no uploaded image; its sprite is drawn from the spec the row
+	// carries, inlined as an SVG data URI.
+	expect(img?.getAttribute('src') ?? '').toContain('data:image/svg+xml');
 });
 
-test('an action row shows the requesting agent’s uploaded avatar', async () => {
-	const ref = { agentId: '' };
+test('an action row shows the requesting agent’s generated avatar', async () => {
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Action Avatar Home' });
 			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
-			ref.agentId = captain.id;
-			await getTestContext().db.query(
-				`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height)
-				 VALUES ($1, 'image/png', $2, 3, 512, 512)`,
-				[captain.id, Buffer.from([0x89, 0x50, 0x4e])],
-			);
 			await seedApproval(ws, project, ApprovalType.PlanReview, captain.id);
 		},
 	});
@@ -173,7 +160,7 @@ test('an action row shows the requesting agent’s uploaded avatar', async () =>
 	const row = await findByTestId('home-needs-you-row', undefined, { timeout: 20_000 });
 	const img = row.querySelector<HTMLImageElement>('img');
 	expect(img).not.toBeNull();
-	expect(img?.getAttribute('src') ?? '').toContain(`/api/agents/${ref.agentId}/icon`);
+	expect(img?.getAttribute('src') ?? '').toContain('data:image/svg+xml');
 });
 
 test('an action row with no known requester renders no avatar and keeps its text', async () => {
