@@ -200,6 +200,7 @@
 	"projectSettings.archive.confirmTitle": "이 프로젝트를 보관할까요?",
 	"projectSettings.archive.restoreLocation": "설정 → 보관된 프로젝트",
 	"projectSettings.dangerZone": "위험 구역",
+	"search.tab.comments": "댓글",
 	"settings.adminPassword": "관리자 비밀번호",
 	"settings.aiProviders": "AI 제공업체",
 	"settings.apiKeys": "API 키",

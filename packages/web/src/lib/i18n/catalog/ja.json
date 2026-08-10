@@ -200,6 +200,7 @@
 	"projectSettings.archive.confirmTitle": "このプロジェクトをアーカイブしますか？",
 	"projectSettings.archive.restoreLocation": "設定 → アーカイブ済みプロジェクト",
 	"projectSettings.dangerZone": "危険な操作",
+	"search.tab.comments": "コメント",
 	"settings.adminPassword": "管理者パスワード",
 	"settings.aiProviders": "AI プロバイダー",
 	"settings.apiKeys": "API キー",

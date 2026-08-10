@@ -200,6 +200,7 @@
 	"projectSettings.archive.confirmTitle": "Arkivera det här projektet?",
 	"projectSettings.archive.restoreLocation": "Inställningar → Arkiverade projekt",
 	"projectSettings.dangerZone": "Riskzon",
+	"search.tab.comments": "Kommentarer",
 	"settings.adminPassword": "Administratörslösenord",
 	"settings.aiProviders": "AI-leverantörer",
 	"settings.apiKeys": "API-nycklar",

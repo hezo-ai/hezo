@@ -21,12 +21,16 @@ export function buildSearchTsQuery(raw: string): string {
 }
 
 /**
- * Cross-team full-text search over project docs, tasks, comments and skills,
- * backed by the generated `search_tsv` columns (+ GIN indexes) in the schema.
- * There is no model to load and no async indexing step — a row is searchable the
- * moment it is written, since `search_tsv` is a STORED generated column.
+ * Cross-team full-text search over project docs, tasks, comments, assets and
+ * skills, backed by the generated `search_tsv` columns (+ GIN indexes) in the
+ * schema. There is no model to load and no async indexing step — a row is
+ * searchable the moment it is written, since `search_tsv` is a STORED generated
+ * column. Assets are the one type whose *content* is not derived in SQL: their
+ * bytes live in the AssetStore, so `assets.search_text` is extracted at write
+ * time (`lib/asset-search-text.ts`). An asset written before that column existed
+ * therefore matches on its filename alone until it is next saved.
  *
- * `teamIds` scopes team-owned content (tasks, project docs, comments) and also
+ * `teamIds` scopes team-owned content (tasks, project docs, comments, assets) and also
  * skills: global skills (project_id null) plus any project skill whose project's
  * team is in `teamIds`. `limit` applies **per type** —
  * each branch caps at `limit` and the results are merged sorted by rank with no
@@ -168,6 +172,45 @@ export async function fullTextSearch(
 				projectSlug: r.project_slug,
 				taskIdentifier: r.identifier,
 				commentPublicId: r.public_id,
+			});
+		}
+	}
+
+	if (scope === 'all' || scope === 'assets') {
+		const assetResults = await db.query<{
+			id: string;
+			original_filename: string;
+			content_type: string;
+			search_text: string | null;
+			project_slug: string;
+			score: number;
+		}>(
+			// `search_text` is NULL for a binary asset (nothing to preview) and for a
+			// text asset written before the search columns existed, so the snippet
+			// degrades to '' — the title carries the full library path either way.
+			`SELECT a.id, a.original_filename, a.content_type,
+			        LEFT(a.search_text, 4000) AS search_text,
+			        p.slug AS project_slug, ts_rank(a.search_tsv, q) AS score
+			 FROM assets a
+			 JOIN projects p ON p.id = a.project_id,
+			      to_tsquery('${TEXT_SEARCH_CONFIG}', $1) q
+			 WHERE a.team_id = ANY($2::uuid[])
+			   AND a.archived_at IS NULL AND a.search_tsv @@ q
+			 ORDER BY score DESC
+			 LIMIT $3`,
+			[tsQuery, teamIds, limit],
+		);
+		for (const r of assetResults.rows) {
+			const { snippet } = buildHighlightedSnippet(r.search_text, query);
+			results.push({
+				type: 'asset',
+				id: r.id,
+				title: r.original_filename,
+				snippet,
+				score: r.score,
+				projectSlug: r.project_slug,
+				assetFilename: r.original_filename,
+				assetContentType: r.content_type,
 			});
 		}
 	}
