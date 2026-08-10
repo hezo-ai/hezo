@@ -22,7 +22,7 @@
  * paid-provider fixture is manual and opt-in - see `test/live/`.
  */
 
-import type { AiProvider } from '@hezo/shared';
+import type { AgentRuntime, AiProvider } from '@hezo/shared';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 
 /**
@@ -96,15 +96,21 @@ export interface LiveAdapterFixture {
 	/** The non-root user execs run as when not elevated. */
 	runUser: string;
 	/**
-	 * A real model-provider credential, enabling {@link describeAgentCliConformance}
-	 * - a genuine coding-CLI run inside a provisioned container.
+	 * Real model-provider credentials, enabling {@link describeAgentCliConformance}
+	 * - a genuine coding-CLI run inside a provisioned container, one per entry.
 	 *
 	 * Separate from the backend's own key because they answer different
 	 * questions and cost differently: the engine and files suites prove the
-	 * *sandbox* works, this proves an *agent* can run in it. Optional, so a
-	 * backend can be conformance-tested with no model spend at all.
+	 * *sandbox* works, this proves an *agent* can run in it. Optional (or empty),
+	 * so a backend can be conformance-tested with no model spend at all.
+	 *
+	 * **A list, because one credential can run on several CLIs.** Proving a second
+	 * runtime is an extra entry here - not a second fixture and not a second suite
+	 * - so the cost of covering a newly-added runtime is one line. Each entry
+	 * bills its own completion, so add one per runtime worth proving, not per
+	 * provider you happen to have a key for.
 	 */
-	modelProvider?: LiveModelProvider;
+	modelProviders?: readonly LiveModelProvider[];
 }
 
 /** The model-provider half of a live fixture. */
@@ -112,12 +118,28 @@ export interface LiveModelProvider {
 	/** Display name for the suite title - the provider, not the env var. */
 	name: string;
 	/**
-	 * Which provider, so the suite reads its runtime, endpoint, model defaults
-	 * and credential variable out of `PROVIDER_RUNTIME_ADAPTERS` rather than
-	 * restating them. Must be an api-key provider (a subscription/file-mount
-	 * auth method has no key to hand a container).
+	 * Which provider, so the suite reads its endpoint, model defaults and
+	 * credential variable out of the production tables rather than restating
+	 * them. Must be an api-key provider (a subscription/file-mount auth method
+	 * has no key to hand a container).
 	 */
 	provider: AiProvider;
+	/**
+	 * Which CLI this credential runs on. Omit for the provider's default.
+	 *
+	 * A provider is not one runtime: a credential carries its own choice
+	 * (`ai_provider_configs.runtime`), and Prime Agent is never any provider's
+	 * default, so it is only reachable by naming it here. Resolving the runtime
+	 * from the provider alone - which this suite used to do - can only ever
+	 * exercise defaults, and is the same mistake that shipped a broken
+	 * config-home mapping in #909.
+	 *
+	 * Must be a pairing the provider actually supports (`providerSupportsRuntime`);
+	 * the suite fails in `beforeAll` rather than skipping on one that is not,
+	 * because an unsupported pairing is a bug in the fixture and a skip would bury
+	 * it. Only that suite fails - the backend's other conformance suites still run.
+	 */
+	runtime?: AgentRuntime;
 	/** The API key. Never logged - it reaches the container as an env var only. */
 	apiKey: string;
 	/**

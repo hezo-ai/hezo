@@ -31,14 +31,21 @@
  * rather than a second suite - the same rule the rest of `test/conformance/`
  * follows.
  *
- * Cost: one short completion per run, on whatever model the fixture pins (pick
+ * **A provider is not a runtime, and this registers per runtime.** A credential
+ * carries its own CLI choice, and Prime Agent is never any provider's default -
+ * so a fixture entry names the runtime and the suite runs once per entry, each
+ * with its own container. Resolving the CLI from the provider alone, which this
+ * did until Prime Agent arrived, can only ever exercise defaults.
+ *
+ * Cost: one short completion per fixture entry, on whatever model it pins (pick
  * the provider's cheapest). It is opt-in for the same reason the Daytona suites
  * are - see `test/live/`.
  *
  * **`HEZO_CONFORMANCE_DUMP=<dir>` writes the raw evidence** - the transcript, the
  * log the production parser rendered from it, and a `meta.json` carrying the exit
- * code, the MCP methods that reached the host and a phase timeline. A live run
- * costs a sandbox and a completion to reproduce, and the questions it raises are
+ * code, the MCP methods that reached the host (and the status each was answered
+ * with), the resolved runtime and a phase timeline. A live run costs a sandbox
+ * and a completion to reproduce, and the questions it raises are
  * usually about ordering ("the tunnel carried the handshake and was gone by the
  * end - which step killed it?"), so recording that once beats paying again to
  * find out. It is what located the PTY message-size limit.
@@ -51,7 +58,10 @@ import {
 	AiAuthMethod,
 	CEO_AGENT_SLUG,
 	claudeCodeModelArg,
-	PROVIDER_RUNTIME_ADAPTERS,
+	opencodeModelArg,
+	PROVIDER_TO_RUNTIME,
+	primeAgentProviderArgs,
+	providerSupportsRuntime,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_DISALLOWED_TOOLS_ARGS,
@@ -60,6 +70,7 @@ import {
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
 } from '@hezo/shared';
+import { buildProviderEnv } from '../../src/services/agent-runner';
 import { createAgentStreamParser } from '../../src/services/agent-stream-parser';
 import { type ContainerRunUser, chownToRunUser } from '../../src/services/container-user';
 import {
@@ -170,32 +181,92 @@ function jsonEvents(transcript: string): Array<Record<string, unknown>> {
 }
 
 /**
- * Environment for the run, built the way `buildProviderEnv` builds it: the
- * adapter's `staticEnv` (which is where an Anthropic-compatible provider's
- * `ANTHROPIC_BASE_URL` and model defaults live), then the credential under the
- * variable that provider's auth method names.
+ * Which CLI this entry runs on: its own choice, else the provider's default.
+ *
+ * Never `PROVIDER_RUNTIME_ADAPTERS[provider].runtime` on its own. That reads the
+ * *default*, so it can only ever exercise defaults - and Prime Agent is never any
+ * provider's default, so a provider-keyed lookup cannot reach it at all.
  */
-function providerEnv(mp: LiveModelProvider): string[] {
-	const adapter = PROVIDER_RUNTIME_ADAPTERS[mp.provider];
-	const env = Object.entries(adapter.staticEnv ?? {}).map(([k, v]) => `${k}=${v}`);
-	const varName = adapter.credentialEnvByAuthMethod[AiAuthMethod.ApiKey];
-	if (!varName) throw new Error(`${mp.provider} has no api-key credential variable`);
-	env.push(`${varName}=${mp.apiKey}`);
-	// Claude Code prefers ANTHROPIC_API_KEY when both are present, so an inherited
-	// one would be sent to the wrong endpoint. The runner blanks it; so do we.
-	if (adapter.runtime === AgentRuntime.ClaudeCode) env.push('ANTHROPIC_API_KEY=');
-	env.push('HOME=/home/node', 'CI=1');
-	return env;
+function resolvedRuntime(mp: LiveModelProvider): AgentRuntime {
+	return mp.runtime ?? PROVIDER_TO_RUNTIME[mp.provider];
+}
+
+/**
+ * Refuses a pairing the provider has no binding for.
+ *
+ * Called from `beforeAll` rather than at registration, and that placement is the
+ * point: a throw while the module is loading takes the whole fixture file down
+ * with it, so one mistyped runtime would stop the engine, files, tunnel, egress
+ * and git suites running at all. In `beforeAll` it fails this suite and leaves
+ * the rest of the backend's coverage intact - the same shape as the
+ * `hezo-tunnel` precondition below. A refusal either way, never a skip: a fixture
+ * naming an impossible pairing is a bug, and a skip would report green.
+ */
+function assertSupportedPairing(mp: LiveModelProvider, runtime: AgentRuntime): void {
+	if (providerSupportsRuntime(mp.provider, runtime)) return;
+	throw new Error(
+		`${mp.name}: ${mp.provider} cannot run on ${runtime}. The fixture names a pairing ` +
+			'`providerSupportsRuntime` rejects, so the run would be configured for a CLI the ' +
+			'credential has no binding for.',
+	);
+}
+
+/**
+ * Environment for the run, from the production builder itself.
+ *
+ * `buildProviderEnv` resolves the binding from the credential's runtime rather
+ * than the provider's default, which is the whole point here - a restatement of
+ * it would build the default runtime's env for a switched credential and the run
+ * would fail as "no credentials found". It also carries the per-runtime details
+ * easy to omit by hand: each quiet-env bag, and the model overrides that have to
+ * land in a variable rather than only on `--model`.
+ *
+ * This deliberately no longer blanks `ANTHROPIC_API_KEY`. The copy it replaced
+ * did, claiming to mirror the runner - but the runner only blanks it for a local
+ * provider carrying its own base URL, where an inherited key would outrank the
+ * one being set. Mirroring production means mirroring what it actually does; the
+ * container is a fresh sandbox whose image sets no such variable, so there is
+ * nothing to inherit here anyway.
+ */
+function providerEnv(mp: LiveModelProvider, runtime: AgentRuntime): string[] {
+	return [
+		...buildProviderEnv(
+			mp.provider,
+			{
+				value: mp.apiKey,
+				authMethod: AiAuthMethod.ApiKey,
+				baseUrl: null,
+				runtime,
+			},
+			mp.model ?? null,
+		),
+		'HOME=/home/node',
+		'CI=1',
+	];
 }
 
 /**
  * The argv the runner would build for this runtime, in the runner's own order -
  * including the MCP injection, which is where `--mcp-config` and `--settings`
- * come from. Mirrors `buildRuntimeInvocation`'s `cmd`, minus the effort args.
+ * come from. Mirrors `buildRuntimeInvocation`'s `cmd` (`agent-runner.ts`), minus
+ * the effort args and Grok's debug-file flag.
  */
-function cliArgv(mp: LiveModelProvider, mcpArgs: readonly string[]): string[] {
-	const runtime = PROVIDER_RUNTIME_ADAPTERS[mp.provider].runtime;
-	const model = mp.model ? claudeCodeModelArg(mp.provider, mp.model) : null;
+function cliArgv(
+	mp: LiveModelProvider,
+	runtime: AgentRuntime,
+	mcpArgs: readonly string[],
+): string[] {
+	// The model id is remapped per runtime, not per provider: Claude Code and
+	// OpenCode each want their own spelling, everything else takes it verbatim.
+	let cliModel = mp.model ?? null;
+	if (cliModel) {
+		if (runtime === AgentRuntime.ClaudeCode) cliModel = claudeCodeModelArg(mp.provider, cliModel);
+		else if (runtime === AgentRuntime.OpenCode) cliModel = opencodeModelArg(mp.provider, cliModel);
+	}
+	// Prime Agent selects its upstream by flag rather than env var, so the provider
+	// has to be named on the command line. Empty for every other runtime.
+	const providerArgs =
+		runtime === AgentRuntime.PrimeAgent ? [...primeAgentProviderArgs(mp.provider)] : [];
 	return [
 		RUNTIME_COMMANDS[runtime],
 		...RUNTIME_HEADLESS_PREFIX_ARGS[runtime],
@@ -203,7 +274,8 @@ function cliArgv(mp: LiveModelProvider, mcpArgs: readonly string[]): string[] {
 		...RUNTIME_STREAM_ARGS[runtime],
 		...RUNTIME_AUTO_APPROVE_ARGS[runtime],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtime],
-		...(model ? ['--model', model] : []),
+		...providerArgs,
+		...(cliModel ? ['--model', cliModel] : []),
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtime],
 	];
 }
@@ -240,24 +312,35 @@ function jsonRpcMethods(body: string): string[] {
 	}
 }
 
-/** Registers the live agent-CLI suite for one backend, if the fixture has a key. */
+/** Registers the live agent-CLI suite for one backend, once per model provider. */
 export function describeAgentCliConformance(
 	fixture: LiveAdapterFixture,
 	h: ConformanceHarness,
 ): void {
-	const { describe, it, expect, beforeAll, afterAll } = h;
-	const mp = fixture.modelProvider;
+	const providers = fixture.modelProviders ?? [];
 
-	if (!mp) {
-		describe(`${fixture.name}: live agent CLI run`, () => {
-			it.skip('skipped - no model-provider key supplied', () => {});
+	if (providers.length === 0) {
+		h.describe(`${fixture.name}: live agent CLI run`, () => {
+			h.it.skip('skipped - no model-provider key supplied', () => {});
 		});
 		return;
 	}
 
-	const runtime = PROVIDER_RUNTIME_ADAPTERS[mp.provider].runtime;
+	// One independent registration per entry: each provisions its own container and
+	// bills its own completion, and the runtime is in the title so a failure names
+	// which CLI broke rather than just which backend.
+	for (const mp of providers) describeOneAgentCliRun(fixture, h, mp);
+}
 
-	describe(`${fixture.name}: live agent CLI run (${mp.name})`, () => {
+function describeOneAgentCliRun(
+	fixture: LiveAdapterFixture,
+	h: ConformanceHarness,
+	mp: LiveModelProvider,
+): void {
+	const { describe, it, expect, beforeAll, afterAll } = h;
+	const runtime = resolvedRuntime(mp);
+
+	describe(`${fixture.name}: live agent CLI run (${mp.name} on ${runtime})`, () => {
 		const engine: ContainerEngine = fixture.engine;
 		const runUser: ContainerRunUser = { name: fixture.runUser, uid: 1000, gid: 1000 };
 		let containerId = '';
@@ -268,6 +351,17 @@ export function describeAgentCliConformance(
 		let exitCode = -1;
 		/** JSON-RPC methods that arrived on the host's `/mcp` endpoint. */
 		const mcpMethods: string[] = [];
+		/**
+		 * The same methods again, once answered, as `<method>=<status>`.
+		 *
+		 * Arrival and success are different claims. A client that reaches `/mcp`
+		 * and is rejected produces exactly the same `mcpMethods` as one that is
+		 * served, so the arrival list alone would pass a run where every tool call
+		 * came back 401. That matters most for a runtime whose MCP client is not
+		 * the CLI's own - Prime Agent builds the request in Python - because that
+		 * is where an auth header goes missing without anything else changing.
+		 */
+		const mcpAnswers: string[] = [];
 		/** Set if the tunnel died on its own at any point during the run. */
 		let tunnelDeath: string | null = null;
 		/**
@@ -287,6 +381,7 @@ export function describeAgentCliConformance(
 		let tunnel: RunTunnel | null = null;
 
 		beforeAll(async () => {
+			assertSupportedPairing(mp, runtime);
 			await sweepConformanceContainers(engine);
 			const created = await engine.createContainer(`hezo-conf-cli-${conformanceRunId()}`, {
 				Image: fixture.image,
@@ -328,6 +423,10 @@ export function describeAgentCliConformance(
 			served = await serveTestApp(host.app, {
 				onRequest: (req: ObservedRequest) => {
 					if (req.url.startsWith('/mcp')) mcpMethods.push(...jsonRpcMethods(req.body));
+				},
+				onResponse: (req: ObservedRequest, status: number) => {
+					if (!req.url.startsWith('/mcp')) return;
+					for (const m of jsonRpcMethods(req.body)) mcpAnswers.push(`${m}=${status}`);
 				},
 			});
 
@@ -434,7 +533,7 @@ export function describeAgentCliConformance(
 			await files.mkdir('.');
 			await files.write(PROMPT_FILE, PROMPT);
 
-			const argv = cliArgv(mp, injection.cliArgs).map(shellQuote).join(' ');
+			const argv = cliArgv(mp, runtime, injection.cliArgs).map(shellQuote).join(' ');
 			const promptPath = shellQuote(`${fixture.workRoot}/${PROMPT_FILE}`);
 			// Prompt delivery is the runtime's own convention, and getting it wrong is
 			// a hang rather than an error - a CLI waiting on a stdin that never closes
@@ -447,7 +546,7 @@ export function describeAgentCliConformance(
 			const execId = await engine.execCreate(containerId, {
 				Cmd: ['sh', '-c', line],
 				Env: [
-					...providerEnv(mp),
+					...providerEnv(mp, runtime),
 					...(homeMount ? [homeMount.envEntry] : []),
 					...injection.envEntries,
 				],
@@ -489,7 +588,11 @@ export function describeAgentCliConformance(
 				writeFileSync(`${process.env.HEZO_CONFORMANCE_DUMP}/rendered.txt`, renderedLog);
 				writeFileSync(
 					`${process.env.HEZO_CONFORMANCE_DUMP}/meta.json`,
-					JSON.stringify({ exitCode, tunnelDeath, timeline, mcpMethods }, null, 2),
+					JSON.stringify(
+						{ runtime, exitCode, tunnelDeath, timeline, mcpMethods, mcpAnswers },
+						null,
+						2,
+					),
 				);
 			}
 		}, 900_000);
@@ -573,11 +676,36 @@ export function describeAgentCliConformance(
 			// *before* its MCP servers connect, so a healthy run lists its built-ins
 			// there, reports the server as `pending`, and carries no Hezo tools at all.
 			//
-			// A `tools/call` arriving at the host proves the whole chain at once - the
-			// server connected, its catalogue reached the model, the model could name a
-			// tool from it, the call travelled the tunnel, and the agent JWT was
-			// accepted on a method that does real work.
+			// A `tools/call` arriving at the host proves most of the chain at once -
+			// the server connected, its catalogue reached the model, the model could
+			// name a tool from it, and the call travelled the tunnel.
 			expect(`called: ${mcpMethods.join(', ')}`).toContain(`tools/call:${HEZO_PROBE_TOOL}`);
+		});
+
+		it('has that tool call answered, not rejected', () => {
+			// Arrival is not acceptance. The assertion above passes just as happily on
+			// a run where every call came back 401, because the request reached `/mcp`
+			// either way - so on its own it proves the transport, not the credential.
+			//
+			// This is where a runtime whose MCP client is not the CLI's own gets
+			// caught: Prime Agent's requests are built in Python by a generated skill,
+			// so its bearer travels a different path from every other runtime's and
+			// can go missing without anything upstream changing.
+			//
+			// A 2xx is the honest limit of what this can claim. Streamable HTTP
+			// answers a tool that *errored* with 200 and a JSON-RPC error body, so
+			// this separates "rejected at the door" from "served" - not "served" from
+			// "succeeded". The prompt's sentinel in the transcript covers the rest.
+			// Stated as "at least one 2xx" rather than "no 4xx/5xx": the negative form
+			// passes vacuously on an empty list, which is the one outcome this is
+			// supposed to catch. A retry that failed and then succeeded is still a
+			// success, so one served call is the bar.
+			const statuses = mcpAnswers
+				.filter((a) => a.startsWith(`tools/call:${HEZO_PROBE_TOOL}=`))
+				.map((a) => a.slice(a.lastIndexOf('=') + 1));
+			expect(`${HEZO_PROBE_TOOL} answered: ${statuses.join(', ') || '(never)'}`).toMatch(
+				/\b2\d\d\b/,
+			);
 		});
 
 		if (!RUNTIME_REPORTS_MCP_STATUS[runtime]) {

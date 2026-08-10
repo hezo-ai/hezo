@@ -74,6 +74,8 @@ That record is the request, and it stays the request: what an adapter reports ba
 
 **Every suite in `conformance/` runs against every adapter** (today `engine`, `files`, `agent-cli`, `egress`, `tunnel`, `git`); write any new suite generically so existing adapters pick it up.
 
+- **`agent-cli` registers once per `modelProviders` entry, not once per fixture.** An entry names a provider *and* optionally the `runtime` it runs on, because a credential carries its own CLI choice and Prime Agent is never any provider's default - so resolving the runtime from the provider alone can only ever exercise defaults. Each entry provisions its own container and buys its own completion, so add one per runtime worth proving. A pairing `providerSupportsRuntime` rejects fails the suite rather than skipping it.
+
 - **A fixture registers the set, never individual suites** — `describeContainerBackendConformance(fixture, harness)` (`conformance/index.ts`) is a backend entry point's only call, and `conformance-coverage.test.ts` asserts both directions. Adding a suite fails the build until it is in the set.
 - **Never add a backend-specific end-to-end test.** Worth asserting against one live backend means worth asserting against all.
 - **A suite that can't do its job refuses rather than skips** — a skip reports green while asserting nothing. The egress suite needs the image to carry `hezo-tunnel` and says so.

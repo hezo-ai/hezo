@@ -18,7 +18,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { AiProvider } from '@hezo/shared';
+import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { DockerClient } from '../../src/services/docker';
 import { CONTAINER_WORKSPACE_ROOT } from '../../src/services/workspace';
 import { describeContainerBackendConformance } from '../conformance';
@@ -79,7 +79,7 @@ if (reason) {
 		// directory is generic. Unset in CI (the key is not a secret there), so it
 		// self-skips with a reason and costs nothing; a developer with a key gets a
 		// real run against local Docker.
-		modelProvider: liveModelProvider(),
+		modelProviders: liveModelProviders(),
 	};
 
 	// One call, deliberately: a suite added to the set reaches this backend
@@ -87,14 +87,27 @@ if (reason) {
 	describeContainerBackendConformance(fixture, harness);
 }
 
-/** Reads the optional model-provider key. Same env contract as `test/live/`. */
-function liveModelProvider(): LiveModelProvider | undefined {
+/**
+ * Reads the optional model-provider key. Same env contract as `test/live/`.
+ *
+ * One key, two runtimes: DeepSeek's default CLI is Claude Code and it also runs
+ * on Prime Agent, so the same credential proves both. Prime Agent has to be named
+ * explicitly - it is never any provider's default, so nothing would otherwise
+ * exercise it, and it is the one runtime whose MCP client is Python inside the
+ * kernel rather than the CLI's own.
+ */
+function liveModelProviders(): LiveModelProvider[] {
 	const key = process.env.HEZO_DEEPSEEK_API_KEY;
-	if (!key) return undefined;
-	return {
-		name: 'DeepSeek',
-		provider: AiProvider.DeepSeek,
-		apiKey: key,
-		model: process.env.HEZO_LIVE_MODEL || 'deepseek-v4-flash',
-	};
+	if (!key) return [];
+	const model = process.env.HEZO_LIVE_MODEL || 'deepseek-v4-flash';
+	return [
+		{ name: 'DeepSeek', provider: AiProvider.DeepSeek, apiKey: key, model },
+		{
+			name: 'DeepSeek',
+			provider: AiProvider.DeepSeek,
+			runtime: AgentRuntime.PrimeAgent,
+			apiKey: key,
+			model,
+		},
+	];
 }
