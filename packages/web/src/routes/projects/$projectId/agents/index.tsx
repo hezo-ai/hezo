@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Globe, Plus, UserPlus } from 'lucide-react';
+import { agentDisplayName } from '../../../../components/agent-identity-tooltip';
 import { agentPageParams } from '../../../../components/agent-link';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { ExportTeamButton } from '../../../../components/export-team-dialog';
@@ -36,7 +37,7 @@ function GlobalAgentsBox({ projectId }: { projectId: string }) {
 						params={agentPageParams(projectId, agent.slug, agent.is_instance)}
 						className="text-[13px] text-text-2 hover:text-text-1 hover:bg-surface-2 rounded-md px-2 py-1 transition-colors"
 					>
-						<AgentStatusLabel name={agent.title} runtimeStatus={agent.runtime_status} />
+						<AgentStatusLabel name={agentDisplayName(agent)} runtimeStatus={agent.runtime_status} />
 					</Link>
 				))}
 			</div>

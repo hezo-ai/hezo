@@ -23,6 +23,7 @@ import {
 	type TaskMentionData,
 } from '../lib/remark-mentions';
 import { remarkNormalizeInlineCode } from '../lib/remark-normalize-inline-code';
+import { AgentIdentityTooltipContent } from './agent-identity-tooltip';
 import { CommentRefLink, MENTION_CLASSES, PASSIVE_MENTION_CLASSES } from './comment-ref-link';
 import { MarkdownCodeBlock } from './markdown-code-block';
 import { useOpenPreview } from './task-detail/preview-context';
@@ -112,12 +113,23 @@ export function MarkdownProse({
 		const m = new Map<string, AgentMentionData>();
 		if (instanceResolved) {
 			for (const a of instanceResolved.agents) {
-				m.set(a.slug.toLowerCase(), { title: a.title, projectSlug: a.project_slug });
+				m.set(a.slug.toLowerCase(), {
+					title: a.title,
+					humanName: a.human_name,
+					canonicalSlug: a.slug,
+					projectSlug: a.project_slug,
+				});
 			}
 			return m;
 		}
 		if (!agents) return m;
-		for (const a of agents) m.set(a.slug.toLowerCase(), { title: a.title });
+		for (const a of agents) {
+			// An agent answers to both handles, so a mention written either way
+			// resolves to the same teammate.
+			const data = { title: a.title, humanName: a.human_name, canonicalSlug: a.slug };
+			m.set(a.slug.toLowerCase(), data);
+			if (a.human_name_slug) m.set(a.human_name_slug.toLowerCase(), data);
+		}
 		return m;
 	}, [agents, instanceResolved]);
 
@@ -268,6 +280,8 @@ export function MarkdownProse({
 					'data-mention-admin'?: string;
 					'data-mention-agent-slug'?: string;
 					'data-mention-agent-title'?: string;
+					'data-mention-agent-name'?: string;
+					'data-mention-agent-canonical-slug'?: string;
 					'data-mention-agent-project-slug'?: string;
 					'data-mention-passive'?: string;
 					'data-mention-task-identifier'?: string;
@@ -424,14 +438,28 @@ export function MarkdownProse({
 
 				const agentSlug = attrs['data-mention-agent-slug'];
 				const agentTitle = attrs['data-mention-agent-title'];
+				const agentName = attrs['data-mention-agent-name'];
 				const agentPassive = attrs['data-mention-passive'] === 'true';
 				const agentProjectSlug = attrs['data-mention-agent-project-slug'] ?? projectId;
-				if (agentSlug && agentProjectSlug && mentionsEnabled) {
+				// The link uses the role slug whichever handle was typed, so it keeps
+				// working after a rename.
+				const agentLinkSlug = attrs['data-mention-agent-canonical-slug'] ?? agentSlug;
+				if (agentSlug && agentProjectSlug && agentLinkSlug && mentionsEnabled) {
 					return (
-						<Tooltip content={agentTitle ?? `@${agentSlug}`}>
+						<Tooltip
+							content={
+								agentName || agentTitle ? (
+									<AgentIdentityTooltipContent
+										agent={{ human_name: agentName, title: agentTitle }}
+									/>
+								) : (
+									`@${agentSlug}`
+								)
+							}
+						>
 							<Link
 								to="/projects/$projectId/agents/$agentId"
-								params={{ projectId: agentProjectSlug, agentId: agentSlug }}
+								params={{ projectId: agentProjectSlug, agentId: agentLinkSlug }}
 								className={agentPassive ? PASSIVE_MENTION_CLASSES : MENTION_CLASSES}
 								data-testid="agent-mention-link"
 								data-mention-passive={agentPassive ? 'true' : undefined}

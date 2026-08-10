@@ -1,4 +1,12 @@
 {
+	"agents.identity.avatarGenerate": "Gerar novo avatar",
+	"agents.identity.avatarHelp": "Os avatares são gerados pelo Hezo. Não há imagem para enviar.",
+	"agents.identity.avatarPick": "Escolha um e salve.",
+	"agents.identity.avatarShuffle": "Mostrar outros três",
+	"agents.identity.help": "Como este agente aparece no projeto e nas menções.",
+	"agents.identity.nameHelp": "Mostrado em todo lugar no lugar do papel. Limpe o campo para voltar ao papel.",
+	"agents.identity.nameLabel": "Nome",
+	"agents.identity.title": "Identidade",
 	"attachments.category.archives": "Arquivos compactados:",
 	"attachments.category.audio": "Áudio:",
 	"attachments.category.documents": "Documentos:",

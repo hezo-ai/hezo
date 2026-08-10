@@ -1,4 +1,12 @@
 {
+	"agents.identity.avatarGenerate": "새 아바타 생성",
+	"agents.identity.avatarHelp": "아바타는 Hezo가 생성해요. 올릴 이미지는 없습니다.",
+	"agents.identity.avatarPick": "하나를 고른 뒤 저장하세요.",
+	"agents.identity.avatarShuffle": "세 개 더 보기",
+	"agents.identity.help": "이 에이전트가 프로젝트와 멘션에서 어떻게 보이는지입니다.",
+	"agents.identity.nameHelp": "역할 대신 어디에서나 표시돼요. 비우면 역할로 돌아갑니다.",
+	"agents.identity.nameLabel": "이름",
+	"agents.identity.title": "프로필",
 	"attachments.category.archives": "압축 파일:",
 	"attachments.category.audio": "오디오:",
 	"attachments.category.documents": "문서:",

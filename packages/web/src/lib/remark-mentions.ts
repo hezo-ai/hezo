@@ -39,7 +39,15 @@ interface ParentNode {
 type MdNode = ParentNode | TextNode | LinkNode;
 
 export interface AgentMentionData {
+	/** The agent's role. */
 	title: string;
+	/** The name it goes by, when it has one. */
+	humanName?: string | null;
+	/**
+	 * The agent's role slug. A mention can be written with either handle, but the
+	 * link always points at the canonical one, so a rename never breaks a link.
+	 */
+	canonicalSlug?: string;
 	/** Set in instance scope: the agent's home project (HQ agents → `hq`). */
 	projectSlug?: string;
 }
@@ -238,6 +246,10 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 				hProperties: {
 					'data-mention-agent-slug': token.slug,
 					'data-mention-agent-title': data.title,
+					...(data.humanName ? { 'data-mention-agent-name': data.humanName } : {}),
+					...(data.canonicalSlug
+						? { 'data-mention-agent-canonical-slug': data.canonicalSlug }
+						: {}),
 					'data-mention-agent-project-slug': agentProject,
 					'data-mention-passive': 'true',
 				},
@@ -270,6 +282,10 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 				hProperties: {
 					'data-mention-agent-slug': token.slug,
 					'data-mention-agent-title': data.title,
+					...(data.humanName ? { 'data-mention-agent-name': data.humanName } : {}),
+					...(data.canonicalSlug
+						? { 'data-mention-agent-canonical-slug': data.canonicalSlug }
+						: {}),
 					'data-mention-agent-project-slug': agentProject,
 				},
 			},

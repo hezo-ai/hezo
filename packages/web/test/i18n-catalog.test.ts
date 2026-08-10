@@ -129,6 +129,9 @@ describe('message catalogs', () => {
 		'containers.column.project': ['nl'],
 		'containers.badge.assistant': ['fr'],
 		'setup.step.password': ['it'],
+		// German writes "Name" for a person's name, identically. Dutch (Naam),
+		// Swedish (Namn) and the rest all differ.
+		'agents.identity.nameLabel': ['de'],
 		// "Audio" and "Video" are the same loanword in these languages, colon and
 		// all - German, Spanish, Italian and Dutch all write Audio; German, Italian,
 		// Dutch and Swedish all write Video. Anything else in the attachment

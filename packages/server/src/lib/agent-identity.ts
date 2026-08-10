@@ -11,15 +11,16 @@ import { randomUUID } from 'node:crypto';
 import {
 	type AgentGender,
 	type AvatarSpec,
-	CAPTAIN_AGENT_SLUG,
 	DEFAULT_TEAM_ID,
 	humanNameError,
-	INSTANCE_AGENT_SLUGS,
+	isNameOnlyRole,
 	isReservedAgentSlug,
 	makeAvatarSpec,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { toSlug } from './slug';
+
+export { isNameOnlyRole };
 
 /**
  * SQL for what an agent is *called*: its human name when it has one, else its
@@ -30,16 +31,6 @@ import { toSlug } from './slug';
  */
 export function agentDisplayNameSql(alias: string): string {
 	return `NULLIF(${alias}.human_name, '')`;
-}
-
-/**
- * Roles that are always addressed by their role, never given a human name: the
- * Captain and the HQ singletons. This is a policy check rather than a schema
- * constraint - the column exists for every agent, so naming them later is a
- * one-line change here.
- */
-export function isNameOnlyRole(slug: string): boolean {
-	return slug === CAPTAIN_AGENT_SLUG || (INSTANCE_AGENT_SLUGS as readonly string[]).includes(slug);
 }
 
 /** Why a human name was refused. `null` means it is available. */

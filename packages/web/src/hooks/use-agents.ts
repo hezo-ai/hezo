@@ -42,8 +42,10 @@ export interface Agent {
 	/** True when the agent has a live chatbox (and thus a Chat history tab). CEO only today. */
 	chat_enabled?: boolean;
 	/** Optional custom avatar (signed URL); null/undefined when unset (falls back to initials). */
-	icon_url?: string | null;
-	icon_updated_at?: string | null;
+	human_name?: string | null;
+	human_name_slug?: string | null;
+	gender?: string | null;
+	avatar_spec?: unknown;
 }
 
 export interface AgentSystemPromptDoc {
@@ -86,6 +88,7 @@ export function useAgent(projectId: string, agentId: string) {
 
 interface UpdateAgentVars {
 	title?: string;
+	human_name?: string;
 	role_description?: string;
 	system_prompt?: string;
 	system_prompt_change_summary?: string;
@@ -124,49 +127,26 @@ export function useUpdateAgent(projectId: string, agentId: string) {
 	);
 }
 
-export interface AgentIconResponse {
-	icon_url: string | null;
-	icon_updated_at: string | null;
-}
-
 /**
- * Seed an agent's icon fields into the detail cache from a server response and
- * invalidate the roster/org-chart/agent queries so every surface that renders
- * the avatar reflects the change. Response-driven (the server returns the signed
- * `icon_url`), not optimistic.
+ * Save a freshly-generated avatar for an agent: the admin picks one of the
+ * options they were shown and we send only its seed. The server recomposes the
+ * spec around it (the role's outfit, the agent's gender), so the stored face and
+ * the previewed one agree without the client being trusted with either.
+ *
+ * Invalidate-and-refetch rather than optimistic: the spec is the server's to
+ * compose, so the roster shows what was actually stored.
  */
-function applyAgentIconToCaches(projectId: string, agentId: string, icon: AgentIconResponse) {
-	queryClient.setQueryData<Agent>(queryKeys.projects.agent(projectId, agentId), (old) =>
-		old ? { ...old, icon_url: icon.icon_url, icon_updated_at: icon.icon_updated_at } : old,
-	);
-	// `agents(projectId)` is a prefix of every `agentsFiltered` key, so this
-	// invalidates the roster list regardless of the active admin_status filter.
-	queryClient.invalidateQueries({ queryKey: queryKeys.projects.agents(projectId) });
-	queryClient.invalidateQueries({ queryKey: queryKeys.projects.orgChart(projectId) });
-	queryClient.invalidateQueries({ queryKey: queryKeys.projects.agent(projectId, agentId) });
-}
-
-/** Upload (or replace) an agent's avatar. `blob` is the normalized square PNG. */
-export function useUploadAgentIcon(projectId: string, agentId: string) {
-	return useMutation<AgentIconResponse, ApiError, Blob>({
-		mutationFn: (blob) => {
-			const fd = new FormData();
-			fd.set('file', blob, 'icon.png');
-			return api.putForm<AgentIconResponse>(
-				`/api/projects/${projectId}/agents/${agentId}/icon`,
-				fd,
-			);
+export function useGenerateAgentAvatar(projectId: string, agentId: string) {
+	return useMutation<Agent, ApiError, string>({
+		mutationFn: (seed) =>
+			api.patch<Agent>(`/api/projects/${projectId}/agents/${agentId}`, { avatar_seed: seed }),
+		onSuccess: () => {
+			// `agents(projectId)` is a prefix of every `agentsFiltered` key, so this
+			// invalidates the roster list regardless of the active admin_status filter.
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.agents(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.orgChart(projectId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.agent(projectId, agentId) });
 		},
-		onSuccess: (data) => applyAgentIconToCaches(projectId, agentId, data),
-	});
-}
-
-export function useRemoveAgentIcon(projectId: string, agentId: string) {
-	return useMutation<AgentIconResponse, ApiError, void>({
-		mutationFn: () =>
-			api.delete<AgentIconResponse>(`/api/projects/${projectId}/agents/${agentId}/icon`),
-		onSuccess: () =>
-			applyAgentIconToCaches(projectId, agentId, { icon_url: null, icon_updated_at: null }),
 	});
 }
 

@@ -1,4 +1,12 @@
 {
+	"agents.identity.avatarGenerate": "Wygeneruj nowy awatar",
+	"agents.identity.avatarHelp": "Awatary generuje Hezo. Nie ma obrazu do przesłania.",
+	"agents.identity.avatarPick": "Wybierz jeden i zapisz.",
+	"agents.identity.avatarShuffle": "Pokaż trzy kolejne",
+	"agents.identity.help": "Jak ten agent pojawia się w projekcie i we wzmiankach.",
+	"agents.identity.nameHelp": "Pokazywane wszędzie zamiast roli. Wyczyść pole, aby wrócić do roli.",
+	"agents.identity.nameLabel": "Imię",
+	"agents.identity.title": "Tożsamość",
 	"attachments.category.archives": "Archiwa:",
 	"attachments.category.audio": "Dźwięk:",
 	"attachments.category.documents": "Dokumenty:",
