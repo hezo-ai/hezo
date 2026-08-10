@@ -1530,6 +1530,22 @@ cover the rest of the run:
   the first cut of this check - would have failed every Claude Code run on that CLI, and
   the live agent-CLI conformance suite is what caught it.
 
+  **The status does not say whether the tools arrived, so the count does.** `connected`
+  means the session came up, not that the server's tools reached the model, and that gap
+  is what made "connector X's tools are missing" unfalsifiable from a run log: the banner
+  read healthy either way. The session line therefore carries a per-server tool count next
+  to each status - `mcp: hezo=connected(73) typefully=connected(27)` - counted from the
+  `mcp__<server>__<tool>` namespace the injector builds. Counting matches against the
+  server names the event itself reports rather than splitting on `__`, so a connector whose
+  own name contains the separator still counts correctly. A server reporting `connected`
+  while contributing **zero** tools gets its own `[runner]` warning, because that is the
+  shape of every way the tools can fail to arrive (a list the runtime deferred behind its
+  own search tool, an empty catalogue, an allowlist that withheld everything) and none of
+  them show up in the status. The `tools` array is typed loosely by the CLI and Hezo had
+  only ever needed its length, so both plausible element shapes are accepted and anything
+  else is skipped; when no name parses, the counts are omitted entirely rather than
+  printing a misleading zero for every server.
+
 The runner also orders these: a signal kill outranks a captured terminal error, which in
 turn outranks "produced no output" on the run row - each is the cause of the one below it,
 and reporting the symptom first sends the reader after the wrong thing. A process a signal
