@@ -4716,6 +4716,26 @@ unapproved caller is served the onboarding tools (`register`, `connection_status
 nothing else. Only `tools/list` and `tools/call` from an authenticated principal reach the
 registry.
 
+**`tools/list` is projected per caller** (`mcp/tool-visibility.ts`). Every authenticated
+principal used to receive the whole registry, so a worker agent scoped to one project carried
+`create_team`, the CEO's project-creation tools and every Captain-only prompt editor — schemas
+resident in its context on every turn for tools its own handler would refuse. `TOOL_AUDIENCE`
+names the ~30 restricted tools and the caller class each one's handler actually gates on;
+absence means everyone, which is right for the ~50 gated only by project scope. Role-shaped
+audiences (CEO, Captain, coordinator) need facts `AuthInfo` does not carry, so one query per
+`tools/list` resolves the agent's slug and whether it is an HQ member; `tools/list` runs once
+per session, not per request. The same projection strips the per-tool `$schema` key, which is
+inert for every model. Measured on the registry: 132,627 bytes full, 102,580 for a worker
+agent — 22.7% off.
+
+**Projection hides, it never forbids.** Every gate still runs on `tools/call`, so nothing here
+is load-bearing for authorization, and the audiences are allowed to be *coarser* than the
+handler's own check but never narrower — where a handler scopes by team as well as role, the
+audience keeps only the role half. A tool shown to a caller who cannot call it costs one
+refused call; a tool hidden from a caller who could call it is a defect with no feedback at
+all. `getToolDefs()` stays unfiltered: `GET /SKILL.md` is unauthenticated and the docs
+generator is build-time, and both must keep describing the whole registry.
+
 Those two are proxied to the singleton `McpServer` over an **`InMemoryTransport` pair that
 is linked once and shared by every request**, with the per-request principal carried into
 the tool handlers through an `AsyncLocalStorage` (`authContext`) rather than through the

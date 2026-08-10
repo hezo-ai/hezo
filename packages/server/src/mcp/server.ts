@@ -18,6 +18,7 @@ import {
 	ONBOARDING_TOOLS,
 	REGISTER_TOOL,
 } from './onboarding';
+import { projectToolsForCaller } from './tool-visibility';
 import {
 	authContext,
 	callerOriginContext,
@@ -209,7 +210,12 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 
 	let result: unknown;
 	if (body.method === 'tools/list') {
-		result = await client.listTools();
+		// Listed per caller: an agent scoped to one project has no use for
+		// `create_team` or the Captain-only prompt editors, and carrying their
+		// schemas costs it context on every turn. Hiding only - `tools/call` still
+		// runs every gate below, so this can never be the thing granting access.
+		const listed = await client.listTools();
+		result = { ...listed, tools: await projectToolsForCaller(db, auth, listed.tools) };
 	} else if (body.method === 'tools/call') {
 		result = await authContext.run(auth, () =>
 			callerOriginContext.run(callerOrigin(c), () => client.callTool(body.params)),

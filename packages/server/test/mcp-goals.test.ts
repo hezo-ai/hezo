@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { getToolDefs } from '../src/mcp/server';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -80,13 +81,11 @@ async function callTool(
 }
 
 describe('MCP goals tools', () => {
-	it('registers list_goals and update_goal_progress', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		const names = (await res.json()).result.tools.map((t: { name: string }) => t.name);
+	it('registers list_goals and update_goal_progress', () => {
+		// Read off the registry, not `tools/list`: listing is projected per caller
+		// (`mcp/tool-visibility.ts`), and `update_goal_progress` is agent-in-a-run
+		// only, so the admin principal these tests use would not see it.
+		const names = getToolDefs().map((t) => t.name);
 		expect(names).toContain('list_goals');
 		expect(names).toContain('update_goal_progress');
 	});
@@ -138,14 +137,8 @@ describe('MCP goals tools', () => {
 });
 
 describe('MCP project progress + goal run activity', () => {
-	it('registers update_project_progress', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		const names = (await res.json()).result.tools.map((t: { name: string }) => t.name);
-		expect(names).toContain('update_project_progress');
+	it('registers update_project_progress', () => {
+		expect(getToolDefs().map((t) => t.name)).toContain('update_project_progress');
 	});
 
 	it('update_project_progress is rejected for a non-run caller', async () => {
@@ -296,14 +289,11 @@ describe('MCP project progress + goal run activity', () => {
 });
 
 describe('MCP suggest_goal', () => {
-	it('registers suggest_goal', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		const tools = (await res.json()).result.tools as { name: string; description: string }[];
-		const suggestGoal = tools.find((t) => t.name === 'suggest_goal');
+	it('registers suggest_goal', () => {
+		// Registry rather than `tools/list`: suggest_goal is Captain-or-CEO, so the
+		// admin principal here is correctly not shown it. The doctrine below is the
+		// point of the test either way.
+		const suggestGoal = getToolDefs().find((t) => t.name === 'suggest_goal');
 		expect(suggestGoal).toBeDefined();
 		// The description must carry the doctrine: goals are admin-elicited outcomes or
 		// milestones; activity-shaped recurring work ("do X every day/week") is a standing
