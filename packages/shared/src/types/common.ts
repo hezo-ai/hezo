@@ -1602,6 +1602,28 @@ export const CLAUDE_CODE_QUIET_ENV = {
 } as const;
 
 /**
+ * Claude Code settings applied only when it runs against a **non-Anthropic**
+ * endpoint - the third-party Anthropic-compatible gateways (DeepSeek, Z.ai,
+ * Moonshot) and the local runners (Ollama, LM Studio). Membership is
+ * {@link claudeCodeProviderUsesCustomEndpoint}.
+ *
+ * `ENABLE_TOOL_SEARCH=false` keeps every tool in the model's tool list. Left at
+ * the CLI default, a large tool surface (Hezo's own ~81 plus every connector's)
+ * is swapped for a search tool and the MCP tools are deferred - present to the
+ * session, absent from the list the model can see. Claude uses that search tool
+ * reliably, so first-party Anthropic keeps it and pays no schema cost; the
+ * models behind these endpoints do not, and an agent that cannot see a
+ * connector's tools reports the connector as broken.
+ *
+ * Applied centrally rather than per-binding `staticEnv` because Ollama and
+ * LM Studio carry no `staticEnv` at all - their endpoint rides on the
+ * credential - so a `staticEnv`-only rule would silently skip both.
+ */
+export const CLAUDE_CODE_CUSTOM_ENDPOINT_ENV = {
+	ENABLE_TOOL_SEARCH: 'false',
+} as const;
+
+/**
  * The Gemini CLI refuses to run in an "untrusted" folder and silently downgrades
  * `--yolo` to manual tool approval, which hangs a headless run; Hezo agents run
  * headless in `/workspace`. Trusting the workspace is the documented headless
@@ -1627,9 +1649,12 @@ export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code';
 
 /**
  * Moonshot reached through Claude Code, against the Anthropic-compatible
- * gateway — the same pattern as DeepSeek/Z.ai. `ENABLE_TOOL_SEARCH` and
- * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` are Moonshot's documented Claude Code
- * settings (https://platform.kimi.ai/docs/guide/agent-support).
+ * gateway — the same pattern as DeepSeek/Z.ai. `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
+ * is Moonshot's documented Claude Code setting
+ * (https://platform.kimi.ai/docs/guide/agent-support). Its documented
+ * `ENABLE_TOOL_SEARCH=false` is no longer set here: it now applies to every
+ * non-Anthropic endpoint via {@link CLAUDE_CODE_CUSTOM_ENDPOINT_ENV}, so
+ * keeping a copy would give the setting two homes.
  *
  * `kimi`'s default binding; `MOONSHOT_KIMI_CODE_BINDING` below is its alternate.
  * The point of the pair is that the same key reaches the same upstream either
@@ -1642,7 +1667,6 @@ const MOONSHOT_CLAUDE_CODE_BINDING: ProviderRuntimeBinding = {
 		ANTHROPIC_DEFAULT_SONNET_MODEL: KIMI_DEFAULT_MODEL,
 		ANTHROPIC_DEFAULT_HAIKU_MODEL: KIMI_DEFAULT_MODEL,
 		CLAUDE_CODE_SUBAGENT_MODEL: KIMI_DEFAULT_MODEL,
-		ENABLE_TOOL_SEARCH: 'false',
 		CLAUDE_CODE_AUTO_COMPACT_WINDOW: '262144',
 	},
 	credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
@@ -1910,9 +1934,19 @@ export function claudeCodeModelArg(provider: AiProvider, model: string): string 
 /**
  * True for the providers that route Claude Code at a THIRD-PARTY
  * Anthropic-compatible endpoint (DeepSeek, Z.ai, Kimi) rather than Anthropic's
- * own API — identified by a `staticEnv.ANTHROPIC_BASE_URL` override.
+ * own API — identified by a `staticEnv.ANTHROPIC_BASE_URL` override — plus the
+ * local runners, which reach a custom endpoint carried on the credential.
  *
- * For these, the run's selected model is the single model that endpoint serves,
+ * In other words: Claude Code against anything that is not first-party
+ * Anthropic. Two consumers read it, and both want exactly that set.
+ *
+ * **Tool search.** {@link CLAUDE_CODE_CUSTOM_ENDPOINT_ENV} is applied to these
+ * runs so the full tool list stays visible rather than being deferred behind the
+ * CLI's search tool, which the models behind these endpoints do not drive
+ * reliably.
+ *
+ * **Derived models.** For these, the run's selected model is the single model
+ * that endpoint serves,
  * so the runtime's *derived* models — the Stop-hook completeness judge and the
  * Claude Code subagent default — should track the selected model instead of a
  * hardcoded constant. The constant goes stale the moment the provider ships a

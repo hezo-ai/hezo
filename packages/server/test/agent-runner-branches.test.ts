@@ -167,6 +167,47 @@ describe('buildProviderEnv', () => {
 		expect(env).toContain('ANTHROPIC_AUTH_TOKEN=ds-key');
 	});
 
+	it('disables Claude Code tool search on every non-Anthropic endpoint, and only there', () => {
+		// Left at the CLI default, a large tool surface is swapped for a search tool
+		// and the MCP tools are deferred out of the model's visible list - which
+		// reads to the agent as a connector that is connected but has no tools.
+		// Anthropic keeps tool search: Claude drives it reliably and pays no schema
+		// cost for the tools it never loads.
+		const envFor = (provider: AiProvider, baseUrl: string | null = null) =>
+			buildProviderEnv(provider, {
+				value: 'k',
+				authMethod: AiAuthMethod.ApiKey,
+				baseUrl,
+				runtime: null,
+			});
+
+		for (const provider of [AiProvider.DeepSeek, AiProvider.ZAi, AiProvider.Kimi]) {
+			expect(envFor(provider)).toContain('ENABLE_TOOL_SEARCH=false');
+		}
+		// The local runners carry no staticEnv at all - their endpoint rides on the
+		// credential - so a staticEnv-only rule would have silently skipped both.
+		for (const provider of [AiProvider.Ollama, AiProvider.LmStudio]) {
+			expect(envFor(provider, 'http://127.0.0.1:11434')).toContain('ENABLE_TOOL_SEARCH=false');
+		}
+
+		expect(envFor(AiProvider.Anthropic).some((e) => e.startsWith('ENABLE_TOOL_SEARCH='))).toBe(
+			false,
+		);
+	});
+
+	it('sets ENABLE_TOOL_SEARCH once for Moonshot, which used to carry its own copy', () => {
+		// The setting has one home now. Two would drift the moment one side moved.
+		const env = buildProviderEnv(AiProvider.Kimi, {
+			value: 'kimi-key',
+			authMethod: AiAuthMethod.ApiKey,
+			baseUrl: null,
+			runtime: null,
+		});
+		expect(env.filter((e) => e === 'ENABLE_TOOL_SEARCH=false')).toHaveLength(1);
+		// Moonshot's other documented setting stays on its own binding.
+		expect(env).toContain('CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144');
+	});
+
 	it('emits the Moonshot staticEnv + quiet env for Kimi (Claude Code runtime)', () => {
 		const env = buildProviderEnv(AiProvider.Kimi, {
 			value: 'kimi-key',

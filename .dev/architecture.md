@@ -2830,6 +2830,24 @@ below). Prime Agent is never a default. Ollama and LM Studio therefore offer exa
 each and the UI omits the picker for them — their Advanced disclosure holds only the optional
 API key.
 
+**Claude Code against a non-Anthropic endpoint turns tool search off.** `buildProviderEnv`
+stamps `CLAUDE_CODE_CUSTOM_ENDPOINT_ENV` (`ENABLE_TOOL_SEARCH=false`) whenever
+`claudeCodeProviderUsesCustomEndpoint` holds - DeepSeek, Z.ai, Moonshot-on-Claude-Code, Ollama
+and LM Studio. Left at the CLI default, a large tool surface is swapped for a search tool and
+the MCP tools are deferred: present to the session, absent from the list the model can see,
+which reads to an agent as a connector that is connected but has no tools. Anthropic is
+excluded deliberately - Claude drives the search tool reliably and pays no schema cost for
+tools it never loads. Applied centrally rather than per-binding `staticEnv` because the local
+runners carry no `staticEnv` at all, so a `staticEnv`-only rule would silently skip both.
+
+**This setting is not yet confirmed against the pinned Claude Code build.** `ENABLE_TOOL_SEARCH`
+came from Moonshot's vendor docs, and a wrong variable name fails silently. It also carries a
+real cost in the other direction: with search off, every tool schema is resident in context on
+every request, which does not scale indefinitely with the connector count. The per-server tool
+count in the `[session]` banner is what settles both questions from a run log - a non-zero
+count for a connector that previously reported zero is the confirmation; there is no other
+evidence that this took effect.
+
 **Because the runtime is per credential, it must be resolved from the credential row, never
 from the provider.** `buildProviderEnv` composes from `providerRuntimeBinding(provider,
 resolvedRuntime)` — reading the adapter's own fields would build the *default* runtime's env

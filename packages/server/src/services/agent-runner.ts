@@ -4,6 +4,7 @@ import {
 	AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
+	CLAUDE_CODE_CUSTOM_ENDPOINT_ENV,
 	CLAUDE_CODE_QUIET_ENV,
 	CommentContentType,
 	ContainerStatus,
@@ -287,6 +288,15 @@ export function buildProviderEnv(
 	const out: string[] = [];
 	if (runtime === AgentRuntime.ClaudeCode) {
 		for (const [key, value] of Object.entries(CLAUDE_CODE_QUIET_ENV)) {
+			out.push(`${key}=${value}`);
+		}
+	}
+	// Claude Code against anything other than first-party Anthropic. Covers the
+	// third-party gateways and the local runners alike, which is why it keys off
+	// the predicate rather than the per-provider `staticEnv`: Ollama and LM Studio
+	// have no `staticEnv` to carry it.
+	if (claudeCodeProviderUsesCustomEndpoint(provider, runtime)) {
+		for (const [key, value] of Object.entries(CLAUDE_CODE_CUSTOM_ENDPOINT_ENV)) {
 			out.push(`${key}=${value}`);
 		}
 	}
