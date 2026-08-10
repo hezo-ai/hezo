@@ -129,6 +129,7 @@ export function useResolveApproval() {
 
 export interface HireProposalEdits {
 	title?: string;
+	human_name?: string;
 	role_description?: string;
 	system_prompt?: string;
 	reports_to?: string;

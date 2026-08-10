@@ -10,6 +10,8 @@ import { Input } from './ui/input';
 
 export interface HireFormValues {
 	title: string;
+	/** What the new teammate will be called. Blank leaves the naming to the Captain. */
+	humanName: string;
 	roleDesc: string;
 	systemPrompt: string;
 	/** Manager's slug this agent reports to ('' = no manager). */
@@ -61,6 +63,14 @@ export function HireAgentForm({ values, onChange, slug, managerOptions = [] }: H
 					required
 					placeholder="e.g. Engineer, Data Scientist"
 				/>
+				<Input
+					label="Name (optional)"
+					value={values.humanName}
+					onChange={(e) => set('humanName', e.target.value)}
+					placeholder="e.g. Max"
+				/>
+			</div>
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-[500px]">
 				<Input
 					label="Role description"
 					value={values.roleDesc}

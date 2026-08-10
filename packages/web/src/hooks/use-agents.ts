@@ -223,6 +223,7 @@ export function useOnboardAgent(projectId: string) {
 	return useMutation({
 		mutationFn: (data: {
 			title: string;
+			human_name?: string;
 			role_description?: string;
 			system_prompt?: string;
 			reports_to?: string;
