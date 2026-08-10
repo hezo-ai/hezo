@@ -1,4 +1,12 @@
 {
+	"agents.identity.avatarGenerate": "新しいアバターを生成",
+	"agents.identity.avatarHelp": "アバターは Hezo が生成します。アップロードする画像はありません。",
+	"agents.identity.avatarPick": "1つ選んで保存してください。",
+	"agents.identity.avatarShuffle": "ほかに3つ表示",
+	"agents.identity.help": "このエージェントがプロジェクトやメンションでどう表示されるかです。",
+	"agents.identity.nameHelp": "役割の代わりにどこでも表示されます。空にすると役割に戻ります。",
+	"agents.identity.nameLabel": "名前",
+	"agents.identity.title": "プロフィール",
 	"attachments.category.archives": "アーカイブ：",
 	"attachments.category.audio": "音声：",
 	"attachments.category.documents": "ドキュメント：",

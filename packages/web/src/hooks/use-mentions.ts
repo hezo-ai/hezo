@@ -87,6 +87,7 @@ export interface InstanceResolvedTask {
 export interface InstanceResolvedAgent {
 	slug: string;
 	title: string;
+	human_name?: string | null;
 	project_slug: string;
 }
 

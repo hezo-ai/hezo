@@ -19,7 +19,7 @@ import {
 	useAllVisibleProjects,
 	useHqProject,
 } from '../../hooks/use-projects';
-import { defaultAvatarForSlug } from '../../lib/default-avatars';
+import { agentAvatarUrl } from '../../lib/agent-avatar';
 
 function formatMoney(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`;
@@ -167,7 +167,11 @@ function NeedsYouAction({ approval }: { approval: Approval }) {
 						size="sm"
 						initials={getInitials(approval.requested_by_name)}
 						imageUrl={
-							approval.requested_by_icon_url ?? defaultAvatarForSlug(approval.requested_by_slug)
+							approval.requested_by_icon_url ??
+							agentAvatarUrl({
+								slug: approval.requested_by_slug,
+								avatar_spec: approval.requested_by_avatar_spec,
+							})
 						}
 					/>
 				) : undefined
@@ -198,7 +202,10 @@ function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
 				<Avatar
 					size="sm"
 					initials={getInitials(mention.author_display_name)}
-					imageUrl={mention.author_icon_url ?? defaultAvatarForSlug(mention.author_slug)}
+					imageUrl={
+						mention.author_icon_url ??
+						agentAvatarUrl({ slug: mention.author_slug, avatar_spec: mention.author_avatar_spec })
+					}
 				/>
 			}
 			project={mention.project_slug}

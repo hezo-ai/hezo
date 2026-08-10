@@ -32,6 +32,18 @@ export const FIXED_REPORTS_TO_SLUGS = [
 export function hasFixedReportsTo(slug: string): boolean {
 	return (FIXED_REPORTS_TO_SLUGS as readonly string[]).includes(slug);
 }
+
+/**
+ * Roles addressed only by their role, never by a human name: the Captain and the
+ * HQ singletons. There is one of each and the role *is* who they are.
+ *
+ * A policy check rather than a schema constraint - `member_agents.human_name`
+ * exists for every agent, so naming these later is a one-line change here. The
+ * server enforces it on every write path; the settings form hides the field.
+ */
+export function isNameOnlyRole(slug: string): boolean {
+	return (FIXED_REPORTS_TO_SLUGS as readonly string[]).includes(slug);
+}
 /**
  * The single instance-level coordination project, living in the HQ (default)
  * team. There is exactly one across the instance — it hosts the CEO + Coach and

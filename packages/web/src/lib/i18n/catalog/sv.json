@@ -1,4 +1,12 @@
 {
+	"agents.identity.avatarGenerate": "Skapa ny avatar",
+	"agents.identity.avatarHelp": "Avatarer skapas av Hezo. Det finns ingen bild att ladda upp.",
+	"agents.identity.avatarPick": "Välj en och spara.",
+	"agents.identity.avatarShuffle": "Visa tre till",
+	"agents.identity.help": "Hur den här agenten visas i projektet och i omnämnanden.",
+	"agents.identity.nameHelp": "Visas överallt i stället för rollen. Töm fältet för att gå tillbaka till rollen.",
+	"agents.identity.nameLabel": "Namn",
+	"agents.identity.title": "Identitet",
 	"attachments.category.archives": "Arkiv:",
 	"attachments.category.audio": "Ljud:",
 	"attachments.category.documents": "Dokument:",

@@ -47,6 +47,26 @@ export const AgentEffort = {
 } as const;
 export type AgentEffort = (typeof AgentEffort)[keyof typeof AgentEffort];
 
+/**
+ * Which feature set an agent's generated avatar draws from. Not an identity
+ * claim about the agent - purely which pixel-art hair, face and build the
+ * generator composes. `Neutral` means "not stated", and the generator resolves
+ * it from the avatar seed so the face is still stable.
+ *
+ * Marketplace roles ship an explicit value; a name-derived guess
+ * (`inferGender`) is only used for a bespoke hire nobody authored.
+ */
+export const AgentGender = {
+	Female: 'f',
+	Male: 'm',
+	Neutral: 'n',
+} as const;
+export type AgentGender = (typeof AgentGender)[keyof typeof AgentGender];
+
+export function isAgentGender(value: unknown): value is AgentGender {
+	return value === 'f' || value === 'm' || value === 'n';
+}
+
 export const EFFORT_ORDER: Record<AgentEffort, number> = {
 	[AgentEffort.Minimal]: 0,
 	[AgentEffort.Low]: 1,
@@ -759,12 +779,14 @@ export interface AdminMentionItem {
 	author_display_name: string;
 	author_slug: string | null;
 	/**
-	 * Freshly-signed avatar URL for the author (their `user_icons` image when a
-	 * human, its `agent_icons` image when an agent), or null when neither has an
-	 * upload. The built-in CEO/Coach default is resolved client-side from
-	 * `author_slug`; this only carries the upload.
+	 * Freshly-signed avatar URL for a human author's `user_icons` image, or null.
+	 * An agent author has none - its face is generated client-side from
+	 * `author_avatar_spec`, and the built-in CEO/Coach portraits resolve from
+	 * `author_slug`.
 	 */
 	author_icon_url: string | null;
+	/** The agent author's avatar spec (see `pixel-avatar.ts`), absent for a human. */
+	author_avatar_spec?: unknown;
 	created_at: string;
 	read_at: string | null;
 }

@@ -1,4 +1,12 @@
 {
+	"agents.identity.avatarGenerate": "Nieuwe avatar genereren",
+	"agents.identity.avatarHelp": "Avatars worden door Hezo gegenereerd. Er is geen afbeelding om te uploaden.",
+	"agents.identity.avatarPick": "Kies er een en sla op.",
+	"agents.identity.avatarShuffle": "Toon drie andere",
+	"agents.identity.help": "Hoe deze agent in het project en in vermeldingen verschijnt.",
+	"agents.identity.nameHelp": "Wordt overal getoond in plaats van de rol. Maak het veld leeg om terug te vallen op de rol.",
+	"agents.identity.nameLabel": "Naam",
+	"agents.identity.title": "Identiteit",
 	"attachments.category.archives": "Archieven:",
 	"attachments.category.audio": "Audio:",
 	"attachments.category.documents": "Documenten:",

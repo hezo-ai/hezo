@@ -1,4 +1,12 @@
 {
+	"agents.identity.avatarGenerate": "Neues Avatarbild erzeugen",
+	"agents.identity.avatarHelp": "Avatare werden von Hezo erzeugt. Es gibt kein Bild zum Hochladen.",
+	"agents.identity.avatarPick": "Wählen Sie eines aus und speichern Sie.",
+	"agents.identity.avatarShuffle": "Drei weitere anzeigen",
+	"agents.identity.help": "Wie dieser Agent im Projekt und in Erwähnungen erscheint.",
+	"agents.identity.nameHelp": "Wird überall anstelle der Rolle angezeigt. Leeren Sie das Feld, um zur Rolle zurückzukehren.",
+	"agents.identity.nameLabel": "Name",
+	"agents.identity.title": "Identität",
 	"attachments.category.archives": "Archive:",
 	"attachments.category.audio": "Audio:",
 	"attachments.category.documents": "Dokumente:",

@@ -353,7 +353,7 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 		expect(archivedRows.some((m) => m.comment_id === readCommentId)).toBe(false);
 	});
 
-	it('carries the authoring agent’s signed avatar URL, and null when it has no upload', async () => {
+	it('carries the authoring agent’s avatar spec so the inbox can draw its face', async () => {
 		const taskIdLocal = await insertTask(captainId, 'Mention avatar test');
 		const { token: agentToken } = await mintAgentToken(
 			db,
@@ -362,37 +362,21 @@ describe('GET /teams/:teamId/inbox/mentions', () => {
 			teamId,
 			taskIdLocal,
 		);
-		const noIconComment = await mcpComment(agentToken, taskIdLocal, '@admin before any avatar.');
+		const commentId = await mcpComment(agentToken, taskIdLocal, '@admin take a look.');
 
-		const before = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+		const res = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
 			headers: authHeader(token),
 		});
-		const beforeRows = (await before.json()).data as Array<{
+		const rows = (await res.json()).data as Array<{
 			comment_id: string;
 			author_icon_url: string | null;
+			author_avatar_spec: { seed: string } | null;
 		}>;
-		expect(beforeRows.find((m) => m.comment_id === noIconComment)?.author_icon_url).toBeNull();
-
-		// Give the authoring agent an uploaded avatar; the feed should sign a URL for it.
-		await db.query(
-			`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height)
-			 VALUES ($1, 'image/png', $2, 3, 512, 512)`,
-			[architectId, Buffer.from([0x89, 0x50, 0x4e])],
-		);
-		const iconComment = await mcpComment(agentToken, taskIdLocal, '@admin now with an avatar.');
-
-		const after = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
-			headers: authHeader(token),
-		});
-		const afterRows = (await after.json()).data as Array<{
-			comment_id: string;
-			author_icon_url: string | null;
-		}>;
-		const url = afterRows.find((m) => m.comment_id === iconComment)?.author_icon_url;
-		expect(url).toContain(`/api/agents/${architectId}/icon`);
-		expect(url).toContain('sig=');
-
-		await db.query('DELETE FROM agent_icons WHERE member_id = $1', [architectId]);
+		const row = rows.find((m) => m.comment_id === commentId);
+		// An agent has no uploaded image to sign a URL for - its sprite is generated
+		// from the spec the row carries.
+		expect(row?.author_icon_url).toBeNull();
+		expect(row?.author_avatar_spec).toMatchObject({ seed: expect.any(String) });
 	});
 });
 

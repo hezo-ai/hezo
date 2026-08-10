@@ -305,6 +305,17 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
+	set_agent_name: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ updated: true, name }` where `name` is the stored name or null when cleared, or `{ error }` (name taken, reserved, malformed, a name-only role, or agent not in team).',
+		auth: 'The Captain of that team, or the CEO.',
+	},
+	generate_agent_avatar: {
+		category: 'Agent prompts & context',
+		returns: '`{ updated: true }`, or `{ error }` (agent not in team).',
+		auth: 'The Captain of that team, or the CEO.',
+	},
 	set_agent_summary: {
 		category: 'Agent prompts & context',
 		returns:

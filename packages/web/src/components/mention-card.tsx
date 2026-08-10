@@ -1,7 +1,7 @@
 import type { AdminMentionItem } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useMarkMentionRead } from '../hooks/use-admin-mentions';
-import { defaultAvatarForSlug } from '../lib/default-avatars';
+import { agentAvatarUrl } from '../lib/agent-avatar';
 import { formatDateTime, formatRelativeTime } from '../lib/format-date';
 import { Avatar, getInitials } from './ui/avatar';
 import { Badge } from './ui/badge';
@@ -73,7 +73,10 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 				<Avatar
 					size="sm"
 					initials={getInitials(mention.author_display_name)}
-					imageUrl={mention.author_icon_url ?? defaultAvatarForSlug(mention.author_slug)}
+					imageUrl={
+						mention.author_icon_url ??
+						agentAvatarUrl({ slug: mention.author_slug, avatar_spec: mention.author_avatar_spec })
+					}
 					className="mr-1.5 align-middle"
 				/>
 				<span className={`align-middle ${unread ? 'font-semibold' : 'font-medium'}`}>{author}</span>{' '}

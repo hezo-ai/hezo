@@ -6,6 +6,7 @@ import {
 	DocumentType,
 	type MarketplaceTeamDef,
 	MemberType,
+	makeAvatarSpec,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { withTransaction } from '../lib/sql';
@@ -339,18 +340,28 @@ async function insertBuiltinAgent(
 	);
 	const memberId = memberResult.rows[0].id;
 
+	// The Captain is addressed by role, never by a human name, but it still gets a
+	// face - seeded from its own member id so every team's Captain looks different.
+	const avatarSpec = makeAvatarSpec({
+		seed: memberId,
+		gender: 'n',
+		roleSlug: config.slug,
+		roleTitle: config.title,
+	});
+
 	await db.query(
-		`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
-		                            team_context,
+		`INSERT INTO member_agents (id, agent_type_id, title, slug, avatar_spec, role_description,
+		                            summary, team_context,
 		                            default_effort, heartbeat_interval_min, run_timeout_min,
 		                            monthly_budget_cents, daily_budget_cents, weekly_budget_cents,
 		                            touches_code)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, $13, $14)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::agent_effort, $10, $11, $12, $13, $14, $15)`,
 		[
 			memberId,
 			config.agentTypeId,
 			config.title,
 			config.slug,
+			JSON.stringify(avatarSpec),
 			config.roleDescription,
 			config.defaultSummary,
 			config.teamContext,
@@ -534,6 +545,11 @@ export async function applyMarketplaceTeamToTeam(
 	const roster: RosterAgentDef[] = teamDef.roster.map((a) => ({
 		slug: a.slug,
 		title: a.title,
+		// The team's people come with it: the same name and face in every project
+		// provisioned from this team.
+		human_name: a.human_name,
+		gender: a.gender,
+		avatar_spec: a.avatar_spec,
 		role_description: a.role_description,
 		summary: a.summary,
 		team_context: a.team_context,
@@ -645,6 +661,10 @@ export async function applyMarketplaceRoleToTeam(
 	const def: RosterAgentDef = {
 		slug: role.slug,
 		title: role.title,
+		// A role pulled out of a team on its own still brings its identity across.
+		human_name: role.human_name,
+		gender: role.gender,
+		avatar_spec: role.avatar_spec,
 		role_description: role.role_description,
 		summary: role.summary,
 		team_context: role.team_context,

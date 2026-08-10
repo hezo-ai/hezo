@@ -28,6 +28,7 @@ export interface Approval {
 	 * resolved client-side from `requested_by_slug`; this only carries the upload.
 	 */
 	requested_by_icon_url: string | null;
+	requested_by_avatar_spec?: unknown;
 	payload_member_name: string | null;
 	payload_member_slug: string | null;
 	payload_project_name: string | null;
@@ -128,6 +129,7 @@ export function useResolveApproval() {
 
 export interface HireProposalEdits {
 	title?: string;
+	human_name?: string;
 	role_description?: string;
 	system_prompt?: string;
 	reports_to?: string;

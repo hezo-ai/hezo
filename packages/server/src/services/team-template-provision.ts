@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto';
-import { DocumentType, MemberType } from '@hezo/shared';
+import {
+	type AgentGender,
+	type AvatarSpec,
+	DocumentType,
+	inferGender,
+	MemberType,
+	makeAvatarSpec,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { deriveSkillSummary } from '../lib/skill-summary';
 import { toSlug } from '../lib/slug';
@@ -58,6 +65,15 @@ interface AgentTypeRow {
 export interface RosterAgentDef {
 	slug: string;
 	title: string;
+	/**
+	 * The role's shipped human name, or null for a role that stays name-only.
+	 * Marketplace roles carry one; DB team templates do not, and their agents are
+	 * named later by the CEO/Captain during the team setup pass.
+	 */
+	human_name?: string | null;
+	gender?: AgentGender | null;
+	/** The role's shipped avatar. Generated per member when the source has none. */
+	avatar_spec?: AvatarSpec | null;
 	role_description: string;
 	summary: string;
 	team_context: string;
@@ -137,6 +153,12 @@ function agentTypeRowToRosterDef(row: AgentTypeRow): RosterAgentDef {
  * version update). Deliberately leaves operational tuning (effort, budgets,
  * heartbeat, run timeout, touches_code) as the admin set it; only the
  * template-authored prose is refreshed.
+ *
+ * Identity (`human_name`, `gender`, `avatar_spec`) is left alone for the same
+ * reason: a project that renamed an agent or regenerated its face has made that
+ * agent its own, and a team version bump must not rename someone the admin has
+ * been working with. New projects still get the team's shipped identity, since
+ * that path inserts rather than refreshes.
  */
 async function refreshRosterAgent(
 	db: Db,
@@ -151,7 +173,14 @@ async function refreshRosterAgent(
 		 WHERE id = $5`,
 		[def.title, def.role_description, def.summary ?? '', def.team_context ?? '', memberId],
 	);
-	await db.query(`UPDATE members SET display_name = $1 WHERE id = $2`, [def.title, memberId]);
+	// Mirrors whatever the agent is displayed as: its own name once it has one,
+	// otherwise the (possibly refreshed) role.
+	await db.query(
+		`UPDATE members SET display_name = COALESCE(NULLIF(
+		   (SELECT human_name FROM member_agents WHERE id = $2), ''), $1)
+		 WHERE id = $2`,
+		[def.title, memberId],
+	);
 	await upsertDocument(db, wsManager, {
 		scope: { type: DocumentType.AgentSystemPrompt, teamId, memberAgentId: memberId },
 		content: def.system_prompt,
@@ -210,28 +239,43 @@ export async function insertRosterAgents(
 			continue;
 		}
 
+		const humanName = def.human_name?.trim() || null;
 		const memberResult = await db.query<{ id: string }>(
 			`INSERT INTO members (team_id, member_type, display_name)
 			 VALUES ($1, $2, $3)
 			 RETURNING id`,
-			[teamId, MemberType.Agent, def.title],
+			[teamId, MemberType.Agent, humanName ?? def.title],
 		);
 		const memberId = memberResult.rows[0].id;
 		slugToMemberId.set(def.slug, memberId);
 		createdSlugs.push(def.slug);
 
+		const gender = def.gender ?? inferGender(humanName);
+		// A source with no authored avatar (a DB team template) still gets one, seeded
+		// from the member id so it is unique to this agent rather than shared by every
+		// project provisioned from the same template.
+		const avatarSpec =
+			def.avatar_spec ??
+			makeAvatarSpec({ seed: memberId, gender, roleSlug: def.slug, roleTitle: def.title });
+
 		await db.query(
-			`INSERT INTO member_agents (id, agent_type_id, title, slug, role_description, summary,
+			`INSERT INTO member_agents (id, agent_type_id, title, slug, human_name, human_name_slug,
+			                            gender, avatar_spec, role_description, summary,
 			                            team_context,
 			                            default_effort, heartbeat_interval_min, run_timeout_min,
 			                            monthly_budget_cents, daily_budget_cents, weekly_budget_cents,
 			                            touches_code)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::agent_effort, $9, $10, $11, $12, $13, $14)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::agent_effort, $13, $14, $15,
+			         $16, $17, $18)`,
 			[
 				memberId,
 				def.agent_type_id,
 				def.title,
 				def.slug,
+				humanName,
+				humanName ? toSlug(humanName) : null,
+				gender,
+				JSON.stringify(avatarSpec),
 				def.role_description,
 				def.summary ?? '',
 				def.team_context ?? '',

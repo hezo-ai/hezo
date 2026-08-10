@@ -18,6 +18,7 @@ import type { ExecutionLockState } from '../../hooks/use-execution-locks';
 import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
 import { TASK_RUN_STATUS_META } from '../../lib/status-meta';
+import { agentDisplayName } from '../agent-identity-tooltip';
 import { AgentLink } from '../agent-link';
 import { AgentStatusLabel } from '../agent-status-label';
 import { TaskStatusBadge } from '../task-status-badge';
@@ -187,7 +188,7 @@ export function TaskSidebar({
 									testId="task-assignee-link"
 								>
 									<AgentStatusLabel
-										name={assignedAgent.title}
+										name={agentDisplayName(assignedAgent)}
 										runtimeStatus={AgentRuntimeStatus.Idle}
 										badge={assigneeRunBadge}
 										className="min-w-0"
@@ -214,7 +215,7 @@ export function TaskSidebar({
 										testId="task-assignee-link"
 									>
 										<AgentStatusLabel
-											name={assignedAgent.title}
+											name={agentDisplayName(assignedAgent)}
 											runtimeStatus={AgentRuntimeStatus.Idle}
 											className="min-w-0"
 										/>
@@ -253,7 +254,10 @@ export function TaskSidebar({
 												a.id === task.assignee_id ? 'bg-surface-2 font-medium' : ''
 											}`}
 										>
-											<AgentStatusLabel name={a.title} runtimeStatus={AgentRuntimeStatus.Idle} />
+											<AgentStatusLabel
+												name={agentDisplayName(a)}
+												runtimeStatus={AgentRuntimeStatus.Idle}
+											/>
 										</button>
 									))}
 								</div>
