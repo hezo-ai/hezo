@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Agent } from '../../hooks/use-agents';
 import type { CommentSkeleton } from '../../hooks/use-comments';
 import type { ExecutionLockState } from '../../hooks/use-execution-locks';
+import { usePanelPlacement } from '../../hooks/use-panel-placement';
 import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
 import { TASK_RUN_STATUS_META } from '../../lib/status-meta';
@@ -36,6 +37,9 @@ const EFFORT_LEVELS: { value: AgentEffort; label: string }[] = [
 	{ value: AgentEffort.High, label: 'High' },
 	{ value: AgentEffort.Max, label: 'Max (ultrathink)' },
 ];
+
+/** The assignee dropdown's former `max-h-48`, now the placement clamp's design cap. */
+const ASSIGNEE_PANEL_MAX_HEIGHT_PX = 192;
 
 interface TaskSidebarProps {
 	task: Task;
@@ -100,6 +104,17 @@ export function TaskSidebar({
 	const assigneeOptions = agents
 		?.filter((a) => a.admin_status !== 'disabled')
 		.filter((a) => !isInternalProject || a.slug === CAPTAIN_AGENT_SLUG);
+
+	const {
+		panelRef: assigneePanelRef,
+		side: assigneeSide,
+		sideClassName: assigneeSideClass,
+		style: assigneePanelStyle,
+	} = usePanelPlacement<HTMLDivElement>(assigneeRef, {
+		open: assigneeOpen,
+		preferredMaxHeight: ASSIGNEE_PANEL_MAX_HEIGHT_PX,
+		deps: [assigneeOptions],
+	});
 
 	// Reassignment is blocked whenever the task carries any non-terminal run —
 	// that mirrors the server, which 409s on a queued run just as it does on a
@@ -241,7 +256,12 @@ export function TaskSidebar({
 								</button>
 							</div>
 							{assigneeOpen && (
-								<div className="absolute left-0 right-0 top-full mt-1 z-20 rounded-md border border-border bg-surface shadow-md max-h-48 overflow-y-auto">
+								<div
+									ref={assigneePanelRef}
+									className={`absolute left-0 right-0 z-20 ${assigneeSideClass} rounded-md border border-border bg-surface shadow-md overflow-y-auto`}
+									style={assigneePanelStyle}
+									data-placement={assigneeSide}
+								>
 									{assigneeOptions?.map((a) => (
 										<button
 											type="button"
