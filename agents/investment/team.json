@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 11,
+			"notes": "Every role now ships a fixed human name and a generated pixel avatar, so the same teammate appears in every project provisioned from this team. A project can rename an agent or regenerate its avatar without affecting the team."
+		},
+		{
 			"version": 10,
 			"notes": "Captain's hire and description-maintenance guidance now names the required substitution variables through a placeholder rendered from the validator's own list, so the names can no longer be substituted away before the Captain reads them."
 		},
@@ -109,6 +113,13 @@
 		{
 			"slug": "market-researcher",
 			"title": "Market Researcher",
+			"human_name": "Ravi",
+			"gender": "m",
+			"avatar_spec": {
+				"seed": "investment:ravi",
+				"gender": "m",
+				"style": "research"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 1,
 			"role_description": "Screens the market, runs sector and thematic research, and sources new stocks and categories to watch.",
@@ -125,6 +136,13 @@
 		{
 			"slug": "equity-analyst",
 			"title": "Equity Analyst",
+			"human_name": "Elena",
+			"gender": "f",
+			"avatar_spec": {
+				"seed": "investment:elena",
+				"gender": "f",
+				"style": "research"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 2,
 			"role_description": "Runs fundamental deep-dives and valuation, and maintains the per-stock analysis document for each watched stock.",
@@ -141,6 +159,13 @@
 		{
 			"slug": "catalyst-monitor",
 			"title": "Catalyst Monitor",
+			"human_name": "Niko",
+			"gender": "m",
+			"avatar_spec": {
+				"seed": "investment:niko",
+				"gender": "m",
+				"style": "research"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 3,
 			"role_description": "Monitors SEC/EDGAR filings, press releases, news, and industry trends daily, updates the stock documents, and notifies the admin.",
@@ -157,6 +182,13 @@
 		{
 			"slug": "risk-verifier",
 			"title": "Risk Verifier",
+			"human_name": "Clara",
+			"gender": "f",
+			"avatar_spec": {
+				"seed": "investment:clara",
+				"gender": "f",
+				"style": "research"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 4,
 			"role_description": "Verification gate for analysis — challenges every thesis, verifies claims and citations, and tracks portfolio-level risk before analysis is presented.",
@@ -173,6 +205,13 @@
 		{
 			"slug": "report-writer",
 			"title": "Report Writer",
+			"human_name": "Jonas",
+			"gender": "m",
+			"avatar_spec": {
+				"seed": "investment:jonas",
+				"gender": "m",
+				"style": "writer"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 5,
 			"role_description": "Produces the periodic portfolio and watchlist review reports and maintains the portfolio document.",

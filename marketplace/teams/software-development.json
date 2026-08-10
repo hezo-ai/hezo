@@ -79,9 +79,13 @@
 		"testing",
 		"security review"
 	],
-	"version": 15,
-	"content_hash": "89a52abcbc454af3363b1f37735e30d411708700f7c158af3da0a89d9748c4cf",
+	"version": 16,
+	"content_hash": "5975124ac1bd88da53f1bf4690a1ea80c88679a27a80abf71c85991ec5201ace",
 	"changelog": [
+		{
+			"version": 16,
+			"notes": "Every role now ships a fixed human name and a generated pixel avatar, so the same teammate appears in every project provisioned from this team. A project can rename an agent or regenerate its avatar without affecting the team."
+		},
 		{
 			"version": 15,
 			"notes": "Engineer, QA, Architect, DevOps and Security roles must build the planned mechanism once and never invent a fallback path - if the designated mechanism fails, fail loudly and ask the admin rather than quietly doing it another way. Captain's hire and description-maintenance guidance now names the required substitution variables through a placeholder rendered from the validator's own list, so the names can no longer be substituted away before the Captain reads them."
@@ -151,6 +155,13 @@
 		{
 			"slug": "architect",
 			"title": "Architect",
+			"human_name": "Ada",
+			"gender": "f",
+			"avatar_spec": {
+				"seed": "software-development:ada",
+				"gender": "f",
+				"style": "engineering"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 1,
 			"default_effort": "max",
@@ -168,6 +179,13 @@
 		{
 			"slug": "product-lead",
 			"title": "Product Lead",
+			"human_name": "Leo",
+			"gender": "m",
+			"avatar_spec": {
+				"seed": "software-development:leo",
+				"gender": "m",
+				"style": "lead"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 2,
 			"default_effort": "high",
@@ -185,6 +203,13 @@
 		{
 			"slug": "engineer",
 			"title": "Engineer",
+			"human_name": "Max",
+			"gender": "m",
+			"avatar_spec": {
+				"seed": "software-development:max",
+				"gender": "m",
+				"style": "engineering"
+			},
 			"reports_to_slug": "architect",
 			"sort_order": 3,
 			"default_effort": "medium",
@@ -202,6 +227,13 @@
 		{
 			"slug": "qa-engineer",
 			"title": "QA Engineer",
+			"human_name": "Priya",
+			"gender": "f",
+			"avatar_spec": {
+				"seed": "software-development:priya",
+				"gender": "f",
+				"style": "engineering"
+			},
 			"reports_to_slug": "architect",
 			"sort_order": 4,
 			"default_effort": "high",
@@ -219,6 +251,13 @@
 		{
 			"slug": "security-engineer",
 			"title": "Security Engineer",
+			"human_name": "Omar",
+			"gender": "m",
+			"avatar_spec": {
+				"seed": "software-development:omar",
+				"gender": "m",
+				"style": "security"
+			},
 			"reports_to_slug": "architect",
 			"sort_order": 5,
 			"default_effort": "high",
@@ -236,6 +275,13 @@
 		{
 			"slug": "ui-designer",
 			"title": "UI Designer",
+			"human_name": "Mia",
+			"gender": "f",
+			"avatar_spec": {
+				"seed": "software-development:mia",
+				"gender": "f",
+				"style": "design"
+			},
 			"reports_to_slug": "architect",
 			"sort_order": 6,
 			"default_effort": "medium",
@@ -253,6 +299,13 @@
 		{
 			"slug": "devops-engineer",
 			"title": "DevOps Engineer",
+			"human_name": "Kai",
+			"gender": "m",
+			"avatar_spec": {
+				"seed": "software-development:kai",
+				"gender": "m",
+				"style": "ops"
+			},
 			"reports_to_slug": "architect",
 			"sort_order": 7,
 			"default_effort": "medium",
@@ -270,6 +323,13 @@
 		{
 			"slug": "marketing-lead",
 			"title": "Marketing Lead",
+			"human_name": "Lena",
+			"gender": "f",
+			"avatar_spec": {
+				"seed": "software-development:lena",
+				"gender": "f",
+				"style": "marketing"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 8,
 			"default_effort": "medium",
@@ -287,6 +347,13 @@
 		{
 			"slug": "researcher",
 			"title": "Researcher",
+			"human_name": "Theo",
+			"gender": "m",
+			"avatar_spec": {
+				"seed": "software-development:theo",
+				"gender": "m",
+				"style": "research"
+			},
 			"reports_to_slug": "captain",
 			"sort_order": 9,
 			"default_effort": "high",

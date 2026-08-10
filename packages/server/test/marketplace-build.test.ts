@@ -28,6 +28,9 @@ function manifest(overrides: Partial<TeamManifest> = {}): TeamManifest {
 			{
 				slug: 'worker',
 				title: 'Worker',
+				human_name: 'Wanda',
+				gender: 'f',
+				avatar_spec: { seed: 'demo:wanda', gender: 'f', style: 'default' },
 				reports_to_slug: 'captain',
 				sort_order: 1,
 				role_description: 'Does the work.',
@@ -141,6 +144,39 @@ describe('marketplace build helpers', () => {
 		expect(next.keywords).toEqual(['completely', 'different', 'terms']);
 		expect(next.version).toBe(prev.version);
 		expect(next.content_hash).toBe(prev.content_hash);
+	});
+
+	it('carries each role identity into the built def', () => {
+		const def = buildTeamDef(manifest(), promptFor, null);
+		expect(def.roster[0]).toMatchObject({
+			human_name: 'Wanda',
+			gender: 'f',
+			avatar_spec: { seed: 'demo:wanda', gender: 'f', style: 'default' },
+		});
+	});
+
+	it('bumps the version when a role is renamed or its avatar changes', () => {
+		// A shipped name is content, not metadata: an instance already on this team
+		// should be offered the update, the same as for a prompt change.
+		const prev = buildTeamDef(manifest(), promptFor, null);
+		const base = manifest();
+		const renamed = buildTeamDef(
+			manifest({ roster: [{ ...base.roster[0], human_name: 'Winifred' }] }),
+			promptFor,
+			prev,
+		);
+		expect(renamed.version).toBe(prev.version + 1);
+
+		const reskinned = buildTeamDef(
+			manifest({
+				roster: [
+					{ ...base.roster[0], avatar_spec: { seed: 'demo:other', gender: 'f', style: 'default' } },
+				],
+			}),
+			promptFor,
+			prev,
+		);
+		expect(reskinned.version).toBe(prev.version + 1);
 	});
 
 	it('rejects a keyword list that breaches the marketplace ceilings', () => {
