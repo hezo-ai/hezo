@@ -31,6 +31,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 		},
 		forwardedRef,
 	) {
+		const wrapperRef = useRef<HTMLDivElement>(null);
 		const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 		const setTextareaRef = useCallback(
 			(el: HTMLTextAreaElement | null) => {
@@ -193,7 +194,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 		);
 
 		return (
-			<div className={containerClassName}>
+			<div ref={wrapperRef} className={containerClassName}>
 				<Textarea
 					{...rest}
 					ref={setTextareaRef}
@@ -210,6 +211,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 						highlightedIndex={highlightedIndex}
 						onHoverIndex={setHighlightedIndex}
 						onSelect={handleSelect}
+						anchorRef={wrapperRef}
 					/>
 				)}
 			</div>
