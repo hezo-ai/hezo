@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import {
 	AgentEffort,
+	AgentRuntime,
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
@@ -1497,6 +1498,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						stagedTomlPath = `${getHostSubscriptionRoot(
 							AiProvider.OpenAI,
+							AgentRuntime.Codex,
 							testDataDir,
 							teamId,
 							projectId,
@@ -1582,6 +1584,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						const hostDir = getHostSubscriptionRoot(
 							AiProvider.OpenAI,
+							AgentRuntime.Codex,
 							testDataDir,
 							teamId,
 							projectId,
@@ -1670,6 +1673,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						settingsPath = `${getHostSubscriptionRoot(
 							AiProvider.Google,
+							AgentRuntime.Gemini,
 							testDataDir,
 							teamId,
 							projectId,
@@ -2472,6 +2476,7 @@ describe('runAgent', () => {
 				'pj',
 				runId,
 				AiProvider.OpenAI,
+				AgentRuntime.Codex,
 				{
 					value: validAuthJson,
 					authMethod: AiAuthMethod.Subscription,
@@ -2498,6 +2503,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.OpenAI,
+					AgentRuntime.Codex,
 					{ value: 'sk-x', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
@@ -2510,6 +2516,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Anthropic,
+					AgentRuntime.ClaudeCode,
 					{ value: 'sk-ant', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
@@ -2527,6 +2534,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Anthropic,
+					AgentRuntime.ClaudeCode,
 					{
 						value: 'sk-ant-oat01-token',
 						authMethod: AiAuthMethod.Subscription,
@@ -2550,6 +2558,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Kimi,
+					AgentRuntime.ClaudeCode,
 					{ value: 'sk-kimi', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
@@ -2582,6 +2591,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						stagedFile = `${getHostSubscriptionRoot(
 							AiProvider.OpenAI,
+							AgentRuntime.Codex,
 							testDataDir,
 							teamId,
 							projectId,
@@ -2638,6 +2648,7 @@ describe('runAgent', () => {
 					const runId = containerDir.split('/').pop()!;
 					const hostFile = `${getHostSubscriptionRoot(
 						AiProvider.OpenAI,
+						AgentRuntime.Codex,
 						testDataDir,
 						teamId,
 						projectId,

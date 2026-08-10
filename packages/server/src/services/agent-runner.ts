@@ -16,8 +16,10 @@ import {
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	opencodeModelArg,
+	PRIME_AGENT_QUIET_ENV,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type ProgressActivityKind,
+	primeAgentProviderArgs,
 	providerDirectUpstreamHosts,
 	providerRuntimeBinding,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -125,9 +127,9 @@ import {
 	getContainerSubscriptionRoot as getContainerSubscriptionRootImpl,
 	getHostSubscriptionBase,
 	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
+	RUNTIME_HOME_LAYOUTS,
 	type RuntimeHomeMount,
 	SUBSCRIPTION_DIR_MODE,
-	SUBSCRIPTION_LAYOUTS,
 	type SubscriptionMount as SubscriptionMountImpl,
 	subscriptionFiles,
 } from './runtime-home';
@@ -293,6 +295,11 @@ export function buildProviderEnv(
 			out.push(`${key}=${value}`);
 		}
 	}
+	if (runtime === AgentRuntime.PrimeAgent) {
+		for (const [key, value] of Object.entries(PRIME_AGENT_QUIET_ENV)) {
+			out.push(`${key}=${value}`);
+		}
+	}
 	if (binding?.staticEnv) {
 		// For a third-party Anthropic-compatible provider (DeepSeek/Z.ai/Kimi), the
 		// Claude Code subagent default should track the run's own selected model
@@ -340,7 +347,7 @@ export function buildProviderEnv(
 	return out;
 }
 
-// SUBSCRIPTION_LAYOUTS, SubscriptionMount, and the home-dir helpers live in
+// RUNTIME_HOME_LAYOUTS, SubscriptionMount, and the home-dir helpers live in
 // runtime-home.ts so per-runtime config conventions sit in one place. These
 // re-exports keep the public import surface stable for callers and tests.
 export type SubscriptionMount = SubscriptionMountImpl;
@@ -612,6 +619,7 @@ export async function buildRuntimeInvocation(
 		projectId,
 		resourceId,
 		provider,
+		runtimeType,
 		credential,
 		deps.docker,
 		containerId,
@@ -621,6 +629,7 @@ export async function buildRuntimeInvocation(
 	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
 		? await ensureRuntimeHomeDir(
 				provider,
+				runtimeType,
 				deps.dataDir,
 				runTeamId,
 				projectId,
@@ -786,6 +795,11 @@ export async function buildRuntimeInvocation(
 	}
 	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
+	// Prime Agent selects the upstream by flag, not by env var, so the provider
+	// has to be named on the command line alongside the model.
+	const providerArgs =
+		runtimeType === AgentRuntime.PrimeAgent ? [...primeAgentProviderArgs(provider)] : [];
+
 	// Grok reports no token usage on its stdout stream, so point it at a per-run
 	// debug log (inside the home mount, hence readable host-side) that the runner
 	// parses for cost after the run and then scrubs. Other runtimes report usage
@@ -804,6 +818,7 @@ export async function buildRuntimeInvocation(
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
 		...effortApplication.extraArgs,
+		...providerArgs,
 		...modelArgs,
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
 	];
@@ -1406,7 +1421,9 @@ export async function runAgent(
 	let sshSocketAllocated = false;
 	let egressProxyAllocated = false;
 	try {
-		const layout = SUBSCRIPTION_LAYOUTS[provider];
+		// Rotation is a property of the CLI that rewrites the token file, so read it
+		// off the resolved runtime rather than the provider's default.
+		const layout = RUNTIME_HOME_LAYOUTS[runtimeType];
 		if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
 			// Records the true wait so the run comment reads honestly while blocked.
 			await deps.db.query(

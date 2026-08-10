@@ -60,11 +60,38 @@ describe('provider runtime roster', () => {
 	});
 
 	it('gives both Moonshot providers both CLIs, defaulting differently', () => {
-		expect(providerRuntimes(AiProvider.Kimi)).toEqual([AgentRuntime.ClaudeCode, AgentRuntime.Kimi]);
+		// Plus Prime Agent, which reaches Moonshot too — the default stays first.
+		expect(providerRuntimes(AiProvider.Kimi)).toEqual([
+			AgentRuntime.ClaudeCode,
+			AgentRuntime.Kimi,
+			AgentRuntime.PrimeAgent,
+		]);
 		expect(providerRuntimes(AiProvider.KimiCode)).toEqual([
 			AgentRuntime.Kimi,
 			AgentRuntime.ClaudeCode,
+			AgentRuntime.PrimeAgent,
 		]);
+	});
+
+	it('offers Prime Agent on every provider it can drive, and nowhere else', () => {
+		// Ollama and LM Studio have no built-in Prime Agent provider, so they must
+		// not advertise a CLI the run would fail to authenticate.
+		for (const provider of [AiProvider.Ollama, AiProvider.LmStudio]) {
+			expect(providerSupportsRuntime(provider, AgentRuntime.PrimeAgent)).toBe(false);
+		}
+		for (const provider of [
+			AiProvider.Anthropic,
+			AiProvider.OpenAI,
+			AiProvider.Google,
+			AiProvider.DeepSeek,
+			AiProvider.ZAi,
+			AiProvider.OpenRouter,
+			AiProvider.XAi,
+		]) {
+			expect(providerSupportsRuntime(provider, AgentRuntime.PrimeAgent)).toBe(true);
+			// Prime Agent is never a default — it is only ever an alternate.
+			expect(PROVIDER_TO_RUNTIME[provider]).not.toBe(AgentRuntime.PrimeAgent);
+		}
 	});
 
 	it('exposes an env binding for every advertised pairing', () => {

@@ -70,6 +70,33 @@ RUN HOME=/opt GROK_BIN_DIR=/usr/local/bin bash -c \
     && chmod -R a+rX /opt/.grok \
     && grok --version
 
+# Prime Intellect Prime Agent (`prime-agent`) — a standalone release tarball (no
+# npm), installed by an upstream script that verifies a SHA-256 checksum. Unlike
+# every other CLI here it is not tied to one vendor: it is offered as an
+# alternate runtime on eight providers, so its `--provider`/`--model` pair comes
+# from the credential rather than being implied by the binary.
+#
+# It is NOT on the public npm registry: the published installer resolves a
+# version from a release channel and then runs `npm install -g` against a tarball
+# on Prime Intellect's CDN. Install that tarball directly rather than piping the
+# installer to sh — same artifact, but pinned, reproducible, and with no
+# interactive Node-bootstrap path running at build time. Bump both the version
+# and re-verify against the `--mode json` event shapes (the parser reads
+# `message_end`), the `usage` bucket names, and the `--autonomous-gate` contract
+# the completeness judge rides on. Current channel head: curl $PRIME_AGENT_CDN/stable
+#
+# The agent drives an IPython kernel over ZeroMQ, which it would otherwise
+# bootstrap on first use — a network call inside a run. `ipykernel` (and the MCP
+# SDK its generated skills import) are prebaked, and PRIME_AGENT_KERNEL_PYTHON
+# pins the interpreter so no run pays for it. `--break-system-packages` because
+# the base image's python3 is PEP 668 managed.
+ARG PRIME_AGENT_VERSION=0.7.1
+ARG PRIME_AGENT_CDN=https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev
+ENV PRIME_AGENT_KERNEL_PYTHON=/usr/bin/python3
+RUN pip3 install --no-cache-dir --break-system-packages ipykernel mcp \
+    && npm install -g "${PRIME_AGENT_CDN}/releases/v${PRIME_AGENT_VERSION}/prime-agent-${PRIME_AGENT_VERSION}.tgz" \
+    && prime-agent --version
+
 # Pre-install Bun (latest) for agent-authored JS/TS projects — the common case,
 # and the runtime Hezo itself uses. Installed globally via npm so `bun`/`bunx`
 # land on the shared PATH for both root and the `node` user (matching the AI CLIs
