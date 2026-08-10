@@ -35,7 +35,7 @@ import { getToolDefs, handleMcpAssetUpload, handleMcpRequest, initMcpServer } fr
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
 import { agentTypesRoutes } from './routes/agent-types';
-import { agentsRoutes, publicAgentsRoutes } from './routes/agents';
+import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
@@ -753,7 +753,6 @@ export function buildApp(
 
 	// Public signed-URL agent-avatar read endpoint — same rationale as the
 	// project icon. Mounted before the /api/* auth middleware.
-	app.route('/', publicAgentsRoutes);
 
 	// Public signed-URL user-avatar read endpoint — same rationale as the
 	// project icon. Mounted before the /api/* auth middleware.

@@ -32,7 +32,7 @@ interface AdminMentionRow {
 	author_member_id: string | null;
 	author_user_id: string | null;
 	author_user_icon_updated_at: string | null;
-	author_agent_icon_updated_at: string | null;
+	author_avatar_spec: unknown;
 	author_display_name: string | null;
 	author_slug: string | null;
 	created_at: string;
@@ -58,9 +58,8 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 		        tc.author_user_id,
 		        (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = tc.author_user_id)
 		          AS author_user_icon_updated_at,
-		        (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = tc.author_member_id)
-		          AS author_agent_icon_updated_at,
-		        COALESCE(ma.title, m.display_name) AS author_display_name,
+		        ma.avatar_spec AS author_avatar_spec,
+		        COALESCE(NULLIF(ma.human_name, ''), ma.title, m.display_name) AS author_display_name,
 		        ma.slug AS author_slug,
 		        bm.created_at, bm.read_at
 		 FROM admin_mentions bm
@@ -96,14 +95,14 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 				author_member_id: r.author_member_id,
 				author_display_name: r.author_display_name ?? 'Admin',
 				author_slug: r.author_slug,
-				// The author's uploaded avatar (if any). The built-in CEO/Coach default
-				// is resolved client-side from the slug; this only carries the upload.
+				// A human author's uploaded avatar. An agent is drawn from its own
+				// `avatar_spec`, and the built-in CEO/Coach portraits resolve
+				// client-side from the slug.
 				author_icon_url: await signAuthorIconUrl(masterKeyManager, {
 					userId: r.author_user_id,
-					memberId: r.author_member_id,
 					userIconUpdatedAt: r.author_user_icon_updated_at,
-					agentIconUpdatedAt: r.author_agent_icon_updated_at,
 				}),
+				author_avatar_spec: r.author_avatar_spec,
 				created_at: r.created_at,
 				read_at: r.read_at,
 			})),

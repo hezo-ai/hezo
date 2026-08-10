@@ -37,10 +37,10 @@ const MAX_BODY_IDS = 100;
 
 /**
  * Resolve each comment row's `author_icon_url` (a freshly-signed avatar URL) from
- * the icon-version subselects the author queries carry, then strip those
- * intermediate fields from the row. A human author resolves to their `user_icons`
- * image (keyed by `author_user_id`), an agent to its `agent_icons` image (keyed by
- * `author_member_id`); an API-key author has neither. Best-effort: a signing
+ * the icon-version subselect the author queries carry, then strip those
+ * intermediate fields from the row. Only a human author has one, keyed by
+ * `author_user_id`; an agent ships `author_avatar_spec` instead and its sprite is
+ * drawn client-side, and an API-key author has neither. Best-effort: a signing
  * failure (e.g. the master key being unavailable) degrades the row to its initials
  * fallback rather than failing the whole thread — the avatar is purely cosmetic.
  */
@@ -51,13 +51,10 @@ async function attachAuthorIcons(
 	for (const row of rows) {
 		row.author_icon_url = await signAuthorIconUrl(masterKeyManager, {
 			userId: row.author_user_id,
-			memberId: row.author_member_id,
 			userIconUpdatedAt: row.author_user_icon_updated_at,
-			agentIconUpdatedAt: row.author_agent_icon_updated_at,
 		});
 		delete row.author_user_id;
 		delete row.author_user_icon_updated_at;
-		delete row.author_agent_icon_updated_at;
 	}
 }
 
@@ -102,19 +99,18 @@ async function getCommentsFull(
 	const result = await db.query(
 		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
-            COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name,
+            COALESCE(ca.name, NULLIF(ma.human_name, ''), ma.title, m.display_name, 'Admin') AS author_name,
             ic.author_member_id,
             ic.author_api_key_id,
             ic.author_user_id,
             ui.updated_at AS author_user_icon_updated_at,
-            ai.updated_at AS author_agent_icon_updated_at,
+            ma.avatar_spec AS author_avatar_spec,
             ic.parent_comment_id
      FROM task_comments ic
      LEFT JOIN members m ON m.id = ic.author_member_id
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
      LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
      LEFT JOIN user_icons ui ON ui.user_id = ic.author_user_id
-     LEFT JOIN agent_icons ai ON ai.member_id = ic.author_member_id
      WHERE ic.task_id = $1
      -- id breaks ties deterministically: comments created in the same instant
      -- (a seeded thread, a burst of system comments) otherwise come back in
@@ -161,12 +157,12 @@ async function getCommentSkeletons(
             CASE WHEN ic.content_type = 'text' THEN NULL ELSE ic.content END AS content,
             ic.chosen_option, ic.created_at,
             CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
-            COALESCE(ca.name, ma.title, m.display_name, 'Admin') AS author_name,
+            COALESCE(ca.name, NULLIF(ma.human_name, ''), ma.title, m.display_name, 'Admin') AS author_name,
             ic.author_member_id,
             ic.author_api_key_id,
             ic.author_user_id,
             ui.updated_at AS author_user_icon_updated_at,
-            ai.updated_at AS author_agent_icon_updated_at,
+            ma.avatar_spec AS author_avatar_spec,
             ic.parent_comment_id,
             CASE WHEN ic.content_type = 'text'
                  THEN COALESCE(length(ic.content->>'text'), 0) ELSE NULL END AS text_length,
@@ -176,7 +172,6 @@ async function getCommentSkeletons(
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
      LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
      LEFT JOIN user_icons ui ON ui.user_id = ic.author_user_id
-     LEFT JOIN agent_icons ai ON ai.member_id = ic.author_member_id
      LEFT JOIN (
        SELECT cat.comment_id, count(*)::int AS n
        FROM comment_attachments cat

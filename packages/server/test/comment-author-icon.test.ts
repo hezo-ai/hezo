@@ -57,6 +57,7 @@ async function postComment(auth: string, text: string): Promise<string> {
 interface SkeletonRow {
 	id: string;
 	author_icon_url: string | null;
+	author_avatar_spec: { seed: string; gender: string; style: string } | null;
 	author_user_id?: string;
 }
 
@@ -139,20 +140,16 @@ describe('comment author avatar', () => {
 		expect(Buffer.from(await serve.arrayBuffer()).equals(pngWithDimensions(512, 512))).toBe(true);
 	});
 
-	it('returns the agent avatar as author_icon_url on an agent comment', async () => {
-		await app.request(`/api/projects/${projectSlug}/agents/${agentSlug}/icon`, {
-			method: 'PUT',
-			headers: authHeader(token),
-			body: iconForm(pngWithDimensions(256, 256)),
-		});
+	it('carries the agent author\u2019s avatar spec, not a signed upload URL', async () => {
 		const agentAuth = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
 		const commentId = await postComment(agentAuth.token, 'from the bot');
 
 		const rows = await skeletons();
 		const row = rows.find((r) => r.id === commentId);
-		expect(row?.author_icon_url).toMatch(
-			new RegExp(`^/api/agents/${agentId}/icon\\?exp=\\d+&sig=[^&]+&v=\\d+$`),
-		);
+		// An agent's face is generated from its spec client-side; there is no
+		// uploaded image to sign a URL for.
+		expect(row?.author_icon_url).toBeNull();
+		expect(row?.author_avatar_spec).toMatchObject({ seed: expect.any(String) });
 	});
 
 	it('is null for an author with no uploaded avatar', async () => {

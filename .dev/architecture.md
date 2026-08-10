@@ -91,7 +91,8 @@ every team participant, discriminated by `member_type` (`agent` | `user`). `memb
 *is* the agent/user-in-team id — every assignee/author/actor FK points at it, no
 secondary keys. Two extension tables hang off it: `member_agents` (system prompt,
 runtime/effort, budgets, heartbeat, org chart, `touches_code`, optional
-`model_override_*`) and `member_users` (role, `role_title`, `permissions_text`,
+`model_override_*`, plus identity — `human_name`/`human_name_slug`/`gender`/`avatar_spec`,
+see § Agent identity) and `member_users` (role, `role_title`, `permissions_text`,
 `project_ids`). Global human identity lives in `users` + `user_auth_methods` (OAuth
 login links — no password, no email column).
 
@@ -190,8 +191,8 @@ dedupe stays keyed on `source_task_id` alone, so a target records one entry per 
 (first mention wins) regardless of origin. A human-authored comment keeps `author_member_id` null by
 convention but records **which** human in `author_user_id` (nullable FK to `users`), so the
 author's uploaded avatar (`user_icons`) resolves alongside their comments; the comments feed
-returns a signed `author_icon_url` per row (a human's `user_icons` image, or an agent's
-`agent_icons` image via `author_member_id`, else null → initials). `comment_reactions` holds
+returns a signed `author_icon_url` per row for a human author (else null → initials), and an
+`author_avatar_spec` for an agent one, whose sprite is drawn client-side. `comment_reactions` holds
 emoji reactions, keyed by a non-null `member_id` (unlike a comment's nullable
 `author_member_id`, which lets an admin author as a null-member "Admin"). Because a reaction needs a real member, a human acting in
 a team they can access but aren't a member of resolves to their **HQ (default-team)**
@@ -693,29 +694,50 @@ served from a public HMAC-signed read route (`GET /api/projects/:projectId/icon`
 query param is the credential since an `<img>` carries no bearer token). The serialized
 project carries a freshly-signed `icon_url` (null when unset); the client normalizes any
 picked image to a square PNG ≤512×512 before upload (`PUT`/`DELETE` on the same path).
-`agent_icons` (1:1 with `member_agents`) and `user_icons` (1:1 with `users`, today just the
-admin) reuse the same mechanism for agent avatars and the admin's own avatar — a dedicated
-`BYTEA` table, a freshly-signed `icon_url` threaded onto the serialized agent/user row, and
-a public HMAC-signed read route (`GET /api/agents/:agentId/icon`, `GET /api/users/:userId/icon`).
+`user_icons` (1:1 with `users`, today just the admin) reuses the same mechanism for the
+admin's own avatar — a dedicated `BYTEA` table, a freshly-signed `icon_url` threaded onto
+the serialized user row, and a public HMAC-signed read route (`GET /api/users/:userId/icon`).
 The signing/verification is generalized in `lib/entity-icon-urls.ts` (a `basePath` +
 per-entity `keyPurpose`), which also owns `signAuthorIconUrl` — the shared resolver every
-*feed* uses to turn a row's author/requester into a signed avatar URL (user icon when the
-actor is human, else the agent icon; best-effort, so a signing failure yields null and the
-row degrades to initials rather than failing the request). The comments feed
-(`routes/comments.ts`), the admin-mentions inbox (`routes/inbox.ts` → `author_icon_url`) and
-the approvals listing (`routes/approvals.ts` → `requested_by_slug` + `requested_by_icon_url`)
-all go through it. The client control is `components/icon-upload-section.tsx`; agent
-icons are edited on the agent Settings page (project-access-gated, like other agent config),
-user icons on the global Settings → Users page (superuser-gated). No MCP tool — icon upload
-is a human-only UI action (as for `project_icons`). The **CEO and Coach** — the HQ singletons that are identical across every
-project — ship a **built-in default avatar** (a committed image under
-`packages/web/public/avatars/`, bundled into the web app); the client resolves an agent's
-effective avatar as `uploaded icon_url ?? defaultAvatarForSlug(slug) ?? initials`
-(`web/src/lib/default-avatars.ts`), so a user upload always overrides the built-in default and
-per-project roles (e.g. the Captain) get no shared default — they show initials until an avatar
-is uploaded. Every agent-avatar surface (org chart, agent header, budget rows, agent-authored
-comments, and the admin inbox — both the home "Needs you" rows and the full inbox's mention /
-approval cards) applies this resolution.
+*feed* uses to turn a row's author/requester into a signed avatar URL. It resolves **only**
+a human actor; an agent has no uploaded image at all (see § Agent identity), so the feeds
+ship its `avatar_spec` alongside and the sprite is drawn client-side. Best-effort, so a
+signing failure yields null and the row degrades to initials rather than failing the
+request. The client control is `components/icon-upload-section.tsx`, used for project icons
+and for user icons on the global Settings → Users page (superuser-gated). No MCP tool —
+icon upload is a human-only UI action.
+
+### Agent identity: names and avatars
+
+An agent has a **role** (`member_agents.title`, the permanent thing it does) and, usually,
+a **human name** (`human_name`) that the UI shows in its place. `human_name_slug` makes
+that name a second mention handle, so `@max` and `@engineer` both resolve to the same
+agent; the fan-out (`fireCommentWakeups`) matches `slug OR human_name_slug`, preferring the
+same team over HQ and a role slug over someone's name. URLs keep the canonical role slug, so
+links are stable across a rename. Uniqueness spans the agent's team ∪ HQ — exactly a
+mention's reach — and is enforced in-transaction by `lib/agent-identity.ts` rather than by
+an index, since no single index expresses that scope. The Captain, CEO and Coach are
+name-only by policy (`isNameOnlyRole`), not by schema: the column exists for every agent, so
+enabling names for them later is a one-line change.
+
+Avatars are **generated, never uploaded**. `avatar_spec` is a small JSONB
+`{seed, gender, style}` that `@hezo/shared`'s `pixel-avatar.ts` renders deterministically to
+an inline SVG — the same spec always yields the same 24×24 sprite, so a face costs a few
+dozen bytes and no storage, and re-renders crisply at any size. `style` comes from the role
+(`styleForRole`) and `gender` from the authored value or `inferGender`; only the seed is
+ever caller-chosen, so a client cannot dress an agent as a Captain. Regenerating shows three
+candidate seeds and stores the picked one. The **CEO and Coach** keep a **built-in portrait**
+(a committed image under `packages/web/public/avatars/`), so the client resolves an agent's
+avatar as `defaultAvatarForSlug(slug) ?? pixelAvatarDataUri(avatar_spec)`; humans still fall
+back to initials. Every agent-avatar surface (org chart, agent header, roster, sidebar,
+budget rows, agent-authored comments, and the admin inbox) applies this resolution.
+
+Both name and avatar are **team data**: a marketplace roster entry carries
+`human_name`/`gender`/`avatar_spec`, so provisioning a team (or adding one of its roles)
+gives every project the same teammate, and `exportTeamBundle` writes a project's current
+identities back out. They sit inside the team's content hash, so a shipped rename bumps the
+version like any other content change — but `refreshRosterAgent` never overwrites them, so a
+project that renamed an agent keeps its own.
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,
