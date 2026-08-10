@@ -154,27 +154,6 @@ bun run dev
 See [the meta-harness](./docs/concepts/meta-harness.md) for the idea underneath it all, and
 the [Introduction](./docs/introduction.md) for the full tour of the moving parts.
 
-## A look around
-
-<table>
-  <tr>
-    <td width="50%"><img src="assets/screens/tasklist.png" alt="The Hezo task board, showing nested sub-tasks with status, priority and assignee" /></td>
-    <td width="50%"><img src="assets/screens/chat-mobile.png" alt="Chatting with the CEO from a phone-sized window" /></td>
-  </tr>
-  <tr>
-    <td><sub>The task board - nested sub-tasks, status, priority, and who has each one.</sub></td>
-    <td><sub>Chat with the CEO across every project, from any device.</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="assets/screens/document.png" alt="A project document with version history and an inline comment being written" /></td>
-    <td width="50%"><img src="assets/screens/skills.png" alt="The Skills page listing reusable skills scoped to all projects" /></td>
-  </tr>
-  <tr>
-    <td><sub>Project documents, with full version history and inline comments.</sub></td>
-    <td><sub>Skills your agents can run, scoped to one project or all of them.</sub></td>
-  </tr>
-</table>
-
 ## Features
 
 - **Agents organised like a company** - a global [CEO and Coach](./docs/concepts/roles-and-coordination.md) above a per-team Captain and workers, [live CEO chat](./docs/concepts/roles-and-coordination.md#chatting-with-the-ceo), automatic [Coach](./docs/concepts/roles-and-coordination.md#the-coach) reviews.
