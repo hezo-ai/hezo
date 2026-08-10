@@ -50,7 +50,10 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 
 function decodeEntities(text: string): string {
-	return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
+	// `[xX]` because a hex reference is spelled either way (`&#x41;`, `&#X41;`) and
+	// both are valid; matching only the lowercase form leaves the uppercase one in
+	// the index as a literal `&#X41;` token.
+	return text.replace(/&(#[xX]?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
 		if (body.startsWith('#')) {
 			const code =
 				body.startsWith('#x') || body.startsWith('#X')

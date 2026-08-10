@@ -130,12 +130,22 @@ describe('extractAssetSearchText', () => {
 			expect(out).not.toContain('xmlns');
 		});
 
-		it('decodes entities, including a numeric NUL that must not survive', () => {
+		it('decodes named, decimal and hex entities', () => {
 			expect(extractAssetSearchText(utf8('<p>a &amp; b &#65; &nbsp; c</p>'), 'text/html')).toBe(
 				'a & b A c',
 			);
-			const out = extractAssetSearchText(utf8('<p>x&#0;y</p>'), 'text/html') as string;
-			expect(out).not.toContain(HIGHLIGHT_SENTINEL);
+			// Both spellings of a hex reference, since the decoder tests for each.
+			expect(extractAssetSearchText(utf8('<p>&#x41;&#X42;</p>'), 'text/html')).toBe('AB');
+		});
+
+		it('rejects an entity that would smuggle back a scrubbed code point', () => {
+			// An entity is decoded before the control-character scrub, so a numeric
+			// reference is another way to reach the bytes that would fail the write.
+			for (const entity of ['&#0;', '&#x0;', '&#xD800;', '&#xFFFFFF;']) {
+				const out = extractAssetSearchText(utf8(`<p>x${entity}y</p>`), 'text/html') as string;
+				expect(out, entity).not.toContain(HIGHLIGHT_SENTINEL);
+				expect(out, entity).toBe('x y');
+			}
 		});
 	});
 });
