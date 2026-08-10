@@ -28,7 +28,6 @@ export const ADD_PROVIDER_ORDER: readonly AiProvider[] = [
 	AiProvider.OpenAI,
 	AiProvider.Google,
 	AiProvider.Kimi,
-	AiProvider.KimiCode,
 	AiProvider.XAi,
 	AiProvider.OpenRouter,
 	AiProvider.Ollama,
@@ -135,9 +134,6 @@ export function ProviderConfigForm({
 	// Only sent when the operator actually opened Advanced and picked something.
 	const [runtime, setRuntime] = useState<AgentRuntime | null>(editing?.runtime ?? null);
 	const [advancedOpen, setAdvancedOpen] = useState(false);
-	// A provider with one CLI has nothing to put behind the disclosure, so the
-	// whole Advanced affordance is omitted rather than opening onto an empty box.
-	const hasAdvanced = providerHasCliChoice(provider);
 
 	// Keep the name pinned to the generated default until the user edits it
 	// (also re-syncs once the async configs query resolves). Never when editing —
@@ -150,6 +146,12 @@ export function ProviderConfigForm({
 	// A local runner needs a reachable server URL, not a credential: it either
 	// ignores the token or only checks one when the operator has enabled auth.
 	const isLocal = Boolean(info.local);
+	// What Advanced holds: the CLI picker where the provider runs on more than one,
+	// and a local runner's API key — optional, because a self-hosted server usually
+	// has no auth, so a prominent key field reads as a requirement it is not.
+	// Nothing to disclose means no trigger, rather than one opening on an empty box.
+	const hasCliChoice = providerHasCliChoice(provider);
+	const hasAdvanced = hasCliChoice || isLocal;
 	// Editing already has a stored credential, so name or CLI alone is a valid save —
 	// except when the auth method is being switched, where the stored credential is
 	// the wrong shape for the new one and a replacement is the whole point.
@@ -161,6 +163,21 @@ export function ProviderConfigForm({
 			: Boolean(credential.trim());
 	const loopbackWarning = isLocal ? loopbackHostWarning(baseUrl) : null;
 	const pending = editing ? updateProvider.isPending : createProvider.isPending;
+
+	const apiKeyField = (
+		<>
+			<Input
+				label={isLocal ? t('settings.provider.apiKeyOptional') : 'API key'}
+				type="password"
+				placeholder={info.keyPlaceholder}
+				value={apiKey}
+				onChange={(e) => setApiKey(e.target.value)}
+			/>
+			{editing && (
+				<p className="text-[13px] text-text-3">{t('settings.provider.credentialUnchangedHint')}</p>
+			)}
+		</>
+	);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
@@ -275,18 +292,7 @@ export function ProviderConfigForm({
 							)}
 						</div>
 					)}
-					<Input
-						label={isLocal ? 'API key (optional)' : 'API key'}
-						type="password"
-						placeholder={info.keyPlaceholder}
-						value={apiKey}
-						onChange={(e) => setApiKey(e.target.value)}
-					/>
-					{editing && (
-						<p className="text-[13px] text-text-3">
-							{t('settings.provider.credentialUnchangedHint')}
-						</p>
-					)}
+					{!isLocal && apiKeyField}
 				</div>
 			)}
 
@@ -306,8 +312,11 @@ export function ProviderConfigForm({
 						{t('settings.provider.advanced')}
 					</button>
 					{advancedOpen && (
-						<div className="ml-1 border-l-2 border-border pl-3">
-							<AgentCliPicker provider={provider} value={runtime} onChange={setRuntime} />
+						<div className="ml-1 flex flex-col gap-3 border-l-2 border-border pl-3">
+							{hasCliChoice && (
+								<AgentCliPicker provider={provider} value={runtime} onChange={setRuntime} />
+							)}
+							{isLocal && authMethod !== AiAuthMethod.Subscription && apiKeyField}
 						</div>
 					)}
 				</div>

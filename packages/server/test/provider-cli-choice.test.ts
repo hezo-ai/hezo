@@ -59,16 +59,12 @@ describe('provider runtime roster', () => {
 		}
 	});
 
-	it('gives both Moonshot providers both CLIs, defaulting differently', () => {
-		// Plus Prime Agent, which reaches Moonshot too — the default stays first.
+	it('offers Moonshot both of its CLIs from one provider', () => {
+		// The pair used to be two providers; now it is one offering both, plus Prime
+		// Agent, which reaches Moonshot too. The default stays first.
 		expect(providerRuntimes(AiProvider.Kimi)).toEqual([
 			AgentRuntime.ClaudeCode,
 			AgentRuntime.Kimi,
-			AgentRuntime.PrimeAgent,
-		]);
-		expect(providerRuntimes(AiProvider.KimiCode)).toEqual([
-			AgentRuntime.Kimi,
-			AgentRuntime.ClaudeCode,
 			AgentRuntime.PrimeAgent,
 		]);
 	});
@@ -86,6 +82,7 @@ describe('provider runtime roster', () => {
 			AiProvider.DeepSeek,
 			AiProvider.ZAi,
 			AiProvider.OpenRouter,
+			AiProvider.Kimi,
 			AiProvider.XAi,
 		]) {
 			expect(providerSupportsRuntime(provider, AgentRuntime.PrimeAgent)).toBe(true);
@@ -113,8 +110,7 @@ describe('provider runtime roster', () => {
 	it('lists a multi-runtime provider under each of its runtimes', () => {
 		expect(PROVIDERS_BY_RUNTIME[AgentRuntime.ClaudeCode]).toContain(AiProvider.Kimi);
 		expect(PROVIDERS_BY_RUNTIME[AgentRuntime.Kimi]).toContain(AiProvider.Kimi);
-		expect(PROVIDERS_BY_RUNTIME[AgentRuntime.ClaudeCode]).toContain(AiProvider.KimiCode);
-		expect(PROVIDERS_BY_RUNTIME[AgentRuntime.Kimi]).toContain(AiProvider.KimiCode);
+		expect(PROVIDERS_BY_RUNTIME[AgentRuntime.PrimeAgent]).toContain(AiProvider.Kimi);
 	});
 
 	it('names every runtime for the picker', () => {
@@ -127,13 +123,13 @@ describe('provider runtime roster', () => {
 describe('effectiveRuntime', () => {
 	it('falls back to the provider default when nothing is stored', () => {
 		expect(effectiveRuntime(AiProvider.Kimi, null)).toBe(AgentRuntime.ClaudeCode);
-		expect(effectiveRuntime(AiProvider.KimiCode, null)).toBe(AgentRuntime.Kimi);
+		expect(effectiveRuntime(AiProvider.OpenAI, null)).toBe(AgentRuntime.Codex);
 	});
 
 	it('honours a supported stored choice', () => {
 		expect(effectiveRuntime(AiProvider.Kimi, AgentRuntime.Kimi)).toBe(AgentRuntime.Kimi);
-		expect(effectiveRuntime(AiProvider.KimiCode, AgentRuntime.ClaudeCode)).toBe(
-			AgentRuntime.ClaudeCode,
+		expect(effectiveRuntime(AiProvider.OpenAI, AgentRuntime.PrimeAgent)).toBe(
+			AgentRuntime.PrimeAgent,
 		);
 	});
 
@@ -164,13 +160,15 @@ describe('buildProviderEnv follows the credential runtime', () => {
 		expect(envValue(env, 'ANTHROPIC_BASE_URL')).toBeUndefined();
 	});
 
-	it('builds the Claude Code bag for a Kimi Code credential switched the other way', () => {
-		const env = buildProviderEnv(AiProvider.KimiCode, {
+	it('builds the Prime Agent bag for the same credential switched again', () => {
+		const env = buildProviderEnv(AiProvider.Kimi, {
 			...credential,
-			runtime: AgentRuntime.ClaudeCode,
+			runtime: AgentRuntime.PrimeAgent,
 		});
-		expect(envValue(env, 'ANTHROPIC_AUTH_TOKEN')).toBe('sk-moonshot');
-		expect(envValue(env, 'ANTHROPIC_BASE_URL')).toBe('https://api.moonshot.ai/anthropic');
+		// Prime Agent reads Moonshot's key from MOONSHOT_API_KEY, not from either
+		// of the other two CLIs' variables.
+		expect(envValue(env, 'MOONSHOT_API_KEY')).toBe('sk-moonshot');
+		expect(envValue(env, 'ANTHROPIC_AUTH_TOKEN')).toBeUndefined();
 		expect(envValue(env, 'KIMI_MODEL_API_KEY')).toBeUndefined();
 	});
 

@@ -46,8 +46,8 @@ RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @google/gemini-cli \
     && npm install -g opencode-ai
 
-# Moonshot Kimi Code (`kimi`) — the native CLI behind the `kimi_code` provider,
-# alongside (not instead of) the `kimi` provider's Claude Code path above. Pinned
+# Moonshot Kimi Code (`kimi`) — the `kimi` provider's native-CLI option, alongside
+# (not instead of) its default Claude Code path above. Pinned
 # for reproducibility like GROK_VERSION: upstream ships two engine generations
 # with duplicated MCP/hook/media paths, so a bump must be re-verified against the
 # stream-json line shapes, the `[[hooks]]` Stop contract, and the session-log
@@ -70,8 +70,7 @@ RUN HOME=/opt GROK_BIN_DIR=/usr/local/bin bash -c \
     && chmod -R a+rX /opt/.grok \
     && grok --version
 
-# Prime Intellect Prime Agent (`prime-agent`) — a standalone release tarball (no
-# npm), installed by an upstream script that verifies a SHA-256 checksum. Unlike
+# Prime Intellect Prime Agent (`prime-agent`). Unlike
 # every other CLI here it is not tied to one vendor: it is offered as an
 # alternate runtime on eight providers, so its `--provider`/`--model` pair comes
 # from the credential rather than being implied by the binary.

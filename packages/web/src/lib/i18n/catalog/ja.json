@@ -205,6 +205,7 @@
 	"settings.general": "一般",
 	"settings.logOut": "ログアウト",
 	"settings.provider.advanced": "詳細設定",
+	"settings.provider.apiKeyOptional": "APIキー（任意）",
 	"settings.provider.agentCli": "エージェント CLI",
 	"settings.provider.agentCliHint": "この認証情報を実行するコマンドラインエージェントです。",
 	"settings.provider.cliDefault": "デフォルト",

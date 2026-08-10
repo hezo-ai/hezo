@@ -2754,12 +2754,13 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
-**Providers → runtimes is one-to-MANY.** `AiProvider` has **eleven** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `kimi_code`, `x_ai`, `ollama`, `lmstudio` — and
-`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. A provider
+**Providers → runtimes is one-to-MANY.** `AiProvider` has **ten** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
+`AgentRuntime` has **seven** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`,
+`prime_agent`. A provider
 declares the CLI it runs on **by default** plus, optionally, the other CLIs it can be driven by;
 the operator picks per credential and the choice is stored on
-`ai_provider_configs.runtime` (nullable, `NULL` = follow the provider default; migration `051`).
+`ai_provider_configs.runtime` (nullable, `NULL` = follow the provider default; migration `052`).
 The table is data-driven in `packages/shared/src/types/common.ts`
 (`ProviderRuntimeAdapter` = a default `runtime` + its inline `ProviderRuntimeBinding` +
 `alternateRuntimes`), with four accessors that everything else reads through:
@@ -2775,10 +2776,12 @@ Defaults: Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Ki
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI → `codex`,
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
-`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Kimi Code → `kimi` (Moonshot's own CLI,
-see below), Ollama + LM Studio → `claude_code` (local runners, see below). Only the two Moonshot
-providers currently declare an alternate; every other provider offers exactly one CLI, and the
-UI omits the picker (and the Advanced disclosure holding it) for those.
+`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
+(local runners, see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
+see below), and **every provider except Ollama and LM Studio declares `prime_agent`** (see
+below). Prime Agent is never a default. Ollama and LM Studio therefore offer exactly one CLI
+each and the UI omits the picker for them — their Advanced disclosure holds only the optional
+API key.
 
 **Because the runtime is per credential, it must be resolved from the credential row, never
 from the provider.** `buildProviderEnv` composes from `providerRuntimeBinding(provider,
@@ -2790,21 +2793,24 @@ provider alone can return one whose runtime disagrees with the run being configu
 `resolveRuntimeForTask` scans its candidate rows in priority order and takes the first whose
 `effectiveRuntime` matches the pin, rather than trusting the highest-priority row outright.
 
-**Moonshot's models are reachable two ways, and both providers now offer both.** `kimi` defaults to
-Claude Code against Moonshot's Anthropic-compatible gateway (above); `kimi_code` defaults to
-Moonshot's first-party **Kimi Code CLI** (`kimi`, npm `@moonshot-ai/kimi-code`) on the
-`kimi` runtime. Each declares the other as an alternate, sharing one pair of binding constants
-(`MOONSHOT_CLAUDE_CODE_BINDING`, `MOONSHOT_KIMI_CODE_BINDING`) so the two env shapes cannot
-drift, so a credential can be switched between harnesses in place instead of being deleted and
-re-added. They are siblings — same account, same API key, same models, different
-harness — so an operator may configure either or both and choose per credential (the CLI
-picker), per agent (`member_agents.model_override_provider`) or per task (`tasks.runtime_type`).
-They exist as two providers only because the runtime used to be pinned to the provider;
-collapsing them would need a migration of existing rows. The
-`AgentRuntime.Kimi` value reuses the `kimi` label that has existed in the `agent_runtime`
-enum since `001_initial_schema.sql`: it was the original standalone Kimi runtime, retired by
-migration `010` when Kimi moved onto Claude Code, and Postgres cannot drop enum labels — so
-the new runtime needed no enum change (only the `kimi_code` provider did, in `048`).
+**Moonshot's models are reachable two ways from one provider.** `kimi` defaults to Claude Code
+against Moonshot's Anthropic-compatible gateway (above) and declares Moonshot's first-party
+**Kimi Code CLI** (`kimi`, npm `@moonshot-ai/kimi-code`) as an alternate. The two env shapes are
+one pair of binding constants (`MOONSHOT_CLAUDE_CODE_BINDING`, `MOONSHOT_KIMI_CODE_BINDING`)
+so they cannot drift, and a credential switches between harnesses in place instead of being
+deleted and re-added — same account, same API key, same models, different harness. Choose per
+credential (the CLI picker), per agent (`member_agents.model_override_provider`) or per task
+(`tasks.runtime_type`).
+
+This was two providers (`kimi`, `kimi_code`) up to migration `054`, back when the runtime was
+pinned to the provider. `054` re-points every `kimi_code` row onto `kimi` with an explicit
+`runtime = 'kimi'` — explicit because those rows carried `NULL`, and `NULL` under `kimi` means
+Claude Code, which would silently move a working credential onto a different CLI. Postgres
+cannot drop an enum label, so `'kimi_code'` survives in `ai_provider` as an unreachable value.
+The `AgentRuntime.Kimi` value likewise reuses the `kimi` label that has existed in
+`agent_runtime` since `001_initial_schema.sql`: it was the original standalone Kimi runtime,
+retired by migration `010` when Kimi moved onto Claude Code, so the runtime needed no enum
+change (only the `kimi_code` provider did, in `048`).
 
 Three things make this runtime unlike the Claude-Code-driven providers:
 
@@ -2818,7 +2824,7 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   step silently replaces every image part with a placeholder string — which would break
   `read_project_asset`, the only path by which an agent ever receives an image.
 - **`KIMI_CODE_HOME` is a real variable the CLI consumes**, unlike the Hezo-internal markers
-  the Claude Code entries use in `SUBSCRIPTION_LAYOUTS`. It relocates the entire data root
+  the Claude Code entries use in `RUNTIME_HOME_LAYOUTS`. It relocates the entire data root
   (config, `mcp.json`, credentials, per-session logs) to the per-run directory. That is the
   only isolation mechanism available — there is no `--mcp-config`-style flag — and it is also
   what makes the session-log reads below possible.
@@ -2827,6 +2833,40 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   under that home, then priced from `model_pricing` like every other runtime. The runner's
   `recoverOffStreamRunUsage` dispatches both file-based recoveries and scrubs the file
   afterwards (each can carry the provider credential).
+
+**Prime Agent is the first runtime that belongs to no provider.** Prime Intellect's
+`prime-agent` speaks to most upstreams Hezo already supports, so it is declared as an
+*alternate* on every provider except Ollama and LM Studio and is never a default. Two
+consequences run through the code:
+
+- **The upstream is chosen by CLI flag, not by env var.** `PRIME_AGENT_BINDINGS` maps each
+  Hezo provider to Prime Agent's own provider id and the env var it reads that key from — its
+  spellings, not the vendor's, and two are easy to get wrong: Moonshot is `moonshotai` reading
+  `MOONSHOT_API_KEY` (its `kimi-coding` / `KIMI_API_KEY` pair is the separate Kimi-for-Coding
+  subscription plan), and Google is `google` reading `GEMINI_API_KEY`. Because the id travels
+  as `--provider <id>` rather than in the env, it cannot live in a binding's `staticEnv`;
+  `primeAgentProviderArgs` supplies it and `agent-runner.ts` splices it into the command.
+  Ollama and LM Studio are absent because Prime Agent has no built-in entry for either and the
+  custom-provider path is unverified — a provider missing from the map simply offers no Prime
+  Agent option in the picker.
+- **MCP is not a model-tool surface.** Prime Agent runs the protocol Python-side in its
+  IPython kernel; a `settings.json` `mcpServers` entry alone registers the endpoint host-side
+  and gives the agent nothing. So `mcp-injectors/prime-agent.ts` writes, per HTTP server, both
+  the settings entry **and** a generated Python package subclassing `rlm.McpIntegration`, and
+  passes each with `--skill`. Tool discovery is the CLI's job (`McpIntegration.__getattr__`
+  fetches the tool list on first use and binds each as an async method), so the generator never
+  hard-codes tool names. The bearer travels as `bearer_token_env` — an env var *name* — which
+  is what keeps `__HEZO_SECRET_*__` substitution intact. stdio descriptors are dropped: Prime
+  Agent's host discards them, so emitting one would look configured and do nothing.
+
+Its usage rides the stream (`message_end` → `message.usage`), so unlike Grok and Kimi Code it
+needs no off-stream recovery. `createPrimeAgentParser` maps the four buckets **straight
+across**: Prime Agent already normalises every provider to disjoint buckets
+(`input = prompt - cacheRead - cacheWrite`), so subtracting cache again — the Codex/Grok
+posture — would under-count input. Its own `cost` object is ignored, per the always-price-from-
+the-table rule. Effort maps onto `--thinking`, the closest fit of any runtime. The image bakes
+a pinned release plus `ipykernel` and `PRIME_AGENT_KERNEL_PYTHON`, so no run pays to bootstrap
+the kernel over the network.
 
 **Local providers carry their endpoint on the credential, not in `staticEnv`.** Ollama and
 LM Studio serve Anthropic's Messages API natively, so they reuse the Claude Code runtime
@@ -2901,7 +2941,7 @@ CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), inj
 servers, and wires the stop-hook. OpenCode, Grok and Kimi Code take the prompt as a CLI
 **argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
-`SUBSCRIPTION_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
+`RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
 TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its
 configuration in two — MCP servers in `mcp.json`, the `[[hooks]]` Stop entry and
 `[permission.rules]` in `config.toml`, both under `$KIMI_CODE_HOME` — and is the only adapter

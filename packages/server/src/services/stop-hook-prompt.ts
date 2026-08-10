@@ -40,10 +40,10 @@ export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
 export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-1.5-flash';
-// Shared by BOTH ways of running Kimi. On the `kimi` provider (Claude Code
-// against Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"`
-// Stop hook judges with it; on the `kimi_code` provider (Moonshot's own CLI) the
-// command-script judge calls Moonshot's OpenAI-compatible endpoint with it.
+// Shared by both ways of running Kimi. On the Claude Code runtime (against
+// Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"` Stop hook
+// judges with it; on Moonshot's own CLI the command-script judge calls their
+// OpenAI-compatible endpoint with it.
 export const STOP_HOOK_JUDGE_MODEL_KIMI = KIMI_DEFAULT_MODEL;
 
 /**
@@ -594,7 +594,7 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 	//    ceiling is real rather than nominal.
 	//
 	// Both read `$KIMI_CODE_HOME`, which the runner points at a per-run directory
-	// (see SUBSCRIPTION_LAYOUTS), so neither can leak across runs. The API key is
+	// (see RUNTIME_HOME_LAYOUTS), so neither can leak across runs. The API key is
 	// `KIMI_MODEL_API_KEY` — the same shell-read var the CLI itself authenticates
 	// with — so no extra credential is injected for the judge.
 	[AgentRuntime.Kimi]: {

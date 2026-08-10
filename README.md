@@ -208,17 +208,16 @@ tooling, guardrails and security stay the same underneath whichever model you pi
 
 | Provider | Models | Runtime | Auth |
 |---|---|---|---|
-| **Anthropic** | Claude | Claude Code | API key or subscription |
-| **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
-| **Google** | Gemini | Gemini | API key or subscription |
-| **xAI** | Grok | Grok Build | API key |
-| **Kimi** (Moonshot) | Kimi | Claude Code, or Kimi Code | API key |
-| **Kimi Code** (Moonshot) | Kimi | Kimi Code, or Claude Code | API key |
-| **DeepSeek** | DeepSeek | Claude Code | API key |
-| **Z.ai** | GLM | Claude Code | API key |
-| **OpenRouter** | Many, via one account | OpenCode | API key |
-| **Ollama** | Whatever you run locally | Claude Code | Server URL (no key) |
-| **LM Studio** | Whatever you run locally | Claude Code | Server URL (no key) |
+| **Anthropic** | Claude | Claude Code, or Prime Agent | API key or subscription |
+| **OpenAI** | ChatGPT / GPT | Codex, or Prime Agent | API key or subscription |
+| **Google** | Gemini | Gemini, or Prime Agent | API key or subscription |
+| **xAI** | Grok | Grok Build, or Prime Agent | API key |
+| **Kimi** (Moonshot) | Kimi | Claude Code, Kimi Code, or Prime Agent | API key |
+| **DeepSeek** | DeepSeek | Claude Code, or Prime Agent | API key |
+| **Z.ai** | GLM | Claude Code, or Prime Agent | API key |
+| **OpenRouter** | Many, via one account | OpenCode, or Prime Agent | API key |
+| **Ollama** | Whatever you run locally | Claude Code | Server URL (key optional) |
+| **LM Studio** | Whatever you run locally | Claude Code | Server URL (key optional) |
 
 Where the Runtime column lists more than one, that credential chooses which CLI it runs on;
 the first is the default, so adding a key without touching the setting just works. You can

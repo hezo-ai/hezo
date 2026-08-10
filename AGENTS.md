@@ -537,6 +537,7 @@ Wiring lives in `services/mcp-injectors/<runtime>.ts`, specs in `JUDGE_SPECS`, t
 | Codex | helper script | Its `type: "prompt"` is parsed-but-skipped — the hook must be `type: "command"`. |
 | Gemini | helper script | The Stop analogue is `AfterAgent`, not `Stop`. |
 | Kimi Code | helper script | `[[hooks]]` entries accept **exactly four keys** (`event`, `matcher`, `command`, `timeout`) — any other makes the CLI refuse the whole config, breaking every run on the runtime. Block via exit code **2**; any other non-zero reads as a broken script and fails open. Its stdin payload carries neither the final assistant message nor `stop_hook_active`, so the spec opts into a session-log lookup and an on-disk loop-guard marker. |
+| Prime Agent | helper script | Runs as `--autonomous --autonomous-gate <cmd>`, which gets **no stdin** — so the spec reads the final message from the `<sessionId>.jsonl` session log under `PRIME_AGENT_CODING_AGENT_DIR`, whose `content` is an array of parts. No `stop_hook_active` either, so the loop guard is an on-disk marker. Blocks via exit code **1**, with the reason on stderr. |
 | OpenCode | **none** | Its plugin API can't block-and-continue in headless mode. Fails open. |
 | Grok | **none** | Its hooks block only on pre-tool-use; Stop is a passive notification. Fails open. |
 
@@ -557,7 +558,7 @@ A runtime is reachable by any credential configured onto it, not only by the pro
 2. **A name-only address that reads as an ask** — the unlinked bold/leading-line form or the passive one, matched against the run team's roster + HQ + `@admin` and gated on directed-ask intent so a name written for emphasis is never touched — is **not** rewritten or auto-delivered; guessing intent to force a wake overreaches. The runner logs the same warning `create_comment` gives interactively and leaves the handoff undelivered.
 3. **A plain direct answer** to a human who addressed this agent: when the run was woken by a reply or mention from a human (not another agent) and posted no comment of its own, the final message is delivered verbatim, threaded under the waking comment.
 
-OpenCode, Grok and Kimi Code take the task prompt as a CLI **argument** rather than on stdin, so the runner sets `HEZO_PROMPT_MODE=arg` (`RUNTIME_PROMPT_DELIVERY`) and the exec wrapper appends `"$(cat $HEZO_PROMPT_FILE)"`. Kimi Code additionally gets **no auto-approve flag** — `--yolo`/`--auto`/`--plan` are mutually exclusive with `--prompt`; `-p` already applies the `auto` permission policy and the injected `[permission.rules]` covers the rest.
+OpenCode, Grok, Kimi Code and Prime Agent take the task prompt as a CLI **argument** rather than on stdin, so the runner sets `HEZO_PROMPT_MODE=arg` (`RUNTIME_PROMPT_DELIVERY`) and the exec wrapper appends `"$(cat $HEZO_PROMPT_FILE)"`. Kimi Code additionally gets **no auto-approve flag** — `--yolo`/`--auto`/`--plan` are mutually exclusive with `--prompt`; `-p` already applies the `auto` permission policy and the injected `[permission.rules]` covers the rest.
 
 ## Cost: always priced from the table
 

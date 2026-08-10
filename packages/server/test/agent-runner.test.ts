@@ -2487,9 +2487,12 @@ describe('runAgent', () => {
 				'container-123',
 			);
 			expect(mount).not.toBeNull();
-			expect(mount!.containerDir).toBe(`/workspace/.hezo/subscription/codex/${runId}`);
+			// `codex-openai`, not `codex`: the layout is keyed by runtime now, so the
+			// per-provider isolation that used to come from the dir name itself is
+			// the provider suffix.
+			expect(mount!.containerDir).toBe(`/workspace/.hezo/subscription/codex-openai/${runId}`);
 			expect(mount!.envEntries).toEqual([
-				`CODEX_HOME=/workspace/.hezo/subscription/codex/${runId}`,
+				`CODEX_HOME=/workspace/.hezo/subscription/codex-openai/${runId}`,
 			]);
 			const staged = engine.files('container-123', mount!.containerDir);
 			expect(await staged.read(mount!.authFileRelative)).toBe(validAuthJson);

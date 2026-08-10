@@ -67,15 +67,13 @@ test('Add provider modal shows a card for every offered provider (incl. OpenRout
 		'Google',
 		'DeepSeek',
 		'Kimi',
-		'Kimi Code',
 		'xAI',
 		'OpenRouter',
 		'Ollama',
 		'LM Studio',
 	]) {
 		// Exact accessible-name match, not `new RegExp(name)`: a substring pattern
-		// makes any provider whose name prefixes another ambiguous, which is exactly
-		// what "Kimi" vs "Kimi Code" would do.
+		// would make any provider whose name prefixes another ambiguous.
 		expect(within(dialog).getByRole('button', { name })).toBeTruthy();
 	}
 	// Cards show only the logo + name now — the runtime label is no longer on them.
@@ -99,7 +97,10 @@ test('a local provider asks for a Server URL, keeps the key optional, and warns 
 	// the runner's documented default.
 	const urlField = within(dialog).getByLabelText('Server URL') as HTMLInputElement;
 	expect(urlField.value).toBe('http://localhost:11434');
-	// The key is explicitly optional for a local runner.
+	// The key is optional for a local runner, so it lives behind Advanced rather
+	// than on the default path where it would read as required.
+	expect(within(dialog).queryByLabelText('API key (optional)')).toBeNull();
+	await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
 	within(dialog).getByLabelText('API key (optional)');
 
 	// localhost inside the agent container is the container itself, so the form
@@ -147,7 +148,7 @@ test('the add picker renders a brand logo for every offered provider (OpenAI, De
 	const dialog = await findByRole('dialog');
 	// Every card renders an inline brand SVG in its logo slot — including the ones
 	// that used to fall back to a bare wordmark (OpenAI, DeepSeek, z.ai, Kimi).
-	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'z.ai', 'Kimi', 'Kimi Code']) {
+	for (const name of ['Anthropic', 'OpenAI', 'Google', 'DeepSeek', 'z.ai', 'Kimi', 'xAI']) {
 		const card = within(dialog).getByRole('button', { name });
 		expect(card.querySelector('svg')).toBeTruthy();
 	}
