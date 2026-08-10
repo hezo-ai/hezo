@@ -2241,6 +2241,23 @@ export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 };
 
 /**
+ * The fully-qualified name a connector's tool is addressed by, and the ceiling
+ * that name has to fit inside.
+ *
+ * Anthropic's API and the OpenAI-compatible endpoints both cap a tool name at 64
+ * characters. The namespace spends `mcp__`, the connector's own name and `__`
+ * before the upstream tool name even begins, so a verbose connector name paired
+ * with a verbose tool name can cross it - and at that point the provider, not
+ * Hezo, decides what becomes of the tool. Renaming the connector shortens every
+ * one of its tools at once, which is why the warning names the connector.
+ */
+export const MCP_TOOL_NAME_MAX_LENGTH = 64;
+
+export function qualifiedMcpToolName(serverName: string, toolName: string): string {
+	return `mcp__${serverName}__${toolName}`;
+}
+
+/**
  * Flags that make each CLI emit structured per-turn events to stdout while
  * the run is in flight, so the run log shows tool calls, thinking, and
  * partial assistant text live instead of silence until the final result.
