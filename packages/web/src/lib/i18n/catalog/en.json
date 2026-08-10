@@ -213,6 +213,7 @@
 	"settings.general": "General",
 	"settings.logOut": "Log out",
 	"settings.provider.advanced": "Advanced",
+	"settings.provider.apiKeyOptional": "API key (optional)",
 	"settings.provider.agentCli": "Agent CLI",
 	"settings.provider.agentCliHint": "The command-line agent that runs this credential.",
 	"settings.provider.cliDefault": "Default",

@@ -213,6 +213,7 @@
 	"settings.general": "Allgemein",
 	"settings.logOut": "Abmelden",
 	"settings.provider.advanced": "Erweitert",
+	"settings.provider.apiKeyOptional": "API-Schlüssel (optional)",
 	"settings.provider.agentCli": "Agent-CLI",
 	"settings.provider.agentCliHint": "Das Kommandozeilen-Tool, das diese Zugangsdaten ausführt.",
 	"settings.provider.cliDefault": "Standard",

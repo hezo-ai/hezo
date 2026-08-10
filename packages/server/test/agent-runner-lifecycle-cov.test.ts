@@ -7,6 +7,7 @@
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import {
+	AgentRuntime,
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
@@ -1080,6 +1081,7 @@ describe('runAgent lifecycle — subscription credential lock + rotation', () =>
 				const runId = codexHomeEntry.slice('CODEX_HOME='.length).split('/').pop()!;
 				const hostFile = `${getHostSubscriptionRoot(
 					AiProvider.OpenAI,
+					AgentRuntime.Codex,
 					dataDir,
 					teamId,
 					projectId,
@@ -1147,7 +1149,7 @@ describe('runAgent lifecycle — subscription credential lock + rotation', () =>
 		const authFileOf = (env: string[]) => {
 			const codexHomeEntry = env.find((e) => e.startsWith('CODEX_HOME='))!;
 			const runId = codexHomeEntry.slice('CODEX_HOME='.length).split('/').pop()!;
-			return `${getHostSubscriptionRoot(AiProvider.OpenAI, dataDir, teamId, projectId, runId)}/auth.json`;
+			return `${getHostSubscriptionRoot(AiProvider.OpenAI, AgentRuntime.Codex, dataDir, teamId, projectId, runId)}/auth.json`;
 		};
 
 		// Run 1: the CLI leaves an empty-token tombstone → must not be persisted.

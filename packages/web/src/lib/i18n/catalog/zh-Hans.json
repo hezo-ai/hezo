@@ -213,6 +213,7 @@
 	"settings.general": "常规",
 	"settings.logOut": "退出登录",
 	"settings.provider.advanced": "高级",
+	"settings.provider.apiKeyOptional": "API 密钥（可选）",
 	"settings.provider.agentCli": "代理 CLI",
 	"settings.provider.agentCliHint": "运行此凭据的命令行代理。",
 	"settings.provider.cliDefault": "默认",

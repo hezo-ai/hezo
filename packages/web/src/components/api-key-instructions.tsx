@@ -6,10 +6,9 @@ import {
 } from './provider-instructions';
 
 /**
- * Shared by the two Kimi providers. Hezo can drive Moonshot's models either
- * through Claude Code (`kimi`) or through Moonshot's own Kimi Code CLI
- * (`kimi_code`); both authenticate with the same key from the same console, so
- * the walkthrough is identical and is written once.
+ * One key, either CLI. Hezo can drive Moonshot's models through Claude Code or
+ * through Moonshot's own Kimi Code CLI (pick under Advanced); both authenticate
+ * with the same key from the same console.
  */
 const KIMI_KEY_INSTRUCTIONS: ProviderInstructionContent = {
 	title: 'How to get your Kimi API key',
@@ -181,11 +180,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>
 		),
 	},
-	// `kimi` and `kimi_code` are the same Moonshot account and the same key; they
-	// differ only in which CLI drives the models. One shared block, referenced
-	// twice, so the two can never drift apart.
 	[AiProvider.Kimi]: KIMI_KEY_INSTRUCTIONS,
-	[AiProvider.KimiCode]: KIMI_KEY_INSTRUCTIONS,
 	[AiProvider.XAi]: {
 		title: 'How to get your xAI API key',
 		steps: [
@@ -227,8 +222,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>,
 			<>
 				Set <strong>Server URL</strong> to an address the agent container can reach —{' '}
-				<code>http://host.docker.internal:11434</code> for a server on this machine. Leave the API
-				key blank.
+				<code>http://host.docker.internal:11434</code> for a server on this machine.
 			</>,
 		],
 		footer: (
@@ -252,8 +246,8 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 			</>,
 			<>
 				Set <strong>Server URL</strong> to an address the agent container can reach —{' '}
-				<code>http://host.docker.internal:1234</code> for a server on this machine. Leave the API
-				key blank unless you enabled <strong>Require Authentication</strong>.
+				<code>http://host.docker.internal:1234</code> for a server on this machine. If you enabled{' '}
+				<strong>Require Authentication</strong>, put the key under <strong>Advanced</strong>.
 			</>,
 		],
 		footer: (

@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
+	AgentRuntime,
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
@@ -1074,6 +1075,7 @@ describe('runAgent — rotated subscription auth tombstone', () => {
 				const runId = codexHomeEntry.slice('CODEX_HOME='.length).split('/').pop()!;
 				const hostFile = `${getHostSubscriptionRoot(
 					AiProvider.OpenAI,
+					AgentRuntime.Codex,
 					testDataDir,
 					teamId,
 					projectId,

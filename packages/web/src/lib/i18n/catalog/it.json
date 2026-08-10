@@ -213,6 +213,7 @@
 	"settings.general": "Generali",
 	"settings.logOut": "Esci",
 	"settings.provider.advanced": "Avanzate",
+	"settings.provider.apiKeyOptional": "Chiave API (facoltativa)",
 	"settings.provider.agentCli": "CLI dell'agente",
 	"settings.provider.agentCliHint": "Lo strumento da riga di comando che esegue queste credenziali.",
 	"settings.provider.cliDefault": "Predefinito",

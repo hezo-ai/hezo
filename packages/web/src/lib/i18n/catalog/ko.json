@@ -213,6 +213,7 @@
 	"settings.general": "일반",
 	"settings.logOut": "로그아웃",
 	"settings.provider.advanced": "고급",
+	"settings.provider.apiKeyOptional": "API 키(선택 사항)",
 	"settings.provider.agentCli": "에이전트 CLI",
 	"settings.provider.agentCliHint": "이 자격 증명을 실행하는 명령줄 에이전트입니다.",
 	"settings.provider.cliDefault": "기본값",

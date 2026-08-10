@@ -912,3 +912,93 @@ describe('extractKimiUsageFromSessionLog', () => {
 		expect(usage?.costCents).toBe(0);
 	});
 });
+
+describe('prime-agent stream parser', () => {
+	const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+
+	const messageEnd = (usage: Record<string, number>, text = 'Done.') =>
+		line({
+			type: 'message_end',
+			message: {
+				role: 'assistant',
+				model: 'claude-x',
+				content: [
+					{ type: 'thinking', thinking: 'weighing it up' },
+					{ type: 'text', text },
+				],
+				usage,
+			},
+		});
+
+	it('renders tool calls, thinking and assistant text', () => {
+		const parser = createAgentStreamParser(AgentRuntime.PrimeAgent, price);
+		let out = '';
+		out += parser.onStdout(
+			line({ type: 'tool_execution_start', toolName: 'python', args: { code: 'print(1)' } }),
+		);
+		out += parser.onStdout(messageEnd({ input: 100, output: 20 }, 'All set.'));
+		expect(out).toContain('python');
+		expect(out).toContain('[thinking] weighing it up');
+		expect(out).toContain('All set.');
+		expect(parser.getFinalAssistantMessage()).toBe('All set.');
+	});
+
+	it('maps the four token buckets straight across without re-subtracting cache', () => {
+		// The trap this guards: Prime Agent normalises every provider to DISJOINT
+		// buckets (`input = prompt - cacheRead - cacheWrite`), so the Codex/Grok
+		// posture of subtracting cache from input would under-count input and
+		// price the run wrong. `input` here is already cache-exclusive.
+		const parser = createAgentStreamParser(AgentRuntime.PrimeAgent, price);
+		parser.onStdout(messageEnd({ input: 500, output: 200, cacheRead: 4000, cacheWrite: 1000 }));
+
+		const usage = parser.getUsage();
+		expect(usage?.inputTokens).toBe(500);
+		expect(usage?.outputTokens).toBe(200);
+		const expected = costCentsFromRate(RATES['claude-x'], {
+			inputTokens: 500,
+			cacheReadTokens: 4000,
+			cacheCreationTokens: 1000,
+			outputTokens: 200,
+		});
+		expect(usage?.costCents).toBeCloseTo(expected, 8);
+	});
+
+	it('prices from the table, ignoring any cost the CLI reports itself', () => {
+		const parser = createAgentStreamParser(AgentRuntime.PrimeAgent, price);
+		parser.onStdout(
+			line({
+				type: 'message_end',
+				message: {
+					role: 'assistant',
+					// Unknown to the rate table: an unpriced model must fail low.
+					model: 'mystery-model',
+					content: [{ type: 'text', text: 'hi' }],
+					usage: { input: 1000, output: 100 },
+					cost: { total: 12.34 },
+				},
+			}),
+		);
+		expect(parser.getUsage()?.inputTokens).toBe(1000);
+		expect(parser.getUsage()?.costCents).toBe(0);
+	});
+
+	it('keeps the last usage-bearing turn rather than a zero-token one', () => {
+		const parser = createAgentStreamParser(AgentRuntime.PrimeAgent, price);
+		parser.onStdout(messageEnd({ input: 300, output: 40 }));
+		// A turn reporting nothing must not blank out what was already captured.
+		parser.onStdout(messageEnd({ input: 0, output: 0 }));
+		expect(parser.getUsage()?.inputTokens).toBe(300);
+	});
+
+	it('ignores a non-assistant message_end', () => {
+		const parser = createAgentStreamParser(AgentRuntime.PrimeAgent, price);
+		const out = parser.onStdout(
+			line({
+				type: 'message_end',
+				message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+			}),
+		);
+		expect(out).toBe('');
+		expect(parser.getUsage()).toBeNull();
+	});
+});

@@ -213,6 +213,7 @@
 	"settings.general": "Ogólne",
 	"settings.logOut": "Wyloguj się",
 	"settings.provider.advanced": "Zaawansowane",
+	"settings.provider.apiKeyOptional": "Klucz API (opcjonalnie)",
 	"settings.provider.agentCli": "CLI agenta",
 	"settings.provider.agentCliHint": "Narzędzie wiersza poleceń, które uruchamia te dane logowania.",
 	"settings.provider.cliDefault": "Domyślne",

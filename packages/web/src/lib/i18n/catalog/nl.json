@@ -213,6 +213,7 @@
 	"settings.general": "Algemeen",
 	"settings.logOut": "Uitloggen",
 	"settings.provider.advanced": "Geavanceerd",
+	"settings.provider.apiKeyOptional": "API-sleutel (optioneel)",
 	"settings.provider.agentCli": "Agent-CLI",
 	"settings.provider.agentCliHint": "De opdrachtregeltool die deze inloggegevens uitvoert.",
 	"settings.provider.cliDefault": "Standaard",

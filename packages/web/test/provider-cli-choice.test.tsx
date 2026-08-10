@@ -39,18 +39,24 @@ async function listProviders(): Promise<ProviderListResponse['data']> {
 	return ((await res.json()) as ProviderListResponse).data;
 }
 
-test('a provider that runs on one CLI shows no Advanced section', async () => {
-	const { findByRole, getByRole, queryByRole, user } = await renderApp({
+test('a local provider discloses its optional API key and no CLI picker', async () => {
+	const { container, findByRole, getByRole, queryByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: clearAiProviders,
 	});
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
-	await user.click(getByRole('button', { name: 'Anthropic' }));
+	await user.click(getByRole('button', { name: 'Ollama' }));
 
-	// Anthropic runs only on Claude Code, so there is nothing to disclose and the
-	// trigger is omitted rather than opening onto an empty box.
-	expect(queryByRole('button', { name: 'Advanced' })).toBeNull();
+	// A self-hosted runner usually has no auth, so the key must not sit on the
+	// default path where it reads as required. Server URL is the only field.
+	expect(container.querySelector('input[type="password"]')).toBeNull();
+	expect(container.querySelector('input[type="url"]')).not.toBeNull();
+
+	await user.click(await findByRole('button', { name: 'Advanced' }));
+	expect(container.querySelector('input[type="password"]')).not.toBeNull();
+	// Ollama runs only on Claude Code, so Advanced holds the key and nothing else.
+	expect(queryByText('Agent CLI')).toBeNull();
 });
 
 test('a provider with a CLI choice discloses it, collapsed, with the default preselected', async () => {
@@ -60,7 +66,7 @@ test('a provider with a CLI choice discloses it, collapsed, with the default pre
 	});
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
-	await user.click(getByRole('button', { name: 'Kimi Code' }));
+	await user.click(getByRole('button', { name: 'Kimi' }));
 
 	const advanced = await findByRole('button', { name: 'Advanced' });
 	// Collapsed by default: the ordinary add-a-key path never sees the picker.
@@ -71,11 +77,14 @@ test('a provider with a CLI choice discloses it, collapsed, with the default pre
 	expect(advanced.getAttribute('aria-expanded')).toBe('true');
 	await findByRole('heading', { name: 'Set up an AI provider' });
 
-	// Both CLIs are offered and this provider's own default carries the marker.
-	const kimiCode = getByRole('button', { name: /^Kimi Code/ });
+	// Every CLI this provider can run is offered, and its own default carries the
+	// marker — Moonshot's key reaches the same upstream on all three.
 	const claudeCode = getByRole('button', { name: /^Claude Code/ });
-	expect(kimiCode.textContent).toContain('Default');
-	expect(claudeCode.textContent).not.toContain('Default');
+	const kimiCode = getByRole('button', { name: /^Kimi Code/ });
+	const primeAgent = getByRole('button', { name: /^Prime Agent/ });
+	expect(claudeCode.textContent).toContain('Default');
+	expect(kimiCode.textContent).not.toContain('Default');
+	expect(primeAgent.textContent).not.toContain('Default');
 });
 
 test('the chosen CLI is submitted with the credential', async () => {
@@ -130,15 +139,24 @@ test('the provider list renders the resolved CLI and changes it from the Edit di
 test('a single-CLI provider offers no CLI picker in its Edit dialog', async () => {
 	const { findByRole, findByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			await postProvider({
+				provider: AiProvider.Ollama,
+				base_url: 'http://host.docker.internal:11434',
+				label: 'Ollama',
+			});
+		},
 	});
 
-	// The harness seeds an Anthropic credential, which runs only on Claude Code.
 	await findByRole('heading', { name: 'AI providers' }, { timeout: 15_000 });
 	await findByText('Claude Code');
 
-	await user.click(await findByRole('button', { name: /^Edit / }));
+	await user.click(await findByRole('button', { name: 'Edit Ollama' }));
 	const dialog = await findByRole('dialog');
-	// Nothing to put behind the disclosure, so it is omitted rather than opening
-	// onto an empty box.
-	expect(within(dialog).queryByRole('button', { name: 'Advanced' })).toBeNull();
+	// Ollama runs only on Claude Code, so Advanced carries its optional key and
+	// no picker — a one-CLI choice is not a choice.
+	await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
+	expect(within(dialog).queryByText('Agent CLI')).toBeNull();
+	expect(dialog.querySelector('input[type="password"]')).not.toBeNull();
 });

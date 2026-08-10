@@ -13,9 +13,14 @@ export const AgentRuntime = {
 	// DB `agent_runtime` enum needs no ALTER TYPE, and no rows select it (010
 	// nulled every `tasks.runtime_type = 'kimi'` pin). Note this runtime is
 	// *additional* to — not a replacement for — Kimi on Claude Code: the `kimi`
-	// provider still drives `claude` against Moonshot's Anthropic-compatible
-	// gateway, and the `kimi_code` provider drives the native CLI.
+	// provider offers both, defaulting to `claude` against Moonshot's
+	// Anthropic-compatible gateway.
 	Kimi: 'kimi',
+	// Prime Intellect's Prime Agent (`prime-agent`). Unlike every other entry it
+	// is not tied to one vendor: it speaks to most providers Hezo already
+	// supports, so it is offered as an ALTERNATE CLI on eight of them rather than
+	// being any provider's default.
+	PrimeAgent: 'prime_agent',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -1482,8 +1487,14 @@ export const AiProvider = {
 	DeepSeek: 'deepseek',
 	ZAi: 'z_ai',
 	OpenRouter: 'openrouter',
+	// One Moonshot provider, two CLIs. It used to be two providers (`kimi` on
+	// Claude Code, `kimi_code` on Moonshot's own CLI) only because a runtime was
+	// pinned to its provider; now that a credential carries its own runtime the
+	// pair is one entry offering both. Migration 054 re-points existing
+	// `kimi_code` rows onto `kimi` with `runtime = 'kimi'`, so they keep running
+	// on the same CLI. The `'kimi_code'` label stays in the DB enum (Postgres
+	// cannot drop one) but is unreachable.
 	Kimi: 'kimi',
-	KimiCode: 'kimi_code',
 	XAi: 'x_ai',
 	Ollama: 'ollama',
 	LmStudio: 'lmstudio',
@@ -1607,10 +1618,9 @@ export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code';
  * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` are Moonshot's documented Claude Code
  * settings (https://platform.kimi.ai/docs/guide/agent-support).
  *
- * Declared once and shared by BOTH Moonshot providers: it is `kimi`'s default
- * binding and `kimi_code`'s alternate. Two copies would drift the moment one
- * side gained a setting, and the whole point of the pair is that the same key
- * reaches the same upstream either way.
+ * `kimi`'s default binding; `MOONSHOT_KIMI_CODE_BINDING` below is its alternate.
+ * The point of the pair is that the same key reaches the same upstream either
+ * way, so the two must stay in step.
  */
 const MOONSHOT_CLAUDE_CODE_BINDING: ProviderRuntimeBinding = {
 	staticEnv: {
@@ -1627,8 +1637,7 @@ const MOONSHOT_CLAUDE_CODE_BINDING: ProviderRuntimeBinding = {
 
 /**
  * Moonshot reached through Moonshot's own first-party CLI (`kimi`), at `/v1`
- * (OpenAI-shaped) rather than at `/anthropic`. `kimi_code`'s default binding
- * and `kimi`'s alternate.
+ * (OpenAI-shaped) rather than at `/anthropic`. `kimi`'s alternate binding.
  *
  * Credential delivery is the unusual part. Kimi Code deliberately does NOT read
  * provider API keys from the shell environment; they are expected to live in
@@ -1659,6 +1668,53 @@ const MOONSHOT_KIMI_CODE_BINDING: ProviderRuntimeBinding = {
 	},
 	credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_MODEL_API_KEY' },
 };
+
+/**
+ * Prime Agent's own provider id for each Hezo provider, and the env var it reads
+ * that provider's key from.
+ *
+ * These are Prime Agent's spellings, taken from its `KnownProvider` union and
+ * `env-api-keys` map — not Hezo's and not the vendor's. Two are easy to get
+ * wrong: Moonshot is `moonshotai` reading `MOONSHOT_API_KEY` (its `kimi-coding`
+ * / `KIMI_API_KEY` pair is the separate Kimi-for-Coding subscription plan, which
+ * is not what a Hezo Moonshot credential is), and Google is `google` reading
+ * `GEMINI_API_KEY`.
+ *
+ * Ollama and LM Studio are deliberately absent: Prime Agent has no built-in
+ * entry for either, and reaching them would need a custom-provider definition
+ * that is unverified. A provider missing here simply offers no Prime Agent
+ * option in the picker.
+ */
+const PRIME_AGENT_BINDINGS: Partial<Record<AiProvider, { id: string; credentialEnv: string }>> = {
+	[AiProvider.Anthropic]: { id: 'anthropic', credentialEnv: 'ANTHROPIC_API_KEY' },
+	[AiProvider.OpenAI]: { id: 'openai', credentialEnv: 'OPENAI_API_KEY' },
+	[AiProvider.Google]: { id: 'google', credentialEnv: 'GEMINI_API_KEY' },
+	[AiProvider.DeepSeek]: { id: 'deepseek', credentialEnv: 'DEEPSEEK_API_KEY' },
+	[AiProvider.ZAi]: { id: 'zai', credentialEnv: 'ZAI_API_KEY' },
+	[AiProvider.OpenRouter]: { id: 'openrouter', credentialEnv: 'OPENROUTER_API_KEY' },
+	[AiProvider.Kimi]: { id: 'moonshotai', credentialEnv: 'MOONSHOT_API_KEY' },
+	[AiProvider.XAi]: { id: 'xai', credentialEnv: 'XAI_API_KEY' },
+};
+
+/**
+ * The `--provider` args for a Prime Agent run, or none when the provider has no
+ * Prime Agent mapping. Prime Agent selects the upstream by flag rather than by
+ * env var, so this cannot live in a binding's `staticEnv`.
+ */
+export function primeAgentProviderArgs(provider: AiProvider): readonly string[] {
+	const id = PRIME_AGENT_BINDINGS[provider]?.id;
+	return id ? ['--provider', id] : [];
+}
+
+/**
+ * Prime Agent's startup network chatter (a release-manifest version check),
+ * silenced so a run does not depend on reaching primeintellect.ai. Telemetry is
+ * turned off in the injected `settings.json` rather than here — it has no env
+ * var. Mirrors CLAUDE_CODE_QUIET_ENV.
+ */
+export const PRIME_AGENT_QUIET_ENV = {
+	PI_SKIP_VERSION_CHECK: '1',
+} as const;
 
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
@@ -1714,32 +1770,22 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		runtime: AgentRuntime.OpenCode,
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENROUTER_API_KEY' },
 	},
-	// The two Moonshot providers are the same upstream and the same key reached by
-	// two different CLIs, so each offers BOTH — they differ only in which one they
-	// default to. `kimi` defaults to Claude Code against the Anthropic-compatible
-	// gateway; `kimi_code` defaults to Moonshot's own CLI. Neither supersedes the
-	// other, and an operator can now switch a credential between them without
-	// re-adding it. (They exist as two providers only because runtime used to be
-	// pinned to provider; collapsing them is a separate change that would have to
-	// migrate existing rows.)
+	// One Moonshot provider reachable by two CLIs against the same upstream with
+	// the same key: Claude Code at `/anthropic` (the default) and Moonshot's own
+	// `kimi` at `/v1`. Neither supersedes the other, and an operator switches a
+	// credential between them without re-adding it.
 	//
-	// Selection precedence is unchanged: the credential's own runtime, else this
-	// default; pick per agent (`model_override_provider`) or per task
-	// (`tasks.runtime_type`).
+	// Selection precedence: the credential's own runtime, else this default; pick
+	// per agent (`model_override_provider`) or per task (`tasks.runtime_type`).
 	[AiProvider.Kimi]: {
 		runtime: AgentRuntime.ClaudeCode,
 		...MOONSHOT_CLAUDE_CODE_BINDING,
 		alternateRuntimes: { [AgentRuntime.Kimi]: MOONSHOT_KIMI_CODE_BINDING },
 	},
-	[AiProvider.KimiCode]: {
-		runtime: AgentRuntime.Kimi,
-		...MOONSHOT_KIMI_CODE_BINDING,
-		alternateRuntimes: { [AgentRuntime.ClaudeCode]: MOONSHOT_CLAUDE_CODE_BINDING },
-	},
 	// xAI Grok Build runs on its own first-party `grok` CLI (its own runtime),
 	// authenticated by XAI_API_KEY sent direct to api.x.ai (the sanctioned
 	// model-provider credential — no MITM). No subscription auth; api-key only.
-	// The grok CLI reads its config from $GROK_HOME (see SUBSCRIPTION_LAYOUTS),
+	// The grok CLI reads its config from $GROK_HOME (see RUNTIME_HOME_LAYOUTS),
 	// so no staticEnv base-url override is needed. Like OpenCode, Grok has no
 	// completeness Stop-hook judge (its Stop hook is passive — see the grok MCP
 	// injector), so it runs fail-open.
@@ -1765,6 +1811,24 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 	},
 };
 
+// Attach the Prime Agent alternate to every provider it can drive.
+//
+// A post-pass rather than eight inline `alternateRuntimes` entries so the roster
+// lives in exactly one place: a provider is Prime-Agent-capable if and only if
+// it has a PRIME_AGENT_BINDINGS row, and the `--provider` id and the credential
+// variable cannot drift apart into two lists. Providers already carrying an
+// alternate (the two Moonshot ones) keep it — this only adds a key.
+for (const [key, entry] of Object.entries(PRIME_AGENT_BINDINGS)) {
+	const adapter = PROVIDER_RUNTIME_ADAPTERS[key as AiProvider];
+	if (!adapter) continue;
+	adapter.alternateRuntimes = {
+		...adapter.alternateRuntimes,
+		[AgentRuntime.PrimeAgent]: {
+			credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: entry.credentialEnv },
+		},
+	};
+}
+
 /** Default upstream API hostnames per provider (for egress NO_PROXY). */
 const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.Anthropic]: ['api.anthropic.com'],
@@ -1773,10 +1837,8 @@ const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
 	[AiProvider.DeepSeek]: ['api.deepseek.com'],
 	[AiProvider.ZAi]: ['api.z.ai'],
 	[AiProvider.OpenRouter]: ['openrouter.ai'],
+	// One host either way: `/anthropic` under Claude Code, `/v1` under Kimi Code.
 	[AiProvider.Kimi]: ['api.moonshot.ai'],
-	// Same upstream as `kimi`, reached at `/v1` (OpenAI-shaped) by the native CLI
-	// rather than at `/anthropic` by Claude Code.
-	[AiProvider.KimiCode]: ['api.moonshot.ai'],
 	[AiProvider.XAi]: ['api.x.ai'],
 	// Local runners have no fixed upstream — the real host comes from the config's
 	// stored base URL, passed to `providerDirectUpstreamHosts` at run time. These
@@ -2007,6 +2069,7 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.OpenCode]: 'opencode',
 	[AgentRuntime.Grok]: 'grok',
 	[AgentRuntime.Kimi]: 'kimi',
+	[AgentRuntime.PrimeAgent]: 'prime-agent',
 };
 
 /**
@@ -2022,6 +2085,7 @@ export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
 	[AgentRuntime.OpenCode]: 'OpenCode',
 	[AgentRuntime.Grok]: 'Grok',
 	[AgentRuntime.Kimi]: 'Kimi Code',
+	[AgentRuntime.PrimeAgent]: 'Prime Agent',
 };
 
 /**
@@ -2042,6 +2106,9 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
 	// `kimi -p <PROMPT>` (--prompt) is the same shape as Grok: the prompt is the
 	// flag's value, not stdin. Kimi Code has no stdin-as-prompt mode at all.
 	[AgentRuntime.Kimi]: 'arg',
+	// `prime-agent -p <PROMPT>` takes the prompt as a trailing positional, so the
+	// bridge appends `"$(cat $HEZO_PROMPT_FILE)"`.
+	[AgentRuntime.PrimeAgent]: 'arg',
 };
 
 /**
@@ -2065,6 +2132,10 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	// `--yes`/`--auto-approve` flags or `[permission.rules]` in the injected
 	// config.toml — not a flag that conflicts with `--prompt`.
 	[AgentRuntime.Kimi]: [],
+	// Nothing to pass, and for a different reason than Kimi Code: Prime Agent has
+	// no permission or sandbox system at all - there is no approval prompt in its
+	// core and no approval flag in its CLI - so a headless run cannot stall on one.
+	[AgentRuntime.PrimeAgent]: [],
 };
 
 /**
@@ -2118,6 +2189,7 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	[AgentRuntime.OpenCode]: [],
 	[AgentRuntime.Grok]: [],
 	[AgentRuntime.Kimi]: [],
+	[AgentRuntime.PrimeAgent]: [],
 };
 
 /**
@@ -2148,6 +2220,11 @@ export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.OpenCode]: true,
 	[AgentRuntime.Grok]: false,
 	[AgentRuntime.Kimi]: true,
+	// Prime Agent does not expose MCP tools as model tools at all: each server
+	// becomes a Python-backed skill the model calls from its IPython kernel, so
+	// there is no tool list to filter. The egress proxy still enforces the
+	// allowlist, which is what actually matters.
+	[AgentRuntime.PrimeAgent]: false,
 };
 
 /**
@@ -2177,6 +2254,11 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	// so cost is recovered post-run from the per-run session log. See
 	// `extractKimiUsageFromSessionLog` in agent-stream-parser.ts.
 	[AgentRuntime.Kimi]: ['--output-format', 'stream-json'],
+	// `--mode json` serializes every session event to stdout verbatim. Unlike Grok
+	// and Kimi Code its stream DOES carry token usage - `message_end` includes the
+	// assistant message, whose `usage` holds the four buckets - so there is no
+	// off-stream recovery for this runtime.
+	[AgentRuntime.PrimeAgent]: ['--mode', 'json'],
 };
 
 /**
@@ -2194,6 +2276,7 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Grok]: [],
 	// `kimi` likewise runs headless directly via the trailing `-p` flag.
 	[AgentRuntime.Kimi]: [],
+	[AgentRuntime.PrimeAgent]: [],
 };
 
 /**
@@ -2214,6 +2297,8 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	// Kimi Code is the same shape: `-p`/`--prompt` runs one prompt headlessly and
 	// streams to stdout, with the prompt appended as the flag's value.
 	[AgentRuntime.Kimi]: ['-p'],
+	// `prime-agent -p` is print mode; the prompt follows as a positional.
+	[AgentRuntime.PrimeAgent]: ['-p'],
 };
 
 export interface AiProviderVerifyEndpoint {
@@ -2318,19 +2403,6 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 		keyPlaceholder: 'sk-...',
 		// Moonshot's OpenAI-compatible catalog. Drives both key verification and
 		// the default-model dropdown; returns the standard `data[]` shape.
-		verifyEndpoint: {
-			url: 'https://api.moonshot.ai/v1/models',
-			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),
-		},
-	},
-	// The same Moonshot account and the same API key as `kimi` above — the only
-	// difference is which CLI drives the models, which is exactly what
-	// `runtimeLabel` tells the operator on the provider card. Both may be
-	// configured at once; pick between them per agent or per task.
-	[AiProvider.KimiCode]: {
-		name: 'Kimi Code',
-		runtimeLabel: 'Kimi Code',
-		keyPlaceholder: 'sk-...',
 		verifyEndpoint: {
 			url: 'https://api.moonshot.ai/v1/models',
 			headers: (apiKey) => ({ Authorization: `Bearer ${apiKey}` }),

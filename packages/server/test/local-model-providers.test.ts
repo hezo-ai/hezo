@@ -3,9 +3,11 @@ import {
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
 	AiProvider,
+	ALL_AI_PROVIDERS,
 	claudeCodeProviderUsesCustomEndpoint,
 	isLocalAiProvider,
 	PROVIDER_RUNTIME_ADAPTERS,
+	PROVIDER_TO_RUNTIME,
 	providerDirectUpstreamHosts,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
@@ -14,7 +16,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { buildProviderEnv } from '../src/services/agent-runner';
 import { readConfigBaseUrl } from '../src/services/ai-provider-keys';
-import { SUBSCRIPTION_LAYOUTS } from '../src/services/runtime-home';
+import { RUNTIME_HOME_LAYOUTS } from '../src/services/runtime-home';
 import { judgeModelForProvider } from '../src/services/stop-hook-prompt';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
@@ -45,16 +47,21 @@ describe('local provider descriptors', () => {
 	// Without a layout entry `ensureRuntimeHomeDir` returns null, no settings.json
 	// is written, and the completeness Stop hook silently never loads.
 	it.each(LOCAL_PROVIDERS)('%s has a runtime config dir so the Stop hook loads', (provider) => {
-		const layout = SUBSCRIPTION_LAYOUTS[provider];
+		// The layout is keyed by the CLI, and both local runners run on Claude Code.
+		const layout = RUNTIME_HOME_LAYOUTS[PROVIDER_TO_RUNTIME[provider]];
 		expect(layout).toBeDefined();
 		expect(layout?.envVarName).toBe('HEZO_CLAUDE_CONFIG_DIR');
-		expect(layout?.dirName).toBeTruthy();
+		expect(layout?.dirPrefix).toBeTruthy();
 		// Api-key only: no subscription blob is mounted for these.
 		expect(layout?.authFileRelative).toBeUndefined();
 	});
 
 	it('gives each provider a distinct config dir', () => {
-		const dirs = Object.values(SUBSCRIPTION_LAYOUTS).map((l) => l?.dirName);
+		// The prefix is shared per CLI, so isolation now comes from the provider
+		// suffix — two Claude Code providers must still land in different dirs.
+		const dirs = ALL_AI_PROVIDERS.map(
+			(p) => `${RUNTIME_HOME_LAYOUTS[PROVIDER_TO_RUNTIME[p]].dirPrefix}-${p}`,
+		);
 		expect(new Set(dirs).size).toBe(dirs.length);
 	});
 

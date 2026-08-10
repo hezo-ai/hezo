@@ -12,9 +12,7 @@ const PROVIDERS_WITH_LOGOS = [
 	AiProvider.DeepSeek,
 	AiProvider.ZAi,
 	AiProvider.Kimi,
-	// Same Moonshot brand mark as `Kimi` — the two cards are told apart by their
-	// runtime label, not the logo.
-	AiProvider.KimiCode,
+	AiProvider.XAi,
 ] as const;
 
 test('registers a brand mark for each provider offered in the add picker', () => {
