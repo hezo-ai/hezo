@@ -224,7 +224,12 @@ it('GET /inbox/needs-you includes pending hire approvals with no project_id or t
 	expect(body.action_count).toBeGreaterThanOrEqual(1);
 });
 
-it('GET /inbox/needs-you includes pending credential requests', async () => {
+it('GET /inbox/needs-you leaves out pending credential requests, which the inbox does not carry', async () => {
+	const before = await app.request(`/api/projects/${projectSlug}/inbox/needs-you`, {
+		headers: authHeader(token),
+	});
+	const beforeCount = ((await before.json()).data as { action_count: number }).action_count;
+
 	await db.query(
 		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 		 VALUES ($1, $2, 'credential_request'::comment_content_type, $3::jsonb)`,
@@ -239,14 +244,14 @@ it('GET /inbox/needs-you includes pending credential requests', async () => {
 		headers: authHeader(token),
 	});
 	const body = (await res.json()).data as {
-		items: Array<{ kind: string; credential?: { credential_name: string } }>;
+		items: Array<{ kind: string }>;
 		action_count: number;
 	};
-	expect(body.items.some((n) => n.kind === 'credential')).toBe(true);
-	expect(body.items.find((n) => n.kind === 'credential')?.credential?.credential_name).toBe(
-		'DASH_API_KEY',
-	);
-	expect(body.action_count).toBeGreaterThanOrEqual(1);
+	// The widget links straight to the inbox, which lists approvals and mentions
+	// only — a row it cannot show must not be counted or listed here either.
+	expect(body.items.every((n) => n.kind === 'approval' || n.kind === 'mention')).toBe(true);
+	expect(JSON.stringify(body.items)).not.toContain('DASH_API_KEY');
+	expect(body.action_count).toBe(beforeCount);
 });
 
 it('GET /inbox/needs-you includes unread admin mentions', async () => {

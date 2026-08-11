@@ -193,10 +193,14 @@ inboxRoutes.post('/projects/:projectId/inbox/mentions/read-all', async (c) => {
 const NEEDS_YOU_LIMIT = 10;
 
 /**
- * Aggregated "needs you" action items for the dashboard widget:
- * pending approvals + unread admin mentions + unfulfilled credential requests,
- * sorted by created_at desc, capped at 10 items total.
- * Also returns a separate per-dashboard action count for this project.
+ * Aggregated "needs you" action items for the dashboard widget: pending
+ * approvals + unread admin mentions, sorted by created_at desc, capped at 10
+ * items total. Also returns a separate per-dashboard action count.
+ *
+ * The item set and the count are exactly the project inbox's unread set - the
+ * widget's "Open inbox" link has to land on the very rows it just listed, so
+ * anything the inbox does not carry (credential requests, say) does not belong
+ * here either. `inbox-parity.test.ts` holds the two endpoints together.
  */
 inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -209,7 +213,7 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 	const db = c.get('db');
 	const adminUserId = auth.userId;
 
-	const [approvals, mentions, credentials, countRow] = await Promise.all([
+	const [approvals, mentions, countRow] = await Promise.all([
 		db.query<{
 			id: string;
 			type: string;
@@ -263,28 +267,6 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 			 LIMIT $4`,
 			[teamId, adminUserId, projectId, NEEDS_YOU_LIMIT],
 		),
-		db.query<{
-			comment_id: string;
-			comment_public_id: string;
-			task_id: string;
-			task_identifier: string;
-			task_title: string;
-			credential_name: string;
-			created_at: string;
-		}>(
-			`SELECT tc.id AS comment_id, tc.public_id AS comment_public_id,
-			        i.id AS task_id, i.identifier AS task_identifier, i.title AS task_title,
-			        COALESCE(tc.content->>'name', 'credential') AS credential_name,
-			        tc.created_at
-			 FROM task_comments tc
-			 JOIN tasks i ON i.id = tc.task_id
-			 WHERE i.project_id = $1
-			   AND tc.content_type = 'credential_request'::comment_content_type
-			   AND tc.chosen_option IS NULL
-			 ORDER BY tc.created_at DESC
-			 LIMIT $2`,
-			[projectId, NEEDS_YOU_LIMIT],
-		),
 		db.query<{ action_count: number }>(
 			`SELECT (
 			          (SELECT count(*) FROM admin_mentions bm
@@ -303,11 +285,6 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 			               OR (a.payload->>'project_id' IS NULL AND a.payload->>'task_id' IS NULL)
 			               OR a.type = $5::approval_type
 			             ))
-			        + (SELECT count(*) FROM task_comments tc
-			           JOIN tasks i ON i.id = tc.task_id
-			           WHERE i.project_id = $3
-			             AND tc.content_type = 'credential_request'::comment_content_type
-			             AND tc.chosen_option IS NULL)
 			        )::int AS action_count`,
 			[teamId, adminUserId, projectId, ApprovalStatus.Pending, ApprovalType.Hire],
 		),
@@ -328,8 +305,7 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 					author_display_name: string;
 					created_at: string;
 				};
-		  }
-		| { kind: 'credential'; created_at: string; credential: (typeof credentials.rows)[number] };
+		  };
 
 	const items: NeedsYouItem[] = [
 		...approvals.rows.map((a) => ({
@@ -350,11 +326,6 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 				author_display_name: m.author_display_name ?? 'Agent',
 				created_at: m.created_at,
 			},
-		})),
-		...credentials.rows.map((c2) => ({
-			kind: 'credential' as const,
-			created_at: c2.created_at,
-			credential: c2,
 		})),
 	]
 		.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())

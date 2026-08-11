@@ -68,20 +68,13 @@ export interface ProjectDashboardMention {
 	created_at: string;
 }
 
-export interface ProjectDashboardCredentialRequest {
-	comment_id: string;
-	comment_public_id: string;
-	task_id: string;
-	task_identifier: string;
-	task_title: string;
-	credential_name: string;
-	created_at: string;
-}
-
+/**
+ * One dashboard action item. The kinds here are exactly what the inbox renders,
+ * so the widget's "Open inbox" link lands on the same rows it just listed.
+ */
 export type ProjectDashboardNeedsYouItem =
 	| { kind: 'approval'; created_at: string; approval: ProjectDashboardApproval }
-	| { kind: 'mention'; created_at: string; mention: ProjectDashboardMention }
-	| { kind: 'credential'; created_at: string; credential: ProjectDashboardCredentialRequest };
+	| { kind: 'mention'; created_at: string; mention: ProjectDashboardMention };
 
 /** A team agent currently running, with its active task when known. */
 export interface ProjectDashboardRunningAgent {

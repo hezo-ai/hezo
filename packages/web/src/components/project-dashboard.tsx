@@ -182,7 +182,7 @@ function NeedsYouRowShell({
 	actionLink,
 }: {
 	tag: string;
-	tagColor: 'accent' | 'info' | 'warning';
+	tagColor: 'accent' | 'info';
 	children: ReactNode;
 	createdAt: string;
 	actionLink: ReactNode;
@@ -223,46 +223,24 @@ function NeedsYouRow({ projectId, row }: { projectId: string; row: ProjectDashbo
 			</NeedsYouRowShell>
 		);
 	}
-	if (row.kind === 'mention') {
-		const m = row.mention;
-		return (
-			<NeedsYouRowShell
-				tag="mention"
-				tagColor="info"
-				createdAt={row.created_at}
-				actionLink={
-					<Link
-						to="/projects/$projectId/tasks/$taskId"
-						params={{ projectId, taskId: m.task_identifier.toLowerCase() }}
-						hash={`comment-${m.comment_public_id}`}
-						className={ACTION_LINK_CLASS}
-					>
-						Reply
-					</Link>
-				}
-			>
-				{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
-			</NeedsYouRowShell>
-		);
-	}
-	const c = row.credential;
+	const m = row.mention;
 	return (
 		<NeedsYouRowShell
-			tag="credential"
-			tagColor="warning"
+			tag="mention"
+			tagColor="info"
 			createdAt={row.created_at}
 			actionLink={
 				<Link
 					to="/projects/$projectId/tasks/$taskId"
-					params={{ projectId, taskId: c.task_identifier.toLowerCase() }}
-					hash={`comment-${c.comment_public_id}`}
+					params={{ projectId, taskId: m.task_identifier.toLowerCase() }}
+					hash={`comment-${m.comment_public_id}`}
 					className={ACTION_LINK_CLASS}
 				>
-					Provide
+					Reply
 				</Link>
 			}
 		>
-			{c.task_identifier}: provide {c.credential_name}
+			{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
 		</NeedsYouRowShell>
 	);
 }
@@ -308,7 +286,7 @@ function NeedsYouSection({
 			<Card className="divide-y divide-border p-0">
 				{rows.map((row) => (
 					<NeedsYouRow
-						key={`${row.kind}-${row.kind === 'approval' ? row.approval.id : row.kind === 'mention' ? row.mention.id : row.credential.comment_id}`}
+						key={`${row.kind}-${row.kind === 'approval' ? row.approval.id : row.mention.id}`}
 						projectId={projectId}
 						row={row}
 					/>

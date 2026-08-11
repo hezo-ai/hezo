@@ -4177,13 +4177,23 @@ Every UI change must work at all three, and its browser test must verify mobile
 (`AGENTS.md` › UX).
 
 **Project Dashboard.** Opening a project (`/projects/:slug` or a rail click) redirects to
-`/projects/:slug/dashboard`, which is also the first item in the project sidebar. The page
-loads a single aggregate payload from `GET /api/projects/:projectId/dashboard`
-(`services/project-dashboard.ts`): action items (approvals, unread @admin mentions,
-pending credential requests), calendar-window spend + budget caps, in-progress/review
-tasks, progress summary + goals preview, and a team snapshot including running agents.
-HQ (`is_internal`) omits spend, progress, and goals. Query keys use the route-param slug;
-WebSocket invalidation covers the tables that feed the aggregate.
+`/projects/:slug/dashboard`, which is also the first item in the project sidebar. Each
+widget loads from the endpoint that already serves it - budget status + costs,
+in-progress/review tasks, progress summary, goals, agents (for the running-agents
+snapshot) - so the page adds no aggregate route of its own. Widget order is stored per
+project and saved with `PATCH /api/projects/:projectId/dashboard-widget-order`, sanitized
+through `services/project-dashboard.ts`. HQ (`is_internal`) omits spend, progress, and
+goals. Query keys use the route-param slug; WebSocket invalidation covers the tables that
+feed each widget.
+
+Action items come from `GET /api/projects/:projectId/inbox/needs-you` (`routes/inbox.ts`),
+which returns pending approvals + unread @admin mentions and an `action_count`. That set is
+deliberately **the project inbox's unread set, exactly** - the widget is headed by an "Open
+inbox" link, so a row the inbox cannot render (a pending `request_credential`, answered in
+its own task thread) is neither listed nor counted here. The global home's "Needs you"
+section reads the same two cross-project endpoints the global inbox does, for the same
+reason. `test/inbox-parity.test.ts` and `packages/web/test/dashboard-inbox-parity.test.tsx`
+hold both dashboards to their inboxes.
 
 **PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
 `display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**
