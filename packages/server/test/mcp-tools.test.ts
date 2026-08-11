@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { AuthInfo, Env } from '../src/lib/types';
+import { getToolDefs } from '../src/mcp/server';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -142,15 +143,12 @@ async function callListViaMcp(
 }
 
 describe('MCP endpoint: tool registration', () => {
-	it('lists all registered tools', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		const toolNames = body.result.tools.map((t: any) => t.name);
+	it('lists all registered tools', () => {
+		// The registry, not `tools/list`: listing is projected per caller
+		// (`mcp/tool-visibility.ts`), so a board-user principal is correctly not
+		// shown the CEO-only and Captain-only tools this asserts on. Per-caller
+		// visibility has its own coverage in `mcp-tool-visibility.test.ts`.
+		const toolNames = getToolDefs().map((t) => t.name);
 		expect(toolNames).toContain('list_teams');
 		expect(toolNames).toContain('get_team');
 		expect(toolNames).toContain('create_team');
@@ -1372,14 +1370,9 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 });
 
 describe('MCP tool: set_agent_summary and set_team_summary', () => {
-	it('set_agent_summary and set_team_summary are registered', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		const body = await res.json();
-		const toolNames = body.result.tools.map((t: any) => t.name);
+	it('set_agent_summary and set_team_summary are registered', () => {
+		// Registry, not `tools/list` - set_team_summary is Captain-or-HQ only.
+		const toolNames = getToolDefs().map((t) => t.name);
 		expect(toolNames).toContain('set_agent_summary');
 		expect(toolNames).toContain('set_team_summary');
 	});
@@ -1807,14 +1800,9 @@ describe('MCP tools: project arg accepts a slug or UUID', () => {
 });
 
 describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
-	it('both tools are registered', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		const body = await res.json();
-		const toolNames = body.result.tools.map((t: any) => t.name);
+	it('both tools are registered', () => {
+		// Registry, not `tools/list` - set_agent_team_context is Captain-or-HQ only.
+		const toolNames = getToolDefs().map((t) => t.name);
 		expect(toolNames).toContain('set_agent_team_context');
 		expect(toolNames).toContain('get_agent_team_context');
 	});
