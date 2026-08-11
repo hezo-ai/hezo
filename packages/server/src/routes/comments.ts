@@ -637,6 +637,22 @@ commentsRoutes.post(
 			};
 		});
 
+		// Clear the request's inbox rows — providing the value IS acting on them,
+		// for every admin, not only whoever happened to open the form.
+		try {
+			await db.query(
+				'UPDATE admin_mentions SET read_at = COALESCE(read_at, now()) WHERE comment_id = $1',
+				[commentId],
+			);
+			broadcastChange(c, wsRoom.team(teamId), 'admin_mentions', 'UPDATE', {
+				comment_id: commentId,
+				team_id: teamId,
+				project_id: c.get('projectId') as string,
+			});
+		} catch (e) {
+			log.error('Failed to mark credential-request mentions read:', e);
+		}
+
 		if (requestingAgentId) {
 			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
 				requestingAgentId,

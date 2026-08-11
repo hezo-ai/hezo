@@ -635,3 +635,94 @@ describe('list_connectors rest_auth', () => {
 		expect(JSON.stringify(rows)).not.toContain('GOCSPX-secret');
 	});
 });
+
+describe('credential requests in the admin inbox', () => {
+	let commentId: string;
+
+	it('raises an unread inbox row for the admin when the request is filed', async () => {
+		const result = (await callRequestCredential({
+			project: projectId,
+			task_id: taskId,
+			name: 'INBOX_ROW_KEY',
+			kind: 'api_key',
+			instructions: 'Paste the key from the provider dashboard.',
+			allowed_hosts: ['api.example.com'],
+		})) as { comment_id: string };
+		commentId = result.comment_id;
+
+		// Nothing in the comment says "@admin" — it reaches the inbox because
+		// request_credential fans it out, the way an @admin mention does.
+		const rows = await db.query<{ user_id: string; read_at: string | null }>(
+			'SELECT user_id, read_at FROM admin_mentions WHERE comment_id = $1',
+			[commentId],
+		);
+		expect(rows.rows.length).toBeGreaterThanOrEqual(1);
+		expect(rows.rows.every((r) => r.read_at === null)).toBe(true);
+
+		const inbox = await app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(token),
+		});
+		const items = (await inbox.json()).data as Array<{
+			comment_id: string;
+			content_type: string;
+			credential_name: string | null;
+			snippet: string;
+		}>;
+		const row = items.find((i) => i.comment_id === commentId);
+		expect(row?.content_type).toBe('credential_request');
+		expect(row?.credential_name).toBe('INBOX_ROW_KEY');
+		expect(row?.snippet).toContain('Paste the key');
+	});
+
+	it('re-asking for the same credential does not duplicate the inbox row', async () => {
+		const again = (await callRequestCredential({
+			project: projectId,
+			task_id: taskId,
+			name: 'INBOX_ROW_KEY',
+			kind: 'api_key',
+			instructions: 'Still waiting on this one.',
+			allowed_hosts: ['api.example.com'],
+		})) as { comment_id: string; reused: boolean };
+		expect(again.reused).toBe(true);
+		expect(again.comment_id).toBe(commentId);
+
+		const rows = await db.query<{ count: number }>(
+			'SELECT count(*)::int AS count FROM admin_mentions WHERE comment_id = $1',
+			[commentId],
+		);
+		expect(rows.rows[0].count).toBeGreaterThanOrEqual(1);
+		const perUser = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM (
+			   SELECT user_id FROM admin_mentions WHERE comment_id = $1 GROUP BY user_id HAVING count(*) > 1
+			 ) dupes`,
+			[commentId],
+		);
+		expect(perUser.rows[0].count).toBe(0);
+	});
+
+	it('providing the value marks the inbox row read for every admin', async () => {
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments/${commentId}/fulfill-credential`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ value: 'sk-inbox-row' }),
+			},
+		);
+		expect(res.status).toBe(200);
+
+		const rows = await db.query<{ read_at: string | null }>(
+			'SELECT read_at FROM admin_mentions WHERE comment_id = $1',
+			[commentId],
+		);
+		expect(rows.rows.length).toBeGreaterThanOrEqual(1);
+		expect(rows.rows.every((r) => r.read_at !== null)).toBe(true);
+
+		// Off the dashboard, still in the inbox under Read.
+		const needsYou = await app.request(`/api/projects/${projectSlug}/inbox/needs-you`, {
+			headers: authHeader(token),
+		});
+		const items = ((await needsYou.json()).data as { items: unknown[] }).items;
+		expect(JSON.stringify(items)).not.toContain('INBOX_ROW_KEY');
+	});
+});

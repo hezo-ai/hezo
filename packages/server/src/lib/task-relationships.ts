@@ -357,12 +357,19 @@ export async function assertNoOutstandingActivity(
 // keeps NULL-author system/run comments from counting as replies). read_at is
 // deliberately ignored — reading is not answering. Enforced for agent callers
 // only: a human closing a ticket is itself the human's decision.
+//
+// Only text-anchored rows count. `admin_mentions` also carries asks that are
+// not questions — a credential request, whose answer is a pasted value and a
+// `system` comment, never the human text reply this gate waits for. Counting
+// one here would park the ticket forever, answered or not; those asks gate
+// through their own flow (the agent waits on a `credential_provided` wakeup).
 export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): Promise<Check> {
 	const r = await db.query<{ public_id: string }>(
 		`SELECT tc.public_id
 		 FROM admin_mentions am
 		 JOIN task_comments tc ON tc.id = am.comment_id
 		 WHERE am.task_id = $1
+		   AND tc.content_type = $2::comment_content_type
 		   AND NOT EXISTS (
 		     SELECT 1 FROM task_comments reply
 		     WHERE reply.task_id = am.task_id

@@ -1,14 +1,14 @@
 /**
- * The dashboard's action-items widget links straight to the inbox, so it must
- * not list or count a row the inbox cannot show. This holds the two endpoints
- * together against drift:
+ * The dashboard's action-items widget links straight to the inbox, so it lists
+ * and counts exactly the inbox's *unread* rows - never one the inbox cannot
+ * show. This holds the endpoints together against drift:
  *
  *   GET /projects/:projectId/inbox/needs-you  (dashboard widget)
  *   GET /projects/:projectId/inbox/mentions + /approvals  (what the inbox lists)
  *   GET /projects/:projectId/inbox/count     (the sidebar/rail badge)
  *
- * The project is seeded with every shape that has ever tempted an extra row -
- * a pending credential request above all - plus rows the inbox filters out.
+ * The project is seeded with an @admin mention, a credential request and an
+ * approval, plus rows the inbox's unread filter drops.
  */
 import { ApprovalStatus, ApprovalType, TaskStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
@@ -24,12 +24,18 @@ let token: string;
 let teamId: string;
 let projectSlug: string;
 let agentId: string;
+let credentialCommentId: string;
 
 interface NeedsYouBody {
 	items: Array<{
 		kind: string;
 		approval?: { id: string };
-		mention?: { id: string; comment_public_id: string };
+		mention?: {
+			id: string;
+			comment_public_id: string;
+			content_type: string;
+			credential_name: string | null;
+		};
 	}>;
 	action_count: number;
 }
@@ -111,13 +117,19 @@ beforeAll(async () => {
 		[teamId, ApprovalType.Hire, agentId, ApprovalStatus.Approved],
 	);
 
-	// A credential request the admin never fulfilled, and one they did. The inbox
-	// carries neither, so neither may reach the dashboard.
-	await seedComment(taskId, 'credential_request', {
+	// An unanswered credential request, raised into the inbox the way
+	// request_credential does it.
+	credentialCommentId = await seedComment(taskId, 'credential_request', {
 		name: 'PARITY_API_KEY',
 		kind: 'api_key',
-		instructions: 'Need a key.',
+		instructions: 'Need a key from the provider dashboard.',
 	});
+	await db.query(
+		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id) VALUES ($1, $2, $3, $4)`,
+		[teamId, taskId, credentialCommentId, adminUserId],
+	);
+
+	// One already answered: no inbox row, so it reaches neither surface.
 	const fulfilled = await seedComment(taskId, 'credential_request', {
 		name: 'PARITY_DONE_KEY',
 		kind: 'api_key',
@@ -175,16 +187,57 @@ it('the dashboard action count matches the inbox unread count', async () => {
 	expect(needsYou.action_count).toBe(count.unread);
 });
 
-it('an unfulfilled credential request reaches neither the inbox nor the dashboard', async () => {
+it('an unanswered credential request reaches both surfaces, carrying its secret name', async () => {
 	const needsYou = await get<NeedsYouBody>('/inbox/needs-you');
-	const mentions = await get<unknown[]>('/inbox/mentions');
+	const mentions =
+		await get<Array<{ content_type: string; credential_name: string | null; snippet: string }>>(
+			'/inbox/mentions',
+		);
 
-	expect(JSON.stringify(needsYou.items)).not.toContain('PARITY_API_KEY');
-	expect(JSON.stringify(mentions)).not.toContain('PARITY_API_KEY');
-	// It is still the admin's to answer - just from the task thread, where it was asked.
-	const pending = await db.query<{ count: number }>(
-		`SELECT count(*)::int AS count FROM task_comments
-		 WHERE content_type = 'credential_request'::comment_content_type AND chosen_option IS NULL`,
+	const inboxRow = mentions.find((m) => m.content_type === 'credential_request');
+	expect(inboxRow?.credential_name).toBe('PARITY_API_KEY');
+	// The instructions stand in for the snippet a text comment would have.
+	expect(inboxRow?.snippet).toContain('Need a key');
+
+	const dashboardRow = needsYou.items.find(
+		(i) => i.mention?.content_type === 'credential_request',
+	)?.mention;
+	expect(dashboardRow?.credential_name).toBe('PARITY_API_KEY');
+
+	// The answered one is on neither: nothing is being asked for.
+	expect(JSON.stringify(mentions)).not.toContain('PARITY_DONE_KEY');
+	expect(JSON.stringify(needsYou.items)).not.toContain('PARITY_DONE_KEY');
+});
+
+it('reading a credential request drops it from the dashboard but keeps it in the inbox', async () => {
+	const before = await get<NeedsYouBody>('/inbox/needs-you');
+	const row = before.items.find((i) => i.mention?.content_type === 'credential_request');
+	expect(row).toBeDefined();
+
+	const res = await app.request(
+		`/api/projects/${projectSlug}/inbox/mentions/${row?.mention?.id}/read`,
+		{ method: 'POST', headers: { ...authHeader(token), 'Content-Type': 'application/json' } },
 	);
-	expect(pending.rows[0].count).toBe(1);
+	expect(res.status).toBe(200);
+
+	const after = await get<NeedsYouBody>('/inbox/needs-you');
+	expect(after.items.some((i) => i.mention?.content_type === 'credential_request')).toBe(false);
+	expect(after.action_count).toBe(before.action_count - 1);
+
+	// Still in the inbox, now marked read - the request itself is untouched.
+	const mentions =
+		await get<Array<{ content_type: string; read_at: string | null; comment_id: string }>>(
+			'/inbox/mentions',
+		);
+	const inboxRow = mentions.find((m) => m.comment_id === credentialCommentId);
+	expect(inboxRow?.read_at).not.toBeNull();
+	const stillPending = await db.query<{ count: number }>(
+		`SELECT count(*)::int AS count FROM task_comments WHERE id = $1 AND chosen_option IS NULL`,
+		[credentialCommentId],
+	);
+	expect(stillPending.rows[0].count).toBe(1);
+
+	// And the count endpoints still agree with each other after the read.
+	const count = await get<{ unread: number }>('/inbox/count');
+	expect(after.action_count).toBe(count.unread);
 });

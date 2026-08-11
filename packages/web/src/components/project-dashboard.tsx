@@ -39,6 +39,7 @@ import { useProject, useProjectMeta, useProjectProgress } from '../hooks/use-pro
 import { useTasks } from '../hooks/use-tasks';
 import { agentAvatarUrl } from '../lib/agent-avatar';
 import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder } from '../lib/dashboard-widget-order';
+import { inboxRowKind, inboxRowLead } from '../lib/inbox-row-kind';
 import { agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { GoalHealthPill } from './goal-health-pill';
@@ -182,7 +183,7 @@ function NeedsYouRowShell({
 	actionLink,
 }: {
 	tag: string;
-	tagColor: 'accent' | 'info';
+	tagColor: 'accent' | 'info' | 'warning';
 	children: ReactNode;
 	createdAt: string;
 	actionLink: ReactNode;
@@ -224,10 +225,12 @@ function NeedsYouRow({ projectId, row }: { projectId: string; row: ProjectDashbo
 		);
 	}
 	const m = row.mention;
+	const kind = inboxRowKind(m.content_type);
+	const lead = inboxRowLead(m);
 	return (
 		<NeedsYouRowShell
-			tag="mention"
-			tagColor="info"
+			tag={kind.tag}
+			tagColor={kind.tagColor}
 			createdAt={row.created_at}
 			actionLink={
 				<Link
@@ -236,11 +239,19 @@ function NeedsYouRow({ projectId, row }: { projectId: string; row: ProjectDashbo
 					hash={`comment-${m.comment_public_id}`}
 					className={ACTION_LINK_CLASS}
 				>
-					Reply
+					{kind.actionLabel}
 				</Link>
 			}
 		>
-			{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
+			{lead ? (
+				<>
+					{m.task_identifier}: {lead}
+				</>
+			) : (
+				<>
+					{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
+				</>
+			)}
 		</NeedsYouRowShell>
 	);
 }

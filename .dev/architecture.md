@@ -4187,13 +4187,25 @@ goals. Query keys use the route-param slug; WebSocket invalidation covers the ta
 feed each widget.
 
 Action items come from `GET /api/projects/:projectId/inbox/needs-you` (`routes/inbox.ts`),
-which returns pending approvals + unread @admin mentions and an `action_count`. That set is
-deliberately **the project inbox's unread set, exactly** - the widget is headed by an "Open
-inbox" link, so a row the inbox cannot render (a pending `request_credential`, answered in
-its own task thread) is neither listed nor counted here. The global home's "Needs you"
-section reads the same two cross-project endpoints the global inbox does, for the same
-reason. `test/inbox-parity.test.ts` and `packages/web/test/dashboard-inbox-parity.test.tsx`
-hold both dashboards to their inboxes.
+which returns pending approvals + unread `admin_mentions` rows and an `action_count`. That
+set is deliberately **the project inbox's unread set, exactly**: the widget is headed by an
+"Open inbox" link, so it may not carry a row the inbox cannot render, and reading a row in
+the inbox drops it from the dashboard while the inbox keeps it under Read. The global
+home's "Needs you" section reads the same two cross-project endpoints the global inbox
+does, for the same reason. `test/inbox-parity.test.ts` and
+`packages/web/test/dashboard-inbox-parity.test.tsx` hold both dashboards to their inboxes.
+
+**An `admin_mentions` row is an inbox row, not only an `@admin` mention.** `fireAdminMention`
+raises one per admin (team admin member_users ∪ all superusers) for any comment that needs a
+human, whether or not it carries `@admin` text - `request_credential` raises one so a
+credential ask is visible and dismissable outside the task thread it was posted in.
+Consumers discriminate on the anchored comment's `content_type`, which the inbox and
+needs-you projections both carry along with `credential_name`; `packages/web/src/lib/inbox-row-kind.ts`
+is the single home for how each kind is labelled across the three surfaces that render
+them. Read state is per user (`read_at`), and acting on the request clears it for everyone -
+`fulfill-credential` and `resolve-asset-deletion` both mark the comment's rows read, the
+same way resolving an approval retires it. Migration `057` backfilled rows for the
+credential requests that predate the fan-out.
 
 **PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
 `display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**

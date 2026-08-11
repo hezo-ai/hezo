@@ -3,6 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import { useMarkMentionRead } from '../hooks/use-admin-mentions';
 import { agentAvatarUrl } from '../lib/agent-avatar';
 import { formatDateTime, formatRelativeTime } from '../lib/format-date';
+import { inboxRowKind, inboxRowLead } from '../lib/inbox-row-kind';
 import { Avatar, getInitials } from './ui/avatar';
 import { Badge } from './ui/badge';
 
@@ -35,6 +36,11 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 
 	const author = mention.author_slug ? `@${mention.author_slug}` : mention.author_display_name;
 	const unread = !mention.read_at;
+	// A credential request is an inbox row too - same read/archive semantics, its
+	// own badge and verb. Clicking still lands on the comment, where the paste
+	// form lives.
+	const kind = inboxRowKind(mention.content_type);
+	const lead = inboxRowLead(mention);
 
 	const stateClass = unread
 		? ' border-l-4 border-l-accent bg-accent-soft shadow-sm'
@@ -56,8 +62,8 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 						className="w-2.5 h-2.5 rounded-full bg-accent shrink-0"
 					/>
 				)}
-				<Badge variant="dot" color="info">
-					mention
+				<Badge variant="dot" color={kind.tagColor}>
+					{kind.tag}
 				</Badge>
 				{showTeam && <span className="text-xs text-text-2">{mention.team_slug}</span>}
 				<time
@@ -80,7 +86,7 @@ export function MentionCard({ mention, showTeam = false }: MentionCardProps) {
 					className="mr-1.5 align-middle"
 				/>
 				<span className={`align-middle ${unread ? 'font-semibold' : 'font-medium'}`}>{author}</span>{' '}
-				asked you on{' '}
+				{lead ? <>needs you to {lead} on </> : <>asked you on </>}
 				<Link
 					to={'/projects/$projectId/tasks/$taskId' as never}
 					params={

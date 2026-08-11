@@ -27,8 +27,10 @@ at-a-glance home for that project, listed first in the project sidebar (above **
 
 A normal project dashboard shows:
 
-- **Action items** - the same pending approvals and unread @admin mentions the project's
-  **Inbox** holds, so **Open inbox** always lands on the rows listed here.
+- **Action items** - what the project's **Inbox** holds unread: pending approvals, @admin
+  mentions and credential requests. **Open inbox** always lands on the rows listed here,
+  and reading one there clears it from the dashboard while the Inbox keeps it under
+  **Read**.
 - **Spend** - Today / This week / This month / All time, with the same calendar budget
   windows and caps as the [budget page](/docs/concepts/budgets-and-costs).
 - **In progress** - tasks currently in progress or review.

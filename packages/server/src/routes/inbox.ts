@@ -1,4 +1,4 @@
-import { ApprovalStatus, ApprovalType, AuthType, wsRoom } from '@hezo/shared';
+import { ApprovalStatus, ApprovalType, AuthType, CommentContentType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { broadcastChange } from '../lib/broadcast';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
@@ -9,13 +9,27 @@ export const inboxRoutes = new Hono<Env>();
 
 const SNIPPET_MAX_LEN = 180;
 
+/**
+ * The one line of prose an inbox row shows. A comment kind that carries no
+ * `text` still has to read as something: a credential request's human-facing
+ * `instructions` is that comment's whole point, so it stands in.
+ */
 function buildSnippet(content: unknown): string {
 	if (!content || typeof content !== 'object') return '';
-	const text = (content as Record<string, unknown>).text;
-	if (typeof text !== 'string') return '';
-	const stripped = text.replace(/\s+/g, ' ').trim();
+	const fields = content as Record<string, unknown>;
+	const body = typeof fields.text === 'string' ? fields.text : fields.instructions;
+	if (typeof body !== 'string') return '';
+	const stripped = body.replace(/\s+/g, ' ').trim();
 	if (stripped.length <= SNIPPET_MAX_LEN) return stripped;
 	return `${stripped.slice(0, SNIPPET_MAX_LEN - 1).trimEnd()}…`;
+}
+
+/** The secret being asked for, on a credential-request row only. */
+function credentialName(contentType: string, content: unknown): string | null {
+	if (contentType !== CommentContentType.CredentialRequest) return null;
+	if (!content || typeof content !== 'object') return null;
+	const name = (content as Record<string, unknown>).name;
+	return typeof name === 'string' && name ? name : null;
 }
 
 interface AdminMentionRow {
@@ -28,6 +42,7 @@ interface AdminMentionRow {
 	project_slug: string;
 	comment_id: string;
 	comment_public_id: string;
+	content_type: string;
 	content: unknown;
 	author_member_id: string | null;
 	author_user_id: string | null;
@@ -53,7 +68,8 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 		`SELECT bm.id, bm.team_id, t.slug AS team_slug,
 		        bm.task_id, i.identifier AS task_identifier, i.title AS task_title,
 		        p.slug AS project_slug,
-		        bm.comment_id, tc.public_id AS comment_public_id, tc.content,
+		        bm.comment_id, tc.public_id AS comment_public_id,
+		        tc.content_type, tc.content,
 		        tc.author_member_id,
 		        tc.author_user_id,
 		        (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = tc.author_user_id)
@@ -91,6 +107,8 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 				project_slug: r.project_slug,
 				comment_id: r.comment_id,
 				comment_public_id: r.comment_public_id,
+				content_type: r.content_type,
+				credential_name: credentialName(r.content_type, r.content),
 				snippet: buildSnippet(r.content),
 				author_member_id: r.author_member_id,
 				author_display_name: r.author_display_name ?? 'Admin',
@@ -194,13 +212,15 @@ const NEEDS_YOU_LIMIT = 10;
 
 /**
  * Aggregated "needs you" action items for the dashboard widget: pending
- * approvals + unread admin mentions, sorted by created_at desc, capped at 10
- * items total. Also returns a separate per-dashboard action count.
+ * approvals + unread admin-inbox rows (an `@admin` mention or an actionable
+ * comment like a credential request), sorted by created_at desc, capped at 10
+ * items. Also returns a separate per-dashboard action count.
  *
- * The item set and the count are exactly the project inbox's unread set - the
- * widget's "Open inbox" link has to land on the very rows it just listed, so
- * anything the inbox does not carry (credential requests, say) does not belong
- * here either. `inbox-parity.test.ts` holds the two endpoints together.
+ * This is exactly the project inbox's *unread* set - the widget's "Open inbox"
+ * link has to land on the very rows it just listed, and reading one there drops
+ * it from the dashboard while the inbox keeps it under Read. A surface the
+ * inbox cannot render must not be listed or counted here.
+ * `inbox-parity.test.ts` holds the two endpoints together.
  */
 inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -247,12 +267,13 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 			task_identifier: string;
 			task_title: string;
 			comment_public_id: string;
+			content_type: string;
 			content: unknown;
 			author_display_name: string | null;
 			created_at: string;
 		}>(
 			`SELECT bm.id, bm.task_id, i.identifier AS task_identifier, i.title AS task_title,
-			        tc.public_id AS comment_public_id, tc.content,
+			        tc.public_id AS comment_public_id, tc.content_type, tc.content,
 			        COALESCE(ma.title, m.display_name) AS author_display_name,
 			        bm.created_at
 			 FROM admin_mentions bm
@@ -301,6 +322,8 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 					task_identifier: string;
 					task_title: string;
 					comment_public_id: string;
+					content_type: string;
+					credential_name: string | null;
 					snippet: string;
 					author_display_name: string;
 					created_at: string;
@@ -322,6 +345,8 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 				task_identifier: m.task_identifier,
 				task_title: m.task_title,
 				comment_public_id: m.comment_public_id,
+				content_type: m.content_type,
+				credential_name: credentialName(m.content_type, m.content),
 				snippet: buildSnippet(m.content),
 				author_display_name: m.author_display_name ?? 'Agent',
 				created_at: m.created_at,

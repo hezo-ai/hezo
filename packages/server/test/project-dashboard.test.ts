@@ -224,34 +224,44 @@ it('GET /inbox/needs-you includes pending hire approvals with no project_id or t
 	expect(body.action_count).toBeGreaterThanOrEqual(1);
 });
 
-it('GET /inbox/needs-you leaves out pending credential requests, which the inbox does not carry', async () => {
-	const before = await app.request(`/api/projects/${projectSlug}/inbox/needs-you`, {
-		headers: authHeader(token),
-	});
-	const beforeCount = ((await before.json()).data as { action_count: number }).action_count;
-
-	await db.query(
+it('GET /inbox/needs-you lists a pending credential request as an unread inbox row', async () => {
+	const admin = await db.query<{ id: string }>(
+		`SELECT id FROM users WHERE is_superuser = true ORDER BY created_at LIMIT 1`,
+	);
+	const comment = await db.query<{ id: string }>(
 		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-		 VALUES ($1, $2, 'credential_request'::comment_content_type, $3::jsonb)`,
+		 VALUES ($1, $2, 'credential_request'::comment_content_type, $3::jsonb)
+		 RETURNING id`,
 		[
 			taskId,
 			agentId,
 			JSON.stringify({ name: 'DASH_API_KEY', kind: 'api_key', instructions: 'Need key.' }),
 		],
 	);
+	// What request_credential does after posting the comment.
+	await db.query(
+		`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id) VALUES ($1, $2, $3, $4)`,
+		[teamId, taskId, comment.rows[0].id, admin.rows[0].id],
+	);
 
 	const res = await app.request(`/api/projects/${projectSlug}/inbox/needs-you`, {
 		headers: authHeader(token),
 	});
 	const body = (await res.json()).data as {
-		items: Array<{ kind: string }>;
+		items: Array<{
+			kind: string;
+			mention?: { content_type: string; credential_name: string | null };
+		}>;
 		action_count: number;
 	};
-	// The widget links straight to the inbox, which lists approvals and mentions
-	// only — a row it cannot show must not be counted or listed here either.
+	// It rides the mention shape, discriminated by the comment it points at, so
+	// every surface the inbox feeds renders it without a new item kind.
 	expect(body.items.every((n) => n.kind === 'approval' || n.kind === 'mention')).toBe(true);
-	expect(JSON.stringify(body.items)).not.toContain('DASH_API_KEY');
-	expect(body.action_count).toBe(beforeCount);
+	const credential = body.items.find(
+		(n) => n.mention?.content_type === 'credential_request',
+	)?.mention;
+	expect(credential?.credential_name).toBe('DASH_API_KEY');
+	expect(body.action_count).toBeGreaterThanOrEqual(1);
 });
 
 it('GET /inbox/needs-you includes unread admin mentions', async () => {
