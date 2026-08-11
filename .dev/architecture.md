@@ -347,7 +347,27 @@ open conversation or a new one is created (so closing a thread from the web and 
 again starts a fresh thread; there is no bindings table). **The web view is the hub**:
 `listConversations` returns **all** kinds with their `channel` + `kind`, so the chatbox
 lists every thread from every surface, badged by origin — assistant threads fully
-interactive, coworker threads read-only (`POST /api/chat/messages` 409s on them).
+interactive, coworker threads read-only (`POST /api/chat/messages` 409s on them, as it
+does on any closed thread — `CLOSED`, naming the continuing task when there is one).
+
+**Convert-to-task.** A web assistant thread can be converted into a task
+(`POST /api/chat/conversations/:id/convert-to-task {project_id, title?}` →
+`ChatSessionManager.convertConversationToTask`): the active window's transcript
+(`loadActiveWindow` + `chatTranscriptLine`, byte-capped with head truncation noted)
+becomes the description of a task created via the normal `createTask` service in the
+**target project's team**, assigned to the CEO by member id (the run-team split — the
+assignment wakeup carries the target team). In-flight work is aborted first
+(`abortConversationRuntime`, shared with close; a partial reply settles as
+`interrupted`), the task is created, and then — atomically — a `system`-role
+`chat_messages` row naming the task is inserted and the row gets
+`converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`. Converted
+threads **stay listed**: the default listing predicate is `closed_at IS NULL OR
+converted_task_id IS NOT NULL`, with a joined `converted_task {identifier, title,
+project_slug}` reference for the switcher marker, locked-composer banner and the meta
+message's link; deleting the task demotes the thread to ordinarily-closed. Lifecycle
+changes (close, convert, auto-title) broadcast `ChatConversationUpdated` with the
+changed fields. The route deliberately has **no MCP twin** — chat is a human-only
+surface; agents create tasks via `create_task`.
 Delivery is **reply-where-asked**: `finalize` delivers a completed reply to the **turn's
 origin surface** (`ConversationContext.channel`, captured per turn) — a web-composed turn
 into a Telegram-DM thread answers on web only, a Telegram message answers in Telegram —

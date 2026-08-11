@@ -149,5 +149,20 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archieven:",
-	"attachments.category.scripts": "Scripts en data:"
+	"attachments.category.scripts": "Scripts en data:",
+	"chat.convert.action": "Omzetten naar taak",
+	"chat.convert.dialogTitle": "Omzetten naar taak",
+	"chat.convert.dialogDescription": "Maakt van dit gesprek een taak en sluit de thread.",
+	"chat.convert.projectLabel": "Project",
+	"chat.convert.selectProject": "Selecteer project",
+	"chat.convert.titleLabel": "Taaktitel",
+	"chat.convert.note": "Het transcript van het gesprek wordt de taakomschrijving. De CEO wordt toegewezen en pakt het vanaf hier op.",
+	"chat.convert.confirm": "Taak aanmaken",
+	"chat.convert.converting": "Bezig met omzetten…",
+	"chat.convert.failed": "Gesprek kon niet worden omgezet",
+	"chat.converted.banner": "Dit gesprek is taak {task} geworden. De CEO pakt het vanaf hier op.",
+	"chat.converted.bannerTaskGone": "Dit gesprek is omgezet naar een taak die niet meer bestaat.",
+	"chat.converted.composerPlaceholder": "Gesloten - gaat verder als {identifier}",
+	"chat.converted.badge": "Omgezet naar taak",
+	"chat.converted.metaMessage": "Gaat verder als {task}"
 }

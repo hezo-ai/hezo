@@ -149,5 +149,20 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archive:",
-	"attachments.category.scripts": "Skripte & Daten:"
+	"attachments.category.scripts": "Skripte & Daten:",
+	"chat.convert.action": "In Aufgabe umwandeln",
+	"chat.convert.dialogTitle": "In Aufgabe umwandeln",
+	"chat.convert.dialogDescription": "Erstellt aus dieser Unterhaltung eine Aufgabe und schließt den Thread.",
+	"chat.convert.projectLabel": "Projekt",
+	"chat.convert.selectProject": "Projekt auswählen",
+	"chat.convert.titleLabel": "Aufgabentitel",
+	"chat.convert.note": "Das Gesprächsprotokoll wird zur Aufgabenbeschreibung. Der CEO wird zugewiesen und übernimmt ab hier.",
+	"chat.convert.confirm": "Aufgabe erstellen",
+	"chat.convert.converting": "Wird umgewandelt…",
+	"chat.convert.failed": "Unterhaltung konnte nicht umgewandelt werden",
+	"chat.converted.banner": "Diese Unterhaltung wurde zur Aufgabe {task}. Der CEO übernimmt ab hier.",
+	"chat.converted.bannerTaskGone": "Diese Unterhaltung wurde in eine Aufgabe umgewandelt, die nicht mehr existiert.",
+	"chat.converted.composerPlaceholder": "Geschlossen - weiter als {identifier}",
+	"chat.converted.badge": "In Aufgabe umgewandelt",
+	"chat.converted.metaMessage": "Weiter als {task}"
 }

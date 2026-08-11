@@ -60,6 +60,29 @@ reloading the page - picks that conversation back up instead of dropping you on 
 thread. The memory is per browser. If the thread you were on has been closed since (by you
 here, in another tab, or on its own chat app), the chatbox falls back to your main thread.
 
+## Converting a conversation into a task
+
+When a chat with the CEO turns into real work, you don't have to retype it as a task -
+convert the thread directly. The convert button in the chatbox header opens a small
+dialog: pick the target project, optionally adjust the task title (the thread's own title
+is the default), and confirm. Hezo then does the rest in one step:
+
+- A **task is created** in the project you chose, assigned to the CEO. The conversation's
+  transcript becomes the task description, so the CEO (and you) can re-read the whole
+  exchange from the task itself. The CEO wakes on the assignment and picks the work up
+  from there.
+- The thread ends with a **meta message linking the new task**, so the pointer is part of
+  the conversation's own record.
+- The thread **closes but stays in your chat list** as a read-only record - unlike an
+  ordinarily closed thread, which disappears. Follow up on the task, not in the thread.
+
+Converting is available on your own web threads. Team-channel (coworker) threads live in
+their channel and can't be converted from the web view. If a reply is still streaming,
+wait for it to finish - converting is disabled mid-reply so nothing gets cut off.
+
+Deleting the task later turns the thread into an ordinarily closed one, which removes it
+from the chat list.
+
 ## How threads work across chat apps
 
 The CEO is also reachable from external chat apps -

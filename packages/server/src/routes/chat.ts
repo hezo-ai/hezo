@@ -10,9 +10,17 @@ import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Db } from '../db/database';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
+import {
+	actorTypeFromAuth,
+	apiKeyIdFromAuth,
+	resolveActorMemberId,
+	resolveProject,
+} from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent, requireTeamAccessForResource } from '../middleware/auth';
+import { ChatConvertError } from '../services/chat-session-manager';
+import { CreateTaskError } from '../services/tasks';
 import { readUploadForm, storeUploadedAsset } from './assets';
 
 export const chatRoutes = new Hono<Env>();
@@ -210,6 +218,18 @@ chatRoutes.post('/chat/messages', async (c) => {
 				409,
 			);
 		}
+		// Closed threads reject sends explicitly (409, not the generic 503 the
+		// manager would throw): a converted thread names the task that continues it.
+		if (convo?.closed_at) {
+			return err(
+				c,
+				'CLOSED',
+				convo.converted_task
+					? `This conversation was converted to task ${convo.converted_task.identifier} — follow up there`
+					: 'This conversation is closed',
+				409,
+			);
+		}
 	}
 
 	try {
@@ -286,6 +306,59 @@ chatRoutes.post('/chat/conversations', async (c) => {
 	const id = await manager.createWebConversation(title);
 	const conversation = await manager.getConversation(id);
 	return ok(c, { conversation }, 201);
+});
+
+// Convert a conversation into a task in a chosen project, assigned to the CEO:
+// the transcript becomes the task description, a system meta message linking
+// the task ends the thread, and the conversation closes but stays listed
+// (read-only) in the chatbox. Deliberately has NO MCP twin (the precedent is
+// documented in routes/connectors.ts): converting the operator's own chat is a
+// human-only surface — agents create tasks via the create_task tool.
+chatRoutes.post('/chat/conversations/:id/convert-to-task', async (c) => {
+	const access = await authorize(c);
+	if (access instanceof Response) return access;
+	const manager = c.get('chatSessionManager');
+	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
+
+	const body = await c.req.json().catch(() => ({}));
+	const projectRef = typeof body.project_id === 'string' ? body.project_id.trim() : '';
+	if (!projectRef) return err(c, 'BAD_REQUEST', 'project_id is required', 400);
+	const title = typeof body.title === 'string' && body.title.trim() ? body.title.trim() : undefined;
+
+	const db = c.get('db');
+	const project = await resolveProject(db, projectRef);
+	if (!project) return err(c, 'NOT_FOUND', 'project not found', 404);
+
+	const auth = c.get('auth');
+	const caller = {
+		actorType: actorTypeFromAuth(auth),
+		actorMemberId: await resolveActorMemberId(db, auth, project.teamId),
+		actorApiKeyId: apiKeyIdFromAuth(auth),
+	};
+
+	try {
+		const { conversation } = await manager.convertConversationToTask({
+			conversationId: c.req.param('id'),
+			projectId: project.projectId,
+			projectTeamId: project.teamId,
+			title,
+			caller,
+			events: c.get('events'),
+		});
+		// The joined reference carries the project slug the task link needs — the
+		// same shape the thread listing serves.
+		return ok(c, { task: conversation.converted_task, conversation }, 201);
+	} catch (e) {
+		if (e instanceof ChatConvertError) {
+			const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'INVALID_REQUEST' ? 400 : 409;
+			return err(c, e.code, e.message, status);
+		}
+		if (e instanceof CreateTaskError) {
+			const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'FORBIDDEN' ? 403 : 400;
+			return err(c, e.code, e.message, status);
+		}
+		throw e;
+	}
 });
 
 // Close a conversation thread.

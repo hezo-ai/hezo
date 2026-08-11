@@ -149,5 +149,20 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Archivi:",
-	"attachments.category.scripts": "Script e dati:"
+	"attachments.category.scripts": "Script e dati:",
+	"chat.convert.action": "Converti in attività",
+	"chat.convert.dialogTitle": "Converti in attività",
+	"chat.convert.dialogDescription": "Crea un'attività da questa conversazione e chiude il thread.",
+	"chat.convert.projectLabel": "Progetto",
+	"chat.convert.selectProject": "Seleziona progetto",
+	"chat.convert.titleLabel": "Titolo dell'attività",
+	"chat.convert.note": "La trascrizione della conversazione diventa la descrizione dell'attività. Il CEO viene assegnato e se ne occupa da qui in poi.",
+	"chat.convert.confirm": "Crea attività",
+	"chat.convert.converting": "Conversione in corso…",
+	"chat.convert.failed": "Impossibile convertire la conversazione",
+	"chat.converted.banner": "Questa conversazione è diventata l'attività {task}. Il CEO se ne occupa da qui in poi.",
+	"chat.converted.bannerTaskGone": "Questa conversazione è stata convertita in un'attività che non esiste più.",
+	"chat.converted.composerPlaceholder": "Chiusa - continua come {identifier}",
+	"chat.converted.badge": "Convertita in attività",
+	"chat.converted.metaMessage": "Continua come {task}"
 }

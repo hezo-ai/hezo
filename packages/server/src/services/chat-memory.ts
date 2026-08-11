@@ -1,3 +1,4 @@
+import { ChatMessageRole } from '@hezo/shared';
 import type { Db } from '../db/database';
 
 /**
@@ -92,6 +93,69 @@ export async function loadActiveWindow(db: Db, conversationId: string): Promise<
 		authorLabel: row.author_label,
 		attachmentNames: row.attachment_names ? row.attachment_names.split('\n') : [],
 	}));
+}
+
+/** Display label for a transcript line by message role. */
+export function roleLabel(role: string): string {
+	if (role === ChatMessageRole.User) return 'Operator';
+	if (role === ChatMessageRole.Assistant) return 'CEO';
+	return 'System';
+}
+
+/**
+ * One transcript line for a windowed message, appending a bare-reference list of
+ * any attached files (`assets/<library-path>`) so the CEO can open them from the
+ * HQ asset library. An attachment-only message (empty text) still gets its files.
+ * A message carrying an external sender label (coworker/group turns) is labelled
+ * with the sender's name ("Alice: …") instead of the generic role label.
+ */
+export function chatTranscriptLine(msg: {
+	role: string;
+	content: string;
+	authorLabel?: string | null;
+	attachmentNames: string[];
+}): string {
+	const label = msg.authorLabel?.trim() ? msg.authorLabel.trim() : roleLabel(msg.role);
+	const base = `${label}: ${msg.content}`;
+	if (msg.attachmentNames.length === 0) return base;
+	const refs = `[Attached files: ${msg.attachmentNames.map((n) => `assets/${n}`).join(', ')}]`;
+	return msg.content ? `${base}\n${refs}` : `${base}${refs}`;
+}
+
+/** Byte budget for the transcript embedded in a converted conversation's task. */
+export const CONVERT_TRANSCRIPT_MAX_BYTES = 64 * 1024;
+
+/**
+ * Task description for a conversation converted into a task: a short preamble
+ * plus the active window's transcript, verbatim. When the transcript exceeds
+ * the byte budget the OLDEST lines are dropped (the recent tail is what the
+ * task is about) and the truncation is stated, so the CEO never mistakes a
+ * partial transcript for the whole conversation. Compacted-away messages are
+ * likewise stated rather than silently missing.
+ */
+export function buildConversationTaskDescription(opts: {
+	messages: WindowMessage[];
+	compactedCount: number;
+}): string {
+	const lines = opts.messages.map(chatTranscriptLine);
+	let dropped = 0;
+	let size = lines.reduce((sum, l) => sum + Buffer.byteLength(l, 'utf8') + 2, 0);
+	while (dropped < lines.length - 1 && size > CONVERT_TRANSCRIPT_MAX_BYTES) {
+		size -= Buffer.byteLength(lines[dropped], 'utf8') + 2;
+		dropped += 1;
+	}
+	const notes: string[] = [
+		'This task was created from a CEO chat conversation. Full transcript below.',
+	];
+	if (opts.compactedCount > 0) {
+		notes.push(
+			`Note: ${opts.compactedCount} earlier message(s) were compacted into the CEO's long-term memory and are not included.`,
+		);
+	}
+	if (dropped > 0) {
+		notes.push(`Note: the ${dropped} oldest message(s) were omitted to fit the transcript here.`);
+	}
+	return `${notes.join('\n')}\n\n---\n\n${lines.slice(dropped).join('\n\n')}`;
 }
 
 /** Mark a set of messages compacted (evicted from the active window). No-op for []. */

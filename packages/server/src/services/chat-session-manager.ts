@@ -19,8 +19,10 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
+import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
+import { withTransaction } from '../lib/sql';
 import { getMaxChatHistorySize } from '../lib/system-meta';
 import { logger } from '../logger';
 import { signChatSessionJwt } from '../middleware/auth';
@@ -37,7 +39,15 @@ import {
 	createAgentChatParser,
 } from './agent-stream-parser';
 import { getProviderCredentialAndModel } from './ai-provider-keys';
-import { getChatMemory, loadActiveWindow, markCompacted, selectFlush } from './chat-memory';
+import {
+	buildConversationTaskDescription,
+	chatTranscriptLine,
+	getChatMemory,
+	loadActiveWindow,
+	markCompacted,
+	selectFlush,
+	type WindowMessage,
+} from './chat-memory';
 import { formatContainerConnectivityMessage } from './container-connectivity-preflight';
 import { CONNECTIVITY_STALE_MS, shouldAbortForConnectivity } from './container-connectivity-status';
 import type { ContainerLogStreamer } from './container-logs';
@@ -47,6 +57,7 @@ import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import type { BridgeRunnerArgs } from './ssh-agent';
+import { type CreateTaskCaller, createTask, type TaskRow } from './tasks';
 import { resolveSystemPrompt } from './template-resolver';
 import { getRunSocketPath } from './workspace';
 import type { WebSocketManager } from './ws';
@@ -721,63 +732,38 @@ export class ChatSessionManager {
 	}
 
 	/** Fetch a conversation row (identity + lifecycle), or null if it doesn't exist. */
-	async getConversation(conversationId: string): Promise<{
-		id: string;
-		channel: ChatChannel;
-		external_thread_id: string | null;
-		kind: ChatConversationKind;
-		title: string | null;
-		closed_at: string | null;
-	} | null> {
-		const r = await this.deps.db.query<{
-			id: string;
-			channel: ChatChannel;
-			external_thread_id: string | null;
-			kind: ChatConversationKind;
-			title: string | null;
-			closed_at: string | null;
-		}>(
-			`SELECT id, channel, external_thread_id, kind, title, closed_at
-			 FROM chat_conversations WHERE id = $1`,
+	async getConversation(conversationId: string): Promise<ConversationSummary | null> {
+		const r = await this.deps.db.query<ConversationRow>(
+			`SELECT ${CONVERSATION_COLUMNS}
+			 FROM chat_conversations c
+			 ${CONVERTED_TASK_JOIN}
+			 WHERE c.id = $1`,
 			[conversationId],
 		);
-		return r.rows[0] ?? null;
+		return r.rows[0] ? toConversationSummary(r.rows[0]) : null;
 	}
 
 	/**
-	 * List conversations (open by default), newest activity first — every kind:
-	 * the web view is the hub that sees all threads. `channel` (the thread's home
-	 * surface) and `kind` drive the switcher's badges, grouping, and the
-	 * read-only treatment of coworker threads.
+	 * List conversations, newest activity first — every kind: the web view is the
+	 * hub that sees all threads. `channel` (the thread's home surface) and `kind`
+	 * drive the switcher's badges, grouping, and the read-only treatment of
+	 * coworker threads. The default listing is "open OR converted": a thread
+	 * converted into a task stays visible as a read-only record (its meta message
+	 * links the task), while ordinarily-closed threads drop out.
 	 */
-	async listConversations(opts?: { includeClosed?: boolean }): Promise<
-		Array<{
-			id: string;
-			channel: ChatChannel;
-			external_thread_id: string | null;
-			kind: ChatConversationKind;
-			title: string | null;
-			last_activity_at: string;
-			closed_at: string | null;
-		}>
-	> {
+	async listConversations(opts?: { includeClosed?: boolean }): Promise<ConversationSummary[]> {
 		const ceoMemberId = await this.resolveCeoMemberId();
-		const r = await this.deps.db.query<{
-			id: string;
-			channel: ChatChannel;
-			external_thread_id: string | null;
-			kind: ChatConversationKind;
-			title: string | null;
-			last_activity_at: string;
-			closed_at: string | null;
-		}>(
-			`SELECT id, channel, external_thread_id, kind, title, last_activity_at, closed_at
-			 FROM chat_conversations
-			 WHERE member_id = $1 ${opts?.includeClosed ? '' : 'AND closed_at IS NULL'}
-			 ORDER BY last_activity_at DESC, created_at DESC`,
+		const r = await this.deps.db.query<ConversationRow>(
+			`SELECT ${CONVERSATION_COLUMNS}, c.last_activity_at
+			 FROM chat_conversations c
+			 ${CONVERTED_TASK_JOIN}
+			 WHERE c.member_id = $1 ${
+					opts?.includeClosed ? '' : 'AND (c.closed_at IS NULL OR c.converted_task_id IS NOT NULL)'
+				}
+			 ORDER BY c.last_activity_at DESC, c.created_at DESC`,
 			[ceoMemberId],
 		);
-		return r.rows;
+		return r.rows.map(toConversationSummary);
 	}
 
 	/** Create a fresh web conversation thread (the new-thread button). */
@@ -802,28 +788,160 @@ export class ChatSessionManager {
 	async closeConversation(conversationId: string): Promise<void> {
 		const convo = await this.getConversation(conversationId);
 		if (!convo || convo.closed_at) return;
-		const rt = this.convos.get(conversationId);
-		if (rt?.current) {
-			rt.current.abort.abort('closed');
-			await rt.current.promise.catch(() => undefined);
-		}
-		if (rt?.compactionAbort) {
-			rt.compactionAbort.abort('closed');
-			await rt.compaction?.catch(() => undefined);
-		}
-		if (rt?.titlingAbort) {
-			rt.titlingAbort.abort('closed');
-			await rt.titling?.catch(() => undefined);
-		}
-		this.convos.delete(conversationId);
-		await this.deps.db.query(`UPDATE chat_conversations SET closed_at = now() WHERE id = $1`, [
+		await this.abortConversationRuntime(conversationId, 'closed');
+		const closed = await this.deps.db.query<{ closed_at: string }>(
+			`UPDATE chat_conversations SET closed_at = now() WHERE id = $1 RETURNING closed_at`,
+			[conversationId],
+		);
+		this.broadcastChat(conversationId, {
+			type: WsMessageType.ChatConversationUpdated,
 			conversationId,
-		]);
+			closedAt: closed.rows[0]?.closed_at ?? new Date().toISOString(),
+		});
 		if (this.channelHooks && convo.channel !== ChatChannel.Web && convo.external_thread_id) {
 			await this.channelHooks
 				.closeThread(convo.channel, convo.external_thread_id)
 				.catch((e) => log.error(`close ${convo.channel} thread failed`, e));
 		}
+	}
+
+	/**
+	 * Abort a conversation's in-flight work (reply turn, compaction, titling) and
+	 * evict its runtime. Shared by close and convert-to-task — both need the
+	 * thread quiescent (a partial reply settles as `interrupted`) before they
+	 * mark the row.
+	 */
+	private async abortConversationRuntime(conversationId: string, reason: string): Promise<void> {
+		const rt = this.convos.get(conversationId);
+		if (rt?.current) {
+			rt.current.abort.abort(reason);
+			await rt.current.promise.catch(() => undefined);
+		}
+		if (rt?.compactionAbort) {
+			rt.compactionAbort.abort(reason);
+			await rt.compaction?.catch(() => undefined);
+		}
+		if (rt?.titlingAbort) {
+			rt.titlingAbort.abort(reason);
+			await rt.titling?.catch(() => undefined);
+		}
+		this.convos.delete(conversationId);
+	}
+
+	/**
+	 * Convert an open web assistant conversation into a task: the active window's
+	 * transcript becomes the task description, the CEO is assigned (waking it in
+	 * the target project's team — the run-team split), a system-role meta message
+	 * records the task in the thread, and the conversation closes but stays
+	 * listed (converted threads remain in the switcher as a read-only record).
+	 *
+	 * Ordering is failure-safe: the task is created first and the close commits
+	 * atomically with the meta message, so a failure can leave a task without a
+	 * closed thread (visible, retryable — a second convert of a still-open thread
+	 * is legal) but never a closed thread pointing at nothing.
+	 */
+	async convertConversationToTask(input: {
+		conversationId: string;
+		/** Target project (resolved UUID) and its backing team. */
+		projectId: string;
+		projectTeamId: string;
+		title?: string;
+		caller: CreateTaskCaller;
+		events?: DomainEventBus;
+	}): Promise<{ task: TaskRow; conversation: ConversationSummary }> {
+		const convo = await this.getConversation(input.conversationId);
+		if (!convo) throw new ChatConvertError('NOT_FOUND', 'conversation not found');
+		if (convo.kind === ChatConversationKind.Coworker) {
+			throw new ChatConvertError(
+				'READ_ONLY',
+				'Team-channel conversations cannot be converted from the web view',
+			);
+		}
+		// External assistant DMs are excluded for now — relax this guard (and close
+		// the platform thread via channelHooks.closeThread) to support them.
+		if (convo.channel !== ChatChannel.Web) {
+			throw new ChatConvertError('INVALID_REQUEST', 'Only web conversations can be converted');
+		}
+		if (convo.converted_task_id) {
+			throw new ChatConvertError('ALREADY_CONVERTED', 'Conversation was already converted');
+		}
+		if (convo.closed_at) throw new ChatConvertError('CLOSED', 'Conversation is closed');
+
+		// Quiesce first so a partial reply settles as `interrupted` and makes the
+		// transcript; the cost of a later failure is that interrupt, nothing more.
+		await this.abortConversationRuntime(input.conversationId, 'converted');
+
+		const window = await loadActiveWindow(this.deps.db, input.conversationId);
+		if (window.length === 0) {
+			throw new ChatConvertError('INVALID_REQUEST', 'Conversation has no messages to convert');
+		}
+		const compacted = await this.deps.db.query<{ count: number }>(
+			`SELECT COUNT(*)::int AS count FROM chat_messages
+			 WHERE conversation_id = $1 AND compacted_at IS NOT NULL`,
+			[input.conversationId],
+		);
+		const description = buildConversationTaskDescription({
+			messages: window,
+			compactedCount: compacted.rows[0]?.count ?? 0,
+		});
+		const title =
+			input.title?.trim() || convo.title?.trim() || firstUserLine(window) || 'Chat conversation';
+
+		// The CEO must be assigned by id: slug resolution is scoped to the target
+		// team and the CEO lives in HQ (same pattern as marketplace team setup).
+		const ceoMemberId = await this.resolveCeoMemberId();
+		const task = await createTask(
+			this.deps.db,
+			input.projectTeamId,
+			{
+				project_id: input.projectId,
+				title,
+				description,
+				assignee_id: ceoMemberId,
+			},
+			input.caller,
+			this.deps.wsManager,
+			input.events,
+		);
+
+		// Meta message + close commit together: the thread never reads as closed
+		// without its pointer, and never carries the pointer while still open.
+		const messageContent = `Conversation converted to task ${task.identifier}: ${title}`;
+		let messageId = '';
+		await withTransaction(this.deps.db, async () => {
+			messageId = await this.insertMessage({
+				conversationId: input.conversationId,
+				role: ChatMessageRole.System,
+				channel: ChatChannel.Web,
+				status: ChatMessageStatus.Complete,
+				content: messageContent,
+				completed: true,
+			});
+			await this.deps.db.query(
+				`UPDATE chat_conversations
+				 SET converted_task_id = $2, closed_at = now(), last_activity_at = now()
+				 WHERE id = $1`,
+				[input.conversationId, task.id],
+			);
+		});
+
+		this.broadcastStart(
+			input.conversationId,
+			messageId,
+			ChatMessageRole.System,
+			ChatChannel.Web,
+			messageContent,
+		);
+		this.broadcastChat(input.conversationId, {
+			type: WsMessageType.ChatConversationUpdated,
+			conversationId: input.conversationId,
+			closedAt: new Date().toISOString(),
+			convertedTaskId: task.id as string,
+		});
+
+		const conversation = await this.getConversation(input.conversationId);
+		if (!conversation) throw new ChatConvertError('NOT_FOUND', 'conversation not found');
+		return { task, conversation };
 	}
 
 	/** Close the conversation living on an external thread (inbound topic-closed). */
@@ -1682,28 +1800,88 @@ export class ChatSessionManager {
 	}
 }
 
-function roleLabel(role: string): string {
-	if (role === ChatMessageRole.User) return 'Operator';
-	if (role === ChatMessageRole.Assistant) return 'CEO';
-	return 'System';
+/** The task a converted conversation became, for switcher/meta-message links. */
+export interface ConvertedTaskRef {
+	id: string;
+	identifier: string;
+	title: string;
+	project_slug: string;
 }
 
-/**
- * One transcript line for a windowed message, appending a bare-reference list of
- * any attached files (`assets/<library-path>`) so the CEO can open them from the
- * HQ asset library. An attachment-only message (empty text) still gets its files.
- * A message carrying an external sender label (coworker/group turns) is labelled
- * with the sender's name ("Alice: …") instead of the generic role label.
- */
-function chatTranscriptLine(msg: {
-	role: string;
-	content: string;
-	authorLabel?: string | null;
-	attachmentNames: string[];
-}): string {
-	const label = msg.authorLabel?.trim() ? msg.authorLabel.trim() : roleLabel(msg.role);
-	const base = `${label}: ${msg.content}`;
-	if (msg.attachmentNames.length === 0) return base;
-	const refs = `[Attached files: ${msg.attachmentNames.map((n) => `assets/${n}`).join(', ')}]`;
-	return msg.content ? `${base}\n${refs}` : `${base}${refs}`;
+/** A conversation as served to the web (thread switcher and single reads). */
+export interface ConversationSummary {
+	id: string;
+	channel: ChatChannel;
+	external_thread_id: string | null;
+	kind: ChatConversationKind;
+	title: string | null;
+	closed_at: string | null;
+	/** Present on listings (drives ordering); omitted on single reads. */
+	last_activity_at?: string;
+	converted_task_id: string | null;
+	/** Joined reference; null when not converted or the task was deleted. */
+	converted_task: ConvertedTaskRef | null;
+}
+
+export type ChatConvertErrorCode =
+	| 'NOT_FOUND'
+	| 'READ_ONLY'
+	| 'CLOSED'
+	| 'ALREADY_CONVERTED'
+	| 'INVALID_REQUEST';
+
+/** Typed failure for convert-to-task, mapped to a 4xx by the route. */
+export class ChatConvertError extends Error {
+	readonly code: ChatConvertErrorCode;
+	constructor(code: ChatConvertErrorCode, message: string) {
+		super(message);
+		this.code = code;
+		this.name = 'ChatConvertError';
+	}
+}
+
+// Conversation projection shared by getConversation/listConversations: the row
+// plus the converted-task reference (identifier/title/project slug) joined in,
+// so the switcher and the meta message can link the task without extra reads.
+const CONVERSATION_COLUMNS = `c.id, c.channel, c.external_thread_id, c.kind, c.title, c.closed_at,
+	c.converted_task_id, t.identifier AS converted_task_identifier, t.title AS converted_task_title,
+	p.slug AS converted_task_project_slug`;
+const CONVERTED_TASK_JOIN = `LEFT JOIN tasks t ON t.id = c.converted_task_id
+	 LEFT JOIN projects p ON p.id = t.project_id`;
+
+interface ConversationRow {
+	id: string;
+	channel: ChatChannel;
+	external_thread_id: string | null;
+	kind: ChatConversationKind;
+	title: string | null;
+	closed_at: string | null;
+	last_activity_at?: string;
+	converted_task_id: string | null;
+	converted_task_identifier: string | null;
+	converted_task_title: string | null;
+	converted_task_project_slug: string | null;
+}
+
+function toConversationSummary(row: ConversationRow): ConversationSummary {
+	const { converted_task_identifier, converted_task_title, converted_task_project_slug, ...rest } =
+		row;
+	const converted_task: ConvertedTaskRef | null =
+		row.converted_task_id && converted_task_identifier && converted_task_project_slug
+			? {
+					id: row.converted_task_id,
+					identifier: converted_task_identifier,
+					title: converted_task_title ?? '',
+					project_slug: converted_task_project_slug,
+				}
+			: null;
+	return { ...rest, converted_task };
+}
+
+/** Default task title fallback: the first user message, trimmed to one line. */
+function firstUserLine(window: WindowMessage[]): string | null {
+	const first = window.find((m) => m.role === ChatMessageRole.User && m.content.trim() !== '');
+	if (!first) return null;
+	const line = first.content.trim().split('\n')[0];
+	return line.length > 80 ? `${line.slice(0, 77)}…` : line;
 }

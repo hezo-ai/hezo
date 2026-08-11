@@ -27,6 +27,8 @@ function thread(id: string, title: string | null): ChatConversationSummary {
 		title,
 		last_activity_at: now(),
 		closed_at: null,
+		converted_task_id: null,
+		converted_task: null,
 	};
 }
 

@@ -149,5 +149,20 @@
 	"attachments.category.audio": "Audio:",
 	"attachments.category.video": "Vídeo:",
 	"attachments.category.archives": "Archivos comprimidos:",
-	"attachments.category.scripts": "Scripts y datos:"
+	"attachments.category.scripts": "Scripts y datos:",
+	"chat.convert.action": "Convertir en tarea",
+	"chat.convert.dialogTitle": "Convertir en tarea",
+	"chat.convert.dialogDescription": "Crea una tarea a partir de esta conversación y cierra el hilo.",
+	"chat.convert.projectLabel": "Proyecto",
+	"chat.convert.selectProject": "Seleccionar proyecto",
+	"chat.convert.titleLabel": "Título de la tarea",
+	"chat.convert.note": "La transcripción de la conversación se convierte en la descripción de la tarea. El CEO queda asignado y se encarga a partir de aquí.",
+	"chat.convert.confirm": "Crear tarea",
+	"chat.convert.converting": "Convirtiendo…",
+	"chat.convert.failed": "No se pudo convertir la conversación",
+	"chat.converted.banner": "Esta conversación se convirtió en la tarea {task}. El CEO se encarga a partir de aquí.",
+	"chat.converted.bannerTaskGone": "Esta conversación se convirtió en una tarea que ya no existe.",
+	"chat.converted.composerPlaceholder": "Cerrada - continúa como {identifier}",
+	"chat.converted.badge": "Convertida en tarea",
+	"chat.converted.metaMessage": "Continúa como {task}"
 }

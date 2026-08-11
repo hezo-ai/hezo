@@ -149,5 +149,20 @@
 	"attachments.category.audio": "Ljud:",
 	"attachments.category.video": "Video:",
 	"attachments.category.archives": "Arkiv:",
-	"attachments.category.scripts": "Skript och data:"
+	"attachments.category.scripts": "Skript och data:",
+	"chat.convert.action": "Omvandla till uppgift",
+	"chat.convert.dialogTitle": "Omvandla till uppgift",
+	"chat.convert.dialogDescription": "Skapar en uppgift av den här konversationen och stänger tråden.",
+	"chat.convert.projectLabel": "Projekt",
+	"chat.convert.selectProject": "Välj projekt",
+	"chat.convert.titleLabel": "Uppgiftens titel",
+	"chat.convert.note": "Konversationens utskrift blir uppgiftens beskrivning. CEO tilldelas och tar över härifrån.",
+	"chat.convert.confirm": "Skapa uppgift",
+	"chat.convert.converting": "Omvandlar…",
+	"chat.convert.failed": "Konversationen kunde inte omvandlas",
+	"chat.converted.banner": "Den här konversationen blev uppgiften {task}. CEO tar över härifrån.",
+	"chat.converted.bannerTaskGone": "Den här konversationen omvandlades till en uppgift som inte längre finns.",
+	"chat.converted.composerPlaceholder": "Stängd - fortsätter som {identifier}",
+	"chat.converted.badge": "Omvandlad till uppgift",
+	"chat.converted.metaMessage": "Fortsätter som {task}"
 }
