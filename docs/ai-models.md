@@ -16,7 +16,7 @@ and your agents run on the models you choose.
 |---|---|---|---|
 | **Anthropic** | Claude | Claude Code, or Prime Agent | API key or subscription |
 | **OpenAI** | ChatGPT / GPT | Codex, or Prime Agent | API key or subscription |
-| **Google** | Gemini | Gemini, or Prime Agent | API key or subscription |
+| **Google** | Gemini | Gemini CLI, or Prime Agent | API key or subscription |
 | **xAI** | Grok | Grok Build, or Prime Agent | API key |
 | **Kimi** (Moonshot) | Kimi | Claude Code, Kimi Code, or Prime Agent | API key |
 | **DeepSeek** | DeepSeek | Claude Code, or Prime Agent | API key |
