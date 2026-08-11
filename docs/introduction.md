@@ -16,9 +16,10 @@ Think of it as the company around the agents: org charts, projects, budgets,
 approvals, and coordination, instead of twenty terminal tabs you babysit by hand.
 
 > [!TIP]
-> **Did you know?** The name *Hezo* is a play on *hézuò* (合作), the Mandarin
-> word for "to collaborate" or "cooperate" - which is what the whole platform is
-> about: agents working together, and working with you, to get real projects done.
+> **Did you know?** The name *Hezo* (say it *huh-zwo*) is a play on *hézuò* (合作),
+> the Mandarin word for "to collaborate" or "cooperate" - which is what the whole
+> platform is about: agents working together, and working with you, to get real
+> projects done.
 
 ## Secure by design
 
@@ -45,6 +46,10 @@ agent can't hurt you. A few guarantees sit underneath everything:
 
 - **Spin up a team per project** from a template, or reuse an existing team's setup
   for a new project. See [Projects & teams](/docs/concepts/projects-and-teams).
+- **Launch a ready-made team from the marketplace.** A team that builds your app, one
+  that grows a creator's social reach, one that researches stocks - each arrives with
+  its roster, reporting lines, and working rules already in place, and every role stays
+  yours to reshape. See [The team marketplace](/docs/concepts/marketplace).
 - **Structure the team to the work - and restructure it as the work changes.** Compose a
   team's roster, reporting lines, and roles, evolve them while a project runs, and carry a
   structure you've tuned forward to the next project. See
@@ -52,6 +57,10 @@ agent can't hurt you. A few guarantees sit underneath everything:
 - **Chat with the CEO in real time** to scope work, create projects, hire new agents, edit
   system prompts, and adjust settings - all from one conversation, with replies streaming
   back as it works. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
+- **Reach your team from the chat app you already use.** Connect Slack, Telegram, or
+  Discord and the CEO becomes a coworker in your group channels and a private assistant
+  in your DMs - hand off work, ask for status, and approve decisions without opening the
+  app. See [Chat platforms](/docs/chat/overview).
 - **Get teams that improve themselves.** Whenever a task is finished, the Coach reviews
   how it went and writes durable lessons back onto the agents, so they get better the more
   they ship - without you hand-tuning prompts. See
@@ -83,6 +92,9 @@ agent can't hurt you. A few guarantees sit underneath everything:
 - **Collect and generate assets.** Upload mockups, images, and PDFs; let agents produce
   interactive HTML and SVG deliverables; and preview their work right in the app. See
   [Assets & previews](/docs/concepts/assets).
+- **Find any of it again in one keystroke.** One search palette covers tasks, comments,
+  documents, assets, and skills across every team you can access, indexed entirely on
+  your own server. See [Search](/docs/concepts/search).
 - **Connect your tools, both ways.** Drive your teams and tasks from any MCP client via
   Hezo's [built-in MCP server](/docs/mcp/hezo-mcp-server), and give your agents the tools
   you already use by [connecting external services](/docs/mcp/connecting-mcp-servers) -

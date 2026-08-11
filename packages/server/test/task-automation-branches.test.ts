@@ -72,7 +72,7 @@ async function hqTask(opts: {
 }
 
 describe('notifyParentOfOAuthVerification — label and platform branches', () => {
-	it('skips when the parent ticket is not labelled as an OAuth verification', async () => {
+	it('skips when the parent task is not labelled as an OAuth verification', async () => {
 		const parent = await hqTask({ title: 'parent unlabelled' });
 		// A done sub-task that carries no OAUTH_VERIFICATION_LABEL → labels.includes(...) false.
 		const child = await hqTask({

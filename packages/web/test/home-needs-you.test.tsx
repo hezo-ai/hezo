@@ -108,7 +108,7 @@ test('an unread admin mention renders as a mention row linking to the comment wi
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Mention Home' });
-			const task = await seedTask(ws, project, { title: 'Decision Ticket' });
+			const task = await seedTask(ws, project, { title: 'Decision Task' });
 			await seedAdminMention(ws, task, '@admin please confirm the rollout window.');
 		},
 	});
@@ -129,7 +129,7 @@ test('a mention row shows the authoring agent’s generated avatar before their 
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Mention Avatar Home' });
-			const task = await seedTask(ws, project, { title: 'Avatar Ticket' });
+			const task = await seedTask(ws, project, { title: 'Avatar Task' });
 			await seedAdminMention(ws, task, '@admin please confirm the rollout window.');
 		},
 	});

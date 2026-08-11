@@ -63,7 +63,7 @@ function buildAgentTypeDefs(): AgentTypeDef[] {
 			monthly_budget_cents: 3000,
 			touches_code: false,
 			role_description:
-				'Reviews completed tickets to extract lessons and improve agent system prompts over time.',
+				'Reviews completed tasks to extract lessons and improve agent system prompts over time.',
 		},
 	];
 }

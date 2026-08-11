@@ -117,7 +117,7 @@ describe('MCP tool create_hire_proposal', () => {
 		expect(row.rows[0]).toMatchObject({ type: 'hire', status: 'pending', team_id: teamId });
 	});
 
-	it('links the proposal to an originating ticket', async () => {
+	it('links the proposal to an originating task', async () => {
 		const taskRow = await db.query<{ id: string }>(
 			'SELECT id FROM tasks WHERE team_id = $1 LIMIT 1',
 			[teamId],
@@ -147,7 +147,7 @@ describe('MCP tool create_hire_proposal', () => {
 		expect(comment.rows[0].chosen_option).toBeNull();
 	});
 
-	it('links the proposal to an originating ticket by human-readable identifier', async () => {
+	it('links the proposal to an originating task by human-readable identifier', async () => {
 		const taskRow = await db.query<{ id: string; identifier: string }>(
 			'SELECT id, identifier FROM tasks WHERE team_id = $1 LIMIT 1',
 			[teamId],

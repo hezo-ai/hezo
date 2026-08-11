@@ -174,7 +174,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(wakeups.rows[0].source).toBe('assignment');
 	});
 
-	it('with { autoStart: false } leaves the ticket unassigned, creates no wakeup, and adds a draft-then-start banner', async () => {
+	it('with { autoStart: false } leaves the task unassigned, creates no wakeup, and adds a draft-then-start banner', async () => {
 		const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, 'initial', {
 			autoStart: false,
 		});
@@ -257,7 +257,7 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(body).toContain('added a house style rule');
 	});
 
-	it('coalesces a later change onto the open ticket and appends it to the description', async () => {
+	it('coalesces a later change onto the open task and appends it to the description', async () => {
 		const first = await enqueueTeamCoherenceReviewTask(db, teamId, 'prompt_updated', {
 			changeSummary: 'Updated the engineer prompt',
 		});
@@ -319,7 +319,7 @@ describe('project creation', () => {
 		expect(oldDescriptionTasks.rows[0].n).toBe(0);
 	});
 
-	it('direct POST /api/projects auto-runs coherence: the ticket is assigned to the CEO with a wakeup', async () => {
+	it('direct POST /api/projects auto-runs coherence: the task is assigned to the CEO with a wakeup', async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
 			(t: Record<string, unknown>) => t.name === 'App Team',

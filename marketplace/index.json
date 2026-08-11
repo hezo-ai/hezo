@@ -4,8 +4,8 @@
 		{
 			"slug": "influencer",
 			"name": "Social Media Marketing",
-			"description": "Grow your social reach — a team that learns your brand, plans a content calendar, drafts and verifies content, and publishes with your approval",
-			"summary": "The Social Media Marketing template provisions a content team that grows a creator's reach. A Captain runs onboarding — learning the creator's accounts, persona, brand, and goals — and suggests goals for the admin to approve. The Brand Strategist owns voice, pillars, and the content calendar; the Trend Researcher feeds ideas; the Content Writer and Media Producer produce; the Content Editor verifies every piece; and the Distribution Manager publishes, but only after the admin approves the content.",
+			"description": "Grow your social reach - a team that learns your brand, plans a content calendar, drafts and verifies content, and publishes with your approval",
+			"summary": "The Social Media Marketing template provisions a content team that grows a creator's reach. A Captain runs onboarding - learning the creator's accounts, persona, brand, and goals - and suggests goals for the admin to approve. The Brand Strategist owns voice, pillars, and the content calendar; the Trend Researcher feeds ideas; the Content Writer and Media Producer produce; the Content Editor verifies every piece; and the Distribution Manager publishes, but only after the admin approves the content.",
 			"keywords": [
 				"social media",
 				"social",
@@ -62,15 +62,15 @@
 				"design",
 				"analytics"
 			],
-			"version": 11,
+			"version": 12,
 			"roster_count": 7,
-			"latest_notes": "Every role now ships a fixed human name and a generated pixel avatar, so the same teammate appears in every project provisioned from this team. A project can rename an agent or regenerate its avatar without affecting the team."
+			"latest_notes": "Renamed ticket to task throughout the roster copy and every role prompt, matching the term Hezo uses everywhere else, and replaced em dashes with hyphens in the operator-facing team and role descriptions."
 		},
 		{
 			"slug": "investment",
 			"name": "Investment Portfolio",
-			"description": "Research-grade stock research and tracking — analysts, verifiers, and a monitor that keeps a living document on every stock you care about up to date",
-			"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding — the stocks and categories to watch, the investor's objective, risk appetite, and horizon — and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
+			"description": "Research-grade stock research and tracking - analysts, verifiers, and a monitor that keeps a living document on every stock you care about up to date",
+			"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding - the stocks and categories to watch, the investor's objective, risk appetite, and horizon - and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
 			"keywords": [
 				"stock",
 				"stocks",
@@ -127,15 +127,15 @@
 				"report",
 				"review"
 			],
-			"version": 11,
+			"version": 12,
 			"roster_count": 6,
-			"latest_notes": "Every role now ships a fixed human name and a generated pixel avatar, so the same teammate appears in every project provisioned from this team. A project can rename an agent or regenerate its avatar without affecting the team."
+			"latest_notes": "Renamed ticket to task throughout the roster copy and every role prompt, matching the term Hezo uses everywhere else, and replaced em dashes with hyphens in the operator-facing team and role descriptions."
 		},
 		{
 			"slug": "software-development",
 			"name": "App Team",
-			"description": "A full team that builds your app — 10 specialized agents across product, design, engineering, and deployment",
-			"summary": "The App Team template provisions a full software-development team led by a Captain who reports to the CEO — the instance-level executive overseeing every team — who in turn reports to the human admin.\n\nStrategy flows top-down: the Captain translates direction from the CEO and admin into priorities and delegates them to the Product Lead, Architect, Marketing Lead, and Researcher. The Product Lead owns \"what to build\" and writes PRDs; the Architect owns \"how to build it\" and produces technical specs and implementation phases. Marketing Lead and Researcher work largely independently of the engineering pipeline, producing externally-facing content and feasibility studies respectively.\n\nImplementation happens via a three-stage planning loop run by the Architect: a research draft, a peer review where the QA Engineer, Security Engineer, and UI Designer add considerations from their specialty, and a final consolidated plan. The Engineer cannot start coding until that plan is approved.\n\nOnce code lands, the QA Engineer is the final approval gate for every ticket — reviewing correctness, test coverage, and quality. The Security Engineer applies a parallel gate for vulnerabilities and threat models. Findings from both flow back through the Architect, who consolidates them into a single set of actionable changes for the Engineer rather than passing fragmented feedback through.\n\nThe DevOps Engineer maintains shared infrastructure and the CI/CD pipeline, handling deployment concerns the Engineer should not own.\n\nDisputes between agents — typically Architect vs Engineer on implementation approach — are resolved in the ticket thread, with the Architect holding technical authority. If they cannot agree, the Captain mediates; if the Captain is unsure, they escalate to the CEO, and ultimately the human admin. The Coach observes the system as a whole, reviewing completed tickets to extract patterns and propose prompt updates that compound the team's effectiveness over time.",
+			"description": "A full team that builds your app - 10 specialized agents across product, design, engineering, and deployment",
+			"summary": "The App Team template provisions a full software-development team led by a Captain who reports to the CEO - the instance-level executive overseeing every team - who in turn reports to the human admin.\n\nStrategy flows top-down: the Captain translates direction from the CEO and admin into priorities and delegates them to the Product Lead, Architect, Marketing Lead, and Researcher. The Product Lead owns \"what to build\" and writes PRDs; the Architect owns \"how to build it\" and produces technical specs and implementation phases. Marketing Lead and Researcher work largely independently of the engineering pipeline, producing externally-facing content and feasibility studies respectively.\n\nImplementation happens via a three-stage planning loop run by the Architect: a research draft, a peer review where the QA Engineer, Security Engineer, and UI Designer add considerations from their specialty, and a final consolidated plan. The Engineer cannot start coding until that plan is approved.\n\nOnce code lands, the QA Engineer is the final approval gate for every task - reviewing correctness, test coverage, and quality. The Security Engineer applies a parallel gate for vulnerabilities and threat models. Findings from both flow back through the Architect, who consolidates them into a single set of actionable changes for the Engineer rather than passing fragmented feedback through.\n\nThe DevOps Engineer maintains shared infrastructure and the CI/CD pipeline, handling deployment concerns the Engineer should not own.\n\nDisputes between agents - typically Architect vs Engineer on implementation approach - are resolved in the task thread, with the Architect holding technical authority. If they cannot agree, the Captain mediates; if the Captain is unsure, they escalate to the CEO, and ultimately the human admin. The Coach observes the system as a whole, reviewing completed tasks to extract patterns and propose prompt updates that compound the team's effectiveness over time.",
 			"keywords": [
 				"app",
 				"apps",
@@ -211,9 +211,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 16,
+			"version": 17,
 			"roster_count": 10,
-			"latest_notes": "Every role now ships a fixed human name and a generated pixel avatar, so the same teammate appears in every project provisioned from this team. A project can rename an agent or regenerate its avatar without affecting the team."
+			"latest_notes": "Renamed ticket to task throughout the roster copy and every role prompt, matching the term Hezo uses everywhere else, and replaced em dashes with hyphens in the operator-facing team and role descriptions."
 		}
 	]
 }

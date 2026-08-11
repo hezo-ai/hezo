@@ -451,7 +451,7 @@ describe('detectPassiveTeammateAsks', () => {
 				detectPassiveTeammateAsks('Parked for @@architect sign-off before release.', signoffSlugs),
 			).toEqual(['architect']);
 			expect(
-				detectPassiveTeammateAsks('The ticket stays in review awaiting @@captain sign-off.', [
+				detectPassiveTeammateAsks('The task stays in review awaiting @@captain sign-off.', [
 					'captain',
 				]),
 			).toEqual(['captain']);

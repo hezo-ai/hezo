@@ -17,7 +17,7 @@ async function setupHandoff(ws: SeededWorkspace): Promise<HandoffFixture> {
 	const architect = ws.agents.find((a) => a.slug === 'architect');
 	if (!captain || !architect) throw new Error('Captain and architect agents required');
 	const ceoTask = await seedTask(ws, project, {
-		title: 'Roadmap ticket',
+		title: 'Roadmap task',
 		assignee_id: captain.id,
 	});
 	return {

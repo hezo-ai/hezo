@@ -218,7 +218,7 @@ test('disables run-now when the queued agent is already running on another task 
 	expect(playBtn.getAttribute('aria-label')).toMatch(/another task in this project/i);
 });
 
-test('disables the play button with a reason when the ticket already has a run', async () => {
+test('disables the play button with a reason when the task already has a run', async () => {
 	const seeded = { projectSlug: '', taskId: '', wakeupId: '' };
 
 	const { findByTestId, router } = await renderApp({

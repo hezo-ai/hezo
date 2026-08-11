@@ -25,7 +25,7 @@ async function insertActiveRun(
 	);
 }
 
-test('assignee shows Idle on this ticket when no active heartbeat run is present', async () => {
+test('assignee shows Idle on this task when no active heartbeat run is present', async () => {
 	let teamSlug = '';
 	let projectSlug = '';
 	let taskIdentifier = '';
@@ -36,7 +36,7 @@ test('assignee shows Idle on this ticket when no active heartbeat run is present
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Quiet Project' });
 			const task = await seedTask(ws, project, {
-				title: 'Quiet Ticket',
+				title: 'Quiet Task',
 				assignee_id: ws.agents[0].id,
 			});
 			teamSlug = ws.team.slug;
@@ -67,7 +67,7 @@ test('assignee shows Idle on this ticket when no active heartbeat run is present
 	expect(assignee.textContent).not.toContain('Running');
 });
 
-test('assignee shows Running on this ticket when has_active_run is true', async () => {
+test('assignee shows Running on this task when has_active_run is true', async () => {
 	let teamSlug = '';
 	let projectSlug = '';
 	let taskIdentifier = '';
@@ -78,7 +78,7 @@ test('assignee shows Running on this ticket when has_active_run is true', async 
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Busy Project' });
 			const task = await seedTask(ws, project, {
-				title: 'Busy Ticket',
+				title: 'Busy Task',
 				assignee_id: ws.agents[0].id,
 			});
 			await insertActiveRun(ws.agents[0].id, ws.team.id, task.id);
@@ -113,7 +113,7 @@ test('assignee shows Queued, not Running, while the run has yet to start', async
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Waiting Project' });
 			const task = await seedTask(ws, project, {
-				title: 'Waiting Ticket',
+				title: 'Waiting Task',
 				assignee_id: ws.agents[0].id,
 			});
 			await insertActiveRun(ws.agents[0].id, ws.team.id, task.id, {
@@ -152,7 +152,7 @@ test('assignee stays Idle when the active run belongs to a different agent', asy
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Shared Project' });
 			const task = await seedTask(ws, project, {
-				title: 'Shared Ticket',
+				title: 'Shared Task',
 				assignee_id: ws.agents[0].id,
 			});
 			// A second agent (a reviewer, say) is the one running on the task.

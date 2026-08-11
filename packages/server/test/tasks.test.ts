@@ -81,7 +81,7 @@ function flushAsyncWakeups(): Promise<void> {
 }
 
 describe('tasks CRUD', () => {
-	it('creates an task with auto-generated identifier', async () => {
+	it('creates a task with auto-generated identifier', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -125,9 +125,9 @@ describe('tasks CRUD', () => {
 		expect((await patchRes.json()).data.runtime_type).toBe('gemini');
 	});
 
-	it('PATCH blocks an agent run from starting a different ticket (run-task scope)', async () => {
-		const runTask = await insertTaskDirect(agentId, 'REST scope run ticket');
-		const otherTask = await insertTaskDirect(agentId, 'REST scope other ticket');
+	it('PATCH blocks an agent run from starting a different task (run-task scope)', async () => {
+		const runTask = await insertTaskDirect(agentId, 'REST scope run task');
+		const otherTask = await insertTaskDirect(agentId, 'REST scope other task');
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -205,7 +205,7 @@ describe('tasks CRUD', () => {
 		expect(body.data.every((i: any) => i.status === 'backlog')).toBe(true);
 	});
 
-	it('gets an task by id with computed fields', async () => {
+	it('gets a task by id with computed fields', async () => {
 		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
@@ -220,7 +220,7 @@ describe('tasks CRUD', () => {
 		expect(body.data).toHaveProperty('comment_count');
 	});
 
-	it('resolves an task by identifier (case-insensitive)', async () => {
+	it('resolves a task by identifier (case-insensitive)', async () => {
 		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
@@ -240,7 +240,7 @@ describe('tasks CRUD', () => {
 		expect((await lowerRes.json()).data.id).toBe(task.id);
 	});
 
-	it('updates an task status', async () => {
+	it('updates a task status', async () => {
 		const listRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			headers: authHeader(token),
 		});
@@ -522,7 +522,7 @@ describe('tasks CRUD', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Agent two ticket',
+				title: 'Agent two task',
 				assignee_id: secondAgentId,
 			}),
 		});
@@ -915,7 +915,7 @@ describe('closure rules — sub-tasks must be resolved before parent', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Parent ticket',
+				title: 'Parent task',
 				assignee_id: agentId,
 			}),
 		});
@@ -927,7 +927,7 @@ describe('closure rules — sub-tasks must be resolved before parent', () => {
 		const res = await app.request(`/api/projects/${projectSlug}/tasks/${parentId}/sub-tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ title: 'Child ticket', assignee_id: agentId }),
+			body: JSON.stringify({ title: 'Child task', assignee_id: agentId }),
 		});
 		expect(res.status).toBe(201);
 		return (await res.json()).data;
@@ -1030,7 +1030,7 @@ describe('closure rules — outstanding pinged-agent activity blocks done', () =
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Activity-guarded ticket',
+				title: 'Activity-guarded task',
 				assignee_id: agentId,
 			}),
 		});

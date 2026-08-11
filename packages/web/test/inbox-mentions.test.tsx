@@ -73,7 +73,7 @@ test('inbox renders a admin mention card with author + snippet', async () => {
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const task = await seedTask(ws, project, { title: 'A admin-decision ticket' });
+			const task = await seedTask(ws, project, { title: 'A admin-decision task' });
 			await seedAgentAdminMention(ws, task, '@admin — should we ship the new auth flow?');
 			ctx = { projectSlug: project.slug, taskIdentifier: task.identifier };
 		},
@@ -98,7 +98,7 @@ test('a mention card shows the authoring agent’s generated avatar next to thei
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const task = await seedTask(ws, project, { title: 'Avatar inbox ticket' });
+			const task = await seedTask(ws, project, { title: 'Avatar inbox task' });
 			await seedAgentAdminMention(ws, task, '@admin who owns the migration?');
 			ctx = { projectSlug: project.slug };
 		},
@@ -129,7 +129,7 @@ test('clicking a mention navigates to the task and marks it read', async () => {
 		seed: async (testCtx) => {
 			const ws = await seedWorkspace();
 			const project: SeededProject = await seedProject(ws, { name: 'Demo' });
-			const task = await seedTask(ws, project, { title: 'Click-to-read ticket' });
+			const task = await seedTask(ws, project, { title: 'Click-to-read task' });
 			const { mentionId } = await seedAgentAdminMention(ws, task, '@admin please weigh in here.');
 			ctx = {
 				taskId: task.id,
@@ -188,7 +188,7 @@ test('clicking a mention deep-links to and highlights the source comment', async
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Deep Link' });
-			const task = await seedTask(ws, project, { title: 'Deep-link target ticket' });
+			const task = await seedTask(ws, project, { title: 'Deep-link target task' });
 			// Seed the mention's comment first (comments sort created_at ASC) so it
 			// sits at the top and Virtuoso mounts it under happy-dom; the trailing
 			// comments make it a real multi-row thread rather than a single row.
@@ -240,8 +240,8 @@ test('inbox shows read mentions as history and highlights unread ones', async ()
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const unreadTask = await seedTask(ws, project, { title: 'Unread ticket' });
-			const readTask = await seedTask(ws, project, { title: 'Read ticket' });
+			const unreadTask = await seedTask(ws, project, { title: 'Unread task' });
+			const readTask = await seedTask(ws, project, { title: 'Read task' });
 			await seedAgentAdminMention(ws, unreadTask, '@admin fresh decision needed.');
 			const { mentionId } = await seedAgentAdminMention(ws, readTask, '@admin already handled.');
 			await markMentionRead(mentionId);
@@ -271,8 +271,8 @@ test('read/unread filter and keyword search narrow the inbox', async () => {
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const unreadTask = await seedTask(ws, project, { title: 'Apple ticket' });
-			const readTask = await seedTask(ws, project, { title: 'Banana ticket' });
+			const unreadTask = await seedTask(ws, project, { title: 'Apple task' });
+			const readTask = await seedTask(ws, project, { title: 'Banana task' });
 			await seedAgentAdminMention(ws, unreadTask, '@admin apple decision.');
 			const { mentionId } = await seedAgentAdminMention(ws, readTask, '@admin banana decision.');
 			await markMentionRead(mentionId);
@@ -326,8 +326,8 @@ test('archived mentions are hidden by default and shown under the Archived filte
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const activeTask = await seedTask(ws, project, { title: 'Active ticket' });
-			const archivedTask = await seedTask(ws, project, { title: 'Archived ticket' });
+			const activeTask = await seedTask(ws, project, { title: 'Active task' });
+			const archivedTask = await seedTask(ws, project, { title: 'Archived task' });
 			const active = await seedAgentAdminMention(ws, activeTask, '@admin active decision.');
 			await markMentionRead(active.mentionId);
 			const archived = await seedAgentAdminMention(ws, archivedTask, '@admin old decision.');
@@ -359,8 +359,8 @@ test('mark all as read clears every unread mention', async () => {
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const t1 = await seedTask(ws, project, { title: 'First ticket' });
-			const t2 = await seedTask(ws, project, { title: 'Second ticket' });
+			const t1 = await seedTask(ws, project, { title: 'First task' });
+			const t2 = await seedTask(ws, project, { title: 'Second task' });
 			const m1 = await seedAgentAdminMention(ws, t1, '@admin first decision.');
 			const m2 = await seedAgentAdminMention(ws, t2, '@admin second decision.');
 			ctx = { projectSlug: project.slug, mentionIds: [m1.mentionId, m2.mentionId] };
@@ -405,7 +405,7 @@ test('mark all as read is disabled when there are no unread mentions', async () 
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const task = await seedTask(ws, project, { title: 'Handled ticket' });
+			const task = await seedTask(ws, project, { title: 'Handled task' });
 			const { mentionId } = await seedAgentAdminMention(ws, task, '@admin already handled.');
 			await markMentionRead(mentionId);
 			ctx = { projectSlug: project.slug };
@@ -431,7 +431,7 @@ test('mark all as read only shows on the Unread tab', async () => {
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
-			const task = await seedTask(ws, project, { title: 'Unread ticket' });
+			const task = await seedTask(ws, project, { title: 'Unread task' });
 			await seedAgentAdminMention(ws, task, '@admin fresh decision needed.');
 			ctx = { projectSlug: project.slug };
 		},

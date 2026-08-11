@@ -102,7 +102,7 @@ test('task detail shows the running agent in the Agent Queue section when locked
 	expect(section.textContent).toContain(seeded.agentTitle);
 });
 
-test('task detail lists every agent running concurrently on a ticket', async () => {
+test('task detail lists every agent running concurrently on a task', async () => {
 	const seeded = {
 		projectSlug: '',
 		taskId: '',

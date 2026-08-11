@@ -39,7 +39,7 @@ afterAll(async () => {
 });
 
 describe('POST /teams/:teamId/agents/onboard', () => {
-	it('creates a hire approval and Captain ticket, but no agent yet', async () => {
+	it('creates a hire approval and Captain task, but no agent yet', async () => {
 		projectSlug = (await (await createTestProject(db, teamId, { name: 'Setup Project' })).json())
 			.data.slug;
 		const res = await app.request(`/api/projects/${projectSlug}/agents/onboard`, {
@@ -90,7 +90,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(pendingComment.rows[0].chosen_option).toBeNull();
 	});
 
-	it('resolving the hire approval materializes the agent, posts a hired comment, and leaves the ticket open', async () => {
+	it('resolving the hire approval materializes the agent, posts a hired comment, and leaves the task open', async () => {
 		const onboardRes = await app.request(`/api/projects/${projectSlug}/agents/onboard`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

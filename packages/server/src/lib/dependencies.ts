@@ -178,7 +178,7 @@ export async function coerceTargetStatusForBlockers(
 }
 
 /**
- * Reconcile an task's stored status against its current blocker state.
+ * Reconcile a task's stored status against its current blocker state.
  * Terminal tasks are never touched. Returns the new status when changed,
  * or null when no update was needed.
  */

@@ -77,8 +77,8 @@ async function listIds(sort?: string): Promise<string[]> {
 
 describe('GET /projects/:projectId/tasks sort=work_order', () => {
 	it('defaults to work order when sort is omitted', async () => {
-		const first = await insertTask('First ticket');
-		const second = await insertTask('Second ticket');
+		const first = await insertTask('First task');
+		const second = await insertTask('Second task');
 		const ids = await listIds();
 		const firstIdx = ids.indexOf(first.id);
 		const secondIdx = ids.indexOf(second.id);
@@ -99,8 +99,8 @@ describe('GET /projects/:projectId/tasks sort=work_order', () => {
 	});
 
 	it('ranks urgent ahead of medium among ready tasks', async () => {
-		const medium = await insertTask('Medium ticket', { priority: TaskPriority.Medium });
-		const urgent = await insertTask('Urgent ticket', { priority: TaskPriority.Urgent });
+		const medium = await insertTask('Medium task', { priority: TaskPriority.Medium });
+		const urgent = await insertTask('Urgent task', { priority: TaskPriority.Urgent });
 
 		const ids = await listIds('work_order:asc');
 		expect(ids.indexOf(urgent.id)).toBeLessThan(ids.indexOf(medium.id));

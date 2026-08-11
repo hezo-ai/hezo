@@ -183,7 +183,7 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 		expect(upstreamDecision).toBe(false);
 	});
 
-	it('lets mention wakeups bypass the gate even on a blocked ticket', async () => {
+	it('lets mention wakeups bypass the gate even on a blocked task', async () => {
 		const r = await createTask('research-bypass', researcherId);
 		const p = await createTask('prd-bypass', productLeadId, [r.identifier]);
 
@@ -193,7 +193,7 @@ describe('dependency gate — wakeup deferral and reverse trigger', () => {
 		expect(await shouldDeferWakeupForBlockers(db, WakeupSource.Automation, p.id)).toBe(false);
 	});
 
-	it('does not defer wakeups on terminal-status tickets', async () => {
+	it('does not defer wakeups on terminal-status tasks', async () => {
 		const r = await createTask('research-done', researcherId);
 		const p = await createTask('prd-done', productLeadId, [r.identifier]);
 		await setStatus(p.id, TaskStatus.Done);
@@ -546,7 +546,7 @@ describe('blocked-status invariant', () => {
 		expect(await getTaskStatus(downstream.id)).toBe(TaskStatus.Blocked);
 	});
 
-	it('never coerces an task whose status is already terminal', async () => {
+	it('never coerces a task whose status is already terminal', async () => {
 		const upstream = await createTask('inv-term-up', researcherId);
 		const downstream = await createTask('inv-term-down', productLeadId);
 		await setStatus(downstream.id, TaskStatus.Cancelled);
@@ -578,7 +578,7 @@ describe('blocked-status invariant', () => {
 		expect(ev?.content.to).toBe(TaskStatus.Blocked);
 	});
 
-	it('creates an task directly as blocked when blocked_by_task_ids is provided', async () => {
+	it('creates a task directly as blocked when blocked_by_task_ids is provided', async () => {
 		const upstream = await createTask('inv-init-up', researcherId);
 		const downstream = await createTask('inv-init-down', productLeadId, [upstream.identifier]);
 

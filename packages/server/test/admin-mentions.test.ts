@@ -187,7 +187,7 @@ beforeEach(async () => {
 
 describe('@admin fan-out via MCP create_comment', () => {
 	it('lands one row per team the admin when an agent writes @admin', async () => {
-		const taskIdLocal = await insertTask(captainId, 'A admin-decision ticket');
+		const taskIdLocal = await insertTask(captainId, 'A admin-decision task');
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -208,7 +208,7 @@ describe('@admin fan-out via MCP create_comment', () => {
 	});
 
 	it('does not notify non-the admin on the team', async () => {
-		const taskIdLocal = await insertTask(captainId, 'Another admin-decision ticket');
+		const taskIdLocal = await insertTask(captainId, 'Another admin-decision task');
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,
@@ -223,7 +223,7 @@ describe('@admin fan-out via MCP create_comment', () => {
 	});
 
 	it('is idempotent under repeated fan-out attempts for the same comment', async () => {
-		const taskIdLocal = await insertTask(captainId, 'Idempotency test ticket');
+		const taskIdLocal = await insertTask(captainId, 'Idempotency test task');
 		const { token: agentToken } = await mintAgentToken(
 			db,
 			masterKeyManager,

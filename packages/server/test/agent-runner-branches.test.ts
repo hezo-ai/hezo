@@ -305,7 +305,7 @@ describe('buildProgressUpdatePrompt', () => {
 		return {
 			id: 'g1',
 			title: 'Ship v2',
-			measurement: 'All P0 tickets closed',
+			measurement: 'All P0 tasks closed',
 			actions: 'Close the parser bug',
 			progress_percent: 40,
 			health: 'on_track',
@@ -329,7 +329,7 @@ describe('buildProgressUpdatePrompt', () => {
 		expect(out).toContain('### Ship v2  `g1`');
 		expect(out).toContain('deadline 2026-12-31');
 		expect(out).toContain('- Last status: Halfway there');
-		expect(out).toContain('- Achieved when: All P0 tickets closed');
+		expect(out).toContain('- Achieved when: All P0 tasks closed');
 		expect(out).toContain('- Suggested actions: Close the parser bug');
 	});
 
@@ -429,7 +429,7 @@ describe('buildTaskPrompt', () => {
 		expect(out).toContain('## Current Task: BR-1 — Branch Task');
 	});
 
-	it('renders an empty-mention excerpt and an empty open-ticket list as their fallbacks', async () => {
+	it('renders an empty-mention excerpt and an empty open-task list as their fallbacks', async () => {
 		const { WakeupSource } = await import('@hezo/shared');
 		const out = buildTaskPrompt(
 			'SYS',
@@ -439,7 +439,7 @@ describe('buildTaskPrompt', () => {
 		);
 		expect(out).toContain('> (empty)');
 		// open-ticket list collapses to the literal "none".
-		expect(out).toMatch(/### Your open tickets\nnone/);
+		expect(out).toMatch(/### Your open tasks\nnone/);
 	});
 
 	it('renders an empty-reply / empty-original excerpt and "none" referenced tasks, with a bare responder name (no slug)', async () => {
@@ -460,7 +460,7 @@ describe('buildTaskPrompt', () => {
 		);
 		// Both excerpt blocks fall back to "> (empty)".
 		expect(out.match(/> \(empty\)/g)?.length).toBe(2);
-		expect(out).toContain('### Tickets referenced by the reply\nnone');
+		expect(out).toContain('### Tasks referenced by the reply\nnone');
 		// responderLabel without a slug is the bare name.
 		expect(out).toContain('NoSlug replied on BR-1');
 	});
@@ -472,7 +472,7 @@ describe('buildTaskPrompt', () => {
 			undefined,
 			{
 				spawnedFrom: {
-					parentLine: '**Parent ticket:** BR-0 — Parent',
+					parentLine: '**Parent task:** BR-0 — Parent',
 					spawnLine: '**Spawned from:** BR-7 — Spawner (provenance only)',
 				},
 			},
@@ -481,7 +481,7 @@ describe('buildTaskPrompt', () => {
 		expect(out).toContain('Write tests');
 		expect(out).toContain('### Progress Summary');
 		expect(out).toContain('Half done');
-		expect(out).toContain('**Parent ticket:** BR-0 — Parent');
+		expect(out).toContain('**Parent task:** BR-0 — Parent');
 		expect(out).toContain('**Spawned from:** BR-7 — Spawner');
 	});
 
@@ -669,7 +669,7 @@ describe('loadReplyContext', () => {
 		await db.query('DELETE FROM task_comments WHERE id = $1', [replyId]);
 	});
 
-	it('returns referencedTasks=[] when the reply text mentions no ticket identifiers', async () => {
+	it('returns referencedTasks=[] when the reply text mentions no task identifiers', async () => {
 		const original = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, $2, 'text', $3::jsonb) RETURNING id`,
@@ -849,7 +849,7 @@ describe('loadOpenSubTasks', () => {
 		await db.query('DELETE FROM tasks WHERE id = $1', [orphan.id]);
 	});
 
-	it('omits the block entirely for a ticket with no open children', async () => {
+	it('omits the block entirely for a task with no open children', async () => {
 		expect(await loadOpenSubTasks(db, makeTask())).toEqual([]);
 		expect(buildTaskPrompt('SYS', makeTask(), undefined, { openSubTasks: [] })).not.toContain(
 			'Open sub-tasks',
@@ -893,7 +893,7 @@ describe('buildCoachReviewPrompt', () => {
 			masterKeyManager,
 			'http://127.0.0.1:47081',
 		);
-		expect(out).toContain('## Review Completed Ticket: ');
+		expect(out).toContain('## Review Completed Task: ');
 		expect(out).toContain('No description provided.');
 		expect(out).not.toContain('### Rules');
 		expect(out).not.toContain('### Progress Summary');
