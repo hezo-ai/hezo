@@ -42,7 +42,14 @@ const READ_OPTIONS: { value: ReadFilter; label: string }[] = [
 ];
 
 function mentionSearch(m: AdminMentionItem): string {
-	return [m.task_identifier, m.task_title, m.author_slug, m.author_display_name, m.snippet]
+	return [
+		m.task_identifier,
+		m.task_title,
+		m.author_slug,
+		m.author_display_name,
+		m.credential_name,
+		m.snippet,
+	]
 		.filter(Boolean)
 		.join(' ')
 		.toLowerCase();
@@ -138,8 +145,8 @@ export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 					label="About the inbox"
 					content={
 						scope === 'global'
-							? 'Approvals and mentions waiting on you from every team you belong to.'
-							: 'Approvals and mentions waiting on you in this team.'
+							? 'Approvals, mentions and credential requests waiting on you from every team you belong to.'
+							: 'Approvals, mentions and credential requests waiting on you in this team.'
 					}
 					data-testid="inbox-info"
 				/>
@@ -185,7 +192,7 @@ export function InboxView({ projectSlugs, scope }: InboxViewProps) {
 					description={
 						archivedView
 							? 'Items are archived 30 days after they are read or resolved.'
-							: 'No approvals or mentions yet.'
+							: 'Nothing is waiting on you yet.'
 					}
 				/>
 			) : filtered.length === 0 ? (

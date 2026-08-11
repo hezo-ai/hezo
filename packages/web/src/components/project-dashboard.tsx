@@ -39,6 +39,7 @@ import { useProject, useProjectMeta, useProjectProgress } from '../hooks/use-pro
 import { useTasks } from '../hooks/use-tasks';
 import { agentAvatarUrl } from '../lib/agent-avatar';
 import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder } from '../lib/dashboard-widget-order';
+import { inboxRowKind, inboxRowLead } from '../lib/inbox-row-kind';
 import { agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { GoalHealthPill } from './goal-health-pill';
@@ -223,46 +224,34 @@ function NeedsYouRow({ projectId, row }: { projectId: string; row: ProjectDashbo
 			</NeedsYouRowShell>
 		);
 	}
-	if (row.kind === 'mention') {
-		const m = row.mention;
-		return (
-			<NeedsYouRowShell
-				tag="mention"
-				tagColor="info"
-				createdAt={row.created_at}
-				actionLink={
-					<Link
-						to="/projects/$projectId/tasks/$taskId"
-						params={{ projectId, taskId: m.task_identifier.toLowerCase() }}
-						hash={`comment-${m.comment_public_id}`}
-						className={ACTION_LINK_CLASS}
-					>
-						Reply
-					</Link>
-				}
-			>
-				{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
-			</NeedsYouRowShell>
-		);
-	}
-	const c = row.credential;
+	const m = row.mention;
+	const kind = inboxRowKind(m.content_type);
+	const lead = inboxRowLead(m);
 	return (
 		<NeedsYouRowShell
-			tag="credential"
-			tagColor="warning"
+			tag={kind.tag}
+			tagColor={kind.tagColor}
 			createdAt={row.created_at}
 			actionLink={
 				<Link
 					to="/projects/$projectId/tasks/$taskId"
-					params={{ projectId, taskId: c.task_identifier.toLowerCase() }}
-					hash={`comment-${c.comment_public_id}`}
+					params={{ projectId, taskId: m.task_identifier.toLowerCase() }}
+					hash={`comment-${m.comment_public_id}`}
 					className={ACTION_LINK_CLASS}
 				>
-					Provide
+					{kind.actionLabel}
 				</Link>
 			}
 		>
-			{c.task_identifier}: provide {c.credential_name}
+			{lead ? (
+				<>
+					{m.task_identifier}: {lead}
+				</>
+			) : (
+				<>
+					{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
+				</>
+			)}
 		</NeedsYouRowShell>
 	);
 }
@@ -308,7 +297,7 @@ function NeedsYouSection({
 			<Card className="divide-y divide-border p-0">
 				{rows.map((row) => (
 					<NeedsYouRow
-						key={`${row.kind}-${row.kind === 'approval' ? row.approval.id : row.kind === 'mention' ? row.mention.id : row.credential.comment_id}`}
+						key={`${row.kind}-${row.kind === 'approval' ? row.approval.id : row.mention.id}`}
 						projectId={projectId}
 						row={row}
 					/>

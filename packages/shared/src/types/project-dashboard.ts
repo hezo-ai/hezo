@@ -1,4 +1,4 @@
-import type { GoalHealth, ProjectProgress } from './common.js';
+import type { CommentContentType, GoalHealth, ProjectProgress } from './common.js';
 
 export const DASHBOARD_WIDGET_IDS = ['goals', 'team_snapshot', 'in_progress', 'spend'] as const;
 
@@ -57,31 +57,28 @@ export interface ProjectDashboardApproval {
 	payload_task_identifier: string | null;
 }
 
+/** An unread admin-inbox row; `content_type` says what is being asked for. */
 export interface ProjectDashboardMention {
 	id: string;
 	task_id: string;
 	task_identifier: string;
 	task_title: string;
 	comment_public_id: string;
+	content_type: CommentContentType;
+	credential_name: string | null;
 	snippet: string;
 	author_display_name: string;
 	created_at: string;
 }
 
-export interface ProjectDashboardCredentialRequest {
-	comment_id: string;
-	comment_public_id: string;
-	task_id: string;
-	task_identifier: string;
-	task_title: string;
-	credential_name: string;
-	created_at: string;
-}
-
+/**
+ * One dashboard action item. These are exactly the project inbox's *unread*
+ * rows, so the widget's "Open inbox" link lands on what it just listed, and an
+ * item leaves the dashboard when the admin reads it - it stays in the inbox.
+ */
 export type ProjectDashboardNeedsYouItem =
 	| { kind: 'approval'; created_at: string; approval: ProjectDashboardApproval }
-	| { kind: 'mention'; created_at: string; mention: ProjectDashboardMention }
-	| { kind: 'credential'; created_at: string; credential: ProjectDashboardCredentialRequest };
+	| { kind: 'mention'; created_at: string; mention: ProjectDashboardMention };
 
 /** A team agent currently running, with its active task when known. */
 export interface ProjectDashboardRunningAgent {

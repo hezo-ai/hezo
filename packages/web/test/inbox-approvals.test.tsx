@@ -31,7 +31,7 @@ test('inbox shows empty state when no approvals', async () => {
 	});
 
 	await findByText('All clear', undefined, { timeout: 10_000 });
-	await findByText(/No approvals or mentions/);
+	await findByText(/Nothing is waiting on you/);
 });
 
 test('inbox shows pending approval with type badge', async () => {

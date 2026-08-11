@@ -20,6 +20,7 @@ import {
 	useHqProject,
 } from '../../hooks/use-projects';
 import { agentAvatarUrl } from '../../lib/agent-avatar';
+import { inboxRowKind, inboxRowLead } from '../../lib/inbox-row-kind';
 
 function formatMoney(cents: number): string {
 	return `$${(cents / 100).toFixed(2)}`;
@@ -127,7 +128,7 @@ function NeedsYouRowShell({
 	actionLink,
 }: {
 	tag: string;
-	tagColor: 'accent' | 'info';
+	tagColor: 'accent' | 'info' | 'warning';
 	/**
 	 * The actor behind the row, shown just before the text (which leads with their
 	 * name). Rows with no identifiable actor pass nothing and get a same-width
@@ -194,10 +195,12 @@ function NeedsYouAction({ approval }: { approval: Approval }) {
 }
 
 function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
+	const kind = inboxRowKind(mention.content_type);
+	const lead = inboxRowLead(mention);
 	return (
 		<NeedsYouRowShell
-			tag="mention"
-			tagColor="info"
+			tag={kind.tag}
+			tagColor={kind.tagColor}
 			avatar={
 				<Avatar
 					size="sm"
@@ -220,12 +223,23 @@ function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
 					hash={`comment-${mention.comment_public_id}`}
 					className={ACTION_LINK_CLASS}
 				>
-					Reply
+					{kind.actionLabel}
 				</Link>
 			}
 		>
-			<span className="font-medium">@{mention.author_slug ?? mention.author_display_name}</span>{' '}
-			{mention.snippet}
+			{lead ? (
+				<>
+					<span className="font-medium">
+						{mention.task_identifier}: {lead}
+					</span>{' '}
+					{mention.snippet}
+				</>
+			) : (
+				<>
+					<span className="font-medium">@{mention.author_slug ?? mention.author_display_name}</span>{' '}
+					{mention.snippet}
+				</>
+			)}
 		</NeedsYouRowShell>
 	);
 }
