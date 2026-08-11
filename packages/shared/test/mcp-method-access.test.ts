@@ -79,6 +79,93 @@ describe('classifyMcpMethod', () => {
 	});
 });
 
+describe('classifyMcpMethods — vendor-namespaced catalogs', () => {
+	it('classifies on the verb after a namespace every tool shares', () => {
+		// The real shape that broke this: Typefully names every tool after itself,
+		// so the leading word is the vendor and the prefix table saw a catalog with
+		// no read method anywhere in it.
+		const out = classifyMcpMethods([
+			{ name: 'typefully_list_drafts' },
+			{ name: 'typefully_get_me' },
+			{ name: 'typefully_create_draft' },
+			{ name: 'typefully_delete_draft' },
+		]);
+		expect(out.map((m) => m.readOnly)).toEqual([true, true, false, false]);
+		// Still a guess, not a declaration.
+		expect(out.every((m) => m.inferred)).toBe(true);
+		expect(readOnlyMethodNames(out)).toEqual(['typefully_list_drafts', 'typefully_get_me']);
+	});
+
+	it('leaves the name untouched — only the classification changes', () => {
+		const [first] = classifyMcpMethods([
+			{ name: 'typefully_get_me', description: 'Who am I' },
+			{ name: 'typefully_create_draft' },
+		]);
+		expect(first).toEqual({
+			name: 'typefully_get_me',
+			description: 'Who am I',
+			readOnly: true,
+			inferred: true,
+		});
+	});
+
+	it('requires every tool to share the token, since a partial match is a coincidence', () => {
+		const out = classifyMcpMethods([{ name: 'typefully_list_drafts' }, { name: 'get_me' }]);
+		// No namespace inferred, so `typefully` is read as the verb and falls through
+		// to write - the historic, deliberately strict behaviour.
+		expect(out[0]?.readOnly).toBe(false);
+		expect(out[1]?.readOnly).toBe(true);
+	});
+
+	it('refuses to strip a shared token that is itself a read prefix', () => {
+		// A server whose tools are all `list_*` is naming them consistently, not
+		// namespacing them. Stripping `list` would leave `drafts`/`tags` and turn a
+		// wholly read-only catalog into a wholly write one.
+		const out = classifyMcpMethods([{ name: 'list_drafts' }, { name: 'list_tags' }]);
+		expect(out.map((m) => m.readOnly)).toEqual([true, true]);
+	});
+
+	it('infers a namespace from a single tool', () => {
+		// A one-tool catalog is still namespaced if it looks namespaced; the token
+		// refusals below are what keep a one-tool guess honest.
+		expect(classifyMcpMethods([{ name: 'typefully_get_me' }])[0]?.readOnly).toBe(true);
+	});
+
+	it('refuses a shared token that is a plain mutation verb', () => {
+		// The mirror of the read-prefix refusal, and the guard that makes a
+		// single-tool namespace safe: stripping `update` here would classify on
+		// `view` - a read prefix - and call a write tool read-only.
+		expect(classifyMcpMethods([{ name: 'update_view' }])[0]?.readOnly).toBe(false);
+		expect(classifyMcpMethods([{ name: 'delete_export' }])[0]?.readOnly).toBe(false);
+		const many = classifyMcpMethods([{ name: 'create_list' }, { name: 'create_preview' }]);
+		expect(many.map((m) => m.readOnly)).toEqual([false, false]);
+	});
+
+	it('keeps a single tool strict when its token carries no verb signal either way', () => {
+		// `typefully_create_draft` strips to `create`, which is not a read prefix.
+		expect(classifyMcpMethods([{ name: 'typefully_create_draft' }])[0]?.readOnly).toBe(false);
+	});
+
+	it('does not infer a namespace when any tool is a bare single word', () => {
+		const out = classifyMcpMethods([{ name: 'typefully' }, { name: 'typefully_get_me' }]);
+		expect(out.map((m) => m.readOnly)).toEqual([false, false]);
+	});
+
+	it("still lets the server's readOnlyHint override the namespace-aware guess", () => {
+		const out = classifyMcpMethods([
+			{ name: 'typefully_get_or_lock_draft', annotations: { readOnlyHint: false } },
+			{ name: 'typefully_create_draft' },
+		]);
+		expect(out[0]?.readOnly).toBe(false);
+		expect(out[0]?.inferred).toBe(false);
+	});
+
+	it('handles camelCase namespacing too', () => {
+		const out = classifyMcpMethods([{ name: 'typefullyListDrafts' }, { name: 'typefullyGetMe' }]);
+		expect(out.map((m) => m.readOnly)).toEqual([true, true]);
+	});
+});
+
 const CATALOG: McpMethodInfo[] = [
 	{ name: 'get_issue', readOnly: true, inferred: false },
 	{ name: 'list_issues', readOnly: true, inferred: false },
