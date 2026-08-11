@@ -1546,6 +1546,19 @@ cover the rest of the run:
   else is skipped; when no name parses, the counts are omitted entirely rather than
   printing a misleading zero for every server.
 
+  **The same counts reach the agent, not just the log.** The parser keeps them
+  (`getMcpToolCounts()`), the runner persists them once at `init` onto
+  `heartbeat_runs.mcp_tool_counts` (migration 056; a mid-run write, since a run that dies
+  later should still leave behind what it was given), and `list_connectors` returns
+  `tools_this_run` per connector - resolved from the caller's own `auth.runId`. NULL means
+  nothing measured it, which is the honest reading outside an agent run and on every runtime
+  but Claude Code; it stays distinct from a recorded zero, because only the zero is
+  actionable. This exists because a prose rule could not do the job: an agent reported a
+  connector as toolless, nothing could confirm or refute it, and the claim then propagated
+  through its progress summary across several runs. The first real measurement -
+  `typefully=connected(25)` on a DeepSeek run - showed the tools had been there all along.
+  Before assuming a connector is broken, read this field.
+
 The runner also orders these: a signal kill outranks a captured terminal error, which in
 turn outranks "produced no output" on the run row - each is the cause of the one below it,
 and reporting the symptom first sends the reader after the wrong thing. A process a signal

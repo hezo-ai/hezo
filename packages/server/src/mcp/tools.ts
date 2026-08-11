@@ -7015,6 +7015,21 @@ export function registerTools(
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
+			// What this run's runtime actually handed the model, per server. A
+			// connector's status says the session came up, not that its tools arrived,
+			// and that gap is what let an agent report a connector as toolless with
+			// nothing able to confirm or refute it. Null outside an agent run (a CEO
+			// chat principal carries no runId) and on runtimes that report no tool
+			// list, which stays distinct from a recorded zero.
+			const runToolCounts =
+				auth.type === AuthType.Agent && auth.runId
+					? ((
+							await db.query<{ mcp_tool_counts: Record<string, number> | null }>(
+								`SELECT mcp_tool_counts FROM heartbeat_runs WHERE id = $1`,
+								[auth.runId],
+							)
+						).rows[0]?.mcp_tool_counts ?? null)
+					: null;
 			const r = await db.query<{
 				id: string;
 				name: string;
@@ -7154,6 +7169,10 @@ export function registerTools(
 								disabled_write: method_access.writeDisabled,
 							}
 						: null,
+					// A number here is a fact about THIS run, not a guess: 0 means the
+					// server connected and contributed nothing callable, which is worth
+					// reporting to the human. Null means nobody measured it.
+					tools_this_run: runToolCounts ? (runToolCounts[row.name] ?? null) : null,
 				};
 			});
 			// Shadowed duplicates are dropped above, so page the de-duped set.
