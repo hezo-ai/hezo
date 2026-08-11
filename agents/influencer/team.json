@@ -2,8 +2,8 @@
 	"schema_version": 1,
 	"slug": "influencer",
 	"name": "Social Media Marketing",
-	"description": "Grow your social reach — a team that learns your brand, plans a content calendar, drafts and verifies content, and publishes with your approval",
-	"summary": "The Social Media Marketing template provisions a content team that grows a creator's reach. A Captain runs onboarding — learning the creator's accounts, persona, brand, and goals — and suggests goals for the admin to approve. The Brand Strategist owns voice, pillars, and the content calendar; the Trend Researcher feeds ideas; the Content Writer and Media Producer produce; the Content Editor verifies every piece; and the Distribution Manager publishes, but only after the admin approves the content.",
+	"description": "Grow your social reach - a team that learns your brand, plans a content calendar, drafts and verifies content, and publishes with your approval",
+	"summary": "The Social Media Marketing template provisions a content team that grows a creator's reach. A Captain runs onboarding - learning the creator's accounts, persona, brand, and goals - and suggests goals for the admin to approve. The Brand Strategist owns voice, pillars, and the content calendar; the Trend Researcher feeds ideas; the Content Writer and Media Producer produce; the Content Editor verifies every piece; and the Distribution Manager publishes, but only after the admin approves the content.",
 	"keywords": [
 		"social media",
 		"social",
@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 12,
+			"notes": "Renamed ticket to task throughout the roster copy and every role prompt, matching the term Hezo uses everywhere else, and replaced em dashes with hyphens in the operator-facing team and role descriptions."
+		},
+		{
 			"version": 11,
 			"notes": "Every role now ships a fixed human name and a generated pixel avatar, so the same teammate appears in every project provisioned from this team. A project can rename an agent or regenerate its avatar without affecting the team."
 		},
@@ -83,7 +87,7 @@
 		},
 		{
 			"version": 6,
-			"notes": "Captain now owns the project Progress page as a first-class duty: it rebuilds the page on every progress-update run whether or not the project has goals, writes a high-level summary that names no ticket identifiers, and authors a one-line, project-level summary for each task in the recently actioned / created / closed columns. Goals are now described as the optional layer on top."
+			"notes": "Captain now owns the project Progress page as a first-class duty: it rebuilds the page on every progress-update run whether or not the project has goals, writes a high-level summary that names no task identifiers, and authors a one-line, project-level summary for each task in the recently actioned / created / closed columns. Goals are now described as the optional layer on top."
 		},
 		{
 			"version": 5,
@@ -107,7 +111,7 @@
 		}
 	],
 	"captain": {
-		"team_context": "You report to the CEO — the instance-level executive who oversees every team's Captain and reports to the human admin. Your team grows a creator's social reach. You run onboarding (accounts, persona, brand, goals), suggest goals for the admin to approve, and delegate to the Brand Strategist (voice, pillars, calendar), the Trend Researcher (ideas), and the Distribution Manager (publishing). You own the content-approval policy: nothing is published without the admin's approval unless they disable the gate. You do not write or publish content yourself."
+		"team_context": "You report to the CEO - the instance-level executive who oversees every team's Captain and reports to the human admin. Your team grows a creator's social reach. You run onboarding (accounts, persona, brand, goals), suggest goals for the admin to approve, and delegate to the Brand Strategist (voice, pillars, calendar), the Trend Researcher (ideas), and the Distribution Manager (publishing). You own the content-approval policy: nothing is published without the admin's approval unless they disable the gate. You do not write or publish content yourself."
 	},
 	"roster": [
 		{
@@ -214,8 +218,8 @@
 			},
 			"reports_to_slug": "brand-strategist",
 			"sort_order": 5,
-			"role_description": "Verification gate for all content — proofreads, fact-checks, and reviews voice and brand safety before content goes for admin approval.",
-			"summary": "The Content Editor is the verification gate — proofreading, fact-checking, and reviewing voice and brand safety for all content before it goes to the admin for approval. They report to the Brand Strategist.",
+			"role_description": "Verification gate for all content - proofreads, fact-checks, and reviews voice and brand safety before content goes for admin approval.",
+			"summary": "The Content Editor is the verification gate - proofreading, fact-checking, and reviewing voice and brand safety for all content before it goes to the admin for approval. They report to the Brand Strategist.",
 			"team_context": "You report to the @brand-strategist. You are the verification gate: proofread, fact-check, and review voice and brand safety for every piece before it goes to the admin for approval. Nothing skips you.",
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
