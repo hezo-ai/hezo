@@ -1981,9 +1981,12 @@ that window - and the detail page renders neither the id nor Remove.
 **A dropped output stream resumes rather than killing the run.** A run's entire stdout
 arrives over one long-lived connection - a `follow=true` log stream on Daytona, a hijacked
 attach socket on Docker - held open for the whole command, so it sits idle whenever the agent
-is thinking or waiting on a tool call and a gateway in front of the provider reaps it.
-(Measured: Bun's `fetch` client imposes no idle timeout of its own, so a mid-stream close is
-always the far end's.) Daytona's adapter reopens the stream and discards the bytes it already
+is thinking or waiting on a tool call, and both ends sever it: a gateway in front of the
+provider reaps idle connections, and Bun's own `fetch` enforces a ~5 minute idle timeout that
+per-request options cannot disable (`.dev/bun-issues.md`). **The wait for response headers is
+idle time too** - measured, Daytona withholds them until the command's first byte of output,
+so a CLI slow to start burns the budget before a single byte exists - which is why the `fetch`
+sits inside the retry rather than in front of it. Daytona's adapter reopens the stream and discards the bytes it already
 delivered, counted at line granularity so the skip can never cut a multi-byte character. That
 client-side skip is the only exact resume available: measured against the live API, the logs
 endpoint accepts `?offset`, `?from`, `?since`, `?tail` and a `Range:` header and **silently
@@ -2886,9 +2889,22 @@ needs no off-stream recovery. `createPrimeAgentParser` maps the four buckets **s
 across**: Prime Agent already normalises every provider to disjoint buckets
 (`input = prompt - cacheRead - cacheWrite`), so subtracting cache again — the Codex/Grok
 posture — would under-count input. Its own `cost` object is ignored, per the always-price-from-
-the-table rule. Effort maps onto `--thinking`, the closest fit of any runtime. The image bakes
-a pinned release plus `ipykernel` and `PRIME_AGENT_KERNEL_PYTHON`, so no run pays to bootstrap
-the kernel over the network.
+the-table rule. Effort maps onto `--thinking`, the closest fit of any runtime.
+
+**Pinning `PRIME_AGENT_KERNEL_PYTHON` moves the kernel's whole package set into the image.**
+The CLI gates every `ipython` tool call on a readiness probe against that interpreter, and a
+miss is not a degraded kernel — it is a hard error returned in place of the tool result, for
+every call, for the whole run. Measured on 0.7.1 with only `ipykernel` + `mcp` baked: nine
+consecutive tool calls returned "missing a current prime-agent-runtime", the model answered
+from memory, and the run exited 0 having reached no MCP server. Three things the probe wants,
+all baked in `docker/Dockerfile.agent-base`: `prime-agent-runtime` (the `rlm` package the
+generated skills subclass — not on PyPI, it ships inside the npm tarball at
+`dist/prime-agent-runtime` and installs from there); `dill`, for the kernel's namespace
+snapshot; and its default import set (requests, httpx, pyyaml, tomli, python-dotenv, pandas,
+numpy, scipy, beautifulsoup4, lxml, pydantic, tyro). That costs a few hundred MB on every
+image, the alternative being a `curl | sh` of `uv` and a network install inside a run. The
+build verifies it as `node`, not root — a root-only check is what let the earlier
+`Permission denied` on the CLI bin ship.
 
 **Local providers carry their endpoint on the credential, not in `staticEnv`.** Ollama and
 LM Studio serve Anthropic's Messages API natively, so they reuse the Claude Code runtime
@@ -2960,8 +2976,18 @@ directive. It's also exposed as `HEZO_AGENT_EFFORT`.
 **Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, six
 adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
-servers, and wires the stop-hook. OpenCode, Grok and Kimi Code take the prompt as a CLI
-**argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
+servers, and wires the stop-hook. OpenCode, Grok, Kimi Code and Prime Agent take the prompt as
+a CLI **argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on
+stdin. **The arg branch redirects stdin from `/dev/null`, and must.** An exec leaves stdin
+attached to a pipe nothing writes to and nothing closes, so a CLI that reads it in headless
+mode blocks forever — no output, no exit, no error, indistinguishable from a slow model until
+the run's deadline. Measured on Prime Agent 0.7.1: a byte-identical invocation produced a full
+transcript in ~2s with stdin closed and nothing at all in 15 minutes without it. In arg mode
+the prompt is already on the command line, so stdin has nothing to legitimately carry. Both
+copies of that logic — `PROMPT_DELIVERY_SH` in `agent-runner.ts` and the bridge path in
+`docker/scripts/hezo-run-with-bridge` — carry it, and `agent-prompt-delivery.test.ts` runs the
+script under a real `sh` against a real open stdin, so the regression is a timeout rather than
+a passing string match.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
 TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its

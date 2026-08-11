@@ -616,10 +616,13 @@ function describeOneAgentCliRun(
 			const promptPath = shellQuote(`${fixture.workRoot}/${PROMPT_FILE}`);
 			// Prompt delivery is the runtime's own convention, and getting it wrong is
 			// a hang rather than an error - a CLI waiting on a stdin that never closes
-			// looks exactly like a slow model.
+			// looks exactly like a slow model. The `< /dev/null` on the arg branch is
+			// not a harness nicety: it is what `PROMPT_DELIVERY_SH` does, and without
+			// it Prime Agent produces no output at all. Mirror production or the suite
+			// proves the wrong invocation.
 			const line =
 				RUNTIME_PROMPT_DELIVERY[runtime] === 'arg'
-					? `${argv} "$(cat ${promptPath})"`
+					? `${argv} "$(cat ${promptPath})" < /dev/null`
 					: `${argv} < ${promptPath}`;
 
 			const execId = await engine.execCreate(containerId, {

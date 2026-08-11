@@ -57,6 +57,10 @@ Roughly five minutes, no way to opt out ([#5930](https://github.com/oven-sh/bun/
 
 `requestStream` (`services/docker.ts`) puts long-lived streaming requests on `node:http` over the same unix socket, which applies no idle timeout, and wraps the response back into a web `Response` so callers parse both transports identically.
 
+Daytona's log stream is HTTPS to a third party, so it cannot take that escape and instead survives the teardown: `followCommandLog` (`sandbox/daytona/client.ts`) retries into its existing bounded reconnect loop, with the `fetch` **inside** the loop so a timeout while waiting for response headers reconnects rather than ending the run. That wait is real - measured, the endpoint withholds headers until the command's first byte of output.
+
+The **test** tier has the mirror-image problem and its own fix. vitest runs under Node, whose undici defaults (`headersTimeout`/`bodyTimeout`, 300s each) are stricter than Bun's, so the live Daytona suite failed at exactly 300s on code that is fine in production. `test/live/setup.ts` installs a no-timeout undici dispatcher for that config only; production takes no dispatcher argument for a limit its runtime does not have.
+
 ### `ClientRequest` emits `'close'` prematurely
 
 No upstream issue. Bun fires it while the response body is still streaming. Detaching an abort handler on that event leaves a stalled read with nothing to tear it down, so a hung exec ignores its timeout and blocks until the connection dies at OS level. `requestStream` detaches on the *response* stream's `'close'` instead.

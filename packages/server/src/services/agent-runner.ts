@@ -503,10 +503,20 @@ export async function recoverOffStreamRunUsage(
 }
 
 // Deliver the prompt either on stdin (default) or as a trailing arg (OpenCode,
-// Grok, Kimi Code), selected per runtime via the HEZO_PROMPT_MODE env var — see
-// RUNTIME_PROMPT_DELIVERY. The bridge wrapper script honors the same env var.
-const PROMPT_DELIVERY_SH =
-	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")"; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
+// Grok, Kimi Code, Prime Agent), selected per runtime via the HEZO_PROMPT_MODE
+// env var — see RUNTIME_PROMPT_DELIVERY. The bridge wrapper script honors the
+// same env var.
+//
+// **Arg mode closes stdin, and must.** An exec leaves the container process's
+// stdin attached to a pipe nothing ever writes to and nothing ever closes, so a
+// CLI that reads it in headless mode blocks forever — no output, no exit, no
+// error, indistinguishable from a slow model until the run's deadline. Measured
+// on Prime Agent 0.7.1: byte-identical invocations produce a full stream-json
+// transcript in ~2s with `< /dev/null` and nothing at all in 15 minutes without
+// it. In arg mode the prompt is already on the command line, so there is by
+// definition nothing stdin can legitimately carry.
+export const PROMPT_DELIVERY_SH =
+	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")" < /dev/null; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
 
 function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
 	if (bridge) {
