@@ -1,28 +1,48 @@
 import type { MarketplaceRosterAgent } from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { ChevronRight, Loader2, Store } from 'lucide-react';
+import { Check, ChevronRight, Loader2, Store } from 'lucide-react';
 import { useState } from 'react';
 import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
+import { HiringForBanner } from '../../components/hiring-for-banner';
 import { marketplaceRosterRows, TeamRosterTable } from '../../components/team-roster-table';
+import { Avatar, getInitials } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { DialogContent } from '../../components/ui/dialog';
 import { useAddMarketplaceTeam, useMarketplaceTeam } from '../../hooks/use-marketplace';
-import { useAllVisibleProjects } from '../../hooks/use-projects';
+import { useAllVisibleProjects, useProjectMeta } from '../../hooks/use-projects';
 import { toast } from '../../hooks/use-toast';
+import { agentAvatarUrl } from '../../lib/agent-avatar';
+import { useI18n } from '../../lib/i18n';
+
+interface MarketplaceTeamSearch {
+	/** The project a hire was started from; see `routes/marketplace/index.tsx`. */
+	forProject?: string;
+}
 
 function MarketplaceTeamDetail() {
+	const { t } = useI18n();
 	const { slug } = Route.useParams();
+	const { forProject } = Route.useSearch();
 	const { data: team, isLoading } = useMarketplaceTeam(slug);
 	const [launchOpen, setLaunchOpen] = useState(false);
 	const [addOpen, setAddOpen] = useState(false);
+	const hiringFor = useProjectMeta(forProject);
 
 	return (
 		<div className="max-w-[900px] mx-auto p-4 sm:p-6 lg:p-8" data-testid="marketplace-detail">
+			{forProject && (
+				<HiringForBanner projectId={forProject} messageKey="agents.hire.hiringForTeam" />
+			)}
+
 			<nav className="flex items-center gap-1 text-[13px] text-text-2 mb-4" aria-label="Breadcrumb">
-				<Link to="/marketplace" className="hover:text-text-1 flex items-center gap-1">
-					<Store className="w-3.5 h-3.5" /> Marketplace
+				<Link
+					to="/marketplace"
+					search={forProject ? { forProject } : {}}
+					className="hover:text-text-1 flex items-center gap-1"
+				>
+					<Store className="w-3.5 h-3.5" /> {t('marketplace.title')}
 				</Link>
 				<ChevronRight className="w-3.5 h-3.5" />
 				<span className="text-text-1">{team?.name ?? slug}</span>
@@ -30,10 +50,10 @@ function MarketplaceTeamDetail() {
 
 			{isLoading ? (
 				<div className="flex items-center gap-2 text-text-2 text-[13px] py-8">
-					<Loader2 className="w-4 h-4 animate-spin" /> Loading…
+					<Loader2 className="w-4 h-4 animate-spin" /> {t('common.loading')}
 				</div>
 			) : !team ? (
-				<p className="text-text-2 text-[13px]">This team is not in the marketplace.</p>
+				<p className="text-text-2 text-[13px]">{t('marketplace.notFound')}</p>
 			) : (
 				<>
 					<div className="flex items-start justify-between gap-3 flex-wrap mb-2">
@@ -44,35 +64,57 @@ function MarketplaceTeamDetail() {
 							</div>
 							<p className="text-[13px] text-text-2 mt-1 max-w-[600px]">{team.description}</p>
 						</div>
+						{/* Arriving mid-hire makes adding to that project the task at hand, so it
+						    leads. Launching a whole new project stays reachable rather than
+						    dead-ending someone who changes their mind. */}
 						<div className="flex gap-2">
-							<Button onClick={() => setLaunchOpen(true)} data-testid="marketplace-launch">
-								Launch new project
-							</Button>
-							<Button
-								variant="secondary"
-								onClick={() => setAddOpen(true)}
-								data-testid="marketplace-add-existing"
-							>
-								Add to a project
-							</Button>
+							{forProject ? (
+								<>
+									<Button onClick={() => setAddOpen(true)} data-testid="marketplace-add-existing">
+										{t('agents.hire.addToProject', {
+											project: hiringFor?.name ?? forProject,
+										})}
+									</Button>
+									<Button
+										variant="secondary"
+										onClick={() => setLaunchOpen(true)}
+										data-testid="marketplace-launch"
+									>
+										{t('marketplace.launchProject')}
+									</Button>
+								</>
+							) : (
+								<>
+									<Button onClick={() => setLaunchOpen(true)} data-testid="marketplace-launch">
+										{t('marketplace.launchProject')}
+									</Button>
+									<Button
+										variant="secondary"
+										onClick={() => setAddOpen(true)}
+										data-testid="marketplace-add-existing"
+									>
+										{t('marketplace.addToProject')}
+									</Button>
+								</>
+							)}
 						</div>
 					</div>
 
 					<section className="mt-6">
 						<h2 className="text-[15px] font-medium mb-2">
-							Roster ({team.roster.length + 1} roles)
+							{t('marketplace.rosterHeading', { count: team.roster.length + 1 })}
 						</h2>
 						<TeamRosterTable rows={marketplaceRosterRows(team)} testId="marketplace-roster" />
 					</section>
 
 					{team.changelog.length > 0 && (
 						<section className="mt-8">
-							<h2 className="text-[15px] font-medium mb-2">Changelog</h2>
+							<h2 className="text-[15px] font-medium mb-2">{t('marketplace.changelog')}</h2>
 							<ul className="space-y-1.5">
 								{team.changelog.map((c) => (
 									<li key={c.version} className="text-[13px] text-text-2">
 										<span className="font-medium text-text-1">v{c.version}</span>
-										{c.notes ? ` — ${c.notes}` : ''}
+										{c.notes ? ` - ${c.notes}` : ''}
 									</li>
 								))}
 							</ul>
@@ -90,6 +132,7 @@ function MarketplaceTeamDetail() {
 						slug={slug}
 						teamName={team.name}
 						roster={team.roster}
+						initialProjectId={forProject}
 					/>
 				</>
 			)}
@@ -102,6 +145,10 @@ function MarketplaceTeamDetail() {
  * roles. The roster checkboxes are driven by the def's `roster`, which never contains
  * the Captain (`RESERVED_ROSTER_SLUGS` forbids it) — that is also the product rule:
  * every project already has a Captain, so it is not selectable.
+ *
+ * `initialProjectId` is set when the operator got here from a project's hire flow.
+ * That also flips the default scope to "choose roles": they pressed **Hire agent**,
+ * which is a request for a teammate, not for a second roster.
  */
 function AddToProjectDialog({
 	open,
@@ -109,16 +156,19 @@ function AddToProjectDialog({
 	slug,
 	teamName,
 	roster,
+	initialProjectId,
 }: {
 	open: boolean;
 	onOpenChange: (v: boolean) => void;
 	slug: string;
 	teamName: string;
 	roster: MarketplaceRosterAgent[];
+	initialProjectId?: string;
 }) {
+	const { t } = useI18n();
 	const { projects } = useAllVisibleProjects();
-	const [projectId, setProjectId] = useState('');
-	const [wholeTeam, setWholeTeam] = useState(true);
+	const [projectId, setProjectId] = useState(initialProjectId ?? '');
+	const [wholeTeam, setWholeTeam] = useState(!initialProjectId);
 	const [picked, setPicked] = useState<string[]>([]);
 	const selected = projects.find((p) => p.slug === projectId);
 	const add = useAddMarketplaceTeam(selected?.slug ?? '');
@@ -127,8 +177,8 @@ function AddToProjectDialog({
 	const canSubmit = projectId.length > 0 && (wholeTeam || picked.length > 0) && !add.isPending;
 
 	function reset() {
-		setProjectId('');
-		setWholeTeam(true);
+		setProjectId(initialProjectId ?? '');
+		setWholeTeam(!initialProjectId);
 		setPicked([]);
 	}
 
@@ -151,13 +201,13 @@ function AddToProjectDialog({
 		reset();
 		const href = `/projects/${selected.slug}/tasks/${res.task_identifier.toLowerCase()}`;
 		const what = wholeTeam
-			? `the ${teamName} team`
+			? t('marketplace.addingTeam', { team: teamName })
 			: chosen.length === 1
-				? `the ${chosen[0].title} role`
-				: `${chosen.length} roles from the ${teamName} team`;
-		toast.success(`The CEO is adding ${what} to ${selected.name}.`, {
+				? t('marketplace.addingRole', { role: chosen[0].title })
+				: t('marketplace.addingRoles', { count: chosen.length, team: teamName });
+		toast.success(t('marketplace.addStarted', { what, project: selected.name }), {
 			link: {
-				label: 'View task',
+				label: t('marketplace.viewTask'),
 				href,
 				onNavigate: () =>
 					navigate({
@@ -171,23 +221,23 @@ function AddToProjectDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<DialogContent size="md">
-				<Dialog.Title className="text-base font-medium mb-1">
-					Add the {teamName} team to a project
+				<Dialog.Title className="text-base font-medium mb-1 pr-8">
+					{selected
+						? t('marketplace.addTitleForProject', { team: teamName, project: selected.name })
+						: t('marketplace.addTitle', { team: teamName })}
 				</Dialog.Title>
 				<Dialog.Description className="text-[13px] text-text-2 mb-4">
-					The CEO opens a task in the project to hire the roles you choose and fit them to the team
-					that's already there. If the project already has these roles, it updates them to this
-					version instead.
+					{t('marketplace.addDescription')}
 				</Dialog.Description>
 				<label className="flex flex-col gap-1 text-[13px] font-medium text-text-1">
-					Project
+					{t('marketplace.projectLabel')}
 					<select
 						value={projectId}
 						onChange={(e) => setProjectId(e.target.value)}
 						data-testid="add-to-project-select"
 						className="border border-border rounded-md px-3 py-2 text-[13px] bg-surface text-text-1"
 					>
-						<option value="">Choose a project…</option>
+						<option value="">{t('marketplace.chooseProject')}</option>
 						{projects.map((p) => (
 							<option key={p.slug} value={p.slug}>
 								{p.name}
@@ -197,7 +247,9 @@ function AddToProjectDialog({
 				</label>
 
 				<fieldset className="mt-4">
-					<legend className="text-[13px] font-medium text-text-1 mb-1.5">What to add</legend>
+					<legend className="text-[13px] font-medium text-text-1 mb-1.5">
+						{t('marketplace.whatToAdd')}
+					</legend>
 					<label className="flex items-start gap-2 text-[13px] py-1 cursor-pointer">
 						<input
 							type="radio"
@@ -208,8 +260,8 @@ function AddToProjectDialog({
 							data-testid="add-scope-whole-team"
 						/>
 						<span>
-							The whole team
-							<span className="text-text-2"> ({roles.length} roles)</span>
+							{t('marketplace.wholeTeam')}
+							<span className="text-text-2"> ({roles.length})</span>
 						</span>
 					</label>
 					<label className="flex items-start gap-2 text-[13px] py-1 cursor-pointer">
@@ -221,29 +273,45 @@ function AddToProjectDialog({
 							onChange={() => setWholeTeam(false)}
 							data-testid="add-scope-pick-roles"
 						/>
-						<span>Choose roles</span>
+						<span>{t('marketplace.chooseRoles')}</span>
 					</label>
 
 					{!wholeTeam && (
 						<div className="mt-2 pl-6" data-testid="add-role-picker">
+							{/* Named and faced rather than a plain checklist: a marketplace roster
+							    ships a fixed person per role, and this is the moment the operator
+							    decides to bring *them* in. The same identity shows on the roster
+							    table above and everywhere the agent appears once hired. */}
 							<ul className="max-h-[220px] overflow-y-auto rounded-md border border-border divide-y divide-border/60">
-								{roles.map((r) => (
-									<li key={r.slug}>
-										<label className="flex items-start gap-2 px-3 py-2 text-[13px] cursor-pointer">
-											<input
-												type="checkbox"
-												className="mt-0.5"
-												checked={picked.includes(r.slug)}
-												onChange={() => togglePicked(r.slug)}
-												data-testid={`add-role-${r.slug}`}
-											/>
-											<span className="min-w-0">
-												<span className="font-medium">{r.title}</span>
-												<span className="block text-[12px] text-text-2">{r.role_description}</span>
-											</span>
-										</label>
-									</li>
-								))}
+								{roles.map((r) => {
+									const name = r.human_name ?? r.title;
+									return (
+										<li key={r.slug}>
+											<label className="flex items-center gap-2.5 px-3 py-2 text-[13px] cursor-pointer">
+												<input
+													type="checkbox"
+													checked={picked.includes(r.slug)}
+													onChange={() => togglePicked(r.slug)}
+													data-testid={`add-role-${r.slug}`}
+												/>
+												<Avatar
+													initials={getInitials(name)}
+													size="sm"
+													imageUrl={agentAvatarUrl({ slug: r.slug, avatar_spec: r.avatar_spec })}
+												/>
+												<span className="min-w-0">
+													<span className="font-medium">{name}</span>
+													{r.human_name && (
+														<span className="text-[12px] text-text-2"> {r.title}</span>
+													)}
+													<span className="block text-[12px] text-text-2">
+														{r.role_description}
+													</span>
+												</span>
+											</label>
+										</li>
+									);
+								})}
 							</ul>
 						</div>
 					)}
@@ -251,21 +319,26 @@ function AddToProjectDialog({
 
 				{add.error && (
 					<p className="text-[13px] text-danger mt-2">
-						{(add.error as { message?: string }).message || 'Failed to add team'}
+						{(add.error as { message?: string }).message || t('marketplace.addFailed')}
 					</p>
 				)}
 				<div className="flex justify-end gap-2 mt-4">
 					<Button variant="ghost" onClick={() => onOpenChange(false)}>
-						Cancel
+						{t('common.cancel')}
 					</Button>
 					<Button onClick={submit} disabled={!canSubmit} data-testid="add-to-project-submit">
+						{add.isPending ? (
+							<Loader2 className="w-4 h-4 animate-spin" />
+						) : (
+							<Check className="w-4 h-4" />
+						)}
 						{add.isPending
-							? 'Starting…'
+							? t('marketplace.starting')
 							: wholeTeam
-								? 'Add team'
+								? t('marketplace.addTeamAction')
 								: picked.length === 1
-									? 'Add role'
-									: `Add ${picked.length} roles`}
+									? t('marketplace.addRoleAction')
+									: t('marketplace.addRolesAction', { count: picked.length })}
 					</Button>
 				</div>
 			</DialogContent>
@@ -274,5 +347,8 @@ function AddToProjectDialog({
 }
 
 export const Route = createFileRoute('/marketplace/$slug')({
+	validateSearch: (search: Record<string, unknown>): MarketplaceTeamSearch => ({
+		forProject: typeof search.forProject === 'string' ? search.forProject : undefined,
+	}),
 	component: MarketplaceTeamDetail,
 });

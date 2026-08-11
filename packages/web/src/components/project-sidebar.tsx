@@ -12,6 +12,7 @@ import { agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
 import { CreateTaskDialog } from './create-task-dialog';
+import { HireAgentChooserDialog } from './hire-agent-chooser-dialog';
 import { SidebarNav, type SidebarNavSection } from './sidebar-nav';
 import { Tooltip } from './ui/tooltip';
 
@@ -40,6 +41,7 @@ export function ProjectSidebar({
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
 	const { data: agents } = useAgents(projectId);
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
+	const [hireOpen, setHireOpen] = useState(false);
 	// Goals are a project concept only (HQ has none). Use the open_goal_count carried on the
 	// project index payload (the same source as open_task_count) rather than a separate per-page
 	// goals fetch — the dot shows only once the project has loaded and reports zero active goals.
@@ -233,8 +235,13 @@ export function ProjectSidebar({
 			title: 'Team',
 			titleTo: '/projects/$projectId/agents',
 			titleParams: projectParams,
-			onAdd: () => navigate({ to: '/projects/$projectId/agents/hire', params: projectParams }),
-			addLabel: 'Hire a new agent',
+			// HQ holds only the CEO and Coach singletons and is not staffed, so it gets
+			// no add affordance (the team page hides its button on the same rule).
+			onAdd: isInternal ? undefined : () => setHireOpen(true),
+			// Deliberately not the team page's "Hire agent": this is a `+` chip whose
+			// tooltip is its only label, and the two must stay distinguishable by
+			// accessible name (the hire form's submit button is "Hire agent" too).
+			addLabel: t('agents.hire.addTooltip'),
 			items: [
 				...ownAgents.map((agent) => ({
 					to: '/projects/$projectId/agents/$agentId',
@@ -326,6 +333,9 @@ export function ProjectSidebar({
 				open={createTaskOpen}
 				onOpenChange={setCreateTaskOpen}
 			/>
+			{!isInternal && (
+				<HireAgentChooserDialog projectId={projectId} open={hireOpen} onOpenChange={setHireOpen} />
+			)}
 		</div>
 	);
 }

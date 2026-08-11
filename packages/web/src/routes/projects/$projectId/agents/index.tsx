@@ -1,9 +1,11 @@
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Globe, Plus, UserPlus } from 'lucide-react';
+import { useState } from 'react';
 import { agentDisplayName } from '../../../../components/agent-identity-tooltip';
 import { agentPageParams } from '../../../../components/agent-link';
 import { AgentStatusLabel } from '../../../../components/agent-status-label';
 import { ExportTeamButton } from '../../../../components/export-team-dialog';
+import { HireAgentChooserDialog } from '../../../../components/hire-agent-chooser-dialog';
 import { OrgChartTree } from '../../../../components/org-chart-tree';
 import { Button } from '../../../../components/ui/button';
 import { EmptyState } from '../../../../components/ui/empty-state';
@@ -11,6 +13,7 @@ import { ExpandableText } from '../../../../components/ui/expandable-text';
 import { StatusDot } from '../../../../components/ui/status-dot';
 import { useAgents } from '../../../../hooks/use-agents';
 import { useOrgChart } from '../../../../hooks/use-org-chart';
+import { useProjectMeta } from '../../../../hooks/use-projects';
 import { useTeam } from '../../../../hooks/use-teams';
 import { useI18n } from '../../../../lib/i18n';
 
@@ -48,26 +51,52 @@ function GlobalAgentsBox({ projectId }: { projectId: string }) {
 function TeamPage() {
 	const { t } = useI18n();
 	const { projectId } = Route.useParams();
+	const { hire } = Route.useSearch();
+	const navigate = useNavigate();
 	const { data: orgChart, isLoading } = useOrgChart(projectId);
 	const { data: team } = useTeam(projectId);
+	const project = useProjectMeta(projectId);
+	const [chooserOpen, setChooserOpen] = useState(false);
+
+	// `?hire` opens the chooser on arrival, which is how the hire form's back link
+	// returns to the fork. Dismissing clears the param so the next visit to this
+	// page (or a browser back into it) is not met by the dialog again.
+	const chooserVisible = chooserOpen || hire === true;
+	function setChooserVisible(next: boolean) {
+		setChooserOpen(next);
+		if (!next && hire) {
+			navigate({ to: '/projects/$projectId/agents', params: { projectId }, replace: true });
+		}
+	}
 
 	if (isLoading)
 		return <div className="text-text-2 text-[13px] py-8 text-center">{t('common.loading')}</div>;
 
 	const roots = orgChart?.admin.children ?? [];
 	const hasMembers = roots.length > 0;
+	// HQ hosts the two instance singletons (CEO, Coach) and nothing else - it is
+	// not a team you staff, and marketplace roles are written for project teams.
+	const canHire = !(project?.is_internal ?? false);
 
 	return (
 		<div className="grid grid-cols-1 lg:grid-cols-[1fr_240px] lg:gap-6">
 			<div className="min-w-0">
 				<div className="flex items-center justify-end gap-2 mb-4">
-					<Link to="/projects/$projectId/agents/hire" params={{ projectId }}>
-						<Button>
-							<UserPlus className="w-4 h-4" /> Hire agent
+					{canHire && (
+						<Button onClick={() => setChooserOpen(true)} data-testid="hire-agent">
+							<UserPlus className="w-4 h-4" /> {t('agents.hire.action')}
 						</Button>
-					</Link>
+					)}
 					<ExportTeamButton projectId={projectId} />
 				</div>
+
+				{canHire && (
+					<HireAgentChooserDialog
+						projectId={projectId}
+						open={chooserVisible}
+						onOpenChange={setChooserVisible}
+					/>
+				)}
 
 				<div
 					data-testid="team-summary"
@@ -119,6 +148,14 @@ function TeamPage() {
 	);
 }
 
+interface TeamPageSearch {
+	/** Open the hire chooser on arrival (the hire form's back link). */
+	hire?: boolean;
+}
+
 export const Route = createFileRoute('/projects/$projectId/agents/')({
+	validateSearch: (search: Record<string, unknown>): TeamPageSearch => ({
+		hire: search.hire === true || search.hire === 'true' ? true : undefined,
+	}),
 	component: TeamPage,
 });

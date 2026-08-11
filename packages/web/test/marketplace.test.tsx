@@ -17,7 +17,7 @@ test('marketplace detail shows the roster, version, and changelog with breadcrum
 	});
 	await findByTestId('marketplace-detail');
 	// Breadcrumb back to the marketplace.
-	await findByText('Marketplace');
+	await findByText('Team marketplace');
 	// Roster is rendered (Captain is always shown, plus specialist roles). Asserted by
 	// row rather than by text: "Reports to" now shows the parent role's *title*, so a
 	// role that others report to (Architect) legitimately appears more than once.
@@ -72,6 +72,50 @@ test('Launch new project opens the standard create dialog preselected to the tea
 		expect(card).toBeTruthy();
 		expect(card?.getAttribute('aria-pressed')).toBe('true');
 	});
+});
+
+test('arriving mid-hire preselects the project and defaults to picking roles', async () => {
+	let projectSlug = '';
+	const { findByTestId, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const { db } = getTestContext();
+			const team = (await (await createTestTeam(db, { name: 'Demo Team' })).json()).data;
+			const project = (await (await createTestProject(db, team.id, { name: 'Storefront' })).json())
+				.data;
+			projectSlug = project.slug;
+		},
+	});
+	// Enter the way the hire chooser sends you: the catalog, carrying the project
+	// the hire was started from.
+	await router.navigate({
+		to: '/marketplace/$slug',
+		params: { slug: 'software-development' },
+		search: { forProject: projectSlug },
+	});
+	await findByTestId('marketplace-detail');
+	await findByTestId('hiring-for-banner');
+
+	// Adding to the project you came from leads; launching a new project demotes
+	// to secondary but stays reachable.
+	const add = await findByTestId('marketplace-add-existing');
+	expect(add.textContent).toContain('Add to Storefront');
+	await user.click(add);
+
+	const select = (await findByTestId('add-to-project-select')) as HTMLSelectElement;
+	expect(select.value).toBe(projectSlug);
+
+	// "Hire agent" is a request for a teammate, not a second roster, so the scope
+	// starts on the role picker rather than on the whole team.
+	const pickRoles = (await findByTestId('add-scope-pick-roles')) as HTMLInputElement;
+	expect(pickRoles.checked).toBe(true);
+	await findByTestId('add-role-picker');
+
+	// Each role is offered as the person it ships as, face and all.
+	const securityEngineer = await findByTestId('add-role-security-engineer');
+	const row = securityEngineer.closest('label');
+	expect(row?.textContent).toContain('Omar');
+	expect(row?.querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
 });
 
 test('Add to a project can add the whole team or a chosen subset of roles', async () => {

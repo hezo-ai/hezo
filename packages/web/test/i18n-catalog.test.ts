@@ -127,6 +127,12 @@ describe('message catalogs', () => {
 		// differ (Conteneur, Contêiner, Kontener, ...).
 		'containers.column.container': ['de', 'it', 'nl', 'sv'],
 		'containers.column.project': ['nl'],
+		// Same word in Dutch, as `containers.column.project` above already records.
+		'marketplace.projectLabel': ['nl'],
+		// Spanish pluralises "rol" to "roles", spelt exactly like the English.
+		// The singular differs ("1 rol"), and every other language does too
+		// (Rollen, rôles, ruoli, papéis, ...).
+		'marketplace.roleCountOther': ['es'],
 		'containers.badge.assistant': ['fr'],
 		'setup.step.password': ['it'],
 		// German writes "Name" for a person's name, identically. Dutch (Naam),
