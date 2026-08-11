@@ -37,8 +37,9 @@ import { useGoals } from '../hooks/use-goals';
 import { useNeedsYou } from '../hooks/use-inbox-count';
 import { useProject, useProjectMeta, useProjectProgress } from '../hooks/use-projects';
 import { useTasks } from '../hooks/use-tasks';
+import { agentAvatarUrl } from '../lib/agent-avatar';
 import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder } from '../lib/dashboard-widget-order';
-import { defaultAvatarForSlug } from '../lib/default-avatars';
+import { agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { GoalHealthPill } from './goal-health-pill';
 import { MarkdownProse } from './markdown-prose';
@@ -628,11 +629,14 @@ function TeamSnapshotWidget({
 									>
 										<Avatar
 											size="sm"
-											initials={getInitials(agent.title)}
-											imageUrl={agent.icon_url ?? defaultAvatarForSlug(agent.slug)}
+											initials={getInitials(agentDisplayName(agent))}
+											imageUrl={agentAvatarUrl({
+												slug: agent.slug,
+												avatar_spec: agent.avatar_spec,
+											})}
 										/>
 										<span className="min-w-0 truncate text-[13px] font-medium text-text-1">
-											{agent.title}
+											{agentDisplayName(agent)}
 										</span>
 									</Link>
 									{run?.task_identifier &&

@@ -38,6 +38,13 @@ const FETCH_TIMEOUT_MS = 8000;
 const rosterAgentSchema = z.object({
 	slug: z.string().min(1),
 	title: z.string().min(1),
+	human_name: z.string().nullable(),
+	gender: z.enum(['f', 'm', 'n']),
+	avatar_spec: z.object({
+		seed: z.string(),
+		gender: z.enum(['f', 'm', 'n']),
+		style: z.string(),
+	}),
 	reports_to_slug: z.string().nullable(),
 	sort_order: z.number(),
 	role_description: z.string(),

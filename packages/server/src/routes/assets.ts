@@ -9,6 +9,7 @@ import {
 	assetServeCsp,
 	isAllowedAttachmentExtension,
 	isAssetSortOrder,
+	isTextAssetMime,
 	normalizeAssetFilename,
 	normalizeAssetFolder,
 	normalizeAssetPath,
@@ -24,6 +25,7 @@ import {
 	insertAssetWithUniqueName,
 	upsertProjectAsset,
 } from '../lib/asset-name';
+import { extractAssetSearchText } from '../lib/asset-search-text';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAssetUrl, verifyAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
@@ -120,12 +122,15 @@ export async function storeUploadedAsset(
 		return err(c, 'TOO_LARGE', 'Attachment exceeds 10 MB', 400);
 	}
 
-	// Capture raster-image pixel dimensions so the asset tools / UI can report
-	// them without re-parsing the blob (readImageDimensions returns null for
-	// non-raster types incl. SVG).
-	const dims = contentType.startsWith('image/')
-		? readImageDimensions(Buffer.from(await file.arrayBuffer()))
-		: null;
+	// One read serves both derived columns: raster pixel dimensions (so the asset
+	// tools / UI can report them without re-parsing the blob - readImageDimensions
+	// returns null for non-raster types incl. SVG) and the full-text search text
+	// (null for a binary asset, which is searchable by filename alone). Bounded by
+	// ATTACHMENT_MAX_BYTES, checked just above.
+	const isImage = contentType.startsWith('image/');
+	const bytes = isImage || isTextAssetMime(contentType) ? await file.arrayBuffer() : null;
+	const dims = bytes && isImage ? readImageDimensions(Buffer.from(bytes)) : null;
+	const searchText = bytes ? extractAssetSearchText(new Uint8Array(bytes), contentType) : null;
 
 	const db = c.get('db');
 	const store = c.get('assetStore');
@@ -169,6 +174,7 @@ export async function storeUploadedAsset(
 				uploadedByMemberId: uploadedBy,
 				width: dims?.width ?? null,
 				height: dims?.height ?? null,
+				searchText,
 			});
 			if (result.status === 'archived') {
 				// Archived between the pre-flight above and here. The bytes we just
@@ -211,6 +217,7 @@ export async function storeUploadedAsset(
 				uploadedByMemberId: uploadedBy,
 				width: dims?.width ?? null,
 				height: dims?.height ?? null,
+				searchText,
 			});
 		}
 	} catch (e) {

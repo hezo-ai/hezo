@@ -186,6 +186,125 @@ describe('Claude Code — session/init fallback arms', () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// Claude Code — per-server tool counts in the session line
+// ---------------------------------------------------------------------------
+
+describe('Claude Code — per-server MCP tool counts', () => {
+	it("counts each server's tools from the mcp__<server>__<tool> namespace", () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: [
+					'Bash',
+					'Read',
+					'mcp__hezo__list_tasks',
+					'mcp__hezo__create_comment',
+					'mcp__typefully__typefully_list_drafts',
+				],
+				mcp_servers: [
+					{ name: 'hezo', status: 'connected' },
+					{ name: 'typefully', status: 'connected' },
+				],
+			},
+		]);
+		expect(out).toContain('tools=5 mcp: hezo=connected(2) typefully=connected(1)');
+	});
+
+	it('warns when a server reports connected but contributed no tools', () => {
+		// The failure this exists to surface: the transport came up, so the status
+		// reads healthy, but the runtime deferred the tool list behind its own
+		// search tool and none of the server's tools reached the model.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'deepseek-v4-pro',
+				tools: ['Bash', 'mcp__hezo__list_tasks'],
+				mcp_servers: [
+					{ name: 'hezo', status: 'connected' },
+					{ name: 'typefully', status: 'connected' },
+				],
+			},
+		]);
+		expect(out).toContain('typefully=connected(0)');
+		expect(out).toContain('MCP server "typefully" connected but contributed no tools');
+		// The server that did contribute is not warned about.
+		expect(out).not.toContain('"hezo" connected but contributed no tools');
+		// A discovery gap, not a run-ending one.
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('does not warn about a server that has not finished connecting', () => {
+		// `pending` at init is what a healthy run reports - the servers connect
+		// asynchronously afterwards - so zero tools there means nothing yet.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['Bash'],
+				mcp_servers: [{ name: 'typefully', status: 'pending' }],
+			},
+		]);
+		expect(out).toContain('typefully=pending(0)');
+		expect(out).not.toContain('contributed no tools');
+	});
+
+	it('omits the counts entirely when no tool name can be read', () => {
+		// A shape change in the CLI's `tools` array must degrade to "no per-server
+		// numbers", never to a misleading zero against every server.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: [{ unexpected: 'shape' }, 42],
+				mcp_servers: [{ name: 'hezo', status: 'connected' }],
+			},
+		]);
+		expect(out).toContain('tools=2 mcp: hezo=connected');
+		expect(out).not.toContain('hezo=connected(');
+		expect(out).not.toContain('contributed no tools');
+	});
+
+	it('reads a name off an object entry as well as a bare string', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: [{ name: 'mcp__hezo__get_task' }, 'mcp__hezo__list_tasks'],
+				mcp_servers: [{ name: 'hezo', status: 'connected' }],
+			},
+		]);
+		expect(out).toContain('hezo=connected(2)');
+	});
+
+	it('counts correctly for a connector whose own name contains the separator', () => {
+		// Counting by the server names the event reports, rather than splitting on
+		// `__`, is what keeps this right.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['mcp__od__d__alpha', 'mcp__od__d__beta'],
+				mcp_servers: [{ name: 'od__d', status: 'connected' }],
+			},
+		]);
+		expect(out).toContain('od__d=connected(2)');
+	});
+});
+
 describe('Claude Code — assistant usage edge arms', () => {
 	it('renders text without usage when message.usage is absent (mu falsy arm)', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);

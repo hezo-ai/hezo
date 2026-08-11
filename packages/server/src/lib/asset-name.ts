@@ -56,6 +56,15 @@ export interface InsertAssetInput {
 	/** Pixel dimensions for raster images (PNG/JPEG/GIF/WebP); null otherwise. */
 	width?: number | null;
 	height?: number | null;
+	/**
+	 * Extracted searchable text (`extractAssetSearchText`): a string for a textual
+	 * asset ('' when it yielded nothing indexable), null for a binary one, which
+	 * is searchable by filename alone. Required rather than optional on purpose:
+	 * only the caller holds the bytes, and one that forgets writes an asset whose
+	 * contents nothing can ever find. Making it required turns that into a
+	 * compile error instead of a silent gap.
+	 */
+	searchText: string | null;
 }
 
 export interface InsertedAsset {
@@ -82,8 +91,8 @@ export async function insertAssetWithUniqueName(
 		const name = await uniqueAssetName(db, input.projectId, input.desiredName);
 		try {
 			const r = await db.query<InsertedAsset>(
-				`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, width, height)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, width, height, search_text)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 				 RETURNING id, content_type, byte_size, original_filename, width, height`,
 				[
 					input.assetId,
@@ -96,6 +105,7 @@ export async function insertAssetWithUniqueName(
 					input.uploadedByMemberId,
 					input.width ?? null,
 					input.height ?? null,
+					input.searchText,
 				],
 			);
 			return r.rows[0];
@@ -177,10 +187,13 @@ export async function upsertProjectAsset(
 				[prior.id],
 			);
 			const r = await tx.query<InsertedAsset>(
+				// `search_text` must move with the bytes: an overwrite that left the
+				// prior value in place would index the old content against the new file.
 				`UPDATE assets
 				 SET id = $1, content_type = $2, byte_size = $3, sha256 = $4,
-				     uploaded_by_member_id = $5, width = $6, height = $7, created_at = now()
-				 WHERE project_id = $8 AND original_filename = $9
+				     uploaded_by_member_id = $5, width = $6, height = $7, search_text = $8,
+				     created_at = now()
+				 WHERE project_id = $9 AND original_filename = $10
 				 RETURNING id, content_type, byte_size, original_filename, width, height`,
 				[
 					input.assetId,
@@ -190,6 +203,7 @@ export async function upsertProjectAsset(
 					input.uploadedByMemberId,
 					input.width ?? null,
 					input.height ?? null,
+					input.searchText,
 					input.projectId,
 					input.desiredName,
 				],
@@ -204,8 +218,8 @@ export async function upsertProjectAsset(
 		// No row to lock, so UNIQUE(project_id, original_filename) is still the
 		// backstop against a concurrent insert — callers handle the violation.
 		const r = await tx.query<InsertedAsset>(
-			`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, width, height)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, width, height, search_text)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			 RETURNING id, content_type, byte_size, original_filename, width, height`,
 			[
 				input.assetId,
@@ -218,6 +232,7 @@ export async function upsertProjectAsset(
 				input.uploadedByMemberId,
 				input.width ?? null,
 				input.height ?? null,
+				input.searchText,
 			],
 		);
 		return {

@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.41.1 - 2026-08-09
+
+### Bug Fixes
+
+- **mentions:** render passive mentions muted, and judge no-wake per task ([#921](https://github.com/hezo-ai/hezo/pull/921))
+- **web:** reconnect on foreground instead of flashing "Connection lost" ([#920](https://github.com/hezo-ai/hezo/pull/920))
+- **projects:** make archiving a project actually retire it ([#919](https://github.com/hezo-ai/hezo/pull/919))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.41.0...0.41.1
+
+## 0.41.0 - 2026-08-08
+
+### Features
+
+- **providers:** let an operator replace a stored provider credential ([#915](https://github.com/hezo-ai/hezo/pull/915))
+
+### Bug Fixes
+
+- **containers:** stop one project's idle containers starving every other ([#917](https://github.com/hezo-ai/hezo/pull/917))
+
+### Documentation
+
+- realign container docs with the two-backend architecture, guard doc links at commit time ([#916](https://github.com/hezo-ai/hezo/pull/916))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.40.0...0.41.0
+
+## 0.40.0 - 2026-08-08
+
+### Features
+
+- **providers:** let a credential choose which agent CLI runs it ([#909](https://github.com/hezo-ai/hezo/pull/909))
+- **containers:** run agents on a third-party sandbox service, behind one seam
+- **web:** remove the All tasks links from the progress columns ([#908](https://github.com/hezo-ai/hezo/pull/908))
+- **mcp:** stop agents writing project docs to disk, and fix adjacent defects ([#907](https://github.com/hezo-ai/hezo/pull/907))
+- **web:** copy button on rendered markdown code blocks ([#904](https://github.com/hezo-ai/hezo/pull/904))
+- **tasks:** raise the sub-task nesting cap from two levels to three ([#905](https://github.com/hezo-ai/hezo/pull/905))
+- **mcp:** expose reporting lines on list_agents, batch the team-context tools ([#898](https://github.com/hezo-ai/hezo/pull/898))
+- **mcp:** make paging a convention, and teach agents to split oversized work ([#895](https://github.com/hezo-ai/hezo/pull/895))
+- **web:** use the globe glyph for the pinned HQ project entry ([#894](https://github.com/hezo-ai/hezo/pull/894))
+- **docker:** support Colima and other Docker-compatible runtimes ([#892](https://github.com/hezo-ai/hezo/pull/892))
+- **nav:** promote Connectors and Skills to top-level project menu items ([#890](https://github.com/hezo-ai/hezo/pull/890))
+- **locale:** preview the picked language in the picker, plus a glyph on its label ([#889](https://github.com/hezo-ai/hezo/pull/889))
+- **progress:** make progress a first-class page, with goals as its optional layer ([#888](https://github.com/hezo-ai/hezo/pull/888))
+
+### Bug Fixes
+
+- **git:** stop a merged-and-deleted branch reading as stranded commits ([#911](https://github.com/hezo-ai/hezo/pull/911))
+- **connectors:** surface broken connectors, and deliver replies agents strand ([#910](https://github.com/hezo-ai/hezo/pull/910))
+- **mentions:** report the wake instead of guessing the ask ([#902](https://github.com/hezo-ai/hezo/pull/902))
+- **tasks:** name the cancel control what it does ([#906](https://github.com/hezo-ai/hezo/pull/906))
+- **web:** keep the task ID on one line in the task list ([#903](https://github.com/hezo-ai/hezo/pull/903))
+- **security:** stop an agent re-pointing a credentialed connector ([#900](https://github.com/hezo-ai/hezo/pull/900))
+- **web:** put the run-row expand chevron beside the timestamp ([#897](https://github.com/hezo-ai/hezo/pull/897))
+- **progress:** let the activity-column summaries finish instead of clipping them ([#896](https://github.com/hezo-ai/hezo/pull/896))
+- **web:** suffix the project info icon to its name, keep the expand tab visible ([#893](https://github.com/hezo-ai/hezo/pull/893))
+- **web:** close shell-hosted overlays when the app navigates ([#891](https://github.com/hezo-ai/hezo/pull/891))
+- **pwa:** fix the Android home-screen launch - icon, splash and cold-start ([#887](https://github.com/hezo-ai/hezo/pull/887))
+- **mentions:** warn on a passive @@slug bound to a sign-off gate ([#886](https://github.com/hezo-ai/hezo/pull/886))
+- **archival:** freeze archived assets and docs against every writer ([#885](https://github.com/hezo-ai/hezo/pull/885))
+
+### Documentation
+
+- realign AGENTS.md with the codebase and the .dev docs ([#899](https://github.com/hezo-ai/hezo/pull/899))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.39.0...0.40.0
+
 ## 0.39.0 - 2026-07-31
 
 ### Features

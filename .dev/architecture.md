@@ -53,7 +53,7 @@ manager (agents bring their own models and runtimes).
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
 | Crypto | AES-256-GCM at rest; master key held in memory only |
-| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired after a fixed 2-minute idle window (15 for a live assistant chat) |
+| Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired per member after a fixed 2-minute idle window (15 for a live assistant chat), or sooner when another project needs the memory |
 
 **Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
 tree:
@@ -91,7 +91,8 @@ every team participant, discriminated by `member_type` (`agent` | `user`). `memb
 *is* the agent/user-in-team id — every assignee/author/actor FK points at it, no
 secondary keys. Two extension tables hang off it: `member_agents` (system prompt,
 runtime/effort, budgets, heartbeat, org chart, `touches_code`, optional
-`model_override_*`) and `member_users` (role, `role_title`, `permissions_text`,
+`model_override_*`, plus identity — `human_name`/`human_name_slug`/`gender`/`avatar_spec`,
+see § Agent identity) and `member_users` (role, `role_title`, `permissions_text`,
 `project_ids`). Global human identity lives in `users` + `user_auth_methods` (OAuth
 login links — no password, no email column).
 
@@ -102,11 +103,27 @@ is a first-class catalog of role templates (built-in + custom); `team_templates`
 `reports_to_slug`, per-template config overrides). `projects` carries `task_prefix`,
 container config, dev ports, the designated repo, `is_internal` (only HQ), and a nullable
 `archived_at` soft-delete stamp (NULL = active). Archiving a project (superuser-only
-`POST /projects/:id/archive`, from the settings page) sets `archived_at`, stops the
-container, and cancels in-flight runs; the `GET /projects` index filters to active by
-default (`?filter=active|archived|all`, mirroring the docs/assets soft-delete), so an
-archived project drops out of the left rail while keeping its tasks/history. Unarchiving
-(`POST /projects/:id/unarchive`) clears the stamp and restores rail visibility.
+`POST /projects/:id/archive`, from the settings page) sets `archived_at`, cancels in-flight
+runs, and **tears its containers down** — `teardownContainer(..., { removeWorkspace: false })`,
+the same path project deletion takes minus the workspace, which survives so unarchiving finds
+the repo clone and any unpushed commits intact. It deliberately does not merely *stop* the
+container: a stopped container is a `suspended` pool member, which is a resume rung on the
+pool ladder, so the next wakeup brought it straight back and in the meantime it sat on the
+global Containers page unreapable (the orphan sweep counts a suspended member as referenced,
+and `planIdleShutdown` keeps one warm member per project by design). Retirement is therefore
+enforced on both sides: every dispatch query filters `archived_at`
+(`activateAgent`'s task select and its `payload.task_id` path, `tryDispatchProgressUpdate`,
+and the startup self-heal / restart / mount-repair passes), and `acquireRunContainer` +
+`ensureProjectContainerRunning` throw `ProjectArchivedError` as the last line rather than
+silently provisioning. `JobManager.retireArchivedProjectContainers` runs once at startup to
+tear down containers left behind by an instance that archived under the old behaviour.
+`CONTAINER_LISTING_SQL` is deliberately *not* filtered by `archived_at` — an archived project
+drops off the Containers page because it holds no container, not because the page hides one
+that still costs memory. The `GET /projects` index filters to active by default
+(`?filter=active|archived|all`, mirroring the docs/assets soft-delete), so an archived project
+drops out of the left rail while keeping its tasks/history. Unarchiving
+(`POST /projects/:id/unarchive`) clears the stamp and restores rail visibility; there is no
+container to restart by then, and the next run provisions a fresh one.
 
 **Rail order.** `projects.display_order` (INTEGER NOT NULL) is the operator's own ordering
 of the project rail, ascending — 1 is the topmost avatar. Every project listing sorts
@@ -174,8 +191,8 @@ dedupe stays keyed on `source_task_id` alone, so a target records one entry per 
 (first mention wins) regardless of origin. A human-authored comment keeps `author_member_id` null by
 convention but records **which** human in `author_user_id` (nullable FK to `users`), so the
 author's uploaded avatar (`user_icons`) resolves alongside their comments; the comments feed
-returns a signed `author_icon_url` per row (a human's `user_icons` image, or an agent's
-`agent_icons` image via `author_member_id`, else null → initials). `comment_reactions` holds
+returns a signed `author_icon_url` per row for a human author (else null → initials), and an
+`author_avatar_spec` for an agent one, whose sprite is drawn client-side. `comment_reactions` holds
 emoji reactions, keyed by a non-null `member_id` (unlike a comment's nullable
 `author_member_id`, which lets an admin author as a null-member "Admin"). Because a reaction needs a real member, a human acting in
 a team they can access but aren't a member of resolves to their **HQ (default-team)**
@@ -623,7 +640,32 @@ no folder table, `UNIQUE(project_id, original_filename)` keys the full path, and
 move on a rename. Task-thread attachment uploads (`POST …/tasks/:taskId/assets`) auto-file
 under `uploads/<task-identifier>` (`taskUploadsFolder` in `@hezo/shared`: the task identifier
 e.g. `IN-42` sanitized to one segment, so the folder stays stable across renames), while direct
-library uploads land in the folder the uploader chose. Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
+library uploads land in the folder the uploader chose. **Assets are full-text searchable** (migration 055), and they are the one searchable entity
+whose content SQL cannot reach: the bytes live in the asset store, so unlike `documents`,
+`tasks`, `task_comments` and `skills` — whose `search_tsv` reads a sibling column — an
+asset's text has to be extracted at write time. `assets.search_text` holds it (NULL for a
+binary type, `''` for a text asset that yielded nothing), capped at
+`ASSET_SEARCH_TEXT_MAX_BYTES` (256 KB) by `lib/asset-search-text.ts`, which also strips NUL
+and other C0 controls, drops a UTF-8 BOM, drops any non-whitespace run over 128 chars, and
+reduces `text/html`/`image/svg+xml` to their visible text. Those scrubs are load-bearing
+rather than cosmetic: `search_tsv` is a GENERATED column computed inside the INSERT, so a
+NUL (rejected by Postgres `text`) or a lexeme over 2 KB fails the **asset write**, not just
+the search. `InsertAssetInput.searchText` is deliberately **required**, so a new write path
+cannot silently skip indexing; the extraction itself sits inside `storeUploadedAsset`
+(`routes/assets.ts`, reusing the one `arrayBuffer()` it already takes for raster dimensions)
+and `storeAssetBlob` (`mcp/tools.ts`, covering `write_project_asset` + `edit_project_asset`),
+while `copy_project_asset` carries the source row's column across. `move_project_asset` and
+the folder PATCH need no code at all — they touch `original_filename`, which the generated
+column re-derives. `search_tsv` indexes the filename at weight A **twice, raw and
+regexp-normalized**, because Postgres' parser emits `launch/hero-image.png` as a single
+`file` lexeme (so `hero`/`image`/`png` would all miss) while the ASCII-only normalization
+alone would destroy a non-ASCII name (`résumé-final.pdf` → `r sum final pdf`); `search_text`
+follows at weight B. There is **no backfill**: an asset written before 055 is filename-
+searchable immediately (the ADD COLUMN rewrite computes its tsvector) and gains content
+search the next time it is saved. `search_text` is a plain column, so it travels in logical
+backups and a restore stays searchable without re-reading blobs; it must never enter a list
+projection (`routes-assets-branches.test.ts` guards it — the assets list route is
+unpaginated). Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
 `PATCH /api/projects/:id/assets/:assetId` (the web Move dialog, human-only) reorganize
 metadata only, erroring on destination collision. **Archival is the agent-facing soft
 delete** (docs and assets both carry `archived_at` + `archived_by_member_id`, migration
@@ -677,29 +719,50 @@ served from a public HMAC-signed read route (`GET /api/projects/:projectId/icon`
 query param is the credential since an `<img>` carries no bearer token). The serialized
 project carries a freshly-signed `icon_url` (null when unset); the client normalizes any
 picked image to a square PNG ≤512×512 before upload (`PUT`/`DELETE` on the same path).
-`agent_icons` (1:1 with `member_agents`) and `user_icons` (1:1 with `users`, today just the
-admin) reuse the same mechanism for agent avatars and the admin's own avatar — a dedicated
-`BYTEA` table, a freshly-signed `icon_url` threaded onto the serialized agent/user row, and
-a public HMAC-signed read route (`GET /api/agents/:agentId/icon`, `GET /api/users/:userId/icon`).
+`user_icons` (1:1 with `users`, today just the admin) reuses the same mechanism for the
+admin's own avatar — a dedicated `BYTEA` table, a freshly-signed `icon_url` threaded onto
+the serialized user row, and a public HMAC-signed read route (`GET /api/users/:userId/icon`).
 The signing/verification is generalized in `lib/entity-icon-urls.ts` (a `basePath` +
 per-entity `keyPurpose`), which also owns `signAuthorIconUrl` — the shared resolver every
-*feed* uses to turn a row's author/requester into a signed avatar URL (user icon when the
-actor is human, else the agent icon; best-effort, so a signing failure yields null and the
-row degrades to initials rather than failing the request). The comments feed
-(`routes/comments.ts`), the admin-mentions inbox (`routes/inbox.ts` → `author_icon_url`) and
-the approvals listing (`routes/approvals.ts` → `requested_by_slug` + `requested_by_icon_url`)
-all go through it. The client control is `components/icon-upload-section.tsx`; agent
-icons are edited on the agent Settings page (project-access-gated, like other agent config),
-user icons on the global Settings → Users page (superuser-gated). No MCP tool — icon upload
-is a human-only UI action (as for `project_icons`). The **CEO and Coach** — the HQ singletons that are identical across every
-project — ship a **built-in default avatar** (a committed image under
-`packages/web/public/avatars/`, bundled into the web app); the client resolves an agent's
-effective avatar as `uploaded icon_url ?? defaultAvatarForSlug(slug) ?? initials`
-(`web/src/lib/default-avatars.ts`), so a user upload always overrides the built-in default and
-per-project roles (e.g. the Captain) get no shared default — they show initials until an avatar
-is uploaded. Every agent-avatar surface (org chart, agent header, budget rows, agent-authored
-comments, and the admin inbox — both the home "Needs you" rows and the full inbox's mention /
-approval cards) applies this resolution.
+*feed* uses to turn a row's author/requester into a signed avatar URL. It resolves **only**
+a human actor; an agent has no uploaded image at all (see § Agent identity), so the feeds
+ship its `avatar_spec` alongside and the sprite is drawn client-side. Best-effort, so a
+signing failure yields null and the row degrades to initials rather than failing the
+request. The client control is `components/icon-upload-section.tsx`, used for project icons
+and for user icons on the global Settings → Users page (superuser-gated). No MCP tool —
+icon upload is a human-only UI action.
+
+### Agent identity: names and avatars
+
+An agent has a **role** (`member_agents.title`, the permanent thing it does) and, usually,
+a **human name** (`human_name`) that the UI shows in its place. `human_name_slug` makes
+that name a second mention handle, so `@max` and `@engineer` both resolve to the same
+agent; the fan-out (`fireCommentWakeups`) matches `slug OR human_name_slug`, preferring the
+same team over HQ and a role slug over someone's name. URLs keep the canonical role slug, so
+links are stable across a rename. Uniqueness spans the agent's team ∪ HQ — exactly a
+mention's reach — and is enforced in-transaction by `lib/agent-identity.ts` rather than by
+an index, since no single index expresses that scope. The Captain, CEO and Coach are
+name-only by policy (`isNameOnlyRole`), not by schema: the column exists for every agent, so
+enabling names for them later is a one-line change.
+
+Avatars are **generated, never uploaded**. `avatar_spec` is a small JSONB
+`{seed, gender, style}` that `@hezo/shared`'s `pixel-avatar.ts` renders deterministically to
+an inline SVG — the same spec always yields the same 24×24 sprite, so a face costs a few
+dozen bytes and no storage, and re-renders crisply at any size. `style` comes from the role
+(`styleForRole`) and `gender` from the authored value or `inferGender`; only the seed is
+ever caller-chosen, so a client cannot dress an agent as a Captain. Regenerating shows three
+candidate seeds and stores the picked one. The **CEO and Coach** keep a **built-in portrait**
+(a committed image under `packages/web/public/avatars/`), so the client resolves an agent's
+avatar as `defaultAvatarForSlug(slug) ?? pixelAvatarDataUri(avatar_spec)`; humans still fall
+back to initials. Every agent-avatar surface (org chart, agent header, roster, sidebar,
+budget rows, agent-authored comments, and the admin inbox) applies this resolution.
+
+Both name and avatar are **team data**: a marketplace roster entry carries
+`human_name`/`gender`/`avatar_spec`, so provisioning a team (or adding one of its roles)
+gives every project the same teammate, and `exportTeamBundle` writes a project's current
+identities back out. They sit inside the team's content hash, so a shipped rename bumps the
+version like any other content change — but `refreshRosterAgent` never overwrites them, so a
+project that renamed an agent keeps its own.
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,
@@ -1467,6 +1530,22 @@ cover the rest of the run:
   the first cut of this check - would have failed every Claude Code run on that CLI, and
   the live agent-CLI conformance suite is what caught it.
 
+  **The status does not say whether the tools arrived, so the count does.** `connected`
+  means the session came up, not that the server's tools reached the model, and that gap
+  is what made "connector X's tools are missing" unfalsifiable from a run log: the banner
+  read healthy either way. The session line therefore carries a per-server tool count next
+  to each status - `mcp: hezo=connected(73) typefully=connected(27)` - counted from the
+  `mcp__<server>__<tool>` namespace the injector builds. Counting matches against the
+  server names the event itself reports rather than splitting on `__`, so a connector whose
+  own name contains the separator still counts correctly. A server reporting `connected`
+  while contributing **zero** tools gets its own `[runner]` warning, because that is the
+  shape of every way the tools can fail to arrive (a list the runtime deferred behind its
+  own search tool, an empty catalogue, an allowlist that withheld everything) and none of
+  them show up in the status. The `tools` array is typed loosely by the CLI and Hezo had
+  only ever needed its length, so both plausible element shapes are accepted and anything
+  else is skipped; when no name parses, the counts are omitted entirely rather than
+  printing a misleading zero for every server.
+
 The runner also orders these: a signal kill outranks a captured terminal error, which in
 turn outranks "produced no output" on the run row - each is the cause of the one below it,
 and reporting the symptom first sends the reader after the wrong thing. A process a signal
@@ -1635,9 +1714,9 @@ removing them.
 **A container found stopped-but-present is a suspended member, not a lost one**, and this is
 the case a managed backend produces routinely: Daytona's `autoStopInterval` reclaims a sandbox
 that has seen no toolbox traffic for ten minutes, which is exactly what an idle pool member
-looks like. Hezo's own idle pass cannot pre-empt it - `stopIdleContainers` retires a pool only
-when the whole *project* is idle, so a busy project's unused members are reclaimed by the
-provider first. The member's writable layer is intact, so the repair is to record `suspended`
+looks like. Hezo's own idle pass narrows the window but does not close it - the surplus pass
+retires a working project's idle members on their own clock (below), but a member inside that
+window can still be reclaimed by the provider first. The member's writable layer is intact, so the repair is to record `suspended`
 and let the ladder resume it in place (about a second) rather than discard the row and pay to
 build a replacement while the sandbox lingers as an orphan. Three places converge on this:
 `syncContainerStatus`'s running→stopped branch, the memory-limit auto-stop, and the `reuse`
@@ -1654,6 +1733,50 @@ exists to remove, and it is not hypothetical - it is how an idle member being au
 killed a run executing in a healthy sibling container. Two sources emit transitions in this
 one shape: `syncAllContainerStatuses` answers for the container `projects.container_id` names,
 and `reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
+
+**The memory budget is instance-wide, so no project may sit on a share of it that it is not
+using.** Two mechanisms enforce that, and both exist because a container is pinned to its
+project for life - `container_pool_members.project_id` is set once at provision and nothing
+reassigns it, since the container is built around that project's `/workspace` bind mount,
+clone and git identity. Unused memory therefore cannot be handed over; the container has to go
+and a fresh one be built.
+
+- **Surplus idle retirement** (`planSurplusIdleRetirement`, run by `JobManager` after the
+  whole-project pass). `findIdleContainerCandidates` asks a project-shaped question - "has
+  everything here gone quiet?" - and a project running two tasks alongside two idle
+  containers never answers yes, so those two were charged to the budget in full for as long
+  as the project kept working and no other project could reach them. That is a permanently
+  wedged instance, not a slow one. `findStaleIdleMembers` asks the member-shaped question
+  instead, clocked on `last_released_at` (made total and indexed by migration 053; the old
+  clock was `projects.container_last_started_at`, so starting any container reset the timer
+  for every idle sibling). It fires only for projects that have a `busy` member - a fully
+  idle project still belongs to the whole-project pass, which keeps one member suspended for
+  a warm restart.
+- **Cross-project reclaim** (`planCrossProjectReclaim`, the `reclaim` rung of
+  `selectPoolMember`). Closes the gap in between: rather than queue behind memory a
+  neighbour is demonstrably not using, a blocked acquire retires enough of other projects'
+  idle members to cover its shortfall. All-or-nothing (freeing part of the shortfall helps
+  nobody and has destroyed a warm container to do it), only as much as the shortfall,
+  hoarder-first then longest-idle, and floored at `CONTAINER_RECLAIM_MIN_IDLE_SEC` so a
+  project mid-burst is not stripped of a container it is about to reuse - which is also what
+  stops two starved projects reclaiming from each other in a loop.
+
+**Both dispatch gates count reclaimable memory as headroom, and must.** The gate runs *before*
+the pool, so leaving it out meant the run was skipped as `InstanceAtCapacity` and the reclaim
+rung never ran - dead code behind a closed door. `getActiveContainers` returns
+`reclaimableMemoryGbByProject`, read through `reclaimableForOthers`; keyed by project because
+the figure is only meaningful relative to who is asking, and a project's own idle members reach
+it through the reuse rung instead. `JobManager.isContainerCapacityBlocked` and
+`isContainerCapacityBlockedInDb` are a deliberate pair and must not drift.
+
+**Reclaim runs outside the requester's lifecycle lock.** `withContainerLifecycleLock` is keyed
+per project, and reclaim takes the *victims'* locks - so a requester holding its own while
+doing that is exactly the cycle two simultaneously-starved projects need to deadlock. Hence
+`acquireRunContainer` takes the lock **per attempt** rather than around its loop: the `reclaim`
+decision returns out of the locked section, reclaim runs between attempts under a single
+process-wide `reclaimLock`, and the loop re-decides against what was actually freed. The
+process-wide serialisation is the other half - two requesters reading the same idle containers
+as their headroom would each retire enough for themselves and take twice what either needed.
 
 **A member is reusable only if it was built to the cap it would be built to now.** The cap
 is a memory *guarantee* the run is sized, budgeted and enforced against, and no backend can
@@ -2540,8 +2663,8 @@ store, and `sandbox/recovery.ts` is the seam between them.
 
 **The pin and the run failure are decided by different things**, which is the point of the vault.
 `setPoolMemberUnpushedFlag` (`services/sandbox/pool-db.ts`) sets
-`container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from both suspend
-and destroy — but it is now set from whether the copy-out **failed**, not from whether the work
+`container_pool_members.has_unpushed_commits`, which `planIdleShutdown` excludes from destroy and
+*prefers* for suspend (suspending keeps the writable layer, so the pin costs no memory) — but it is now set from whether the copy-out **failed**, not from whether the work
 reached `origin`. A vaulted run releases its container (the work exists in two places) and still
 fails (it never reached the remote); a run whose bundle could not be built, was oversized, or could
 not be moved keeps the pin, failing closed. The scan still distinguishes "no unpushed work" from
@@ -2694,12 +2817,13 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
-**Providers → runtimes is one-to-MANY.** `AiProvider` has **eleven** values — `anthropic`, `openai`,
-`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `kimi_code`, `x_ai`, `ollama`, `lmstudio` — and
-`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. A provider
+**Providers → runtimes is one-to-MANY.** `AiProvider` has **ten** values — `anthropic`, `openai`,
+`google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
+`AgentRuntime` has **seven** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`,
+`prime_agent`. A provider
 declares the CLI it runs on **by default** plus, optionally, the other CLIs it can be driven by;
 the operator picks per credential and the choice is stored on
-`ai_provider_configs.runtime` (nullable, `NULL` = follow the provider default; migration `051`).
+`ai_provider_configs.runtime` (nullable, `NULL` = follow the provider default; migration `052`).
 The table is data-driven in `packages/shared/src/types/common.ts`
 (`ProviderRuntimeAdapter` = a default `runtime` + its inline `ProviderRuntimeBinding` +
 `alternateRuntimes`), with four accessors that everything else reads through:
@@ -2715,10 +2839,12 @@ Defaults: Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Ki
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI → `codex`,
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
-`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Kimi Code → `kimi` (Moonshot's own CLI,
-see below), Ollama + LM Studio → `claude_code` (local runners, see below). Only the two Moonshot
-providers currently declare an alternate; every other provider offers exactly one CLI, and the
-UI omits the picker (and the Advanced disclosure holding it) for those.
+`XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
+(local runners, see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
+see below), and **every provider except Ollama and LM Studio declares `prime_agent`** (see
+below). Prime Agent is never a default. Ollama and LM Studio therefore offer exactly one CLI
+each and the UI omits the picker for them — their Advanced disclosure holds only the optional
+API key.
 
 **Because the runtime is per credential, it must be resolved from the credential row, never
 from the provider.** `buildProviderEnv` composes from `providerRuntimeBinding(provider,
@@ -2730,21 +2856,24 @@ provider alone can return one whose runtime disagrees with the run being configu
 `resolveRuntimeForTask` scans its candidate rows in priority order and takes the first whose
 `effectiveRuntime` matches the pin, rather than trusting the highest-priority row outright.
 
-**Moonshot's models are reachable two ways, and both providers now offer both.** `kimi` defaults to
-Claude Code against Moonshot's Anthropic-compatible gateway (above); `kimi_code` defaults to
-Moonshot's first-party **Kimi Code CLI** (`kimi`, npm `@moonshot-ai/kimi-code`) on the
-`kimi` runtime. Each declares the other as an alternate, sharing one pair of binding constants
-(`MOONSHOT_CLAUDE_CODE_BINDING`, `MOONSHOT_KIMI_CODE_BINDING`) so the two env shapes cannot
-drift, so a credential can be switched between harnesses in place instead of being deleted and
-re-added. They are siblings — same account, same API key, same models, different
-harness — so an operator may configure either or both and choose per credential (the CLI
-picker), per agent (`member_agents.model_override_provider`) or per task (`tasks.runtime_type`).
-They exist as two providers only because the runtime used to be pinned to the provider;
-collapsing them would need a migration of existing rows. The
-`AgentRuntime.Kimi` value reuses the `kimi` label that has existed in the `agent_runtime`
-enum since `001_initial_schema.sql`: it was the original standalone Kimi runtime, retired by
-migration `010` when Kimi moved onto Claude Code, and Postgres cannot drop enum labels — so
-the new runtime needed no enum change (only the `kimi_code` provider did, in `048`).
+**Moonshot's models are reachable two ways from one provider.** `kimi` defaults to Claude Code
+against Moonshot's Anthropic-compatible gateway (above) and declares Moonshot's first-party
+**Kimi Code CLI** (`kimi`, npm `@moonshot-ai/kimi-code`) as an alternate. The two env shapes are
+one pair of binding constants (`MOONSHOT_CLAUDE_CODE_BINDING`, `MOONSHOT_KIMI_CODE_BINDING`)
+so they cannot drift, and a credential switches between harnesses in place instead of being
+deleted and re-added — same account, same API key, same models, different harness. Choose per
+credential (the CLI picker), per agent (`member_agents.model_override_provider`) or per task
+(`tasks.runtime_type`).
+
+This was two providers (`kimi`, `kimi_code`) up to migration `054`, back when the runtime was
+pinned to the provider. `054` re-points every `kimi_code` row onto `kimi` with an explicit
+`runtime = 'kimi'` — explicit because those rows carried `NULL`, and `NULL` under `kimi` means
+Claude Code, which would silently move a working credential onto a different CLI. Postgres
+cannot drop an enum label, so `'kimi_code'` survives in `ai_provider` as an unreachable value.
+The `AgentRuntime.Kimi` value likewise reuses the `kimi` label that has existed in
+`agent_runtime` since `001_initial_schema.sql`: it was the original standalone Kimi runtime,
+retired by migration `010` when Kimi moved onto Claude Code, so the runtime needed no enum
+change (only the `kimi_code` provider did, in `048`).
 
 Three things make this runtime unlike the Claude-Code-driven providers:
 
@@ -2758,7 +2887,7 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   step silently replaces every image part with a placeholder string — which would break
   `read_project_asset`, the only path by which an agent ever receives an image.
 - **`KIMI_CODE_HOME` is a real variable the CLI consumes**, unlike the Hezo-internal markers
-  the Claude Code entries use in `SUBSCRIPTION_LAYOUTS`. It relocates the entire data root
+  the Claude Code entries use in `RUNTIME_HOME_LAYOUTS`. It relocates the entire data root
   (config, `mcp.json`, credentials, per-session logs) to the per-run directory. That is the
   only isolation mechanism available — there is no `--mcp-config`-style flag — and it is also
   what makes the session-log reads below possible.
@@ -2767,6 +2896,40 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   under that home, then priced from `model_pricing` like every other runtime. The runner's
   `recoverOffStreamRunUsage` dispatches both file-based recoveries and scrubs the file
   afterwards (each can carry the provider credential).
+
+**Prime Agent is the first runtime that belongs to no provider.** Prime Intellect's
+`prime-agent` speaks to most upstreams Hezo already supports, so it is declared as an
+*alternate* on every provider except Ollama and LM Studio and is never a default. Two
+consequences run through the code:
+
+- **The upstream is chosen by CLI flag, not by env var.** `PRIME_AGENT_BINDINGS` maps each
+  Hezo provider to Prime Agent's own provider id and the env var it reads that key from — its
+  spellings, not the vendor's, and two are easy to get wrong: Moonshot is `moonshotai` reading
+  `MOONSHOT_API_KEY` (its `kimi-coding` / `KIMI_API_KEY` pair is the separate Kimi-for-Coding
+  subscription plan), and Google is `google` reading `GEMINI_API_KEY`. Because the id travels
+  as `--provider <id>` rather than in the env, it cannot live in a binding's `staticEnv`;
+  `primeAgentProviderArgs` supplies it and `agent-runner.ts` splices it into the command.
+  Ollama and LM Studio are absent because Prime Agent has no built-in entry for either and the
+  custom-provider path is unverified — a provider missing from the map simply offers no Prime
+  Agent option in the picker.
+- **MCP is not a model-tool surface.** Prime Agent runs the protocol Python-side in its
+  IPython kernel; a `settings.json` `mcpServers` entry alone registers the endpoint host-side
+  and gives the agent nothing. So `mcp-injectors/prime-agent.ts` writes, per HTTP server, both
+  the settings entry **and** a generated Python package subclassing `rlm.McpIntegration`, and
+  passes each with `--skill`. Tool discovery is the CLI's job (`McpIntegration.__getattr__`
+  fetches the tool list on first use and binds each as an async method), so the generator never
+  hard-codes tool names. The bearer travels as `bearer_token_env` — an env var *name* — which
+  is what keeps `__HEZO_SECRET_*__` substitution intact. stdio descriptors are dropped: Prime
+  Agent's host discards them, so emitting one would look configured and do nothing.
+
+Its usage rides the stream (`message_end` → `message.usage`), so unlike Grok and Kimi Code it
+needs no off-stream recovery. `createPrimeAgentParser` maps the four buckets **straight
+across**: Prime Agent already normalises every provider to disjoint buckets
+(`input = prompt - cacheRead - cacheWrite`), so subtracting cache again — the Codex/Grok
+posture — would under-count input. Its own `cost` object is ignored, per the always-price-from-
+the-table rule. Effort maps onto `--thinking`, the closest fit of any runtime. The image bakes
+a pinned release plus `ipykernel` and `PRIME_AGENT_KERNEL_PYTHON`, so no run pays to bootstrap
+the kernel over the network.
 
 **Local providers carry their endpoint on the credential, not in `staticEnv`.** Ollama and
 LM Studio serve Anthropic's Messages API natively, so they reuse the Claude Code runtime
@@ -2791,9 +2954,23 @@ row per `(provider, label)`, each inlining an encrypted credential. `auth_method
 distinguishes an **API key** (injected as env at run start) from a **subscription** blob
 (materialized to a per-run mount in the container). Subscription auth is supported by
 Anthropic, OpenAI, and Google (xAI is API-key only). A config's `status` is `verified` (the healthy default —
-the add flow live-verifies the key, and the Verify action persists the result, restoring
-`verified` on a key that had gone `invalid`), `invalid` (a verify was rejected), or
-`revoked` (a retired provider). Exactly **one** config instance-wide carries the
+the add flow live-verifies the key, the Verify action persists the result, and replacing the
+credential re-verifies it — each restoring `verified` on a key that had gone `invalid`),
+`invalid` (a verify was rejected), or `revoked` (a retired provider).
+
+**Editing a config.** `PATCH /api/ai-providers/:configId` is the single write behind the
+settings Edit dialog and carries everything about a config except its default model: `label`,
+`runtime`, a replacement credential (`api_key`, with `auth_method` / `base_url` alongside),
+and `default_model` for the inline cell selector. Credential validation is shared with the
+create route (`prepareProviderCredential` in `routes/ai-providers.ts`), so a replacement key
+faces the same format check, subscription-blob check and live pre-flight as a new one, and a
+rejected key leaves the stored one intact. All of it lands in one `UPDATE`, so there is no
+window where the key rotated but the rename failed; a supplied credential also writes
+`status = 'verified'` in that same statement, which is how a config the provider had rejected
+becomes selectable again without a separate Verify click. A blank `api_key` means "keep the
+stored credential", so a rename never requires re-pasting a key, and `base_url` is editable on
+its own for the local runners. `updateAiProviderCredential` remains the narrower helper used
+by the Codex refresh-token write-back, which must not touch `status` or `metadata`. Exactly **one** config instance-wide carries the
 `is_default` flag — a single global default enforced by a partial-unique index
 (`ai_provider_configs_single_default`); the first config added to the instance auto-takes
 it, and `setDefaultAiProvider` moves it atomically. `resolveRuntimeForTask` filters by
@@ -2827,7 +3004,7 @@ CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), inj
 servers, and wires the stop-hook. OpenCode, Grok and Kimi Code take the prompt as a CLI
 **argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
-`SUBSCRIPTION_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
+`RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
 TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its
 configuration in two — MCP servers in `mcp.json`, the `[[hooks]]` Stop entry and
 `[permission.rules]` in `config.toml`, both under `$KIMI_CODE_HOME` — and is the only adapter
@@ -3005,7 +3182,20 @@ nothing looked at what a run achieved in aggregate, which is exactly where a pas
 ask posted as a comment lives. `agent_wakeup_requests` carries no `created_by_run_id`, so "did
 this run wake anyone" is derived from the run's own comments (an active `@`-mention, or a
 `parent_comment_id` reply that wakes the parent author) rather than queried directly; no migration
-is involved. Warn-only, per the standing posture that the system never fabricates a wake from a
+is involved.
+
+The aggregate is **per task, not per run**. A run comments on whatever tasks it touches, so answered
+run-wide the question lets a run that woke a teammate on its own task strand a handoff in a comment
+on a *different* task and still pass clean - the shape of the incident this scoping came from, where
+a review verdict written from a run on a sibling task named its approver passively and no layer
+anywhere reported it. Each task the run commented on is judged on its own comments, its own wakes
+and its own status, and the warning names that task. The run's own task is always judged, since a
+handoff stranded in the final message has no comment behind it; conversely the final message counts
+as outward-facing on that task only, being addressed to no other task's thread. Every touched task
+is read in one query, and `resolveWarnableSlugs` is memoized per distinct `team_id` - one call in
+the ordinary single-team run, and correct for an HQ agent commenting inside another team's project.
+
+Warn-only, per the standing posture that the system never fabricates a wake from a
 non-`@` signal. It fires on attribution-only runs too, which is the accepted cost of having no
 vocabulary - the run-log wording says so, and a run log is the cheap place to over-report.
 
@@ -3297,11 +3487,12 @@ tier. Full rationale: `AGENTS.md` › Bun-native runtime rules.
 
 ## 8. SSH signing & git
 
-Repo access is **SSH end to end**, keyed on one Ed25519 key per team (`team_ssh_keys`,
-`UNIQUE(team_id)`, encrypted on the team row and never in the secrets vault). The same key
-signs commits and authenticates the git transport, so a `Verified` badge on GitHub and a
-successful `git push` are the same credential. The OAuth token is never used for git - see
-§ 9, *Git vs API*.
+Commit signing is keyed on one Ed25519 key per team (`team_ssh_keys`, `UNIQUE(team_id)`,
+encrypted on the team row and never in the secrets vault). Git **transport is HTTPS on
+every backend** (§ Agent runtime - `buildGitRemoteUrl`), authenticated by the GitHub
+connection's access token as a placeholder the egress proxy substitutes; the key's
+remaining job is signing, which is what makes a `Verified` badge the mark of a commit
+that went through this instance. See § 9, *Git vs API*.
 
 The key never leaves Hezo. Everything that needs it reaches it through an **ssh-agent
 socket**, which is what lets a container sign and push without the private half ever
@@ -3667,10 +3858,12 @@ is withheld rather than absent. There is deliberately **no MCP write tool** for 
 allowlist: letting an agent widen its own access would be a privilege escalation, so the
 write side is human-only (`GET`/`PATCH`/`POST …/methods{,/refresh}`).
 
-**Git vs API.** Repo clone/fetch/push does **not** use the OAuth token — that's SSH with
-the project key (§ 8). The OAuth token is reserved for GitHub REST (listing/creating
-repos, registering keys) and the GitHub MCP tool surface. Full design: this section plus
-the route table in `services/oauth/` and `routes/oauth.ts`.
+**Git vs API.** Both surfaces now ride the OAuth token, differently delivered: GitHub
+REST (listing/creating repos, registering keys) and the GitHub MCP tool surface use it
+server-side, while repo clone/fetch/push carries it as the access-token secret's
+**placeholder** in the HTTPS remote URL, substituted at the egress proxy (§ 8). The
+project key signs commits and never authenticates transport. Full design: this section
+plus the route table in `services/oauth/` and `routes/oauth.ts`.
 
 ---
 
@@ -3847,13 +4040,40 @@ already-open half-open socket hasn't noticed) and the socket's own `connected` f
 server that went away while the route is intact) - gated on "connected at least once" and
 debounced ~2s so a mobile radio blip doesn't flash. The store is a module singleton rather than
 a context because the writer lives inside `SocketProvider` while the reader, the global
-`<Toaster />`, mounts outside the provider and the router in `main.tsx`. The indicator renders
-as a persistent, non-auto-dismissing toast ("Connection lost / Reconnecting…" plus **Retry
-now**, wired to the socket client's `reconnect()`). It is **user-dismissable** - close button or
+`<Toaster />`, mounts outside the provider and the router in `main.tsx` (which is also why
+`I18nProvider` sits above both - the toast copy goes through `t()` like everything else). The
+indicator renders as a persistent, non-auto-dismissing toast ("Connection lost / Reconnecting…"
+plus **Retry now**, wired to the socket client's `reconnect()`). It is **user-dismissable** - close button or
 right swipe, both through Radix's `onOpenChange` into `dismissConnectionOffline()` - which
 hides it for `DISMISS_SNOOZE_MS` (20s) and then re-surfaces it if the socket is still down;
 reconnect attempts continue untouched underneath, so the snooze only silences the notice. A heal
 discards the snooze, so a fresh drop always surfaces immediately.
+
+**Page visibility gates all of it** (`lib/page-lifecycle.ts`, the one home for the
+foreground/background signal - it has two consumers). A mobile OS freezes a backgrounded PWA:
+timers stop and the socket dies, so launching the installed app from the home screen reliably
+starts from a drop the app caused itself. Two halves handle it. The **client redials on resume**
+(`WebSocketClient.handleVisibility`) rather than waiting out RWS's backoff ladder, whose pending
+timer was frozen along with everything else - `reconnect()` recreates the RWS instance, so the
+dial is immediate and `subscribedRooms` replay on open. It redials unconditionally when the page
+was hidden longer than `RESUME_STALE_HIDDEN_MS` (30s) even if `readyState` still reads OPEN,
+because a socket frozen that long is commonly half-open over a dead TCP connection. The
+**indicator surfaces nothing while hidden** and, for `RESUME_GRACE_MS` (8s) measured from the
+resume, holds its fire - long enough for that handshake, and a page that was never backgrounded
+keeps the plain 2s debounce. None of this branches on device: "the page came back" is the signal,
+which is correct on a mobile PWA and inert on a desktop tab switch.
+
+**Liveness probe.** A socket whose peer has vanished keeps reading OPEN until something tries to
+write, and browsers never expose RFC 6455 ping/pong frames to page code - so liveness rides an
+ordinary message pair, `WsClientAction.Ping` → `WsMessageType.Pong` (answered by `handleWsPing`
+ahead of the server's subsystem guards, so a probe is never met with silence). The client probes
+an idle socket every 30s and redials if nothing arrives within 5s; **any** inbound frame settles
+the probe, not just the pong, so a burst of log frames delaying the reply cannot trip it. The
+interval is **parked while the page is hidden** - a probe loop waking the radio in the background
+is the battery cost this whole path exists to avoid - and doubles as a keepalive against carrier
+NAT and proxy idle timers, which commonly reap a silent connection after 30-60s. Each dial carries
+a generation counter its handlers check, so a superseded socket's late `onclose` cannot report the
+replacement as down.
 
 **Lazy comments feed.** A task's comment thread can be long, so the feed
 (`components/task-detail/comments-section.tsx`, virtualized with react-virtuoso) loads in
@@ -4453,7 +4673,8 @@ shapes.
 - **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
   `execution-locks`, `queued-wakeups`, `chat` (live realtime chat session — today the CEO).
 - **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
-  `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
+  `comments`, `mentions`, `assets`, `inbox`, `search` (full-text over tasks, comments,
+  project docs, assets and skills).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
   `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below).
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`

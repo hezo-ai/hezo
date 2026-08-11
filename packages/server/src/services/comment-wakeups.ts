@@ -30,13 +30,18 @@ export async function resolveWarnableSlugs(
 	teamId: string,
 	selfMemberId: string,
 ): Promise<string[]> {
-	const roster = await db.query<{ slug: string }>(
-		`SELECT ma.slug FROM member_agents ma
+	const roster = await db.query<{ slug: string; human_name_slug: string | null }>(
+		`SELECT ma.slug, ma.human_name_slug FROM member_agents ma
 		 JOIN members m ON m.id = ma.id
 		 WHERE (m.team_id = $1 OR m.team_id = $2) AND ma.id <> $3`,
 		[teamId, DEFAULT_TEAM_ID, selfMemberId],
 	);
-	return [...roster.rows.map((r) => r.slug), ADMIN_MENTION_SLUG];
+	// Both handles are real: a teammate can be reached by role or by name, so the
+	// detectors that read this roster have to recognise either spelling.
+	return [
+		...roster.rows.flatMap((r) => (r.human_name_slug ? [r.slug, r.human_name_slug] : [r.slug])),
+		ADMIN_MENTION_SLUG,
+	];
 }
 
 /**
@@ -130,12 +135,17 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		// agent wins over an HQ namesake. The wakeup carries the task's team,
 		// so an instance agent runs scoped to this project — the run-team
 		// split realigns it (see agent-runner).
+		// A token matches either handle an agent answers to: its role slug or the
+		// slug of its human name. Same-team still beats an HQ namesake, and within
+		// a team the role slug wins over someone else's name - the set-time
+		// uniqueness check stops that pair ever being created, so the tiebreak only
+		// ever settles an HQ collision.
 		const mentioned = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
-			 WHERE ma.slug = $1
+			 WHERE (ma.slug = $1 OR ma.human_name_slug = $1)
 			   AND (m.team_id = $2 OR (m.team_id = $3 AND $2 <> $3))
-			 ORDER BY (m.team_id <> $2)
+			 ORDER BY (m.team_id <> $2), (ma.slug <> $1)
 			 LIMIT 1`,
 			[slug, teamId, DEFAULT_TEAM_ID],
 		);

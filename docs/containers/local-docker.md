@@ -1,6 +1,6 @@
 ---
 title: Local Docker
-order: 25.2
+order: 17.6
 section: Containers
 ---
 
@@ -32,7 +32,8 @@ one container's worth reserved for the assistant chat.**
 Swap counts in full, because a container sits idle between runs rather than working
 continuously. The remainder is the budget all project containers share. A run whose
 container will not fit in what is left waits in the queue and starts as memory frees up;
-the assistant chat always starts.
+the assistant chat always starts. No project can hold a share of that budget it is not
+using - see [how the budget is shared](/docs/containers/overview#how-much-can-run-at-once).
 
 You can set the total explicitly in **Settings -> Containers** if you would rather keep
 more headroom, and a project that needs a bigger container than the 2 GB default can raise
@@ -68,8 +69,12 @@ practical difference from a [remote service](/docs/containers/remote/overview), 
 provider may carry only some protocols - so if your agents need to reach something over
 SSH from inside the container, local Docker is the option that has it.
 
-HTTP and HTTPS still pass through Hezo's egress proxy either way. That is what substitutes
-credentials into agent requests, and it applies on every container service.
+Requests to hosts your credentials and connectors are scoped to still pass through Hezo's
+egress proxy - that is what substitutes credentials into agent requests, and it applies on
+every container service. Everything else connects straight out from the container. A
+request that reaches a credentialed host without the proxy carries an inert placeholder
+rather than a secret, so nothing rides on the container playing along - see
+[Secret protection](/docs/security/secret-protection).
 
 ## Startup
 

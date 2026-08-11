@@ -8,6 +8,7 @@ import { useContainerHealth } from '../hooks/use-container-health';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
 import { useI18n } from '../lib/i18n';
+import { agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
 import { CreateTaskDialog } from './create-task-dialog';
@@ -241,7 +242,7 @@ export function ProjectSidebar({
 					label: (
 						<AgentStatusLabel
 							variant="sidebar"
-							name={agent.title}
+							name={agentDisplayName(agent)}
 							runtimeStatus={agent.runtime_status}
 						/>
 					),
@@ -257,7 +258,7 @@ export function ProjectSidebar({
 							/>
 							<AgentStatusLabel
 								variant="sidebar"
-								name={agent.title}
+								name={agentDisplayName(agent)}
 								runtimeStatus={agent.runtime_status}
 							/>
 						</span>

@@ -43,6 +43,7 @@ export interface Comment {
 	author_api_key_id: string | null;
 	/** Signed avatar URL for the author (human user or agent); null → initials. */
 	author_icon_url?: string | null;
+	author_avatar_spec?: unknown;
 	parent_comment_id: string | null;
 	reactions?: ReactionGroup[];
 	attachments?: CommentAttachment[];
@@ -80,6 +81,7 @@ export interface CommentSkeleton {
 	author_api_key_id: string | null;
 	/** Signed avatar URL for the author (human user or agent); null → initials. */
 	author_icon_url?: string | null;
+	author_avatar_spec?: unknown;
 	parent_comment_id: string | null;
 	/** Character length of a text comment's body — sizes its placeholder. Null for non-text. */
 	text_length: number | null;

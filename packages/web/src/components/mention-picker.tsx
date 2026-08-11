@@ -1,6 +1,7 @@
 import { AtSign, FileText, Hash, UserRound } from 'lucide-react';
-import { useEffect, useMemo, useRef } from 'react';
+import { type RefObject, useEffect, useMemo } from 'react';
 import type { MentionKind, MentionSearchResult } from '../hooks/use-mentions';
+import { usePanelPlacement } from '../hooks/use-panel-placement';
 
 const KIND_ICON: Record<MentionKind, React.ComponentType<{ className?: string }>> = {
 	agent: UserRound,
@@ -16,6 +17,13 @@ const KIND_LABEL: Record<MentionKind, string> = {
 	doc: 'Project doc',
 };
 
+/** Everything but the vertical side, which `usePanelPlacement` decides per open. */
+const PANEL_BASE =
+	'absolute left-0 right-0 z-40 rounded-md border border-border bg-surface shadow-md';
+
+/** The former `max-h-64`, now the design cap the placement clamp works against. */
+const PANEL_MAX_HEIGHT_PX = 256;
+
 interface MentionPickerProps {
 	query: string;
 	results: MentionSearchResult[];
@@ -23,6 +31,8 @@ interface MentionPickerProps {
 	highlightedIndex: number;
 	onHoverIndex: (index: number) => void;
 	onSelect: (result: MentionSearchResult) => void;
+	/** The textarea's positioning wrapper — what the picker is measured against. */
+	anchorRef: RefObject<HTMLElement | null>;
 }
 
 export function MentionPicker({
@@ -32,21 +42,34 @@ export function MentionPicker({
 	highlightedIndex,
 	onHoverIndex,
 	onSelect,
+	anchorRef,
 }: MentionPickerProps) {
-	const listRef = useRef<HTMLDivElement>(null);
+	// The picker only mounts while open, so `open` is unconditionally true here.
+	// One ref serves both jobs: the panel is the scroll container, so it is what
+	// gets measured and what the highlighted row scrolls within.
+	const { panelRef, side, sideClassName, style } = usePanelPlacement<HTMLDivElement>(anchorRef, {
+		open: true,
+		preferredMaxHeight: PANEL_MAX_HEIGHT_PX,
+		deps: [results, loading, query],
+	});
 
 	const grouped = useMemo(() => results, [results]);
 
 	useEffect(() => {
-		const el = listRef.current?.querySelector<HTMLElement>(
+		const el = panelRef.current?.querySelector<HTMLElement>(
 			`[data-mention-idx="${highlightedIndex}"]`,
 		);
 		if (el) el.scrollIntoView({ block: 'nearest' });
-	}, [highlightedIndex]);
+	}, [highlightedIndex, panelRef]);
 
 	if (!loading && results.length === 0) {
 		return (
-			<div className="absolute left-0 right-0 top-full z-40 mt-1 rounded-md border border-border bg-surface shadow-md">
+			<div
+				ref={panelRef}
+				className={`${PANEL_BASE} ${sideClassName}`}
+				style={style}
+				data-placement={side}
+			>
 				<div className="px-3 py-2 text-xs text-text-2">
 					{query ? `No matches for @${query}` : 'Type to search'}
 				</div>
@@ -56,8 +79,10 @@ export function MentionPicker({
 
 	return (
 		<div
-			ref={listRef}
-			className="absolute left-0 right-0 top-full z-40 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-surface shadow-md"
+			ref={panelRef}
+			className={`${PANEL_BASE} ${sideClassName} overflow-y-auto`}
+			style={style}
+			data-placement={side}
 			data-testid="mention-picker"
 		>
 			{loading && <div className="px-3 py-2 text-xs text-text-2">Searching…</div>}

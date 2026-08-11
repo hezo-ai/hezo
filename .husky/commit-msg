@@ -1,3 +1,4 @@
 bunx commitlint --edit $1
 bun scripts/check-docs-ack.ts $1
 bun scripts/check-translations-ack.ts $1
+bun scripts/check-docs-links.ts

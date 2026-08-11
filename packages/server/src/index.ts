@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { AuthType } from '@hezo/shared';
+import { AuthType, WsClientAction } from '@hezo/shared';
 import { app } from './app';
 import { AssetStorageError } from './assets/errors';
 import { parseConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
@@ -26,7 +26,11 @@ import { formatPortInUseMessage, probePort } from './services/port-preflight';
 import { SandboxBackendError } from './services/sandbox/errors';
 import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
-import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
+import {
+	handleWsPing,
+	handleWsSubscribe,
+	handleWsUnsubscribe,
+} from './services/ws-subscribe-handler';
 import { type StartupResult, startup } from './startup';
 import { clearStartupFailure, readStartupFailure, recordStartupFailure } from './startup-failure';
 import { getStartupProgress, markStartupError, setStartupPhase } from './startup-progress';
@@ -377,10 +381,24 @@ export default {
 			}
 		},
 		async message(ws: Bun.ServerWebSocket<WsConnectionData>, msg: string | Buffer) {
+			let data: { action?: unknown; room?: unknown };
+			try {
+				data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
+			} catch {
+				return; // ignore malformed messages
+			}
+			// Answered before the subsystem guards below: a liveness probe must not go
+			// unanswered just because some other ref hasn't been wired up yet, or the
+			// client would read the silence as a dead socket and redial a healthy one.
+			if (data.action === WsClientAction.Ping) {
+				handleWsPing(ws as unknown as WsSocket, {
+					sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
+				});
+				return;
+			}
 			if (!wsManager || !containerLogStreamerRef) return;
 			try {
-				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
-				if (data.action === 'subscribe' && typeof data.room === 'string') {
+				if (data.action === WsClientAction.Subscribe && typeof data.room === 'string') {
 					await handleWsSubscribe(ws as unknown as WsSocket, data.room, {
 						db: dbRef,
 						wsManager,
@@ -391,7 +409,7 @@ export default {
 						canAccessTeam,
 						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
 					});
-				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
+				} else if (data.action === WsClientAction.Unsubscribe && typeof data.room === 'string') {
 					handleWsUnsubscribe(ws as unknown as WsSocket, data.room, {
 						wsManager,
 						containerLogStreamer: containerLogStreamerRef,
@@ -399,7 +417,7 @@ export default {
 					});
 				}
 			} catch {
-				// ignore malformed messages
+				// a failed subscribe must not take the socket down with it
 			}
 		},
 	},

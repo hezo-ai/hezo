@@ -113,6 +113,11 @@ export function createAgentStreamParser(
 		// parser's getUsage() stays null.
 		case AgentRuntime.Kimi:
 			return createKimiParser();
+		// Prime Agent's `--mode json` DOES carry usage on the stream (`message_end`
+		// includes the assistant message, whose `usage` holds all four buckets), so
+		// unlike Grok and Kimi Code there is no off-stream recovery for it.
+		case AgentRuntime.PrimeAgent:
+			return createPrimeAgentParser(price);
 		default:
 			return createPassthroughParser();
 	}
@@ -476,6 +481,52 @@ function claudeHezoMcpFailure(servers: ClaudeMcpServerStatus[] | undefined): str
 	);
 }
 
+/**
+ * Tool names carried by an `init` event's `tools` array.
+ *
+ * The CLI types the array loosely and Hezo has only ever needed its length, so
+ * accept both plausible shapes (a bare name, or an object carrying one) and skip
+ * anything else. A partial read still answers the question this exists for, and a
+ * shape change must degrade to "no per-server counts", never to a broken session
+ * line.
+ */
+function initToolNames(tools: unknown[] | undefined): string[] {
+	if (!Array.isArray(tools)) return [];
+	const names: string[] = [];
+	for (const entry of tools) {
+		if (typeof entry === 'string') {
+			names.push(entry);
+			continue;
+		}
+		const name = (entry as { name?: unknown } | null)?.name;
+		if (typeof name === 'string') names.push(name);
+	}
+	return names;
+}
+
+/**
+ * How many tools each MCP server contributed, counted by the
+ * `mcp__<server>__<tool>` namespace the injector builds (see
+ * `mcp-injectors/claude-code.ts`).
+ *
+ * Matched against the server names the event itself reports rather than by
+ * splitting on `__`, so a connector whose own name contains the separator is
+ * still counted correctly.
+ */
+function mcpToolCounts(
+	names: readonly string[],
+	servers: readonly ClaudeMcpServerStatus[],
+): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const server of servers) {
+		const serverName = server?.name;
+		if (!serverName) continue;
+		const prefix = `mcp__${serverName}__`;
+		counts.set(serverName, names.filter((n) => n.startsWith(prefix)).length);
+	}
+	return counts;
+}
+
 function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
@@ -497,15 +548,40 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		if (event.type === 'system' && event.subtype === 'init') {
 			const toolCount = Array.isArray(event.tools) ? event.tools.length : 0;
 			modelId = event.model ?? undefined;
+			const mcpServers = event.mcp_servers ?? [];
 			// The per-server states go in the session line too, so a log read after
 			// the fact answers "did it have its tools?" without needing the raw
 			// stream - the question a bare `tools=25` left the reader to guess at.
-			const servers = (event.mcp_servers ?? [])
-				.map((s) => `${s?.name ?? '?'}=${s?.status ?? '?'}`)
+			//
+			// The state alone does not answer it, though: `connected` means the
+			// session came up, not that the server's tools reached the model. So
+			// carry a per-server tool count alongside it, derived from the names.
+			// Omitted entirely when no name parsed, rather than printing a
+			// misleading zero for every server.
+			const toolNames = initToolNames(event.tools);
+			const counts = toolNames.length > 0 ? mcpToolCounts(toolNames, mcpServers) : null;
+			const servers = mcpServers
+				.map((s) => {
+					const count = s?.name === undefined ? undefined : counts?.get(s.name);
+					return `${s?.name ?? '?'}=${s?.status ?? '?'}${count === undefined ? '' : `(${count})`}`;
+				})
 				.join(' ');
 			out.push(
 				`[session] model=${modelId ?? 'unknown'} tools=${toolCount}${servers ? ` mcp: ${servers}` : ''}`,
 			);
+			// Connected but contributing nothing is the shape of a server whose tools
+			// never reached the model - a tool list the runtime deferred behind its
+			// own search tool, an empty catalogue, or an allowlist that withheld
+			// everything. The banner's status would read healthy, so say it outright.
+			for (const s of mcpServers) {
+				const name = s?.name;
+				if (!name || (s?.status ?? '').toLowerCase() !== 'connected') continue;
+				if (counts?.get(name) === 0) {
+					out.push(
+						`[runner] MCP server "${name}" connected but contributed no tools to this run, so the agent cannot call them.`,
+					);
+				}
+			}
 			const mcpFailure = claudeHezoMcpFailure(event.mcp_servers);
 			if (mcpFailure) {
 				// Recorded as the run's terminal error rather than just logged: it is
@@ -964,6 +1040,100 @@ function extractGenericUsage(
 		outputTokens: output,
 	});
 	return { inputTokens: input, outputTokens: output, costCents };
+}
+
+/**
+ * Prime Agent (`--mode json`) — one JSON object per session event, verbatim.
+ *
+ * The one thing to get right here is the token accounting. Prime Agent
+ * normalises every provider to DISJOINT buckets before it records them: its
+ * `input` is `promptTokens - cacheRead - cacheWrite`, so the cached portion is
+ * already excluded. Feeding these through `extractGenericUsage` (which does
+ * `input - cached`, the Codex/Grok posture) would subtract the cache a second
+ * time and under-report every cached run. Hence a bespoke parser that maps the
+ * four buckets straight across — the Kimi Code posture.
+ *
+ * Its own `usage.cost` object is ignored, like every other runtime's: runs price
+ * only from `model_pricing`.
+ */
+function createPrimeAgentParser(price: PriceModelFn): AgentStreamParser {
+	let usage: AgentRunUsage | null = null;
+	let modelId: string | undefined;
+	let finalMessage: string | null = null;
+
+	/** Text parts of a message's content array, in order. */
+	const contentText = (content: unknown): string => {
+		if (typeof content === 'string') return content;
+		if (!Array.isArray(content)) return '';
+		return content
+			.filter(isRecord)
+			.filter((part) => part.type === 'text' && typeof part.text === 'string')
+			.map((part) => part.text as string)
+			.join('');
+	};
+
+	const thinkingText = (content: unknown): string => {
+		if (!Array.isArray(content)) return '';
+		return content
+			.filter(isRecord)
+			.filter((part) => part.type === 'thinking' && typeof part.thinking === 'string')
+			.map((part) => part.thinking as string)
+			.join('');
+	};
+
+	const renderEvent = (raw: unknown): string[] => {
+		if (!isRecord(raw)) return [];
+		const type = typeof raw.type === 'string' ? raw.type : '';
+
+		if (type === 'tool_execution_start') {
+			const name = typeof raw.toolName === 'string' ? raw.toolName : 'tool';
+			return [formatToolUse(name, raw.args)];
+		}
+
+		if (type !== 'message_end') return [];
+		const message = isRecord(raw.message) ? raw.message : null;
+		if (!message || message.role !== 'assistant') return [];
+
+		if (typeof message.model === 'string') modelId = message.model;
+
+		const out: string[] = [];
+		const thinking = thinkingText(message.content);
+		if (thinking.trim()) out.push(formatThinking(thinking));
+		const text = contentText(message.content);
+		if (text.trim()) {
+			finalMessage = text;
+			out.push(text);
+		}
+
+		const u = isRecord(message.usage) ? message.usage : null;
+		if (u) {
+			const input = firstNumber(u, ['input']);
+			const output = firstNumber(u, ['output']);
+			const cacheRead = firstNumber(u, ['cacheRead']);
+			const cacheWrite = firstNumber(u, ['cacheWrite']);
+			if (input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0) {
+				usage = {
+					inputTokens: input,
+					outputTokens: output,
+					// No `- cacheRead` here, deliberately: see the note above.
+					costCents: price(modelId, {
+						inputTokens: input,
+						cacheReadTokens: cacheRead,
+						cacheCreationTokens: cacheWrite,
+						outputTokens: output,
+					}),
+				};
+			}
+		}
+		return out;
+	};
+
+	return createJsonlParser(
+		renderEvent,
+		() => usage,
+		() => null,
+		() => finalMessage,
+	);
 }
 
 const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;

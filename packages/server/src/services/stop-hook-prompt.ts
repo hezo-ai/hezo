@@ -40,10 +40,10 @@ export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
 export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-1.5-flash';
-// Shared by BOTH ways of running Kimi. On the `kimi` provider (Claude Code
-// against Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"`
-// Stop hook judges with it; on the `kimi_code` provider (Moonshot's own CLI) the
-// command-script judge calls Moonshot's OpenAI-compatible endpoint with it.
+// Shared by both ways of running Kimi. On the Claude Code runtime (against
+// Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"` Stop hook
+// judges with it; on Moonshot's own CLI the command-script judge calls their
+// OpenAI-compatible endpoint with it.
 export const STOP_HOOK_JUDGE_MODEL_KIMI = KIMI_DEFAULT_MODEL;
 
 /**
@@ -312,8 +312,17 @@ interface JudgeRuntimeSpec {
 	sessionLogLookup?: {
 		/** Env var holding the runtime's data root. */
 		homeEnvVar: string;
-		/** Basename of the per-session JSONL to search for under that root. */
-		logBasename: string;
+		/**
+		 * Exact basename of the per-session JSONL to search for under that root
+		 * (Kimi Code writes a fixed `wire.jsonl`).
+		 */
+		logBasename?: string;
+		/**
+		 * Match by extension instead, for runtimes that name the file after the
+		 * session id (Prime Agent writes `sessions/<uuid>.jsonl`, so there is no
+		 * fixed basename to look for). Set one of these, not both.
+		 */
+		logSuffix?: string;
 	};
 	/**
 	 * Use a marker file rather than `stop_hook_active` as the "already continued
@@ -356,6 +365,7 @@ const GUARD_HOME_ENV = ${JSON.stringify(guard?.homeEnvVar ?? '')};
 const GUARD_BASENAME = ${JSON.stringify(guard?.basename ?? '')};
 const LOG_HOME_ENV = ${JSON.stringify(lookup?.homeEnvVar ?? '')};
 const LOG_BASENAME = ${JSON.stringify(lookup?.logBasename ?? '')};
+const LOG_SUFFIX = ${JSON.stringify(lookup?.logSuffix ?? '')};
 
 function guardPath() {
 	if (!GUARD_HOME_ENV || !GUARD_BASENAME) return null;
@@ -386,9 +396,17 @@ function findLogs(dir, depth) {
 	for (const e of entries) {
 		const full = path.join(dir, e.name);
 		if (e.isDirectory()) out.push(...findLogs(full, depth + 1));
-		else if (e.isFile() && e.name === LOG_BASENAME) out.push(full);
+		else if (e.isFile() && matchesLog(e.name)) out.push(full);
 	}
 	return out;
+}
+
+// Either an exact basename (Kimi Code's fixed wire.jsonl) or an extension, for
+// runtimes that name the file after the session id.
+function matchesLog(name) {
+	if (LOG_BASENAME) return name === LOG_BASENAME;
+	if (LOG_SUFFIX) return name.endsWith(LOG_SUFFIX);
+	return false;
 }
 
 // Last assistant message from the run's own session log, for runtimes whose Stop
@@ -415,7 +433,16 @@ function messageFromSessionLog(sessionId) {
 			try { rec = JSON.parse(t); } catch { continue; }
 			if (!rec || rec.role !== 'assistant') continue;
 			const c = rec.content;
-			if (typeof c === 'string' && c.trim()) latest = c;
+			// Content is a plain string on some runtimes and a parts array on others
+			// (Prime Agent stores text/thinking/tool-call parts); take the text parts.
+			const text = typeof c === 'string'
+				? c
+				: Array.isArray(c)
+					? c.filter((part) => part && part.type === 'text' && typeof part.text === 'string')
+							.map((part) => part.text)
+							.join('')
+					: '';
+			if (text.trim()) latest = text;
 		}
 	}
 	return latest;
@@ -567,7 +594,7 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 	//    ceiling is real rather than nominal.
 	//
 	// Both read `$KIMI_CODE_HOME`, which the runner points at a per-run directory
-	// (see SUBSCRIPTION_LAYOUTS), so neither can leak across runs. The API key is
+	// (see RUNTIME_HOME_LAYOUTS), so neither can leak across runs. The API key is
 	// `KIMI_MODEL_API_KEY` — the same shell-read var the CLI itself authenticates
 	// with — so no extra credential is injected for the judge.
 	[AgentRuntime.Kimi]: {
@@ -585,6 +612,43 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 		blockReasonToStderr: true,
 		sessionLogLookup: { homeEnvVar: 'KIMI_CODE_HOME', logBasename: 'wire.jsonl' },
 		loopGuardFile: { homeEnvVar: 'KIMI_CODE_HOME', basename: '.hezo-stop-blocked' },
+	},
+	// Prime Agent has no Stop hook. Its equivalent is `--autonomous-gate <cmd>`: a
+	// command that must succeed before the session may finish, whose output is fed
+	// back to the model as the continuation when it fails. Same block-and-continue
+	// shape, reached through a different door — and the CLI supplies the retry
+	// budget and the turn/token/wall-clock ceilings itself.
+	//
+	// The gate is spawned with `stdio: ['ignore', 'pipe', 'pipe']`, so unlike every
+	// Stop hook it gets NO stdin at all. `inputFields` is therefore certain to come
+	// up empty and `sessionLogLookup` is the real source — matched by extension
+	// because Prime Agent names the file after the session id rather than using a
+	// fixed basename. Its assistant records store content as a parts array, which
+	// the shared extractor now handles.
+	//
+	// A failing gate is a non-zero exit; there is no decision JSON to emit, and the
+	// captured output IS the reason (the CLI truncates it at 6000 chars), so stderr
+	// carries it. The loop guard mirrors Kimi Code's: the gate has no
+	// `stop_hook_active` equivalent, so without a marker a persistent verdict would
+	// burn every retry the CLI allows.
+	[AgentRuntime.PrimeAgent]: {
+		...openAiCompatJudgeSpec({
+			// Prime Agent reaches many providers, but the judge has to name one
+			// endpoint. Anthropic's is the safe default: it is the only provider whose
+			// key is guaranteed present when the run itself is on Anthropic, and every
+			// other case fails open rather than mis-judging.
+			baseUrl: 'https://api.anthropic.com/v1',
+			apiKeyEnvVars: ['ANTHROPIC_API_KEY'],
+			model: STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
+			inputFields: ['last_assistant_message'],
+		}),
+		blockExitCode: 1,
+		blockReasonToStderr: true,
+		sessionLogLookup: { homeEnvVar: 'PRIME_AGENT_CODING_AGENT_DIR', logSuffix: '.jsonl' },
+		loopGuardFile: {
+			homeEnvVar: 'PRIME_AGENT_CODING_AGENT_DIR',
+			basename: '.hezo-stop-blocked',
+		},
 	},
 };
 

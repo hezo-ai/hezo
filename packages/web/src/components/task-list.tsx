@@ -8,6 +8,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
+import { usePanelPlacement } from '../hooks/use-panel-placement';
 import { type Task, useInfiniteTasks, useTasks } from '../hooks/use-tasks';
 import { useI18n } from '../lib/i18n';
 import { nestTasksForDisplay } from '../lib/nest-tasks-for-display';
@@ -193,6 +194,16 @@ export function TaskList({ projectId }: TaskListProps) {
 	const [sortField, setSortField] = useState<SortField>(stored?.sortField ?? 'work_order');
 	const [sortDir, setSortDir] = useState<SortDir>(stored?.sortDir ?? 'asc');
 	const [createOpen, setCreateOpen] = useState(false);
+
+	const filterBarRef = useRef<HTMLDivElement>(null);
+	// No design cap: the panel is a wrap-around form, so it stays exactly as tall
+	// as its content wherever there is room and only clamps on a short viewport.
+	const {
+		panelRef: filterPanelRef,
+		side: filterSide,
+		sideClassName: filterSideClass,
+		style: filterPanelStyle,
+	} = usePanelPlacement<HTMLDivElement>(filterBarRef, { open: expanded });
 
 	useEffect(() => {
 		const handle = setTimeout(() => {
@@ -493,7 +504,7 @@ export function TaskList({ projectId }: TaskListProps) {
 	);
 
 	const filterBar = (
-		<div className="relative flex-1 min-w-0 h-10" data-testid="task-filter-bar">
+		<div ref={filterBarRef} className="relative flex-1 min-w-0 h-10" data-testid="task-filter-bar">
 			<div className="h-full rounded-md border border-border bg-surface">
 				<button
 					type="button"
@@ -512,8 +523,11 @@ export function TaskList({ projectId }: TaskListProps) {
 			</div>
 			{expanded && (
 				<div
+					ref={filterPanelRef}
 					data-testid="task-filter-panel"
-					className="absolute left-0 right-0 top-full z-20 mt-1 rounded-md border border-border bg-surface shadow-md px-3 py-3 flex flex-wrap items-end gap-3"
+					data-placement={filterSide}
+					style={filterPanelStyle}
+					className={`absolute left-0 right-0 z-20 ${filterSideClass} rounded-md border border-border bg-surface shadow-md overflow-y-auto px-3 py-3 flex flex-wrap items-end gap-3`}
 				>
 					<label className="flex flex-col gap-1 flex-1 min-w-0 sm:min-w-[180px]">
 						<span className="text-[11px] uppercase tracking-wider text-text-3">Search</span>

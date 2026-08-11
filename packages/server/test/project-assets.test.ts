@@ -841,6 +841,7 @@ describe('MCP asset upload (POST /mcp/assets)', () => {
 			sha256: 'deadbeef',
 			desiredName: 'helper-guard.txt',
 			uploadedByMemberId: null,
+			searchText: 'new bytes',
 		});
 
 		expect(result.status).toBe('archived');

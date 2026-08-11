@@ -40,9 +40,8 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
             mu.user_id AS requested_by_user_id,
             (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = mu.user_id)
               AS requested_by_user_icon_updated_at,
-            (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = a.requested_by_member_id)
-              AS requested_by_agent_icon_updated_at,
-            COALESCE(pma.title, pm.display_name) AS payload_member_name,
+            ma.avatar_spec AS requested_by_avatar_spec,
+            COALESCE(NULLIF(pma.human_name, ''), pma.title, pm.display_name) AS payload_member_name,
             pma.slug AS payload_member_slug,
             pp.name AS payload_project_name,
             pp.slug AS payload_project_slug,
@@ -64,19 +63,17 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
 		[teamId, ...statusFilter.split(',').map((s) => s.trim())],
 	);
 
-	// The requester's uploaded avatar (if any), so the inbox can put a face on the
-	// row. The built-in CEO/Coach default is resolved client-side from the slug.
+	// A human requester's uploaded avatar, so the inbox can put a face on the row.
+	// An agent ships its `avatar_spec` instead and is drawn client-side; the
+	// built-in CEO/Coach portraits are resolved client-side from the slug.
 	const masterKeyManager = c.get('masterKeyManager');
 	for (const row of result.rows) {
 		row.requested_by_icon_url = await signAuthorIconUrl(masterKeyManager, {
 			userId: row.requested_by_user_id,
-			memberId: row.requested_by_member_id,
 			userIconUpdatedAt: row.requested_by_user_icon_updated_at,
-			agentIconUpdatedAt: row.requested_by_agent_icon_updated_at,
 		});
 		delete row.requested_by_user_id;
 		delete row.requested_by_user_icon_updated_at;
-		delete row.requested_by_agent_icon_updated_at;
 	}
 
 	return ok(c, result.rows);

@@ -91,23 +91,16 @@ test('inbox renders a admin mention card with author + snippet', async () => {
 	await findByText(/should we ship the new auth flow/);
 });
 
-test('a mention card shows the authoring agent’s uploaded avatar next to their name', async () => {
-	let ctx: { projectSlug: string; agentId: string };
+test('a mention card shows the authoring agent’s generated avatar next to their name', async () => {
+	let ctx: { projectSlug: string };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Demo' });
 			const task = await seedTask(ws, project, { title: 'Avatar inbox ticket' });
-			const architect = ws.agents.find((a) => a.slug === 'architect');
-			if (!architect) throw new Error('architect agent missing');
-			await getTestContext().db.query(
-				`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height)
-				 VALUES ($1, 'image/png', $2, 3, 512, 512)`,
-				[architect.id, Buffer.from([0x89, 0x50, 0x4e])],
-			);
 			await seedAgentAdminMention(ws, task, '@admin who owns the migration?');
-			ctx = { projectSlug: project.slug, agentId: architect.id };
+			ctx = { projectSlug: project.slug };
 		},
 	});
 
@@ -119,7 +112,9 @@ test('a mention card shows the authoring agent’s uploaded avatar next to their
 	const card = await findByTestId('mention-card', undefined, { timeout: 10_000 });
 	const img = card.querySelector<HTMLImageElement>('img');
 	expect(img).not.toBeNull();
-	expect(img?.getAttribute('src') ?? '').toContain(`/api/agents/${ctx!.agentId}/icon`);
+	// An agent has no uploaded image; its face is the sprite drawn from the spec
+	// the row carries, inlined as an SVG data URI.
+	expect(img?.getAttribute('src') ?? '').toContain('data:image/svg+xml');
 });
 
 test('clicking a mention navigates to the task and marks it read', async () => {

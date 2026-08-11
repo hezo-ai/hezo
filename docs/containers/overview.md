@@ -1,6 +1,6 @@
 ---
 title: Containers overview
-order: 25.1
+order: 17.5
 section: Containers
 ---
 
@@ -32,9 +32,11 @@ the container hold placeholders, never the actual credentials, and the proxy enf
 which hosts each secret may be sent to. Git signing and SSH keys stay outside the
 container too, so commits land verified without the private key ever being exposed.
 
-**Limits.** Each container runs with a memory cap, a process limit that stops fork bombs,
-and a reduced set of Linux capabilities, so a runaway agent cannot exhaust the machine it
-is on.
+**Limits.** Each container runs against a hard memory cap, and where it shares your own
+machine ([local Docker](/docs/containers/local-docker)) Hezo also applies a process limit
+that stops fork bombs and drops Linux capabilities to the few the workload needs, so a
+runaway agent cannot exhaust the machine it is on. On a managed service the equivalent
+guardrails between sandboxes are the provider's own.
 
 For the full security picture, including the honest note on where a container's boundary
 ends, see [Container isolation](/docs/security/container-isolation) and
@@ -47,6 +49,12 @@ and stops again after sitting idle for a couple of minutes. A quiet instance run
 containers. That window is fixed rather than configurable: its only job is to keep a
 container warm between one run and the next in the same project. Because containers do not
 stay up between bursts, they are not a place to run a long-lived dev or preview server.
+
+**Each container is timed separately.** A project running several tasks at once holds one
+container per run, and any of them that finishes and then sits idle past the window is
+retired on its own - the project does not have to fall completely quiet first. So a busy
+project gives its unused memory back while it keeps working, rather than holding it until
+the last task ends.
 
 **An open assistant chat gets a longer window.** A pause between chat messages is you
 reading a reply, not an idle project, so a container serving a live chat session is kept
@@ -137,9 +145,17 @@ HEZO_SANDBOX_BACKEND=daytona HEZO_DAYTONA_API_KEY=<key> hezo
 
 **This sets the service a brand-new instance starts on.** It is a convenience for
 provisioning an instance non-interactively, not a second way to configure a running one.
-Once a service has been chosen in Settings -> Containers, that stored choice wins and the
-flag and environment variable are ignored on later startups. To change a running
-instance, use Settings -> Containers.
+The first startup records the choice, and from then on the stored setting wins:
+restarting with a different flag or environment variable does not switch an existing
+instance - Hezo logs that it ignored the flag and stays where it is, so a stale launch
+script or leftover environment variable can never flip the substrate under your agents.
+To change an instance once it has booted - stopped or running - use Settings ->
+Containers.
+
+The provider key is the one flag that stays live: passing `--daytona-api-key` (or
+`HEZO_DAYTONA_API_KEY`) at a later startup rotates or supplies the credential for the
+backend already chosen - it never chooses a backend by itself. See
+[Restarting an instance on a managed service](#restarting-an-instance-on-a-managed-service).
 
 Selecting a managed service Hezo cannot reach is **fatal at startup**. Hezo reports the
 problem and exits rather than silently falling back to local Docker: an instance that
@@ -175,6 +191,15 @@ consume:
   and starts as memory frees up; the assistant chat always starts. There is no separate
   limit on the *number* of containers: how many fit follows from this budget and the cap
   below.
+
+  The budget is shared across every project, and no project can sit on a share of it that
+  it is not using. A container belongs to the project it was built for and is never handed
+  to another - it is built around that project's checkout - so when a run cannot fit,
+  Hezo retires an idle container belonging to some other project and builds a fresh one
+  for the waiting run. Containers that have only just gone idle are left alone, so a
+  project working through a burst of tasks keeps its containers warm between them. Where
+  more than one project is holding idle containers, the one holding the most gives one up
+  first.
 - **RAM cap per container** - the memory limit applied to every container (2 GB by
   default). A project that needs more can override it on its own Containers page. A
   container over its cap is stopped, or has its biggest process killed by the kernel,

@@ -16,8 +16,10 @@ import {
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	opencodeModelArg,
+	PRIME_AGENT_QUIET_ENV,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type ProgressActivityKind,
+	primeAgentProviderArgs,
 	providerDirectUpstreamHosts,
 	providerRuntimeBinding,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -125,9 +127,9 @@ import {
 	getContainerSubscriptionRoot as getContainerSubscriptionRootImpl,
 	getHostSubscriptionBase,
 	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
+	RUNTIME_HOME_LAYOUTS,
 	type RuntimeHomeMount,
 	SUBSCRIPTION_DIR_MODE,
-	SUBSCRIPTION_LAYOUTS,
 	type SubscriptionMount as SubscriptionMountImpl,
 	subscriptionFiles,
 } from './runtime-home';
@@ -293,6 +295,11 @@ export function buildProviderEnv(
 			out.push(`${key}=${value}`);
 		}
 	}
+	if (runtime === AgentRuntime.PrimeAgent) {
+		for (const [key, value] of Object.entries(PRIME_AGENT_QUIET_ENV)) {
+			out.push(`${key}=${value}`);
+		}
+	}
 	if (binding?.staticEnv) {
 		// For a third-party Anthropic-compatible provider (DeepSeek/Z.ai/Kimi), the
 		// Claude Code subagent default should track the run's own selected model
@@ -340,7 +347,7 @@ export function buildProviderEnv(
 	return out;
 }
 
-// SUBSCRIPTION_LAYOUTS, SubscriptionMount, and the home-dir helpers live in
+// RUNTIME_HOME_LAYOUTS, SubscriptionMount, and the home-dir helpers live in
 // runtime-home.ts so per-runtime config conventions sit in one place. These
 // re-exports keep the public import surface stable for callers and tests.
 export type SubscriptionMount = SubscriptionMountImpl;
@@ -612,6 +619,7 @@ export async function buildRuntimeInvocation(
 		projectId,
 		resourceId,
 		provider,
+		runtimeType,
 		credential,
 		deps.docker,
 		containerId,
@@ -621,6 +629,7 @@ export async function buildRuntimeInvocation(
 	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
 		? await ensureRuntimeHomeDir(
 				provider,
+				runtimeType,
 				deps.dataDir,
 				runTeamId,
 				projectId,
@@ -786,6 +795,11 @@ export async function buildRuntimeInvocation(
 	}
 	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
+	// Prime Agent selects the upstream by flag, not by env var, so the provider
+	// has to be named on the command line alongside the model.
+	const providerArgs =
+		runtimeType === AgentRuntime.PrimeAgent ? [...primeAgentProviderArgs(provider)] : [];
+
 	// Grok reports no token usage on its stdout stream, so point it at a per-run
 	// debug log (inside the home mount, hence readable host-side) that the runner
 	// parses for cost after the run and then scrubs. Other runtimes report usage
@@ -804,6 +818,7 @@ export async function buildRuntimeInvocation(
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
 		...effortApplication.extraArgs,
+		...providerArgs,
 		...modelArgs,
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
 	];
@@ -1406,7 +1421,9 @@ export async function runAgent(
 	let sshSocketAllocated = false;
 	let egressProxyAllocated = false;
 	try {
-		const layout = SUBSCRIPTION_LAYOUTS[provider];
+		// Rotation is a property of the CLI that rewrites the token file, so read it
+		// off the resolved runtime rather than the provider's default.
+		const layout = RUNTIME_HOME_LAYOUTS[runtimeType];
 		if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
 			// Records the true wait so the run comment reads honestly while blocked.
 			await deps.db.query(
@@ -2040,57 +2057,98 @@ export async function runAgent(
 			// aggregate — which is exactly where a passively-addressed ask posted as a
 			// comment lives.
 			//
+			// The aggregate is PER TASK, not per run. A run comments on whatever tasks
+			// it touches, so "did this run wake anyone" answered run-wide lets a run
+			// that woke a teammate on its own task strand a handoff on another one and
+			// still pass clean — the shape of the incident this scoping came from. Each
+			// task the run commented on is judged on its own comments, its own wakes and
+			// its own status; the run's own task is always judged, since its handoff can
+			// live in the final message with no comment posted at all.
+			//
 			// Warn-only, deliberately: the standing posture is that the system never
 			// fabricates a wake from a non-`@` signal.
 			if (exitedClean && task) {
 				try {
-					const fresh = await deps.db.query<{ status: string }>(
-						'SELECT status::text AS status FROM tasks WHERE id = $1',
-						[task.id],
+					const posted = await deps.db.query<{
+						task_id: string;
+						content: unknown;
+						parent_comment_id: string | null;
+					}>(
+						`SELECT task_id, content, parent_comment_id FROM task_comments
+						 WHERE created_by_run_id = $1 AND content_type = 'text'`,
+						[heartbeatRunId],
 					);
-					const status = fresh.rows[0]?.status;
-					const stillOpen =
-						Boolean(status) && !(TERMINAL_TASK_STATUSES as readonly string[]).includes(status);
-					if (stillOpen) {
-						const posted = await deps.db.query<{
-							content: unknown;
-							parent_comment_id: string | null;
-						}>(
-							`SELECT content, parent_comment_id FROM task_comments
-							 WHERE created_by_run_id = $1 AND content_type = 'text'`,
-							[heartbeatRunId],
-						);
+					const byTask = new Map<
+						string,
+						{ content: unknown; parent_comment_id: string | null }[]
+					>();
+					for (const row of posted.rows) {
+						const bucket = byTask.get(row.task_id);
+						if (bucket) bucket.push(row);
+						else byTask.set(row.task_id, [row]);
+					}
+					// The run's own task is judged even with no comment on it: that is
+					// where a handoff stranded in the final message lives.
+					if (!byTask.has(task.id)) byTask.set(task.id, []);
+
+					// One read for every touched task rather than one per task, and it
+					// carries team_id so a cross-team comment is warned against the right
+					// roster (an HQ agent acting inside another team's project).
+					const touched = await deps.db.query<{
+						id: string;
+						identifier: string;
+						team_id: string;
+						status: string;
+					}>(
+						`SELECT id, identifier, team_id, status::text AS status
+						 FROM tasks WHERE id = ANY($1)`,
+						[Array.from(byTask.keys())],
+					);
+					// Memoized per team — one call in the ordinary single-team run.
+					const rosterByTeam = new Map<string, string[]>();
+					const rosterFor = async (teamId: string): Promise<string[]> => {
+						const cached = rosterByTeam.get(teamId);
+						if (cached) return cached;
+						const resolved = await resolveWarnableSlugs(deps.db, teamId, agent.id);
+						rosterByTeam.set(teamId, resolved);
+						return resolved;
+					};
+
+					const finalMessage = parser.getFinalAssistantMessage() ?? '';
+					for (const row of touched.rows) {
+						if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(row.status)) continue;
+						const comments = byTask.get(row.id) ?? [];
 						// A wake is an active `@`-mention or a reply (which wakes the parent
 						// author). agent_wakeup_requests carries no created_by_run_id, so this
 						// is derived from the run's own comments rather than queried directly.
-						const wokeSomeone = posted.rows.some(
+						const wokeSomeone = comments.some(
 							(c) => extractMentionSlugs(c.content).length > 0 || c.parent_comment_id !== null,
 						);
-						if (!wokeSomeone) {
-							const finalMessage = parser.getFinalAssistantMessage() ?? '';
-							const outward = [...posted.rows.map((c) => c.content), finalMessage];
-							const roster = await resolveWarnableSlugs(deps.db, runTeamId, agent.id);
-							const named = new Set<string>();
-							for (const text of outward) {
-								for (const slug of extractPassiveMentionSlugs(text)) {
-									if (roster.includes(slug)) named.add(slug);
-								}
-								for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
+						if (wokeSomeone) continue;
+						const outward: unknown[] = comments.map((c) => c.content);
+						// The final message is outward-facing on the run's own task only —
+						// it is not addressed to any other task's thread.
+						if (row.id === task.id) outward.push(finalMessage);
+						const roster = await rosterFor(row.team_id);
+						const named = new Set<string>();
+						for (const text of outward) {
+							for (const slug of extractPassiveMentionSlugs(text)) {
+								if (roster.includes(slug)) named.add(slug);
 							}
-							if (named.size > 0) {
-								const list = Array.from(named);
-								const namedList = list.map((s) => `**${s}**`).join(', ');
-								const fixes = list.map((s) => `@${s}`).join(', ');
-								emit(
-									'stdout',
-									`\n[runner] WARNING: this run woke no one. It named ${namedList} without an ` +
-										`active @-mention and left ${task.identifier} open, so whoever acts next was ` +
-										`never notified. If you were handing the work over, post a comment with an ` +
-										`active mention (${fixes}); if you were only referring to them, no action ` +
-										`is needed.\n`,
-								);
-							}
+							for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
 						}
+						if (named.size === 0) continue;
+						const list = Array.from(named);
+						const namedList = list.map((s) => `**${s}**`).join(', ');
+						const fixes = list.map((s) => `@${s}`).join(', ');
+						emit(
+							'stdout',
+							`\n[runner] WARNING: this run woke no one on ${row.identifier}. It named ` +
+								`${namedList} there without an active @-mention and left ${row.identifier} ` +
+								`open, so whoever acts next was never notified. If you were handing the ` +
+								`work over, post a comment with an active mention (${fixes}); if you were ` +
+								`only referring to them, no action is needed.\n`,
+						);
 					}
 				} catch (e) {
 					log.error(`Run ${heartbeatRunId} no-wake exit check failed:`, e);

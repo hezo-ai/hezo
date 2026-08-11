@@ -19,12 +19,14 @@ export enum WsMessageType {
 	ChatCompacted = 'chat_compacted',
 	ChatConversationUpdated = 'chat_conversation_updated',
 	ProjectsChanged = 'projects_changed',
+	Pong = 'pong',
 	Error = 'error',
 }
 
 export enum WsClientAction {
 	Subscribe = 'subscribe',
 	Unsubscribe = 'unsubscribe',
+	Ping = 'ping',
 }
 
 export type ChangeAction = 'INSERT' | 'UPDATE' | 'DELETE';
@@ -103,6 +105,18 @@ export interface WsErrorMessage {
 	type: WsMessageType.Error;
 	code: string;
 	message: string;
+}
+
+/**
+ * Reply to a client liveness probe.
+ *
+ * A socket whose peer has vanished keeps reading OPEN until something tries to write
+ * and gives up, so silence alone never proves the connection is gone. Browsers do not
+ * expose RFC 6455 ping/pong frames to page code, which leaves an ordinary message as
+ * the only probe a client can send - hence this pair rather than protocol frames.
+ */
+export interface WsPongMessage {
+	type: WsMessageType.Pong;
 }
 
 /**
@@ -198,6 +212,7 @@ export type WsServerMessage =
 	| WsChatConversationUpdatedMessage
 	| WsProjectsChangedMessage
 	| WsConnectedMessage
+	| WsPongMessage
 	| WsErrorMessage;
 
 export interface WsSubscribeAction {
@@ -210,4 +225,9 @@ export interface WsUnsubscribeAction {
 	room: string;
 }
 
-export type WsClientMessage = WsSubscribeAction | WsUnsubscribeAction;
+/** Liveness probe; the server answers with {@link WsPongMessage}. */
+export interface WsPingAction {
+	action: WsClientAction.Ping;
+}
+
+export type WsClientMessage = WsSubscribeAction | WsUnsubscribeAction | WsPingAction;

@@ -92,6 +92,19 @@ const KIMI_THINKING_EFFORT: Record<AgentEffort, string> = {
 	[AgentEffort.Max]: 'max',
 };
 
+// Prime Agent's `--thinking` ladder is `off|minimal|low|medium|high|xhigh|max`,
+// which contains every Hezo level by name — the only runtime where the mapping
+// is an identity rather than an approximation. `off` and `xhigh` are unused:
+// Hezo has no "no reasoning" level, and reaching past `high` for `max` would
+// make the two top levels indistinguishable (same call as Kimi Code's).
+const PRIME_AGENT_THINKING: Record<AgentEffort, string> = {
+	[AgentEffort.Minimal]: 'minimal',
+	[AgentEffort.Low]: 'low',
+	[AgentEffort.Medium]: 'medium',
+	[AgentEffort.High]: 'high',
+	[AgentEffort.Max]: 'max',
+};
+
 const GENERIC_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
 	[AgentEffort.Minimal]: '',
 	[AgentEffort.Low]: 'Think briefly before answering.',
@@ -139,6 +152,14 @@ export function applyEffortToRuntime(
 			return {
 				extraArgs: [],
 				extraEnv: [`KIMI_MODEL_THINKING_EFFORT=${KIMI_THINKING_EFFORT[effort]}`],
+				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
+			};
+		// Prime Agent takes the level as a first-class CLI flag, so effort needs no
+		// env var and no prompt steering — the harness applies it directly.
+		case AgentRuntime.PrimeAgent:
+			return {
+				extraArgs: ['--thinking', PRIME_AGENT_THINKING[effort]],
+				extraEnv: [],
 				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 			};
 	}

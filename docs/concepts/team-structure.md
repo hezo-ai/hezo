@@ -33,7 +33,7 @@ A team's structure is more than a list of agents. It's:
 - **What the team shares** - its [skills](/docs/concepts/skills),
   [project documents and memory](/docs/concepts/documents-and-memory),
   connected [external services](/docs/mcp/connecting-mcp-servers), budgets, and the project
-  container they all work in.
+  workspace their containers work in.
 
 Change any of these and you've changed the team's structure.
 

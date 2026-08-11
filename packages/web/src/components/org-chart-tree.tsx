@@ -2,7 +2,8 @@ import { isBudgetPauseStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { OrgNode } from '../hooks/use-org-chart';
-import { defaultAvatarForSlug } from '../lib/default-avatars';
+import { agentAvatarUrl } from '../lib/agent-avatar';
+import { AgentIdentityTooltipContent, agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { Avatar, getInitials } from './ui/avatar';
 import { StatusDot } from './ui/status-dot';
@@ -58,14 +59,14 @@ function orgDotStatus(node: OrgNode): VisibleStatus | null {
 }
 
 function AgentRoleTooltipContent({ node }: { node: OrgNode }) {
-	const description = node.role_description?.trim();
 	return (
-		<div className="space-y-1.5">
-			<p className="text-[12px] font-semibold text-text-1 leading-tight">{node.title}</p>
-			<p className="text-[11px] leading-relaxed text-text-2">
-				{description || 'No role description yet.'}
-			</p>
-		</div>
+		<AgentIdentityTooltipContent
+			agent={{
+				human_name: node.human_name,
+				title: node.title,
+				role_description: node.role_description?.trim() || 'No role description yet.',
+			}}
+		/>
 	);
 }
 
@@ -104,12 +105,12 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 				{mode === 'interactive' && (
 					<Avatar
 						size="sm"
-						initials={getInitials(node.title)}
-						imageUrl={node.icon_url ?? defaultAvatarForSlug(node.slug)}
+						initials={getInitials(agentDisplayName(node))}
+						imageUrl={agentAvatarUrl(node)}
 					/>
 				)}
 				{status && <StatusDot status={status} />}
-				{node.title}
+				{agentDisplayName(node)}
 			</>
 		);
 

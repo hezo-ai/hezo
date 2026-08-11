@@ -44,6 +44,7 @@ export interface InstanceResolvedAsset {
 export interface InstanceResolvedAgent {
 	slug: string;
 	title: string;
+	human_name: string | null;
 	project_slug: string;
 }
 
@@ -126,16 +127,21 @@ export async function resolveInstanceMentions(
 	if (candidates.agents.length > 0) {
 		// Teams and projects are 1:1 (UNIQUE(projects.team_id)), so the join is
 		// total; HQ agents (CEO/Coach) resolve to the HQ project's slug.
+		// An agent answers to two handles, so the match is against either and the
+		// uniqueness count is per *token*: `@max` is ambiguous only if two agents
+		// answer to "max", regardless of which handle each got it from.
 		const result = await db.query<InstanceResolvedAgent>(
 			`WITH m AS (
-				SELECT ma.slug, ma.title, p.slug AS project_slug,
-				       COUNT(*) OVER (PARTITION BY LOWER(ma.slug)) AS n
-				FROM member_agents ma
+				SELECT tok, ma.slug, ma.title, ma.human_name, p.slug AS project_slug,
+				       COUNT(*) OVER (PARTITION BY tok) AS n
+				FROM unnest($1::text[]) AS tok
+				JOIN member_agents ma
+				  ON LOWER(ma.slug) = tok OR ma.human_name_slug = tok
 				JOIN members mem ON mem.id = ma.id
 				JOIN projects p ON p.team_id = mem.team_id
-				WHERE ma.admin_status = 'enabled' AND LOWER(ma.slug) = ANY($1::text[])
+				WHERE ma.admin_status = 'enabled'
 			)
-			SELECT slug, title, project_slug FROM m WHERE n = 1`,
+			SELECT slug, title, human_name, project_slug FROM m WHERE n = 1`,
 			[candidates.agents],
 		);
 		out.agents = result.rows;

@@ -671,6 +671,7 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | --- | --- | --- | --- |
 | `approval_id` | `string` | Yes | Hire approval ID |
 | `title` | `string` | No | Updated role title |
+| `human_name` | `string` | No | Updated human name for the new teammate, or an empty string to clear it |
 | `role_description` | `string` | No | Updated short role description |
 | `system_prompt` | `string` | No | Updated system prompt. If provided, it must keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the revision is rejected. |
 | `reports_to` | `string` | No | Updated manager - an existing agent's slug. Pass an empty string to clear the reporting line. |
@@ -695,6 +696,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `title` | `string` | Yes | Role title (the slug is derived from it) |
+| `human_name` | `string` | No | Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out to name them during the coherence review that follows the hire. |
 | `role_description` | `string` | No | Short role description |
 | `system_prompt` | `string` | No | Full system prompt for the new agent. If provided, it MUST contain every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the proposal is rejected - these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs. |
 | `reports_to` | `string` | No | The manager this agent reports to - an existing agent's slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team. |
@@ -888,6 +890,41 @@ Save a short human-readable summary for an agent (≤1000 chars, single paragrap
 
 **Authorization:** Any agent or the admin in the same team (the Captain is the expected caller; agents may self-summarise).
 
+### `set_agent_name`
+
+_Write tool._
+
+Give an agent the human name it is addressed by (e.g. "Max" for the Engineer), or clear it with an empty string to fall back to its role. The name displays in place of the role everywhere and becomes a second mention handle, so both @max and @engineer reach the agent. Names must be unique within the team, and the Captain, CEO and Coach are always addressed by role and cannot be named. Callable by the Captain of that team, or the CEO.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
+| `name` | `string` | Yes | The name to use, or an empty string to clear it |
+
+**Returns:** `{ updated: true, name }` where `name` is the stored name or null when cleared, or `{ error }` (name taken, reserved, malformed, a name-only role, or agent not in team).
+
+**Authorization:** The Captain of that team, or the CEO.
+
+### `generate_agent_avatar`
+
+_Write tool._
+
+Generate a fresh pixel avatar for an agent. The face is composed from the agent's role and name, so there is nothing to choose beyond asking for a new one; call it again for a different face. Use it for a newly hired agent, or one that still has no avatar. Callable by the Captain of that team, or the CEO.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
+
+**Returns:** `{ updated: true }`, or `{ error }` (agent not in team).
+
+**Authorization:** The Captain of that team, or the CEO.
+
 ### `set_team_summary`
 
 _Write tool._
@@ -1070,7 +1107,7 @@ Propose a new skill for the team's skills database (reusable team know-how: MCP 
 
 _Read-only._
 
-Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first.
+Full-text keyword search across the team skills database, tasks, project docs, task comments, and project assets. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first. Assets match on their library path, folders included, so any segment of "launch/hero-image.png" finds it; textual assets (.md, .txt, .html, .svg, and the script/data formats stored as plain text such as .py, .js, .json, .csv, .yaml) also match on their content, while binary ones (images, PDFs, media, archives) match on path alone. Use it to find work product an earlier run produced before rebuilding it; an asset hit returns its path, which you pass to read_project_asset. An asset saved before this search existed matches on path until it is next written. Archived items are excluded.
 
 **Parameters:**
 
@@ -1078,10 +1115,10 @@ Full-text keyword search across the team skills database, tasks, project docs, a
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `query` | `string` | Yes | Search query (keywords) |
-| `scope` | `all` \| `tasks` \| `skills` \| `project_docs` \| `comments` | No | Limit search to specific content type (default: all) |
+| `scope` | `all` \| `tasks` \| `skills` \| `project_docs` \| `comments` \| `assets` | No | Limit search to specific content type (default: all) |
 | `limit` | `number` | No | Max results per type (default: 10) |
 
-**Returns:** `{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.
+**Returns:** `{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, comments, and assets. A bare task number or full identifier resolves directly to that task, ranked first. An asset result carries `assetFilename` (its library path) and `assetContentType`; pass the path to read_project_asset. Assets match on any segment of their path, and textual ones on their content as well.
 
 ### `list_skills`
 

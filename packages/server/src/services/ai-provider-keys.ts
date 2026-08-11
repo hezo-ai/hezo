@@ -220,6 +220,18 @@ export interface AiProviderConfigUpdate {
 	 * provider default; `undefined` leaves it untouched, per `buildUpdateSet`.
 	 */
 	runtime?: AgentRuntime | null;
+	/**
+	 * A replacement credential, encrypted here rather than by the caller so the
+	 * plaintext never has to be handed around already-encrypted-or-not.
+	 */
+	credential?: { value: string; masterKeyManager: MasterKeyManager };
+	authMethod?: AiAuthMethod;
+	status?: AiProviderStatus;
+	/**
+	 * Locally-hosted providers only. Merged into the existing jsonb rather than
+	 * replacing it, so unrelated metadata keys survive a credential rotation.
+	 */
+	baseUrl?: string;
 }
 
 export async function updateAiProviderConfig(
@@ -227,19 +239,40 @@ export async function updateAiProviderConfig(
 	configId: string,
 	fields: AiProviderConfigUpdate,
 ): Promise<boolean> {
+	let encryptedCredential: string | undefined;
+	if (fields.credential) {
+		const encryptionKey = fields.credential.masterKeyManager.getKey();
+		if (!encryptionKey) throw new Error('Master key not available');
+		encryptedCredential = encrypt(fields.credential.value, encryptionKey);
+	}
+
 	const { clauses, params, nextIdx } = buildUpdateSet([
 		{ column: 'label', value: fields.label },
 		{ column: 'default_model', value: fields.defaultModel },
 		{ column: 'runtime', value: fields.runtime, cast: 'agent_runtime' },
+		{ column: 'encrypted_credential', value: encryptedCredential },
+		{ column: 'auth_method', value: fields.authMethod, cast: 'ai_auth_method' },
+		{ column: 'status', value: fields.status },
 	]);
+
+	// `buildUpdateSet` can only assign, and the base URL has to merge — overwriting
+	// `metadata` wholesale would drop any other key stored alongside it.
+	let idx = nextIdx;
+	const allParams = [...params];
+	if (fields.baseUrl !== undefined) {
+		clauses.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${idx}::jsonb`);
+		allParams.push(JSON.stringify({ base_url: fields.baseUrl }));
+		idx++;
+	}
+
 	if (clauses.length === 0) return false;
 
 	const result = await db.query<{ id: string }>(
 		`UPDATE ai_provider_configs
 		 SET ${clauses.join(', ')}, updated_at = now()
-		 WHERE id = $${nextIdx}
+		 WHERE id = $${idx}
 		 RETURNING id`,
-		[...params, configId],
+		[...allParams, configId],
 	);
 	return result.rows.length > 0;
 }

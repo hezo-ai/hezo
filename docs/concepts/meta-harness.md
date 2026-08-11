@@ -69,18 +69,19 @@ Everything runs from one self-contained server process:
   external Postgres is [optional](/docs/deployment/configuration)). Uploaded asset
   files live there too, or in any
   [S3-compatible bucket](/docs/deployment/configuration) if you configure one.
-- **Egress proxy** - the mandatory exit through which all agent network traffic
-  flows, where secret placeholders become real values for allowed hosts only.
-- **Docker orchestration** - provisions and manages the containers agents run in.
+- **Egress proxy** - the checkpoint every request that could carry a secret must pass,
+  where placeholders become real values for allowed hosts only.
+- **Container orchestration** - provisions and manages the containers agents run in, on
+  the local Docker daemon or a managed sandbox service.
 - **MCP server** - a built-in [Model Context Protocol](/docs/mcp/hezo-mcp-server)
   endpoint, so agents (Hezo's own and external clients) can manage your work.
 
 ### Where agents run
 
-Each project gets its own **container** - a private workspace with the project's
-code and tools. Agents execute inside it, never on your host directly. All their
-outbound traffic is forced through the egress proxy, and the keys used to sign commits
-or reach your model never enter the container. See
+Agents execute inside **containers** - private workspaces holding a project's code and
+tools - never on your host directly. A container serves one project, one run at a time.
+Outbound requests that could carry a secret pass through the egress proxy, and the keys
+used to sign commits never enter a container. See
 [Container isolation](/docs/security/container-isolation) for the security case, and
 [Containers](/docs/containers/overview) for where they run: your own Docker daemon by
 default, or a managed sandbox service, switchable at any time.
