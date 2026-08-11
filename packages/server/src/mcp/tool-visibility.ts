@@ -29,7 +29,7 @@ import type { AuthInfo } from '../lib/types';
 
 /**
  * The caller classes a tool can be restricted to, named for the gate its handler
- * actually enforces. Absence from {@link TOOL_AUDIENCE} means `everyone`, which
+ * actually enforces. A tool registered without an `audience` means `everyone`, which
  * is correct for the ~60 tools gated only by project scope.
  */
 export type ToolAudience =
@@ -56,67 +56,6 @@ export type ToolAudience =
 	 *  `canCoordinateTeam` and its `|| isHqInstanceAgent` variant: the two differ
 	 *  only in team scoping, which this layer deliberately does not model. */
 	| 'coordinator';
-
-/**
- * The restricted tools, and nothing else. Mirrors `MCP_WRITE_TOOLS`: a name set
- * consulted at registration rather than an argument threaded through 81 call
- * sites.
- *
- * Each entry was read off the handler's own check, not from the `auth:` prose in
- * `TOOL_DOC_META` - that prose is documentation and is wrong in several places
- * (it claims a gate for `list_marketplace_teams` and `get_marketplace_team`
- * whose handlers take no `auth` at all, and "Captain only" for
- * `update_goal_progress` / `update_project_progress`, which check only for an
- * agent in a run).
- */
-export const TOOL_AUDIENCE: Readonly<Record<string, ToolAudience>> = {
-	// Superuser board user only; the API key is rejected.
-	create_team: 'admin_superuser',
-
-	// An agent, inside a run.
-	report_no_work: 'agent_run',
-	update_goal_progress: 'agent_run',
-	update_project_progress: 'agent_run',
-	update_comment: 'agent_run',
-
-	// An agent, editing its own memory.
-	update_chat_memory: 'agent',
-
-	// Same-team agent or board user; the API key is excluded.
-	get_agent_system_prompt: 'agent_or_admin',
-	get_agent_system_prompts: 'agent_or_admin',
-	set_agent_summary: 'agent_or_admin',
-	set_agent_summaries: 'agent_or_admin',
-	get_agent_team_context: 'agent_or_admin',
-	get_agent_team_contexts: 'agent_or_admin',
-
-	// CEO only.
-	create_project: 'ceo',
-	start_team_setup: 'ceo',
-
-	// CEO, but the check fires only for agents.
-	apply_marketplace_team: 'ceo_if_agent',
-	apply_marketplace_agent: 'ceo_if_agent',
-
-	// Captain only.
-	update_hire_proposal: 'captain',
-
-	// Captain or CEO.
-	suggest_goal: 'captain_or_ceo',
-	create_hire_proposal: 'captain_or_ceo',
-
-	// Captain, or an HQ agent acting in the team.
-	set_agent_name: 'coordinator',
-	generate_agent_avatar: 'coordinator',
-	set_team_summary: 'coordinator',
-	set_agent_team_context: 'coordinator',
-	set_agent_team_contexts: 'coordinator',
-	set_agent_reports_to: 'coordinator',
-	set_agent_status: 'coordinator',
-	update_agent_system_prompt: 'coordinator',
-	update_agent_system_prompts: 'coordinator',
-	update_project_custom_prompt: 'coordinator',
-};
 
 /**
  * The role facts an audience decision needs that `AuthInfo` does not carry.
@@ -192,12 +131,13 @@ export async function projectToolsForCaller<T extends ListedTool>(
 	db: Db,
 	auth: AuthInfo,
 	tools: readonly T[],
+	audienceFor: (name: string) => ToolAudience | undefined,
 ): Promise<ListedTool[]> {
-	const restricted = tools.some((t) => TOOL_AUDIENCE[t.name] !== undefined);
+	const restricted = tools.some((t) => audienceFor(t.name) !== undefined);
 	const role = restricted ? await loadRoleFacts(db, auth) : { slug: null, isHqAgent: false };
 	const out: ListedTool[] = [];
 	for (const t of tools) {
-		const audience = TOOL_AUDIENCE[t.name];
+		const audience = audienceFor(t.name);
 		if (audience && !AUDIENCE_PREDICATES[audience](auth, role)) continue;
 		out.push(withoutInertSchemaKeys(t));
 	}

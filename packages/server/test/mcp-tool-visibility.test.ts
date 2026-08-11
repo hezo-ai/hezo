@@ -4,8 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { getToolDefs } from '../src/mcp/server';
-import { TOOL_AUDIENCE } from '../src/mcp/tool-visibility';
+import { audienceOf, getToolDefs } from '../src/mcp/server';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -83,20 +82,26 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-describe('TOOL_AUDIENCE declarations', () => {
-	it('names only tools that are actually registered', () => {
-		// A stale entry would silently stop hiding anything after a rename, and
-		// nothing else would notice.
-		const registered = new Set(getToolDefs().map((t) => t.name));
-		const unknown = Object.keys(TOOL_AUDIENCE).filter((name) => !registered.has(name));
-		expect(unknown).toEqual([]);
-	});
+describe('audience declarations', () => {
+	// There is deliberately no "every declared audience names a registered tool"
+	// test here. The audience is declared *on* the registration, so naming a tool
+	// that does not exist is not a drift a test has to catch - it is a call that
+	// cannot be written. That is the whole reason the side table went away.
 
 	it('leaves the great majority of the registry unrestricted', () => {
 		// Most tools are gated only by project scope, so filtering is a trim, not a
-		// redesign. If this ratio moves sharply, the table has drifted into
+		// redesign. If this ratio moves sharply, the audiences have drifted into
 		// describing scope rather than caller class.
-		expect(Object.keys(TOOL_AUDIENCE).length).toBeLessThan(getToolDefs().length / 2);
+		const restricted = getToolDefs().filter((t) => t.audience !== undefined);
+		expect(restricted.length).toBeLessThan(getToolDefs().length / 2);
+		// And it is not vacuous: the projection has something to act on.
+		expect(restricted.length).toBeGreaterThan(20);
+	});
+
+	it('resolves an audience off the registry, and undefined for an unknown name', () => {
+		expect(audienceOf('create_team')).toBe('admin_superuser');
+		expect(audienceOf('list_tasks')).toBeUndefined();
+		expect(audienceOf('no_such_tool')).toBeUndefined();
 	});
 });
 

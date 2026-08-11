@@ -18,7 +18,7 @@ import {
 	ONBOARDING_TOOLS,
 	REGISTER_TOOL,
 } from './onboarding';
-import { projectToolsForCaller } from './tool-visibility';
+import { projectToolsForCaller, type ToolAudience } from './tool-visibility';
 import {
 	authContext,
 	callerOriginContext,
@@ -89,6 +89,18 @@ export function initMcpServer(
 
 export function getToolDefs(): ToolDef[] {
 	return toolDefs;
+}
+
+/**
+ * The caller class a tool's handler gates on, read off its own registration.
+ *
+ * `tools/list` comes back from the SDK carrying only what the protocol defines,
+ * so the audience has to be looked up by name on the way out - but the lookup
+ * resolves against the registry itself, not a second table that could name a
+ * tool no longer registered, or miss one newly added.
+ */
+export function audienceOf(name: string): ToolAudience | undefined {
+	return toolDefs.find((t) => t.name === name)?.audience;
 }
 
 function extractBearer(c: Context<Env>): string | null {
@@ -215,7 +227,12 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 		// schemas costs it context on every turn. Hiding only - `tools/call` still
 		// runs every gate below, so this can never be the thing granting access.
 		const listed = await client.listTools();
-		result = { ...listed, tools: await projectToolsForCaller(db, auth, listed.tools) };
+		result = {
+			...listed,
+			// The audience rides on each tool's registration, so it is read back off
+			// the registry rather than from a second table keyed by name.
+			tools: await projectToolsForCaller(db, auth, listed.tools, audienceOf),
+		};
 	} else if (body.method === 'tools/call') {
 		result = await authContext.run(auth, () =>
 			callerOriginContext.run(callerOrigin(c), () => client.callTool(body.params)),

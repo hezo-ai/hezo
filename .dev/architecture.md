@@ -1064,7 +1064,7 @@ override. `marketplace/index.json` is the catalog listing.
   role instead of authoring one from scratch. Guidance lives in `agents/_partials/captain/hire-workflow.md`
   (a partial, since only the seeded Captain/CEO file hires — runtime hires never do) and
   `agents/_instance/ceo.md` § Roster changes. Both `apply_marketplace_*` tools are in
-  `MCP_WRITE_TOOLS`, so a run that only provisions is not recorded as a no-op.
+  `write: true` on its registration, so a run that only provisions is not recorded as a no-op.
 - **Export a live team as a bundle.** `GET /api/projects/:projectId/team-bundle`
   (`services/team-bundle-export.ts`, `exportTeamBundle`) serializes a project's current team
   into a self-contained `MarketplaceTeamDef` — the inverse of `applyMarketplaceTeamToTeam`. It
@@ -4769,9 +4769,19 @@ registry.
 **`tools/list` is projected per caller** (`mcp/tool-visibility.ts`). Every authenticated
 principal used to receive the whole registry, so a worker agent scoped to one project carried
 `create_team`, the CEO's project-creation tools and every Captain-only prompt editor — schemas
-resident in its context on every turn for tools its own handler would refuse. `TOOL_AUDIENCE`
-names the ~30 restricted tools and the caller class each one's handler actually gates on;
-absence means everyone, which is right for the ~50 gated only by project scope. Role-shaped
+resident in its context on every turn for tools its own handler would refuse. Each tool declares
+an `audience` on its own `tool(...)` registration, naming the caller class its handler actually
+gates on; no `audience` means everyone, which is right for the ~50 gated only by project scope.
+
+**These per-tool facts are declared at the registration, never in a table beside it.** `write`,
+`audience`, `resultByteLimit` and `batchArrayParam` all ride on `ToolOptions`. They used to be
+four separate `Record<toolName, …>` tables, which is a shape that can only drift: a rename left
+a stale entry pointing at nothing, and a new tool needing one simply never got it, with nothing
+to say so - three of the four had no drift test at all. Declared on the tool, the fact and the
+tool cannot separate, and naming a tool that does not exist stops being a bug a test has to
+catch and becomes a call that cannot be written. `TOOL_DOC_META` deliberately stays a table:
+it holds documentation prose, not behaviour, and `mcp-reference.test.ts` already asserts it
+covers exactly the registered tools. Role-shaped
 audiences (CEO, Captain, coordinator) need facts `AuthInfo` does not carry, so one query per
 `tools/list` resolves the agent's slug and whether it is an HQ member; `tools/list` runs once
 per session, not per request. The same projection strips the per-tool `$schema` key, which is
