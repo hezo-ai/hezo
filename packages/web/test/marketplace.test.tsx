@@ -33,6 +33,30 @@ test('marketplace detail shows the roster, version, and changelog with breadcrum
 	await findByTestId('marketplace-add-existing');
 });
 
+test('the marketplace roster names each teammate and shows their avatar', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/marketplace/software-development' });
+	await findByTestId('marketplace-roster');
+
+	// The team authors a fixed human name per role, so the roster introduces the
+	// person and keeps the role as the supporting line - not the role alone.
+	const engineer = await findByTestId('roster-row-engineer');
+	expect(engineer.textContent).toContain('Max');
+	expect(engineer.textContent).toContain('Engineer');
+	const architect = await findByTestId('roster-row-architect');
+	expect(architect.textContent).toContain('Ada');
+
+	// The row's avatar is drawn from the team's own `avatar_spec`, so it is a real
+	// generated sprite rather than the initials fallback.
+	const img = engineer.querySelector('img');
+	expect(img?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
+
+	// The Captain carries no human name, so its row stays role-only and falls back
+	// to initials - asserting no name line got invented for it.
+	const captain = await findByTestId('roster-row-captain');
+	expect(captain.textContent).toContain('Captain');
+	expect(captain.querySelector('img')).toBeNull();
+});
+
 test('Launch new project opens the standard create dialog preselected to the team', async () => {
 	const { findByTestId, user } = await renderApp({
 		initialPath: '/marketplace/software-development',
