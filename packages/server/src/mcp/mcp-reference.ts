@@ -305,6 +305,11 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
+	update_dashboard_widget_order: {
+		category: 'Projects',
+		returns:
+			'`{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.',
+	},
 	set_agent_name: {
 		category: 'Agent prompts & context',
 		returns:

@@ -144,7 +144,7 @@ test('clicking a project avatar opens that project menu', async () => {
 	await user.click(avatar);
 
 	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\//));
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 });
 
 test('superuser creates a new project from the rail create button', async () => {

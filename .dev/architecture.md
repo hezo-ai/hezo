@@ -1530,6 +1530,22 @@ cover the rest of the run:
   the first cut of this check - would have failed every Claude Code run on that CLI, and
   the live agent-CLI conformance suite is what caught it.
 
+  **The status does not say whether the tools arrived, so the count does.** `connected`
+  means the session came up, not that the server's tools reached the model, and that gap
+  is what made "connector X's tools are missing" unfalsifiable from a run log: the banner
+  read healthy either way. The session line therefore carries a per-server tool count next
+  to each status - `mcp: hezo=connected(73) typefully=connected(27)` - counted from the
+  `mcp__<server>__<tool>` namespace the injector builds. Counting matches against the
+  server names the event itself reports rather than splitting on `__`, so a connector whose
+  own name contains the separator still counts correctly. A server reporting `connected`
+  while contributing **zero** tools gets its own `[runner]` warning, because that is the
+  shape of every way the tools can fail to arrive (a list the runtime deferred behind its
+  own search tool, an empty catalogue, an allowlist that withheld everything) and none of
+  them show up in the status. The `tools` array is typed loosely by the CLI and Hezo had
+  only ever needed its length, so both plausible element shapes are accepted and anything
+  else is skipped; when no name parses, the counts are omitted entirely rather than
+  printing a misleading zero for every server.
+
 The runner also orders these: a signal kill outranks a captured terminal error, which in
 turn outranks "produced no output" on the run row - each is the cause of the one below it,
 and reporting the symptom first sends the reader after the wrong thing. A process a signal
@@ -3783,6 +3799,30 @@ otherwise a leading-word heuristic. An unrecognised name classifies as **write**
 heuristic can never widen access by accident. `summarizeMethodAccess` is the single source
 for every count the card, the dialog, and `list_connectors` show, so they can't disagree.
 
+`classifyMcpMethods` (the whole-catalog entry point) first detects a **vendor namespace** -
+a leading token every tool shares, as in `typefully_list_drafts` / `typefully_get_me` - and
+classifies on the word after it. Without that the vendor sits where the verb belongs and an
+entire server classifies as write. Detection is deliberately conservative: every tool must
+share the token, and the token is refused when it is itself a read prefix (a server whose
+tools are all `list_*` is naming them consistently, not namespacing them) or a plain mutation
+verb (`WRITE_VERB_PREFIXES`). A single tool can imply a namespace; those two refusals are what
+make that safe, since they reject exactly the tokens a one-tool guess would get wrong -
+`update_view` keeps `update` as its verb rather than stripping to the read prefix `view`.
+`classifyMcpMethod` called directly on one tool, with no namespace passed, keeps its old
+behaviour.
+
+Because of that, an `access: 'read'` request can resolve to an allowlist of nothing when the
+classifier recognises no read method at all. `discoverConnectorMethods` **refuses to persist
+an empty allowlist**: `enabled_methods` stays NULL (unrestricted) and the miss is logged,
+because `[]` means restricted-to-nothing and would withhold every tool while the card still
+read Connected. The request stays pending, so a later refresh can still satisfy it.
+
+Discovery also warns when a fully-qualified `mcp__<server>__<tool>` name exceeds
+`MCP_TOOL_NAME_MAX_LENGTH` (64, the cap Anthropic and the OpenAI-compatible endpoints share).
+Advisory only - what happens past the limit is the provider's call, so the descriptor is
+unaffected - and the warning names the connector, since renaming it shortens every one of its
+tools at once.
+
 `discoverConnectorMethods` (`services/connectors/method-discovery.ts`) probes a connected
 `saas` connector over the MCP SDK's Streamable HTTP transport (SSE fallback) and caches the
 catalog. It decrypts the connector's own credential in-process (trusted server code — § 7's
@@ -4141,6 +4181,15 @@ than failing.
 `sm:`/`md:`/`lg:`. Three breakpoints (mobile <768px, tablet 768–1023px, desktop 1024px+).
 Every UI change must work at all three, and its browser test must verify mobile
 (`AGENTS.md` › UX).
+
+**Project Dashboard.** Opening a project (`/projects/:slug` or a rail click) redirects to
+`/projects/:slug/dashboard`, which is also the first item in the project sidebar. The page
+loads a single aggregate payload from `GET /api/projects/:projectId/dashboard`
+(`services/project-dashboard.ts`): action items (approvals, unread @admin mentions,
+pending credential requests), calendar-window spend + budget caps, in-progress/review
+tasks, progress summary + goals preview, and a team snapshot including running agents.
+HQ (`is_internal`) omits spend, progress, and goals. Query keys use the route-param slug;
+WebSocket invalidation covers the tables that feed the aggregate.
 
 **PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
 `display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**
@@ -4642,7 +4691,8 @@ shapes.
   `instance-settings` (incl. `PATCH /instance-settings/locale` — self-authenticating: open
   pre-onboarding, superuser after; § 11), `preferences`, `ui-state`.
 - **Projects & teams** — `projects` (creation/intake, the 1:1 team reached *through* the
-  project — there is no bare `GET /teams`), `team-templates`, `agent-types`, `repos`,
+  project — there is no bare `GET /teams`; includes `GET …/dashboard` for the per-project
+  at-a-glance aggregate), `team-templates`, `agent-types`, `repos`,
   `project-docs`.
 - **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
   `execution-locks`, `queued-wakeups`, `chat` (live realtime chat session — today the CEO).

@@ -33,7 +33,9 @@ test('displays project name and description', async () => {
 	// useProject query resolves, so waiting on it confirms the page loaded with
 	// the project's data.
 	await findByText('Test project settings.', undefined, { timeout: 15_000 });
-	const sidebarName = await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	const sidebarName = await findByTestId('project-sidebar-dashboard', undefined, {
+		timeout: 15_000,
+	});
 	await waitFor(() => expect(sidebarName.textContent).toContain(projectName));
 });
 

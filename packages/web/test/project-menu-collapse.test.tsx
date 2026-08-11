@@ -32,7 +32,7 @@ test('collapsing hides the project menu and docks an expand tab to the rail; exp
 	});
 
 	// Expanded by default: the menu is shown with a collapse control, no expand tab.
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 	expect(queryByTestId('project-sidebar-expand')).toBeNull();
 	const collapse = await findByTestId('project-sidebar-collapse');
 
@@ -40,12 +40,12 @@ test('collapsing hides the project menu and docks an expand tab to the rail; exp
 	// and the choice is persisted.
 	await user.click(collapse);
 	await findByTestId('project-sidebar-expand', undefined, { timeout: 15_000 });
-	await waitFor(() => expect(queryByTestId('project-sidebar-name')).toBeNull());
+	await waitFor(() => expect(queryByTestId('project-sidebar-dashboard')).toBeNull());
 	expect(localStorage.getItem(COLLAPSED_KEY)).toBe('1');
 
 	// Expand → the menu returns, the tab is gone, and the persisted flag clears.
 	await user.click(await findByTestId('project-sidebar-expand'));
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 	expect(queryByTestId('project-sidebar-expand')).toBeNull();
 	expect(localStorage.getItem(COLLAPSED_KEY)).toBe('0');
 });
@@ -70,5 +70,5 @@ test('a persisted collapsed state renders collapsed on first paint', async () =>
 
 	// It comes up collapsed: the expand tab is present and the menu is absent.
 	await findByTestId('project-sidebar-expand', undefined, { timeout: 15_000 });
-	expect(queryByTestId('project-sidebar-name')).toBeNull();
+	expect(queryByTestId('project-sidebar-dashboard')).toBeNull();
 });

@@ -32,6 +32,10 @@ architect, engineers, QA, and more). See
 
 ## 3. Watch the team work
 
+Open the project from the rail - it lands on the **Dashboard**, where you can see action
+items waiting on you, current spend, work in progress, a progress snippet, and goals at a
+glance.
+
 The Captain starts on the **planning task**, turning your brief into the work the team
 will do. If the brief leaves something load-bearing open, it will post a question that
 `@`-mentions you and wait for your answer rather than guessing - so an early question on
@@ -48,5 +52,6 @@ look for work, so the team keeps moving without you driving each step.
   [progress summary](/docs/concepts/tasks) an agent keeps as it goes.
 - **Approve sensitive actions** when an agent asks - including pasting in a credential
   it needs (which it will only ever use as a [protected placeholder](/docs/security/secret-protection)).
-- **Keep an eye on spend** from the budget view. See
+  Pending approvals and credential requests also surface on the Dashboard's action items.
+- **Keep an eye on spend** from the Dashboard or the full budget view. See
   [Budgets & cost control](/docs/concepts/budgets-and-costs).

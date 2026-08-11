@@ -282,6 +282,21 @@ List projects, by name. With CEO cross-team access (or as superuser) returns eve
 
 **Authorization:** An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.
 
+### `update_dashboard_widget_order`
+
+_Write tool._
+
+Save the user's preferred widget order for the project dashboard. Pass the full ordered list of widget ids; unknown or duplicate ids are rejected. The order persists across sessions and is returned in subsequent get_project_dashboard calls.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `order` | `string[]` | Yes | Ordered list of widget ids. Valid values: goals, team_snapshot, in_progress, spend. |
+
+**Returns:** `{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.
+
 ## Tasks
 
 ### `list_tasks`

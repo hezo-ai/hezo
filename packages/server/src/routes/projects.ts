@@ -4,6 +4,7 @@ import {
 	CONTAINER_DISK_GB_MAX,
 	CONTAINER_DISK_GB_MIN,
 	ContainerStatus,
+	DASHBOARD_WIDGET_IDS,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
 	type MarketplaceRosterAgent,
@@ -43,6 +44,7 @@ import {
 	enqueueAddMarketplaceTeamTask,
 } from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
+import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
 import { createBundleVault } from '../services/sandbox/bundle-vault';
@@ -551,6 +553,47 @@ projectsRoutes.get('/projects/:projectId/progress', async (c) => {
 	const progress = await getProjectProgress(c.get('db'), projectId);
 	if (!progress) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	return ok(c, progress);
+});
+
+// Store a user's preferred widget order for the dashboard.
+projectsRoutes.patch('/projects/:projectId/dashboard-widget-order', async (c) => {
+	const projectId = c.get('projectId') as string;
+	const db = c.get('db');
+
+	let body: unknown;
+	try {
+		body = await c.req.json();
+	} catch {
+		return err(c, 'BAD_REQUEST', 'Invalid JSON body', 400);
+	}
+
+	if (
+		typeof body !== 'object' ||
+		body === null ||
+		!Array.isArray((body as Record<string, unknown>).order)
+	) {
+		return err(c, 'BAD_REQUEST', 'Body must be { order: DashboardWidgetId[] }', 400);
+	}
+
+	const raw: unknown[] = (body as { order: unknown[] }).order;
+	const known = new Set(DASHBOARD_WIDGET_IDS as readonly string[]);
+	const seen = new Set<string>();
+	for (const item of raw) {
+		if (typeof item !== 'string' || !known.has(item)) {
+			return err(c, 'BAD_REQUEST', `Unknown widget id: ${String(item)}`, 400);
+		}
+		if (seen.has(item)) {
+			return err(c, 'BAD_REQUEST', `Duplicate widget id: ${item}`, 400);
+		}
+		seen.add(item);
+	}
+
+	await db.query(`UPDATE projects SET dashboard_widget_order = $1 WHERE id = $2`, [
+		JSON.stringify(raw),
+		projectId,
+	]);
+
+	return ok(c, { order: sanitizeWidgetOrder(raw) });
 });
 
 projectsRoutes.patch('/projects/:projectId', async (c) => {
