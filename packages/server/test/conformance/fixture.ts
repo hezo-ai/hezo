@@ -22,7 +22,14 @@
  * paid-provider fixture is manual and opt-in - see `test/live/`.
  */
 
-import type { AgentRuntime, AiProvider } from '@hezo/shared';
+import {
+	type AgentRuntime,
+	AI_PROVIDER_INFO,
+	AiProvider,
+	ALL_AI_PROVIDERS,
+	KIMI_DEFAULT_MODEL,
+	providerRuntimes,
+} from '@hezo/shared';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
 
 /**
@@ -148,6 +155,102 @@ export interface LiveModelProvider {
 	 * larger model and the run is billed either way.
 	 */
 	model?: string;
+	/**
+	 * Server URL for a locally-hosted runner (Ollama, LM Studio), whose endpoint
+	 * is per-install and therefore cannot live in a compile-time table.
+	 *
+	 * It must be an address **the container** can reach, which is not the address
+	 * your browser uses: `localhost` inside a container is the container. That
+	 * rules these providers out on a managed backend entirely, and on local Docker
+	 * means `http://host.docker.internal:<port>` or a LAN address.
+	 */
+	baseUrl?: string;
+}
+
+/**
+ * Where each provider's credential comes from, and what to pin it to.
+ *
+ * Exhaustive by construction, so adding a provider is a compile error here rather
+ * than a combination that silently never runs - which is the failure this table
+ * exists to prevent. What it does *not* restate is which CLIs a provider can run
+ * on: {@link liveModelProviders} reads that from `providerRuntimes`, so a runtime
+ * added to a provider in production is covered here the moment it lands.
+ *
+ * The models are the ids this repo already relies on for that provider's Stop-hook
+ * judge - real, current, and cheap enough that we already pay for them once per
+ * agent turn. `HEZO_LIVE_MODEL_<PROVIDER>` overrides any of them; a provider with
+ * no default listed simply lets the CLI choose, which is the honest answer where
+ * the catalogue is the operator's (the local runners) or too broad to guess
+ * (OpenRouter).
+ */
+const LIVE_PROVIDER_ENV: Record<AiProvider, { slug: string; model?: string }> = {
+	[AiProvider.Anthropic]: { slug: 'ANTHROPIC', model: 'claude-sonnet-4-6' },
+	[AiProvider.OpenAI]: { slug: 'OPENAI', model: 'gpt-4o-mini' },
+	[AiProvider.Google]: { slug: 'GOOGLE', model: 'gemini-1.5-flash' },
+	[AiProvider.DeepSeek]: { slug: 'DEEPSEEK', model: 'deepseek-v4-flash' },
+	// Slugs, not `provider.toUpperCase()`: the enum values are `z_ai` / `x_ai`, and
+	// nobody types `HEZO_Z_AI_API_KEY`. One stem per provider, so the key variable
+	// and the model override below cannot drift apart.
+	[AiProvider.ZAi]: { slug: 'ZAI', model: 'GLM-4.7' },
+	[AiProvider.OpenRouter]: { slug: 'OPENROUTER' },
+	[AiProvider.Kimi]: { slug: 'KIMI', model: KIMI_DEFAULT_MODEL },
+	[AiProvider.XAi]: { slug: 'XAI', model: 'grok-4.5' },
+	// The local runners take a server URL in place of a key - see `baseUrl`.
+	[AiProvider.Ollama]: { slug: 'OLLAMA' },
+	[AiProvider.LmStudio]: { slug: 'LMSTUDIO' },
+};
+
+/**
+ * The env var carrying a provider's credential: its key, or a local runner's
+ * server URL. Exported so a caller (and the tests) name it the same way the
+ * builder reads it, rather than re-deriving the spelling.
+ */
+export function liveProviderEnvVar(provider: AiProvider): string {
+	const { slug } = LIVE_PROVIDER_ENV[provider];
+	return AI_PROVIDER_INFO[provider].local ? `HEZO_${slug}_BASE_URL` : `HEZO_${slug}_API_KEY`;
+}
+
+/**
+ * Every (provider, runtime) pairing the environment has a credential for.
+ *
+ * **The matrix is derived, never listed.** Providers come from `ALL_AI_PROVIDERS`
+ * and their CLIs from `providerRuntimes`, so the coverage a fixture gets is
+ * whatever production currently supports - a provider gaining an alternate CLI is
+ * covered with no edit here, and cannot be quietly missed. What gates each entry
+ * is only whether its key is present, so supplying one key runs that provider on
+ * every CLI it can drive and nothing else.
+ *
+ * Deliberately api-key only: subscription and file-mount auth have no credential
+ * that can be handed to a container, so those pairings are unreachable from here
+ * however the fixture is configured.
+ *
+ * Each entry bills a completion and provisions a container, so a full-matrix run
+ * is not free - which is why this is opt-in per key rather than all-or-nothing.
+ */
+export function liveModelProviders(): LiveModelProvider[] {
+	const out: LiveModelProvider[] = [];
+	for (const provider of ALL_AI_PROVIDERS) {
+		const spec = LIVE_PROVIDER_ENV[provider];
+		const supplied = process.env[liveProviderEnvVar(provider)]?.trim();
+		if (!supplied) continue;
+
+		const info = AI_PROVIDER_INFO[provider];
+		const model = process.env[`HEZO_LIVE_MODEL_${spec.slug}`]?.trim() || spec.model;
+		for (const runtime of providerRuntimes(provider)) {
+			out.push({
+				name: info.name,
+				provider,
+				runtime,
+				// A local runner authenticates only if the operator turned auth on, so
+				// what its env var carries is the URL; the credential is the documented
+				// sentinel, exactly as the create route stores it.
+				apiKey: info.local ? info.local.authTokenSentinel : supplied,
+				...(info.local ? { baseUrl: supplied } : {}),
+				...(model ? { model } : {}),
+			});
+		}
+	}
+	return out;
 }
 
 /** A label every container this suite creates carries, so a sweep can find them. */

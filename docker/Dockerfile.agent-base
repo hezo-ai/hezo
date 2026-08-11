@@ -89,12 +89,30 @@ RUN HOME=/opt GROK_BIN_DIR=/usr/local/bin bash -c \
 # SDK its generated skills import) are prebaked, and PRIME_AGENT_KERNEL_PYTHON
 # pins the interpreter so no run pays for it. `--break-system-packages` because
 # the base image's python3 is PEP 668 managed.
+#
+# **The chmod is load-bearing, and the verification runs as `node` for a reason.**
+# A CDN tarball preserves whatever modes it was packed with, where a registry
+# publish would have normalised them: this one installed a bin the unprivileged
+# run-user could not execute, so every Prime Agent run died on
+# `sh: 1: prime-agent: Permission denied` with exit 127, before reaching a model
+# or an MCP server. `a+rX` alone is not enough to fix it - `X` only grants execute
+# to directories and to files that already have it for somebody - hence the
+# explicit `a+rx` on the resolved bin, with the tree-wide pass for traversal.
+#
+# The check underneath it is the part that matters going forward. `RUN` executes
+# as root, so a root-only `prime-agent --version` passed on an image that was
+# broken for every real run - which is exactly how this shipped. Verifying as
+# `node`, the user `docker exec` actually runs agents as, is what turns that
+# blind spot into a failed build. Same class of problem the Grok install solves
+# with its own `chmod -R a+rX /opt/.grok` above.
 ARG PRIME_AGENT_VERSION=0.7.1
 ARG PRIME_AGENT_CDN=https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev
 ENV PRIME_AGENT_KERNEL_PYTHON=/usr/bin/python3
 RUN pip3 install --no-cache-dir --break-system-packages ipykernel mcp \
     && npm install -g "${PRIME_AGENT_CDN}/releases/v${PRIME_AGENT_VERSION}/prime-agent-${PRIME_AGENT_VERSION}.tgz" \
-    && prime-agent --version
+    && chmod -R a+rX "$(npm root -g)" \
+    && chmod a+rx "$(readlink -f "$(command -v prime-agent)")" \
+    && su node -s /bin/sh -c 'prime-agent --version'
 
 # Pre-install Bun (latest) for agent-authored JS/TS projects — the common case,
 # and the runtime Hezo itself uses. Installed globally via npm so `bun`/`bunx`

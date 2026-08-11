@@ -18,14 +18,13 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { DockerClient } from '../../src/services/docker';
 import { CONTAINER_WORKSPACE_ROOT } from '../../src/services/workspace';
 import { describeContainerBackendConformance } from '../conformance';
-import type {
-	ConformanceHarness,
-	LiveAdapterFixture,
-	LiveModelProvider,
+import {
+	type ConformanceHarness,
+	type LiveAdapterFixture,
+	liveModelProviders,
 } from '../conformance/fixture';
 
 const IMAGE = 'hezo/agent-base:latest';
@@ -76,38 +75,13 @@ if (reason) {
 		// The same opt-in the Daytona fixture takes, wired here too so the agent-CLI
 		// suite is not a Daytona-only assertion - a suite one backend ever runs
 		// drifts into describing that backend, which is the reason this whole
-		// directory is generic. Unset in CI (the key is not a secret there), so it
-		// self-skips with a reason and costs nothing; a developer with a key gets a
-		// real run against local Docker.
+		// directory is generic. No keys are set in CI, so it self-skips with a reason
+		// and costs nothing; a developer with keys gets real runs against local
+		// Docker, one per (provider, runtime) pairing they supplied a key for.
 		modelProviders: liveModelProviders(),
 	};
 
 	// One call, deliberately: a suite added to the set reaches this backend
 	// without editing this file, and a new adapter cannot register a subset.
 	describeContainerBackendConformance(fixture, harness);
-}
-
-/**
- * Reads the optional model-provider key. Same env contract as `test/live/`.
- *
- * One key, two runtimes: DeepSeek's default CLI is Claude Code and it also runs
- * on Prime Agent, so the same credential proves both. Prime Agent has to be named
- * explicitly - it is never any provider's default, so nothing would otherwise
- * exercise it, and it is the one runtime whose MCP client is Python inside the
- * kernel rather than the CLI's own.
- */
-function liveModelProviders(): LiveModelProvider[] {
-	const key = process.env.HEZO_DEEPSEEK_API_KEY;
-	if (!key) return [];
-	const model = process.env.HEZO_LIVE_MODEL || 'deepseek-v4-flash';
-	return [
-		{ name: 'DeepSeek', provider: AiProvider.DeepSeek, apiKey: key, model },
-		{
-			name: 'DeepSeek',
-			provider: AiProvider.DeepSeek,
-			runtime: AgentRuntime.PrimeAgent,
-			apiKey: key,
-			model,
-		},
-	];
 }

@@ -235,7 +235,9 @@ function providerEnv(mp: LiveModelProvider, runtime: AgentRuntime): string[] {
 			{
 				value: mp.apiKey,
 				authMethod: AiAuthMethod.ApiKey,
-				baseUrl: null,
+				// Only a local runner carries one; it is what makes `buildProviderEnv`
+				// stamp ANTHROPIC_BASE_URL at the operator's own server.
+				baseUrl: mp.baseUrl ?? null,
 				runtime,
 			},
 			mp.model ?? null,
@@ -583,13 +585,31 @@ function describeOneAgentCliRun(
 			exitCode = (await engine.execInspect(execId)).ExitCode;
 			mark('exec-inspected');
 			if (process.env.HEZO_CONFORMANCE_DUMP) {
-				const { writeFileSync } = await import('node:fs');
-				writeFileSync(`${process.env.HEZO_CONFORMANCE_DUMP}/transcript.txt`, transcript);
-				writeFileSync(`${process.env.HEZO_CONFORMANCE_DUMP}/rendered.txt`, renderedLog);
+				const { mkdirSync, writeFileSync } = await import('node:fs');
+				// One directory per entry, because the whole point of the matrix is
+				// running several. Fixed filenames under the dump root meant each entry
+				// overwrote the last, so a two-entry run left the evidence of exactly
+				// one of them - and silently, since the surviving file looks complete.
+				const dir = `${process.env.HEZO_CONFORMANCE_DUMP}/${fixture.name}-${mp.provider}-${runtime}`
+					.toLowerCase()
+					.replaceAll(/[^a-z0-9/._-]+/g, '-');
+				mkdirSync(dir, { recursive: true });
+				writeFileSync(`${dir}/transcript.txt`, transcript);
+				writeFileSync(`${dir}/rendered.txt`, renderedLog);
 				writeFileSync(
-					`${process.env.HEZO_CONFORMANCE_DUMP}/meta.json`,
+					`${dir}/meta.json`,
 					JSON.stringify(
-						{ runtime, exitCode, tunnelDeath, timeline, mcpMethods, mcpAnswers },
+						{
+							backend: fixture.name,
+							provider: mp.provider,
+							runtime,
+							model: mp.model ?? null,
+							exitCode,
+							tunnelDeath,
+							timeline,
+							mcpMethods,
+							mcpAnswers,
+						},
 						null,
 						2,
 					),

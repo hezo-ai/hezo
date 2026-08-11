@@ -18,44 +18,22 @@
  * backend rather than as an assertion nobody wrote for it.
  */
 
-import { AgentRuntime, AiProvider } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from '../../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../../src/services/sandbox/daytona/engine';
 import { describeContainerBackendConformance } from '../conformance';
-import type {
-	ConformanceHarness,
-	LiveAdapterFixture,
-	LiveModelProvider,
+import {
+	type ConformanceHarness,
+	type LiveAdapterFixture,
+	liveModelProviders,
 } from '../conformance/fixture';
 
 const apiKey = process.env.HEZO_DAYTONA_API_KEY;
-// A second, independent key: the Daytona key buys a sandbox, this buys the
-// completions that prove an agent can actually run in one. Supplying it turns on
-// the agent-CLI suite; without it the sandbox suites run alone and that suite
-// self-skips with a reason. DeepSeek because its flash model is the cheapest way
-// to buy a real run, and because it runs on two of the CLIs Hezo supports.
-const modelKey = process.env.HEZO_DEEPSEEK_API_KEY;
-// The cheapest model the provider serves - the suite asks for one word.
-const model = process.env.HEZO_LIVE_MODEL || 'deepseek-v4-flash';
-// One key, two runtimes. DeepSeek's default is Claude Code (Anthropic-compatible
-// endpoint) and it also runs on Prime Agent, so the same credential proves both
-// CLIs for the price of a second one-word completion. Prime Agent is named
-// explicitly because it is never any provider's default, so nothing else would
-// ever exercise it - and its MCP client is Python inside the kernel rather than
-// the CLI's own, which is the part no unit test can reach.
-const modelProviders: LiveModelProvider[] = modelKey
-	? [
-			{ name: 'DeepSeek', provider: AiProvider.DeepSeek, apiKey: modelKey, model },
-			{
-				name: 'DeepSeek',
-				provider: AiProvider.DeepSeek,
-				runtime: AgentRuntime.PrimeAgent,
-				apiKey: modelKey,
-				model,
-			},
-		]
-	: [];
+// Model-provider keys are separate from the Daytona key: that one buys a sandbox,
+// these buy the completions that prove an agent can actually run in one. Each key
+// supplied turns on every CLI that provider can drive; supplying none leaves the
+// sandbox suites running alone and the agent-CLI suite self-skipping with a reason.
+const modelProviders = liveModelProviders();
 
 if (!apiKey) {
 	describe('Daytona backend conformance', () => {
