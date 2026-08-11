@@ -203,7 +203,7 @@ afterEach(async () => {
 	await Promise.all([activeQueryClient?.cancelQueries(), singletonQueryClient.cancelQueries()]);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 
-	globalThis.fetch = tornDownFetch as typeof globalThis.fetch;
+	globalThis.fetch = tornDownFetch as unknown as typeof globalThis.fetch;
 	if (activeQueryClient) {
 		activeQueryClient.clear();
 		activeQueryClient = null;

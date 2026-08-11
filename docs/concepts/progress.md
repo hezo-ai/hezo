@@ -10,7 +10,7 @@ section: Concepts
 **Captain**, kept current on its own, and readable in about ten seconds. Every project has one.
 You don't have to configure anything, and you don't need to set a goal first.
 
-Open **Progress** in the project menu (just under **Inbox**). Top to bottom it shows:
+Open **Progress** in the project menu (below **Dashboard** and **Inbox**). Top to bottom it shows:
 
 - the **project progress summary** - the high-level read,
 - three columns of **recent task activity** - the specific work,

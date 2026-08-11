@@ -27,6 +27,7 @@ import {
 	CredentialKind,
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
+	DASHBOARD_WIDGET_IDS,
 	DEFAULT_TEAM_ID,
 	DocumentType,
 	extensionOf,
@@ -72,6 +73,7 @@ import {
 } from '../lib/agent-identity';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
+import { assetSearchTextFromBlob } from '../lib/asset-search-text';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
@@ -167,6 +169,7 @@ import {
 	type ProgressActivityInput,
 } from '../services/project-activity';
 import { createProjectWithTeam } from '../services/project-create';
+import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
 import {
@@ -309,6 +312,7 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'update_goal_progress',
 	'update_project_progress',
 	'update_project_custom_prompt',
+	'update_dashboard_widget_order',
 	'apply_marketplace_team',
 	'apply_marketplace_agent',
 ]);
@@ -4789,6 +4793,38 @@ export function registerTools(
 		db,
 	);
 
+	tool(
+		server,
+		'update_dashboard_widget_order',
+		"Save the user's preferred widget order for the project dashboard. Pass the full ordered list of widget ids; unknown or duplicate ids are rejected. The order persists across sessions and is returned in subsequent get_project_dashboard calls.",
+		{
+			project: projectArg(),
+			order: z
+				.array(z.enum(DASHBOARD_WIDGET_IDS as unknown as [string, ...string[]]))
+				.describe(`Ordered list of widget ids. Valid values: ${DASHBOARD_WIDGET_IDS.join(', ')}.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { projectId } = scope;
+
+			const raw = args.order as string[];
+			const seen = new Set<string>();
+			for (const id of raw) {
+				if (seen.has(id)) return { error: `Duplicate widget id: ${id}` };
+				seen.add(id);
+			}
+
+			await db.query(`UPDATE projects SET dashboard_widget_order = $1 WHERE id = $2`, [
+				JSON.stringify(raw),
+				projectId,
+			]);
+
+			return { order: sanitizeWidgetOrder(raw) };
+		},
+		db,
+	);
+
 	// Description maintenance — used by the Captain (and self) to write back
 	// auto-generated agent and team summaries.
 	tool(
@@ -5629,6 +5665,9 @@ export function registerTools(
 	> => {
 		const { db: adb, teamId, projectId, filename, blob, contentType } = opts;
 		const assetId = crypto.randomUUID();
+		// Extracted here rather than in each caller so write_project_asset and
+		// edit_project_asset cannot drift apart - the same reason this helper exists.
+		const searchText = await assetSearchTextFromBlob(blob, contentType);
 		const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
 		let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
 		try {
@@ -5643,6 +5682,7 @@ export function registerTools(
 				uploadedByMemberId: opts.uploadedByMemberId,
 				width: opts.width,
 				height: opts.height,
+				searchText,
 			});
 		} catch (e) {
 			await assets.delete(projectId, assetId).catch(() => {});
@@ -6172,8 +6212,9 @@ export function registerTools(
 				id: string;
 				content_type: string;
 				archived_at: string | null;
+				search_text: string | null;
 			}>(
-				'SELECT id, content_type, archived_at FROM assets WHERE project_id = $1 AND original_filename = $2',
+				'SELECT id, content_type, archived_at, search_text FROM assets WHERE project_id = $1 AND original_filename = $2',
 				[scope.projectId, from],
 			);
 			if (found.rows.length === 0) return { error: `Asset 'assets/${from}' not found` };
@@ -6196,10 +6237,22 @@ export function registerTools(
 			let inserted: { id: string; original_filename: string };
 			try {
 				const r = await db.query<{ id: string; original_filename: string }>(
-					`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+					// The copy has identical bytes, so its search text is the source's -
+					// carry the column across rather than re-extracting it.
+					`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, search_text)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 					 RETURNING id, original_filename`,
-					[assetId, teamId, projectId, source.content_type, byteSize, sha256, to, uploadedBy],
+					[
+						assetId,
+						teamId,
+						projectId,
+						source.content_type,
+						byteSize,
+						sha256,
+						to,
+						uploadedBy,
+						source.search_text,
+					],
 				);
 				inserted = r.rows[0];
 			} catch (e) {
@@ -6751,7 +6804,7 @@ export function registerTools(
 	tool(
 		server,
 		'full_text_search',
-		'Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first.',
+		'Full-text keyword search across the team skills database, tasks, project docs, task comments, and project assets. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first. Assets match on their library path, folders included, so any segment of "launch/hero-image.png" finds it; textual assets (.md, .txt, .html, .svg, and the script/data formats stored as plain text such as .py, .js, .json, .csv, .yaml) also match on their content, while binary ones (images, PDFs, media, archives) match on path alone. Use it to find work product an earlier run produced before rebuilding it; an asset hit returns its path, which you pass to read_project_asset. An asset saved before this search existed matches on path until it is next written. Archived items are excluded.',
 		{
 			project: projectArg(),
 			query: z.string().describe('Search query (keywords)'),

@@ -9,7 +9,7 @@ function getNav(container: HTMLElement): HTMLElement {
 	return nav as HTMLElement;
 }
 
-test('the project menu leads with Inbox, lists the project pages, and has a Team section of agents', async () => {
+test('the project menu leads with Dashboard, lists the project pages, and has a Team section of agents', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { container, findByTestId, queryByTestId, router } = await renderApp({
@@ -26,10 +26,13 @@ test('the project menu leads with Inbox, lists the project pages, and has a Team
 		params: { projectId: projectSlug },
 	});
 
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	const dashboardLink = await findByTestId('project-sidebar-dashboard', undefined, {
+		timeout: 15_000,
+	});
 	const nav = getNav(container);
 
-	// Inbox leads; the project pages follow.
+	// The project title is the dashboard link; the project pages follow beneath it.
+	expect(dashboardLink.getAttribute('href')).toMatch(/\/dashboard$/);
 	expect(within(nav).getByRole('link', { name: 'Inbox' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Documents' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Assets' })).toBeTruthy();
@@ -73,7 +76,7 @@ test('Git, Custom Prompt, Container and Activity nest under Settings, disclosed 
 		to: '/projects/$projectId/tasks',
 		params: { projectId: projectSlug },
 	});
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 	expect(within(getNav(container)).queryByRole('link', { name: 'Git' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Custom Prompt' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Containers' })).toBeNull();
@@ -124,7 +127,7 @@ test('the Team section is always expanded — no collapse/expand toggle', async 
 		to: '/projects/$projectId/tasks',
 		params: { projectId: projectSlug },
 	});
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 	await waitFor(() => expect(within(getNav(container)).queryByText('Captain')).toBeTruthy(), {
 		timeout: 20_000,
 	});
@@ -150,7 +153,7 @@ test('HQ agents appear in the Team section as global members linking to the HQ p
 		to: '/projects/$projectId/tasks',
 		params: { projectId: projectSlug },
 	});
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 
 	// The CEO (an HQ agent) surfaces as a virtual member linking to its HQ page.
 	const nav = getNav(container);
@@ -185,7 +188,7 @@ test('Team agents use a pulsing live dot for running and no dot when idle', asyn
 		to: '/projects/$projectId/tasks',
 		params: { projectId: projectSlug },
 	});
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 	const nav = getNav(container);
 
 	// The "idle"/"running" text suffixes are gone — status is a dot now.
@@ -225,7 +228,7 @@ test("the project menu persists across the project's team pages and disappears o
 		to: '/projects/$projectId',
 		params: { projectId: projectSlug },
 	});
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 
 	// The Team header links to the agents page, nested under the project.
 	await user.click(within(getNav(container)).getByRole('link', { name: 'Team' }));
@@ -233,12 +236,12 @@ test("the project menu persists across the project's team pages and disappears o
 		expect(router.state.location.pathname).toBe(`/projects/${projectSlug}/agents`),
 	);
 	// The menu stays — the route still carries the project.
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 
 	// Going to the cross-team home drops the menu (full-width content).
 	await router.navigate({ to: '/home' });
 	await waitFor(() =>
-		expect(container.querySelector('[data-testid="project-sidebar-name"]')).toBeNull(),
+		expect(container.querySelector('[data-testid="project-sidebar-dashboard"]')).toBeNull(),
 	);
 });
 
@@ -273,7 +276,7 @@ test('the Progress nav item shows the "no goals yet" dot only until the project 
 		to: '/projects/$projectId/tasks',
 		params: { projectId: withGoalSlug },
 	});
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 	await waitFor(() => expect(queryByTestId('project-sidebar-goals-empty-dot')).toBeNull(), {
 		timeout: 15_000,
 	});
@@ -345,7 +348,7 @@ test('the Containers nav item stays unmarked while a container is being created'
 		to: '/projects/$projectId/container',
 		params: { projectId: projectSlug },
 	});
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 	await findByTestId('project-sidebar-container', undefined, { timeout: 15_000 });
 
 	expect(queryByTestId('project-sidebar-container-spinner')).toBeNull();
@@ -373,7 +376,7 @@ test('the Container nav item shows no spinner once the container is running', as
 		to: '/projects/$projectId/container',
 		params: { projectId: projectSlug },
 	});
-	await findByTestId('project-sidebar-name', undefined, { timeout: 15_000 });
+	await findByTestId('project-sidebar-dashboard', undefined, { timeout: 15_000 });
 
 	// Once the Containers item is disclosed and healthy it carries no marker.
 	// Provisioning no longer marks it at all - a project gets a container whenever

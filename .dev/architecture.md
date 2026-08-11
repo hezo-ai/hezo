@@ -640,7 +640,32 @@ no folder table, `UNIQUE(project_id, original_filename)` keys the full path, and
 move on a rename. Task-thread attachment uploads (`POST …/tasks/:taskId/assets`) auto-file
 under `uploads/<task-identifier>` (`taskUploadsFolder` in `@hezo/shared`: the task identifier
 e.g. `IN-42` sanitized to one segment, so the folder stays stable across renames), while direct
-library uploads land in the folder the uploader chose. Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
+library uploads land in the folder the uploader chose. **Assets are full-text searchable** (migration 055), and they are the one searchable entity
+whose content SQL cannot reach: the bytes live in the asset store, so unlike `documents`,
+`tasks`, `task_comments` and `skills` — whose `search_tsv` reads a sibling column — an
+asset's text has to be extracted at write time. `assets.search_text` holds it (NULL for a
+binary type, `''` for a text asset that yielded nothing), capped at
+`ASSET_SEARCH_TEXT_MAX_BYTES` (256 KB) by `lib/asset-search-text.ts`, which also strips NUL
+and other C0 controls, drops a UTF-8 BOM, drops any non-whitespace run over 128 chars, and
+reduces `text/html`/`image/svg+xml` to their visible text. Those scrubs are load-bearing
+rather than cosmetic: `search_tsv` is a GENERATED column computed inside the INSERT, so a
+NUL (rejected by Postgres `text`) or a lexeme over 2 KB fails the **asset write**, not just
+the search. `InsertAssetInput.searchText` is deliberately **required**, so a new write path
+cannot silently skip indexing; the extraction itself sits inside `storeUploadedAsset`
+(`routes/assets.ts`, reusing the one `arrayBuffer()` it already takes for raster dimensions)
+and `storeAssetBlob` (`mcp/tools.ts`, covering `write_project_asset` + `edit_project_asset`),
+while `copy_project_asset` carries the source row's column across. `move_project_asset` and
+the folder PATCH need no code at all — they touch `original_filename`, which the generated
+column re-derives. `search_tsv` indexes the filename at weight A **twice, raw and
+regexp-normalized**, because Postgres' parser emits `launch/hero-image.png` as a single
+`file` lexeme (so `hero`/`image`/`png` would all miss) while the ASCII-only normalization
+alone would destroy a non-ASCII name (`résumé-final.pdf` → `r sum final pdf`); `search_text`
+follows at weight B. There is **no backfill**: an asset written before 055 is filename-
+searchable immediately (the ADD COLUMN rewrite computes its tsvector) and gains content
+search the next time it is saved. `search_text` is a plain column, so it travels in logical
+backups and a restore stays searchable without re-reading blobs; it must never enter a list
+projection (`routes-assets-branches.test.ts` guards it — the assets list route is
+unpaginated). Reorganization: `move_project_asset`/`copy_project_asset` (MCP) and
 `PATCH /api/projects/:id/assets/:assetId` (the web Move dialog, human-only) reorganize
 metadata only, erroring on destination collision. **Archival is the agent-facing soft
 delete** (docs and assets both carry `archived_at` + `archived_by_member_id`, migration
@@ -1504,6 +1529,22 @@ cover the rest of the run:
   the tunnel guard above as the backstop. Reading anything-but-`connected` as a failure -
   the first cut of this check - would have failed every Claude Code run on that CLI, and
   the live agent-CLI conformance suite is what caught it.
+
+  **The status does not say whether the tools arrived, so the count does.** `connected`
+  means the session came up, not that the server's tools reached the model, and that gap
+  is what made "connector X's tools are missing" unfalsifiable from a run log: the banner
+  read healthy either way. The session line therefore carries a per-server tool count next
+  to each status - `mcp: hezo=connected(73) typefully=connected(27)` - counted from the
+  `mcp__<server>__<tool>` namespace the injector builds. Counting matches against the
+  server names the event itself reports rather than splitting on `__`, so a connector whose
+  own name contains the separator still counts correctly. A server reporting `connected`
+  while contributing **zero** tools gets its own `[runner]` warning, because that is the
+  shape of every way the tools can fail to arrive (a list the runtime deferred behind its
+  own search tool, an empty catalogue, an allowlist that withheld everything) and none of
+  them show up in the status. The `tools` array is typed loosely by the CLI and Hezo had
+  only ever needed its length, so both plausible element shapes are accepted and anything
+  else is skipped; when no name parses, the counts are omitted entirely rather than
+  printing a misleading zero for every server.
 
 The runner also orders these: a signal kill outranks a captured terminal error, which in
 turn outranks "produced no output" on the run row - each is the cause of the one below it,
@@ -4143,6 +4184,15 @@ than failing.
 Every UI change must work at all three, and its browser test must verify mobile
 (`AGENTS.md` › UX).
 
+**Project Dashboard.** Opening a project (`/projects/:slug` or a rail click) redirects to
+`/projects/:slug/dashboard`, which is also the first item in the project sidebar. The page
+loads a single aggregate payload from `GET /api/projects/:projectId/dashboard`
+(`services/project-dashboard.ts`): action items (approvals, unread @admin mentions,
+pending credential requests), calendar-window spend + budget caps, in-progress/review
+tasks, progress summary + goals preview, and a team snapshot including running agents.
+HQ (`is_internal`) omits spend, progress, and goals. Query keys use the route-param slug;
+WebSocket invalidation covers the tables that feed the aggregate.
+
 **PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
 `display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**
 service worker (`public/sw.js`, registered from `main.tsx` via `lib/register-sw.ts`). The worker
@@ -4643,12 +4693,14 @@ shapes.
   `instance-settings` (incl. `PATCH /instance-settings/locale` — self-authenticating: open
   pre-onboarding, superuser after; § 11), `preferences`, `ui-state`.
 - **Projects & teams** — `projects` (creation/intake, the 1:1 team reached *through* the
-  project — there is no bare `GET /teams`), `team-templates`, `agent-types`, `repos`,
+  project — there is no bare `GET /teams`; includes `GET …/dashboard` for the per-project
+  at-a-glance aggregate), `team-templates`, `agent-types`, `repos`,
   `project-docs`.
 - **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
   `execution-locks`, `queued-wakeups`, `chat` (live realtime chat session — today the CEO).
 - **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
-  `comments`, `mentions`, `assets`, `inbox`, `search` (full-text).
+  `comments`, `mentions`, `assets`, `inbox`, `search` (full-text over tasks, comments,
+  project docs, assets and skills).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
   `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below).
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`

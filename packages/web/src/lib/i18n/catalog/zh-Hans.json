@@ -200,6 +200,7 @@
 	"projectSettings.archive.confirmTitle": "要归档此项目吗？",
 	"projectSettings.archive.restoreLocation": "设置 → 已归档项目",
 	"projectSettings.dangerZone": "危险操作区",
+	"search.tab.comments": "评论",
 	"settings.adminPassword": "管理员密码",
 	"settings.aiProviders": "AI 提供商",
 	"settings.apiKeys": "API 密钥",

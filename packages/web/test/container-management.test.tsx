@@ -200,7 +200,7 @@ test('a stored error status alone raises no banner once no container is failed',
 
 	// The project has loaded, so the absent banner is a decision rather than a
 	// slow fetch.
-	await r.findByTestId('project-sidebar-name', undefined, { timeout: 20_000 });
+	await r.findByTestId('project-sidebar-dashboard', undefined, { timeout: 20_000 });
 	await waitFor(() => expect(r.queryByTestId('container-status-banner')).toBeNull());
 	expect(r.queryByTestId('project-sidebar-container-error')).toBeNull();
 });
@@ -222,7 +222,7 @@ test('a container being provisioned raises no banner', async () => {
 
 	// The project has loaded (its menu is named from the same index payload), so
 	// the absent banner is a decision rather than a slow fetch.
-	await r.findByTestId('project-sidebar-name', undefined, { timeout: 20_000 });
+	await r.findByTestId('project-sidebar-dashboard', undefined, { timeout: 20_000 });
 	await waitFor(() => expect(r.queryByTestId('container-status-banner')).toBeNull());
 	expect(r.queryByTestId('container-status-banner-provisioning')).toBeNull();
 });

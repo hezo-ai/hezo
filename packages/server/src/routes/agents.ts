@@ -39,7 +39,7 @@ import {
 	isNameOnlyRole,
 } from '../lib/agent-identity';
 import { trackBackground } from '../lib/background';
-import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
+import { broadcastChange } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { signEntityIconUrl, verifyEntityIconUrl } from '../lib/entity-icon-urls';
 import { readImageDimensions } from '../lib/image-dimensions';
@@ -238,9 +238,26 @@ agentsRoutes.get('/projects/:projectId/agents', async (c) => {
 		SELECT ${AGENT_BASE_COLUMNS},
 			(m.team_id <> $1) AS is_instance,
 			(SELECT ma2.title FROM member_agents ma2 WHERE ma2.id = ma.reports_to) AS reports_to_title,
-			(SELECT count(*) FROM tasks i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_task_count
+			(SELECT count(*) FROM tasks i WHERE i.assignee_id = m.id AND i.status NOT IN (${ts.placeholders}))::int AS assigned_task_count,
+			CASE WHEN hr.run_status IS NOT NULL THEN json_build_object(
+				'task_id', hr.task_id,
+				'task_identifier', hr.task_identifier,
+				'task_project_id', hr.task_project_id,
+				'run_status', hr.run_status
+			) ELSE NULL END AS active_run
 		FROM members m
 		JOIN member_agents ma ON ma.id = m.id
+		LEFT JOIN LATERAL (
+			SELECT hr2.task_id, i.identifier AS task_identifier, i.project_id AS task_project_id,
+			       hr2.status AS run_status
+			FROM heartbeat_runs hr2
+			LEFT JOIN tasks i ON i.id = hr2.task_id
+			WHERE hr2.member_id = m.id AND hr2.status IN ('running', 'queued')
+			ORDER BY CASE hr2.status WHEN 'running' THEN 0 ELSE 1 END,
+			         hr2.started_at DESC NULLS LAST,
+			         hr2.created_at DESC
+			LIMIT 1
+		) hr ON true
 		WHERE (m.team_id = $1 OR (m.team_id = $${hqIdx} AND $1 <> $${hqIdx}))`;
 
 	if (adminFilter) {

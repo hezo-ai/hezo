@@ -46,6 +46,11 @@ beforeAll(async () => {
 		 VALUES ($1, $2, $3, $4, 'Zebra onboarding flow', 'Track the zebra rollout')`,
 		[teamId, projectId, num, `ZEB-${num}`],
 	);
+	await db.query(
+		`INSERT INTO assets (team_id, project_id, content_type, byte_size, sha256, original_filename, search_text)
+		 VALUES ($1, $2, 'text/markdown', 128, 'aa', 'research/zebra-notes.md', 'Field notes on the zebra rollout')`,
+		[teamId, projectId],
+	);
 });
 
 afterAll(async () => {
@@ -102,6 +107,20 @@ describe('GET /projects/:projectId/search', () => {
 		expect(res.status).toBe(200);
 	});
 
+	it('serves the assets scope with the fields the viewer link needs', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/search?q=zebra&scope=assets`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		const results = body.data.results as Array<Record<string, unknown>>;
+		expect(results).toHaveLength(1);
+		expect(results[0].type).toBe('asset');
+		expect(results[0].assetFilename).toBe('research/zebra-notes.md');
+		expect(results[0].assetContentType).toBe('text/markdown');
+		expect(typeof results[0].projectSlug).toBe('string');
+	});
+
 	it('returns 404 for a non-existent project', async () => {
 		const res = await app.request(
 			'/api/projects/00000000-0000-0000-0000-000000000099/search?q=test',
@@ -123,6 +142,14 @@ describe('GET /api/search (global palette)', () => {
 		const body = await res.json();
 		expect(body.data.message).toBeUndefined();
 		expect(body.data.results.some((r: { title: string }) => r.title.includes('Zebra'))).toBe(true);
+	});
+
+	it('merges assets into the default all-types search', async () => {
+		const res = await app.request('/api/search?q=zebra', { headers: authHeader(token) });
+		const body = await res.json();
+		const types = (body.data.results as Array<{ type: string }>).map((r) => r.type);
+		expect(types).toContain('asset');
+		expect(types).toContain('task');
 	});
 });
 

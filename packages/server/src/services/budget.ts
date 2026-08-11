@@ -17,11 +17,12 @@ import type { Db } from '../db/database';
  * budget-status API (`routes/costs.ts`).
  */
 
-/** Cents spent within each rolling window. */
+/** Cents spent within each UTC calendar window, plus all-time. */
 export interface WindowSpend {
 	daily: number;
 	weekly: number;
 	monthly: number;
+	allTime: number;
 }
 
 /** Spend vs. limit for a single window. `overBudget` requires a positive limit. */
@@ -47,12 +48,12 @@ export interface BudgetLimits {
 	monthly_budget_cents: number;
 }
 
-const ZERO_SPEND: WindowSpend = { daily: 0, weekly: 0, monthly: 0 };
+const ZERO_SPEND: WindowSpend = { daily: 0, weekly: 0, monthly: 0, allTime: 0 };
 
 /**
- * Sum spend over the three UTC windows for a single entity column. `column` is
- * the trusted `cost_entries` filter column (`member_id` or `project_id`); it is
- * never derived from user input.
+ * Sum spend over the three UTC windows (and all-time) for a single entity column.
+ * `column` is the trusted `cost_entries` filter column (`member_id` or `project_id`);
+ * it is never derived from user input.
  */
 async function getSpendByColumn(
 	db: Db,
@@ -63,7 +64,8 @@ async function getSpendByColumn(
 		`SELECT
 		   COALESCE(SUM(amount_cents) FILTER (WHERE created_at >= date_trunc('day',   now() AT TIME ZONE 'UTC')), 0)::int AS daily,
 		   COALESCE(SUM(amount_cents) FILTER (WHERE created_at >= date_trunc('week',  now() AT TIME ZONE 'UTC')), 0)::int AS weekly,
-		   COALESCE(SUM(amount_cents) FILTER (WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')), 0)::int AS monthly
+		   COALESCE(SUM(amount_cents) FILTER (WHERE created_at >= date_trunc('month', now() AT TIME ZONE 'UTC')), 0)::int AS monthly,
+		   COALESCE(SUM(amount_cents), 0)::int AS "allTime"
 		 FROM cost_entries
 		 WHERE ${column} = $1`,
 		[id],
@@ -85,11 +87,17 @@ function windowStatus(spentCents: number, limitCents: number): WindowStatus {
 }
 
 /** Build per-window status from already-fetched spend + limits (no DB access). */
-export function toEntityBudgetStatus(spend: WindowSpend, limits: BudgetLimits): EntityBudgetStatus {
+export function toEntityBudgetStatus(
+	spend: Pick<WindowSpend, 'daily' | 'weekly' | 'monthly'>,
+	limits: BudgetLimits,
+): EntityBudgetStatus {
 	return buildStatus(spend, limits);
 }
 
-function buildStatus(spend: WindowSpend, limits: BudgetLimits): EntityBudgetStatus {
+function buildStatus(
+	spend: Pick<WindowSpend, 'daily' | 'weekly' | 'monthly'>,
+	limits: BudgetLimits,
+): EntityBudgetStatus {
 	const daily = windowStatus(spend.daily, limits.daily_budget_cents);
 	const weekly = windowStatus(spend.weekly, limits.weekly_budget_cents);
 	const monthly = windowStatus(spend.monthly, limits.monthly_budget_cents);

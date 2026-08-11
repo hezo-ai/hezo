@@ -17,7 +17,7 @@ import { Tooltip } from './ui/tooltip';
 
 /**
  * The project menu: the persistent panel shown beside the project rail whenever
- * a project is active. Inbox leads as its own section; the project's pages
+ * a project is active. Dashboard leads, then Inbox; the project's pages
  * follow; the backing team's agents close it out under a Team section. The team
  * is presented as the project's own — there is no separate team-level view.
  */
@@ -274,9 +274,9 @@ export function ProjectSidebar({
 				className={`relative pl-2.5 ${onCollapse ? 'pr-7' : 'pr-2.5'} pt-1.5 pb-1 flex items-center gap-1 min-w-0`}
 			>
 				<Link
-					to="/projects/$projectId"
+					to="/projects/$projectId/dashboard"
 					params={projectParams}
-					data-testid="project-sidebar-name"
+					data-testid="project-sidebar-dashboard"
 					className="min-w-0 text-[13px] font-semibold text-text-1 truncate"
 				>
 					{project ? (

@@ -1,7 +1,21 @@
+import type { ProjectDashboardNeedsYouItem } from '@hezo/shared';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
 import { useAllVisibleProjects } from './use-projects';
+
+export interface NeedsYouResponse {
+	items: ProjectDashboardNeedsYouItem[];
+	action_count: number;
+}
+
+export function useNeedsYou(projectId: string) {
+	return useQuery({
+		queryKey: queryKeys.projects.needsYou(projectId),
+		queryFn: () => api.get<NeedsYouResponse>(`/api/projects/${projectId}/inbox/needs-you`),
+		enabled: !!projectId,
+	});
+}
 
 export function useInboxUnreadCount(projectId: string, enabled = true) {
 	return useQuery({

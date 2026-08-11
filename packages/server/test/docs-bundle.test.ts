@@ -47,7 +47,9 @@ describe('buildHezoDocsBlock', () => {
 		expect(block).toContain('## Concepts');
 		expect(block).toContain('## Chat & messaging apps');
 		expect(block).toContain('### Installation');
-		expect(block).not.toContain('order:');
+		// Frontmatter must be stripped — bare `order: <n>` lines are metadata, not
+		// prose. Body text may still mention an `order` field (e.g. MCP tool returns).
+		expect(block).not.toMatch(/^order:\s*[\d.]+$/m);
 
 		// Ordering: the Introduction (order 1) precedes Installation (order 2),
 		// which precedes the CLI reference (order 24).

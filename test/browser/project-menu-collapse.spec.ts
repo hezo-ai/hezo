@@ -19,7 +19,7 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 	await waitForPageLoad(page);
 
 	// Expanded by default: the menu shows, no expand tab yet.
-	await expect(page.getByTestId('project-sidebar-name')).toBeVisible({ timeout: 20000 });
+	await expect(page.getByTestId('project-sidebar-dashboard')).toBeVisible({ timeout: 20000 });
 	await expect(page.getByTestId('project-sidebar-expand')).toHaveCount(0);
 
 	// The collapse button hugs the menu panel's top-right corner (absolute
@@ -43,7 +43,7 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 	await page.getByTestId('project-sidebar-collapse').click();
 
 	// The menu is gone and the slim expand tab appears.
-	await expect(page.getByTestId('project-sidebar-name')).toHaveCount(0);
+	await expect(page.getByTestId('project-sidebar-dashboard')).toHaveCount(0);
 	const tab = page.getByTestId('project-sidebar-expand');
 	await expect(tab).toBeVisible();
 
@@ -67,7 +67,7 @@ test('the project menu collapses to a rail-docked expand tab and restores', asyn
 
 	// Expand restores the menu and removes the tab.
 	await tab.click();
-	await expect(page.getByTestId('project-sidebar-name')).toBeVisible();
+	await expect(page.getByTestId('project-sidebar-dashboard')).toBeVisible();
 	await expect(page.getByTestId('project-sidebar-expand')).toHaveCount(0);
 });
 
@@ -123,7 +123,7 @@ test('the expand tab stays clickable when a sticky banner tops the page', async 
 	// satisfied by a fully covered element, but Playwright's actionability check
 	// hit-tests the click point and fails when another element intercepts it.
 	await tab.click();
-	await expect(page.getByTestId('project-sidebar-name')).toBeVisible();
+	await expect(page.getByTestId('project-sidebar-dashboard')).toBeVisible();
 });
 
 test('the mobile drawer is unaffected — no collapse affordance there', async ({
@@ -142,6 +142,6 @@ test('the mobile drawer is unaffected — no collapse affordance there', async (
 	await page.getByTestId('mobile-nav-toggle').click();
 	const drawer = page.getByTestId('mobile-nav-drawer');
 	await expect(drawer).toBeVisible();
-	await expect(drawer.getByTestId('project-sidebar-name')).toBeVisible({ timeout: 20000 });
+	await expect(drawer.getByTestId('project-sidebar-dashboard')).toBeVisible({ timeout: 20000 });
 	await expect(drawer.getByTestId('project-sidebar-collapse')).toHaveCount(0);
 });

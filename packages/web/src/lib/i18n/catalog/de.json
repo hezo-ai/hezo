@@ -200,6 +200,7 @@
 	"projectSettings.archive.confirmTitle": "Dieses Projekt archivieren?",
 	"projectSettings.archive.restoreLocation": "Einstellungen → Archivierte Projekte",
 	"projectSettings.dangerZone": "Gefahrenbereich",
+	"search.tab.comments": "Kommentare",
 	"settings.adminPassword": "Admin-Passwort",
 	"settings.aiProviders": "KI-Anbieter",
 	"settings.apiKeys": "API-Schlüssel",

@@ -1,8 +1,16 @@
 import { Hash, Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { usePanelPlacement } from '../../hooks/use-panel-placement';
 import { useTasks } from '../../hooks/use-tasks';
 import { Button } from '../ui/button';
 import type { ReviewTaskContext } from './action-review-dialog';
+
+/**
+ * Filter input plus the former `max-h-56` list, now the whole panel's design
+ * cap: the panel is the scroll container (the filter row sticks to its top), so
+ * `usePanelPlacement` can read a content height its own clamp doesn't move.
+ */
+const PANEL_MAX_HEIGHT_PX = 264;
 
 interface TaskRow {
 	/** Lowercase identifier — the `:taskId` API path segment. */
@@ -31,8 +39,9 @@ interface AddToTaskPickerProps {
  * "Add to task": a filterable dropdown of the project's tasks, opened from the
  * action-review dialog's footer. Hand-rolled absolute panel (MentionPicker
  * style) rather than a body-portaled popover — the trigger already sits inside
- * a modal dialog, and the panel opens upward so it never crosses the dialog's
- * scroll edge. Selecting a row posts the handoff to that task immediately.
+ * a modal dialog. `usePanelPlacement` picks the side: it prefers upward, the
+ * trigger being a dialog-footer button, and drops below only when there is no
+ * room above. Selecting a row posts the handoff to that task immediately.
  */
 export function AddToTaskPicker({
 	projectId,
@@ -46,7 +55,7 @@ export function AddToTaskPicker({
 	const [query, setQuery] = useState('');
 	const [debouncedQuery, setDebouncedQuery] = useState('');
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
-	const listRef = useRef<HTMLDivElement>(null);
+	const anchorRef = useRef<HTMLDivElement>(null);
 
 	// Fresh filter on every open.
 	useEffect(() => {
@@ -100,14 +109,23 @@ export function AddToTaskPicker({
 		return rest;
 	}, [data, currentTask, debouncedQuery]);
 
+	const { panelRef, side, sideClassName, style } = usePanelPlacement<HTMLDivElement>(anchorRef, {
+		open,
+		prefer: 'top',
+		preferredMaxHeight: PANEL_MAX_HEIGHT_PX,
+		deps: [rows, isFetching],
+	});
+
 	useEffect(() => {
 		if (highlightedIndex >= rows.length) setHighlightedIndex(0);
 	}, [rows, highlightedIndex]);
 
 	useEffect(() => {
-		const el = listRef.current?.querySelector<HTMLElement>(`[data-task-idx="${highlightedIndex}"]`);
+		const el = panelRef.current?.querySelector<HTMLElement>(
+			`[data-task-idx="${highlightedIndex}"]`,
+		);
 		if (el) el.scrollIntoView({ block: 'nearest' });
-	}, [highlightedIndex]);
+	}, [highlightedIndex, panelRef]);
 
 	// Tracks the blur-close timer so we can cancel it on unmount. Without this
 	// the timer fires after the component is gone — in happy-dom teardown that
@@ -152,7 +170,7 @@ export function AddToTaskPicker({
 	}
 
 	return (
-		<div className="relative">
+		<div ref={anchorRef} className="relative">
 			<Button
 				size="sm"
 				onClick={() => onOpenChange(!open)}
@@ -167,7 +185,10 @@ export function AddToTaskPicker({
 			</Button>
 			{open && (
 				<div
-					className="absolute bottom-full right-0 z-10 mb-1 w-72 max-w-[calc(100vw-3rem)] rounded-md border border-border bg-surface shadow-md"
+					ref={panelRef}
+					className={`absolute right-0 z-10 ${sideClassName} w-72 max-w-[calc(100vw-3rem)] overflow-y-auto rounded-md border border-border bg-surface shadow-md`}
+					style={style}
+					data-placement={side}
 					data-testid="add-to-task-picker"
 				>
 					<input
@@ -180,9 +201,9 @@ export function AddToTaskPicker({
 						placeholder="Filter tasks…"
 						aria-label="Filter tasks"
 						data-testid="add-to-task-filter"
-						className="w-full border-b border-border bg-transparent px-3 py-2 text-[13px] text-text-1 outline-none placeholder:text-text-3"
+						className="sticky top-0 z-10 w-full border-b border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none placeholder:text-text-3"
 					/>
-					<div ref={listRef} role="listbox" className="max-h-56 overflow-y-auto p-1">
+					<div role="listbox" className="p-1">
 						{isFetching && rows.length === 0 && (
 							<div className="px-3 py-2 text-xs text-text-2">Searching…</div>
 						)}

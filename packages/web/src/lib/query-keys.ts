@@ -261,6 +261,7 @@ export const queryKeys = {
 
 		// inbox
 		inboxCount: (slug: string) => ['projects', slug, 'inbox-count'],
+		needsYou: (slug: string) => ['projects', slug, 'needs-you'],
 		inboxMentions: (slug: string) => ['projects', slug, 'inbox-mentions'],
 
 		// docs / custom prompt / skills
