@@ -1628,7 +1628,28 @@ export const GEMINI_RUNTIME_ENV = {
  * Keep a `model_pricing` row for whatever this points at: runs are priced solely
  * from that table, so an unpriced model records $0.
  */
-export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code';
+export const KIMI_DEFAULT_MODEL = 'kimi-k3';
+
+/**
+ * Context window per Moonshot model, for the one place a window has to be
+ * declared rather than discovered.
+ *
+ * Kimi Code learns a model's metadata from the provider catalog, but the
+ * `KIMI_MODEL_*` family registers an *in-memory* provider it can look nothing up
+ * for - so it refuses to start unless the window is stated. Declaring one too
+ * large is the harmful direction (the CLI compacts too late and the endpoint
+ * rejects the request), so an unlisted model takes the smallest window Moonshot
+ * currently ships rather than the largest.
+ */
+const KIMI_CONTEXT_FALLBACK = 262_144;
+const KIMI_MODEL_CONTEXT_SIZES: Record<string, number> = {
+	'kimi-k3': 1_048_576,
+};
+
+/** The context window to declare for a Moonshot model. See the table above. */
+export function kimiModelContextSize(model: string | null | undefined): number {
+	return KIMI_MODEL_CONTEXT_SIZES[model?.trim() ?? ''] ?? KIMI_CONTEXT_FALLBACK;
+}
 
 /**
  * Moonshot reached through Claude Code, against the Anthropic-compatible
@@ -1680,6 +1701,9 @@ const MOONSHOT_KIMI_CODE_BINDING: ProviderRuntimeBinding = {
 		KIMI_MODEL_PROVIDER_TYPE: 'kimi',
 		KIMI_MODEL_BASE_URL: 'https://api.moonshot.ai/v1',
 		KIMI_MODEL_NAME: KIMI_DEFAULT_MODEL,
+		// An in-memory provider has no catalog to read a window from, and the CLI
+		// refuses to run without one. Overridden per run from the selected model.
+		KIMI_MODEL_MAX_CONTEXT_SIZE: String(kimiModelContextSize(KIMI_DEFAULT_MODEL)),
 		KIMI_MODEL_CAPABILITIES: 'image_in,thinking',
 		KIMI_DISABLE_TELEMETRY: '1',
 		KIMI_CODE_NO_AUTO_UPDATE: '1',
@@ -2057,6 +2081,30 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
 	// `kimi -p <PROMPT>` (--prompt) is the same shape as Grok: the prompt is the
 	// flag's value, not stdin. Kimi Code has no stdin-as-prompt mode at all.
 	[AgentRuntime.Kimi]: 'arg',
+};
+
+/**
+ * How each CLI is told which model to use.
+ *
+ * Nearly all take `--model <id>`. Kimi Code does not: its `--model` resolves the
+ * id against a `[models."<id>"]` table in `config.toml`, and Hezo registers its
+ * model through the shell-read `KIMI_MODEL_*` family instead - an in-memory
+ * provider that table knows nothing about. Passing the flag there fails the run
+ * outright with `config.invalid: Model "…" is not configured in config.toml`,
+ * so the id has to travel on `KIMI_MODEL_NAME` alone (`buildProviderEnv` puts
+ * the run's selected model there).
+ *
+ * Writing the model into `config.toml` instead is not an option: the same file
+ * would then need the provider's key, and only env delivery keeps that out of a
+ * file the agent can read.
+ */
+export const RUNTIME_MODEL_DELIVERY: Record<AgentRuntime, 'flag' | 'env'> = {
+	[AgentRuntime.ClaudeCode]: 'flag',
+	[AgentRuntime.Codex]: 'flag',
+	[AgentRuntime.Gemini]: 'flag',
+	[AgentRuntime.OpenCode]: 'flag',
+	[AgentRuntime.Grok]: 'flag',
+	[AgentRuntime.Kimi]: 'env',
 };
 
 /**

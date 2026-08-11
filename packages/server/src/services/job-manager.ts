@@ -75,6 +75,7 @@ import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
 import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
+import { refreshModelPins } from './model-pins';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
@@ -291,6 +292,10 @@ const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
 // Daily model-pricing refresh from the pricepertoken.com catalog. Failures
 // log and leave the existing rows — the boot-time refresh / next tick retries.
 const PRICING_REFRESH_CRON = process.env.HEZO_PRICING_REFRESH_CRON ?? '0 0 2 * * *';
+// Daily re-read of each configured provider's model catalog, moving the pinned
+// default a NEW credential starts on. Existing configs are never touched. An
+// hour after the pricing refresh so a newly pinned model already has a rate row.
+const MODEL_PIN_REFRESH_CRON = process.env.HEZO_MODEL_PIN_REFRESH_CRON ?? '0 0 3 * * *';
 // Daily check for a newer release; when auto-update is enabled and one is found,
 // download+verify+stage it so an operator "Update & restart" is instant.
 const UPDATE_CHECK_CRON = process.env.HEZO_UPDATE_CHECK_CRON ?? '0 0 4 * * *';
@@ -715,6 +720,11 @@ export class JobManager {
 				onTick: () => this.guarded('pricing-refresh', () => this.refreshPricing()),
 			});
 		}
+		this.cron.createJob('model-pin-refresh', {
+			cron: MODEL_PIN_REFRESH_CRON,
+			log: cronLog,
+			onTick: () => this.guarded('model-pin-refresh', () => this.refreshModelPins()),
+		});
 		if (this.deps.telemetry?.enabled) {
 			this.cron.createJob('telemetry', {
 				cron: TELEMETRY_CRON,
@@ -3663,6 +3673,21 @@ export class JobManager {
 		if (!this.deps.pricing) return;
 		const count = await this.deps.pricing.refresh();
 		log.info(`Model pricing refreshed from pricepertoken.com (${count} models)`);
+	}
+
+	/**
+	 * Move each configured provider's pinned default model to the newest in its
+	 * family. Best-effort: the service reports per-provider failures rather than
+	 * throwing, so one unreachable provider cannot skip the rest.
+	 */
+	private async refreshModelPins(): Promise<void> {
+		const result = await refreshModelPins(this.deps.db, this.deps.masterKeyManager);
+		if (result.changed.length > 0) {
+			log.info(`Model pins refreshed — ${result.changed.join(', ')}`);
+		}
+		if (result.skipped.length > 0) {
+			log.info(`Model pins skipped — ${result.skipped.join(', ')}`);
+		}
 	}
 
 	private async runTelemetry(): Promise<void> {

@@ -12,6 +12,7 @@ export * from './marketplace.js';
 export * from './mcp/connector-status.js';
 export * from './mcp/method-access.js';
 export * from './mentions/index.js';
+export * from './model-pins.js';
 export * from './pricing.js';
 export * from './search/terms.js';
 export * from './system-prompt-vars.js';

@@ -1,8 +1,10 @@
+import { AiProvider } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
+import { getPinnedModel } from '../src/services/model-pins';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
@@ -462,7 +464,7 @@ describe('AI providers default model', () => {
 		await db.query('DELETE FROM ai_provider_configs');
 	});
 
-	it('returns default_model null on list when not set', async () => {
+	it('starts a new config on the provider’s pinned model', async () => {
 		const create = await app.request('/api/ai-providers', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -479,7 +481,10 @@ describe('AI providers default model', () => {
 		const row = (body.data as Array<{ provider: string; default_model: string | null }>).find(
 			(r) => r.provider === 'anthropic',
 		);
-		expect(row?.default_model).toBeNull();
+		// A new credential is offered the pinned default rather than left on none,
+		// so an operator who adds a key and walks away still has a working model.
+		// Against the pin, not a literal, since the pin moves with the catalog.
+		expect(row?.default_model).toBe(await getPinnedModel(db, AiProvider.Anthropic));
 	});
 
 	it('PATCH /ai-providers/:configId sets and clears default_model', async () => {

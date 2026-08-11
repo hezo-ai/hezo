@@ -39,7 +39,11 @@ export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
-export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-1.5-flash';
+// Retiring a judge model is silent: the call 404s, the hook fails open, and
+// nothing about the run looks wrong. Check this id is still served when the
+// provider ships a generation - `gemini-1.5-flash` sat here long after Google
+// withdrew it.
+export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-3.5-flash-lite';
 // Shared by both ways of running Kimi. On the Claude Code runtime (against
 // Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"` Stop hook
 // judges with it; on Moonshot's own CLI the command-script judge calls their

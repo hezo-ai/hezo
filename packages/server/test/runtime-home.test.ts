@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { AgentRuntime, AiAuthMethod, AiProvider, PROVIDER_TO_RUNTIME } from '@hezo/shared';
@@ -247,5 +247,47 @@ describe('buildSubscriptionMount under a strict umask', () => {
 		);
 		const subscriptionDir = dirname(dirname(leaf as string));
 		expect(mode(subscriptionDir) & 0o001).toBe(0o001);
+	});
+});
+
+/**
+ * Codex will not authenticate a request from `OPENAI_API_KEY`. It reports the
+ * variable as present and then sends no bearer, so every api-key run 401s; the
+ * key it honours is the one in its auth file. These cover that the file is
+ * written, in the shape the CLI reads, and is not mistaken for a rotating one.
+ */
+describe('buildSubscriptionMount for an api-key credential', () => {
+	let base: string;
+	afterEach(() => {
+		if (base) rmSync(base, { recursive: true, force: true });
+	});
+
+	it('writes Codex an apikey auth file that never reports as rotating', async () => {
+		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
+		const mount = await buildSubscriptionMountWithEngine(base, RUN, AiProvider.OpenAI, {
+			value: 'sk-proj-abc123',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		expect(mount).not.toBeNull();
+		const { hostAuthFile, rotates } = mount as { hostAuthFile: string; rotates: boolean };
+		expect(JSON.parse(readFileSync(hostAuthFile, 'utf8'))).toEqual({
+			auth_mode: 'apikey',
+			OPENAI_API_KEY: 'sk-proj-abc123',
+		});
+		expect(mode(hostAuthFile)).toBe(0o600);
+		// The subscription blob rotates on this CLI; a key written fresh each run
+		// does not, and reading one back would overwrite the operator's own value.
+		expect(rotates).toBe(false);
+	});
+
+	it('writes no file for a CLI that does read its key from the environment', async () => {
+		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
+		// Gemini declares an auth file for its OAuth credential only; an api key
+		// there reaches the CLI as GEMINI_API_KEY and must not land on disk.
+		const mount = await buildSubscriptionMountWithEngine(base, RUN, AiProvider.Google, {
+			value: 'AIza-key',
+			authMethod: AiAuthMethod.ApiKey,
+		});
+		expect(mount).toBeNull();
 	});
 });

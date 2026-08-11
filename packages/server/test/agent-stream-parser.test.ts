@@ -433,16 +433,79 @@ describe('agent-stream-parser', () => {
 			expect(parser.getUsage()).toEqual({ inputTokens: 1200, outputTokens: 160, costCents: 0 });
 		});
 
+		// The shape the CLI actually writes: `convertToStreamStats` flattens its
+		// internal token object into `*_tokens` names and drops the reasoning
+		// bucket entirely. Reading only the nested form found nothing here, so every
+		// Gemini run reported 0/0 and priced at $0.
+		it('captures usage from the flattened per-model stats the CLI emits', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'result',
+					stats: {
+						total_tokens: 94109,
+						input_tokens: 93507,
+						output_tokens: 22,
+						cached: 40586,
+						input: 52921,
+						models: {
+							'gemini-2.5-pro': {
+								total_tokens: 94109,
+								input_tokens: 93507,
+								output_tokens: 22,
+								cached: 40586,
+								input: 52921,
+							},
+						},
+					},
+				})}\n`,
+			);
+			const usage = parser.getUsage();
+			expect(usage?.inputTokens).toBe(93507);
+			// The visible answer plus the reasoning the flat projection leaves as the
+			// residual between the total and the two counts it does state.
+			expect(usage?.outputTokens).toBe(602);
+			// Priced, not $0: (93507-40586) full-rate input + 40586 cache-read + 602 output.
+			expect(usage?.costCents).toBeGreaterThan(0);
+		});
+
+		it('joins the assistant chunks the CLI streams into one final message', () => {
+			// A `HEZO-LIVE-OK` reply arrives as `HEZO-LIVE-` then `OK`. Treating each
+			// `message` as complete left the final message as the last fragment, which
+			// the runner's handoff net would then post verbatim in place of the answer.
+			const parser = createAgentStreamParser(AgentRuntime.Gemini);
+			parser.onStdout(
+				`${JSON.stringify({ type: 'message', role: 'assistant', content: 'HEZO-LIVE-' })}\n`,
+			);
+			parser.onStdout(`${JSON.stringify({ type: 'message', role: 'assistant', content: 'OK' })}\n`);
+			const out = parser.onStdout(`${JSON.stringify({ type: 'result', stats: {} })}\n`);
+			expect(out).toContain('HEZO-LIVE-OK');
+			expect(parser.getFinalAssistantMessage()).toBe('HEZO-LIVE-OK');
+		});
+
+		it('recovers a final message still buffered when the stream just stops', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Gemini);
+			parser.onStdout(
+				`${JSON.stringify({ type: 'message', role: 'assistant', content: 'all done' })}\n`,
+			);
+			expect(parser.getFinalAssistantMessage()).toBe('all done');
+		});
+
 		it('renders an assistant message and skips the user echo', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Gemini);
 			expect(
 				parser.onStdout(`${JSON.stringify({ type: 'message', role: 'user', content: 'hi' })}\n`),
 			).toBe('');
+			// Assistant text is buffered until the run of chunks ends, so it renders
+			// as one line on the next event rather than one line per chunk.
 			expect(
 				parser.onStdout(
 					`${JSON.stringify({ type: 'message', role: 'assistant', content: 'Done.' })}\n`,
 				),
-			).toBe('Done.\n');
+			).toBe('');
+			expect(parser.onStdout(`${JSON.stringify({ type: 'result', stats: {} })}\n`)).toContain(
+				'Done.',
+			);
 		});
 
 		it('renders the init event as a session line', () => {
@@ -565,6 +628,65 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = parser.onStdout(`${JSON.stringify({ type: 'session.status', status: 'busy' })}\n`);
 		expect(out).toBe('');
+	});
+
+	// The shape a real run emits: per-step counts nested under `part`, with the
+	// cache halves in their own object. Probing only the event root found nothing,
+	// so every OpenCode run priced at $0.
+	const STEP_FINISHES = [
+		{
+			type: 'step_finish',
+			part: {
+				type: 'step-finish',
+				tokens: {
+					total: 44557,
+					input: 3,
+					output: 40,
+					reasoning: 0,
+					cache: { write: 44514, read: 0 },
+				},
+				cost: 0.0558455,
+			},
+		},
+		{
+			type: 'step_finish',
+			part: {
+				type: 'step-finish',
+				tokens: {
+					total: 44797,
+					input: 5,
+					output: 11,
+					reasoning: 0,
+					cache: { write: 267, read: 44514 },
+				},
+				cost: 0.00484515,
+			},
+		},
+	];
+
+	it('sums per-step usage nested under part, including both cache buckets', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		for (const e of STEP_FINISHES) parser.onStdout(`${JSON.stringify(e)}\n`);
+		const usage = parser.getUsage();
+		// Every step counted, not just the last: 3+5 fresh input, 44514+267 cache
+		// writes and 0+44514 cache reads all read as input the run paid for.
+		expect(usage?.inputTokens).toBe(8 + 44_781 + 44_514);
+		expect(usage?.outputTokens).toBe(51);
+	});
+
+	it('prices from the run model when the stream names none', () => {
+		// OpenCode announces no model anywhere, so without the run's own model
+		// there is nothing to look up and the run prices at $0 whatever it spent.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price, 'gemini-2.5-flash');
+		for (const e of STEP_FINISHES) parser.onStdout(`${JSON.stringify(e)}\n`);
+		expect(parser.getUsage()?.costCents).toBeGreaterThan(0);
+	});
+
+	it('ignores the run model once the stream names one', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode, price, 'not-in-the-table');
+		parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-flash' })}\n`);
+		for (const e of STEP_FINISHES) parser.onStdout(`${JSON.stringify(e)}\n`);
+		expect(parser.getUsage()?.costCents).toBeGreaterThan(0);
 	});
 });
 

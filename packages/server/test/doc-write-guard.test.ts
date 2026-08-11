@@ -89,6 +89,10 @@ describe('doc-write guard script', () => {
 		execFileSync('git', ['init', '-q'], { cwd: repo });
 		execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
 		execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
+		// A throwaway repo still inherits the developer's global git config, and a
+		// commit signer that expects a human (1Password, gpg-agent, a hardware key)
+		// cannot run here - the commit fails and the test reads as a guard bug.
+		execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: repo });
 		writeFileSync(join(repo, 'todo-spec.md'), '# a real repo file\n');
 		execFileSync('git', ['add', 'todo-spec.md'], { cwd: repo });
 		execFileSync('git', ['commit', '-qm', 'add'], { cwd: repo });

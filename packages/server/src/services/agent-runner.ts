@@ -15,6 +15,7 @@ import {
 	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
+	kimiModelContextSize,
 	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type ProgressActivityKind,
@@ -25,6 +26,7 @@ import {
 	RUNTIME_DISALLOWED_TOOLS_ARGS,
 	RUNTIME_HEADLESS_PREFIX_ARGS,
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
+	RUNTIME_MODEL_DELIVERY,
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
 	repoNameFromIdentifier,
@@ -318,6 +320,11 @@ export function buildProviderEnv(
 				out.push(`${key}=${subagentOverride}`);
 			} else if (kimiModelOverride && key === 'KIMI_MODEL_NAME') {
 				out.push(`${key}=${kimiModelOverride}`);
+			} else if (kimiModelOverride && key === 'KIMI_MODEL_MAX_CONTEXT_SIZE') {
+				// Tracks the selected model rather than the pinned default: the window
+				// is a property of the model, and declaring the default's window for a
+				// smaller model makes the CLI compact too late and the endpoint refuse.
+				out.push(`${key}=${kimiModelContextSize(kimiModelOverride)}`);
 			} else {
 				out.push(`${key}=${value}`);
 			}
@@ -421,7 +428,7 @@ export function getPromptRelPath(heartbeatRunId: string): string {
 // is readable host-side after the run. Grok reports no token usage on stdout, so
 // the runner parses this file for cost, then scrubs it (it also contains the
 // XAI_API_KEY in plaintext). See `extractGrokUsageFromDebugLog`.
-const GROK_DEBUG_BASENAME = 'debug.log';
+export const GROK_DEBUG_BASENAME = 'debug.log';
 
 // Basename of Kimi Code's per-session wire log, written under
 // `$KIMI_CODE_HOME/sessions/<workspace>/<session>/agents/<agent>/`. Kimi Code's
@@ -796,7 +803,11 @@ export async function buildRuntimeInvocation(
 			cliModel = opencodeModelArg(provider, modelOverride);
 		}
 	}
-	const modelArgs = cliModel ? ['--model', cliModel] : [];
+	// A runtime that selects its model from the environment gets no flag: on Kimi
+	// Code `--model` looks the id up in a config table Hezo never writes, and the
+	// run dies before reaching the model at all.
+	const modelArgs =
+		cliModel && RUNTIME_MODEL_DELIVERY[runtimeType] === 'flag' ? ['--model', cliModel] : [];
 
 	// Grok reports no token usage on its stdout stream, so point it at a per-run
 	// debug log (inside the home mount, hence readable host-side) that the runner
@@ -1587,7 +1598,7 @@ export async function runAgent(
 		const priceFn = pricing
 			? (model: string | undefined, tokens: CostTokens) => pricing.costCents(model, tokens)
 			: undefined;
-		const parser = createAgentStreamParser(runtimeType, priceFn);
+		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride);
 
 		const persistRotatedAuth = async () => {
 			const mount = context.subscriptionMount;
