@@ -4,7 +4,7 @@ import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { logger } from '../logger';
 import type { LocalConnectorConfig } from './connectors/connections';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 
 const log = logger.child('mcp-installer');
 
@@ -26,7 +26,7 @@ interface PendingRow {
 
 export interface InstallerDeps {
 	db: Db;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	containerId: string;
 	teamId: string;
 	projectId: string;

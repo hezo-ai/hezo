@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AssetStore, WriteAssetResult } from '../src/assets/store';
 import { AssetNotFoundError, AttachmentTooLargeError } from '../src/assets/store';
 import { signAssetUrl } from '../src/lib/asset-urls';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createTestApp,
@@ -48,7 +48,7 @@ function fileForm(filename: string, mime: string, bytes: Uint8Array, folder?: st
 	const fd = new FormData();
 	const copy = new Uint8Array(bytes.byteLength);
 	copy.set(bytes);
-	fd.set('file', new File([copy.buffer], filename, { type: mime }));
+	fd.set('file', new File([blobBytes(copy)], filename, { type: mime }));
 	if (folder !== undefined) fd.set('folder', folder);
 	return fd;
 }
@@ -237,6 +237,28 @@ describe('GET /projects/:projectId/assets', () => {
 		expect(active?.comment_attachment_count).toBe(0);
 		expect(active?.url).toMatch(/^\/api\/assets\//);
 		expect(archived?.archived_at).not.toBeNull();
+	});
+
+	it('never returns the search-index columns', async () => {
+		// This list route is unpaginated, so it returns every asset in the project.
+		// `search_text` holds up to 256 KB per row: one `a.*` would ship megabytes.
+		// Nothing but this test enforces the row-width rule here.
+		const upload = await uploadProject(
+			'width-guard.txt',
+			'text/plain',
+			new TextEncoder().encode('indexed body'),
+		);
+		expect(upload.status).toBe(201);
+
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/assets`, {
+			headers: authHeader(ctx.token),
+		});
+		const assets = (await res.json()).data as Array<Record<string, unknown>>;
+		expect(assets.length).toBeGreaterThan(0);
+		for (const row of assets) {
+			expect(Object.keys(row)).not.toContain('search_text');
+			expect(Object.keys(row)).not.toContain('search_tsv');
+		}
 	});
 });
 

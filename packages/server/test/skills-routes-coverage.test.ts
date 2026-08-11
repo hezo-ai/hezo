@@ -61,7 +61,7 @@ beforeEach(async () => {
 
 const MISSING_ID = '00000000-0000-0000-0000-000000000000';
 
-function create(body: Record<string, unknown>): Promise<Response> {
+async function create(body: Record<string, unknown>): Promise<Response> {
 	return app.request('/api/skills', {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },

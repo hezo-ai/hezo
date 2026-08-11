@@ -12,7 +12,7 @@ import { useInstanceSettings } from '../../../../hooks/use-instance-settings';
 import { useMe } from '../../../../hooks/use-me';
 import { useArchiveProject, useProject, useUpdateProject } from '../../../../hooks/use-projects';
 import { useScrollToHash } from '../../../../hooks/use-scroll-to-hash';
-import { useI18n } from '../../../../lib/i18n';
+import { Trans, useI18n } from '../../../../lib/i18n';
 
 function ProjectSettingsPage() {
 	const { t } = useI18n();
@@ -29,8 +29,6 @@ function ProjectSettingsPage() {
 
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
-	// '' = no override: the container inherits the instance-wide ram cap.
-	const [memoryLimit, setMemoryLimit] = useState('');
 	const [editing, setEditing] = useState(false);
 	const [archiveOpen, setArchiveOpen] = useState(false);
 
@@ -40,23 +38,14 @@ function ProjectSettingsPage() {
 		if (!project) return;
 		setName(project.name);
 		setDescription(project.description ?? '');
-		setMemoryLimit(project.memory_limit_gib === null ? '' : String(project.memory_limit_gib));
 		setEditing(true);
 	}
 
 	async function handleSave(e: React.FormEvent) {
 		e.preventDefault();
-		const trimmedMemory = memoryLimit.trim();
-		const parsedMemoryLimit = Number(trimmedMemory);
 		await updateProject.mutateAsync({
 			name: name.trim() || undefined,
 			description: description.trim(),
-			memory_limit_gib:
-				trimmedMemory === ''
-					? null
-					: Number.isInteger(parsedMemoryLimit) && parsedMemoryLimit >= 1
-						? parsedMemoryLimit
-						: undefined,
 		});
 		setEditing(false);
 	}
@@ -76,21 +65,6 @@ function ProjectSettingsPage() {
 							onChange={(e) => setDescription(e.target.value)}
 							rows={4}
 						/>
-						<Input
-							label="Container memory limit (GiB)"
-							type="number"
-							min={1}
-							className="w-40"
-							value={memoryLimit}
-							onChange={(e) => setMemoryLimit(e.target.value)}
-							placeholder={defaultRamCap ? `Default (${defaultRamCap} GB)` : 'Default'}
-							data-testid="memory-limit-gib-input"
-						/>
-						<p className="text-xs text-text-3 -mt-1">
-							Overrides the global RAM cap for this project's container. The container is
-							auto-stopped when it exceeds this budget. Leave empty to use the global default from
-							Settings → Concurrency.
-						</p>
 						<div className="flex gap-2">
 							<Button type="submit" size="sm" disabled={updateProject.isPending}>
 								{updateProject.isPending ? (
@@ -114,15 +88,10 @@ function ProjectSettingsPage() {
 								<span className="text-text-2">Description:</span> {project.description}
 							</div>
 						)}
-						<div data-testid="memory-limit-gib-value">
-							<span className="text-text-2">Container memory limit:</span>{' '}
-							{project.memory_limit_gib === null
-								? `Default${defaultRamCap ? ` (${defaultRamCap} GB)` : ''}`
-								: `${project.memory_limit_gib} GiB`}
-						</div>
-						<p className="text-xs text-text-3">
-							The concurrent-run limit is global - see Settings → Concurrency.
-						</p>
+						{/* Memory per container moved to the project's Container page: it is a
+						    property of the containers and only means anything next to their
+						    state. Filed here it read as project metadata, between the name and
+						    the description. */}
 						<Button variant="ghost" size="sm" onClick={startEditing} className="mt-2">
 							Edit
 						</Button>
@@ -158,11 +127,20 @@ function ProjectSettingsPage() {
 
 			{me?.is_superuser && (
 				<section className="border-t border-border pt-6">
-					<h2 className="text-sm font-medium text-danger mb-1">Danger zone</h2>
+					<h2 className="text-sm font-medium text-danger mb-1">
+						{t('projectSettings.dangerZone')}
+					</h2>
 					<p className="text-xs text-text-3 mb-3 max-w-prose">
-						Archiving removes this project from the project rail and stops its container. Its tasks
-						and history are kept — you can restore it later from{' '}
-						<span className="text-text-2">Settings → Archived projects</span>.
+						<Trans
+							k="projectSettings.archive.blurb"
+							vars={{
+								location: (
+									<span className="text-text-2">
+										{t('projectSettings.archive.restoreLocation')}
+									</span>
+								),
+							}}
+						/>
 					</p>
 					<Button
 						variant="destructive"
@@ -170,19 +148,19 @@ function ProjectSettingsPage() {
 						onClick={() => setArchiveOpen(true)}
 						data-testid="archive-project-button"
 					>
-						Archive this project
+						{t('projectSettings.archive.action')}
 					</Button>
 					<ConfirmDialog
 						open={archiveOpen}
 						onOpenChange={setArchiveOpen}
-						title="Archive this project?"
+						title={t('projectSettings.archive.confirmTitle')}
 						description={
-							<>
-								<strong>{project.name}</strong> will be hidden from the project rail and its
-								container will be stopped. You can unarchive it later from global Settings.
-							</>
+							<Trans
+								k="projectSettings.archive.confirmDescription"
+								vars={{ name: <strong>{project.name}</strong> }}
+							/>
 						}
-						confirmLabel="Archive"
+						confirmLabel={t('projectSettings.archive.confirmAction')}
 						variant="danger"
 						loading={archiveProject.isPending}
 						onConfirm={async () => {

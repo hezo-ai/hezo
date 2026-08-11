@@ -1,10 +1,14 @@
 import {
+	type AgentRuntime,
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
 	type AiProvider,
 	AiProviderStatus,
 	ALL_AI_PROVIDERS,
+	isAgentRuntime,
 	parseProviderModels,
+	providerRuntimes,
+	providerSupportsRuntime,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
@@ -17,6 +21,7 @@ import {
 	getAiProviderStatus,
 	getProviderConfigCredential,
 	listAiProviders,
+	readConfigBaseUrl,
 	setDefaultAiProvider,
 	storeAiProviderKey,
 	updateAiProviderConfig,
@@ -26,6 +31,149 @@ import { validateSubscriptionBlob } from '../services/subscription-auth';
 const log = logger.child('routes');
 
 const VALID_PROVIDERS = new Set<string>(ALL_AI_PROVIDERS);
+
+type RuntimeChoice = { ok: true; value: AgentRuntime | null } | { ok: false; error: string };
+
+/**
+ * Validate an operator-supplied CLI choice against the provider's own roster.
+ * Null and undefined both mean "follow the provider default" and are always
+ * accepted, so a client that has never heard of the field keeps working.
+ *
+ * Rejecting an unsupported pairing here is what keeps an unrunnable credential
+ * out of the database: the column is a bare enum (which pairings are valid is a
+ * TypeScript table that moves when a provider gains a CLI), so this route is the
+ * only place the two are checked against each other.
+ */
+function parseRuntimeChoice(provider: AiProvider, raw: unknown): RuntimeChoice {
+	if (raw === undefined || raw === null || raw === '') return { ok: true, value: null };
+	if (!isAgentRuntime(raw)) {
+		return { ok: false, error: `Unknown runtime "${String(raw)}"` };
+	}
+	if (!providerSupportsRuntime(provider, raw)) {
+		return {
+			ok: false,
+			error: `${AI_PROVIDER_INFO[provider]?.name ?? provider} cannot run on "${raw}". Supported: ${providerRuntimes(provider).join(', ')}`,
+		};
+	}
+	return { ok: true, value: raw };
+}
+
+type CredentialPrep =
+	| { ok: true; value: string; baseUrl: string | null }
+	| { ok: false; code: string; message: string; status: 400 | 503 };
+
+/**
+ * Normalize a locally-hosted runner's server URL. Shared by the credential
+ * preparation below and the update route, which can change the URL on its own
+ * without a new credential.
+ */
+function parseServerUrl(raw: string): { ok: true; value: string } | { ok: false; message: string } {
+	let parsed: URL;
+	try {
+		parsed = new URL(raw);
+	} catch {
+		return { ok: false, message: 'Server URL must be a valid URL' };
+	}
+	if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+		return { ok: false, message: 'Server URL must use http or https' };
+	}
+	return { ok: true, value: raw.replace(/\/+$/, '') };
+}
+
+/**
+ * Validate an operator-supplied credential against its provider and return the
+ * value to store, plus the normalized base URL for a locally-hosted runner.
+ *
+ * Shared by the create route and the credential-rotation half of the update
+ * route, so a replacement key is held to exactly the same bar as a new one —
+ * format, subscription-blob shape, and a live call to the provider — rather than
+ * being written unchecked and only failing at run time.
+ */
+async function prepareProviderCredential(
+	provider: AiProvider,
+	authMethod: AiAuthMethod,
+	rawKey: string | undefined,
+	rawBaseUrl: string | undefined,
+): Promise<CredentialPrep> {
+	const info = AI_PROVIDER_INFO[provider];
+
+	// A locally-hosted runner authenticates only if the operator turned auth on, so
+	// the key is optional here; `encrypted_credential` is NOT NULL, so an omitted
+	// one is stored as the runner's documented sentinel. Its endpoint is
+	// per-install, so the base URL takes the place of the key as the required field.
+	let baseUrl: string | null = null;
+	let value: string;
+	if (info?.local) {
+		const parsed = parseServerUrl(rawBaseUrl?.trim() || info.local.defaultBaseUrl);
+		if (!parsed.ok) {
+			return { ok: false, code: 'INVALID_BASE_URL', message: parsed.message, status: 400 };
+		}
+		baseUrl = parsed.value;
+		value = rawKey?.trim() || info.local.authTokenSentinel;
+	} else {
+		if (!rawKey?.trim()) {
+			return { ok: false, code: 'INVALID_REQUEST', message: 'api_key is required', status: 400 };
+		}
+		value = rawKey;
+	}
+
+	if (authMethod === AiAuthMethod.Subscription) {
+		if (!info.supportsSubscription) {
+			return {
+				ok: false,
+				code: 'UNSUPPORTED_AUTH_METHOD',
+				message: `${info.name} does not support subscription auth — use an API key instead`,
+				status: 400,
+			};
+		}
+		const validation = validateSubscriptionBlob(provider, value);
+		if (!validation.ok) {
+			return {
+				ok: false,
+				code: 'INVALID_SUBSCRIPTION_BLOB',
+				message: validation.error ?? 'Invalid credential',
+				status: 400,
+			};
+		}
+	}
+
+	if (info.keyPrefix && authMethod === AiAuthMethod.ApiKey && !value.startsWith(info.keyPrefix)) {
+		return {
+			ok: false,
+			code: 'INVALID_KEY_FORMAT',
+			message: `API key for ${info.name} should start with "${info.keyPrefix}"`,
+			status: 400,
+		};
+	}
+
+	if (authMethod === AiAuthMethod.ApiKey && !process.env.SKIP_AI_KEY_VALIDATION) {
+		try {
+			const valid = await verifyProviderKey(provider, value, authMethod, baseUrl);
+			if (!valid) {
+				return {
+					ok: false,
+					code: 'INVALID_KEY',
+					message: `API key validation failed — the key was rejected by ${info.name}`,
+					status: 400,
+				};
+			}
+		} catch {
+			// For a local provider the usual cause is that the runner is not listening
+			// at the given URL, so name the endpoint rather than blaming a key that
+			// may not even be required.
+			return {
+				ok: false,
+				code: 'VALIDATION_FAILED',
+				message: info.local
+					? `Could not reach ${info.name} at ${baseUrl}. Check the server is running and the URL is reachable from Hezo.`
+					: 'Could not reach the provider to validate the key. Please try again.',
+				status: 503,
+			};
+		}
+	}
+
+	return { ok: true, value, baseUrl };
+}
 
 export const aiProvidersRoutes = new Hono<Env>();
 
@@ -57,6 +205,7 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		label?: string;
 		auth_method?: string;
 		base_url?: string;
+		runtime?: string | null;
 	}>();
 
 	if (!body.provider || !VALID_PROVIDERS.has(body.provider)) {
@@ -76,85 +225,19 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 	const provider = body.provider as AiProvider;
 	const authMethod = (body.auth_method as AiAuthMethod) || AiAuthMethod.ApiKey;
 
-	const info = AI_PROVIDER_INFO[provider];
-
-	// A locally-hosted runner authenticates only if the operator turned auth on, so
-	// the key is optional here; `encrypted_credential` is NOT NULL, so an omitted
-	// one is stored as the runner's documented sentinel. Its endpoint is
-	// per-install, so the base URL takes the place of the key as the required field.
-	let baseUrl: string | null = null;
-	if (info?.local) {
-		const raw = body.base_url?.trim() || info.local.defaultBaseUrl;
-		let parsed: URL;
-		try {
-			parsed = new URL(raw);
-		} catch {
-			return err(c, 'INVALID_BASE_URL', 'Server URL must be a valid URL', 400);
-		}
-		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-			return err(c, 'INVALID_BASE_URL', 'Server URL must use http or https', 400);
-		}
-		baseUrl = raw.replace(/\/+$/, '');
-	} else if (!body.api_key?.trim()) {
-		return err(c, 'INVALID_REQUEST', 'api_key is required', 400);
+	const runtimeChoice = parseRuntimeChoice(provider, body.runtime);
+	if (!runtimeChoice.ok) {
+		return err(c, 'INVALID_RUNTIME', runtimeChoice.error, 400);
 	}
 
-	const credentialValue = info?.local
-		? body.api_key?.trim() || info.local.authTokenSentinel
-		: body.api_key;
-
-	if (authMethod === AiAuthMethod.Subscription) {
-		if (!info.supportsSubscription) {
-			return err(
-				c,
-				'UNSUPPORTED_AUTH_METHOD',
-				`${info.name} does not support subscription auth — use an API key instead`,
-				400,
-			);
-		}
-		const validation = validateSubscriptionBlob(provider, body.api_key);
-		if (!validation.ok) {
-			return err(c, 'INVALID_SUBSCRIPTION_BLOB', validation.error ?? 'Invalid credential', 400);
-		}
-	}
-
-	if (
-		info.keyPrefix &&
-		authMethod === AiAuthMethod.ApiKey &&
-		!credentialValue.startsWith(info.keyPrefix)
-	) {
-		return err(
-			c,
-			'INVALID_KEY_FORMAT',
-			`API key for ${info.name} should start with "${info.keyPrefix}"`,
-			400,
-		);
-	}
-
-	if (authMethod === AiAuthMethod.ApiKey && !process.env.SKIP_AI_KEY_VALIDATION) {
-		try {
-			const valid = await verifyProviderKey(provider, credentialValue, authMethod, baseUrl);
-			if (!valid) {
-				return err(
-					c,
-					'INVALID_KEY',
-					`API key validation failed — the key was rejected by ${info.name}`,
-					400,
-				);
-			}
-		} catch {
-			// For a local provider the usual cause is that the runner is not listening
-			// at the given URL, so name the endpoint rather than blaming a key that
-			// may not even be required.
-			return err(
-				c,
-				'VALIDATION_FAILED',
-				info.local
-					? `Could not reach ${info.name} at ${baseUrl}. Check the server is running and the URL is reachable from Hezo.`
-					: 'Could not reach the provider to validate the key. Please try again.',
-				503,
-			);
-		}
+	const prepared = await prepareProviderCredential(
+		provider,
+		authMethod,
+		body.api_key,
+		body.base_url,
+	);
+	if (!prepared.ok) {
+		return err(c, prepared.code, prepared.message, prepared.status);
 	}
 
 	try {
@@ -162,10 +245,11 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 			db,
 			masterKeyManager,
 			provider,
-			credentialValue,
+			prepared.value,
 			authMethod,
 			body.label?.trim(),
-			baseUrl ? { base_url: baseUrl } : {},
+			prepared.baseUrl ? { base_url: prepared.baseUrl } : {},
+			runtimeChoice.value,
 		);
 
 		return ok(c, { id: configId }, 201);
@@ -254,18 +338,39 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	}
 });
 
-// Update a provider config — `label` (rename) and/or `default_model`
+// Update a provider config — `label` (rename), `default_model`, `runtime` (the CLI
+// this credential runs on; null clears it back to the provider default), and/or a
+// replacement credential (`api_key`, with `auth_method`/`base_url` alongside it).
+//
+// The settings Edit dialog saves all of these in one submit, so they land in one
+// request and one UPDATE: there is no window where the key rotated but the rename
+// failed. An absent or blank `api_key` leaves the stored credential untouched.
 aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 	const denied = requireAdminEquivalent(c);
 	if (denied) return denied;
 
 	const db = c.get('db');
+	const masterKeyManager = c.get('masterKeyManager');
 	const configId = c.req.param('configId');
 
-	const body = await c.req.json<{ default_model?: string | null; label?: string }>();
+	const body = await c.req.json<{
+		default_model?: string | null;
+		label?: string;
+		runtime?: string | null;
+		api_key?: string;
+		auth_method?: string;
+		base_url?: string;
+	}>();
 	const hasLabel = 'label' in body;
 	const hasModel = 'default_model' in body;
-	if (!hasLabel && !hasModel) {
+	const hasRuntime = 'runtime' in body;
+	// A blank key is the dialog's "leave the credential alone" state, not a request
+	// to store an empty one — treat it as absent rather than rejecting the save.
+	const hasCredential = Boolean(body.api_key?.trim());
+	// A local runner's server URL is editable on its own: it is the field most
+	// likely to change (a moved port, a new host) and needs no new credential.
+	const hasBaseUrl = Boolean(body.base_url?.trim());
+	if (!hasLabel && !hasModel && !hasRuntime && !hasCredential && !hasBaseUrl) {
 		return err(c, 'INVALID_REQUEST', 'Nothing to update', 400);
 	}
 
@@ -281,10 +386,81 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 				? body.default_model.trim() || null
 				: null;
 
+	// The CLI choice and the credential are both only meaningful against this
+	// config's own provider, which the request doesn't carry — read the row once and
+	// serve both, so an unsupported pairing or a malformed key 404s or 400s here
+	// rather than being written and failing at run time.
+	let owner: { provider: AiProvider; auth_method: AiAuthMethod; metadata: unknown } | undefined;
+	if (hasRuntime || hasCredential || hasBaseUrl) {
+		const result = await db.query<{
+			provider: AiProvider;
+			auth_method: AiAuthMethod;
+			metadata: Record<string, unknown> | null;
+		}>(`SELECT provider, auth_method, metadata FROM ai_provider_configs WHERE id = $1`, [configId]);
+		owner = result.rows[0];
+		if (!owner) {
+			return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
+		}
+	}
+
+	let runtime: AgentRuntime | null = null;
+	if (hasRuntime && owner) {
+		const parsed = parseRuntimeChoice(owner.provider, body.runtime);
+		if (!parsed.ok) {
+			return err(c, 'INVALID_RUNTIME', parsed.error, 400);
+		}
+		runtime = parsed.value;
+	}
+
+	// A base URL only means anything to a locally-hosted runner; every hosted
+	// provider has a fixed endpoint, so the field is ignored there exactly as the
+	// create route ignores it.
+	let baseUrl: string | undefined;
+	if (hasBaseUrl && owner && AI_PROVIDER_INFO[owner.provider]?.local) {
+		const parsed = parseServerUrl((body.base_url as string).trim());
+		if (!parsed.ok) {
+			return err(c, 'INVALID_BASE_URL', parsed.message, 400);
+		}
+		baseUrl = parsed.value;
+	}
+
+	let credential: { value: string; authMethod: AiAuthMethod } | null = null;
+	if (hasCredential && owner) {
+		// Only the credential half needs the master key — a rename must keep working
+		// on a locked instance, as it always has.
+		if (!masterKeyManager.getKey()) {
+			return err(c, 'LOCKED', 'Server must be unlocked to manage AI providers', 401);
+		}
+		const authMethod = (body.auth_method as AiAuthMethod) || owner.auth_method;
+		const prepared = await prepareProviderCredential(
+			owner.provider,
+			authMethod,
+			body.api_key,
+			baseUrl ?? readConfigBaseUrl(owner.metadata) ?? undefined,
+		);
+		if (!prepared.ok) {
+			return err(c, prepared.code, prepared.message, prepared.status);
+		}
+		credential = { value: prepared.value, authMethod };
+		if (prepared.baseUrl) baseUrl = prepared.baseUrl;
+	}
+
 	try {
 		const updated = await updateAiProviderConfig(db, configId, {
 			...(hasLabel ? { label } : {}),
 			...(hasModel ? { defaultModel: model } : {}),
+			...(hasRuntime ? { runtime } : {}),
+			...(baseUrl ? { baseUrl } : {}),
+			...(credential
+				? {
+						credential: { value: credential.value, masterKeyManager },
+						authMethod: credential.authMethod,
+						// `prepareProviderCredential` has just live-verified the key, so a config
+						// previously marked `invalid` becomes selectable again in the same write
+						// rather than needing a separate Verify click.
+						status: AiProviderStatus.Verified,
+					}
+				: {}),
 		});
 		if (!updated) {
 			return err(c, 'NOT_FOUND', 'AI provider config not found', 404);
@@ -296,10 +472,14 @@ aiProvidersRoutes.patch('/ai-providers/:configId', async (c) => {
 		throw e;
 	}
 
+	// Nothing derived from the credential goes back over the wire — not a prefix,
+	// a length, or a masked form.
 	return ok(c, {
 		updated: true,
 		...(hasLabel ? { label } : {}),
 		...(hasModel ? { default_model: model } : {}),
+		...(hasRuntime ? { runtime } : {}),
+		...(credential ? { credential_updated: true } : {}),
 	});
 });
 

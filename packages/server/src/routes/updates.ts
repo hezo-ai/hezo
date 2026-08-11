@@ -54,6 +54,17 @@ async function fetchLatest(): Promise<UpdateInfo> {
 		updateAvailable: false,
 		url: null,
 	};
+	// Test/CI-only, alongside HEZO_SKIP_PRICING_REFRESH and HEZO_TELEMETRY_ENABLED=0:
+	// the e2e server makes no outbound feed fetches. This one is not just about the
+	// network - whether a release newer than this working tree's version happens to
+	// exist decides whether the UpdateBanner renders, which moves every element in
+	// the shell down by the banner's height. That turned the browser tier red the
+	// day 0.39.0 shipped, in specs that had nothing to do with updates: measurements
+	// like "the collapse tab sits flush under the header" were suddenly off by
+	// exactly the banner's 47px, and sticky-on-scroll specs saw their frame of
+	// reference move mid-test when the poll resolved. Never expose this to users -
+	// checking for updates is a real feature, not an opt-out.
+	if (process.env.HEZO_SKIP_UPDATE_CHECK) return base;
 	try {
 		const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
 			headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'hezo' },

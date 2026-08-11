@@ -85,14 +85,14 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_project: {
 		category: 'Projects',
 		returns:
-			'The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup ticket (`coherence_task_id`, `coherence_task_identifier`). The coherence ticket is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.',
+			'The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup task (`coherence_task_id`, `coherence_task_identifier`). The coherence task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.',
 		auth: 'CEO only - call after the admin has explicitly approved the scope and team type in intake.',
 	},
 	start_team_setup: {
 		category: 'Projects',
 		returns:
-			'`{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup ticket to the CEO and waking them to run it. Returns `{ error }` if there is no open setup ticket for the project or a run is already active on it.',
-		auth: 'CEO only - for a project the CEO created via `create_project`; author the coherence ticket description first.',
+			'`{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup task to the CEO and waking them to run it. Returns `{ error }` if there is no open setup task for the project or a run is already active on it.',
+		auth: 'CEO only - for a project the CEO created via `create_project`; author the coherence task description first.',
 	},
 	list_team_templates: {
 		category: 'Projects',
@@ -157,7 +157,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Tasks',
 		returns:
 			'The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.',
-		auth: '`done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
+		auth: '`done` is the final completed state; marking a task `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
 	},
 	add_task_blocker: {
 		category: 'Tasks',
@@ -214,12 +214,12 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_comment: {
 		category: 'Comments & reactions',
 		returns:
-			"The created comment row (`id`, `public_id`, `created_at`, …), optionally with an advisory `warning` string. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.",
+			"The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.",
 	},
 	update_comment: {
 		category: 'Comments & reactions',
 		returns:
-			'The updated comment row, optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
+			'The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.',
 		auth: 'An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.',
 	},
 	add_reaction: {
@@ -305,6 +305,22 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
+	update_dashboard_widget_order: {
+		category: 'Projects',
+		returns:
+			'`{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.',
+	},
+	set_agent_name: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ updated: true, name }` where `name` is the stored name or null when cleared, or `{ error }` (name taken, reserved, malformed, a name-only role, or agent not in team).',
+		auth: 'The Captain of that team, or the CEO.',
+	},
+	generate_agent_avatar: {
+		category: 'Agent prompts & context',
+		returns: '`{ updated: true }`, or `{ error }` (agent not in team).',
+		auth: 'The Captain of that team, or the CEO.',
+	},
 	set_agent_summary: {
 		category: 'Agent prompts & context',
 		returns:
@@ -387,7 +403,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	full_text_search: {
 		category: 'Skills & search',
 		returns:
-			'`{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.',
+			'`{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, comments, and assets. A bare task number or full identifier resolves directly to that task, ranked first. An asset result carries `assetFilename` (its library path) and `assetContentType`; pass the path to read_project_asset. Assets match on any segment of their path, and textual ones on their content as well.',
 	},
 
 	// Credentials & connectors
@@ -411,7 +427,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	list_connectors: {
 		category: 'MCP connections',
 		returns:
-			'An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.',
+			'An array of connector rows with a derived `oauth_status` (`active` | `degraded` | `pending` | `failed` | `revoked` | `none`) and, for an OAuth-backed connector that is `active` or `degraded`, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). `degraded` means the connector was connected and its stored token has stopped working - a human must reconnect it, so report it rather than retrying around it. Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Every row carries `tools_this_run`: how many of that connector\'s tools your current run actually received, or `null` when nothing measured it (outside an agent run, or on a runtime that reports no tool list). This is a measurement of your own run, not a guess - if you cannot find a connector\'s tools, read this before concluding it is broken. A `0` alongside an `active` connector means it connected and contributed nothing callable, which is worth reporting to the human; a non-zero count means the tools are there and worth searching your tool list for again. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.',
 	},
 	test_connector: {
 		category: 'MCP connections',

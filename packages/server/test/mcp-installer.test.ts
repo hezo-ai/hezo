@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
-import type { DockerClient } from '../src/services/docker';
 import { installLocalMcpById, installPendingLocalMcps } from '../src/services/mcp-installer';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam } from './helpers/app';
 
@@ -18,7 +18,7 @@ function makeFakeDocker(opts: {
 	stdout?: string;
 	stderr?: string;
 	throwOnExec?: boolean;
-}): { docker: DockerClient; calls: DockerCall[] } {
+}): { docker: ContainerEngine; calls: DockerCall[] } {
 	const calls: DockerCall[] = [];
 	const docker = {
 		execCreate: async (_id: string, cfg: { Cmd: string[] }): Promise<string> => {
@@ -35,7 +35,7 @@ function makeFakeDocker(opts: {
 			Running: false,
 			Pid: 0,
 		}),
-	} as unknown as DockerClient;
+	} as unknown as ContainerEngine;
 	return { docker, calls };
 }
 
@@ -214,7 +214,7 @@ describe('install exec process scoping', () => {
 			},
 			execStart: async () => ({ stdout: '', stderr: '' }),
 			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
-		} as unknown as DockerClient;
+		} as unknown as ContainerEngine;
 
 		await installLocalMcpById({ db, docker, containerId: 'c', teamId, projectId }, id);
 
@@ -254,7 +254,7 @@ describe('install exec process scoping', () => {
 				killRunProcesses: async (containerId: string, runId: string) => {
 					kills.push({ containerId, runId });
 				},
-			} as unknown as DockerClient;
+			} as unknown as ContainerEngine;
 
 			const install = installLocalMcpById({ db, docker, containerId: 'c', teamId, projectId }, id);
 			await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1);

@@ -36,14 +36,6 @@ const EXPECTED_KEY_LINKS: ReadonlyArray<{ card: string; title: RegExp; href: str
 		title: /How to get your Kimi API key/i,
 		href: 'https://platform.kimi.ai/console/api-keys',
 	},
-	{
-		// Kimi Code is the same Moonshot account and the same key as Kimi above, so
-		// it shares one instructions block. Asserting both cards reach it is what
-		// keeps that sharing honest.
-		card: 'Kimi Code',
-		title: /How to get your Kimi API key/i,
-		href: 'https://platform.kimi.ai/console/api-keys',
-	},
 ];
 
 test('every pickable provider shows how-to-get-a-key instructions linking its key console', async () => {

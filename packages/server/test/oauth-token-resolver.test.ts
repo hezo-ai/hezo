@@ -377,3 +377,94 @@ describe('failed-refresh backoff', () => {
 		expect(recovered.rows[0].auth_error).toBe(null);
 	});
 });
+
+/**
+ * The bounds the periodic `connector-health` cron relies on. The egress path
+ * calls this with no options and a naturally tiny candidate set; the sweep calls
+ * it with a wide horizon on a timer, which is what makes each of these matter.
+ */
+describe('refreshExpiringTokens sweep bounds', () => {
+	it('caps candidates per call and takes the soonest-to-expire first', async () => {
+		// The starvation bug a LIMIT without an ORDER BY produces: the same
+		// arbitrary N rows come back every tick and the rest never refresh at all.
+		// Seeded newest-first so insertion order cannot accidentally satisfy this.
+		const far = await makeConnection({
+			provider: 'sweep-order',
+			providerAccountId: 'far',
+			expiresAt: new Date(Date.now() + 5 * 60_000),
+			withRefresh: true,
+		});
+		const near = await makeConnection({
+			provider: 'sweep-order',
+			providerAccountId: 'near',
+			expiresAt: new Date(Date.now() - 60_000),
+			withRefresh: true,
+		});
+
+		const refreshed: string[] = [];
+		registerRefreshFn('sweep-order', async (connection) => {
+			refreshed.push(connection.providerAccountId);
+			return { accessToken: 'new', expiresAt: new Date(Date.now() + 3_600_000) };
+		});
+
+		await refreshExpiringTokens({ db, masterKeyManager }, { horizonMs: 10 * 60_000, limit: 1 });
+
+		expect(refreshed).toEqual(['near']);
+		// And the one it skipped is still due, so the next tick picks it up rather
+		// than the limit permanently hiding it.
+		const skipped = await getConnection({ db, masterKeyManager }, far.id);
+		expect(skipped?.expiresAt?.getTime()).toBeLessThan(Date.now() + 10 * 60_000);
+		expect(near).toBeDefined();
+	});
+
+	it('refreshes a token expiring between ticks, which the default window would miss', async () => {
+		// The horizon has to exceed the sweep's own interval or a token that lapses
+		// mid-interval is renewed only after it has already expired.
+		const conn = await makeConnection({
+			provider: 'sweep-horizon',
+			providerAccountId: 'soon',
+			expiresAt: new Date(Date.now() + 5 * 60_000),
+			withRefresh: true,
+		});
+		let calls = 0;
+		registerRefreshFn('sweep-horizon', async () => {
+			calls++;
+			return { accessToken: 'new', expiresAt: new Date(Date.now() + 3_600_000) };
+		});
+
+		// Default 60s window: not yet due.
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(0);
+
+		await refreshExpiringTokens({ db, masterKeyManager }, { horizonMs: 10 * 60_000 });
+		expect(calls).toBe(1);
+		const refreshed = await getConnection({ db, masterKeyManager }, conn.id);
+		expect(refreshed?.expiresAt?.getTime()).toBeGreaterThan(Date.now() + 30 * 60_000);
+	});
+
+	it('bounds how many provider round-trips are in flight at once', async () => {
+		// Each refresh is a provider round-trip plus a secret read and decrypt, and
+		// those decrypts queue behind the one serialized DB handle the process
+		// shares - so a wide horizon must not fan out unbounded.
+		for (let i = 0; i < 6; i++) {
+			await makeConnection({
+				provider: 'sweep-conc',
+				providerAccountId: `c${i}`,
+				expiresAt: new Date(Date.now() - 1_000),
+				withRefresh: true,
+			});
+		}
+		let inFlight = 0;
+		let peak = 0;
+		registerRefreshFn('sweep-conc', async () => {
+			inFlight++;
+			peak = Math.max(peak, inFlight);
+			await new Promise((r) => setTimeout(r, 5));
+			inFlight--;
+			return { accessToken: 'new', expiresAt: new Date(Date.now() + 3_600_000) };
+		});
+
+		await refreshExpiringTokens({ db, masterKeyManager }, { limit: 6, concurrency: 2 });
+		expect(peak).toBeLessThanOrEqual(2);
+	});
+});

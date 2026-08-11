@@ -64,7 +64,7 @@ beforeAll(async () => {
 	);
 	memberId = memberRes.rows[0].id;
 
-	// Helper to create an task
+	// Helper to create a task
 	const createTask = async (
 		title: string,
 		priority: string,

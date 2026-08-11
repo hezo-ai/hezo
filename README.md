@@ -6,7 +6,7 @@
 
 <div align="center">
   
-[![Update hezo submodule](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hezo-ai/main/actions/workflows/main.yml)
+[![CI](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml)
 [![Coverage Status](https://coveralls.io/repos/github/hezo-ai/hezo/badge.svg?branch=main)](https://coveralls.io/github/hezo-ai/hezo?branch=main)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](./LICENSE.md)
 [![Languages: 12](https://img.shields.io/badge/languages-12-brightgreen.svg)](./docs/concepts/languages-and-formats.md)
@@ -52,17 +52,22 @@ and every project runs sandboxed in its own container. You own the machine, the 
 the spend, and the data.
 
 New here? Start with the [Introduction](./docs/introduction.md) and
-[How Hezo works](./docs/concepts/how-hezo-works.md).
+[the meta-harness](./docs/concepts/meta-harness.md) - the idea Hezo is built around.
 
 ## Quickstart
 
 Hezo ships as a **single self-contained binary** - nothing to compile, no runtime or
 dependencies to install, so you're up in seconds. The fastest way to get it is the
 one-line installer, which detects your OS and CPU architecture and downloads the
-matching [release binary](https://github.com/hezo-ai/hezo/releases/latest). A
-Docker-compatible runtime is the only prerequisite (agents run in isolated containers) -
-Docker, Colima, Rancher Desktop, OrbStack and Lima all work. See
-[Container runtimes](./docs/deployment/container-runtimes.md).
+matching [release binary](https://github.com/hezo-ai/hezo/releases/latest).
+
+Agents only ever work inside a container, and you choose where those containers run. By
+default it's your own machine, so the one prerequisite is a **Docker-compatible runtime** -
+Docker, Colima, Rancher Desktop, OrbStack and Lima all work, and Hezo finds the socket
+itself (see [Container runtimes](./docs/deployment/container-runtimes.md)). Point the
+instance at a [managed sandbox service](./docs/containers/remote/overview.md) instead and
+**this machine needs no container runtime at all**. Either way you can switch later from
+**Settings > Containers**. See [Containers](./docs/containers/overview.md).
 
 **macOS / Linux**
 
@@ -110,9 +115,12 @@ then **Create stack**). **DigitalOcean** opens a short guide until its
 provider that takes cloud-init works too - see
 [One-click deploy](./docs/deployment/one-click.md).
 
-> Hezo runs each project's agents in a container on the host's container-runtime
-> socket, so it needs a **real VM** - not a managed-container PaaS (Render, Railway,
-> Cloud Run). That's why these buttons target VM providers.
+> These buttons target VM providers because the default setup runs each project's agents
+> on the host's own container-runtime socket, which needs a **real VM** - not a
+> managed-container PaaS (Render, Railway, Cloud Run). Run the containers on a
+> [managed sandbox service](./docs/containers/remote/overview.md) instead and the server
+> needs no runtime at all, so a much smaller VPS will do. See
+> [Deploying to the cloud](./docs/deployment/cloud.md).
 
 ### Build from source
 
@@ -128,35 +136,42 @@ bun run dev
 
 ## How it works
 
-1. **Create a project and pick a team.** Start from a
+1. **Create a project and pick a team.** Launch a ready-made team from the
+   [marketplace](./docs/concepts/marketplace.md), start from a
    [template](./docs/concepts/projects-and-teams.md#team-templates), or ask the
    [CEO](./docs/concepts/roles-and-coordination.md) to help you assemble a
    [team](./docs/concepts/projects-and-teams.md) for the work.
-2. **Set the direction.** Specify the project plan, [hire or customize
+2. **Set the direction.** Specify the project plan, shape the
+   [team's structure](./docs/concepts/team-structure.md), [hire or customize
    agents](./docs/concepts/hiring-and-agents.md), edit their prompts, and give any agent
    [its own model](./docs/ai-models.md#give-an-agent-its-own-model).
 3. **The team gets to work.** Agents pick up [tasks](./docs/concepts/tasks.md) and work
    autonomously, asking for your [approval](./docs/getting-started/first-project.md#4-stay-in-control)
-   when needed - and you can change direction at any time.
+   when needed - and you can change direction at any time. The
+   [Progress](./docs/concepts/progress.md) page tells you where things stand without your
+   having to read the board.
 
-See [How Hezo works](./docs/concepts/how-hezo-works.md) for the full tour of the moving
-parts.
+See [the meta-harness](./docs/concepts/meta-harness.md) for the idea underneath it all, and
+the [Introduction](./docs/introduction.md) for the full tour of the moving parts.
 
 ## Features
 
 - **Agents organised like a company** - a global [CEO and Coach](./docs/concepts/roles-and-coordination.md) above a per-team Captain and workers, [live CEO chat](./docs/concepts/roles-and-coordination.md#chatting-with-the-ceo), automatic [Coach](./docs/concepts/roles-and-coordination.md#the-coach) reviews.
-- **Teams & projects** - [one team per project](./docs/concepts/projects-and-teams.md), start from a [template](./docs/concepts/projects-and-teams.md#team-templates), [hire and customize agents](./docs/concepts/hiring-and-agents.md), [snapshot a team](./docs/concepts/projects-and-teams.md#reusing-a-team-setup) to reuse.
-- **Autonomous task execution** - a [task board](./docs/concepts/tasks.md), [heartbeat](./docs/getting-started/first-project.md#3-watch-the-team-work) wake-ups, [approvals](./docs/getting-started/first-project.md#4-stay-in-control), auto-resumed long runs.
-- **Steer by outcome** - high-level [goals and a progress view](./docs/concepts/goals.md), scheduled Captain re-checks, up-to-date project summaries.
+- **Structure the team to the work** - compose the roster, the [reporting lines, and what each role is](./docs/concepts/team-structure.md), change it while a project runs, and carry a structure you've tuned forward to the next one.
+- **Teams & projects** - [one team per project](./docs/concepts/projects-and-teams.md), launch a ready-made team from the [marketplace](./docs/concepts/marketplace.md) or start from a [template](./docs/concepts/projects-and-teams.md#team-templates), [hire and customize agents](./docs/concepts/hiring-and-agents.md), [snapshot a team](./docs/concepts/projects-and-teams.md#reusing-a-team-setup) to reuse, [export one](./docs/concepts/marketplace.md#exporting-your-team) to share.
+- **Autonomous task execution** - a [task board](./docs/concepts/tasks.md) with sub-tasks nested up to three levels, [heartbeat](./docs/getting-started/first-project.md#3-watch-the-team-work) wake-ups, [approvals](./docs/getting-started/first-project.md#4-stay-in-control), auto-resumed long runs.
+- **Know where a project stands** - a [Progress page](./docs/concepts/progress.md) the Captain keeps current on its own, with optional high-level [goals](./docs/concepts/goals.md) and scheduled re-checks layered on top.
+- **One platform layer over every model** - the [meta-harness](./docs/concepts/meta-harness.md) runs each model in its own first-party CLI, then levels the differences: the same tools, skills, memory and sandbox whichever you pick, plus an independent completeness check that won't let a run end on failing tests, an "out of scope" dodge, or a handoff nobody received.
 - **Your models, your spend** - [bring your own providers](./docs/ai-models.md), [per-agent models](./docs/ai-models.md#give-an-agent-its-own-model), [budget caps and cost tracking](./docs/concepts/budgets-and-costs.md).
+- **Choose where containers run** - on [your own machine](./docs/containers/local-docker.md) or a [managed sandbox service](./docs/containers/remote/overview.md), [switchable either way](./docs/containers/overview.md#switching-at-any-time) at any time, with containers started on demand and a memory budget shared across every project.
 - **Secure by design** - [secret placeholders](./docs/security/secret-protection.md), [encryption at rest](./docs/security/master-key.md), [admin password sign-in](./docs/security/master-key.md#your-password-vs-the-master-key), [sandboxed containers](./docs/security/container-isolation.md), [verified git commits](./docs/security/git-and-verified-commits.md), an [audit trail](./docs/security/activity-log.md).
 - **Teams that improve themselves** - the [Coach](./docs/concepts/coach-and-self-improving-teams.md) writes durable learned rules back onto agents after each finished task.
-- **Knowledge & memory** - [documents](./docs/concepts/documents-and-memory.md), [skills](./docs/concepts/skills.md), [version history and restore](./docs/concepts/documents-and-memory.md#version-history), [CEO chatbox memory](./docs/concepts/documents-and-memory.md#chatbox-memory), [assets](./docs/concepts/assets.md), [full-text search](./docs/concepts/search.md).
-- **MCP, in and out** - a [built-in MCP server](./docs/mcp/hezo-mcp-server.md), [external MCP servers](./docs/mcp/connecting-mcp-servers.md) scoped per instance, team, or project.
+- **Knowledge & memory** - [documents](./docs/concepts/documents-and-memory.md), [skills](./docs/concepts/skills.md), [version history and restore](./docs/concepts/documents-and-memory.md#version-history), [long-term chat memory](./docs/concepts/documents-and-memory.md#long-term-chat-memory), [assets](./docs/concepts/assets.md), [full-text search](./docs/concepts/search.md).
+- **Connect your tools, both ways** - drive Hezo from any MCP client via its [built-in MCP server](./docs/mcp/hezo-mcp-server.md), and give agents the services you already use with [connectors](./docs/mcp/connecting-mcp-servers.md) - hosted MCP servers or plain REST APIs - scoped to one project or shared across all of them.
 - **Chat from anywhere** - run the CEO from [Telegram](./docs/chat/telegram.md), [Slack](./docs/chat/slack.md), and [Discord](./docs/chat/discord.md), as a [private assistant or a coworker](./docs/chat/overview.md#two-modes-assistant-and-coworker) in your team channels.
 - **Your data, in your storage** - [embedded Postgres](./docs/concepts/your-data.md), optional [hosted Postgres](./docs/deployment/configuration.md), local or [S3-compatible](./docs/deployment/configuration.md#storing-assets-in-s3-compatible-object-storage) [asset storage](./docs/concepts/assets.md#where-asset-files-live), data-preserving upgrades.
 - **Speaks your language** - the web app runs in [12 languages](./docs/concepts/languages-and-formats.md), picked from your browser on first run and set before anything else; [date and currency formats](./docs/concepts/languages-and-formats.md#date-and-currency-formats) are chosen independently, so ISO dates with German prose is a valid combination.
-- **Self-hosted & easy to run** - a [single binary](./docs/getting-started/installation.md), [deployable anywhere a Docker-compatible runtime runs](./docs/deployment/self-hosting.md), [one-click cloud-init](./docs/deployment/one-click.md), [secure remote access](./docs/deployment/secure-remote-access.md), [safe-rollback backups](./docs/deployment/backup-and-recovery.md), [in-app self-update](./docs/deployment/self-hosting.md#updating), a mobile-first web app.
+- **Self-hosted & easy to run** - a [single binary](./docs/getting-started/installation.md) that [runs anywhere](./docs/deployment/self-hosting.md) a Docker-compatible runtime does, or on a host with no container runtime at all when containers live on a [managed service](./docs/containers/remote/overview.md), [one-click cloud-init](./docs/deployment/one-click.md), [secure remote access](./docs/deployment/secure-remote-access.md), [safe-rollback backups](./docs/deployment/backup-and-recovery.md), [in-app self-update](./docs/deployment/self-hosting.md#updating), a mobile-first web app.
 
 ## Agents never hold your secrets
 
@@ -187,7 +202,9 @@ your spend, your data.
 Bring your own provider accounts - connect as many as you like, and give any individual
 agent [its own model](./docs/ai-models.md#give-an-agent-its-own-model). Each provider is
 driven through its **native command-line runtime** inside the container, so you get each
-model's first-party agentic tooling, not a lowest-common-denominator wrapper.
+model's first-party agentic tooling, not a lowest-common-denominator wrapper - and Hezo's
+[meta-harness](./docs/concepts/meta-harness.md) levels the differences between them, so the
+tooling, guardrails and security stay the same underneath whichever model you pick.
 
 | Provider | Models | Runtime | Auth |
 |---|---|---|---|
@@ -195,13 +212,16 @@ model's first-party agentic tooling, not a lowest-common-denominator wrapper.
 | **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
 | **Google** | Gemini | Gemini CLI | API key or subscription |
 | **xAI** | Grok | Grok Build | API key |
-| **Kimi** (Moonshot) | Kimi | Claude Code | API key |
-| **Kimi Code** (Moonshot) | Kimi | Kimi Code | API key |
+| **Kimi** (Moonshot) | Kimi | Claude Code or Kimi Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 | **OpenRouter** | Many, via one account | OpenCode | API key |
-| **Ollama** | Whatever you run locally | Claude Code | Server URL (no key) |
-| **LM Studio** | Whatever you run locally | Claude Code | Server URL (no key) |
+| **Ollama** | Whatever you run locally | Claude Code | Server URL (key optional) |
+| **LM Studio** | Whatever you run locally | Claude Code | Server URL (key optional) |
+
+Where the Runtime column lists more than one, that credential chooses which CLI it runs on;
+the first is the default, so adding a key without touching the setting just works. You can
+change it later, or rotate the stored key in place, without re-adding the connection.
 
 Ollama and LM Studio run agents **entirely on your own hardware** at no per-token cost -
 point Hezo at your server URL and leave the key blank.

@@ -98,7 +98,7 @@ describe('project intake (CEO-assisted)', () => {
 		expect(comments.some((c) => c.content.text.includes("I'm the CEO"))).toBe(true);
 	});
 
-	it('records the admin-chosen team type as the CEO baseline on the intake ticket', async () => {
+	it('records the admin-chosen team type as the CEO baseline on the intake task', async () => {
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const startup = (await typesRes.json()).data.find(
 			(t: { name: string }) => t.name === 'App Team',

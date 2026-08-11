@@ -460,7 +460,6 @@ export function CreateProjectWithTeamDialog({
 						</Dialog.Description>
 						<HqContainerNotice
 							health={blockedHealth}
-							slug={hq.slug}
 							description="A new project is scoped by the CEO in HQ, so it can't be created until the HQ container is running."
 						/>
 					</>

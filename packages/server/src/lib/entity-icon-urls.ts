@@ -46,13 +46,11 @@ export interface EntityIconUrlConfig {
 	keyPurpose: string;
 }
 
-// The two entity kinds that carry an uploaded avatar. These MUST match the
-// constants the serving endpoints verify against (routes/agents.ts,
-// routes/users.ts) — a mismatch yields a signature the `<img>` can't verify.
-export const AGENT_ICON_URL: EntityIconUrlConfig = {
-	basePath: '/api/agents',
-	keyPurpose: 'agent-icon-url',
-};
+// The one entity kind that carries an uploaded avatar. This MUST match the
+// constant the serving endpoint verifies against (routes/users.ts) — a mismatch
+// yields a signature the `<img>` can't verify. Agents deliberately have no entry:
+// an agent's avatar is generated from its `avatar_spec`, never uploaded, so
+// there is nothing to serve or sign.
 export const USER_ICON_URL: EntityIconUrlConfig = {
 	basePath: '/api/users',
 	keyPurpose: 'user-icon-url',
@@ -79,8 +77,9 @@ export async function signVersionedIconUrl(
 
 /**
  * The signed avatar URL for whoever authored/requested a row in a feed: a human
- * resolves to their `user_icons` image (keyed by `userId`), an agent to its
- * `agent_icons` image (keyed by `memberId`); an API-key author has neither.
+ * resolves to their `user_icons` image (keyed by `userId`). An agent author has
+ * none - its avatar is drawn client-side from the `avatar_spec` the row carries -
+ * and an API-key author has neither.
  *
  * Best-effort by design — a signing failure (e.g. the master key being
  * unavailable) yields null so the row degrades to its initials fallback rather
@@ -88,12 +87,7 @@ export async function signVersionedIconUrl(
  */
 export async function signAuthorIconUrl(
 	masterKeyManager: MasterKeyManager,
-	author: {
-		userId?: unknown;
-		memberId?: unknown;
-		userIconUpdatedAt?: unknown;
-		agentIconUpdatedAt?: unknown;
-	},
+	author: { userId?: unknown; userIconUpdatedAt?: unknown },
 ): Promise<string | null> {
 	try {
 		if (author.userId) {
@@ -101,14 +95,6 @@ export async function signAuthorIconUrl(
 				USER_ICON_URL,
 				author.userId as string,
 				author.userIconUpdatedAt,
-				masterKeyManager,
-			);
-		}
-		if (author.memberId) {
-			return await signVersionedIconUrl(
-				AGENT_ICON_URL,
-				author.memberId as string,
-				author.agentIconUpdatedAt,
 				masterKeyManager,
 			);
 		}

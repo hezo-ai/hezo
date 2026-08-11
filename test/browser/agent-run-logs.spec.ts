@@ -492,6 +492,19 @@ test('the expand chevron sits beside the timestamp on a retryable run header', a
 	).toBeLessThanOrEqual(2);
 	// …and is nowhere near the stretched header's right edge.
 	expect(headerBox.x + headerBox.width - (chevronBox.x + chevronBox.width)).toBeGreaterThan(40);
+
+	// Drain the interceptor before teardown. This is the only spec that wraps the
+	// task GET in a `route.fetch()` round-trip, and React Query keeps background-
+	// refetching that same endpoint — so when teardown closes the context with one
+	// of those in flight, `route.fetch()` rejects with "Target page, context or
+	// browser has been closed" and Playwright reports it as this test failing,
+	// after every assertion above has already passed. Whether a refetch happens to
+	// overlap teardown is pure timing, which is why it survives locally and fails
+	// on a loaded CI runner. `ignoreErrors` is Playwright's own prescribed remedy
+	// (it names it in that error) and is not a masked race: the assertions are
+	// complete by here, so the only thing being silenced is a request whose result
+	// nothing reads.
+	await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
 
 // #1 (real CSS layout): the leading inline-event icon must share a vertical

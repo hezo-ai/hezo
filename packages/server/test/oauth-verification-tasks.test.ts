@@ -81,7 +81,7 @@ describe('enqueueOAuthVerificationTask', () => {
 		);
 		const parent = await db.query<{ id: string; identifier: string }>(
 			`INSERT INTO tasks (team_id, project_id, number, identifier, title)
-			 VALUES ($1, $2, $3, $4, 'Originating ticket')
+			 VALUES ($1, $2, $3, $4, 'Originating task')
 			 RETURNING id, identifier`,
 			[
 				teamId,

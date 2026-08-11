@@ -59,7 +59,7 @@ beforeAll(async () => {
 	projectId = proj1.id;
 	projectSlug = proj1.slug;
 
-	// Create an task under the project
+	// Create a task under the project
 	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },

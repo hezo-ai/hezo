@@ -161,7 +161,7 @@ export async function wakeTaskIfChildrenClosed(
 }
 
 /**
- * Trigger automations when an task's status changes.
+ * Trigger automations when a task's status changes.
  * Called from both the REST handler and MCP tool to ensure consistent behavior.
  */
 export async function triggerStatusAutomations(

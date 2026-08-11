@@ -162,7 +162,7 @@ function buildTeamCoherenceReviewBody(
 	const draftBanner = autoStart
 		? ''
 		: `> **Setup plan — fill this in before you start.**
-> You created this project from an intake conversation, so this setup ticket has **not** started yet and is currently unassigned. Replace the generic audit below with the concrete setup you settled with the operator: the specific roles to hire (and why), any system-prompt rewrites, and the reporting structure. Edit this description with \`update_task\`. When it reflects the agreed plan, call \`start_team_setup(project="${teamSlug}")\` to assign this ticket to yourself and begin the run. Until you do, the Captain's planning ticket stays blocked on it.
+> You created this project from an intake conversation, so this setup task has **not** started yet and is currently unassigned. Replace the generic audit below with the concrete setup you settled with the operator: the specific roles to hire (and why), any system-prompt rewrites, and the reporting structure. Edit this description with \`update_task\`. When it reflects the agreed plan, call \`start_team_setup(project="${teamSlug}")\` to assign this task to yourself and begin the run. Until you do, the Captain's planning task stays blocked on it.
 
 `;
 	const changesSection = changeSummary
@@ -198,13 +198,14 @@ ${intro} — including whether every role's output gets verified by someone othe
    - Use \`update_agent_system_prompt(agent_id, content)\` to rewrite a prompt so it matches the current team structure — including baking verification into the flow of work where it is missing: name who reviews the producer's output before it can close, and make reviewing that output an explicit responsibility in the reviewer's or manager's prompt. Also strip or replace any carried-over specifics from a different project so the prompt describes *this* project, not the one the template came from; when a carried-over convention applies to the whole team, fix it once in the project Custom Prompt via \`update_project_custom_prompt\` rather than in each prompt.
    - Use \`set_agent_reports_to(agent_id, reports_to)\` to fix orphan or wrong reporting lines so delegation and review can actually flow along the org chart.
    - When a gap (verification or coverage) needs a role that doesn't exist yet, file it with \`create_hire_proposal\` — it lands as a pending approval for the admin to review.
-   - For changes that need admin confirmation before you can action them (removing an agent), post a single summary comment on this ticket explaining what should change and request admin confirmation. Do NOT block on the comment — finish steps 5 and 6 with the current roster.
-5. **Rewrite the descriptive blobs.** For every enabled agent:
+   - For changes that need admin confirmation before you can action them (removing an agent), post a single summary comment on this task explaining what should change and request admin confirmation. Do NOT block on the comment — finish steps 5 and 6 with the current roster.
+5. **Make sure everyone has a name and a face.** Teams shipped from the marketplace already come named, so this normally only affects a bespoke hire. For each enabled agent with no human name, call \`set_agent_name(agent_id, name="...")\` with a short, ordinary first name that suits the role, and \`generate_agent_avatar(agent_id)\` if it has no avatar yet. Names must be unique in the team, and \`captain\`, \`ceo\` and \`coach\` are always addressed by their role - the tools reject those, so skip them.
+6. **Rewrite the descriptive blobs.** For every enabled agent:
    - \`set_agent_summary(agent_id, summary="...")\` — distill the agent's prompt into a single plain-prose paragraph (≤5 lines, third person, no bullets, no greetings) describing what the agent does and how it works.
    - \`set_agent_team_context(agent_id, content="...")\` — write a relationships narrative addressed to that agent ("you"), up to ~30 lines, covering its manager (and how to escalate), direct reports (and how to delegate to each), peers (and typical handoffs), indirect reports / agents two+ levels away (and the correct routing path), and any humans on the admin (and when to involve them).
    - This blob is injected into the agent's own system prompt at the start of every run, so it doesn't need to derive its place in the org chart from scratch.
-6. \`set_team_summary(summary="...")\` — synthesise a team-level summary (≤20 lines, plain prose, may span paragraphs) covering reporting structure, handoffs, and escalation paths.
-7. Move this task to **done** once the audit and rewrites are complete.${changesSection}`;
+7. \`set_team_summary(summary="...")\` — synthesise a team-level summary (≤20 lines, plain prose, may span paragraphs) covering reporting structure, handoffs, and escalation paths.
+8. Move this task to **done** once the audit and rewrites are complete.${changesSection}`;
 }
 
 export async function enqueueTeamCoherenceReviewTask(

@@ -114,7 +114,7 @@ test.describe('Task detail — right sidebar sticky positioning', () => {
 });
 
 test.describe('Task detail — initial scroll and scroll-to-bottom button', () => {
-	test('lands at top of ticket page and floating button scrolls to bottom on demand', async ({
+	test('lands at top of task page and floating button scrolls to bottom on demand', async ({
 		page,
 		sharedWorkspace,
 	}) => {

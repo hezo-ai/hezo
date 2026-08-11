@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createTestApp,
@@ -12,10 +12,11 @@ import {
 	mintAgentToken,
 } from './helpers/app';
 
-// A comment's author avatar: human authors resolve to their user_icons image and
-// agent authors to their agent_icons image, both returned as a signed
-// `author_icon_url` on the comments feed (skeleton + full). Regression guard for
-// the admin avatar never rendering in the thread.
+// A comment's author avatar: a human author resolves to their user_icons image,
+// returned as a signed `author_icon_url` on the comments feed (skeleton + full).
+// An agent has no uploaded image and ships `author_avatar_spec` instead, whose
+// sprite is drawn client-side. Regression guard for the admin avatar never
+// rendering in the thread.
 
 let app: Hono<Env>;
 let db: Db;
@@ -40,7 +41,7 @@ function pngWithDimensions(width: number, height: number): Buffer {
 
 function iconForm(bytes: Buffer): FormData {
 	const fd = new FormData();
-	fd.set('file', new Blob([bytes], { type: 'image/png' }), 'icon.png');
+	fd.set('file', new Blob([blobBytes(bytes)], { type: 'image/png' }), 'icon.png');
 	return fd;
 }
 
@@ -57,6 +58,7 @@ async function postComment(auth: string, text: string): Promise<string> {
 interface SkeletonRow {
 	id: string;
 	author_icon_url: string | null;
+	author_avatar_spec: { seed: string; gender: string; style: string } | null;
 	author_user_id?: string;
 }
 
@@ -139,20 +141,16 @@ describe('comment author avatar', () => {
 		expect(Buffer.from(await serve.arrayBuffer()).equals(pngWithDimensions(512, 512))).toBe(true);
 	});
 
-	it('returns the agent avatar as author_icon_url on an agent comment', async () => {
-		await app.request(`/api/projects/${projectSlug}/agents/${agentSlug}/icon`, {
-			method: 'PUT',
-			headers: authHeader(token),
-			body: iconForm(pngWithDimensions(256, 256)),
-		});
+	it('carries the agent author\u2019s avatar spec, not a signed upload URL', async () => {
 		const agentAuth = await mintAgentToken(db, masterKeyManager, agentId, teamId, taskId);
 		const commentId = await postComment(agentAuth.token, 'from the bot');
 
 		const rows = await skeletons();
 		const row = rows.find((r) => r.id === commentId);
-		expect(row?.author_icon_url).toMatch(
-			new RegExp(`^/api/agents/${agentId}/icon\\?exp=\\d+&sig=[^&]+&v=\\d+$`),
-		);
+		// An agent's face is generated from its spec client-side; there is no
+		// uploaded image to sign a URL for.
+		expect(row?.author_icon_url).toBeNull();
+		expect(row?.author_avatar_spec).toMatchObject({ seed: expect.any(String) });
 	});
 
 	it('is null for an author with no uploaded avatar', async () => {

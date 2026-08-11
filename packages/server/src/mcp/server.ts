@@ -18,7 +18,14 @@ import {
 	ONBOARDING_TOOLS,
 	REGISTER_TOOL,
 } from './onboarding';
-import { authContext, registerTools, resolveScope, type ToolDef } from './tools';
+import { projectToolsForCaller, type ToolAudience } from './tool-visibility';
+import {
+	authContext,
+	callerOriginContext,
+	registerTools,
+	resolveScope,
+	type ToolDef,
+} from './tools';
 
 let mcpServer: McpServer | null = null;
 let toolDefs: ToolDef[] = [];
@@ -84,10 +91,36 @@ export function getToolDefs(): ToolDef[] {
 	return toolDefs;
 }
 
+/**
+ * The caller class a tool's handler gates on, read off its own registration.
+ *
+ * `tools/list` comes back from the SDK carrying only what the protocol defines,
+ * so the audience has to be looked up by name on the way out - but the lookup
+ * resolves against the registry itself, not a second table that could name a
+ * tool no longer registered, or miss one newly added.
+ */
+export function audienceOf(name: string): ToolAudience | undefined {
+	return toolDefs.find((t) => t.name === name)?.audience;
+}
+
 function extractBearer(c: Context<Env>): string | null {
 	const header = c.req.header('Authorization');
 	if (!header?.startsWith('Bearer ')) return null;
 	return header.slice(7);
+}
+
+/**
+ * The origin this request was addressed to, for building absolute URLs the same
+ * caller can dial back. See {@link callerOriginContext} for why it comes off the
+ * request rather than from server config.
+ */
+function callerOrigin(c: Context<Env>): string {
+	const host = c.req.header('Host');
+	if (!host) return new URL(c.req.url).origin;
+	// The MCP leg is plain HTTP over the tunnel's loopback port; a deployment
+	// terminating TLS in front says so with the standard forwarded header.
+	const proto = c.req.header('X-Forwarded-Proto') ?? new URL(c.req.url).protocol.replace(':', '');
+	return `${proto}://${host}`;
 }
 
 async function authenticateRequest(c: Context<Env>): Promise<AuthInfo | null> {
@@ -189,9 +222,21 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 
 	let result: unknown;
 	if (body.method === 'tools/list') {
-		result = await client.listTools();
+		// Listed per caller: an agent scoped to one project has no use for
+		// `create_team` or the Captain-only prompt editors, and carrying their
+		// schemas costs it context on every turn. Hiding only - `tools/call` still
+		// runs every gate below, so this can never be the thing granting access.
+		const listed = await client.listTools();
+		result = {
+			...listed,
+			// The audience rides on each tool's registration, so it is read back off
+			// the registry rather than from a second table keyed by name.
+			tools: await projectToolsForCaller(db, auth, listed.tools, audienceOf),
+		};
 	} else if (body.method === 'tools/call') {
-		result = await authContext.run(auth, () => client.callTool(body.params));
+		result = await authContext.run(auth, () =>
+			callerOriginContext.run(callerOrigin(c), () => client.callTool(body.params)),
+		);
 	} else {
 		return c.json({
 			jsonrpc: '2.0',

@@ -252,7 +252,7 @@ describe('initial project plan upload', () => {
 		expect(taskResult.rows[0].description).toContain('starting point for planning');
 	});
 
-	it('creates the coherence review as the first ticket, blocking the planning task', async () => {
+	it('creates the coherence review as the first task, blocking the planning task', async () => {
 		const res = await createProject({ name: 'Coherence Order Project' });
 		expect(res.status).toBe(201);
 		const project = (await res.json()).data;

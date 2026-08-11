@@ -36,6 +36,12 @@ interface CommentRow {
 		to?: string;
 		from_id?: string | null;
 		to_id?: string | null;
+		// Parent-change events also carry where the parent lives, so a reader can
+		// tell a re-parent inside one project from a move across two.
+		from_identifier?: string;
+		to_identifier?: string;
+		from_project_slug?: string;
+		to_project_slug?: string;
 		from_name?: string;
 		to_name?: string;
 		actor_id?: string | null;
@@ -501,8 +507,8 @@ describe('parent change system events', () => {
 
 describe('task link system events', () => {
 	it('creates a link comment on the target the first time another task mentions it', async () => {
-		const target = await createTask('Target ticket');
-		const source = await createTask('Source ticket');
+		const target = await createTask('Target task');
+		const source = await createTask('Source task');
 
 		const res = await app.request(`/api/projects/${projectSlug}/tasks/${source.id}/comments`, {
 			method: 'POST',

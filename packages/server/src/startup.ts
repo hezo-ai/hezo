@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import { API_BODY_MAX_BYTES, ATTACHMENT_MAX_BYTES } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -22,6 +22,7 @@ import { DomainEventBus } from './events/bus';
 import type { AssetStorageInfo } from './lib/asset-storage-info';
 import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
+import type { SandboxBackendInfo } from './lib/sandbox-backend-info';
 import {
 	getInstanceBaseUrl,
 	getInstanceLocale,
@@ -34,7 +35,7 @@ import { getToolDefs, handleMcpAssetUpload, handleMcpRequest, initMcpServer } fr
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
 import { agentTypesRoutes } from './routes/agent-types';
-import { agentsRoutes, publicAgentsRoutes } from './routes/agents';
+import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
 import { apiKeysRoutes } from './routes/api-keys';
 import { approvalsRoutes } from './routes/approvals';
@@ -48,6 +49,7 @@ import { chatChannelRoutes } from './routes/chat-channels';
 import { chatWebhookRoutes } from './routes/chat-webhooks';
 import { commentsRoutes } from './routes/comments';
 import { connectorsRoutes } from './routes/connectors';
+import { buildContainerRoutes } from './routes/containers';
 import { costsRoutes } from './routes/costs';
 import { customPromptRoutes } from './routes/custom-prompt';
 import { buildDatabaseInfoRoutes } from './routes/database-info';
@@ -67,6 +69,7 @@ import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes, publicProjectsRoutes } from './routes/projects';
 import { queuedWakeupsRoutes } from './routes/queued-wakeups';
 import { reposRoutes } from './routes/repos';
+import { buildSandboxBackendInfoRoutes } from './routes/sandbox-backend-info';
 import { searchRoutes } from './routes/search';
 import { secretsRoutes } from './routes/secrets';
 import { skillsRoutes } from './routes/skills';
@@ -85,28 +88,24 @@ import {
 	wireManagerToChannels,
 } from './services/chat-channels';
 import { ChatSessionManager } from './services/chat-session-manager';
-import { checkAndAutoRebindConnectivity } from './services/container-connectivity-preflight';
-import {
-	ContainerConnectivityStatus,
-	EffectiveBindHost,
-} from './services/container-connectivity-status';
 import { ContainerLogStreamer } from './services/container-logs';
 import type { ContainerDeps } from './services/containers';
 import { DockerClient } from './services/docker';
-import { extractBundledDockerContext } from './services/docker-assets';
 import { bindSecretsVaultToMasterKey, EgressProxy, loadOrCreateCA } from './services/egress';
 import { ImageBuildTracker, setSharedImageBuildTracker } from './services/image-build-tracker';
-import {
-	pruneStaleBundledImages,
-	refreshPublishedAgentBaseImage,
-	setDockerBaseDir,
-} from './services/image-registry';
 import { JobManager } from './services/job-manager';
 import { LogStreamBroker } from './services/log-stream-broker';
-import { checkContainerMounts } from './services/mount-preflight';
 import { registerGenericOAuthRefresh } from './services/oauth/generic-refresh';
 import { adminPasswordIsSet } from './services/password';
 import { PricingService } from './services/pricing';
+import {
+	completeSandboxBackendOnUnlock,
+	type StartupBackendResolution,
+} from './services/sandbox/backend-store';
+import { DOCKER_CONTAINER_HOST_ALIAS } from './services/sandbox/endpoints';
+import { SandboxBackendHolder } from './services/sandbox/holder';
+import { openSandboxBackend } from './services/sandbox/open';
+import type { ContainerEngine } from './services/sandbox/types';
 import { SshAgentServer } from './services/ssh-agent';
 import { WebSocketManager } from './services/ws';
 import { setStartupPhase } from './startup-progress';
@@ -121,8 +120,9 @@ export interface AppConfig {
 	dataDir: string;
 	webUrl: string;
 	/**
-	 * Port the HTTP server listens on — used to build the absolute
-	 * `host.docker.internal:<port>` asset download URLs handed to agents.
+	 * Port the HTTP server listens on - the address the tunnel's `mcp` leg
+	 * forwards to, so a container reaches Hezo on its own loopback without ever
+	 * naming the host.
 	 */
 	serverPort?: number;
 	/** A master key was configured at startup (env/CLI), so the instance auto-unlocks after a restart. */
@@ -134,6 +134,14 @@ export interface AppConfig {
 	storageInfo?: StorageInfo;
 	/** Pre-redacted asset-storage metadata — same contract as `storageInfo`. */
 	assetStorageInfo?: AssetStorageInfo;
+	/**
+	 * The live container-backend holder.
+	 *
+	 * A holder rather than the metadata it used to carry, because the backend is
+	 * now switchable at runtime: the settings route reads *and re-points* it, so
+	 * a snapshot taken at boot would go stale the moment an operator switched.
+	 */
+	sandboxHolder?: SandboxBackendHolder;
 }
 
 export interface StartupResult {
@@ -145,7 +153,7 @@ export interface StartupResult {
 	wsManager: WebSocketManager;
 	db: Db;
 	assetStore: AssetStore;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	masterKeyManager: MasterKeyManager;
 	logs: LogStreamBroker;
 	containerLogStreamer: ContainerLogStreamer;
@@ -246,52 +254,89 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	const masterKeyManager = new MasterKeyManager();
 	const masterKeyState = await resolveMasterKeyState(db, masterKeyManager, config.masterKey);
 
-	let docker: DockerClient;
+	// The backend is chosen here from the **stored setting**, which the launch
+	// flag only seeds on a fresh instance - so an operator who switched from the
+	// Containers page comes back on what they chose, not on what the command line
+	// happens to say. It can change at runtime now, which is why everything below
+	// receives `holder.engine` (a stable proxy) rather than the engine itself: a
+	// captured reference would keep driving the backend they just left.
+	//
+	// Still no dynamic failover. A backend that cannot be reached aborts startup
+	// exactly as before; the holder swaps *which* backend is current, never picks
+	// a second one because the first is down.
+	setStartupPhase('sandbox');
+	let initialEngine: ContainerEngine;
+	let sandboxBackendInfo: SandboxBackendInfo;
+	// Set when the backend's credential is in the locked vault, so the open has
+	// to wait for the unlock. Null on every other path, including Docker.
+	let deferredBackend: StartupBackendResolution | null = null;
 	if (process.env.HEZO_SKIP_DOCKER) {
+		// The fake needs the db (it synthesizes agent output), which is why this
+		// branch stays here rather than inside `openSandboxBackend`.
 		const { createFakeDockerClient } = await import('./services/fake-docker.js');
-		docker = createFakeDockerClient(db);
+		initialEngine = createFakeDockerClient(db);
+		sandboxBackendInfo = { backend: 'docker', display: 'local Docker daemon' };
 	} else {
-		docker = new DockerClient();
-		// A compiled binary has no repo checkout, so extract the embedded agent-base
-		// build context to the data dir and point the image resolver at it. This is
-		// the local-build fallback for when the published-image pull fails, and it's
-		// fast (writing files), so it stays on the critical path. No-op in dev/source
-		// (returns null — the resolver falls back to the repo's docker/ dir).
-		try {
-			const contextDir = await extractBundledDockerContext(config.dataDir);
-			if (contextDir) setDockerBaseDir(contextDir);
-		} catch (err) {
-			log.error('Failed to extract bundled agent-base build context (continuing):', err);
+		const { resolveStartupBackend } = await import('./services/sandbox/backend-store.js');
+		const resolved = await resolveStartupBackend(db, masterKeyManager, {
+			backend: config.sandboxBackend,
+			daytonaApiKey: config.daytonaApiKey,
+			daytonaApiUrl: config.daytonaApiUrl,
+		});
+		deferredBackend = resolved;
+		if (resolved.deferred) {
+			// The credential exists but only the vault has it, and an instance boots
+			// locked by design. Holding a pending engine until the unlock is what lets
+			// a managed backend survive a restart at all - the alternatives were
+			// failing every boot, or quietly running on Docker instead.
+			const { createPendingEngine, pendingUnlockMessage } = await import(
+				'./services/sandbox/pending.js'
+			);
+			const { redactSandboxApiUrl } = await import('./lib/sandbox-backend-info.js');
+			const { DEFAULT_DAYTONA_API_URL } = await import('./services/sandbox/daytona/client.js');
+			const display = redactSandboxApiUrl(resolved.daytonaApiUrl || DEFAULT_DAYTONA_API_URL);
+			initialEngine = createPendingEngine(pendingUnlockMessage(display));
+			sandboxBackendInfo = { backend: resolved.backend, display };
+			log.info(
+				`Sandbox backend: ${resolved.backend} (${display}) - connecting once the instance is unlocked`,
+			);
+		} else {
+			({ engine: initialEngine, info: sandboxBackendInfo } = await openSandboxBackend({
+				backend: resolved.backend,
+				daytonaApiKey: resolved.daytonaApiKey,
+				daytonaApiUrl: resolved.daytonaApiUrl,
+				// An operator who pinned a socket did so because discovery does not
+				// reach their daemon; dropping it here would silently ignore the flag
+				// and send them round the discovery loop it exists to bypass.
+				dockerSocket: config.dockerSocket,
+			}));
 		}
-		// Prune stale bundled images and refresh the published agent-base image (so a
-		// long-running install picks up a newer release's :latest on restart — Docker
-		// caches :latest by name and never refreshes it on its own). The pull is
-		// network-bound and can take minutes on a cold cache, so run it in the
-		// BACKGROUND: it must not gate `serverReady` (the web UI, master-key unlock,
-		// and project creation are all usable without it). It's best-effort anyway —
-		// container provisioning pulls-then-builds on demand and falls back to a local
-		// build, so a missing/slow refresh self-heals on first use. No-op in dev/tests.
-		trackBackground(
-			(async () => {
-				try {
-					const outcome = await pruneStaleBundledImages(docker);
-					if (outcome.removed.length > 0 || outcome.skipped.length > 0) {
-						log.info(
-							`bundled-image prune: kept=${outcome.kept.length} removed=${outcome.removed.length} skipped=${outcome.skipped.length}`,
-						);
-					}
-				} catch (err) {
-					log.error('bundled-image prune failed (continuing startup):', err);
-				}
-				try {
-					const refreshed = await refreshPublishedAgentBaseImage(docker);
-					if (refreshed) log.info(`refreshed published agent-base image ${refreshed}`);
-				} catch (err) {
-					log.warn('agent-base image refresh failed (continuing startup):', err);
-				}
-			})(),
-		);
 	}
+	const { SandboxBackendHolder } = await import('./services/sandbox/holder.js');
+	const sandboxHolder = new SandboxBackendHolder({
+		engine: initialEngine,
+		info: sandboxBackendInfo,
+		dataDir: config.dataDir,
+	});
+	// Everything downstream takes the proxy. Nothing may capture `initialEngine`.
+	const docker: ContainerEngine = sandboxHolder.engine;
+
+	// Host-side setup, asked of whichever backend is in use. What it does is that
+	// backend's business: the local daemon extracts its embedded build context and
+	// refreshes images, a managed service has no host state and does nothing. This
+	// used to be two `initialEngine instanceof DockerClient` branches - a capability
+	// branch above the seam, which had already silently broken once when the holder
+	// proxy made `instanceof` false and image setup stopped happening at all.
+	//
+	// Skipped only while the open is deferred: no backend is current then, so
+	// there is no host to prepare, and the unlock that opens the real one prepares
+	// it as part of the swap. That is a lifecycle question - "is a backend current
+	// yet?" - and not the capability question - "which backend is this?" - that the
+	// seam exists to forbid. Asking anyway is what exited the boot: the pending
+	// engine throws from every member by design, and the caught error reads as a
+	// fatal unreachable backend rather than the healthy locked instance it is.
+	if (!deferredBackend?.deferred) await sandboxHolder.prepareHost();
+
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -302,94 +347,37 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	imageBuildTracker.setWsManager(wsManager);
 	setSharedImageBuildTracker(imageBuildTracker);
 	const containerLogStreamer = new ContainerLogStreamer();
-	// Mutable bind host shared by the egress proxy and SSH bridge, read per-run at
-	// allocation. The boot connectivity check below can auto-rebind it to the
-	// detected docker bridge gateway IP when loopback is unreachable — no restart.
-	const bindHost = new EffectiveBindHost(config.containerBindHost);
-	// Latest container→host connectivity outcome, read at run time to gate egress.
-	const connectivityStatus = new ContainerConnectivityStatus(config.containerBindHost);
-	const sshAgentServer = new SshAgentServer({
-		db,
-		masterKeyManager,
-		tcpListenHost: config.containerBindHost,
-		bindHostRef: bindHost,
-	});
+	// The egress proxy and SSH bridge bind loopback, always: a container reaches
+	// them through its own tunnel, whose host-side end dials them from this
+	// process. Nothing outside the host ever needs a route to either, so there is
+	// no interface to choose and none to firewall.
+	const sshAgentServer = new SshAgentServer({ db, masterKeyManager });
 	await cleanupOrphanRunSockets(db, config.dataDir);
 	const egressCA = await loadOrCreateCA(config.dataDir);
 	const egressProxy = new EgressProxy({
 		db,
 		masterKeyManager,
 		ca: egressCA,
-		proxyBindHost: config.containerBindHost,
-		bindHostRef: bindHost,
 		authEnabled: config.egressProxyAuth,
 		allowPrivateTargets: config.egressAllowPrivateTargets,
 		// Hezo's own MCP/asset endpoint as a container addresses it. Already in the
 		// run's NO_PROXY, so it should never reach the proxy — but NO_PROXY is a
 		// client-side convention, and a runtime that ignores it would otherwise have
 		// its tool traffic refused by the destination guard.
-		selfEndpoint: { host: 'host.docker.internal', port: config.port },
+		selfEndpoint: { host: DOCKER_CONTAINER_HOST_ALIAS, port: config.port },
 	});
 	// Decrypted secrets must never outlive the unlock that produced them.
 	bindSecretsVaultToMasterKey(masterKeyManager);
-	// Verify a container can actually reach back to the host — the MCP server
-	// (firewall signal) and a listener at the egress/SSH bind host. On native-Linux
-	// Docker a host firewall or a loopback bind silently blocks this, leaving every
-	// agent with no tools; detect it at boot and log the exact fix instead of
-	// letting runs hang. When the bind is loopback-only and a container can't reach
-	// it, auto-rebind the proxy + SSH bridge to the detected bridge gateway IP and
-	// re-probe — so native-Linux works out of the box without exposing them on all
-	// interfaces. The captured outcome gates egress at run time (see agent-runner).
-	// Backgrounded + non-fatal: it must not gate readiness, and the web UI stays up
-	// so the operator can act on any residual guidance. No-ops under HEZO_SKIP_DOCKER
-	// (fake docker / tests) and the documented opt-out.
+	// Verify agent containers get a WRITABLE view of the data directory. Every
+	// agent works on a bind mount of it, and a VM-backed runtime only shares the
+	// host paths it was told to - Colima shares $HOME read-only by default - so an
+	// otherwise healthy Docker setup can leave every run failing on its first
+	// write, with an error that reads as a broken agent. Backgrounded and
+	// non-fatal: the operator needs the web UI up to act on the guidance.
 	//
-	// One probe over the LIVE bind host, used by both the boot check and the per-run
-	// gate (agent-runner / CEO). Routing every probe through checkAndAutoRebindConnectivity
-	// means the gate always re-probes the current EffectiveBindHost (and rebinds if still
-	// on loopback), so a stale/race-poisoned loopback result self-heals on the next run
-	// instead of blocking until restart. The boot probe logs the auto-bind / outcome; the
-	// per-run gate stays quiet (logResult:false) — it surfaces failures via its abort message.
-	const makeConnectivityProbe = (logResult: boolean) => async () => {
-		const r = await checkAndAutoRebindConnectivity({
-			docker,
-			serverPort: config.port,
-			bindHost,
-			logResult,
-		});
-		return { status: r.outcome, bindHost: r.bindHost };
-	};
-	const connectivityProbe = makeConnectivityProbe(false);
-	// Boot via ensureFresh so an early run-time probe shares this single-flight (no race,
-	// no duplicate probe container). maxAge 0 forces the initial probe; the boot closure
-	// logs. Whichever ensureFresh starts first wins — boot starts here, before any request.
-	trackBackground(
-		connectivityStatus
-			.ensureFresh(makeConnectivityProbe(true), 0)
-			.catch((err) => {
-				log.info('container→host connectivity check failed', {
-					error: err instanceof Error ? err.message : String(err),
-				});
-				connectivityStatus.set('skipped', bindHost.get());
-			})
-			// Then verify agent containers get a WRITABLE view of the data directory.
-			// Every agent works on a bind mount of it, and a VM-backed runtime only
-			// shares the host paths it was told to — Colima shares $HOME read-only by
-			// default — so an otherwise healthy Docker setup can leave every run
-			// failing on its first write. Chained after connectivity rather than run
-			// alongside it: both boot a throwaway container from the same agent-base
-			// image, so running them concurrently on a cold cache would fire two
-			// simultaneous pulls of an image neither has yet. Backgrounded and
-			// non-fatal for the same reason as the connectivity check — the operator
-			// needs the web UI up to act on the guidance.
-			.then(() =>
-				checkContainerMounts({ docker, dataDir: config.dataDir }).catch((err) => {
-					log.info('container mount check failed', {
-						error: err instanceof Error ? err.message : String(err),
-					});
-				}),
-			),
-	);
+	// Docker only, and deliberately: the check is about *bind mounts of a host
+	// path*, which a managed backend has none of - its filesystem is the
+	// sandbox's own. Running it there would boot a throwaway container on a paid
 	const events = new DomainEventBus();
 	const jobManager = new JobManager({
 		db,
@@ -404,8 +392,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
-		connectivityStatus,
-		connectivityProbe,
 		pricing,
 		storageBackend: storageInfo.backend,
 		telemetry: config.telemetry,
@@ -423,8 +409,6 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sshAgentServer,
 		egressProxy,
 		egressCAPath: egressCA.certPath,
-		connectivityStatus,
-		connectivityProbe,
 		containerLogStreamer,
 	});
 
@@ -440,6 +424,10 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		sink: buildInboundEventSink({ db, manager: chatSessionManager }),
 	});
 	wireManagerToChannels(chatSessionManager, chatChannelRegistry);
+	// Closes the one edge that runs the other way: the idle pass parks a live
+	// assistant session before taking its container down, so the session is
+	// suspended deliberately rather than discovering it through a dead tunnel.
+	jobManager.setChatSessions(chatSessionManager);
 
 	setStartupPhase('workspace');
 	// On a genuinely fresh instance (HQ not yet seeded) install the default skills
@@ -468,7 +456,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		log.error('Failed to seed default team:', err);
 	}
 
-	masterKeyManager.onUnlock(() => {
+	function startUnlockedServices(): void {
 		jobManager
 			.reconcileOnStartup()
 			.catch((err) => log.error('Startup reconciliation failed:', err))
@@ -509,6 +497,27 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 					);
 				}),
 		);
+	}
+
+	masterKeyManager.onUnlock(() => {
+		// Connecting the backend goes first, because everything in
+		// `startUnlockedServices` drives the container engine and a deferred open is
+		// still holding the pending one. Sequencing here is what keeps "deferred"
+		// invisible downstream: the job manager, the chat manager and the HQ warm-up
+		// each start against a real backend, exactly as they would have if the vault
+		// had been readable at boot.
+		const connected = deferredBackend
+			? completeSandboxBackendOnUnlock(db, masterKeyManager, sandboxHolder, deferredBackend)
+			: Promise.resolve();
+		trackBackground(
+			connected
+				// Not fatal to the process - this is long past startup - but not
+				// papered over either: the pending engine stays in place, so every
+				// container operation reports this instead of running somewhere
+				// unintended.
+				.catch((err) => log.error('Failed to connect the container backend after unlock:', err))
+				.then(startUnlockedServices),
+		);
 	});
 
 	const app = buildApp(
@@ -521,6 +530,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			autoUnlock: config.masterKey !== undefined,
 			storageInfo,
 			assetStorageInfo,
+			sandboxHolder,
 		},
 		docker,
 		wsManager,
@@ -558,7 +568,7 @@ export function buildApp(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
 	config: AppConfig = { dataDir: '', webUrl: '' },
-	docker: DockerClient = new DockerClient(),
+	docker: ContainerEngine = new DockerClient(),
 	wsManager: WebSocketManager = new WebSocketManager(),
 	jobManager?: JobManager,
 	logs: LogStreamBroker = new LogStreamBroker(),
@@ -652,6 +662,7 @@ export function buildApp(
 		logs,
 		containerLogStreamer,
 		sshAgentServer,
+		egressProxy,
 		egressCAPath: egressProxy?.caCertPath ?? null,
 	};
 	initMcpServer(
@@ -742,7 +753,6 @@ export function buildApp(
 
 	// Public signed-URL agent-avatar read endpoint — same rationale as the
 	// project icon. Mounted before the /api/* auth middleware.
-	app.route('/', publicAgentsRoutes);
 
 	// Public signed-URL user-avatar read endpoint — same rationale as the
 	// project icon. Mounted before the /api/* auth middleware.
@@ -772,6 +782,7 @@ export function buildApp(
 	app.route('/api', usersRoutes);
 	app.route('/api', agentsRoutes);
 	app.route('/api', projectsRoutes);
+	app.route('/api', buildContainerRoutes());
 	app.route('/api', tasksRoutes);
 	app.route('/api', goalsRoutes);
 	app.route('/api', commentsRoutes);
@@ -803,6 +814,17 @@ export function buildApp(
 		'/api',
 		buildAssetStorageInfoRoutes(
 			config.assetStorageInfo ?? { backend: 'local', display: join(config.dataDir, 'assets') },
+		),
+	);
+	app.route(
+		'/api',
+		buildSandboxBackendInfoRoutes(
+			config.sandboxHolder ??
+				new SandboxBackendHolder({
+					engine: docker,
+					info: { backend: 'docker', display: 'local Docker daemon' },
+					dataDir: config.dataDir,
+				}),
 		),
 	);
 	app.route('/api', modelPricingRoutes);

@@ -18,6 +18,7 @@ describe('oauth state signing', () => {
 	it('round-trips a state through sign and verify', async () => {
 		const { state, codeVerifier, codeChallenge } = await signState(masterKeyManager, {
 			teamId: 'aaaa',
+			projectId: null,
 			provider: 'datocms',
 			redirectUri: 'http://127.0.0.1:3100/api/oauth/callback',
 			returnTo: '/teams/x/connections',
@@ -37,6 +38,7 @@ describe('oauth state signing', () => {
 	it('rejects a tampered state', async () => {
 		const { state } = await signState(masterKeyManager, {
 			teamId: 'aaaa',
+			projectId: null,
 			provider: 'p',
 			redirectUri: 'http://x/cb',
 			returnTo: '/',
@@ -50,6 +52,7 @@ describe('oauth state signing', () => {
 	it('rejects a state with a different signature', async () => {
 		const { state } = await signState(masterKeyManager, {
 			teamId: 'aaaa',
+			projectId: null,
 			provider: 'p',
 			redirectUri: 'http://x/cb',
 			returnTo: '/',

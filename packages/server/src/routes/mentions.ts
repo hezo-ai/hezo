@@ -253,23 +253,31 @@ mentionsRoutes.get('/projects/:projectId/mentions/search', async (c) => {
 		// team — surface them alongside the team's own roster so they can be
 		// @-mentioned from any project (mirrors GET /projects/:projectId/agents).
 		// Own-team agents sort first; instance agents follow.
-		const r = await db.query<{ slug: string; title: string }>(
-			`SELECT ma.slug, ma.title
+		const r = await db.query<{
+			slug: string;
+			title: string;
+			human_name: string | null;
+			human_name_slug: string | null;
+		}>(
+			`SELECT ma.slug, ma.title, ma.human_name, ma.human_name_slug
 			 FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE (m.team_id = $1 OR (m.team_id = $5 AND $1 <> $5))
 			   AND ma.admin_status = 'enabled'
-			   AND ($2 = '' OR ma.slug ILIKE $3 OR ma.title ILIKE $3)
-			 ORDER BY (m.team_id <> $1), ma.title
+			   AND ($2 = '' OR ma.slug ILIKE $3 OR ma.title ILIKE $3 OR ma.human_name ILIKE $3)
+			 ORDER BY (m.team_id <> $1), COALESCE(NULLIF(ma.human_name, ''), ma.title)
 			 LIMIT $4`,
 			[teamId, q, pattern, perKind, DEFAULT_TEAM_ID],
 		);
 		for (const row of r.rows) {
+			// Typing part of a role finds the person doing it, and picking them
+			// inserts the handle they are actually known by.
+			const handle = row.human_name_slug ?? row.slug;
 			results.push({
 				kind: 'agent',
-				handle: row.slug,
-				label: row.title,
-				sublabel: `@${row.slug}`,
+				handle,
+				label: row.human_name || row.title,
+				sublabel: row.human_name ? `${row.title} · @${handle}` : `@${handle}`,
 			});
 		}
 	}

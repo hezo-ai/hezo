@@ -18,7 +18,7 @@ test('archives a project from settings via the confirm dialog', async () => {
 	let projectSlug = '';
 	let projectId = '';
 
-	const { findByTestId, ctx, user, router } = await renderApp({
+	const { findByTestId, findByText, ctx, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -34,10 +34,19 @@ test('archives a project from settings via the confirm dialog', async () => {
 	});
 
 	// The superuser-only Danger zone renders the archive affordance.
-	await user.click(await findByTestId('archive-project-button', undefined, { timeout: 15_000 }));
+	await findByTestId('archive-project-button', undefined, { timeout: 15_000 });
+
+	// The block resolves through the catalog rather than rendering raw keys: the
+	// heading, and the interpolated node inside the blurb's `<Trans>` sentence.
+	await findByText('Danger zone');
+	await findByText('Settings → Archived projects');
+
+	await user.click(await findByTestId('archive-project-button'));
 
 	// Confirm in the dialog (portaled onto document.body).
-	await user.click(await findByTestId('confirm-dialog-confirm', undefined, { timeout: 8_000 }));
+	await findByTestId('confirm-dialog-confirm', undefined, { timeout: 8_000 });
+	await findByText('Archive this project?');
+	await user.click(await findByTestId('confirm-dialog-confirm'));
 
 	// The real backend stamps archived_at on the project row.
 	await waitFor(

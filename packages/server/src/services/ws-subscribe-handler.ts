@@ -1,7 +1,7 @@
-import { DEFAULT_TEAM_ID, wsRoom } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, WsMessageType, type WsPongMessage, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import type { ContainerLogStreamer } from './container-logs';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 import type { ImageBuildTracker } from './image-build-tracker';
 import type { LogStreamBroker } from './log-stream-broker';
 import type { WebSocketManager, WsData, WsSocket } from './ws';
@@ -9,7 +9,7 @@ import type { WebSocketManager, WsData, WsSocket } from './ws';
 export interface WsSubscribeDeps {
 	db: Db | null;
 	wsManager: WebSocketManager;
-	docker: DockerClient | null;
+	docker: ContainerEngine | null;
 	containerLogStreamer: ContainerLogStreamer;
 	logs: LogStreamBroker | null;
 	imageBuildTracker: ImageBuildTracker | null;
@@ -58,20 +58,39 @@ export async function handleWsSubscribe(
 
 	const logsMatch = room.match(/^container-logs:(.+)$/);
 	if (logsMatch && deps.db && deps.docker) {
-		const projectId = logsMatch[1];
-		const project = await deps.db.query<{
-			container_id: string | null;
-			team_id: string;
-			container_status: string | null;
-		}>('SELECT container_id, team_id, container_status FROM projects WHERE id = $1', [projectId]);
-		if (project.rows.length === 0) return;
-		const row = project.rows[0];
+		// The room names a **container**, so the project has to be resolved from it
+		// to run the team check. Both representations are asked, in the order that
+		// makes the newer one win: a pool member is the authoritative record, and
+		// `projects.container_id` still names a container during provisioning before
+		// its member row exists.
+		const containerId = logsMatch[1];
+		const owner = await deps.db.query<{ project_id: string; team_id: string; live: boolean }>(
+			`SELECT p.id AS project_id, p.team_id,
+			        m.state IN ('idle', 'busy') AS live
+			   FROM container_pool_members m JOIN projects p ON p.id = m.project_id
+			  WHERE m.container_id = $1
+			  UNION
+			 SELECT p.id, p.team_id, p.container_status = 'running'
+			   FROM projects p WHERE p.container_id = $1
+			  LIMIT 1`,
+			[containerId],
+		);
+		const row = owner.rows[0];
+		// An unknown container is refused rather than subscribed to an empty room:
+		// a client watching a room nothing will ever publish to looks identical to
+		// one watching a quiet container.
+		if (!row) return;
 		const allowed = await deps.canAccessTeam(ws.data.auth, row.team_id);
 		if (!allowed) return;
 
 		deps.wsManager.subscribe(ws, room);
-		if (row.container_id && row.container_status === 'running' && deps.logs) {
-			deps.containerLogStreamer.subscribe(projectId, row.container_id, deps.logs, deps.docker);
+		// Only a container that is actually up gets a follow stream: a stopped one
+		// has nothing to emit, and attaching to it is an engine call that can only
+		// fail. It can no longer *erase* anything - the follow stream and the
+		// provisioning trace are one stream now (see `containerStreamId`) - but
+		// there is still no reason to open it.
+		if (deps.logs && row.live) {
+			deps.containerLogStreamer.subscribe(row.project_id, containerId, deps.logs, deps.docker);
 		}
 		deps.logs?.replay(room, (payload) => {
 			deps.sendToSocket(ws, payload);
@@ -95,6 +114,15 @@ export async function handleWsSubscribe(
 		});
 		return;
 	}
+}
+
+/**
+ * Answer a client liveness probe. Deliberately depends on nothing but the socket: it
+ * is dispatched ahead of the manager guards so a probe is still answered on a socket
+ * that opened while some subsystem was still coming up.
+ */
+export function handleWsPing(ws: WsSocket, deps: Pick<WsSubscribeDeps, 'sendToSocket'>): void {
+	deps.sendToSocket(ws, { type: WsMessageType.Pong } satisfies WsPongMessage);
 }
 
 export function handleWsUnsubscribe(

@@ -1,13 +1,17 @@
 import {
 	ArchiveFilter,
 	AuthType,
+	CONTAINER_DISK_GB_MAX,
+	CONTAINER_DISK_GB_MIN,
 	ContainerStatus,
+	DASHBOARD_WIDGET_IDS,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
 	type MarketplaceRosterAgent,
 	MemberType,
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
+	projectMemoryFitsBudget,
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -20,23 +24,18 @@ import {
 	broadcastProjectUpdate,
 } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
+import { buildContainerDeps } from '../lib/container-deps';
 import { readImageDimensions } from '../lib/image-dimensions';
 import { ref } from '../lib/log-ref';
 import { signProjectIconUrl, verifyProjectIconUrl } from '../lib/project-icon-urls';
 import { err, ok } from '../lib/response';
 import { toSlug, uniqueSlug } from '../lib/slug';
 import { terminalStatusParams } from '../lib/sql';
+import { getMaxContainerMemoryGb } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent, requireSuperuser } from '../middleware/auth';
-import {
-	type ContainerDeps,
-	type ProjectRow,
-	rebuildContainer,
-	stopContainerGracefully,
-	teardownContainer,
-	wakeAgentsWithPendingWork,
-} from '../services/containers';
+import { teardownContainer } from '../services/containers';
 import { loadCoordinationContext } from '../services/internal-intake';
 import type { JobManager } from '../services/job-manager';
 import { getMarketplaceTeam } from '../services/marketplace';
@@ -45,25 +44,14 @@ import {
 	enqueueAddMarketplaceTeamTask,
 } from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
+import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
+import { createBundleVault } from '../services/sandbox/bundle-vault';
+import { strandedCommitsExistsSql } from '../services/sandbox/pool-db';
 import { exportTeamBundle, TeamBundleExportError } from '../services/team-bundle-export';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function buildContainerDeps(c: Context<Env>): ContainerDeps {
-	return {
-		db: c.get('db'),
-		docker: c.get('docker'),
-		dataDir: c.get('dataDir'),
-		wsManager: c.get('wsManager'),
-		masterKeyManager: c.get('masterKeyManager'),
-		logs: c.get('logs'),
-		containerLogStreamer: c.get('containerLogStreamer'),
-		sshAgentServer: c.get('sshAgentServer'),
-		egressCAPath: c.get('egressProxy')?.caCertPath ?? null,
-	};
-}
 
 const log = logger.child('routes');
 
@@ -149,7 +137,24 @@ projectsRoutes.get('/projects', async (c) => {
           AS today_spend_cents,
        COALESCE((SELECT max(i3.updated_at) FROM tasks i3 WHERE i3.project_id = p.id), p.created_at)
           AS last_activity_at,
-       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
+       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at,
+       -- Containers this project holds that the pool has given up on. Derived
+       -- rather than read off projects.container_status, which is a leftover of
+       -- the one-container-per-project model and latches: the sync loop writes
+       -- the error while nulling container_id, after which nothing can name the
+       -- container to clear it, so a project stayed errored forever. A pool
+       -- member is deleted when its container is removed, so this needs no
+       -- clearing path at all. The predicate is the error state and not a
+       -- non-null last_error, because only that state is refused by the ladder
+       -- and persists; a usable member carrying a last-run error is not broken.
+       (SELECT count(*) FROM container_pool_members cpm
+          WHERE cpm.project_id = p.id AND cpm.state = 'error')::int
+          AS failed_container_count,
+       -- A container holding commits that reached neither origin nor any other
+       -- durable remote is pinned against suspend and destroy until a later run
+       -- gets them out. Surfaced so such a project reads as at-risk instead of
+       -- looking healthy while one container quietly carries the only copy.
+       ${strandedCommitsExistsSql('p')} AS has_stranded_commits
      FROM projects p
      JOIN teams t ON t.id = p.team_id`;
 
@@ -504,7 +509,24 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
        (SELECT count(*) FROM goals g WHERE g.project_id = p.id AND g.archived_at IS NULL)::int AS open_goal_count,
        (SELECT count(*) FROM member_agents ma JOIN members mm ON mm.id = ma.id
           WHERE mm.team_id = p.team_id AND ma.touches_code)::int AS code_agent_count,
-       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at
+       (SELECT pi.updated_at FROM project_icons pi WHERE pi.project_id = p.id) AS icon_updated_at,
+       -- Containers this project holds that the pool has given up on. Derived
+       -- rather than read off projects.container_status, which is a leftover of
+       -- the one-container-per-project model and latches: the sync loop writes
+       -- the error while nulling container_id, after which nothing can name the
+       -- container to clear it, so a project stayed errored forever. A pool
+       -- member is deleted when its container is removed, so this needs no
+       -- clearing path at all. The predicate is the error state and not a
+       -- non-null last_error, because only that state is refused by the ladder
+       -- and persists; a usable member carrying a last-run error is not broken.
+       (SELECT count(*) FROM container_pool_members cpm
+          WHERE cpm.project_id = p.id AND cpm.state = 'error')::int
+          AS failed_container_count,
+       -- A container holding commits that reached neither origin nor any other
+       -- durable remote is pinned against suspend and destroy until a later run
+       -- gets them out. Surfaced so such a project reads as at-risk instead of
+       -- looking healthy while one container quietly carries the only copy.
+       ${strandedCommitsExistsSql('p')} AS has_stranded_commits
      FROM projects p
      WHERE p.id = $1 AND p.team_id = $2`,
 		[projectId, teamId, ...ts2.values],
@@ -533,6 +555,47 @@ projectsRoutes.get('/projects/:projectId/progress', async (c) => {
 	return ok(c, progress);
 });
 
+// Store a user's preferred widget order for the dashboard.
+projectsRoutes.patch('/projects/:projectId/dashboard-widget-order', async (c) => {
+	const projectId = c.get('projectId') as string;
+	const db = c.get('db');
+
+	let body: unknown;
+	try {
+		body = await c.req.json();
+	} catch {
+		return err(c, 'BAD_REQUEST', 'Invalid JSON body', 400);
+	}
+
+	if (
+		typeof body !== 'object' ||
+		body === null ||
+		!Array.isArray((body as Record<string, unknown>).order)
+	) {
+		return err(c, 'BAD_REQUEST', 'Body must be { order: DashboardWidgetId[] }', 400);
+	}
+
+	const raw: unknown[] = (body as { order: unknown[] }).order;
+	const known = new Set(DASHBOARD_WIDGET_IDS as readonly string[]);
+	const seen = new Set<string>();
+	for (const item of raw) {
+		if (typeof item !== 'string' || !known.has(item)) {
+			return err(c, 'BAD_REQUEST', `Unknown widget id: ${String(item)}`, 400);
+		}
+		if (seen.has(item)) {
+			return err(c, 'BAD_REQUEST', `Duplicate widget id: ${item}`, 400);
+		}
+		seen.add(item);
+	}
+
+	await db.query(`UPDATE projects SET dashboard_widget_order = $1 WHERE id = $2`, [
+		JSON.stringify(raw),
+		projectId,
+	]);
+
+	return ok(c, { order: sanitizeWidgetOrder(raw) });
+});
+
 projectsRoutes.patch('/projects/:projectId', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
@@ -556,6 +619,7 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		name?: string;
 		description?: string;
 		memory_limit_gib?: number | null;
+		container_disk_gb?: number | null;
 		daily_budget_cents?: number;
 		weekly_budget_cents?: number;
 		monthly_budget_cents?: number;
@@ -594,8 +658,51 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 		) {
 			return err(c, 'INVALID_REQUEST', 'memory_limit_gib must be an integer ≥ 1 or null', 400);
 		}
+		// Admission check. A cap larger than the whole instance budget can never be
+		// scheduled, so accepting it would leave this project's runs queueing
+		// forever with nothing naming the cause. Refuse where it is set instead -
+		// the same reason the Daytona adapter refuses a request above its ceiling
+		// rather than quietly allocating less.
+		if (body.memory_limit_gib !== null) {
+			const budget = await getMaxContainerMemoryGb(db, c.get('docker'));
+			if (!projectMemoryFitsBudget(body.memory_limit_gib, budget)) {
+				return err(
+					c,
+					'INVALID_REQUEST',
+					`memory_limit_gib of ${body.memory_limit_gib} GB exceeds the instance memory ` +
+						`budget of ${budget} GB, so a container this size could never start. Raise ` +
+						`the budget in instance settings first.`,
+					400,
+				);
+			}
+		}
 		sets.push(`memory_limit_gib = $${idx}`);
 		params.push(body.memory_limit_gib);
+		idx++;
+	}
+	if (body.container_disk_gb !== undefined) {
+		// null clears the per-project override - the container inherits the
+		// instance-wide default disk size.
+		if (
+			body.container_disk_gb !== null &&
+			(!Number.isInteger(body.container_disk_gb) ||
+				body.container_disk_gb < CONTAINER_DISK_GB_MIN ||
+				body.container_disk_gb > CONTAINER_DISK_GB_MAX)
+		) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				`container_disk_gb must be an integer between ${CONTAINER_DISK_GB_MIN} and ` +
+					`${CONTAINER_DISK_GB_MAX}, or null`,
+				400,
+			);
+		}
+		// No instance-budget check, unlike the memory cap: Hezo does not pool disk.
+		// What bounds it is the provider account's own quota, which Hezo cannot see,
+		// so a check here would be guessing - the real limit surfaces at provision
+		// time naming the provider.
+		sets.push(`container_disk_gb = $${idx}`);
+		params.push(body.container_disk_gb);
 		idx++;
 	}
 	// Budget limits: 0 = unlimited. Validate the *merged* trio (incoming ?? stored)
@@ -649,9 +756,18 @@ projectsRoutes.patch('/projects/:projectId', async (c) => {
 // --- Archive / unarchive ------------------------------------------------------
 // Soft-delete a project: it drops out of the default project index (the rail),
 // keeping its row/tasks/history so it can be restored. Superuser-only, matching
-// the global-settings "Archived projects" page that unarchives. Archiving also
-// stops the container (a retired project is dormant); unarchiving restores
-// visibility only — the container stays stopped, like any stopped project.
+// the global-settings "Archived projects" page that unarchives.
+//
+// Archiving makes the project genuinely dormant, not merely hidden. Its
+// containers are torn down (not stopped: a stopped container is a `suspended`
+// pool member, which is a *resume* rung on the pool ladder, so the next wakeup
+// brought it straight back), and every dispatch path filters `archived_at` so
+// nothing asks for one. The workspace survives, because unarchiving has to find
+// the repo clone and any unpushed commits where it left them.
+//
+// Unarchiving restores visibility only. There is no container to restart by
+// then; the next run provisions a fresh one, the same path any project with no
+// container takes.
 projectsRoutes.post('/projects/:projectId/archive', async (c) => {
 	const denied = requireSuperuser(c);
 	if (denied) return denied;
@@ -661,45 +777,45 @@ projectsRoutes.post('/projects/:projectId/archive', async (c) => {
 	const projectId = c.get('projectId') as string;
 	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
 
-	const existing = await db.query<{
-		slug: string;
-		is_internal: boolean;
-		container_id: string | null;
-	}>('SELECT slug, is_internal, container_id FROM projects WHERE id = $1 AND team_id = $2', [
-		projectId,
-		teamId,
-	]);
+	const existing = await db.query<{ slug: string; is_internal: boolean }>(
+		'SELECT slug, is_internal FROM projects WHERE id = $1 AND team_id = $2',
+		[projectId, teamId],
+	);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	if (existing.rows[0].is_internal) {
 		return err(c, 'FORBIDDEN', 'Cannot archive an internal project', 403);
 	}
 
-	const { slug: projectSlug, container_id: containerId } = existing.rows[0];
+	const { slug: projectSlug } = existing.rows[0];
 
-	// Cancel in-flight agent runs before stopping the container (mirrors
-	// POST /projects/:projectId/container/stop). No container yet → just mark it
-	// stopped so the archived project reads as dormant.
-	if (containerId) {
-		await cancelRunningAgentTasks(db, c.get('jobManager'), projectId, teamId);
-	}
+	// Unconditionally, not only when `projects.container_id` is set: that column
+	// names the newest container a project holds, and a project can hold pool
+	// members with no named container at all (`clearProjectContainerIfNamed`
+	// nulls it whenever the named one is destroyed). Gating on it meant a project
+	// in that state was archived with its runs still going and its containers
+	// still up.
+	await cancelRunningAgentTasks(db, c.get('jobManager'), projectId, teamId);
 
+	// `archived_at` is written before the teardown lands so the dispatch gates
+	// see it immediately - a wakeup racing the teardown must find the project
+	// already archived, not merely mid-stop.
 	const result = await db.query(
 		`UPDATE projects
 		 SET archived_at = now(), container_status = $1::container_status
 		 WHERE id = $2 RETURNING *`,
-		[containerId ? ContainerStatus.Stopping : ContainerStatus.Stopped, projectId],
+		[ContainerStatus.Stopping, projectId],
 	);
 
-	if (containerId) {
-		const containerDeps = buildContainerDeps(c);
-		c.get('jobManager').launchTask(
-			`stop:${projectId}`,
-			async () => {
-				await stopContainerGracefully(containerDeps, projectId, projectSlug, teamId, containerId);
-			},
-			60_000,
-		);
-	}
+	const containerDeps = buildContainerDeps(c);
+	c.get('jobManager').launchTask(
+		`teardown:${projectId}`,
+		async () => {
+			await teardownContainer(containerDeps, projectId, projectSlug, teamId, {
+				removeWorkspace: false,
+			});
+		},
+		60_000,
+	);
 
 	broadcastChange(
 		c,
@@ -874,6 +990,21 @@ projectsRoutes.delete('/projects/:projectId', async (c) => {
 			}),
 	);
 
+	// Recovery bundles go with the project and not a moment sooner. Container
+	// teardown deliberately leaves them: it wipes the local clones, so from that
+	// point the bundle may be the ONLY copy of commits that never reached the
+	// remote. Deleting the project is the operator saying they want it all gone.
+	await trackBackground(
+		createBundleVault(c.get('dataDir'))
+			.removeProject(projectId)
+			.catch((error) => {
+				log.error(
+					`Failed to delete recovery bundles for project ${ref(existing.rows[0].slug, projectId)}:`,
+					error,
+				);
+			}),
+	);
+
 	// Purge the project's OAuth connections + their vault secrets before the row
 	// delete: the project_id cascade drops the connection rows but would orphan
 	// their encrypted token secrets otherwise.
@@ -883,161 +1014,6 @@ projectsRoutes.delete('/projects/:projectId', async (c) => {
 	await db.query('DELETE FROM projects WHERE id = $1', [projectId]);
 	broadcastChange(c, wsRoom.team(teamId), 'projects', 'DELETE', { id: projectId });
 	return c.json({ data: null }, 200);
-});
-
-projectsRoutes.post('/projects/:projectId/container/start', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const projectId = c.get('projectId') as string;
-	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const result = await db.query<{ slug: string; container_id: string | null }>(
-		'SELECT slug, container_id FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
-	);
-	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
-	if (!result.rows[0].container_id) return err(c, 'NO_CONTAINER', 'No container provisioned', 400);
-
-	const docker = c.get('docker');
-	const projectSlug = result.rows[0].slug;
-	const containerId = result.rows[0].container_id;
-	try {
-		await docker.startContainer(containerId);
-		await db.query(
-			`UPDATE projects
-			 SET container_status = $1::container_status, container_last_started_at = now()
-			 WHERE id = $2`,
-			[ContainerStatus.Running, projectId],
-		);
-		c.get('containerLogStreamer').subscribe(projectId, containerId, c.get('logs'), docker);
-		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
-		await wakeAgentsWithPendingWork(db, projectId, teamId);
-		log.info(
-			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} started`,
-		);
-		return ok(c, { container_status: ContainerStatus.Running });
-	} catch (error) {
-		const message = (error as Error).message;
-		log.warn(
-			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} start failed: ${message}`,
-		);
-		return err(c, 'DOCKER_ERROR', `Failed to start container: ${message}`, 500);
-	}
-});
-
-projectsRoutes.post('/projects/:projectId/container/stop', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const projectId = c.get('projectId') as string;
-	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const result = await db.query<{
-		slug: string;
-		container_id: string | null;
-		container_status: string | null;
-	}>('SELECT slug, container_id, container_status FROM projects WHERE id = $1 AND team_id = $2', [
-		projectId,
-		teamId,
-	]);
-	if (result.rows.length === 0) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const row = result.rows[0];
-
-	if (!row.container_id) {
-		// No container yet (e.g. still provisioning) — just set status to stopped
-		await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-			ContainerStatus.Stopped,
-			projectId,
-		]);
-		await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
-		return ok(c, { container_status: ContainerStatus.Stopped });
-	}
-
-	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-		ContainerStatus.Stopping,
-		projectId,
-	]);
-	await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
-
-	const jobManager = c.get('jobManager');
-	const containerDeps = buildContainerDeps(c);
-
-	await cancelRunningAgentTasks(db, jobManager, projectId, teamId);
-
-	const containerId = row.container_id;
-	if (!containerId) return ok(c, { container_status: ContainerStatus.Stopping });
-
-	const projectSlug = row.slug;
-	const taskKey = `stop:${projectId}`;
-	jobManager.launchTask(
-		taskKey,
-		async () => {
-			await stopContainerGracefully(containerDeps, projectId, projectSlug, teamId, containerId);
-		},
-		60_000,
-	);
-
-	return ok(c, { container_status: ContainerStatus.Stopping });
-});
-
-const REBUILD_TIMEOUT_MS = 5 * 60 * 1000;
-
-projectsRoutes.post('/projects/:projectId/container/rebuild', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const projectId = c.get('projectId') as string;
-	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
-
-	const projectResult = await db.query<ProjectRow>(
-		'SELECT * FROM projects WHERE id = $1 AND team_id = $2',
-		[projectId, teamId],
-	);
-	if (projectResult.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Project not found', 404);
-	}
-
-	const teamSlugResult = await db.query<{ slug: string }>('SELECT slug FROM teams WHERE id = $1', [
-		teamId,
-	]);
-	const teamSlug = teamSlugResult.rows[0]?.slug;
-	if (!teamSlug) {
-		return err(c, 'NOT_FOUND', 'Team not found', 404);
-	}
-
-	const jobManager = c.get('jobManager');
-	const taskKey = `rebuild:${projectId}`;
-
-	// Cancel any conflicting tasks before launching rebuild
-	jobManager.cancelTask(`stop:${projectId}`);
-	jobManager.cancelTask(taskKey);
-	await cancelRunningAgentTasks(db, jobManager, projectId, teamId);
-
-	const containerDeps = buildContainerDeps(c);
-
-	await db.query('UPDATE projects SET container_status = $1::container_status WHERE id = $2', [
-		ContainerStatus.Creating,
-		projectId,
-	]);
-
-	await broadcastProjectUpdate(db, c.get('wsManager'), teamId, projectId);
-
-	jobManager.launchTask(
-		taskKey,
-		async () => {
-			try {
-				await rebuildContainer(containerDeps, projectResult.rows[0], teamSlug);
-				await wakeAgentsWithPendingWork(db, projectId, teamId);
-			} catch (error) {
-				log.error(
-					`Container rebuild failed for project ${ref(projectResult.rows[0].slug, projectId)}:`,
-					error,
-				);
-			}
-		},
-		REBUILD_TIMEOUT_MS,
-	);
-
-	return ok(c, { container_status: ContainerStatus.Creating });
 });
 
 // Public signed-URL read endpoint for a project icon. Rendered in an `<img>`

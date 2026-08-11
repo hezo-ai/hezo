@@ -23,7 +23,7 @@ const TABLE_TO_QUERY_KEY: Record<
 		queryKeys.projectIntakes(),
 	],
 	heartbeat_runs: (cid, row) => {
-		const keys: QueryKey[] = [queryKeys.projects.tasks(cid)];
+		const keys: QueryKey[] = [queryKeys.projects.tasks(cid), queryKeys.projects.agents(cid)];
 		// A run starting/finishing flips the task's run-now availability (task_busy),
 		// so refresh that task's queued-wakeups (and their dispatch state).
 		if (row.task_id) {
@@ -55,7 +55,7 @@ const TABLE_TO_QUERY_KEY: Record<
 		}
 		return keys;
 	},
-	task_comments: (cid) => [queryKeys.projects.tasks(cid)],
+	task_comments: (cid) => [queryKeys.projects.tasks(cid), queryKeys.projects.needsYou(cid)],
 	comment_reactions: (cid) => [queryKeys.projects.tasks(cid)],
 	comment_attachments: (cid) => [queryKeys.projects.tasks(cid)],
 	// Agent rows carry the per-agent budget caps, so an update (e.g. a cap edit
@@ -71,12 +71,14 @@ const TABLE_TO_QUERY_KEY: Record<
 	approvals: (cid) => [
 		queryKeys.projects.approvals(cid),
 		queryKeys.projects.inboxCount(cid),
+		queryKeys.projects.needsYou(cid),
 		queryKeys.approvals.root(),
 	],
 	admin_mentions: (cid) => [
 		queryKeys.projects.tasks(cid),
 		queryKeys.projects.inboxMentions(cid),
 		queryKeys.projects.inboxCount(cid),
+		queryKeys.projects.needsYou(cid),
 		queryKeys.inboxMentions.root(),
 	],
 	documents: (cid, row) => {
@@ -108,7 +110,11 @@ const TABLE_TO_QUERY_KEY: Record<
 		return keys;
 	},
 	// New spend moves both the cost charts and the spend-vs-cap status.
-	cost_entries: (cid) => [['projects', cid, 'costs'], queryKeys.projects.budgetStatus(cid)],
+	cost_entries: (cid) => [
+		['projects', cid, 'costs'],
+		queryKeys.projects.budgetStatus(cid),
+		queryKeys.projects.all(),
+	],
 	execution_locks: (cid) => [['projects', cid, 'execution-locks']],
 	repos: (cid) => [queryKeys.projects.repos(cid), queryKeys.projects.all()],
 	// `goals(cid)` = ['projects', slug, 'goals'] is a prefix of goalsFiltered /

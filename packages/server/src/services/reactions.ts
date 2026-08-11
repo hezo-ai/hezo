@@ -118,7 +118,7 @@ export async function removeCommentReaction(params: MutateReactionParams): Promi
 }
 
 /**
- * Loads every reaction on every comment of an task in one query, keyed by
+ * Loads every reaction on every comment of a task in one query, keyed by
  * comment id, so a comments-list response can include reactions without an
  * N+1.
  */

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { getToolDefs } from '../src/mcp/server';
 import { buildCoachReviewPrompt, type TaskInfo } from '../src/services/agent-runner';
 import { safeClose } from './helpers';
 import {
@@ -196,7 +197,14 @@ describe('Coach review prompt builder', () => {
 		);
 		expect(taskRow.rows.length).toBe(1);
 
-		const prompt = await buildCoachReviewPrompt(db, 'SYSTEM_PROMPT', taskRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(
+			db,
+			'SYSTEM_PROMPT',
+			taskRow.rows[0],
+			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 
 		expect(prompt).toContain('SYSTEM_PROMPT');
 		expect(prompt).toContain(taskRow.rows[0].identifier);
@@ -220,7 +228,14 @@ describe('Coach review prompt builder', () => {
 			[taskId],
 		);
 
-		const prompt = await buildCoachReviewPrompt(db, 'SYS', taskRow.rows[0], teamId);
+		const prompt = await buildCoachReviewPrompt(
+			db,
+			'SYS',
+			taskRow.rows[0],
+			teamId,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+		);
 
 		expect(prompt).toContain('### Rules');
 		expect(prompt).toContain('Run the full suite before pushing');
@@ -264,12 +279,10 @@ describe('Coach review prompt builder', () => {
 			taskRow.rows[0],
 			teamId,
 			masterKeyManager,
-			3100,
+			'http://127.0.0.1:47081',
 		);
 		expect(prompt).toContain('attachment: crash.log');
-		expect(prompt).toContain(
-			`download: http://host.docker.internal:3100/api/assets/${assetId}?exp=`,
-		);
+		expect(prompt).toContain(`download: http://127.0.0.1:47081/api/assets/${assetId}?exp=`);
 	});
 
 	it('seeded coach system prompt contains the summary-comment rule from the partial', async () => {
@@ -289,15 +302,12 @@ describe('Coach review prompt builder', () => {
 });
 
 describe('MCP tools registration', () => {
-	it('registers get_agent_system_prompt and update_agent_system_prompt tools', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		const toolNames = body.result.tools.map((t: any) => t.name);
+	it('registers get_agent_system_prompt and update_agent_system_prompt tools', () => {
+		// The registry, not `tools/list`: listing is projected per caller
+		// (`mcp/tool-visibility.ts`) and `update_agent_system_prompt` is
+		// Captain-or-HQ-agent only, so the admin token here is correctly not shown
+		// it. Registration is what this test is about.
+		const toolNames = getToolDefs().map((t) => t.name);
 		expect(toolNames).toContain('get_agent_system_prompt');
 		expect(toolNames).toContain('update_agent_system_prompt');
 	});

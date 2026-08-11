@@ -18,6 +18,7 @@
  * tokens uniformly across runtimes.
  */
 import { AgentRuntime, type CostTokens } from '@hezo/shared';
+import { HEZO_MCP_SERVER_NAME } from './mcp-injectors/types';
 
 export interface AgentRunUsage {
 	inputTokens: number;
@@ -55,6 +56,22 @@ export interface AgentStreamParser {
 	 * a real comment (see the handoff-delivery guardrail in `agent-runner.ts`).
 	 */
 	getFinalAssistantMessage(): string | null;
+	/**
+	 * How many tools each MCP server contributed to this run, keyed by server
+	 * name, or null when the runtime reported nothing usable.
+	 *
+	 * The same figures the `[session]` banner carries, kept so the runner can
+	 * persist them on the run row. `=connected` only ever meant the transport came
+	 * up, so an agent suspecting a connector is broken has no first-party way to
+	 * check what it actually received — it infers, and a wrong inference has
+	 * already outlived several runs by way of a progress summary. This is that
+	 * fact, reachable from inside the run through `list_connectors`.
+	 *
+	 * Null rather than `{}` when the tool array was unreadable or the runtime
+	 * emits no such event, so "not reported" stays distinguishable from "reported
+	 * zero" — the latter is the actionable one.
+	 */
+	getMcpToolCounts(): Record<string, number> | null;
 }
 
 /**
@@ -125,6 +142,7 @@ function createPassthroughParser(): AgentStreamParser {
 		getUsage: () => null,
 		getTerminalError: () => null,
 		getFinalAssistantMessage: () => null,
+		getMcpToolCounts: () => null,
 	};
 }
 
@@ -140,6 +158,7 @@ function createJsonlParser(
 	getUsage: () => AgentRunUsage | null,
 	getTerminalError: () => string | null = () => null,
 	getFinalAssistantMessage: () => string | null = () => null,
+	getMcpToolCounts: () => Record<string, number> | null = () => null,
 ): AgentStreamParser {
 	let buffer = '';
 
@@ -176,6 +195,7 @@ function createJsonlParser(
 		getUsage,
 		getTerminalError,
 		getFinalAssistantMessage,
+		getMcpToolCounts,
 	};
 }
 
@@ -404,11 +424,18 @@ interface ClaudeUsage {
 	cache_read_input_tokens?: number;
 }
 
+/** Per-server entry of the `init` event's MCP startup report. */
+interface ClaudeMcpServerStatus {
+	name?: string;
+	status?: string;
+}
+
 interface ClaudeStreamEvent {
 	type?: string;
 	subtype?: string;
 	message?: ClaudeMessage;
 	tools?: unknown[];
+	mcp_servers?: ClaudeMcpServerStatus[];
 	model?: string;
 	session_id?: string;
 	duration_ms?: number;
@@ -417,6 +444,101 @@ interface ClaudeStreamEvent {
 	is_error?: boolean;
 	total_cost_usd?: number;
 	usage?: ClaudeUsage;
+}
+
+/**
+ * Statuses in the `init` report that mean the run will **not** get that
+ * server's tools, as opposed to "not yet".
+ *
+ * Measured against Claude Code 2.1.220 on a live run, and it is not what the
+ * event's shape suggests: MCP servers connect **asynchronously, after** `init`
+ * is emitted, so a perfectly healthy run reports `pending` there and its `tools`
+ * array carries the built-ins only - the CLI even ships a `WaitForMcpServers`
+ * tool for an agent to block on. Reading anything-but-`connected` as a failure
+ * therefore fails every healthy Claude Code run, which is exactly what the live
+ * agent-CLI conformance suite caught before it shipped.
+ *
+ * An unrecognised status is deliberately **not** a failure, for the same reason:
+ * this set is what the CLI is known to emit, and a CLI upgrade that adds a
+ * status must not start failing runs on a string nobody has seen.
+ */
+const CLAUDE_MCP_FAILED_STATUSES = new Set(['failed', 'error', 'needs-auth']);
+
+/**
+ * Whether the runtime reported the Hezo MCP server as unusable this session.
+ *
+ * A Hezo server that failed means the agent has no Hezo tools for the entire
+ * run: it cannot read a task, post a comment, or even call `report_no_work`. It
+ * then runs to completion against a system prompt that assumes ~73 tools exist,
+ * burns its whole budget, and fails as "produced no output" - which reads as a
+ * lazy model rather than a dead transport. `tools=25` in the session line was
+ * the only tell, and nothing looked at it.
+ *
+ * **This can only ever rule a server out, never in.** `init` is the sole event
+ * carrying the status and it fires before the servers have connected, so
+ * `pending` there says nothing either way and no later event restates it. The
+ * guard for a server that quietly never connects is the tunnel's own `onClosed`,
+ * which is backend-agnostic and needs no cooperation from the runtime.
+ *
+ * A missing `mcp_servers` array means the runtime told us nothing (an older CLI,
+ * or a runtime that does not report it), which is likewise not a failure.
+ */
+function claudeHezoMcpFailure(servers: ClaudeMcpServerStatus[] | undefined): string | null {
+	if (!Array.isArray(servers) || servers.length === 0) return null;
+	const hezo = servers.find((s) => s?.name === HEZO_MCP_SERVER_NAME);
+	if (!hezo || !CLAUDE_MCP_FAILED_STATUSES.has((hezo.status ?? '').toLowerCase())) return null;
+	return (
+		`the Hezo MCP server did not connect (status: ${hezo.status ?? 'unknown'}), so this run had ` +
+		'no Hezo tools at all - it could not read tasks, post comments, or record any work. ' +
+		'The container reaches Hezo only through the run tunnel, so check that the tunnel bound ' +
+		'and stayed up for this run.'
+	);
+}
+
+/**
+ * Tool names carried by an `init` event's `tools` array.
+ *
+ * The CLI types the array loosely and Hezo has only ever needed its length, so
+ * accept both plausible shapes (a bare name, or an object carrying one) and skip
+ * anything else. A partial read still answers the question this exists for, and a
+ * shape change must degrade to "no per-server counts", never to a broken session
+ * line.
+ */
+function initToolNames(tools: unknown[] | undefined): string[] {
+	if (!Array.isArray(tools)) return [];
+	const names: string[] = [];
+	for (const entry of tools) {
+		if (typeof entry === 'string') {
+			names.push(entry);
+			continue;
+		}
+		const name = (entry as { name?: unknown } | null)?.name;
+		if (typeof name === 'string') names.push(name);
+	}
+	return names;
+}
+
+/**
+ * How many tools each MCP server contributed, counted by the
+ * `mcp__<server>__<tool>` namespace the injector builds (see
+ * `mcp-injectors/claude-code.ts`).
+ *
+ * Matched against the server names the event itself reports rather than by
+ * splitting on `__`, so a connector whose own name contains the separator is
+ * still counted correctly.
+ */
+function mcpToolCounts(
+	names: readonly string[],
+	servers: readonly ClaudeMcpServerStatus[],
+): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const server of servers) {
+		const serverName = server?.name;
+		if (!serverName) continue;
+		const prefix = `mcp__${serverName}__`;
+		counts.set(serverName, names.filter((n) => n.startsWith(prefix)).length);
+	}
+	return counts;
 }
 
 function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
@@ -432,6 +554,10 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 	const run = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
 	let sawResult = false;
 	let finalMessage: string | null = null;
+	// Kept past the session line so the runner can persist it on the run row and
+	// `list_connectors` can answer, from inside the run, what each connector
+	// actually contributed. Stays null when no tool name parsed.
+	let mcpCounts: Record<string, number> | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as ClaudeStreamEvent;
@@ -440,7 +566,49 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		if (event.type === 'system' && event.subtype === 'init') {
 			const toolCount = Array.isArray(event.tools) ? event.tools.length : 0;
 			modelId = event.model ?? undefined;
-			out.push(`[session] model=${modelId ?? 'unknown'} tools=${toolCount}`);
+			const mcpServers = event.mcp_servers ?? [];
+			// The per-server states go in the session line too, so a log read after
+			// the fact answers "did it have its tools?" without needing the raw
+			// stream - the question a bare `tools=25` left the reader to guess at.
+			//
+			// The state alone does not answer it, though: `connected` means the
+			// session came up, not that the server's tools reached the model. So
+			// carry a per-server tool count alongside it, derived from the names.
+			// Omitted entirely when no name parsed, rather than printing a
+			// misleading zero for every server.
+			const toolNames = initToolNames(event.tools);
+			const counts = toolNames.length > 0 ? mcpToolCounts(toolNames, mcpServers) : null;
+			if (counts) mcpCounts = Object.fromEntries(counts);
+			const servers = mcpServers
+				.map((s) => {
+					const count = s?.name === undefined ? undefined : counts?.get(s.name);
+					return `${s?.name ?? '?'}=${s?.status ?? '?'}${count === undefined ? '' : `(${count})`}`;
+				})
+				.join(' ');
+			out.push(
+				`[session] model=${modelId ?? 'unknown'} tools=${toolCount}${servers ? ` mcp: ${servers}` : ''}`,
+			);
+			// Connected but contributing nothing is the shape of a server whose tools
+			// never reached the model - a tool list the runtime deferred behind its
+			// own search tool, an empty catalogue, or an allowlist that withheld
+			// everything. The banner's status would read healthy, so say it outright.
+			for (const s of mcpServers) {
+				const name = s?.name;
+				if (!name || (s?.status ?? '').toLowerCase() !== 'connected') continue;
+				if (counts?.get(name) === 0) {
+					out.push(
+						`[runner] MCP server "${name}" connected but contributed no tools to this run, so the agent cannot call them.`,
+					);
+				}
+			}
+			const mcpFailure = claudeHezoMcpFailure(event.mcp_servers);
+			if (mcpFailure) {
+				// Recorded as the run's terminal error rather than just logged: it is
+				// the *cause* of everything that follows, and the runner surfaces it on
+				// the run row ahead of the "produced no output" symptom.
+				terminalError = mcpFailure;
+				out.push(`[runner] ${mcpFailure}`);
+			}
 			return out;
 		}
 
@@ -536,6 +704,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		() => usage,
 		() => terminalError,
 		() => finalMessage,
+		() => mcpCounts,
 	);
 }
 
@@ -990,6 +1159,7 @@ function createGrokParser(): AgentStreamParser {
 	let terminalError: string | null = null;
 	let thoughtBuf = '';
 	let textBuf = '';
+	let finalMessage: string | null = null;
 
 	const flushThought = (out: string[]): void => {
 		if (thoughtBuf.trim()) out.push(formatThinking(thoughtBuf));
@@ -997,7 +1167,16 @@ function createGrokParser(): AgentStreamParser {
 	};
 	const flushText = (out: string[]): void => {
 		const t = textBuf.trim();
-		if (t) out.push(t);
+		if (t) {
+			out.push(t);
+			// Grok streams assistant text as `text` deltas and has no `result`
+			// event, so the flushed buffer IS the run's final message. Capturing
+			// it is what makes the runner's handoff-delivery net work here at all
+			// — and it matters more on Grok than anywhere else, because Grok is
+			// also one of the two runtimes whose hooks cannot host the
+			// completeness judge, so the net is its only guardrail.
+			finalMessage = t;
+		}
 		textBuf = '';
 	};
 
@@ -1036,6 +1215,7 @@ function createGrokParser(): AgentStreamParser {
 		renderEvent,
 		() => null,
 		() => terminalError,
+		() => finalMessage,
 	);
 }
 

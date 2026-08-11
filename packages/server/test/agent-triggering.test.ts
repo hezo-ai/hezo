@@ -201,7 +201,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates wakeup for container start with pending agent work', async () => {
-		// Create an task assigned to the agent
+		// Create a task assigned to the agent
 		await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -214,21 +214,14 @@ describe('agent triggering', () => {
 
 		await clearWakeups();
 
-		// Simulate a container start by setting a fake container_id and calling start
 		await db.query(
 			"UPDATE projects SET container_id = 'fake-container-id', container_status = 'stopped' WHERE id = $1",
 			[projectId],
 		);
 
-		await app.request(`/api/projects/${projectSlug}/container/start`, {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		});
-		// This will fail because of Docker, but the wakeup creation happens before Docker call
-		// So let's check at DB level instead — just verify the wakeAgentsWithPendingWork function
-		// by calling the route (even if Docker fails, the function may or may not run)
-
-		// Direct DB test: insert a stopped container and manually verify the query finds pending work
+		// The assertion was always this query rather than the route above it: the
+		// route call could not complete against a stub docker, so it proved nothing
+		// either way and only described a lifecycle endpoint that no longer exists.
 		const pending = await db.query<{ agent_id: string }>(
 			`SELECT DISTINCT i.assignee_id AS agent_id
 			 FROM tasks i
@@ -248,7 +241,7 @@ describe('agent triggering', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Captain ticket that mentions architect',
+				title: 'Captain task that mentions architect',
 				assignee_id: agentId,
 			}),
 		});
@@ -291,7 +284,7 @@ describe('agent triggering', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Multi-mention ticket',
+				title: 'Multi-mention task',
 				assignee_id: agentId,
 			}),
 		});
@@ -377,7 +370,7 @@ describe('agent triggering', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Self-mention ticket',
+				title: 'Self-mention task',
 				assignee_id: architect.id,
 			}),
 		});
@@ -421,7 +414,7 @@ describe('agent triggering', () => {
 	});
 
 	it('releases execution locks when container stops', async () => {
-		// Create an task and fake an execution lock
+		// Create a task and fake an execution lock
 		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

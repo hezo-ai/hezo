@@ -76,9 +76,274 @@ describe('Claude Code — session/init fallback arms', () => {
 		expect(out).toBe('[session] model=m tools=3\n');
 	});
 
+	it('records a terminal error when the Hezo MCP server did not connect', () => {
+		// The transcript this comes from: the tunnel died, the MCP server could not
+		// be reached, and the agent ran a full max-effort budget with 25 built-in
+		// tools and none of Hezo's. Claude Code reported the failure in this very
+		// event and nothing read it, so the run was recorded as "produced no
+		// output" - which blames the model for a dead transport.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'deepseek-v4-pro',
+				tools: Array.from({ length: 25 }, (_, i) => `builtin-${i}`),
+				mcp_servers: [{ name: 'hezo', status: 'failed' }],
+			},
+		]);
+
+		expect(out).toContain('mcp: hezo=failed');
+		const terminal = parser.getTerminalError();
+		expect(terminal).toContain('Hezo MCP server did not connect');
+		// Names the transport, because that is where the fix is.
+		expect(terminal).toContain('tunnel');
+	});
+
+	it('stays silent when the Hezo MCP server connected', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['a'],
+				mcp_servers: [{ name: 'hezo', status: 'connected' }],
+			},
+		]);
+		expect(out).toContain('mcp: hezo=connected');
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('treats `pending` as "not yet", because that is what a healthy run reports', () => {
+		// Measured on Claude Code 2.1.220 against a live backend: MCP servers connect
+		// asynchronously *after* `init`, so a healthy run's init says `pending` and
+		// lists the built-ins only (the CLI ships `WaitForMcpServers` for exactly
+		// this). The first cut of this check read anything-but-connected as a
+		// failure, which would have failed every Claude Code run on that CLI.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'deepseek-v4-flash',
+				tools: Array.from({ length: 20 }, (_, i) => `builtin-${i}`),
+				mcp_servers: [{ name: 'hezo', status: 'pending' }],
+			},
+		]);
+
+		// Still recorded verbatim - the operator gets to see it, they just are not
+		// told the run is doomed on the strength of it.
+		expect(out).toContain('mcp: hezo=pending');
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('does not fail a run on a status the CLI has never emitted before', () => {
+		// The same lesson generalised: an unknown string is "we do not know", not
+		// "it failed". A CLI upgrade that renames or adds a status must not take
+		// every run down with it.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['a'],
+				mcp_servers: [{ name: 'hezo', status: 'reconnecting-v2' }],
+			},
+		]);
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('does not invent a failure when the runtime reports no MCP servers at all', () => {
+		// An older CLI that never sends the array told us nothing, which is not the
+		// same as telling us the server failed. The tunnel's own guard is the
+		// backstop there; guessing here would fail healthy runs.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [{ type: 'system', subtype: 'init', model: 'm', tools: ['a'] }]);
+		expect(out).toBe('[session] model=m tools=1\n');
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('ignores a server entry for a different MCP server', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['a'],
+				mcp_servers: [{ name: 'github', status: 'failed' }],
+			},
+		]);
+		// A connector failing is the connector's problem, not a toolless run.
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
 	it('ignores a system event whose subtype is not init', () => {
 		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
 		expect(feed(parser, [{ type: 'system', subtype: 'other' }])).toBe('');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Claude Code — per-server tool counts in the session line
+// ---------------------------------------------------------------------------
+
+describe('Claude Code — per-server MCP tool counts', () => {
+	it("counts each server's tools from the mcp__<server>__<tool> namespace", () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: [
+					'Bash',
+					'Read',
+					'mcp__hezo__list_tasks',
+					'mcp__hezo__create_comment',
+					'mcp__typefully__typefully_list_drafts',
+				],
+				mcp_servers: [
+					{ name: 'hezo', status: 'connected' },
+					{ name: 'typefully', status: 'connected' },
+				],
+			},
+		]);
+		expect(out).toContain('tools=5 mcp: hezo=connected(2) typefully=connected(1)');
+		// Kept past the log line so the runner can persist it and `list_connectors`
+		// can answer the same question from inside the run.
+		expect(parser.getMcpToolCounts()).toEqual({ hezo: 2, typefully: 1 });
+	});
+
+	it('exposes a zero count, which is the actionable one', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['Bash', 'mcp__hezo__list_tasks'],
+				mcp_servers: [
+					{ name: 'hezo', status: 'connected' },
+					{ name: 'typefully', status: 'connected' },
+				],
+			},
+		]);
+		expect(parser.getMcpToolCounts()).toEqual({ hezo: 1, typefully: 0 });
+	});
+
+	it('reports null counts, not zeroes, when no tool name could be parsed', () => {
+		// "not measured" and "measured zero" lead to different conclusions, so an
+		// unreadable tools array must not masquerade as a server contributing none.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: [{ unexpected: 'shape' }, 42],
+				mcp_servers: [{ name: 'hezo', status: 'connected' }],
+			},
+		]);
+		expect(parser.getMcpToolCounts()).toBeNull();
+	});
+
+	it('reports null counts before any init event, and on a runtime that emits none', () => {
+		expect(createAgentStreamParser(AgentRuntime.ClaudeCode).getMcpToolCounts()).toBeNull();
+		expect(createAgentStreamParser(AgentRuntime.Codex).getMcpToolCounts()).toBeNull();
+		expect(createAgentStreamParser(AgentRuntime.Gemini).getMcpToolCounts()).toBeNull();
+	});
+
+	it('warns when a server reports connected but contributed no tools', () => {
+		// The failure this exists to surface: the transport came up, so the status
+		// reads healthy, but the runtime deferred the tool list behind its own
+		// search tool and none of the server's tools reached the model.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'deepseek-v4-pro',
+				tools: ['Bash', 'mcp__hezo__list_tasks'],
+				mcp_servers: [
+					{ name: 'hezo', status: 'connected' },
+					{ name: 'typefully', status: 'connected' },
+				],
+			},
+		]);
+		expect(out).toContain('typefully=connected(0)');
+		expect(out).toContain('MCP server "typefully" connected but contributed no tools');
+		// The server that did contribute is not warned about.
+		expect(out).not.toContain('"hezo" connected but contributed no tools');
+		// A discovery gap, not a run-ending one.
+		expect(parser.getTerminalError()).toBeNull();
+	});
+
+	it('does not warn about a server that has not finished connecting', () => {
+		// `pending` at init is what a healthy run reports - the servers connect
+		// asynchronously afterwards - so zero tools there means nothing yet.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['Bash'],
+				mcp_servers: [{ name: 'typefully', status: 'pending' }],
+			},
+		]);
+		expect(out).toContain('typefully=pending(0)');
+		expect(out).not.toContain('contributed no tools');
+	});
+
+	it('omits the counts entirely when no tool name can be read', () => {
+		// A shape change in the CLI's `tools` array must degrade to "no per-server
+		// numbers", never to a misleading zero against every server.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: [{ unexpected: 'shape' }, 42],
+				mcp_servers: [{ name: 'hezo', status: 'connected' }],
+			},
+		]);
+		expect(out).toContain('tools=2 mcp: hezo=connected');
+		expect(out).not.toContain('hezo=connected(');
+		expect(out).not.toContain('contributed no tools');
+	});
+
+	it('reads a name off an object entry as well as a bare string', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: [{ name: 'mcp__hezo__get_task' }, 'mcp__hezo__list_tasks'],
+				mcp_servers: [{ name: 'hezo', status: 'connected' }],
+			},
+		]);
+		expect(out).toContain('hezo=connected(2)');
+	});
+
+	it('counts correctly for a connector whose own name contains the separator', () => {
+		// Counting by the server names the event reports, rather than splitting on
+		// `__`, is what keeps this right.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		const out = feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['mcp__od__d__alpha', 'mcp__od__d__beta'],
+				mcp_servers: [{ name: 'od__d', status: 'connected' }],
+			},
+		]);
+		expect(out).toContain('od__d=connected(2)');
 	});
 });
 

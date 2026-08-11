@@ -130,7 +130,7 @@ describe('generic host-side OAuth refresh', () => {
 			},
 		);
 		let called = false;
-		globalThis.fetch = (async () => {
+		globalThis.fetch = (async (_input: string | URL | Request, _init?: RequestInit) => {
 			called = true;
 			return new Response('{}', { status: 200 });
 		}) as typeof globalThis.fetch;

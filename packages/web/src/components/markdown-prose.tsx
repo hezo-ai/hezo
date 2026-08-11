@@ -23,7 +23,8 @@ import {
 	type TaskMentionData,
 } from '../lib/remark-mentions';
 import { remarkNormalizeInlineCode } from '../lib/remark-normalize-inline-code';
-import { CommentRefLink, MENTION_CLASSES } from './comment-ref-link';
+import { AgentIdentityTooltipContent } from './agent-identity-tooltip';
+import { CommentRefLink, MENTION_CLASSES, PASSIVE_MENTION_CLASSES } from './comment-ref-link';
 import { MarkdownCodeBlock } from './markdown-code-block';
 import { useOpenPreview } from './task-detail/preview-context';
 import { TaskMentionTooltipContent } from './task-mention-tooltip';
@@ -42,8 +43,15 @@ export const REVIEW_MARK_ACTIVE_CLASSES =
 // break-words wraps long unbreakable strings (URLs, paths) inside the prose
 // column instead of widening it; tables opt back out so cell tokens stay whole
 // and the table scrolls in its overflow wrapper (see the `table` component).
+//
+// The link colour excludes passive mention chips. `[&_a]:…` compiles to a
+// descendant selector (specificity 0,1,1) which outranks the chip's own
+// `text-neutral-soft-fg` class (0,1,0), so without the :not() a passive `@@slug`
+// rendered in active-blue and a reader could not tell a routed handoff from one
+// that woke nobody. Narrowing the blanket rule is the fix rather than an
+// `!important` on the chip, because the rule over-reaching is the actual defect.
 const PROSE_CLASSES =
-	'prose prose-sm max-w-none break-words [&_table]:[overflow-wrap:normal] text-sm text-text-1 [&_a]:text-info-soft-fg [&_h1]:text-text-1 [&_h2]:text-text-1 [&_h3]:text-text-1 [&_h4]:text-text-1 [&_strong]:text-text-1 [&_code]:text-info-soft-fg [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-surface-3 [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text-1 [&_blockquote]:border-l-border-strong [&_blockquote_p]:text-text-1 [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
+	'prose prose-sm max-w-none break-words [&_table]:[overflow-wrap:normal] text-sm text-text-1 [&_a:not([data-mention-passive])]:text-info-soft-fg [&_h1]:text-text-1 [&_h2]:text-text-1 [&_h3]:text-text-1 [&_h4]:text-text-1 [&_strong]:text-text-1 [&_code]:text-info-soft-fg [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_pre]:bg-surface-3 [&_pre]:border [&_pre]:border-border [&_blockquote]:text-text-1 [&_blockquote]:border-l-border-strong [&_blockquote_p]:text-text-1 [&_p:last-child]:mb-0 [&_p:first-child]:mt-0 [&_hr]:my-6';
 
 interface MarkdownProseProps {
 	children: string;
@@ -105,12 +113,23 @@ export function MarkdownProse({
 		const m = new Map<string, AgentMentionData>();
 		if (instanceResolved) {
 			for (const a of instanceResolved.agents) {
-				m.set(a.slug.toLowerCase(), { title: a.title, projectSlug: a.project_slug });
+				m.set(a.slug.toLowerCase(), {
+					title: a.title,
+					humanName: a.human_name,
+					canonicalSlug: a.slug,
+					projectSlug: a.project_slug,
+				});
 			}
 			return m;
 		}
 		if (!agents) return m;
-		for (const a of agents) m.set(a.slug.toLowerCase(), { title: a.title });
+		for (const a of agents) {
+			// An agent answers to both handles, so a mention written either way
+			// resolves to the same teammate.
+			const data = { title: a.title, humanName: a.human_name, canonicalSlug: a.slug };
+			m.set(a.slug.toLowerCase(), data);
+			if (a.human_name_slug) m.set(a.human_name_slug.toLowerCase(), data);
+		}
 		return m;
 	}, [agents, instanceResolved]);
 
@@ -261,6 +280,8 @@ export function MarkdownProse({
 					'data-mention-admin'?: string;
 					'data-mention-agent-slug'?: string;
 					'data-mention-agent-title'?: string;
+					'data-mention-agent-name'?: string;
+					'data-mention-agent-canonical-slug'?: string;
 					'data-mention-agent-project-slug'?: string;
 					'data-mention-passive'?: string;
 					'data-mention-task-identifier'?: string;
@@ -417,15 +438,29 @@ export function MarkdownProse({
 
 				const agentSlug = attrs['data-mention-agent-slug'];
 				const agentTitle = attrs['data-mention-agent-title'];
+				const agentName = attrs['data-mention-agent-name'];
 				const agentPassive = attrs['data-mention-passive'] === 'true';
 				const agentProjectSlug = attrs['data-mention-agent-project-slug'] ?? projectId;
-				if (agentSlug && agentProjectSlug && mentionsEnabled) {
+				// The link uses the role slug whichever handle was typed, so it keeps
+				// working after a rename.
+				const agentLinkSlug = attrs['data-mention-agent-canonical-slug'] ?? agentSlug;
+				if (agentSlug && agentProjectSlug && agentLinkSlug && mentionsEnabled) {
 					return (
-						<Tooltip content={agentTitle ?? `@${agentSlug}`}>
+						<Tooltip
+							content={
+								agentName || agentTitle ? (
+									<AgentIdentityTooltipContent
+										agent={{ human_name: agentName, title: agentTitle }}
+									/>
+								) : (
+									`@${agentSlug}`
+								)
+							}
+						>
 							<Link
 								to="/projects/$projectId/agents/$agentId"
-								params={{ projectId: agentProjectSlug, agentId: agentSlug }}
-								className={MENTION_CLASSES}
+								params={{ projectId: agentProjectSlug, agentId: agentLinkSlug }}
+								className={agentPassive ? PASSIVE_MENTION_CLASSES : MENTION_CLASSES}
 								data-testid="agent-mention-link"
 								data-mention-passive={agentPassive ? 'true' : undefined}
 							>
@@ -436,17 +471,27 @@ export function MarkdownProse({
 				}
 
 				if (attrs['data-mention-admin'] === 'true' && mentionsEnabled) {
+					// `@@admin` is a reference, not an inbox ask — mute it the same way a
+					// passive teammate chip is muted, so the thread shows at a glance
+					// which mentions actually reached someone.
+					const adminClasses = agentPassive ? PASSIVE_MENTION_CLASSES : MENTION_CLASSES;
 					const adminLink = projectId ? (
 						<Link
 							to="/projects/$projectId/inbox"
 							params={{ projectId }}
-							className={MENTION_CLASSES}
+							className={adminClasses}
 							data-testid="admin-mention-link"
+							data-mention-passive={agentPassive ? 'true' : undefined}
 						>
 							{props.children}
 						</Link>
 					) : (
-						<Link to="/home/inbox" className={MENTION_CLASSES} data-testid="admin-mention-link">
+						<Link
+							to="/home/inbox"
+							className={adminClasses}
+							data-testid="admin-mention-link"
+							data-mention-passive={agentPassive ? 'true' : undefined}
+						>
 							{props.children}
 						</Link>
 					);

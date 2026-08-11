@@ -24,8 +24,10 @@ the last possible moment.
 
 ## The egress proxy
 
-All of an agent's outbound network traffic is routed through Hezo's **egress proxy**.
-As a request leaves, the proxy:
+Any agent request that could carry one of your secrets - a request to a host that some
+credential or connector is scoped to - is routed through Hezo's **egress proxy**,
+wherever the [container runs](/docs/containers/overview). As such a request leaves, the
+proxy:
 
 1. **Looks for placeholders** in the request's headers and URL.
 2. **Checks the destination** against that secret's list of **allowed hosts**.
@@ -36,6 +38,13 @@ If a placeholder is used against a host it isn't allowed for, the proxy **blocks
 request**. So even if an agent is tricked or compromised into trying to send your
 Stripe key somewhere it shouldn't, the substitution simply never happens and the
 secret never leaves.
+
+Traffic with no security stake - an `npm install`, a documentation fetch, a request to a
+host no credential is scoped to - connects straight out from the container rather than
+round-tripping through your instance. Nothing is lost by that: a secret can only ever
+materialise at the proxy, so a request that goes out directly can carry at most a
+placeholder, which is inert and simply fails upstream. The proxy, not the route, is what
+the guarantee rests on.
 
 ### Credentials that go in the request body
 

@@ -1,7 +1,7 @@
 import { getConnectorCapability, isReadOnlyRestricted } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Check, ExternalLink, Github, Plug, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, ExternalLink, Github, Plug, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
 import { ConnectorOAuthBrokerForm } from '../../../components/connector-oauth-broker-form';
@@ -14,6 +14,7 @@ import { InPlaceForm } from '../../../components/ui/in-place-form';
 import { Input } from '../../../components/ui/input';
 import {
 	type Connector,
+	type ConnectorStatus,
 	connectorStatus,
 	useConnectors,
 	useCreateConnector,
@@ -697,17 +698,50 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						>
 							Manage <ExternalLink className="size-3" />
 						</Link>
-					) : status === 'active' ? (
-						<Button
-							size="sm"
-							variant="outline"
-							onClick={() => setConfirmOpen(true)}
-							disabled={revoke.isPending}
-							data-testid="connector-revoke"
-						>
-							<Trash2 className="size-3.5 mr-1" />
-							{revoke.isPending ? 'Revoking…' : 'Disconnect'}
-						</Button>
+					) : status === 'active' || status === 'degraded' ? (
+						<>
+							{/* A degraded connector's credential is dead and only a human can
+							    replace it, so the reconnect affordance has to live here in the
+							    connected branch — it used to exist only in the not-connected
+							    branch below, which a stale-token row never reached, leaving
+							    Disconnect as the only button on a connector the operator
+							    wanted to fix. `auth-start` re-runs cleanly on an active row
+							    (cached DCR is reused) and a completed re-auth clears
+							    auth_error, so this self-heals the state. */}
+							{status === 'degraded' &&
+								(isApi ? (
+									!isStaticKeyApi &&
+									!brokerOpen && (
+										<Button
+											size="sm"
+											onClick={() => setBrokerOpen(true)}
+											data-testid="connector-reconnect"
+										>
+											<Plug className="size-3.5 mr-1" />
+											{t('connectors.reconnect')}
+										</Button>
+									)
+								) : (
+									<Button
+										size="sm"
+										onClick={openConnect}
+										disabled={authStart.isPending}
+										data-testid="connector-reconnect"
+									>
+										{authStart.isPending ? 'Starting…' : t('connectors.reconnect')}
+									</Button>
+								))}
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => setConfirmOpen(true)}
+								disabled={revoke.isPending}
+								data-testid="connector-revoke"
+							>
+								<Trash2 className="size-3.5 mr-1" />
+								{revoke.isPending ? 'Revoking…' : 'Disconnect'}
+							</Button>
+						</>
 					) : (
 						<>
 							{!isApi && (
@@ -830,16 +864,27 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 	);
 }
 
-function StatusBadge({
-	status,
-}: {
-	status: 'pending' | 'active' | 'failed' | 'revoked' | 'optional';
-}) {
+function StatusBadge({ status }: { status: ConnectorStatus | 'optional' }) {
+	const { t } = useI18n();
 	if (status === 'active') {
 		return (
 			<Badge className="bg-success-soft text-success-soft-fg border-success">
 				<Check className="size-3 mr-0.5 inline" />
 				Connected
+			</Badge>
+		);
+	}
+	// Distinct from `failed`: this one WAS connected, so the remedy is a
+	// reconnect rather than a first-time setup. Warning tone, not danger - the
+	// connector is recoverable in one click and nothing is lost.
+	if (status === 'degraded') {
+		return (
+			<Badge
+				className="bg-warning-soft text-warning-soft-fg border-warning"
+				testId="connector-degraded-badge"
+			>
+				<AlertTriangle className="size-3 mr-0.5 inline" />
+				{t('connectors.status.needsReconnect')}
 			</Badge>
 		);
 	}

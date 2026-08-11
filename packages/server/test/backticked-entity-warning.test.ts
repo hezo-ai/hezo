@@ -177,14 +177,14 @@ describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 			 VALUES ($1, $2, 'image/svg+xml', 4, 'cafef00d', 'diagrams/hezo-architecture-diagram.svg')`,
 			[teamId, projectId],
 		);
-		existingTaskIdentifier = (await insertTask(captainId, 'An existing ticket')).identifier;
+		existingTaskIdentifier = (await insertTask(captainId, 'An existing task')).identifier;
 	});
 
 	afterAll(async () => {
 		await safeClose(db);
 	});
 
-	it('warns on create_task when real docs/assets/tickets/teammates are backticked', async () => {
+	it('warns on create_task when real docs/assets/tasks/teammates are backticked', async () => {
 		const description =
 			`Read \`prd.md\` and the mockup \`assets/login.png\`. Depends on ` +
 			`\`${existingTaskIdentifier}\`. Ask \`@architect\` if blocked.`;
@@ -263,7 +263,7 @@ describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 		// The reported failure: an agent describes a tracker it is about to produce and
 		// backticks the (non-existent) asset path. The warning must fire, but the write
 		// is advisory/non-blocking — the comment is committed regardless.
-		const task = await insertTask(architectId, 'Tracker ticket');
+		const task = await insertTask(architectId, 'Tracker task');
 		const result = await callTool(
 			architectId,
 			'create_comment',
@@ -287,7 +287,7 @@ describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 	});
 
 	it('warns on update_task when a backticked doc is added to the description', async () => {
-		const task = await insertTask(architectId, 'Architect ticket');
+		const task = await insertTask(architectId, 'Architect task');
 		const result = await callTool(
 			architectId,
 			'update_task',
@@ -300,7 +300,7 @@ describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 	});
 
 	it('warns on create_comment when a backticked asset is referenced', async () => {
-		const task = await insertTask(architectId, 'Comment ticket');
+		const task = await insertTask(architectId, 'Comment task');
 		const result = await callTool(
 			architectId,
 			'create_comment',
@@ -317,7 +317,7 @@ describe('MCP tools warn when a Hezo reference is wrapped in backticks', () => {
 		// asset referenced by a folder path that dropped the `assets/` prefix. That form
 		// matches neither the mention regex nor a bare-filename branch, so previously it
 		// warned nowhere. The warning must fire and show the corrected, prefixed form.
-		const task = await insertTask(architectId, 'Prefix-drop ticket');
+		const task = await insertTask(architectId, 'Prefix-drop task');
 		const result = await callTool(
 			architectId,
 			'create_comment',

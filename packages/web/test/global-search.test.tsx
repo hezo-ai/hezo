@@ -91,6 +91,16 @@ test('renders per-type tabs with counts, deep-links comments, and closes on sele
 			projectSlug,
 			docSlug: 'spec.md',
 		},
+		{
+			type: 'asset',
+			id: 'a1',
+			title: 'launch/hero-image.png',
+			snippet: '',
+			score: 0.55,
+			projectSlug,
+			assetFilename: 'launch/hero-image.png',
+			assetContentType: 'image/png',
+		},
 		{ type: 'skill', id: 's1', title: 'Deploy Skill', snippet: 'how to deploy', score: 0.5 },
 	];
 
@@ -111,7 +121,9 @@ test('renders per-type tabs with counts, deep-links comments, and closes on sele
 	expect(commentTab.textContent).toContain('Comments');
 	expect(commentTab.textContent).toContain('(2)');
 	expect((await screen.findByTestId('search-tab-task')).textContent).toContain('(1)');
-	expect((await screen.findByTestId('search-tab-project_doc')).textContent).toContain('Docs');
+	// Labels come from the catalog, so they read as the sidebar's own words.
+	expect((await screen.findByTestId('search-tab-project_doc')).textContent).toContain('Documents');
+	expect((await screen.findByTestId('search-tab-asset')).textContent).toContain('Assets');
 	expect((await screen.findByTestId('search-tab-skill')).textContent).toContain('Skills');
 
 	// Default tab is tasks.
@@ -126,8 +138,18 @@ test('renders per-type tabs with counts, deep-links comments, and closes on sele
 	expect(href).toContain(`/projects/${projectSlug}/tasks/${identifier.toLowerCase()}`);
 	expect(href).toContain('#comment-20261009112345');
 
+	// An asset hit opens the asset viewer, with its library path (folders and all)
+	// URL-encoded into the `file` search param.
+	await user.click(await screen.findByTestId('search-tab-asset'));
+	const assetRow = await screen.findByTestId('search-result-asset');
+	const assetHref = assetRow.getAttribute('href') ?? '';
+	expect(assetHref).toContain(`/projects/${projectSlug}/assets/view`);
+	expect(assetHref).toContain('file=launch%2Fhero-image.png');
+
 	// Selecting a result closes the palette.
-	await user.click(commentRows[0]);
+	await user.click(commentTab);
+	const rows = await screen.findAllByTestId('search-result-comment');
+	await user.click(rows[0]);
 	await dialogGone();
 });
 

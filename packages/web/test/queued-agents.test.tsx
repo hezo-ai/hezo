@@ -121,12 +121,12 @@ test('disables run-now with a capacity reason when the project is at its run lim
 			const captain = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
 			const queuedAgent = ws.agents.find((a) => a.id !== captain.id) ?? ws.agents[0];
 			const project = await seedProject(ws, { name: 'At Capacity Demo' });
-			// Container semantics: cap the instance at one active container, park
-			// this project's container, and let a filler project's running
-			// container hold the only slot.
+			// Container semantics: give the instance room for exactly one
+			// default-sized (2 GB) container, park this project's container, and let
+			// a filler project's running container hold the only budget there is.
 			await ctx.db.query(
-				`INSERT INTO system_meta (key, value) VALUES ('max_active_containers', '1')
-				 ON CONFLICT (key) DO UPDATE SET value = '1'`,
+				`INSERT INTO system_meta (key, value) VALUES ('max_container_memory_gb', '2')
+				 ON CONFLICT (key) DO UPDATE SET value = '2'`,
 			);
 			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
 				project.id,
@@ -218,7 +218,7 @@ test('disables run-now when the queued agent is already running on another task 
 	expect(playBtn.getAttribute('aria-label')).toMatch(/another task in this project/i);
 });
 
-test('disables the play button with a reason when the ticket already has a run', async () => {
+test('disables the play button with a reason when the task already has a run', async () => {
 	const seeded = { projectSlug: '', taskId: '', wakeupId: '' };
 
 	const { findByTestId, router } = await renderApp({

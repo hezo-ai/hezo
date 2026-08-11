@@ -1,18 +1,31 @@
 import { HIGHLIGHT_SENTINEL, type SearchResult, type SearchResultType } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { BookOpen, CheckSquare, FileText, type LucideIcon, MessageSquare } from 'lucide-react';
+import {
+	BookOpen,
+	CheckSquare,
+	FileText,
+	type LucideIcon,
+	MessageSquare,
+	Paperclip,
+} from 'lucide-react';
 import { Fragment, type ReactNode, useMemo, useState } from 'react';
+import { type MessageKey, useI18n } from '../lib/i18n';
+import { AssetIcon } from './asset-icon';
 import { Tabs } from './ui/tabs';
 
-const TYPE_META: Record<SearchResultType, { label: string; Icon: LucideIcon }> = {
-	task: { label: 'Tasks', Icon: CheckSquare },
-	comment: { label: 'Comments', Icon: MessageSquare },
-	project_doc: { label: 'Docs', Icon: FileText },
-	skill: { label: 'Skills', Icon: BookOpen },
+// Labels reuse the keys the sidebar and settings already carry, so a tab reads
+// with the same word for the same concept in every language.
+const TYPE_META: Record<SearchResultType, { labelKey: MessageKey; Icon: LucideIcon }> = {
+	task: { labelKey: 'nav.tasks', Icon: CheckSquare },
+	comment: { labelKey: 'search.tab.comments', Icon: MessageSquare },
+	project_doc: { labelKey: 'nav.documents', Icon: FileText },
+	asset: { labelKey: 'nav.assets', Icon: Paperclip },
+	skill: { labelKey: 'settings.skills', Icon: BookOpen },
 };
 
-// Tab order — task-centric first, skills (instance-global) last.
-const TYPE_ORDER: SearchResultType[] = ['task', 'comment', 'project_doc', 'skill'];
+// Tab order — task-centric first, then the rest of a project's content, skills
+// (instance-global) last.
+const TYPE_ORDER: SearchResultType[] = ['task', 'comment', 'project_doc', 'asset', 'skill'];
 
 /**
  * Results for the global search palette, split into one tab per result type with
@@ -27,11 +40,13 @@ export function SearchResults({
 	results: SearchResult[];
 	onSelect: () => void;
 }) {
+	const { t } = useI18n();
 	const grouped = useMemo(() => {
 		const g: Record<SearchResultType, SearchResult[]> = {
 			task: [],
 			comment: [],
 			project_doc: [],
+			asset: [],
 			skill: [],
 		};
 		for (const r of results) g[r.type].push(r);
@@ -49,19 +64,23 @@ export function SearchResults({
 	return (
 		<div className="flex min-h-0 flex-col">
 			<Tabs
-				items={tabs.map((t) => {
-					const { label, Icon } = TYPE_META[t];
+				items={tabs.map((type) => {
+					const { labelKey, Icon } = TYPE_META[type];
 					return {
-						key: t,
-						label,
+						key: type,
+						label: t(labelKey),
 						icon: <Icon className="h-3.5 w-3.5" />,
-						count: grouped[t].length,
-						testId: `search-tab-${t}`,
+						count: grouped[type].length,
+						testId: `search-tab-${type}`,
 					};
 				})}
 				value={active}
 				onValueChange={(k) => setActiveType(k as SearchResultType)}
 				activeSurface="bg-surface"
+				// Five tabs overflow the palette on a phone, where the dialog is
+				// full-screen with 16px of padding. Scroll the strip rather than
+				// letting the tabs compress into unreadable slivers.
+				className="overflow-x-auto"
 			/>
 			<ul className="flex flex-col overflow-y-auto py-1" data-testid="search-results-list">
 				{grouped[active].map((r) => (
@@ -97,12 +116,21 @@ function renderHighlighted(snippet: string): ReactNode {
 	);
 }
 
+const ROW_ICON_CLASS = 'mt-0.5 h-4 w-4 shrink-0 text-text-3';
+
 function SearchResultRow({ result, onSelect }: { result: SearchResult; onSelect: () => void }) {
 	const { Icon } = TYPE_META[result.type];
 	const testId = `search-result-${result.type}`;
 	const body = (
 		<>
-			<Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-3" />
+			{/* An asset row draws its own per-MIME glyph from the single shared source,
+			    so a hit looks like its card in the assets grid; every other type has
+			    one glyph for the whole tab. */}
+			{result.type === 'asset' && result.assetContentType ? (
+				<AssetIcon contentType={result.assetContentType} className={ROW_ICON_CLASS} />
+			) : (
+				<Icon className={ROW_ICON_CLASS} />
+			)}
 			<span className="flex min-w-0 flex-col">
 				<span className="flex min-w-0 items-center gap-1.5">
 					<span className="truncate text-[13px] text-text-1">{result.title}</span>
@@ -140,6 +168,23 @@ function SearchResultRow({ result, onSelect }: { result: SearchResult; onSelect:
 				to="/projects/$projectId/documents"
 				params={{ projectId: result.projectSlug ?? '' }}
 				search={{ file: result.docSlug }}
+				onClick={onSelect}
+				className={ROW_CLASS}
+				data-testid={testId}
+			>
+				{body}
+			</Link>
+		);
+	}
+
+	if (result.type === 'asset') {
+		// The asset viewer is the canonical in-app target for an asset — the same
+		// destination `assetPath()` builds for an asset mention.
+		return (
+			<Link
+				to="/projects/$projectId/assets/view"
+				params={{ projectId: result.projectSlug ?? '' }}
+				search={{ file: result.assetFilename }}
 				onClick={onSelect}
 				className={ROW_CLASS}
 				data-testid={testId}

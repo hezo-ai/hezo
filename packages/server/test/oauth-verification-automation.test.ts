@@ -30,7 +30,7 @@ afterAll(async () => {
 	await safeClose(db);
 });
 
-async function createParentTask(title = 'Originating ticket'): Promise<string> {
+async function createParentTask(title = 'Originating task'): Promise<string> {
 	const meta = await db.query<{ task_prefix: string; number: number }>(
 		`SELECT p.task_prefix, next_project_task_number(p.id) AS number
 		 FROM projects p WHERE p.id = $1`,
@@ -63,7 +63,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const comments = await db.query<{
@@ -108,7 +108,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		expect(await confirmationCount()).toBe(before);
@@ -132,7 +132,7 @@ describe('triggerStatusAutomations: OAuth verification done', () => {
 			TaskStatus.Backlog,
 			TaskStatus.Done,
 			null,
-			undefined,
+			null,
 		);
 
 		const after = await db.query<{ count: string }>(

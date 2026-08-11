@@ -31,5 +31,5 @@ export function assertRunTaskScope(
 	if (nextStatus !== TaskStatus.InProgress) return null;
 	if (!auth.taskId) return null;
 	if (auth.taskId === targetTaskId) return null;
-	return 'This run is scoped to its own ticket — you cannot move a different ticket to "in_progress" here, and you must not start doing its work inside this run (no branch, code, or edits for it). Leave it for its own run (the next heartbeat or assignment picks it up), or hand off via a comment/@mention or a sub-task (create_task with parent_task_id).';
+	return 'This run is scoped to its own task — you cannot move a different task to "in_progress" here, and you must not start doing its work inside this run (no branch, code, or edits for it). Leave it for its own run (the next heartbeat or assignment picks it up), or hand off via a comment/@mention or a sub-task (create_task with parent_task_id).';
 }

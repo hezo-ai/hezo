@@ -192,7 +192,7 @@ describe('POST /approvals/:approvalId/resolve — auth + state arms', () => {
 describe('GET blocked-tickets — cross-team NOT_FOUND arm', () => {
 	it('404s when the approval belongs to a different team', async () => {
 		// An approval created in a different team is not visible via this projectSlug.
-		const otherTeam = await createTestTeam(db, { name: 'Blocked Tickets Other Co' });
+		const otherTeam = await createTestTeam(db, { name: 'Blocked Tasks Other Co' });
 		const otherTeamId = (await otherTeam.json()).data.id;
 		const ins = await db.query<{ id: string }>(
 			`INSERT INTO approvals (team_id, type, payload)

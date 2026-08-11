@@ -1,6 +1,6 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { AlertTriangle, ChevronsLeft, Globe, Info, Loader2 } from 'lucide-react';
+import { AlertTriangle, ChevronsLeft, Globe, Info } from 'lucide-react';
 import { useState } from 'react';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
@@ -8,6 +8,7 @@ import { useContainerHealth } from '../hooks/use-container-health';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
 import { useI18n } from '../lib/i18n';
+import { agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { AgentStatusLabel } from './agent-status-label';
 import { CreateTaskDialog } from './create-task-dialog';
@@ -16,7 +17,7 @@ import { Tooltip } from './ui/tooltip';
 
 /**
  * The project menu: the persistent panel shown beside the project rail whenever
- * a project is active. Inbox leads as its own section; the project's pages
+ * a project is active. Dashboard leads, then Inbox; the project's pages
  * follow; the backing team's agents close it out under a Team section. The team
  * is presented as the project's own — there is no separate team-level view.
  */
@@ -50,8 +51,10 @@ export function ProjectSidebar({
 	const isInternal = project?.is_internal ?? false;
 	const projectParams = { projectId };
 	// `stopped` is the normal on-demand resting state — only genuine errors flag.
+	// Provisioning no longer flags either: a project gets a container whenever a
+	// run needs one, so a spinner here would be on more often than off and would
+	// mark as noteworthy the most ordinary thing the system does.
 	const containerFailed = health?.kind === 'error';
-	const containerProvisioning = health?.kind === 'provisioning' || health?.kind === 'rebuilding';
 
 	const enabledAgents = (agents ?? []).filter((a) => a.admin_status !== AgentAdminStatus.Disabled);
 	const byCreatedAt = (a: { created_at: string }, b: { created_at: string }) =>
@@ -69,14 +72,7 @@ export function ProjectSidebar({
 		testId: 'project-sidebar-container',
 		label: (
 			<span className="inline-flex items-center gap-1.5">
-				<span>Container</span>
-				{containerProvisioning && (
-					<Loader2
-						data-testid="project-sidebar-container-spinner"
-						aria-hidden="true"
-						className="w-3 h-3 shrink-0 animate-spin text-info"
-					/>
-				)}
+				<span>Containers</span>
 				{containerFailed && (
 					<Tooltip content="Container failed — click for details" side="right">
 						<span
@@ -246,7 +242,7 @@ export function ProjectSidebar({
 					label: (
 						<AgentStatusLabel
 							variant="sidebar"
-							name={agent.title}
+							name={agentDisplayName(agent)}
 							runtimeStatus={agent.runtime_status}
 						/>
 					),
@@ -262,7 +258,7 @@ export function ProjectSidebar({
 							/>
 							<AgentStatusLabel
 								variant="sidebar"
-								name={agent.title}
+								name={agentDisplayName(agent)}
 								runtimeStatus={agent.runtime_status}
 							/>
 						</span>
@@ -278,9 +274,9 @@ export function ProjectSidebar({
 				className={`relative pl-2.5 ${onCollapse ? 'pr-7' : 'pr-2.5'} pt-1.5 pb-1 flex items-center gap-1 min-w-0`}
 			>
 				<Link
-					to="/projects/$projectId"
+					to="/projects/$projectId/dashboard"
 					params={projectParams}
-					data-testid="project-sidebar-name"
+					data-testid="project-sidebar-dashboard"
 					className="min-w-0 text-[13px] font-semibold text-text-1 truncate"
 				>
 					{project ? (

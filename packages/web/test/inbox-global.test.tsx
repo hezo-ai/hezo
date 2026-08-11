@@ -69,7 +69,7 @@ test('global inbox lists mentions from any team and matches the header badge', a
 			// Team B: one unread admin mention sitting on a real task.
 			const wsB = await seedWorkspace();
 			const project = await seedProject(wsB, { name: 'Demo' });
-			const task = await seedTask(wsB, project, { title: 'A admin-decision ticket' });
+			const task = await seedTask(wsB, project, { title: 'A admin-decision task' });
 			await seedAgentAdminMention(wsB, task, '@admin — please weigh in on shipping the new flow.');
 		},
 	});

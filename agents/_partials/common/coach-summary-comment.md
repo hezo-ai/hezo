@@ -1,5 +1,5 @@
-- **End every review with exactly one `create_comment` on the reviewed ticket** summarising what you did.
-  - Use **passive references only** throughout this comment — `@@<agent-slug>` for teammates and `@@admin` for the admin. The summary is a wrap-up that coincides with marking the ticket terminal, never an ask: an active `@<agent-slug>` fires a redundant wakeup and blocks the done transition, and an active `@admin` lands a needless decision row in every admin's inbox.
+- **End every review with exactly one `create_comment` on the reviewed task** summarising what you did.
+  - Use **passive references only** throughout this comment — `@@<agent-slug>` for teammates and `@@admin` for the admin. The summary is a wrap-up that coincides with marking the task terminal, never an ask: an active `@<agent-slug>` fires a redundant wakeup and blocks the done transition, and an active `@admin` lands a needless decision row in every admin's inbox.
   - If you applied rule updates, include one line per change as `- @@<agent-slug>: <one-line lesson>`.
-  - If you made no changes, state that the ticket completed cleanly and no rule changes were warranted — crediting who did what keeps the passive form (e.g. `@@product-lead drafted the PRD; @@admin approved on first review`).
+  - If you made no changes, state that the task completed cleanly and no rule changes were warranted — crediting who did what keeps the passive form (e.g. `@@product-lead drafted the PRD; @@admin approved on first review`).
   - Keep it concise (≤10 lines). This is the closing action of the review — do not end the turn without posting it.

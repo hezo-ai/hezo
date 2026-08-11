@@ -1,4 +1,5 @@
 import { type APIRequestContext, type Browser, test as base, expect } from '@playwright/test';
+import { dumpFailureDiagnostics, recordPage } from './diagnostics';
 import {
 	authenticate,
 	createTeamLight,
@@ -39,6 +40,7 @@ type TestFixtures = {
 	sharedPage: import('@playwright/test').Page;
 	freshWorkspace: Workspace;
 	lightWorkspace: LightWorkspace;
+	failureDiagnostics: undefined;
 };
 
 async function getTokenFromBrowser(browser: Browser): Promise<string> {
@@ -99,6 +101,22 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 		}, apiToken);
 		await use(page);
 	},
+
+	// Auto: every spec taking this `test` gets failure forensics with no opt-in.
+	// It depends on `page`, so it tears down *before* the page closes and can
+	// still read the live DOM - which is the whole value, since the failures this
+	// tier produces in CI are geometry ones whose cause is a node that is not in
+	// the assertion. See ./diagnostics.ts. On a pass it costs one no-op teardown.
+	failureDiagnostics: [
+		async ({ page }, use, testInfo) => {
+			const rec = recordPage(page);
+			await use(undefined);
+			if (testInfo.status !== testInfo.expectedStatus) {
+				await dumpFailureDiagnostics(page, testInfo, rec);
+			}
+		},
+		{ auto: true },
+	],
 
 	authedPage: async ({ page, apiToken }, use) => {
 		await page.addInitScript((t: string) => {

@@ -6,6 +6,11 @@
 // matches" empty state, and the not-a-trigger case. Component tier — no real
 // layout / viewport / WebSocket (the picker's scrollIntoView is a no-op in
 // happy-dom but the surrounding logic is fully reachable).
+//
+// The picker's flip-above-when-near-the-bottom placement is only reachable here
+// as the `data-placement` attribute — happy-dom reports a zero box for
+// everything, so which side it actually resolves to is covered by
+// test/browser/dropdown-flip-placement.mobile.spec.ts.
 
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
@@ -47,6 +52,18 @@ test('typing "@" opens the picker and shows the searching/results state, with ag
 	expect(option.textContent).toContain('@');
 	// The kind label is shown on the right.
 	expect(option.textContent?.toLowerCase()).toContain('agent');
+});
+
+test('the open picker carries a resolved placement, defaulting below the composer', async () => {
+	const { composer, findByTestId, user } = await setupComposer();
+
+	await user.type(composer, '@cap');
+
+	const picker = await findByTestId('mention-picker', undefined, { timeout: 15_000 });
+	// The placement hook ran and committed a side. With no layout engine there is
+	// always room below, so this is the unflipped default every composer had before.
+	expect(picker.getAttribute('data-placement')).toBe('bottom');
+	expect(picker.className).toContain('top-full');
 });
 
 test('selecting an agent option with a mouse inserts "@slug " into the textarea', async () => {

@@ -125,14 +125,14 @@ Create a new team (superuser only)
 
 _Write tool._
 
-Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.
+Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tasks in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `summary` | `string` | Yes | Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference ticket identifiers - the activity columns carry the specific tasks. |
+| `summary` | `string` | Yes | Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference task identifiers - the activity columns carry the specific tasks. |
 | `actioned` | `object[]` | No | Up to 5 tasks being worked on right now, most significant first. Omit all three lists to leave the columns as they are. |
 | `created` | `object[]` | No | Up to 5 tasks newly filed, most significant first. Omit all three lists to leave the columns as they are. |
 | `closed` | `object[]` | No | Up to 5 tasks recently finished, most significant first. Omit all three lists to leave the columns as they are. |
@@ -145,7 +145,7 @@ Replace the whole Progress page for the project: the summary at the top and the 
 
 _Write tool._
 
-Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. The coherence/setup ticket is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned coherence_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and coherence ticket identifiers.
+Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned coherence_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and coherence task identifiers.
 
 **Parameters:**
 
@@ -153,14 +153,14 @@ Create a new project together with its dedicated team. CEO-only. Call this ONLY 
 | --- | --- | --- | --- |
 | `name` | `string` | Yes | Project name |
 | `description` | `string` | Yes | Project description |
-| `task_prefix` | `string` | No | Optional 2-4 char uppercase ticket prefix; derived from the name when omitted |
+| `task_prefix` | `string` | No | Optional 2-4 char uppercase task prefix; derived from the name when omitted |
 | `initial_project_plan` | `string` | No | Optional project plan document (markdown), seeded as project-plan.md |
 | `template_id` | `string` | No | Team-type template id (from list_team_templates). Mutually exclusive with source_team_id; defaults to Blank when neither is given. |
 | `source_team_id` | `string` | No | Existing team to clone into a fresh template. Mutually exclusive with template_id. |
 | `marketplace_slug` | `string` | No | A marketplace team slug (from get_marketplace_team / the intake baseline) to provision the roster from directly. Mutually exclusive with template_id and source_team_id. |
-| `intake_task_id` | `string` | No | The HQ project-intake ticket this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success. |
+| `intake_task_id` | `string` | No | The HQ project-intake task this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success. |
 
-**Returns:** The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup ticket (`coherence_task_id`, `coherence_task_identifier`). The coherence ticket is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.
+**Returns:** The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup task (`coherence_task_id`, `coherence_task_identifier`). The coherence task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.
 
 **Authorization:** CEO only - call after the admin has explicitly approved the scope and team type in intake.
 
@@ -168,7 +168,7 @@ Create a new project together with its dedicated team. CEO-only. Call this ONLY 
 
 _Write tool._
 
-Kick off the initial team-coherence/setup run for a project you created via create_project. CEO-only. Projects created directly from the admin form start their coherence pass automatically; projects you create do NOT. First author the coherence ticket with update_task - replace its description with the concrete plan you agreed in intake (the exact roles to hire and why, any system-prompt rewrites, and the reporting structure) - then call this to assign the ticket to yourself and start the run. Returns the started ticket; errors if there is no open setup ticket for the project or a run is already active on it.
+Kick off the initial team-coherence/setup run for a project you created via create_project. CEO-only. Projects created directly from the admin form start their coherence pass automatically; projects you create do NOT. First author the coherence task with update_task - replace its description with the concrete plan you agreed in intake (the exact roles to hire and why, any system-prompt rewrites, and the reporting structure) - then call this to assign the task to yourself and start the run. Returns the started task; errors if there is no open setup task for the project or a run is already active on it.
 
 **Parameters:**
 
@@ -176,9 +176,9 @@ Kick off the initial team-coherence/setup run for a project you created via crea
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 
-**Returns:** `{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup ticket to the CEO and waking them to run it. Returns `{ error }` if there is no open setup ticket for the project or a run is already active on it.
+**Returns:** `{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup task to the CEO and waking them to run it. Returns `{ error }` if there is no open setup task for the project or a run is already active on it.
 
-**Authorization:** CEO only - for a project the CEO created via `create_project`; author the coherence ticket description first.
+**Authorization:** CEO only - for a project the CEO created via `create_project`; author the coherence task description first.
 
 ### `list_team_templates`
 
@@ -282,13 +282,28 @@ List projects, by name. With CEO cross-team access (or as superuser) returns eve
 
 **Authorization:** An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.
 
+### `update_dashboard_widget_order`
+
+_Write tool._
+
+Save the user's preferred widget order for the project dashboard. Pass the full ordered list of widget ids; unknown or duplicate ids are rejected. The order persists across sessions and is returned in subsequent get_project_dashboard calls.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `order` | `string[]` | Yes | Ordered list of widget ids. Valid values: goals, team_snapshot, in_progress, spend. |
+
+**Returns:** `{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.
+
 ## Tasks
 
 ### `list_tasks`
 
 _Read-only._
 
-List a project's tasks, newest first. Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. description and rules come back as excerpts capped at `excerpt_chars` (default 500) so one page cannot be dominated by a few long tickets - read a task's full text with get_task.
+List a project's tasks, newest first. Omit `project` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tasks in the current project - only call this if you need older or terminal tasks, another project, or a specific status filter. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. description and rules come back as excerpts capped at `excerpt_chars` (default 500) so one page cannot be dominated by a few long tasks - read a task's full text with get_task.
 
 **Parameters:**
 
@@ -308,7 +323,7 @@ List a project's tasks, newest first. Omit `project` to use the project your run
 
 _Read-only._
 
-Get task details, including the ticket's declared blockers (upstream - what this ticket is waiting on) and dependents (downstream - tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal - you do not need to @-mention them, the auto-wake handles it.
+Get task details, including the task's declared blockers (upstream - what this task is waiting on) and dependents (downstream - tasks that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this task is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tasks will be auto-unblocked when this task is marked terminal - you do not need to @-mention them, the auto-wake handles it.
 
 **Parameters:**
 
@@ -323,7 +338,7 @@ Get task details, including the ticket's declared blockers (upstream - what this
 
 _Write tool._
 
-Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, and those one further level, but no deeper (depth is capped at 3). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
+Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level task whenever the new work is part of the task you are on. Sub-tasks themselves can have sub-tasks, and those one further level, but no deeper (depth is capped at 3). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant task instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this task until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
 
 **Parameters:**
 
@@ -337,7 +352,7 @@ Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-lev
 | `assignee_slug` | `string` | No | Assignee agent slug (alternative to assignee_id) |
 | `parent_task_id` | `string` | No | Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3. |
 | `runtime_type` | `string` | No | Pin this task to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default. |
-| `blocked_by_task_ids` | `string[]` | No | Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied. |
+| `blocked_by_task_ids` | `string[]` | No | Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this task is started. The assignee will not be woken on this task until every blocker is satisfied. |
 | `goal_id` | `string` | No | UUID of the project goal this task advances. Links the task to the goal for traceability; it does not gate or change how the task runs. (Captain) set this when filing work to move a goal forward. |
 
 **Returns:** The created task row (it may carry an advisory `warning` string, e.g. when the description backticks a Hezo reference such as an `assets/<path>` - flagged even before that asset exists). Returns `{ error }` on a validation failure.
@@ -348,7 +363,7 @@ Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-lev
 
 _Write tool._
 
-Create multiple tasks in one call (max 50). Items are created in order; each has the same shape as create_task, and per-item errors are returned without aborting the rest. When the items are slices of the ticket you are on - delegated tracks handed to direct reports, parallel slices, phases of its deliverable - set parent_task_id on EACH item (normally your current ticket) so they are sub-tasks; filing them top-level detaches them and lets the parent close while they are still open. Within a batch, blocked_by_task_ids entries may reference an earlier item in the same call by zero-based index token - '#0' is the first item. To chain sequential work (e.g. implementation phases that must run one at a time), set blocked_by_task_ids: ['#<previous index>'] on every item after the first; each task then stays blocked until the one before it reaches a terminal status. Filing sequential phases WITHOUT these blockers makes all of them runnable at once. Index tokens may only point at earlier items; a token that is self-referencing, forward-referencing, or points at an item that failed errors that item. Use this when filing a related set of tickets in one go (planning a feature, splitting a ticket into phases or sub-tasks). For a single task, use create_task.
+Create multiple tasks in one call (max 50). Items are created in order; each has the same shape as create_task, and per-item errors are returned without aborting the rest. When the items are slices of the task you are on - delegated tracks handed to direct reports, parallel slices, phases of its deliverable - set parent_task_id on EACH item (normally your current task) so they are sub-tasks; filing them top-level detaches them and lets the parent close while they are still open. Within a batch, blocked_by_task_ids entries may reference an earlier item in the same call by zero-based index token - '#0' is the first item. To chain sequential work (e.g. implementation phases that must run one at a time), set blocked_by_task_ids: ['#<previous index>'] on every item after the first; each task then stays blocked until the one before it reaches a terminal status. Filing sequential phases WITHOUT these blockers makes all of them runnable at once. Index tokens may only point at earlier items; a token that is self-referencing, forward-referencing, or points at an item that failed errors that item. Use this when filing a related set of tasks in one go (planning a feature, splitting a task into phases or sub-tasks). For a single task, use create_task.
 
 **Parameters:**
 
@@ -365,7 +380,7 @@ Create multiple tasks in one call (max 50). Items are created in order; each has
 
 _Write tool._
 
-Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` - that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
+Update a task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a task, set status to `done` - that is the final completed state and wakes Coach to review the task for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
 
 **Parameters:**
 
@@ -375,24 +390,24 @@ Update an task. Agents can use this to change status, update progress, set rules
 | `task_id` | `string` | Yes | Task identifier or UUID |
 | `title` | `string` | No | New title |
 | `description` | `string` | No | New description |
-| `status` | `string` | No | New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a ticket `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only. |
+| `status` | `string` | No | New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a task `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only. |
 | `priority` | `string` | No | New priority |
 | `assignee_id` | `string` | No | New assignee - an agent slug (e.g. "engineer") or a member UUID |
 | `progress_summary` | `string` | No | Progress summary update |
-| `rules` | `string` | No | How-to-work-on guardrails for this ticket - approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead. |
+| `rules` | `string` | No | How-to-work-on guardrails for this task - approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead. |
 | `branch_name` | `string` | No | Git branch name for this task |
 | `runtime_type` | `string` | No | Override the AI runtime for this task (claude_code, codex, gemini). Pass an empty string to clear. |
 | `parent_task_id` | `string` \| `null` | No | Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 3. An open task cannot be nested under a parent that is already done or cancelled. |
 
 **Returns:** The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.
 
-**Authorization:** `done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
+**Authorization:** `done` is the final completed state; marking a task `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.
 
 ### `add_task_blocker`
 
 _Write tool._
 
-Declare that one task blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet - declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.
+Declare that one task blocks another. The downstream task will not start an automatic agent run until the blocker reaches a terminal status (done, cancelled). Use this when you discover that a task you have been woken on depends on work that has not landed yet - declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.
 
 **Parameters:**
 
@@ -408,7 +423,7 @@ Declare that one task blocks another. The downstream ticket will not start an au
 
 _Write tool._
 
-Remove a blocker between two tasks. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream ticket's last open blocker, its assignee is woken automatically.
+Remove a blocker between two tasks. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream task's last open blocker, its assignee is woken automatically.
 
 **Parameters:**
 
@@ -541,7 +556,7 @@ Read one comment in full by its id (the UUID from a list_comments row, or its pu
 
 _Read-only._
 
-List comments for an task, newest first. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. (`before`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at `excerpt_chars` (default 2000); structured comments (system/option/task_link) are always returned whole. A truncated row sets `text_truncated: true` alongside `text_length` and a `text_paging_hint` naming the exact follow-up call - the excerpt sits in `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment. Read the full body with `get_comment`; raising `excerpt_chars` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.
+List comments for a task, newest first. Paged: returns `limit` rows (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false. (`before`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at `excerpt_chars` (default 2000); structured comments (system/option/task_link) are always returned whole. A truncated row sets `text_truncated: true` alongside `text_length` and a `text_paging_hint` naming the exact follow-up call - the excerpt sits in `content.text`, the same field a whole comment uses, so check `text_truncated` before treating what you got as the entire comment. Read the full body with `get_comment`; raising `excerpt_chars` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.
 
 **Parameters:**
 
@@ -560,7 +575,7 @@ List comments for an task, newest first. Paged: returns `limit` rows (default 50
 
 _Write tool._
 
-React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add - comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new ticket (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.
+React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add - comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new task (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.
 
 **Parameters:**
 
@@ -594,7 +609,7 @@ Remove your own reaction from a comment. Removing a reaction does not wake the c
 
 _Write tool._
 
-Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this ticket or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment's UUID - it wakes the original author with source=reply (so they're notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.
+Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment's UUID - it wakes the original author with source=reply (so they're notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.
 
 **Parameters:**
 
@@ -605,13 +620,13 @@ Add a comment to an task. In content, reference teammates with @<agent-slug>. Re
 | `content` | `string` | Yes | Comment text |
 | `parent_comment_id` | `string` | No | The comment you are replying to - its id (UUID) or its public_id. Setting this wakes that comment's author with source=reply and renders this comment as "replying to ..." in the UI. |
 
-**Returns:** The created comment row (`id`, `public_id`, `created_at`, …), optionally with an advisory `warning` string. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.
+**Returns:** The created comment row (`id`, `public_id`, `created_at`, …), always with a `wake` receipt and optionally with an advisory `warning` string. `wake.woke` lists the teammate slugs the comment actually notified (an active `@slug`, `admin` for the admin inbox fan-out, or the reply target); `wake.named_not_woken` lists roster teammates the text names without notifying them - a passive `@@slug`, or a bare or bold name. Returns `{ error }` if `parent_comment_id` does not belong to the task. Setting `parent_comment_id` wakes the parent comment's author.
 
 ### `update_comment`
 
 _Write tool._
 
-Edit the text of a comment you posted earlier in THIS run - use it to fix a mistake (a typo, a broken reference, wrong markdown) instead of posting a correction as a new comment. You can only edit a text comment authored by your current run; comments from earlier runs, other agents, or humans are not editable. Editing re-runs the same notification side effects create_comment does, but idempotently: a teammate already notified by this comment is not woken again, while a mention you ADD in the edit (e.g. a bare @<agent-slug> that replaces a backticked, inert one) wakes that teammate for the first time - so fixing a missed mention by editing works. Same reference rules as create_comment: reference tickets and project docs by their bare identifier/filename, teammates with @<agent-slug>, skills by their slug, and never wrap any of these in backticks.
+Edit the text of a comment you posted earlier in THIS run - use it to fix a mistake (a typo, a broken reference, wrong markdown) instead of posting a correction as a new comment. You can only edit a text comment authored by your current run; comments from earlier runs, other agents, or humans are not editable. Editing re-runs the same notification side effects create_comment does, but idempotently: a teammate already notified by this comment is not woken again, while a mention you ADD in the edit (e.g. a bare @<agent-slug> that replaces a backticked, inert one) wakes that teammate for the first time - so fixing a missed mention by editing works. Same reference rules as create_comment: reference tasks and project docs by their bare identifier/filename, teammates with @<agent-slug>, skills by their slug, and never wrap any of these in backticks.
 
 **Parameters:**
 
@@ -622,7 +637,7 @@ Edit the text of a comment you posted earlier in THIS run - use it to fix a mist
 | `comment_id` | `string (uuid)` | Yes | UUID of the comment to edit, as returned by create_comment or list_comments. |
 | `content` | `string` | Yes | The replacement comment text (overwrites the existing body). |
 
-**Returns:** The updated comment row, optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
+**Returns:** The updated comment row, always with a `wake` receipt (same shape as `create_comment`) and optionally with an advisory `warning` string. Returns `{ error }` if the comment is not a text comment the caller authored during the current run. Re-runs create-time side effects (mention/reply wakeups, task links) idempotently, so only references the edit newly introduces notify anyone.
 
 **Authorization:** An agent editing a text comment its own current run authored. Comments from earlier runs, other agents, or humans are not editable.
 
@@ -656,6 +671,7 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | --- | --- | --- | --- |
 | `approval_id` | `string` | Yes | Hire approval ID |
 | `title` | `string` | No | Updated role title |
+| `human_name` | `string` | No | Updated human name for the new teammate, or an empty string to clear it |
 | `role_description` | `string` | No | Updated short role description |
 | `system_prompt` | `string` | No | Updated system prompt. If provided, it must keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the revision is rejected. |
 | `reports_to` | `string` | No | Updated manager - an existing agent's slug. Pass an empty string to clear the reporting line. |
@@ -672,7 +688,7 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 
 _Write tool._
 
-File a new hire proposal. Callable by a team Captain (for its own team) or the CEO (for any team - pass `project` to target it, including HQ). Use this when directed or deciding to staff or expand a team: author the full role spec - title, role description, and a complete system prompt - and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the ticket that prompted it.
+File a new hire proposal. Callable by a team Captain (for its own team) or the CEO (for any team - pass `project` to target it, including HQ). Use this when directed or deciding to staff or expand a team: author the full role spec - title, role description, and a complete system prompt - and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the task that prompted it.
 
 **Parameters:**
 
@@ -680,6 +696,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `title` | `string` | Yes | Role title (the slug is derived from it) |
+| `human_name` | `string` | No | Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out to name them during the coherence review that follows the hire. |
 | `role_description` | `string` | No | Short role description |
 | `system_prompt` | `string` | No | Full system prompt for the new agent. If provided, it MUST contain every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the proposal is rejected - these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs. |
 | `reports_to` | `string` | No | The manager this agent reports to - an existing agent's slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team. |
@@ -689,7 +706,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `weekly_budget_cents` | `number` | No | Weekly budget in cents |
 | `monthly_budget_cents` | `number` | No | Monthly budget in cents |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
-| `task_id` | `string` | No | Optional originating ticket to link the proposal to - a task identifier (e.g. "HM-1") or UUID |
+| `task_id` | `string` | No | Optional originating task to link the proposal to - a task identifier (e.g. "HM-1") or UUID |
 
 **Returns:** `{ approval_id, status, payload }` for the new pending hire approval, or `{ error }` if the spec is rejected (missing title, invalid effort/budget, reserved or duplicate slug, or an unknown `task_id`).
 
@@ -873,6 +890,41 @@ Save a short human-readable summary for an agent (≤1000 chars, single paragrap
 
 **Authorization:** Any agent or the admin in the same team (the Captain is the expected caller; agents may self-summarise).
 
+### `set_agent_name`
+
+_Write tool._
+
+Give an agent the human name it is addressed by (e.g. "Max" for the Engineer), or clear it with an empty string to fall back to its role. The name displays in place of the role everywhere and becomes a second mention handle, so both @max and @engineer reach the agent. Names must be unique within the team, and the Captain, CEO and Coach are always addressed by role and cannot be named. Callable by the Captain of that team, or the CEO.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
+| `name` | `string` | Yes | The name to use, or an empty string to clear it |
+
+**Returns:** `{ updated: true, name }` where `name` is the stored name or null when cleared, or `{ error }` (name taken, reserved, malformed, a name-only role, or agent not in team).
+
+**Authorization:** The Captain of that team, or the CEO.
+
+### `generate_agent_avatar`
+
+_Write tool._
+
+Generate a fresh pixel avatar for an agent. The face is composed from the agent's role and name, so there is nothing to choose beyond asking for a new one; call it again for a different face. Use it for a newly hired agent, or one that still has no avatar. Callable by the Captain of that team, or the CEO.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
+| `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
+
+**Returns:** `{ updated: true }`, or `{ error }` (agent not in team).
+
+**Authorization:** The Captain of that team, or the CEO.
+
 ### `set_team_summary`
 
 _Write tool._
@@ -981,7 +1033,7 @@ Read the stored team-relationships context for MULTIPLE agents in one call (max 
 
 _Write tool._
 
-Replace your long-term chat memory - the durable notes carried into every turn of your live operator chat. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/ticket/roster state). Memory is compacted automatically when the conversation window fills - you'll be handed the window and asked to fold it in via this tool - but you may also call it any time to record something standing.
+Replace your long-term chat memory - the durable notes carried into every turn of your live operator chat. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/task/roster state). Memory is compacted automatically when the conversation window fills - you'll be handed the window and asked to fold it in via this tool - but you may also call it any time to record something standing.
 
 **Parameters:**
 
@@ -1055,7 +1107,7 @@ Propose a new skill for the team's skills database (reusable team know-how: MCP 
 
 _Read-only._
 
-Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first.
+Full-text keyword search across the team skills database, tasks, project docs, task comments, and project assets. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first. Assets match on their library path, folders included, so any segment of "launch/hero-image.png" finds it; textual assets (.md, .txt, .html, .svg, and the script/data formats stored as plain text such as .py, .js, .json, .csv, .yaml) also match on their content, while binary ones (images, PDFs, media, archives) match on path alone. Use it to find work product an earlier run produced before rebuilding it; an asset hit returns its path, which you pass to read_project_asset. An asset saved before this search existed matches on path until it is next written. Archived items are excluded.
 
 **Parameters:**
 
@@ -1063,10 +1115,10 @@ Full-text keyword search across the team skills database, tasks, project docs, a
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `query` | `string` | Yes | Search query (keywords) |
-| `scope` | `all` \| `tasks` \| `skills` \| `project_docs` \| `comments` | No | Limit search to specific content type (default: all) |
+| `scope` | `all` \| `tasks` \| `skills` \| `project_docs` \| `comments` \| `assets` | No | Limit search to specific content type (default: all) |
 | `limit` | `number` | No | Max results per type (default: 10) |
 
-**Returns:** `{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.
+**Returns:** `{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, comments, and assets. A bare task number or full identifier resolves directly to that task, ranked first. An asset result carries `assetFilename` (its library path) and `assetContentType`; pass the path to read_project_asset. Assets match on any segment of their path, and textual ones on their content as well.
 
 ### `list_skills`
 
@@ -1197,7 +1249,7 @@ Fetch a remote agent skill file (Markdown describing how to use a third-party MC
 
 _Read-only._
 
-List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider's REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.
+List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider's REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.
 
 **Parameters:**
 
@@ -1207,13 +1259,13 @@ List the connectors available to agent runs in your project (its own connectors 
 | `limit` | `integer` | No | Max rows to return in this page (default 50, ceiling 200). |
 | `cursor` | `string` | No | Opaque cursor from a previous call. Pass back the `next_cursor` you were given to fetch the following page; keep going until `has_more` is false. Treat it as opaque - do not construct or parse one. |
 
-**Returns:** An array of connector rows with a derived `oauth_status` (`active` | `pending` | `failed` | `revoked` | `none`) and, for an active OAuth-backed connector, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.
+**Returns:** An array of connector rows with a derived `oauth_status` (`active` | `degraded` | `pending` | `failed` | `revoked` | `none`) and, for an OAuth-backed connector that is `active` or `degraded`, `rest_auth` = `{ placeholder, allowed_hosts, scopes }` (else `null`). `degraded` means the connector was connected and its stored token has stopped working - a human must reconnect it, so report it rather than retrying around it. Other fields include `id`, `name`, `display_name`, `kind`, `config`, `project_id`, `oauth_account_label`, `install_status`, `install_error`, `skill_id`, `created_by_task_id`, `activated_at`, `revoked_at`, `auth_error`. A hosted MCP connector whose methods have been listed also carries `method_access` = `{ mode: "all" | "restricted", enabled, total, disabled_write }` (else `null`) - when `mode` is `restricted`, the withheld methods are absent from your tool list on purpose, so a tool you expect and cannot see is disabled rather than missing. Every row carries `tools_this_run`: how many of that connector's tools your current run actually received, or `null` when nothing measured it (outside an agent run, or on a runtime that reports no tool list). This is a measurement of your own run, not a guess - if you cannot find a connector's tools, read this before concluding it is broken. A `0` alongside an `active` connector means it connected and contributed nothing callable, which is worth reporting to the human; a non-zero count means the tools are there and worth searching your tool list for again. Scoped to your project: its own connectors plus global ("all projects") ones, with a project connector shadowing a global one of the same name.
 
 ### `test_connector`
 
 _Read-only._
 
-Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP's tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".
+Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP's tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?". A 401 here means the stored credential is no longer accepted: report it to the human with an active @admin comment asking them to reconnect the connector. You do not need this call when oauth_status already says "degraded" - that answer is known.
 
 **Parameters:**
 
@@ -1434,7 +1486,7 @@ Read a markdown project doc by filename (e.g. "spec.md") - the high-level projec
 
 _Write tool._
 
-Write a project documentation file, replacing its whole body. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so never author or edit one with the Write/Edit file tools or a shell redirect - a markdown file you save to disk persists nothing, is invisible to every teammate, and leaves the real doc stale. To change PART of an existing doc, prefer edit_project_doc: this tool sends the entire body, so a large doc means a large argument, and a runtime that caps tool-call argument size can cut `content` mid-stream. Pass `content_length` (the exact character count of `content`) so a truncated argument is rejected rather than silently overwriting the doc and wiping its review comments. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
+Write a project documentation file, replacing its whole body. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so never author or edit one with the Write/Edit file tools or a shell redirect - a markdown file you save to disk persists nothing, is invisible to every teammate, and leaves the real doc stale. To change PART of an existing doc, prefer edit_project_doc: this tool sends the entire body, so a large doc means a large argument, and a runtime that caps tool-call argument size can cut `content` mid-stream. Pass `content_length` (the exact character count of `content`) so a truncated argument is rejected rather than silently overwriting the doc and wiping its review comments. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.
 
 **Parameters:**
 
@@ -1444,7 +1496,7 @@ Write a project documentation file, replacing its whole body. These docs live in
 | `filename` | `string` | Yes | Markdown filename to write (e.g. "spec.md") |
 | `content` | `string` | Yes | File content (markdown) |
 | `description` | `string` | No | An overall summary of what this doc is and when to read it, in no more than one or two sentences (e.g. "How we track and report campaign analytics each week"). Describe its stable purpose, not its current contents: do NOT list the sections, findings, dates, counts, or latest revisions here (those belong in the body and the `changelog`), so the description stays steady across updates. Shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is without opening it. It is NOT the changelog and NOT part of the body. Omit to leave any existing description unchanged. |
-| `changelog` | `string` | No | Markdown summary of what changed in THIS update and why - recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content. |
+| `changelog` | `string` | No | Markdown summary of what changed in THIS update and why - recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tasks/docs/agents by bare identifier as in content. |
 | `content_length` | `integer` | No | The exact character count of `content`. When provided, a mismatch is rejected instead of stored, so an argument the runtime truncated mid-stream cannot silently overwrite the doc with a partial body (which would also delete every pending review comment on it). Strongly recommended for anything large. |
 | `allow_empty` | `boolean` | No | Permit an empty `content` to blank an existing non-empty doc. Off by default, because an empty body is far more often a truncated argument than an intent - and blanking also deletes every pending review comment. To retire a doc, call archive_project_doc instead. |
 

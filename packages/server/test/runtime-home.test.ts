@@ -1,14 +1,19 @@
 import { mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { AiAuthMethod, AiProvider } from '@hezo/shared';
+import { AgentRuntime, AiAuthMethod, AiProvider, PROVIDER_TO_RUNTIME } from '@hezo/shared';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createFakeDockerClient, registerFakeContainerRoot } from '../src/services/fake-docker';
 import {
 	buildSubscriptionMount,
 	ensureRuntimeHomeDir,
+	getHostSubscriptionBase,
 	getHostSubscriptionRoot,
-	mkdirTraversable,
+	SUBSCRIPTION_DIR_MODE,
+	subscriptionFiles,
 } from '../src/services/runtime-home';
+import type { ContainerEngine } from '../src/services/sandbox/types';
+import { getWorkspacePath } from '../src/services/workspace';
 
 /**
  * Regression coverage for the EACCES-on-settings.json bug: the per-run subscription /
@@ -20,56 +25,94 @@ import {
  * builders under a strict umask and assert the traversal bit survives.
  */
 
+/**
+ * The subscription files live *inside the container* now, so the tests drive the
+ * same seam production does. The fake resolves a container root to a host path,
+ * so the mode assertions below still read real directories - which is the point:
+ * the mode contract has to survive the move, not just the write.
+ */
+const CONTAINER = 'container-runtime-home';
+
+function fakeEngine(base: string): ContainerEngine {
+	const engine = createFakeDockerClient();
+	registerFakeContainerRoot(CONTAINER, getWorkspacePath(base, TEAM, PROJECT));
+	return engine;
+}
+
+function buildSubscriptionMountWithEngine(
+	base: string,
+	runId: string,
+	provider: AiProvider,
+	credential: { value: string; authMethod: AiAuthMethod },
+	runtime: AgentRuntime = PROVIDER_TO_RUNTIME[provider],
+) {
+	return buildSubscriptionMount(
+		base,
+		TEAM,
+		PROJECT,
+		runId,
+		provider,
+		runtime,
+		{ ...credential, baseUrl: null, runtime: null },
+		fakeEngine(base),
+		CONTAINER,
+	);
+}
+
 const TEAM = 'team-1';
 const PROJECT = 'project-1';
 const RUN = 'run-abc';
 const mode = (p: string): number => statSync(p).mode & 0o777;
 
 /** Run `fn` with the process umask forced to `value`, restoring it afterwards. */
-function withUmask<T>(value: number, fn: () => T): T {
+async function withUmask<T>(value: number, fn: () => T | Promise<T>): Promise<T> {
 	const prev = process.umask(value);
 	try {
-		return fn();
+		return await fn();
 	} finally {
 		process.umask(prev);
 	}
 }
 
-describe('mkdirTraversable', () => {
+describe('subscriptionFiles directory modes', () => {
 	let base: string;
 	afterEach(() => {
 		if (base) rmSync(base, { recursive: true, force: true });
 	});
 
-	it('forces 0o711 on every component from the subscription root down, past a strict umask', () => {
+	it('forces 0o711 on every component from the subscription root down, past a strict umask', async () => {
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
-		const sub = join(base, 'workspace', '.hezo', 'subscription');
-		const leaf = join(sub, 'codex', RUN);
+		const sub = getHostSubscriptionBase(base, TEAM, PROJECT);
 
-		withUmask(0o077, () => {
-			// A bare mkdir would lose the traversal bit under this umask — assert the
+		await withUmask(0o077, async () => {
+			// A bare mkdir would lose the traversal bit under this umask - assert the
 			// premise so this test fails loudly if Node's masking behaviour ever changes.
 			const control = join(base, 'control');
 			mkdirSync(control, { recursive: true, mode: 0o711 });
 			expect(mode(control) & 0o001).toBe(0);
 
-			mkdirTraversable(leaf);
+			await subscriptionFiles(fakeEngine(base), CONTAINER).mkdir(join('codex', RUN), {
+				mode: SUBSCRIPTION_DIR_MODE,
+			});
 		});
 
 		expect(mode(sub)).toBe(0o711);
 		expect(mode(join(sub, 'codex'))).toBe(0o711);
-		expect(mode(leaf)).toBe(0o711);
+		expect(mode(join(sub, 'codex', RUN))).toBe(0o711);
 	});
 
-	it('leaves components above the subscription root untouched', () => {
+	it('leaves components above the subscription root untouched', async () => {
+		// The SandboxFiles root is the boundary: widening `.hezo` would re-mode a
+		// directory this seam does not own.
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
-		const hezo = join(base, 'workspace', '.hezo');
-		const leaf = join(hezo, 'subscription', 'gemini', RUN);
+		const hezo = dirname(getHostSubscriptionBase(base, TEAM, PROJECT));
 
-		withUmask(0o077, () => mkdirTraversable(leaf));
+		await withUmask(0o077, () =>
+			subscriptionFiles(fakeEngine(base), CONTAINER).mkdir(join('gemini', RUN), {
+				mode: SUBSCRIPTION_DIR_MODE,
+			}),
+		);
 
-		// `.hezo` is above the marker — the walk stops at `subscription`, so `.hezo`
-		// keeps the umask-derived mode (here 0o700) rather than being widened.
 		expect(mode(hezo) & 0o001).toBe(0);
 	});
 });
@@ -80,14 +123,31 @@ describe('ensureRuntimeHomeDir under a strict umask', () => {
 		if (base) rmSync(base, { recursive: true, force: true });
 	});
 
-	it('keeps the intermediate dirs traversable by the non-root run-user', () => {
+	it('keeps the intermediate dirs traversable by the non-root run-user', async () => {
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
-		const mount = withUmask(0o077, () =>
-			ensureRuntimeHomeDir(AiProvider.DeepSeek, base, TEAM, PROJECT, RUN, null),
+		const mount = await withUmask(0o077, () =>
+			ensureRuntimeHomeDir(
+				AiProvider.DeepSeek,
+				AgentRuntime.ClaudeCode,
+				base,
+				TEAM,
+				PROJECT,
+				RUN,
+				null,
+				fakeEngine(base),
+				CONTAINER,
+			),
 		);
 		expect(mount).not.toBeNull();
 
-		const leaf = getHostSubscriptionRoot(AiProvider.DeepSeek, base, TEAM, PROJECT, RUN);
+		const leaf = getHostSubscriptionRoot(
+			AiProvider.DeepSeek,
+			AgentRuntime.ClaudeCode,
+			base,
+			TEAM,
+			PROJECT,
+			RUN,
+		);
 		expect(leaf).not.toBeNull();
 		const providerDir = dirname(leaf as string); // .../subscription/claude-code-deepseek
 		const subscriptionDir = dirname(providerDir); // .../subscription
@@ -99,16 +159,72 @@ describe('ensureRuntimeHomeDir under a strict umask', () => {
 	});
 });
 
+/**
+ * The home layout must follow the credential's RESOLVED runtime, not the
+ * provider's default.
+ *
+ * When the layout was keyed by provider, a Moonshot credential switched onto
+ * Kimi Code was handed `HEZO_CLAUDE_CONFIG_DIR` and never got `KIMI_CODE_HOME`
+ * — so the CLI never read its injected MCP config, the Stop hook could not find
+ * the session log, and the usage scrape found nothing and priced the run at $0.
+ * Nothing failed loudly; the run just did the wrong thing.
+ */
+describe('the home layout follows the resolved runtime', () => {
+	let base: string;
+	afterEach(() => {
+		if (base) rmSync(base, { recursive: true, force: true });
+	});
+
+	async function homeFor(provider: AiProvider, runtime: AgentRuntime) {
+		base ||= mkdtempSync(join(tmpdir(), 'hezo-rt-'));
+		return ensureRuntimeHomeDir(
+			provider,
+			runtime,
+			base,
+			TEAM,
+			PROJECT,
+			RUN,
+			null,
+			fakeEngine(base),
+			CONTAINER,
+		);
+	}
+
+	it('gives a Moonshot credential KIMI_CODE_HOME when it runs on Kimi Code', async () => {
+		const mount = await homeFor(AiProvider.Kimi, AgentRuntime.Kimi);
+		expect(mount?.envEntry.startsWith('KIMI_CODE_HOME=')).toBe(true);
+	});
+
+	it('gives the same provider HEZO_CLAUDE_CONFIG_DIR when it runs on Claude Code', async () => {
+		const mount = await homeFor(AiProvider.Kimi, AgentRuntime.ClaudeCode);
+		expect(mount?.envEntry.startsWith('HEZO_CLAUDE_CONFIG_DIR=')).toBe(true);
+	});
+
+	it('separates the two runtimes into different directories', async () => {
+		const onKimi = await homeFor(AiProvider.Kimi, AgentRuntime.Kimi);
+		const onClaude = await homeFor(AiProvider.Kimi, AgentRuntime.ClaudeCode);
+		expect(onKimi?.containerDir).not.toBe(onClaude?.containerDir);
+	});
+
+	it('keeps two providers on one runtime in different directories', async () => {
+		// The prefix is per-CLI now, so the provider suffix is the only thing
+		// stopping two Claude Code accounts sharing a config dir.
+		const anthropic = await homeFor(AiProvider.Anthropic, AgentRuntime.ClaudeCode);
+		const deepseek = await homeFor(AiProvider.DeepSeek, AgentRuntime.ClaudeCode);
+		expect(anthropic?.containerDir).not.toBe(deepseek?.containerDir);
+	});
+});
+
 describe('buildSubscriptionMount under a strict umask', () => {
 	let base: string;
 	afterEach(() => {
 		if (base) rmSync(base, { recursive: true, force: true });
 	});
 
-	it('makes the auth-file dir traversable while keeping the credential file 0o600', () => {
+	it('makes the auth-file dir traversable while keeping the credential file 0o600', async () => {
 		base = mkdtempSync(join(tmpdir(), 'hezo-rt-'));
-		const mount = withUmask(0o077, () =>
-			buildSubscriptionMount(base, TEAM, PROJECT, RUN, AiProvider.OpenAI, {
+		const mount = await withUmask(0o077, () =>
+			buildSubscriptionMountWithEngine(base, RUN, AiProvider.OpenAI, {
 				value: JSON.stringify({ tokens: { refresh_token: 'rt' } }),
 				authMethod: AiAuthMethod.Subscription,
 			}),
@@ -121,7 +237,14 @@ describe('buildSubscriptionMount under a strict umask', () => {
 		expect(mode(dirname(hostAuthFile)) & 0o001).toBe(0o001);
 
 		// .../subscription/codex/<run> → .../subscription is two levels up from the leaf.
-		const leaf = getHostSubscriptionRoot(AiProvider.OpenAI, base, TEAM, PROJECT, RUN);
+		const leaf = getHostSubscriptionRoot(
+			AiProvider.OpenAI,
+			AgentRuntime.Codex,
+			base,
+			TEAM,
+			PROJECT,
+			RUN,
+		);
 		const subscriptionDir = dirname(dirname(leaf as string));
 		expect(mode(subscriptionDir) & 0o001).toBe(0o001);
 	});

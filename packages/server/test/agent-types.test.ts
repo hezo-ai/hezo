@@ -68,14 +68,14 @@ describe('agent types CRUD', () => {
 
 		const engineer = types.find((t: any) => t.slug === 'engineer');
 		expect(engineer.system_prompt_template).toContain('only role that edits source code and tests');
-		expect(engineer.system_prompt_template).toContain('Exclusive test-runner slot per ticket');
+		expect(engineer.system_prompt_template).toContain('Exclusive test-runner slot per task');
 
 		const qa = types.find((t: any) => t.slug === 'qa-engineer');
 		expect(qa.system_prompt_template).toContain('Do not edit source code or tests');
-		expect(qa.system_prompt_template).toContain('Exclusive test-runner slot per ticket');
+		expect(qa.system_prompt_template).toContain('Exclusive test-runner slot per task');
 	});
 
-	it('engineer prompt directs one-branch/one-PR phased work, auto-proceeding, with final QA on the main ticket', async () => {
+	it('engineer prompt directs one-branch/one-PR phased work, auto-proceeding, with final QA on the main task', async () => {
 		const res = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
@@ -90,19 +90,17 @@ describe('agent types CRUD', () => {
 			'never hand off to QA until every phase is on the branch',
 		);
 		// ...but the whole feature still goes to QA once, via the main ticket.
-		expect(engineer.system_prompt_template).toContain('main ticket is the single QA handoff');
+		expect(engineer.system_prompt_template).toContain('main task is the single QA handoff');
 	});
 
-	it('qa-engineer prompt reviews a phased ticket as one feature on the default branch', async () => {
+	it('qa-engineer prompt reviews a phased task as one feature on the default branch', async () => {
 		const res = await app.request('/api/agent-types', {
 			headers: authHeader(token),
 		});
 		const types = (await res.json()).data;
 
 		const qa = types.find((t: any) => t.slug === 'qa-engineer');
-		expect(qa.system_prompt_template).toContain(
-			'your gate is the whole feature on this main ticket',
-		);
+		expect(qa.system_prompt_template).toContain('your gate is the whole feature on this main task');
 	});
 
 	it('non-engineer code-touching roles are forbidden from editing source', async () => {

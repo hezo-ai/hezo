@@ -96,22 +96,22 @@ describe('judgeModelForProvider derives the judge from the run model', () => {
  * and strands the work. The judge rule that enforces this is shared verbatim
  * across every runtime's judge, so a single rule edit must reach all of them.
  */
-describe('stop-hook rules require add_task_blocker for cross-ticket waits', () => {
+describe('stop-hook rules require add_task_blocker for cross-task waits', () => {
 	it('the rules block prose-only waits and require add_task_blocker', () => {
 		expect(STOP_HOOK_RULES).toContain('add_task_blocker');
 		expect(STOP_HOOK_RULES).toContain('waiting on');
 		// The closing allow-clause must NOT treat waiting on another ticket as
 		// "waiting on input" — that loophole is what stranded the downstream ticket.
 		expect(STOP_HOOK_RULES).toContain(
-			"Waiting on ANOTHER TICKET's completion does NOT count as waiting on input",
+			"Waiting on ANOTHER TASK's completion does NOT count as waiting on input",
 		);
 	});
 
-	it("blocks offloading the ticket's own deliverable into a sub-task or separate ticket", () => {
+	it("blocks offloading the task's own deliverable into a sub-task or separate task", () => {
 		// A defect in the work THIS ticket is producing is its own remaining work,
 		// not separable follow-up — it cannot be deferred via create_task.
-		expect(STOP_HOOK_RULES).toContain("part of THIS ticket's own deliverable");
-		expect(STOP_HOOK_RULES).toContain('never for fixing this ticket');
+		expect(STOP_HOOK_RULES).toContain("part of THIS task's own deliverable");
+		expect(STOP_HOOK_RULES).toContain('never for fixing this task');
 	});
 
 	it('blocks marking done while the agent awaits an answer to its own outbound ask', () => {
@@ -149,7 +149,7 @@ describe('stop-hook rules require add_task_blocker for cross-ticket waits', () =
  */
 describe('stop-hook rules block announced-plan abandonment', () => {
 	it('blocks closing with an announced plan neither executed nor revised', () => {
-		expect(STOP_HOOK_RULES).toContain('announced a plan or next step on this ticket');
+		expect(STOP_HOOK_RULES).toContain('announced a plan or next step on this task');
 		expect(STOP_HOOK_RULES).toContain('silent scope reduction');
 		expect(STOP_HOOK_RULES).toContain('explicitly revising or retracting the plan');
 	});
@@ -164,9 +164,9 @@ describe('stop-hook rules block announced-plan abandonment', () => {
 		expect(STOP_HOOK_RULES).toContain('never for legitimately revising scope in the thread');
 	});
 
-	it('report_no_work carve-out spans rules 1-11', () => {
-		expect(STOP_HOOK_RULES).toContain('block rules 1-11');
-		expect(STOP_HOOK_RULES).not.toContain('block rules 1-10');
+	it('report_no_work carve-out spans rules 1-13', () => {
+		expect(STOP_HOOK_RULES).toContain('block rules 1-13');
+		expect(STOP_HOOK_RULES).not.toContain('block rules 1-11');
 	});
 
 	it('every runtime judge embeds the rule', () => {
@@ -205,8 +205,17 @@ describe('stop-hook rules block handoffs left only in the final message', () => 
 		// no longer earns an exemption — only a first-person claim of the create_comment itself.
 		expect(STOP_HOOK_RULES).toContain('EXPLICITLY states the same handoff was already posted');
 		expect(STOP_HOOK_RULES).toContain('must still be blocked');
-		// The deliberately-passive @@<slug> form still notifies no one and stays exempt.
-		expect(STOP_HOOK_RULES).toContain('written passively (@@<slug>)');
+	});
+
+	it('does not exempt a handoff merely because it is spelled passively', () => {
+		// The @@<slug> spelling used to be a blanket exemption ("notifies no one by
+		// design"), which made the judge structurally blind to the incident it most
+		// needed to catch: a passively-addressed ask ("@@equity-analyst — please mark
+		// INV-86 done.") hands over the next action and wakes nobody, exactly like a
+		// bare name. The exemption is now about who acts next, not how it is spelled.
+		expect(STOP_HOOK_RULES).toContain('NOT itself an exemption');
+		expect(STOP_HOOK_RULES).toContain('who is expected to act next on this task?');
+		expect(STOP_HOOK_RULES).not.toContain('written passively (@@<slug>), which notifies no one');
 	});
 
 	it('blocks a stative sign-off recap that names an approver but posts no @-mention', () => {
@@ -259,7 +268,7 @@ describe('stop-hook rules block closing while an inherited approval is still owe
 		expect(STOP_HOOK_RULES).toContain('does NOT discharge a pending approval');
 	});
 
-	it('the block reason routes the agent to a live @-mention approval ask, ticket non-terminal', () => {
+	it('the block reason routes the agent to a live @-mention approval ask, task non-terminal', () => {
 		expect(STOP_HOOK_RULES).toContain('post the outstanding approval as a live @-mention ask');
 		expect(STOP_HOOK_RULES).toContain(
 			'may become done only after the required approval actually lands',
@@ -268,7 +277,7 @@ describe('stop-hook rules block closing while an inherited approval is still owe
 
 	it('the allow-clause blesses a correctly-posted approval wait as a valid stop', () => {
 		expect(STOP_HOOK_RULES).toContain(
-			"Waiting on an approval or sign-off the ticket's flow requires",
+			"Waiting on an approval or sign-off the task's flow requires",
 		);
 	});
 
@@ -360,5 +369,75 @@ describe('stop-hook rules bless waiting on a pending admin approval', () => {
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('create_hire_proposal');
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('create_hire_proposal');
+	});
+});
+
+/**
+ * Rule 12. The incident: a Captain woken by a teammate's `@captain` review request
+ * did the whole review, wrote its PASS verdict, and ended the run with that verdict
+ * only in its final message. Rule 10 did not reach it — the message named nobody and
+ * passed no baton, so it is not shaped like a handoff — and the ticket sat in `review`
+ * with nobody woken. Rule 12 covers the reply itself, whatever shape it takes.
+ */
+describe('stop-hook rules block a reply left only in the final message', () => {
+	it('blocks an answer to an ask that was never posted as a comment', () => {
+		expect(STOP_HOOK_RULES).toContain('woken by someone ASKING this agent for something');
+		expect(STOP_HOOK_RULES).toContain('Doing the work is NOT the deliverable on its own');
+	});
+
+	it('is scoped so it does not collapse into rule 10', () => {
+		expect(STOP_HOOK_RULES).toContain('a reply that names nobody and passes no baton');
+		// Answering the asker needs no mention — the reply reaches them — so the rule
+		// must not push agents into spraying @-mentions on routine answers.
+		expect(STOP_HOOK_RULES).toContain('it does not need an @-mention if it is simply answering');
+	});
+
+	it('reaches every runtime judge', () => {
+		const needle = 'woken by someone ASKING this agent for something';
+		expect(STOP_HOOK_PROMPT).toContain(needle);
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			needle,
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(needle);
+	});
+});
+
+/**
+ * Rule 13. The same run noticed the IBKR MCP connector's OAuth grant had expired and
+ * filed it as a "Known gap (already acknowledged)" pointing at another ticket. Nothing
+ * reached a human who could reconnect it, so every later run kept producing degraded
+ * output. Rule 6 does not reach this — it covers an agent that never had a credential,
+ * not one whose working integration broke.
+ */
+describe('stop-hook rules block an unescalated broken integration', () => {
+	it('blocks stopping without escalating a broken connector', () => {
+		expect(STOP_HOOK_RULES).toContain('an integration the work depends on is BROKEN');
+		expect(STOP_HOOK_RULES).toContain('is NOT escalation');
+	});
+
+	it('names the acceptable resolutions and rejects the known-gap dodge', () => {
+		expect(STOP_HOOK_RULES).toContain(
+			'active @admin comment on the current task naming the connector',
+		);
+		expect(STOP_HOOK_RULES).toContain(
+			'request_credential call where a pasted value is what fixes it',
+		);
+		// Working around it is fine; going quiet about it is not.
+		expect(STOP_HOOK_RULES).toContain('does not discharge the escalation');
+	});
+
+	it('is distinguished from rule 6', () => {
+		expect(STOP_HOOK_RULES).toContain('covers one that WAS working and has stopped working');
+	});
+
+	it('reaches every runtime judge', () => {
+		const needle = 'an integration the work depends on is BROKEN';
+		expect(STOP_HOOK_PROMPT).toContain(needle);
+		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+			needle,
+		);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(needle);
 	});
 });

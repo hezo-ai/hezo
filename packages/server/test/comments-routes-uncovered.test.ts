@@ -5,7 +5,7 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { signAdminJwt } from '../src/middleware/auth';
-import { safeClose } from './helpers';
+import { blobBytes, safeClose } from './helpers';
 import {
 	authHeader,
 	createTestApp,
@@ -98,7 +98,7 @@ function buildPng(seed = 0): Uint8Array {
 
 async function uploadAsset(filename: string): Promise<{ id: string; path: string }> {
 	const fd = new FormData();
-	fd.set('file', new File([buildPng(filename.length)], filename, { type: 'image/png' }));
+	fd.set('file', new File([blobBytes(buildPng(filename.length))], filename, { type: 'image/png' }));
 	const res = await app.request(`/api/projects/${projectSlug}/assets`, {
 		method: 'POST',
 		headers: { ...authHeader(token) },

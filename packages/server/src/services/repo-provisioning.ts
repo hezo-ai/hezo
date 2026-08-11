@@ -5,6 +5,7 @@ import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveContainerRunUser } from './container-user';
 import { type ContainerDeps, ensureProjectContainerRunning } from './containers';
+import type { EgressProxy } from './egress';
 import { ContainerGitExecutor, mintGitOpScopeId } from './git-executor';
 import { refreshRepoPushAccess } from './repo-push-access';
 import {
@@ -32,6 +33,15 @@ export interface RepoSetupInput {
 	projectId: string;
 	repoId: string;
 	repoIdentifier: string;
+	/**
+	 * Replace whatever is already cloned rather than adopting it - the reset
+	 * route's `reclone` action.
+	 *
+	 * Carried as intent rather than performed by the caller: the sync decides
+	 * clone-vs-adopt by reading the container, so only a removal on that side can
+	 * change its mind, and only the sync is on that side.
+	 */
+	freshClone?: boolean;
 }
 
 export interface RepoSetupOutcome {
@@ -90,22 +100,40 @@ export async function performRepoSetup(
 
 			if (containerId && running) {
 				// Git runs inside the project container; the host runs no git. The
-				// provisioning bridge carries the project SSH key into the exec.
+				// provisioning bridge carries the project SSH key for commit signing,
+				// and the egress proxy substitutes the clone's credential placeholder.
 				const runUser = await resolveContainerRunUser(docker, containerId);
-				const syncRepos = (bridge: BridgeRunnerArgs | null, scopeId: string) =>
+				const syncRepos = (
+					bridge: BridgeRunnerArgs | null,
+					scopeId: string,
+					proxyEnv: string[] = [],
+				) =>
 					ensureProjectRepos(
 						db,
 						{ id: input.projectId, team_id: input.teamId },
 						dataDir,
-						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId),
+						ContainerGitExecutor.forPrep(docker, containerId, bridge, runUser, scopeId, proxyEnv),
+						undefined,
+						undefined,
+						{ freshClone: input.freshClone ? new Set([input.repoIdentifier]) : undefined },
 					);
+				// Ssh server only — the egress proxy is mandatory, and
+				// `withProvisionBridge` enforces that by throwing. See the note at the
+				// equivalent guard in `containers.ts`.
 				const syncRes = deps.sshAgentServer
 					? await withProvisionBridge(
 							deps.sshAgentServer,
-							input.teamId,
-							dataDir,
-							runUser.name,
-							({ bridge, scopeId }) => syncRepos(bridge, scopeId),
+							{
+								engine: docker,
+								containerId,
+								teamId: input.teamId,
+								dataDir,
+								runUser,
+								db,
+								egressProxy: deps.egressProxy as EgressProxy,
+								projectId: input.projectId,
+							},
+							({ bridge, scopeId, proxyEnv }) => syncRepos(bridge, scopeId, proxyEnv),
 						)
 					: await syncRepos(null, mintGitOpScopeId());
 				const failed = syncRes.failed.find((f) => f.name === repoName);

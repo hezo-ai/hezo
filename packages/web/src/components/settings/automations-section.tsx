@@ -61,7 +61,7 @@ export function AutomationsSection({
 					Sub-task page size
 				</label>
 				<p className="text-text-2 text-[13px] mt-0.5 mb-1.5">
-					How many sub-tasks to show on an task page before a "Show more" link is offered.
+					How many sub-tasks to show on a task page before a "Show more" link is offered.
 				</p>
 				<Input
 					id="subtask-page-size"

@@ -278,7 +278,7 @@ describe('list tools page instead of silently truncating', () => {
 		for (let i = 0; i < 12; i++) {
 			const t = (await callTool('create_task', {
 				project: projectId,
-				title: `Paged ticket ${i}`,
+				title: `Paged task ${i}`,
 				description: 'body',
 				assignee_id: agentId,
 			})) as { identifier?: string };
@@ -507,6 +507,7 @@ describe('result_too_large names remedies the called tool actually has', () => {
 			{ items: Array.from({ length: 10 }, () => ({ agent_id: 'x' })) },
 			205_939,
 			131_072,
+			'items',
 		);
 		const joined = remedies.join(' ');
 		expect(joined).toContain('you sent 10 items');
@@ -525,6 +526,7 @@ describe('result_too_large names remedies the called tool actually has', () => {
 			{ items: Array.from({ length: 20 }, () => ({})) },
 			70_000,
 			64_000,
+			'items',
 		).join(' ');
 		const massive = oversizeRemedies(
 			'create_tasks',
@@ -532,6 +534,7 @@ describe('result_too_large names remedies the called tool actually has', () => {
 			{ items: Array.from({ length: 20 }, () => ({})) },
 			640_000,
 			64_000,
+			'items',
 		).join(' ');
 		expect(modest).toContain('at most 14');
 		expect(massive).toContain('at most 1');

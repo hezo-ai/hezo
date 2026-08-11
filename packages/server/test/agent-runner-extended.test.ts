@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import {
+	AgentRuntime,
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
@@ -23,17 +24,19 @@ import {
 	type RunnerDeps,
 	runAgent,
 } from '../src/services/agent-runner';
-import { NETWORKING_DOCS_URL } from '../src/services/container-connectivity-preflight';
-import {
-	type ConnectivityStatus,
-	ContainerConnectivityStatus,
-	type ProbeResult,
-} from '../src/services/container-connectivity-status';
-import type { DockerClient } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
+import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createStubDocker,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	stubEngineSeams,
+} from './helpers/app';
+import { withRunUserStub } from './helpers/run-user-docker';
 
 // Read the prompt the run wrote to its host prompt file, located from the
 // HEZO_PROMPT_FILE env var captured off the exec opts.
@@ -55,7 +58,7 @@ function readPromptFromExec(
 // Same exec-driven side effect the sibling agent-runner.test.ts uses: flip a
 // run's produced_output (or reported_no_work) mid-exec so an exit-0 mock reads
 // as a genuine success/no-op rather than tripping the "no output" failure path.
-function createMockDocker(taskId: string, overrides: Record<string, any> = {}): DockerClient {
+function createMockDocker(taskId: string, overrides: Record<string, any> = {}): ContainerEngine {
 	const {
 		execStart: execStartOverride,
 		producesOutput = true,
@@ -64,7 +67,11 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 		...rest
 	} = overrides;
 	const innerExecStart = execStartOverride ?? (async () => ({ stdout: 'done', stderr: '' }));
-	return {
+	// Built on createStubDocker rather than hand-rolled: a literal cast through
+	// `as unknown as ContainerEngine` silently omits whatever the interface grows
+	// next, and the compiler cannot say so. That is how six specs came to call a
+	// method that did not exist on their engine.
+	const base = createStubDocker({
 		ping: async () => true,
 		imageExists: async () => true,
 		pullImage: async () => {},
@@ -97,9 +104,19 @@ function createMockDocker(taskId: string, overrides: Record<string, any> = {}): 
 			}
 			return (innerExecStart as (...a: unknown[]) => unknown)(...args);
 		},
-	} as unknown as DockerClient;
+		// The run stages its prompt and runtime home through the engine seam, so an
+		// inline engine needs the same bind-resolving view the shared stub gives.
+		...stubEngineSeams(),
+	});
+	// Absorb the infra execs (run-user probe, chowns, the run-directory mkdir) so
+	// a test asserting on the *agent's* exec is not handed provisioning's.
+	return withRunUserStub(base);
 }
 
+// The runner's data dir must be the harness's own, not a fixed path: the
+// container engine resolves a run's files through the project's workspace under
+// it, so a hardcoded literal would stage them somewhere the test cannot read.
+let testDataDir: string;
 let app: Hono<Env>;
 let db: Db;
 let adminToken: string;
@@ -115,6 +132,7 @@ const originalFetch = globalThis.fetch;
 
 beforeAll(async () => {
 	const ctx = await createTestApp();
+	testDataDir = ctx.dataDir;
 	app = ctx.app;
 	db = ctx.db;
 	adminToken = ctx.token;
@@ -213,13 +231,13 @@ function makeProject(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-function baseDeps(docker: DockerClient, extra: Partial<RunnerDeps> = {}): RunnerDeps {
+function baseDeps(docker: ContainerEngine, extra: Partial<RunnerDeps> = {}): RunnerDeps {
 	return {
 		db,
 		docker,
 		masterKeyManager,
 		serverPort: 3000,
-		dataDir: '/tmp/test-data',
+		dataDir: testDataDir,
 		logs: new LogStreamBroker(),
 		...extra,
 	};
@@ -289,45 +307,41 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		// Egress proxy env: both upper- and lower-case proxy vars, NO_PROXY, and the
 		// three CA-bundle pointers the in-container tooling reads. The per-run token
 		// rides the URL userinfo so the client sends it as Proxy-Authorization.
-		const proxyUrl = 'http://run:testtoken0123456789abcdef@127.0.0.1:18080';
-		expect(capturedEnv).toContain(`HTTP_PROXY=${proxyUrl}`);
+		// The host is always container loopback and the port is the one this run's
+		// tunnel client is listening on, so match the shape rather than a literal.
+		const proxyVar = capturedEnv.find((e) => e.startsWith('HTTP_PROXY='));
+		expect(proxyVar).toMatch(
+			/^HTTP_PROXY=http:\/\/run:testtoken0123456789abcdef@127\.0\.0\.1:\d+$/,
+		);
+		const proxyUrl = proxyVar?.slice('HTTP_PROXY='.length);
 		expect(capturedEnv).toContain(`http_proxy=${proxyUrl}`);
 		expect(capturedEnv).toContain(`HTTPS_PROXY=${proxyUrl}`);
 		expect(capturedEnv).toContain(`https_proxy=${proxyUrl}`);
 		// Node ≥24 safety net so spawned Node processes without their own dispatcher
 		// route through the proxy (connector auth is a placeholder that MUST traverse it).
 		expect(capturedEnv).toContain('NODE_USE_ENV_PROXY=1');
-		// NO_PROXY excludes the proxy host itself + loopback + the host origin that
-		// serves the Hezo MCP endpoint and signed asset URLs (host.docker.internal —
-		// real-JWT / signed, no secret to substitute), plus the provider's direct
-		// upstream hosts.
+		// NO_PROXY excludes loopback, which is where the proxy, the Hezo MCP
+		// endpoint and signed asset URLs all arrive through the tunnel (real-JWT /
+		// signed, no secret to substitute), plus the provider's direct upstreams.
 		expect(
 			capturedEnv.some(
-				(e) =>
-					e.startsWith('NO_PROXY=') &&
-					e.includes('127.0.0.1') &&
-					e.includes('localhost') &&
-					e.includes('host.docker.internal'),
+				(e) => e.startsWith('NO_PROXY=') && e.includes('127.0.0.1') && e.includes('localhost'),
 			),
 		).toBe(true);
-		expect(
-			capturedEnv.some((e) => e.startsWith('no_proxy=') && e.includes('host.docker.internal')),
-		).toBe(true);
+		expect(capturedEnv.some((e) => e.startsWith('no_proxy=') && e.includes('127.0.0.1'))).toBe(
+			true,
+		);
 		expect(
 			capturedEnv.some(
 				(e) => e === 'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt',
 			),
 		).toBe(true);
-		expect(
-			capturedEnv.some(
-				(e) => e === 'CURL_CA_BUNDLE=/usr/local/share/ca-certificates/hezo-egress.crt',
-			),
-		).toBe(true);
-		expect(
-			capturedEnv.some(
-				(e) => e === 'GIT_SSL_CAINFO=/usr/local/share/ca-certificates/hezo-egress.crt',
-			),
-		).toBe(true);
+		// Deliberately absent: unlike NODE_EXTRA_CA_CERTS these two *replace* the
+		// trust bundle rather than adding to it, so a direct TLS peer would be
+		// checked against a bundle holding only the Hezo CA and fail. curl and git
+		// get the CA from the system trust store instead (update-ca-certificates).
+		expect(capturedEnv.some((e) => e.startsWith('CURL_CA_BUNDLE='))).toBe(false);
+		expect(capturedEnv.some((e) => e.startsWith('GIT_SSL_CAINFO='))).toBe(false);
 
 		// SSH socket env points at the per-run bridge socket.
 		expect(
@@ -364,134 +378,6 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		// The bridge runner forwards the per-run socket path as one of its argv.
 		expect(capturedExecCmd).toContain(`/run/hezo/${result.heartbeatRunId}.sock`);
 		expect(ssh.calls.released).toContain(result.heartbeatRunId);
-	});
-});
-
-describe('runAgent — egress connectivity gate', () => {
-	// A status holder preset to `s` (fresh). `unknown` is left unset.
-	function presetStatus(s: ConnectivityStatus): ContainerConnectivityStatus {
-		const status = new ContainerConnectivityStatus('127.0.0.1');
-		if (s !== 'unknown') status.set(s, '127.0.0.1');
-		return status;
-	}
-
-	// A fake run-time probe (stands in for the auto-rebind closure from startup).
-	function fakeProbe(result: ProbeResult) {
-		const calls = { count: 0 };
-		return {
-			calls,
-			fn: async () => {
-				calls.count++;
-				return result;
-			},
-		};
-	}
-
-	const okDocker = () =>
-		createMockDocker(taskId, {
-			execCreate: async () => 'exec-gate',
-			execStart: async () => ({ stdout: 'ok', stderr: '' }),
-			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
-		});
-
-	it('self-heals a stale/race-poisoned bind-loopback cache by re-probing the live bind host', async () => {
-		// The production bug: connectivityStatus stuck at bind-loopback@127.0.0.1 while
-		// the proxy is actually bound+reachable at the gateway. A bad cache must re-probe,
-		// and the auto-rebind probe reports ok@172.17.0.1 → the run proceeds.
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const probe = fakeProbe({ status: 'ok', bindHost: '172.17.0.1' });
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-			connectivityStatus: presetStatus('bind-loopback'),
-			connectivityProbe: probe.fn,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(true);
-		expect(probe.calls.count).toBe(1); // bad cache forced a re-probe
-		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
-	});
-
-	it.each([
-		'bind-loopback',
-		'bind-firewalled',
-		'mcp-unreachable',
-	] as const)('aborts (without allocating egress) when the proxy is genuinely unreachable: %s', async (bad) => {
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const probe = fakeProbe({ status: bad, bindHost: '127.0.0.1' });
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-			connectivityStatus: presetStatus(bad),
-			connectivityProbe: probe.fn,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(false);
-		// The operator-actionable guidance (with the docs pointer) is surfaced.
-		expect(result.stderr).toContain(NETWORKING_DOCS_URL);
-		// Egress was never allocated; the ssh socket allocated above was released.
-		expect(egress.calls.allocated).not.toContain(result.heartbeatRunId);
-		expect(ssh.calls.released).toContain(result.heartbeatRunId);
-	});
-
-	it('short-circuits a fresh good cache without re-probing', async () => {
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const status = new ContainerConnectivityStatus('172.17.0.1');
-		status.set('ok', '172.17.0.1'); // fresh ok
-		const probe = fakeProbe({ status: 'mcp-unreachable', bindHost: '127.0.0.1' }); // would abort if called
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-			connectivityStatus: status,
-			connectivityProbe: probe.fn,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(true);
-		expect(probe.calls.count).toBe(0); // fresh ok → no probe
-		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
-	});
-
-	it('fails open (allocates egress) when the probe is not wired (back-compat)', async () => {
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-			connectivityStatus: presetStatus('bind-loopback'), // present, but no probe → gate skipped
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(true);
-		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
-	});
-
-	it('fails open when no connectivity status holder is wired', async () => {
-		const egress = fakeEgressProxy();
-		const ssh = fakeSshAgentServer();
-		const deps = baseDeps(okDocker(), {
-			egressProxy: egress.proxy,
-			egressCAPath: '/tmp/test-data/egress-ca.crt',
-			sshAgentServer: ssh.server,
-		});
-
-		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
-
-		expect(result.success).toBe(true);
-		expect(egress.calls.allocated).toContain(result.heartbeatRunId);
 	});
 });
 
@@ -573,6 +459,17 @@ describe('runAgent — provider/credential resolution failures', () => {
 			);
 			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
 			expect(run.rows[0].error).toContain('No AI provider credentials configured');
+
+			// And it never took a container to fail in. The claim happens only after
+			// the credential resolves, so a misconfigured instance provisions nothing
+			// it would then have to give back. When the claim came first, every wakeup
+			// on an instance with no credential leaked one busy member - which nothing
+			// reclaims (the ladder skips it, the idle pass ignores it) while its memory
+			// counts against the budget, so the budget walked to exhaustion.
+			const members = await isoCtx.db.query<{ state: string }>(
+				`SELECT state::text AS state FROM container_pool_members`,
+			);
+			expect(members.rows.map((r) => r.state)).toEqual([]);
 		} finally {
 			await safeClose(isoCtx.db);
 		}
@@ -701,7 +598,7 @@ describe('runAgent — requester_context substitution', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker(taskId, {
 			execCreate: async (_id: string, opts: any) => {
-				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 				return 'exec-req-ctx';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -741,7 +638,7 @@ describe('runAgent — mention handoff', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker(taskId, {
 			execCreate: async (_id: string, opts: any) => {
-				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 				return 'exec-mention';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -767,7 +664,7 @@ describe('runAgent — mention handoff', () => {
 		expect(ctx).toBeNull();
 	});
 
-	it('loadMentionContext loads the author, excerpt, and open tickets', async () => {
+	it('loadMentionContext loads the author, excerpt, and open tasks', async () => {
 		const commentRes = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, NULL, 'text', $2::jsonb)
@@ -809,7 +706,7 @@ describe('runAgent — reply handoff', () => {
 		let capturedPrompt = '';
 		const docker = createMockDocker(taskId, {
 			execCreate: async (_id: string, opts: any) => {
-				capturedPrompt = readPromptFromExec(opts, '/tmp/test-data', project);
+				capturedPrompt = readPromptFromExec(opts, testDataDir, project);
 				return 'exec-reply';
 			},
 			execStart: async () => ({ stdout: 'ok', stderr: '' }),
@@ -828,7 +725,7 @@ describe('runAgent — reply handoff', () => {
 		expect(capturedPrompt).toContain('My original question about EX-1');
 		expect(capturedPrompt).toContain('Replying — see EX-1 for the answer');
 		// The reply references EX-1, which resolves to a known ticket row.
-		expect(capturedPrompt).toContain('### Tickets referenced by the reply');
+		expect(capturedPrompt).toContain('### Tasks referenced by the reply');
 
 		await db.query('DELETE FROM task_comments WHERE id = ANY($1::uuid[])', [[originalId, replyId]]);
 	});
@@ -853,7 +750,7 @@ describe('runAgent — spawned-from / parent provenance', () => {
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Parent Ticket',
+				title: 'Parent Task',
 				description: 'p',
 				assignee_id: agentId,
 			}),
@@ -866,7 +763,7 @@ describe('runAgent — spawned-from / parent provenance', () => {
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Spawning Ticket',
+				title: 'Spawning Task',
 				description: 's',
 				assignee_id: agentId,
 			}),
@@ -891,14 +788,14 @@ describe('runAgent — spawned-from / parent provenance', () => {
 
 		const out = await loadSpawnedFromTask(db, taskInfo);
 		expect(out).not.toBeNull();
-		expect(out!.parentLine).toContain('Parent ticket');
-		expect(out!.parentLine).toContain('Parent Ticket');
+		expect(out!.parentLine).toContain('Parent task');
+		expect(out!.parentLine).toContain('Parent Task');
 		expect(out!.spawnLine).toContain('Spawned from');
-		expect(out!.spawnLine).toContain('Spawning Ticket');
+		expect(out!.spawnLine).toContain('Spawning Task');
 
 		// And through buildTaskPrompt the lines land in the rendered prompt.
 		const prompt = buildTaskPrompt('SYS', taskInfo, undefined, { spawnedFrom: out });
-		expect(prompt).toContain('**Parent ticket:** ');
+		expect(prompt).toContain('**Parent task:** ');
 		expect(prompt).toContain('**Spawned from:** ');
 
 		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [spawnRun.rows[0].id]);
@@ -1178,7 +1075,8 @@ describe('runAgent — rotated subscription auth tombstone', () => {
 				const runId = codexHomeEntry.slice('CODEX_HOME='.length).split('/').pop()!;
 				const hostFile = `${getHostSubscriptionRoot(
 					AiProvider.OpenAI,
-					'/tmp/test-data',
+					AgentRuntime.Codex,
+					testDataDir,
 					teamId,
 					projectId,
 					runId,
@@ -1212,7 +1110,7 @@ describe('runAgent — rotated subscription auth tombstone', () => {
 			[configId],
 		);
 		expect(cfg.rows[0].status).toBe('verified');
-		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey())).toBe(
+		expect(decrypt(cfg.rows[0].encrypted_credential, masterKeyManager.getKey() as Buffer)).toBe(
 			validAuthJson,
 		);
 

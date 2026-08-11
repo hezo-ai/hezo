@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { AuthInfo, Env } from '../src/lib/types';
+import { getToolDefs } from '../src/mcp/server';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -142,15 +143,12 @@ async function callListViaMcp(
 }
 
 describe('MCP endpoint: tool registration', () => {
-	it('lists all registered tools', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		const toolNames = body.result.tools.map((t: any) => t.name);
+	it('lists all registered tools', () => {
+		// The registry, not `tools/list`: listing is projected per caller
+		// (`mcp/tool-visibility.ts`), so a board-user principal is correctly not
+		// shown the CEO-only and Captain-only tools this asserts on. Per-caller
+		// visibility has its own coverage in `mcp-tool-visibility.test.ts`.
+		const toolNames = getToolDefs().map((t) => t.name);
 		expect(toolNames).toContain('list_teams');
 		expect(toolNames).toContain('get_team');
 		expect(toolNames).toContain('create_team');
@@ -199,51 +197,6 @@ describe('MCP endpoint: tool registration', () => {
 });
 
 describe('MCP tool: verifyTeamAccess (direct DB tests)', () => {
-	it('API key auth allows access to own team', () => {
-		const apiKeyAuth: AuthInfo = { type: AuthType.ApiKey, teamId };
-		expect(apiKeyAuth.teamId).toBe(teamId);
-	});
-
-	it('API key auth denies access to other team', () => {
-		const apiKeyAuth: AuthInfo = { type: AuthType.ApiKey, teamId };
-		expect(apiKeyAuth.teamId).not.toBe(teamBId);
-	});
-
-	it('agent auth allows access to own team', async () => {
-		const agentAuth: AuthInfo = {
-			type: AuthType.Agent,
-			memberId: agentId,
-			teamId,
-			runId: '00000000-0000-0000-0000-000000000001',
-			taskId: null,
-			projectId: '00000000-0000-0000-0000-000000000010',
-			crossProject: true,
-		};
-		expect(agentAuth.teamId).toBe(teamId);
-	});
-
-	it('agent auth denies access to other team', async () => {
-		const agentAuth: AuthInfo = {
-			type: AuthType.Agent,
-			memberId: agentBId,
-			teamId: teamBId,
-			runId: '00000000-0000-0000-0000-000000000002',
-			taskId: null,
-			projectId: '00000000-0000-0000-0000-000000000011',
-			crossProject: true,
-		};
-		expect(agentAuth.teamId).not.toBe(teamId);
-	});
-
-	it('admin superuser has access to any team', async () => {
-		const superuserAuth: AuthInfo = {
-			type: AuthType.Admin,
-			userId: 'test-user-id',
-			isSuperuser: true,
-		};
-		expect(superuserAuth.isSuperuser).toBe(true);
-	});
-
 	it('admin non-superuser needs membership check', async () => {
 		// Create a non-superuser who is NOT a member of teamB
 		const userRes = await db.query<{ id: string }>(
@@ -616,7 +569,7 @@ describe('MCP endpoint: tool call integration', () => {
 			task_id: other.id,
 			status: 'in_progress',
 		});
-		expect(result.error).toMatch(/scoped to its own ticket/i);
+		expect(result.error).toMatch(/scoped to its own task/i);
 		expect(result.error).toMatch(/must not start doing its work/i);
 		expect(result.status).toBeUndefined();
 
@@ -649,7 +602,7 @@ describe('MCP endpoint: tool call integration', () => {
 		const summary = await callUpdateTaskScoped(agentToken, {
 			project: projectId,
 			task_id: other.id,
-			progress_summary: 'context folded in from the run ticket',
+			progress_summary: 'context folded in from the run task',
 		});
 		expect(summary.error).toBeUndefined();
 
@@ -855,7 +808,7 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 				method: 'tools/call',
 				params: {
 					name: 'report_no_work',
-					arguments: { reason: 'planning ticket — sub-tasks still open' },
+					arguments: { reason: 'planning task — sub-tasks still open' },
 				},
 				id: 1,
 			}),
@@ -873,7 +826,7 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 			[runId],
 		);
 		expect(after.rows[0].reported_no_work).toBe(true);
-		expect(after.rows[0].no_work_reason).toBe('planning ticket — sub-tasks still open');
+		expect(after.rows[0].no_work_reason).toBe('planning task — sub-tasks still open');
 		expect(after.rows[0].produced_output).toBe(false);
 	});
 
@@ -1417,14 +1370,9 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 });
 
 describe('MCP tool: set_agent_summary and set_team_summary', () => {
-	it('set_agent_summary and set_team_summary are registered', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		const body = await res.json();
-		const toolNames = body.result.tools.map((t: any) => t.name);
+	it('set_agent_summary and set_team_summary are registered', () => {
+		// Registry, not `tools/list` - set_team_summary is Captain-or-HQ only.
+		const toolNames = getToolDefs().map((t) => t.name);
 		expect(toolNames).toContain('set_agent_summary');
 		expect(toolNames).toContain('set_team_summary');
 	});
@@ -1613,7 +1561,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		expect(intakeTask.rows[0].status).toBe('done');
 	});
 
-	it('accepts the intake ticket identifier (e.g. HQ-1), not only its UUID', async () => {
+	it('accepts the intake task identifier (e.g. HQ-1), not only its UUID', async () => {
 		const intake = await startIntake(`CEO Identifier ${Date.now()}`);
 		const ceoId = await instanceCeoId(db);
 		const { token: ceoToken } = await mintAgentToken(
@@ -1734,7 +1682,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		return { ceoToken, ceoId, result };
 	}
 
-	it('does NOT auto-run coherence: the setup ticket is created unassigned, with no wakeup, and planning stays blocked on it', async () => {
+	it('does NOT auto-run coherence: the setup task is created unassigned, with no wakeup, and planning stays blocked on it', async () => {
 		const { result } = await createProjectAsCeo('No Auto Coherence');
 		expect(result.coherence_task_id).toBeTruthy();
 		expect(result.coherence_task_identifier).toBeTruthy();
@@ -1763,7 +1711,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		expect(dep.rows[0].n).toBe(1);
 	});
 
-	it('start_team_setup assigns the coherence ticket to the CEO and wakes them', async () => {
+	it('start_team_setup assigns the coherence task to the CEO and wakes them', async () => {
 		const { ceoToken, ceoId, result } = await createProjectAsCeo('Setup Happy');
 		const coherenceId = result.coherence_task_id as string;
 
@@ -1786,13 +1734,13 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		expect(wakeups.rows[0].source).toBe('assignment');
 	});
 
-	it('start_team_setup errors when there is no open setup ticket', async () => {
+	it('start_team_setup errors when there is no open setup task', async () => {
 		const { ceoToken, result } = await createProjectAsCeo('Setup Done');
 		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [
 			result.coherence_task_id as string,
 		]);
 		const started = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
-		expect(started.error).toContain('No open team-setup ticket');
+		expect(started.error).toContain('No open team-setup task');
 	});
 
 	it('start_team_setup rejects a non-CEO agent', async () => {
@@ -1852,14 +1800,9 @@ describe('MCP tools: project arg accepts a slug or UUID', () => {
 });
 
 describe('MCP tool: set_agent_team_context and get_agent_team_context', () => {
-	it('both tools are registered', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		const body = await res.json();
-		const toolNames = body.result.tools.map((t: any) => t.name);
+	it('both tools are registered', () => {
+		// Registry, not `tools/list` - set_agent_team_context is Captain-or-HQ only.
+		const toolNames = getToolDefs().map((t) => t.name);
 		expect(toolNames).toContain('set_agent_team_context');
 		expect(toolNames).toContain('get_agent_team_context');
 	});
@@ -2413,7 +2356,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		for (let i = 0; i < 8; i++) {
 			await callToolViaMcp('create_task', {
 				project: fatProjectId,
-				title: `Fat ticket ${i}`,
+				title: `Fat task ${i}`,
 				description: fatBody,
 				assignee_id: agentId,
 			});

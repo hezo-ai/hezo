@@ -14,7 +14,7 @@ import { toSlug, uniqueSlug } from '../lib/slug';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import type { ContainerLogStreamer } from './container-logs';
-import type { DockerClient } from './docker';
+import type { ContainerEngine } from './docker';
 import type { LogStreamBroker } from './log-stream-broker';
 import {
 	applyMarketplaceTeamToTeam,
@@ -30,7 +30,7 @@ const log = logger.child('teams');
 
 export interface CreateTeamDeps {
 	db: Db;
-	docker: DockerClient;
+	docker: ContainerEngine;
 	wsManager?: WebSocketManager;
 	masterKeyManager?: MasterKeyManager;
 	logs?: LogStreamBroker;

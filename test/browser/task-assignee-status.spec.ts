@@ -62,7 +62,7 @@ async function setHasActiveRun(page: Page, projectSlug: string, taskId: string, 
 	});
 }
 
-test.describe('Task detail — assignee status is ticket-scoped (mobile viewport)', () => {
+test.describe('Task detail — assignee status is task-scoped (mobile viewport)', () => {
 	test('mobile layout: assignee badge follows the same idle rule', async ({
 		sharedPage: page,
 		sharedWorkspace,
@@ -73,7 +73,7 @@ test.describe('Task detail — assignee status is ticket-scoped (mobile viewport
 		const project = await createProject(page, token, uniqueName('Mobile Quiet'));
 		const task = await createTask(page, project.slug, token, {
 			project_id: project.id,
-			title: 'Mobile Ticket',
+			title: 'Mobile Task',
 			assignee_id: project.assigneeId,
 		});
 

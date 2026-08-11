@@ -158,7 +158,7 @@ describe('assertSubordinateAssignee (unit)', () => {
 		expect(msg).toContain('direct subordinate');
 		// new guidance: discourage manager-as-stand-in, point to the breakdown path
 		expect(msg).toContain('stand-in');
-		expect(msg).toContain('breakdown ticket');
+		expect(msg).toContain('breakdown task');
 	});
 });
 
@@ -274,7 +274,7 @@ describe('MCP create_task: agent assignment hierarchy', () => {
 		);
 		const ticket = await callTool(engToken, 'create_task', {
 			project: projectId,
-			title: 'Engineer ticket needing QA review',
+			title: 'Engineer task needing QA review',
 			assignee_id: engineerId,
 		});
 		expect(ticket.error).toBeUndefined();

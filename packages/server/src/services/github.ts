@@ -21,6 +21,12 @@ export interface RepoAccessResult {
 	 * may not have.
 	 */
 	canPush: boolean | null;
+	/**
+	 * Whether the repo is private, off the same response. `null` means unknown -
+	 * the field was absent or the body unreadable - and is never read as "public",
+	 * so a message that names the visibility can decline to rather than guess.
+	 */
+	isPrivate: boolean | null;
 }
 
 export interface GitHubOrg {
@@ -49,7 +55,20 @@ export type CreateRepoResult =
 			private: boolean;
 			default_branch: string;
 	  }
-	| { status: 'already_exists'; owner: string; name: string };
+	| {
+			status: 'already_exists';
+			owner: string;
+			name: string;
+			/**
+			 * Visibility of the repo that is already there, when it could be read.
+			 *
+			 * Carried because "already exists" on its own is the least useful true
+			 * thing to say: the case that actually confuses people is asking for a
+			 * public repo whose name is taken by a **private** one they cannot see in
+			 * the picker, so the message needs to be able to name it.
+			 */
+			existingPrivate: boolean | null;
+	  };
 
 const authHeaders = (accessToken: string) => ({
 	Authorization: `Bearer ${accessToken}`,
@@ -91,27 +110,42 @@ export async function validateRepoAccess(
 	const res = await fetchFn(`${getApiBaseUrl()}/repos/${owner}/${repo}`, {
 		headers: authHeaders(accessToken),
 	});
-	if (res.status !== 200) return { accessible: false, status: res.status, canPush: null };
-	return { accessible: true, status: res.status, canPush: await parsePushPermission(res) };
+	if (res.status !== 200) {
+		return { accessible: false, status: res.status, canPush: null, isPrivate: null };
+	}
+	// One read of the body for both facts: it is the same response, and asking
+	// twice would be a second API call for something already in hand.
+	const { canPush, isPrivate } = await parseRepoFacts(res);
+	return { accessible: true, status: res.status, canPush, isPrivate };
 }
 
 /**
- * Read `permissions.push` off a repo response. Any shape that doesn't carry a
- * boolean there — an unexpected body, a non-JSON response, an API that omits
- * the field — is reported as unknown rather than assumed either way.
+ * Read `permissions.push` and `private` off a repo response. Any shape that
+ * doesn't carry a boolean where one is expected — an unexpected body, a non-JSON
+ * response, an API that omits the field — is reported as unknown rather than
+ * assumed either way.
  */
-async function parsePushPermission(res: Response): Promise<boolean | null> {
+async function parseRepoFacts(res: Response): Promise<{
+	canPush: boolean | null;
+	isPrivate: boolean | null;
+}> {
 	let body: unknown;
 	try {
 		body = await res.json();
 	} catch {
-		return null;
+		return { canPush: null, isPrivate: null };
 	}
-	if (typeof body !== 'object' || body === null) return null;
+	if (typeof body !== 'object' || body === null) return { canPush: null, isPrivate: null };
 	const permissions = (body as { permissions?: unknown }).permissions;
-	if (typeof permissions !== 'object' || permissions === null) return null;
-	const push = (permissions as { push?: unknown }).push;
-	return typeof push === 'boolean' ? push : null;
+	const push =
+		typeof permissions === 'object' && permissions !== null
+			? (permissions as { push?: unknown }).push
+			: undefined;
+	const priv = (body as { private?: unknown }).private;
+	return {
+		canPush: typeof push === 'boolean' ? push : null,
+		isPrivate: typeof priv === 'boolean' ? priv : null,
+	};
 }
 
 export async function fetchAuthenticatedUser(
@@ -174,6 +208,20 @@ export async function createGitHubRepo(
 	accessToken: string,
 	fetchFn: FetchFn = globalThis.fetch,
 ): Promise<CreateRepoResult> {
+	// Asked before creating, not only inferred from the failure afterwards.
+	//
+	// The 422 path below does catch a collision, but only if GitHub's error prose
+	// still matches - and it can say nothing about the repo that is in the way.
+	// The case that actually confuses people is a **private** repo holding the
+	// name: it is invisible in the picker, so "create" looks like the only option
+	// and the collision reads as a bug in Hezo. One GET turns that into a
+	// statement of what is there.
+	const existing = await validateRepoAccess(owner, name, accessToken, fetchFn);
+	if (existing.accessible) {
+		log.info('GitHub repo already exists, refusing to create', { owner, name });
+		return { status: 'already_exists', owner, name, existingPrivate: existing.isPrivate };
+	}
+
 	const user = await fetchAuthenticatedUser(accessToken, fetchFn);
 	const isPersonal = user?.login.toLowerCase() === owner.toLowerCase();
 
@@ -187,11 +235,14 @@ export async function createGitHubRepo(
 	if (!res.ok) {
 		const body = await res.text();
 		if (res.status === 422 && isRepoNameAlreadyExists(body)) {
+			// The race backstop, and the fallback for a repo the check could not see
+			// (an org repo the token may create in but not read). Kept rather than
+			// replaced: the pre-check narrows the window, it does not close it.
 			log.info('GitHub repo name already exists, surfacing as already_exists', {
 				owner,
 				name,
 			});
-			return { status: 'already_exists', owner, name };
+			return { status: 'already_exists', owner, name, existingPrivate: null };
 		}
 		throw new Error(`Failed to create GitHub repo (${res.status}): ${body}`);
 	}
@@ -246,6 +297,67 @@ export type SigningKeyResult =
 export type AuthKeyResult =
 	| { status: 'created'; id: number; title: string }
 	| { status: 'already_exists' };
+
+/**
+ * Whether a commit's work landed on the repo.
+ *
+ * `unknown` is a first-class answer, not an error: the caller decides whether a
+ * container may be released on the strength of this, so "could not tell" must never
+ * be collapsed into either of the definitive answers.
+ */
+export type CommitMergeVerdict = 'merged' | 'not_merged' | 'unknown';
+
+/**
+ * Ask whether a commit was merged, via the pull requests associated with it.
+ *
+ * This is the question a ref comparison inside the clone cannot answer. Once a
+ * branch is deleted from the remote, the local refs look identical whether the work
+ * was squash-merged first or thrown away - and a squash rewrites the commits, so
+ * there is no per-commit identity left on the default branch to match against. The
+ * association GitHub keeps between a commit and the pull request that carried it
+ * survives both the squash and the branch deletion, which is what makes it the right
+ * thing to ask.
+ *
+ * **Only a 200 is definitive.** A 404, a rate limit, a 5xx or an unreadable body all
+ * report `unknown`, because the caller turns `not_merged` into a failed run and a
+ * renamed repo or a throttled minute is no evidence that anyone lost any work.
+ *
+ * Returns a verdict and nothing else - no upstream body, no status text - so nothing
+ * derived from the credential this call carries can reach a run log.
+ */
+export async function checkCommitMerged(
+	owner: string,
+	repo: string,
+	sha: string,
+	accessToken: string,
+	fetchFn: FetchFn = globalThis.fetch,
+): Promise<CommitMergeVerdict> {
+	let res: Response;
+	try {
+		res = await fetchFn(`${getApiBaseUrl()}/repos/${owner}/${repo}/commits/${sha}/pulls`, {
+			headers: authHeaders(accessToken),
+		});
+	} catch (e) {
+		log.warn(`merge check for ${owner}/${repo}@${sha} failed:`, (e as Error).message);
+		return 'unknown';
+	}
+	if (res.status !== 200) {
+		log.warn(`merge check for ${owner}/${repo}@${sha} was inconclusive (${res.status})`);
+		return 'unknown';
+	}
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		return 'unknown';
+	}
+	if (!Array.isArray(body)) return 'unknown';
+	// An empty list is a definite "no pull request ever carried this commit", which
+	// is exactly the shape of a branch pushed and then thrown away.
+	return body.some((pr) => (pr as { merged_at?: unknown } | null)?.merged_at != null)
+		? 'merged'
+		: 'not_merged';
+}
 
 /**
  * Fetch the authenticated user's full identity — used when establishing an

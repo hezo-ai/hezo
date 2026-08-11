@@ -38,7 +38,7 @@ let architectMemberId: string;
 const TRIGGERING_TASK: Parameters<typeof buildTaskPrompt>[1] = {
 	id: 'filled-below',
 	identifier: 'filled-below',
-	title: 'Captain PRD ticket',
+	title: 'Captain PRD task',
 	description: 'Project definition and roadmap.',
 	status: 'in_progress',
 	priority: 'high',
@@ -96,7 +96,7 @@ async function createTriggeringTaskWithComment(commentText: string): Promise<{
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			project_id: projectId,
-			title: "Captain's PRD ticket",
+			title: "Captain's PRD task",
 			assignee_id: captainMemberId,
 		}),
 	});
@@ -142,7 +142,7 @@ async function createArchitectTicket(
 }
 
 describe('mention handoff prompt (integration)', () => {
-	it('renders the handoff block with triggering ticket + author + open tickets', async () => {
+	it('renders the handoff block with triggering task + author + open tasks', async () => {
 		const { triggeringTaskId, triggeringIdentifier, commentId } =
 			await createTriggeringTaskWithComment('@architect please bring the spec up to date');
 
@@ -187,14 +187,14 @@ describe('mention handoff prompt (integration)', () => {
 		expect(prompt).toContain(`add_reaction(comment_id='${commentId}', kind='ack')`);
 	});
 
-	it('renders "none" when the mentioned agent has no open tickets', async () => {
+	it('renders "none" when the mentioned agent has no open tasks', async () => {
 		// Fresh team to isolate state — the architect in this team has no tickets.
 		const typesRes = await app.request('/api/team-templates', { headers: authHeader(token) });
 		const typeId = (await typesRes.json()).data.find(
 			(t: Record<string, unknown>) => t.name === 'App Team',
 		).id;
 		const teamRes = await createTestTeam(db, {
-			name: 'No Tickets Co',
+			name: 'No Tasks Co',
 			template_id: typeId,
 		});
 		const soloTeam = (await teamRes.json()).data;
@@ -209,7 +209,7 @@ describe('mention handoff prompt (integration)', () => {
 		const captain = agents.find((a) => a.slug === 'captain')!;
 		const architect = agents.find((a) => a.slug === 'architect')!;
 		const projRes = await createTestProject(db, soloTeamId, {
-			name: 'No tickets',
+			name: 'No tasks',
 			description: 'x',
 		});
 		const soloProject = (await projRes.json()).data;
@@ -219,7 +219,7 @@ describe('mention handoff prompt (integration)', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: soloProjectId,
-				title: 'Captain ticket only',
+				title: 'Captain task only',
 				assignee_id: captain.id,
 			}),
 		});
@@ -250,7 +250,7 @@ describe('mention handoff prompt (integration)', () => {
 			{
 				id: triggering.id,
 				identifier: triggering.identifier,
-				title: 'Captain ticket only',
+				title: 'Captain task only',
 				description: 'x',
 				status: 'backlog',
 				priority: 'medium',
@@ -261,7 +261,7 @@ describe('mention handoff prompt (integration)', () => {
 			payload,
 			{ mentionContext: ctx },
 		);
-		expect(prompt).toContain('### Your open tickets\nnone');
+		expect(prompt).toContain('### Your open tasks\nnone');
 	});
 
 	it('keeps the sub-task / peer / top-level triage guidance in the resolved architect prompt via SHARED_INSTRUCTIONS', async () => {
@@ -379,7 +379,7 @@ describe('reply handoff prompt (integration)', () => {
 		};
 	}
 
-	it('loads the reply excerpt, original excerpt, and referenced new ticket', async () => {
+	it('loads the reply excerpt, original excerpt, and referenced new task', async () => {
 		const { triggeringCommentId, replyCommentId, newTicket } = await seedReplyScenario();
 		const ctx = await loadReplyContext(db, {
 			source: WakeupSource.Reply,
@@ -419,7 +419,7 @@ describe('reply handoff prompt (integration)', () => {
 		expect(prompt).toContain('## Reply Received');
 		expect(prompt).toContain('replied on');
 		expect(prompt).toContain('### Their reply');
-		expect(prompt).toContain('### Tickets referenced by the reply');
+		expect(prompt).toContain('### Tasks referenced by the reply');
 		expect(prompt).toContain('may choose to wait');
 	});
 
@@ -455,7 +455,7 @@ describe('reply handoff prompt (integration)', () => {
 });
 
 describe('spawned-from prompt line', () => {
-	it('renders "Parent ticket" when parent_task_id matches the spawning run', async () => {
+	it('renders "Parent task" when parent_task_id matches the spawning run', async () => {
 		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -491,6 +491,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 			parent_task_id: parent.id,
 			created_by_run_id: run.rows[0].id,
 		});
@@ -508,17 +509,18 @@ describe('spawned-from prompt line', () => {
 				priority: 'medium',
 				project_id: projectId,
 				rules: null,
+				progress_summary: null,
 				parent_task_id: parent.id,
 				created_by_run_id: run.rows[0].id,
 			},
 			undefined,
 			{ spawnedFrom: spawn },
 		);
-		expect(prompt).toContain(`**Parent ticket:** ${parent.identifier}`);
+		expect(prompt).toContain(`**Parent task:** ${parent.identifier}`);
 		expect(prompt).not.toContain('**Spawned from:**');
 	});
 
-	it('renders "Spawned from" when a sibling/top-level ticket has no structural parent', async () => {
+	it('renders "Spawned from" when a sibling/top-level task has no structural parent', async () => {
 		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -554,6 +556,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 			parent_task_id: null,
 			created_by_run_id: run.rows[0].id,
 		});
@@ -571,6 +574,7 @@ describe('spawned-from prompt line', () => {
 				priority: 'medium',
 				project_id: projectId,
 				rules: null,
+				progress_summary: null,
 				parent_task_id: null,
 				created_by_run_id: run.rows[0].id,
 			},
@@ -578,10 +582,10 @@ describe('spawned-from prompt line', () => {
 			{ spawnedFrom: spawn },
 		);
 		expect(prompt).toContain(`**Spawned from:** ${spawning.identifier}`);
-		expect(prompt).not.toContain('**Parent ticket:**');
+		expect(prompt).not.toContain('**Parent task:**');
 	});
 
-	it('returns null for an orphan ticket (no parent, no created_by_run_id)', async () => {
+	it('returns null for an orphan task (no parent, no created_by_run_id)', async () => {
 		const spawn = await loadSpawnedFromTask(db, {
 			id: '00000000-0000-0000-0000-000000000000',
 			identifier: 'MHP-orphan',
@@ -591,6 +595,7 @@ describe('spawned-from prompt line', () => {
 			priority: 'medium',
 			project_id: projectId,
 			rules: null,
+			progress_summary: null,
 			parent_task_id: null,
 			created_by_run_id: null,
 		});
@@ -636,9 +641,15 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 	it('loads exactly the latest N comments in chronological order (drops older ones)', async () => {
 		const total = RECENT_COMMENTS_LIMIT + 3;
 		const task = await createTaskWithNComments(total);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
-			limit: RECENT_COMMENTS_LIMIT,
-		});
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{
+				limit: RECENT_COMMENTS_LIMIT,
+			},
+		);
 
 		expect(recent.length).toBe(RECENT_COMMENTS_LIMIT);
 		// Only the newest RECENT_COMMENTS_LIMIT survive, oldest-first within that window.
@@ -652,9 +663,15 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 	it('renders the Recent Comments block with the list_comments pointer and omits older comments', async () => {
 		const total = RECENT_COMMENTS_LIMIT + 3;
 		const task = await createTaskWithNComments(total);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
-			limit: RECENT_COMMENTS_LIMIT,
-		});
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{
+				limit: RECENT_COMMENTS_LIMIT,
+			},
+		);
 
 		const prompt = buildTaskPrompt(
 			'System prompt',
@@ -716,9 +733,15 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 		expect(wakeCtx?.excerpt).toContain('no emdashes');
 		expect(wakeCtx?.commentId).toBe(commentId);
 
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
-			limit: RECENT_COMMENTS_LIMIT,
-		});
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{
+				limit: RECENT_COMMENTS_LIMIT,
+			},
+		);
 		const prompt = buildTaskPrompt(
 			'System prompt',
 			{
@@ -771,9 +794,15 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 			comment_id: commentId,
 		};
 		const mentionCtx = await loadMentionContext(db, architectMemberId, teamId, payload);
-		const recent = await loadCommentHistory(db, task.id, masterKeyManager, 0, {
-			limit: RECENT_COMMENTS_LIMIT,
-		});
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{
+				limit: RECENT_COMMENTS_LIMIT,
+			},
+		);
 
 		const prompt = buildTaskPrompt(
 			'System prompt',

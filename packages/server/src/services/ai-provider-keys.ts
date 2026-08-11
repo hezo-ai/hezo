@@ -1,8 +1,16 @@
-import { type AiAuthMethod, type AiProvider, AiProviderStatus } from '@hezo/shared';
+import {
+	type AgentRuntime,
+	type AiAuthMethod,
+	type AiProvider,
+	AiProviderStatus,
+	effectiveRuntime,
+	isAgentRuntime,
+} from '@hezo/shared';
 import { decrypt, encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import { buildUpdateSet, withTransaction } from '../lib/sql';
+import { RUNTIME_CANDIDATE_SCAN_LIMIT } from './runtime-resolver';
 
 export interface AiProviderCredential {
 	value: string;
@@ -17,6 +25,14 @@ export interface AiProviderCredential {
 	 * egress proxy.
 	 */
 	baseUrl: string | null;
+	/**
+	 * The CLI the operator chose for this credential, or null to follow the
+	 * provider default. Carried here for the same reason as `baseUrl`: it is a
+	 * per-credential value, so it cannot be derived from the provider alone.
+	 * Resolve it with `effectiveRuntime` before building env from it — a provider
+	 * supports several runtimes and each wants the credential in a different var.
+	 */
+	runtime: AgentRuntime | null;
 }
 
 /** Read the stored base URL off a config's jsonb metadata, if it has one. */
@@ -35,6 +51,8 @@ export interface AiProviderConfig {
 	status: string;
 	default_model: string | null;
 	metadata: Record<string, unknown>;
+	/** Chosen CLI, or null to follow the provider default. */
+	runtime: AgentRuntime | null;
 	created_at: string;
 }
 
@@ -50,6 +68,7 @@ export async function storeAiProviderKey(
 	authMethod: AiAuthMethod,
 	label?: string,
 	metadata: Record<string, unknown> = {},
+	runtime: AgentRuntime | null = null,
 ): Promise<string> {
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) throw new Error('Master key not available');
@@ -69,10 +88,18 @@ export async function storeAiProviderKey(
 	const resolvedLabel = label?.trim() || deriveLabel(provider, existingForProvider.rows.length);
 
 	const configResult = await db.query<{ id: string }>(
-		`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, metadata)
-		 VALUES ($1::ai_provider, $2::ai_auth_method, $3, $4, $5, $6::jsonb)
+		`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, metadata, runtime)
+		 VALUES ($1::ai_provider, $2::ai_auth_method, $3, $4, $5, $6::jsonb, $7::agent_runtime)
 		 RETURNING id`,
-		[provider, authMethod, resolvedLabel, encryptedValue, isDefault, JSON.stringify(metadata)],
+		[
+			provider,
+			authMethod,
+			resolvedLabel,
+			encryptedValue,
+			isDefault,
+			JSON.stringify(metadata),
+			runtime,
+		],
 	);
 
 	return configResult.rows[0].id;
@@ -85,7 +112,12 @@ export async function getProviderCredential(
 ): Promise<AiProviderCredential | null> {
 	const result = await getProviderCredentialAndModel(db, masterKeyManager, provider);
 	if (!result) return null;
-	return { value: result.value, authMethod: result.authMethod, baseUrl: result.baseUrl };
+	return {
+		value: result.value,
+		authMethod: result.authMethod,
+		baseUrl: result.baseUrl,
+		runtime: result.runtime,
+	};
 }
 
 export interface AiProviderCredentialAndModel extends AiProviderCredential {
@@ -122,40 +154,58 @@ export async function getProviderCredentialAndModel(
 	db: Db,
 	masterKeyManager: MasterKeyManager,
 	provider: AiProvider,
+	/**
+	 * Restrict to credentials that run on this CLI. Pass the runtime the run was
+	 * resolved to whenever one is known: a provider can hold several credentials
+	 * on different CLIs, so selecting by provider alone can return a row whose
+	 * runtime disagrees with the one the run is being configured for — which
+	 * builds the env for one CLI and launches the other.
+	 */
+	runtime?: AgentRuntime | null,
 ): Promise<AiProviderCredentialAndModel | null> {
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) throw new Error('Master key not available');
 
+	// When filtering by runtime the matching credential may not be the
+	// highest-priority one for the provider, so `LIMIT 1` would pre-select a row
+	// that fails the test and report "no credential". Widen the window instead and
+	// let the ordering pick the winner among the matches.
 	const result = await db.query<{
 		id: string;
 		auth_method: AiAuthMethod;
 		encrypted_credential: string;
 		default_model: string | null;
 		metadata: Record<string, unknown> | null;
+		runtime: string | null;
 	}>(
-		`SELECT id, auth_method, encrypted_credential, default_model, metadata
+		`SELECT id, auth_method, encrypted_credential, default_model, metadata, runtime
 		 FROM ai_provider_configs
 		 WHERE provider = $1::ai_provider AND status = $2
 		 ORDER BY is_default DESC, created_at ASC
-		 LIMIT 1`,
+		 LIMIT ${runtime ? RUNTIME_CANDIDATE_SCAN_LIMIT : 1}`,
 		[provider, AiProviderStatus.Verified],
 	);
 
-	if (result.rows.length === 0) return null;
+	const rows = result.rows.map((row) => ({
+		...row,
+		resolvedRuntime: effectiveRuntime(provider, isAgentRuntime(row.runtime) ? row.runtime : null),
+	}));
+	const row = runtime ? rows.find((r) => r.resolvedRuntime === runtime) : rows[0];
+	if (!row) return null;
 
-	const row = result.rows[0];
 	return {
 		configId: row.id,
 		value: decrypt(row.encrypted_credential, encryptionKey),
 		authMethod: row.auth_method,
 		defaultModel: row.default_model,
 		baseUrl: readConfigBaseUrl(row.metadata),
+		runtime: isAgentRuntime(row.runtime) ? row.runtime : null,
 	};
 }
 
 export async function listAiProviders(db: Db): Promise<AiProviderConfig[]> {
 	const result = await db.query<AiProviderConfig>(
-		`SELECT id, provider, auth_method, label, is_default, status, default_model, metadata, created_at::text
+		`SELECT id, provider, auth_method, label, is_default, status, default_model, metadata, runtime, created_at::text
 		 FROM ai_provider_configs
 		 ORDER BY provider ASC, is_default DESC, created_at ASC`,
 	);
@@ -165,6 +215,23 @@ export async function listAiProviders(db: Db): Promise<AiProviderConfig[]> {
 export interface AiProviderConfigUpdate {
 	label?: string;
 	defaultModel?: string | null;
+	/**
+	 * The CLI this credential runs on. `null` clears the choice back to the
+	 * provider default; `undefined` leaves it untouched, per `buildUpdateSet`.
+	 */
+	runtime?: AgentRuntime | null;
+	/**
+	 * A replacement credential, encrypted here rather than by the caller so the
+	 * plaintext never has to be handed around already-encrypted-or-not.
+	 */
+	credential?: { value: string; masterKeyManager: MasterKeyManager };
+	authMethod?: AiAuthMethod;
+	status?: AiProviderStatus;
+	/**
+	 * Locally-hosted providers only. Merged into the existing jsonb rather than
+	 * replacing it, so unrelated metadata keys survive a credential rotation.
+	 */
+	baseUrl?: string;
 }
 
 export async function updateAiProviderConfig(
@@ -172,18 +239,40 @@ export async function updateAiProviderConfig(
 	configId: string,
 	fields: AiProviderConfigUpdate,
 ): Promise<boolean> {
+	let encryptedCredential: string | undefined;
+	if (fields.credential) {
+		const encryptionKey = fields.credential.masterKeyManager.getKey();
+		if (!encryptionKey) throw new Error('Master key not available');
+		encryptedCredential = encrypt(fields.credential.value, encryptionKey);
+	}
+
 	const { clauses, params, nextIdx } = buildUpdateSet([
 		{ column: 'label', value: fields.label },
 		{ column: 'default_model', value: fields.defaultModel },
+		{ column: 'runtime', value: fields.runtime, cast: 'agent_runtime' },
+		{ column: 'encrypted_credential', value: encryptedCredential },
+		{ column: 'auth_method', value: fields.authMethod, cast: 'ai_auth_method' },
+		{ column: 'status', value: fields.status },
 	]);
+
+	// `buildUpdateSet` can only assign, and the base URL has to merge — overwriting
+	// `metadata` wholesale would drop any other key stored alongside it.
+	let idx = nextIdx;
+	const allParams = [...params];
+	if (fields.baseUrl !== undefined) {
+		clauses.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${idx}::jsonb`);
+		allParams.push(JSON.stringify({ base_url: fields.baseUrl }));
+		idx++;
+	}
+
 	if (clauses.length === 0) return false;
 
 	const result = await db.query<{ id: string }>(
 		`UPDATE ai_provider_configs
 		 SET ${clauses.join(', ')}, updated_at = now()
-		 WHERE id = $${nextIdx}
+		 WHERE id = $${idx}
 		 RETURNING id`,
-		[...params, configId],
+		[...allParams, configId],
 	);
 	return result.rows.length > 0;
 }

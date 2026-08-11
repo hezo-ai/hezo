@@ -17,6 +17,7 @@ export type StartupPhaseId =
 	| 'seed'
 	| 'asset-storage'
 	| 'pricing'
+	| 'sandbox'
 	| 'workspace'
 	| 'ready'
 	| 'error';
@@ -36,6 +37,7 @@ const PHASE_MESSAGES: Record<StartupPhaseId, string> = {
 	seed: 'Preparing data…',
 	'asset-storage': 'Connecting to asset storage…',
 	pricing: 'Loading model pricing…',
+	sandbox: 'Connecting to the container backend…',
 	workspace: 'Setting up your workspace…',
 	ready: 'Ready',
 	error: 'Startup failed',

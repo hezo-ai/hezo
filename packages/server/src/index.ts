@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { AuthType } from '@hezo/shared';
+import { AuthType, WsClientAction } from '@hezo/shared';
 import { app } from './app';
 import { AssetStorageError } from './assets/errors';
 import { parseConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
@@ -20,14 +20,17 @@ import { canAuthAccessTeam, verifyToken } from './middleware/auth';
 import { getActiveRuntime, setActiveRuntime, shutdownRuntime } from './runtime-control';
 import type { ContainerLogStreamer } from './services/container-logs';
 import { setKeepOldContainers } from './services/containers';
-import { evaluateDockerPreflight, formatDockerPreflightMessage } from './services/docker-preflight';
-import { describeDockerSocket } from './services/docker-socket';
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import { formatPortInUseMessage, probePort } from './services/port-preflight';
+import { SandboxBackendError } from './services/sandbox/errors';
 import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
-import { handleWsSubscribe, handleWsUnsubscribe } from './services/ws-subscribe-handler';
+import {
+	handleWsPing,
+	handleWsSubscribe,
+	handleWsUnsubscribe,
+} from './services/ws-subscribe-handler';
 import { type StartupResult, startup } from './startup';
 import { clearStartupFailure, readStartupFailure, recordStartupFailure } from './startup-failure';
 import { getStartupProgress, markStartupError, setStartupPhase } from './startup-progress';
@@ -159,24 +162,24 @@ if (!globalThis.__hezoPortProbed) {
 	}
 }
 
-// Docker is a hard prerequisite — every agent runs in a per-project container.
-// Detect a missing or unreachable daemon at launch and exit with actionable
-// guidance (install link / start instructions) rather than booting a server
-// that can't run a single agent. Any Docker-API-compatible runtime works, so the
-// preflight walks every socket a supported runtime is known to use and records
-// the one that answered — every DockerClient then reads that socket. The
-// resolved socket is logged: "which daemon did it even look at" is the first
-// question a failure on a non-default runtime raises. HEZO_SKIP_DOCKER swaps in
-// the in-process fake docker for UI/dev work and tests, so the gate is skipped
-// when it is set.
-if (!process.env.HEZO_SKIP_DOCKER) {
-	const preflight = await evaluateDockerPreflight({ override: config.dockerSocket });
-	if (preflight.status !== 'ok') {
-		log.error(`\n${formatDockerPreflightMessage({ ...preflight, status: preflight.status })}\n`);
-		process.exit(1);
-	}
-	if (preflight.socket) log.info(describeDockerSocket(preflight.socket));
-}
+// The container backend's preflight is deliberately NOT here.
+//
+// A daemon check at this point can only read the launch flag - the database is
+// not open yet - but the backend actually in use comes from the **stored**
+// setting, which the flag merely seeds (`resolveStartupBackend`). Gating here
+// therefore failed an instance switched to a managed backend from the Containers
+// page: it exited 1 on the next restart, printing Docker install guidance for a
+// backend it would never use.
+//
+// `openSandboxBackend` inside `startup()` is the single preflight for whichever
+// backend is selected, and it carries the same install/start guidance. It throws
+// `SandboxBackendError`, which the catch below turns into the same fatal exit.
+//
+// It also owns **socket resolution** for Docker-compatible runtimes (Colima,
+// Rancher Desktop, OrbStack, rootless): walking the candidate sockets and
+// recording the winner has to happen before any `DockerClient` is used, and the
+// Docker branch of that preflight is the first place that is both after the
+// backend is known and before an engine is handed out.
 
 /** Bumped on each module load so stale async startup completions are ignored after HMR. */
 let startupGeneration = 0;
@@ -202,7 +205,7 @@ let serveFetch: (
 let wsManager: WebSocketManager | null = null;
 let dbRef: Db | null = null;
 let mkmRef: MasterKeyManager | null = null;
-let dockerRef: import('./services/docker').DockerClient | null = null;
+let dockerRef: import('./services/sandbox/types').ContainerEngine | null = null;
 let logsRef: LogStreamBroker | null = null;
 let containerLogStreamerRef: ContainerLogStreamer | null = null;
 
@@ -281,7 +284,8 @@ void (async () => {
 			err instanceof MigrationFailedError ||
 			err instanceof ExternalDbError ||
 			err instanceof ExternalMigrationFailedError ||
-			err instanceof AssetStorageError
+			err instanceof AssetStorageError ||
+			err instanceof SandboxBackendError
 		) {
 			log.error(`\n${err.message}\n`);
 			// Under `Restart=always` this exit is immediately undone, so without a
@@ -377,10 +381,24 @@ export default {
 			}
 		},
 		async message(ws: Bun.ServerWebSocket<WsConnectionData>, msg: string | Buffer) {
+			let data: { action?: unknown; room?: unknown };
+			try {
+				data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
+			} catch {
+				return; // ignore malformed messages
+			}
+			// Answered before the subsystem guards below: a liveness probe must not go
+			// unanswered just because some other ref hasn't been wired up yet, or the
+			// client would read the silence as a dead socket and redial a healthy one.
+			if (data.action === WsClientAction.Ping) {
+				handleWsPing(ws as unknown as WsSocket, {
+					sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
+				});
+				return;
+			}
 			if (!wsManager || !containerLogStreamerRef) return;
 			try {
-				const data = JSON.parse(typeof msg === 'string' ? msg : msg.toString());
-				if (data.action === 'subscribe' && typeof data.room === 'string') {
+				if (data.action === WsClientAction.Subscribe && typeof data.room === 'string') {
 					await handleWsSubscribe(ws as unknown as WsSocket, data.room, {
 						db: dbRef,
 						wsManager,
@@ -391,7 +409,7 @@ export default {
 						canAccessTeam,
 						sendToSocket: (_s, payload) => ws.send(JSON.stringify(payload)),
 					});
-				} else if (data.action === 'unsubscribe' && typeof data.room === 'string') {
+				} else if (data.action === WsClientAction.Unsubscribe && typeof data.room === 'string') {
 					handleWsUnsubscribe(ws as unknown as WsSocket, data.room, {
 						wsManager,
 						containerLogStreamer: containerLogStreamerRef,
@@ -399,7 +417,7 @@ export default {
 					});
 				}
 			} catch {
-				// ignore malformed messages
+				// a failed subscribe must not take the socket down with it
 			}
 		},
 	},

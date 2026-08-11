@@ -53,7 +53,7 @@ jobs:
       # Whether the image made it to GHCR, i.e. whether test-backend can pull
       # it. Read by test-backend below — never infer it from the event name
       # there, or the two jobs drift.
-      published: ${{ steps.publishable.outputs.value }}
+      published: ${{ steps.published.outputs.value }}
     steps:
       - uses: actions/checkout@v5
       # A pull_request from a fork runs with a read-only GITHUB_TOKEN: the
@@ -86,13 +86,30 @@ jobs:
           tags: ghcr.io/hezo-ai/agent-base:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Emitted *after* the push, not beside the decision to attempt one. The
+      # `publishable` step runs first and succeeds either way, so publishing its
+      # value as the output meant a build that failed at the push still claimed
+      # the image was there — and every backend shard then failed on a `docker
+      # pull` of a tag that does not exist. A later step does not run once an
+      # earlier one fails, so this is empty exactly when the image is missing.
+      - name: Record that the image reached GHCR
+        id: published
+        if: steps.publishable.outputs.value == 'true'
+        run: echo "value=true" >> "$GITHUB_OUTPUT"
 
   test-backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Gated on the image build so the *-docker.test.ts suites actually run
-    # instead of self-skipping.
+    # Ordered after the image build so the *-docker.test.ts suites run against a
+    # real image instead of self-skipping - but **not gated on its success**.
+    # A bare `needs:` skips this whole tier when that job fails, which turned a
+    # registry hiccup into five shards of backend tests that never ran and a
+    # required check that failed having tested nothing. Every step below that
+    # touches the image is already conditioned on `published`, and the suites
+    # self-skip without it, so running image-less is a path that already works -
+    # it is the one a fork PR takes on every run.
     needs: build-agent-image
+    if: ${{ !cancelled() }}
     permissions:
       contents: read
       packages: read
@@ -131,11 +148,17 @@ jobs:
           docker pull ghcr.io/hezo-ai/agent-base:${{ github.sha }}
           docker tag ghcr.io/hezo-ai/agent-base:${{ github.sha }} hezo/agent-base:latest
       # No silent coverage gap: say so in the run when the container suites are
-      # going to self-skip because the image couldn't be published.
+      # going to self-skip, and say which of the two reasons it was — a fork PR
+      # never had a writable token, while a failed build means the image itself
+      # needs looking at.
       - name: Note unavailable agent base image
-        if: needs.build-agent-image.outputs.published != 'true'
+        if: needs.build-agent-image.outputs.published != 'true' && needs.build-agent-image.result == 'success'
         run: |
           echo "::notice title=agent-base image unavailable::A fork pull request gets a read-only GITHUB_TOKEN, so the image was built but not pushed to GHCR. The *-docker.test.ts container suites will self-skip on this run; they run in full once the change lands on main."
+      - name: Warn that the agent base image failed to build
+        if: needs.build-agent-image.result != 'success'
+        run: |
+          echo "::warning title=agent-base image unavailable::build-agent-image did not succeed, so the *-docker.test.ts container suites self-skip on this run. The rest of the backend tier still ran. Check that job before trusting a green result here."
       - run: bun install --frozen-lockfile
       # Runs the server vitest suite (Node runtime) — including the ssh-agent /
       # egress-proxy / mcp-connections container suites now that the image is
@@ -348,6 +371,31 @@ jobs:
       - if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: bunx playwright install-deps chromium
       - run: bun run test --browser --shard ${{ matrix.shard }}/3
+      # Everything needed to diagnose a failure is in the artifact below, but
+      # reading it means downloading a zip — a slow loop for a browser failure
+      # that only reproduces on CI. So print the page-side evidence into the job
+      # log too. `test/browser/diagnostics.ts` already logs the shell's geometry
+      # from the fixture; this adds Playwright's own snapshot of the accessibility
+      # tree at the moment of failure, which covers specs that drive their own
+      # `test` (master-key-gate) and so never reach that fixture.
+      - name: Print Playwright failure context
+        if: failure()
+        run: |
+          shopt -s globstar nullglob
+          # error-context.md ONLY. The page-state dump is already in this log via
+          # the fixture's stdout, and it lands on disk twice (the file the fixture
+          # writes plus Playwright's copy under attachments/) — globbing it here
+          # printed every dump three times per attempt, which buries the failure
+          # the log exists to surface.
+          found=0
+          for f in test-results/**/error-context.md; do
+            found=1
+            echo "::group::$f"
+            head -c 60000 "$f"
+            echo
+            echo "::endgroup::"
+          done
+          [ "$found" = 1 ] || echo "no error-context.md written (the failure was not page-side)"
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

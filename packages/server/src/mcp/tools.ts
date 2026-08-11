@@ -2,7 +2,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SearchScope } from '@hezo/shared';
 import {
 	ADMIN_MENTION_SLUG,
+	AGENT_HUMAN_NAME_MAX,
 	AgentAdminStatus,
+	type AgentGender,
 	ApprovalStatus,
 	ApprovalType,
 	ArchiveFilter,
@@ -19,10 +21,13 @@ import {
 	COACH_AGENT_SLUG,
 	CommentContentType,
 	ConnectorAccess,
+	ConnectorStatus,
 	ConnectorTransport,
 	CredentialInputType,
 	CredentialKind,
+	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
+	DASHBOARD_WIDGET_IDS,
 	DEFAULT_TEAM_ID,
 	DocumentType,
 	extensionOf,
@@ -32,6 +37,7 @@ import {
 	getConnectorCapability,
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
+	inferGender,
 	isAllowedAttachmentMime,
 	isMarkdownDocSlug,
 	isTextAssetMime,
@@ -59,8 +65,15 @@ import type { Db } from '../db/database';
 import { readRunLogTail, readRunLogWindow, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
+import {
+	applyAgentHumanName,
+	buildAgentAvatarSpec,
+	checkHumanNameAvailable,
+	isNameOnlyRole,
+} from '../lib/agent-identity';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
+import { assetSearchTextFromBlob } from '../lib/asset-search-text';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
@@ -93,7 +106,7 @@ import {
 } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
-import { isUniqueViolation } from '../lib/sql';
+import { isUniqueViolation, withTransaction } from '../lib/sql';
 import { applyStringEdit } from '../lib/string-edit';
 import {
 	assertChildrenAllClosed,
@@ -114,6 +127,7 @@ import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
 import {
+	buildWakeReceipt,
 	fireCommentWakeups,
 	postAgentComment,
 	resolveWarnableSlugs,
@@ -149,11 +163,13 @@ import {
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
+import { setConnectorAuthError } from '../services/oauth/token-resolver';
 import {
 	buildProgressActivitySnapshot,
 	type ProgressActivityInput,
 } from '../services/project-activity';
 import { createProjectWithTeam } from '../services/project-create';
+import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
 import {
@@ -198,6 +214,7 @@ import {
 	utf8FloorBoundary,
 	windowContent,
 } from './paging';
+import type { ToolAudience } from './tool-visibility';
 
 /**
  * Minimal row shape the keyset pager needs. List tools select far more columns;
@@ -208,6 +225,20 @@ type ListRow = KeysetRow & Record<string, unknown>;
 const log = logger.child('mcp');
 
 export const authContext = new AsyncLocalStorage<AuthInfo>();
+
+/**
+ * Origin the current MCP caller reached Hezo on, e.g. `http://127.0.0.1:47081`.
+ *
+ * Agent-facing asset download URLs have to be absolute and dialable *by the
+ * caller*, and the caller is inside a container whose only route to Hezo is its
+ * own tunnel - on a loopback port allocated for that tunnel, which the server
+ * does not otherwise know. Reading it off the request is what makes it correct
+ * without a registry to keep in sync: the tunnel forwards the container's
+ * request verbatim, so the `Host` header already carries exactly the address the
+ * container used. An out-of-container API-key caller gets the origin it really
+ * reached, which is strictly better than the host-shaped guess this replaced.
+ */
+export const callerOriginContext = new AsyncLocalStorage<string>();
 
 export interface ToolDef {
 	name: string;
@@ -221,68 +252,40 @@ export interface ToolDef {
 	 */
 	params: Record<string, unknown>;
 	/**
-	 * True when the tool persists data (it is in `MCP_WRITE_TOOLS`): a successful
-	 * call from an agent run marks the run as having produced output.
+	 * True when the tool persists data: a successful call from an agent run marks
+	 * the run as having produced output.
 	 */
 	write: boolean;
+	/**
+	 * The caller class this tool's handler gates on, or undefined when any
+	 * authenticated caller may see it. Read by `tool-visibility.ts` to project
+	 * `tools/list`; it hides, it never forbids.
+	 */
+	audience?: ToolAudience;
+	/** Raised result cap for an inherently large resource. */
+	resultByteLimit?: number;
+	/** For a batch tool, the argument holding the array it chunks over. */
+	batchArrayParam?: string;
+}
+
+/**
+ * The per-tool facts that used to live in name-keyed side tables beside the
+ * registry (`MCP_WRITE_TOOLS`, `TOOL_AUDIENCE`, `MCP_RESULT_BYTE_LIMIT_OVERRIDES`,
+ * `MCP_BATCH_ARRAY_PARAMS`).
+ *
+ * Declared at the registration instead, because a second list keyed by tool name
+ * can only ever drift from the first: a rename left a stale entry behind, and a
+ * new tool needing one simply never got it, with nothing to say so. Here the
+ * fact and the tool cannot separate - there is no second place to forget.
+ */
+export interface ToolOptions {
+	write?: boolean;
+	audience?: ToolAudience;
+	resultByteLimit?: number;
+	batchArrayParam?: string;
 }
 
 const registeredTools: ToolDef[] = [];
-
-// Tools that persist data. When an agent run invokes one of these and it
-// succeeds, the run has produced output — recorded on the run row so the
-// completion path can distinguish a useful run from a no-op that merely exited
-// cleanly. Read-only tools (list_*/get_*/read_*/full_text_search/test_connector)
-// and run-local fetches (fetch_skill_file) are excluded.
-const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
-	'create_team',
-	'create_task',
-	'create_tasks',
-	'update_task',
-	'add_task_blocker',
-	'remove_task_blocker',
-	'update_hire_proposal',
-	'create_hire_proposal',
-	'create_project',
-	'start_team_setup',
-	'add_reaction',
-	'remove_reaction',
-	'create_comment',
-	'update_comment',
-	'request_credential',
-	'register_connector',
-	'resolve_approval',
-	'update_agent_system_prompt',
-	'update_agent_system_prompts',
-	'set_agent_status',
-	'set_agent_summary',
-	'set_agent_summaries',
-	'set_team_summary',
-	'set_agent_team_context',
-	'set_agent_team_contexts',
-	'set_agent_reports_to',
-	'write_project_asset',
-	'edit_project_asset',
-	'move_project_asset',
-	'copy_project_asset',
-	'archive_project_asset',
-	'unarchive_project_asset',
-	'write_project_doc',
-	'edit_project_doc',
-	'archive_project_doc',
-	'unarchive_project_doc',
-	'update_chat_memory',
-	'propose_skill',
-	'create_skill',
-	'add_connector',
-	'remove_connector',
-	'suggest_goal',
-	'update_goal_progress',
-	'update_project_progress',
-	'update_project_custom_prompt',
-	'apply_marketplace_team',
-	'apply_marketplace_agent',
-]);
 
 /** A handler result that signals failure rather than a persisted write. */
 function isErrorResult(result: unknown): boolean {
@@ -296,12 +299,9 @@ function isErrorResult(result: unknown): boolean {
  * scoping (the task's team plus the HQ instance agents) and includes @admin.
  */
 async function buildUnlinkedMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectUnlinkedTeammateReferences(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `**${s}**`).join(', ');
@@ -309,7 +309,7 @@ async function buildUnlinkedMentionWarning(
 	return (
 		`You referenced teammate(s) ${named} by bold/plain name - that renders as text ` +
 		`and notifies no one, so no wakeup was created. If you need them to act on this ` +
-		`ticket, post a follow-up using an active mention (${fixes}); if you were only ` +
+		`task, post a follow-up using an active mention (${fixes}); if you were only ` +
 		`referring to them, use the passive form (@@${offenders[0]}).`
 	);
 }
@@ -324,12 +324,9 @@ async function buildUnlinkedMentionWarning(
  * Same scoping as buildUnlinkedMentionWarning; best-effort and non-blocking.
  */
 async function buildPassiveMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectPassiveTeammateAsks(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `@@${s}`).join(', ');
@@ -337,7 +334,7 @@ async function buildPassiveMentionWarning(
 	return (
 		`You addressed ${named} with the passive form (@@) - that renders as a link and ` +
 		`notifies no one, so no wakeup or admin-inbox alert was created. If you need them to ` +
-		`act on this ticket, edit this comment or post a follow-up with an active mention ` +
+		`act on this task, edit this comment or post a follow-up with an active mention ` +
 		`(${fixes}). If you only meant to refer to them, keep the passive form but move the ` +
 		`reference out of the handoff position: a line that opens with a teammate reference and ` +
 		`a dash is an address, and a name bound to a sign-off gate ("ready for <name> review", ` +
@@ -357,12 +354,9 @@ async function buildPassiveMentionWarning(
  * best-effort and non-blocking.
  */
 async function buildNarratedMentionWarning(
-	db: Db,
-	teamId: string,
-	authorMemberId: string,
+	knownSlugs: string[],
 	content: string,
 ): Promise<string | null> {
-	const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 	const offenders = detectNarratedActiveMentions(content, knownSlugs);
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `@${s}`).join(', ');
@@ -515,7 +509,7 @@ async function buildBacktickedEntityWarning(
 	}
 	if (hasAgents) {
 		parts.push(
-			'For a teammate, @<slug> also wakes them on this ticket; use @@<slug> to refer without notifying.',
+			'For a teammate, @<slug> also wakes them on this task; use @@<slug> to refer without notifying.',
 		);
 	}
 	return parts.join(' ');
@@ -608,9 +602,20 @@ const APPROVAL_COLUMNS_ALIASED = APPROVAL_COLUMNS.replace(/[A-Za-z_][A-Za-z_0-9]
 // An oversized result is discarded whole and replaced with a `result_too_large`
 // error, because a runtime that instead persists a large result to disk would make
 // it unreadable anyway (the persisted file trips the same cap). A few single-
-// resource readers raise this via MCP_RESULT_BYTE_LIMIT_OVERRIDES; read_project_doc
-// keeps this cap and pages a large doc into byte windows rather than tripping it.
+// resource readers raise this with `resultByteLimit` on their registration;
+// read_project_doc keeps this cap and pages a large doc into byte windows
+// rather than tripping it.
 export const MCP_RESULT_BYTE_LIMIT = 64_000;
+
+/**
+ * The raised cap for the system-prompt readers, which return one inherently
+ * large resource rather than a list that could page.
+ *
+ * A named constant rather than a lookup keyed by tool name: the handler windows
+ * its content against this value and the registration declares it, so both read
+ * the same binding and neither can drift from the other.
+ */
+export const SYSTEM_PROMPT_RESULT_BYTES = 131_072;
 
 // A few inspection tools return a single, inherently large resource rather than
 // a list — a fully-resolved agent system prompt already fills most of the 64 KB
@@ -618,26 +623,6 @@ export const MCP_RESULT_BYTE_LIMIT = 64_000;
 // limit so a legitimate single-resource read isn't rejected as
 // `result_too_large`; the generic cap still guards every list/query tool against
 // context bloat. Keyed by tool name; falls back to MCP_RESULT_BYTE_LIMIT.
-export const MCP_RESULT_BYTE_LIMIT_OVERRIDES: Readonly<Record<string, number>> = {
-	get_agent_system_prompt: 131_072,
-	get_agent_system_prompts: 131_072,
-};
-
-/**
- * Tools taking an array of work items, keyed by the argument holding it.
- *
- * Used by the `result_too_large` guard to turn an overflow into a concrete
- * "retry with at most N items" instruction. Without it the guard can only
- * offer generic advice, and the only generic remedy that fits a batch tool is
- * "fetch a single resource" - which collapses one call into N and is almost
- * never what the cap was asking for.
- */
-export const MCP_BATCH_ARRAY_PARAMS: Readonly<Record<string, string>> = {
-	create_tasks: 'items',
-	get_agent_system_prompts: 'items',
-	update_agent_system_prompts: 'updates',
-};
-
 /**
  * Fraction of the theoretical fit to actually suggest on a batch retry. Rows
  * vary in size, so proposing exactly `limit / size` of the batch would put the
@@ -660,10 +645,10 @@ export function oversizeRemedies(
 	args: Record<string, unknown>,
 	sizeBytes: number,
 	byteLimit: number,
+	batchParam?: string,
 ): string[] {
 	const remedies: string[] = [];
 
-	const batchParam = MCP_BATCH_ARRAY_PARAMS[name];
 	const batch = batchParam ? args[batchParam] : undefined;
 	if (batchParam && Array.isArray(batch) && batch.length > 1) {
 		const safe = Math.max(
@@ -714,7 +699,7 @@ const DOC_READ_ENVELOPE_RESERVE = 4_096;
  * that decides whether a result is admitted at all.
  *
  * The two are not the same number, and conflating them is a real failure we hit:
- * chunking to the raised `MCP_RESULT_BYTE_LIMIT_OVERRIDES` value (128 KB) let a
+ * chunking to the raised `resultByteLimit` (128 KB) let a
  * batch return ~125 KB, which is roughly 31k tokens - over the ~25k-token
  * tool-result ceiling a runtime like the Claude Code harness enforces. The
  * chunker had "succeeded" into a result the client could not accept, so the
@@ -912,13 +897,17 @@ function tool(
 	schema: Record<string, z.ZodType>,
 	handler: (args: Record<string, unknown>, db: Db, auth: AuthInfo) => Promise<unknown>,
 	db: Db,
+	opts: ToolOptions = {},
 ) {
 	registeredTools.push({
 		name,
 		description,
 		schema: Object.fromEntries(Object.entries(schema).map(([k, v]) => [k, v.description ?? k])),
 		params: z.toJSONSchema(z.object(schema)) as Record<string, unknown>,
-		write: MCP_WRITE_TOOLS.has(name),
+		write: opts.write ?? false,
+		...(opts.audience ? { audience: opts.audience } : {}),
+		...(opts.resultByteLimit ? { resultByteLimit: opts.resultByteLimit } : {}),
+		...(opts.batchArrayParam ? { batchArrayParam: opts.batchArrayParam } : {}),
 	});
 	server.tool(name, description, schema, async (args: Record<string, unknown>) => {
 		const auth = authContext.getStore();
@@ -933,12 +922,7 @@ function tool(
 			};
 		}
 		const result = await handler(args, db, auth);
-		if (
-			auth.type === AuthType.Agent &&
-			auth.runId &&
-			MCP_WRITE_TOOLS.has(name) &&
-			!isErrorResult(result)
-		) {
+		if (auth.type === AuthType.Agent && auth.runId && opts.write && !isErrorResult(result)) {
 			await markRunProducedOutput(db, auth.runId);
 		}
 		// A handler may return pre-shaped MCP content blocks (e.g. an image);
@@ -948,7 +932,7 @@ function tool(
 		}
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
-		const byteLimit = MCP_RESULT_BYTE_LIMIT_OVERRIDES[name] ?? MCP_RESULT_BYTE_LIMIT;
+		const byteLimit = opts.resultByteLimit ?? MCP_RESULT_BYTE_LIMIT;
 		if (sizeBytes > byteLimit) {
 			const guard = JSON.stringify(
 				{
@@ -957,7 +941,14 @@ function tool(
 					size_bytes: sizeBytes,
 					limit_bytes: byteLimit,
 					hint: 'This result exceeded the cap and was discarded whole - nothing was returned. Split the work and retry; do not narrow what you cover to whatever fits in one call.',
-					remedies: oversizeRemedies(name, schema, args, sizeBytes, byteLimit),
+					remedies: oversizeRemedies(
+						name,
+						schema,
+						args,
+						sizeBytes,
+						byteLimit,
+						opts.batchArrayParam,
+					),
 				},
 				null,
 				2,
@@ -1226,8 +1217,12 @@ export function registerTools(
 	// callers (reference generation, tests) that register without running
 	// handlers or with a plain local data dir.
 	const assets = assetStore ?? new LocalAssetStore(dataDir);
-	// Port for agent-facing download URLs (host.docker.internal origin).
-	const agentPort = serverPort ?? 0;
+	// Fallback origin for agent-facing download URLs, used only by callers that
+	// register the tools without dispatching a request (reference generation,
+	// tests). A live tool call reads the caller's own origin off its request -
+	// see `callerOriginContext`.
+	const registeredOrigin = `http://127.0.0.1:${serverPort ?? 0}`;
+	const agentOrigin = () => callerOriginContext.getStore() ?? registeredOrigin;
 
 	// Teams
 	tool(
@@ -1313,13 +1308,14 @@ export function registerTools(
 			return r.rows[0];
 		},
 		db,
+		{ write: true, audience: 'admin_superuser' },
 	);
 
 	// Tasks
 	tool(
 		server,
 		'list_tasks',
-		`List a project's tasks, newest first. Omit \`project\` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tickets in the current project - only call this if you need older or terminal tickets, another project, or a specific status filter. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. description and rules come back as excerpts capped at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}) so one page cannot be dominated by a few long tickets - read a task's full text with get_task.`,
+		`List a project's tasks, newest first. Omit \`project\` to use the project your run is in; pass it (slug or ID) to inspect another project. Narrow with status (comma-separated) or assignee_id/assignee_slug. The Project State block in your system prompt already gives you the active tasks in the current project - only call this if you need older or terminal tasks, another project, or a specific status filter. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. description and rules come back as excerpts capped at \`excerpt_chars\` (default ${DEFAULT_TASK_EXCERPT_CHARS}) so one page cannot be dominated by a few long tasks - read a task's full text with get_task.`,
 		{
 			project: projectArg(),
 			status: z.string().optional().describe('Filter by status (comma-separated)'),
@@ -1402,7 +1398,7 @@ export function registerTools(
 	tool(
 		server,
 		'get_task',
-		"Get task details, including the ticket's declared blockers (upstream - what this ticket is waiting on) and dependents (downstream - tickets that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this ticket is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tickets will be auto-unblocked when this ticket is marked terminal - you do not need to @-mention them, the auto-wake handles it.",
+		"Get task details, including the task's declared blockers (upstream - what this task is waiting on) and dependents (downstream - tasks that are blocked on this one). Each entry has identifier, title, and current status. A non-empty blockers list means an automatic agent run on this task is paused until every blocker reaches a terminal status (done, cancelled). The dependents list shows which teammates' tasks will be auto-unblocked when this task is marked terminal - you do not need to @-mention them, the auto-wake handles it.",
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1445,7 +1441,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_task',
-		"Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level ticket whenever the new work is part of the ticket you are on. Sub-tasks themselves can have sub-tasks, and those one further level, but no deeper (depth is capped at 3). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant ticket instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this ticket until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
+		"Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-level task whenever the new work is part of the task you are on. Sub-tasks themselves can have sub-tasks, and those one further level, but no deeper (depth is capped at 3). Use assignee_slug as alternative to assignee_id. As an agent caller, you may only assign to yourself or to your direct subordinates - to request work from anyone else (peers, your manager, or agents elsewhere in the org), use create_comment with @<agent-slug> on a relevant task instead. Use blocked_by_task_ids to declare prerequisites - the assignee will not be woken on this task until every blocker reaches a terminal status (done, cancelled). When splitting work into sequential phases, prefer create_tasks and chain the items with '#<index>' blockers instead of filing them unordered. In title/description, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
 		{
 			project: projectArg(),
 			title: z.string().describe('Task title'),
@@ -1472,7 +1468,7 @@ export function registerTools(
 				.array(z.string())
 				.optional()
 				.describe(
-					'Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this ticket is started. The assignee will not be woken on this ticket until every blocker is satisfied.',
+					'Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this task is started. The assignee will not be woken on this task until every blocker is satisfied.',
 				),
 			goal_id: z
 				.string()
@@ -1509,6 +1505,7 @@ export function registerTools(
 			);
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -1610,6 +1607,7 @@ export function registerTools(
 			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,
+		{ write: true, audience: 'captain_or_ceo' },
 	);
 
 	tool(
@@ -1693,18 +1691,19 @@ export function registerTools(
 			}
 		},
 		db,
+		{ write: true, audience: 'agent_run' },
 	);
 
 	tool(
 		server,
 		'update_project_progress',
-		"Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tickets in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.",
+		"Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tasks in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.",
 		{
 			project: projectArg(),
 			summary: z
 				.string()
 				.describe(
-					'Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference ticket identifiers - the activity columns carry the specific tasks.',
+					'Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference task identifiers - the activity columns carry the specific tasks.',
 				),
 			actioned: progressActivityArg('being worked on right now', 'what is being accomplished'),
 			created: progressActivityArg('newly filed', 'what it sets out to accomplish, and why'),
@@ -1745,12 +1744,13 @@ export function registerTools(
 			}
 		},
 		db,
+		{ write: true, audience: 'agent_run' },
 	);
 
 	tool(
 		server,
 		'create_tasks',
-		`Create multiple tasks in one call (max ${MAX_BATCH_CREATE_TASKS}). Items are created in order; each has the same shape as create_task, and per-item errors are returned without aborting the rest. When the items are slices of the ticket you are on - delegated tracks handed to direct reports, parallel slices, phases of its deliverable - set parent_task_id on EACH item (normally your current ticket) so they are sub-tasks; filing them top-level detaches them and lets the parent close while they are still open. Within a batch, blocked_by_task_ids entries may reference an earlier item in the same call by zero-based index token - '#0' is the first item. To chain sequential work (e.g. implementation phases that must run one at a time), set blocked_by_task_ids: ['#<previous index>'] on every item after the first; each task then stays blocked until the one before it reaches a terminal status. Filing sequential phases WITHOUT these blockers makes all of them runnable at once. Index tokens may only point at earlier items; a token that is self-referencing, forward-referencing, or points at an item that failed errors that item. Use this when filing a related set of tickets in one go (planning a feature, splitting a ticket into phases or sub-tasks). For a single task, use create_task.`,
+		`Create multiple tasks in one call (max ${MAX_BATCH_CREATE_TASKS}). Items are created in order; each has the same shape as create_task, and per-item errors are returned without aborting the rest. When the items are slices of the task you are on - delegated tracks handed to direct reports, parallel slices, phases of its deliverable - set parent_task_id on EACH item (normally your current task) so they are sub-tasks; filing them top-level detaches them and lets the parent close while they are still open. Within a batch, blocked_by_task_ids entries may reference an earlier item in the same call by zero-based index token - '#0' is the first item. To chain sequential work (e.g. implementation phases that must run one at a time), set blocked_by_task_ids: ['#<previous index>'] on every item after the first; each task then stays blocked until the one before it reaches a terminal status. Filing sequential phases WITHOUT these blockers makes all of them runnable at once. Index tokens may only point at earlier items; a token that is self-referencing, forward-referencing, or points at an item that failed errors that item. Use this when filing a related set of tasks in one go (planning a feature, splitting a task into phases or sub-tasks). For a single task, use create_task.`,
 		{
 			project: projectArg(),
 			items: z
@@ -1780,7 +1780,7 @@ export function registerTools(
 							.array(z.string())
 							.optional()
 							.describe(
-								'Task identifiers (e.g. ["BE-2"]), UUIDs, or zero-based index tokens referencing earlier items in this same call (e.g. "#0" = first item). All must reach a terminal status before this ticket starts. To chain phases sequentially, set ["#<previous index>"] on each item after the first.',
+								'Task identifiers (e.g. ["BE-2"]), UUIDs, or zero-based index tokens referencing earlier items in this same call (e.g. "#0" = first item). All must reach a terminal status before this task starts. To chain phases sequentially, set ["#<previous index>"] on each item after the first.',
 							),
 					}),
 				)
@@ -1823,12 +1823,13 @@ export function registerTools(
 			);
 		},
 		db,
+		{ write: true, batchArrayParam: 'items' },
 	);
 
 	tool(
 		server,
 		'update_task',
-		'Update an task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a ticket, set status to `done` - that is the final completed state and wakes Coach to review the ticket for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
+		'Update a task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a task, set status to `done` - that is the final completed state and wakes Coach to review the task for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1838,7 +1839,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a ticket `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
+					'New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a task `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z
@@ -1850,7 +1851,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'How-to-work-on guardrails for this ticket - approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead.',
+					'How-to-work-on guardrails for this task - approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead.',
 				),
 			branch_name: z.string().optional().describe('Git branch name for this task'),
 			runtime_type: z
@@ -2149,12 +2150,13 @@ export function registerTools(
 			);
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
 		server,
 		'add_task_blocker',
-		'Declare that one task blocks another. The downstream ticket will not start an automatic agent run until the blocker reaches a terminal status (done, cancelled). Use this when you discover that a ticket you have been woken on depends on work that has not landed yet - declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
+		'Declare that one task blocks another. The downstream task will not start an automatic agent run until the blocker reaches a terminal status (done, cancelled). Use this when you discover that a task you have been woken on depends on work that has not landed yet - declare the blocker and end your turn; the system will wake you again when the blocker resolves. Cycles are rejected.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID that should be blocked'),
@@ -2182,12 +2184,13 @@ export function registerTools(
 			return r.rows[0];
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
 		server,
 		'remove_task_blocker',
-		"Remove a blocker between two tasks. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream ticket's last open blocker, its assignee is woken automatically.",
+		"Remove a blocker between two tasks. Call this when a dependency that was previously declared no longer applies. If removing this dependency clears the downstream task's last open blocker, its assignee is woken automatically.",
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID that is currently blocked'),
@@ -2210,6 +2213,7 @@ export function registerTools(
 			return { removed: true };
 		},
 		db,
+		{ write: true },
 	);
 
 	// Agents
@@ -2260,6 +2264,12 @@ export function registerTools(
 		{
 			approval_id: z.string().describe('Hire approval ID'),
 			title: z.string().optional().describe('Updated role title'),
+			human_name: z
+				.string()
+				.trim()
+				.max(AGENT_HUMAN_NAME_MAX)
+				.optional()
+				.describe('Updated human name for the new teammate, or an empty string to clear it'),
 			role_description: z.string().optional().describe('Updated short role description'),
 			system_prompt: z
 				.string()
@@ -2345,15 +2355,24 @@ export function registerTools(
 			return updated.rows[0] ?? null;
 		},
 		db,
+		{ write: true, audience: 'captain' },
 	);
 
 	tool(
 		server,
 		'create_hire_proposal',
-		'File a new hire proposal. Callable by a team Captain (for its own team) or the CEO (for any team - pass `project` to target it, including HQ). Use this when directed or deciding to staff or expand a team: author the full role spec - title, role description, and a complete system prompt - and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the ticket that prompted it.',
+		'File a new hire proposal. Callable by a team Captain (for its own team) or the CEO (for any team - pass `project` to target it, including HQ). Use this when directed or deciding to staff or expand a team: author the full role spec - title, role description, and a complete system prompt - and submit it. The proposal surfaces as a pending approval in the admin inbox; the admin reviews, may modify it, and approves, at which point the agent is created automatically. Pass task_id to link the proposal back to the task that prompted it.',
 		{
 			project: projectArg(),
 			title: z.string().describe('Role title (the slug is derived from it)'),
+			human_name: z
+				.string()
+				.trim()
+				.max(AGENT_HUMAN_NAME_MAX)
+				.optional()
+				.describe(
+					'Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out to name them during the coherence review that follows the hire.',
+				),
 			role_description: z.string().optional().describe('Short role description'),
 			system_prompt: z
 				.string()
@@ -2380,7 +2399,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Optional originating ticket to link the proposal to - a task identifier (e.g. "HM-1") or UUID',
+					'Optional originating task to link the proposal to - a task identifier (e.g. "HM-1") or UUID',
 				),
 		},
 		async (args, db, auth) => {
@@ -2444,6 +2463,7 @@ export function registerTools(
 			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,
+		{ write: true, audience: 'captain_or_ceo' },
 	);
 
 	const createProjectShape = {
@@ -2456,7 +2476,7 @@ export function registerTools(
 		task_prefix: z
 			.string()
 			.optional()
-			.describe('Optional 2-4 char uppercase ticket prefix; derived from the name when omitted'),
+			.describe('Optional 2-4 char uppercase task prefix; derived from the name when omitted'),
 		initial_project_plan: z
 			.string()
 			.optional()
@@ -2483,13 +2503,13 @@ export function registerTools(
 			.string()
 			.optional()
 			.describe(
-				'The HQ project-intake ticket this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success.',
+				'The HQ project-intake task this fulfils (its identifier, e.g. "HQ-1", or its UUID); it is closed with a completion note on success.',
 			),
 	} satisfies z.ZodRawShape;
 	tool(
 		server,
 		'create_project',
-		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning ticket, and the initial CEO coherence/setup ticket the planning ticket is blocked on, then provisions the container. The coherence/setup ticket is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned coherence_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and coherence ticket identifiers.',
+		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned coherence_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and coherence task identifiers.',
 		createProjectShape,
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -2593,6 +2613,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true, audience: 'ceo' },
 	);
 
 	tool(
@@ -2600,10 +2621,10 @@ export function registerTools(
 		'start_team_setup',
 		'Kick off the initial team-coherence/setup run for a project you created via create_project. ' +
 			'CEO-only. Projects created directly from the admin form start their coherence pass automatically; ' +
-			'projects you create do NOT. First author the coherence ticket with update_task - replace its ' +
+			'projects you create do NOT. First author the coherence task with update_task - replace its ' +
 			'description with the concrete plan you agreed in intake (the exact roles to hire and why, any ' +
-			'system-prompt rewrites, and the reporting structure) - then call this to assign the ticket to ' +
-			'yourself and start the run. Returns the started ticket; errors if there is no open setup ticket ' +
+			'system-prompt rewrites, and the reporting structure) - then call this to assign the task to ' +
+			'yourself and start the run. Returns the started task; errors if there is no open setup task ' +
 			'for the project or a run is already active on it.',
 		{ project: projectArg() },
 		async (args, db, auth) => {
@@ -2637,7 +2658,7 @@ export function registerTools(
 				[scope.teamId, ...TERMINAL_TASK_STATUSES],
 			);
 			const row = ticket.rows[0];
-			if (!row) return { error: 'No open team-setup ticket for this project' };
+			if (!row) return { error: 'No open team-setup task for this project' };
 
 			const active = await assertNoActiveRun(db, row.id);
 			if (!active.ok) return { error: active.message };
@@ -2665,6 +2686,7 @@ export function registerTools(
 			return { started: true, task_id: row.id, task_identifier: row.identifier };
 		},
 		db,
+		{ write: true, audience: 'ceo' },
 	);
 
 	tool(
@@ -2822,6 +2844,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true, audience: 'ceo_if_agent' },
 	);
 
 	tool(
@@ -2875,6 +2898,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true, audience: 'ceo_if_agent' },
 	);
 
 	// Projects
@@ -3015,7 +3039,7 @@ export function registerTools(
 				db,
 				[commentId],
 				masterKeyManager,
-				agentPort,
+				agentOrigin(),
 			);
 			const base = {
 				...row,
@@ -3055,7 +3079,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		`List comments for an task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.`,
+		`List comments for a task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -3111,7 +3135,7 @@ export function registerTools(
 				db,
 				commentIds,
 				masterKeyManager,
-				agentPort,
+				agentOrigin(),
 			);
 			const enriched: Record<string, unknown>[] = r.rows.map((row) => ({
 				...row,
@@ -3281,7 +3305,7 @@ export function registerTools(
 	tool(
 		server,
 		'add_reaction',
-		'React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add - comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new ticket (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.',
+		'React to a comment without waking its author. Use this to acknowledge mentions or signal "seen / picked up" without forcing the original commenter to run again. Prefer this over a follow-up create_comment when you have nothing substantive to add - comments wake the author, reactions do not. Only react when the situation calls for it: a clean handoff to your own new task (✓ on the mention), or a brief acknowledgement that a request landed. If you need the original commenter to read something, post a comment instead.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID the comment belongs to'),
@@ -3330,6 +3354,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -3384,12 +3409,13 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
 		server,
 		'create_comment',
-		'Add a comment to an task. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this ticket or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID - it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
+		'Add a comment to a task. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert. To point at a specific earlier comment (in this task or another), write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345) using a comment public_id from list_comments - do not paraphrase "the comment above". When your comment is a direct response to a specific earlier one (answering a question, confirming/pushing back on a request, providing the follow-up that was asked for) ALWAYS set parent_comment_id to that comment\'s UUID - it wakes the original author with source=reply (so they\'re notified the conversation moved forward) and shows "replying to ..." threading in the UI so other readers can follow the dialogue. Skip parent_comment_id only when the comment is genuinely standalone (a new observation, an unrelated update). If you only need to acknowledge a mention without adding substance, use add_reaction instead.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -3429,7 +3455,7 @@ export function registerTools(
 			// comment the agent posts and one auto-delivered from a stranded final
 			// message are byte-identical. RETURNING * includes public_id (the
 			// comment-link slug), so the agent gets it back without a list_comments.
-			const row = await postAgentComment({
+			const { row, woke } = await postAgentComment({
 				db,
 				wsManager,
 				teamId,
@@ -3460,6 +3486,11 @@ export function registerTools(
 			// already-persisted comment on this check.
 			if (authorMemberId) {
 				const commentText = args.content as string;
+				// One roster read per write, shared by the receipt and all three mention
+				// advisories. They each used to resolve it themselves, so a single
+				// create_comment ran the identical query three times (four once the
+				// receipt was added) - see "Budget the DB round trips a request costs".
+				const knownSlugs = await resolveWarnableSlugs(db, teamId, authorMemberId);
 				const [
 					teammateWarning,
 					passiveWarning,
@@ -3467,15 +3498,15 @@ export function registerTools(
 					backtickWarning,
 					terminalAskWarning,
 				] = await Promise.all([
-					buildUnlinkedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildUnlinkedMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for unlinked teammate references:', e);
 						return null;
 					}),
-					buildPassiveMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildPassiveMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for passive teammate asks:', e);
 						return null;
 					}),
-					buildNarratedMentionWarning(db, teamId, authorMemberId, commentText).catch((e) => {
+					buildNarratedMentionWarning(knownSlugs, commentText).catch((e) => {
 						log.error('Failed to check comment for narrated active mentions:', e);
 						return null;
 					}),
@@ -3497,17 +3528,24 @@ export function registerTools(
 				]
 					.filter((w): w is string => Boolean(w))
 					.join(' ');
-				if (warning) return { ...row, warning };
+				// The receipt ships on every write, warning or not: it is a fact about what
+				// the comment delivered, not an advisory that fires when a heuristic guessed
+				// right. An agent that meant to ask sees `woke: []` with the teammate it
+				// addressed sitting in `named_not_woken`.
+				const wake = buildWakeReceipt(commentText, woke, knownSlugs);
+				if (warning) return { ...row, wake, warning };
+				return { ...row, wake };
 			}
 			return row;
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
 		server,
 		'update_comment',
-		'Edit the text of a comment you posted earlier in THIS run - use it to fix a mistake (a typo, a broken reference, wrong markdown) instead of posting a correction as a new comment. You can only edit a text comment authored by your current run; comments from earlier runs, other agents, or humans are not editable. Editing re-runs the same notification side effects create_comment does, but idempotently: a teammate already notified by this comment is not woken again, while a mention you ADD in the edit (e.g. a bare @<agent-slug> that replaces a backticked, inert one) wakes that teammate for the first time - so fixing a missed mention by editing works. Same reference rules as create_comment: reference tickets and project docs by their bare identifier/filename, teammates with @<agent-slug>, skills by their slug, and never wrap any of these in backticks.',
+		'Edit the text of a comment you posted earlier in THIS run - use it to fix a mistake (a typo, a broken reference, wrong markdown) instead of posting a correction as a new comment. You can only edit a text comment authored by your current run; comments from earlier runs, other agents, or humans are not editable. Editing re-runs the same notification side effects create_comment does, but idempotently: a teammate already notified by this comment is not woken again, while a mention you ADD in the edit (e.g. a bare @<agent-slug> that replaces a backticked, inert one) wakes that teammate for the first time - so fixing a missed mention by editing works. Same reference rules as create_comment: reference tasks and project docs by their bare identifier/filename, teammates with @<agent-slug>, skills by their slug, and never wrap any of these in backticks.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID the comment belongs to'),
@@ -3565,7 +3603,7 @@ export function registerTools(
 			// a mention or a task link that was previously backticked and inert —
 			// fires for the first time. That is what makes "fix it by editing"
 			// behave the same as posting it correctly the first time.
-			await fireCommentWakeups({
+			const woke = await fireCommentWakeups({
 				db,
 				taskId,
 				teamId,
@@ -3576,7 +3614,10 @@ export function registerTools(
 				authorRunId: auth.runId,
 				parentCommentId: row.parent_comment_id,
 				wsManager,
-			}).catch((e) => log.error('Failed to fire wakeups for edited comment:', e));
+			}).catch((e) => {
+				log.error('Failed to fire wakeups for edited comment:', e);
+				return [] as string[];
+			});
 			trackBackground(
 				recordTaskLinks(
 					db,
@@ -3589,26 +3630,23 @@ export function registerTools(
 					{ kind: 'comment', commentPublicId: r.rows[0].public_id },
 				).catch((e) => log.error('Failed to record task links from edited comment:', e)),
 			);
+			// One roster read, shared by the receipt and the three mention advisories.
+			const knownSlugs = await resolveWarnableSlugs(db, teamId, auth.memberId);
+			const wake = buildWakeReceipt(args.content as string, woke, knownSlugs);
 			const [teammateWarning, passiveWarning, narratedWarning, backtickWarning] = await Promise.all(
 				[
-					buildUnlinkedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for unlinked teammate references:', e);
-							return null;
-						},
-					),
-					buildPassiveMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for passive teammate asks:', e);
-							return null;
-						},
-					),
-					buildNarratedMentionWarning(db, teamId, auth.memberId, args.content as string).catch(
-						(e) => {
-							log.error('Failed to check edited comment for narrated active mentions:', e);
-							return null;
-						},
-					),
+					buildUnlinkedMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for unlinked teammate references:', e);
+						return null;
+					}),
+					buildPassiveMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for passive teammate asks:', e);
+						return null;
+					}),
+					buildNarratedMentionWarning(knownSlugs, args.content as string).catch((e) => {
+						log.error('Failed to check edited comment for narrated active mentions:', e);
+						return null;
+					}),
 					buildBacktickedEntityWarning(db, teamId, scope.projectId, args.content as string).catch(
 						(e) => {
 							log.error('Failed to check edited comment for backticked entity references:', e);
@@ -3620,10 +3658,11 @@ export function registerTools(
 			const warning = [teammateWarning, passiveWarning, narratedWarning, backtickWarning]
 				.filter((w): w is string => Boolean(w))
 				.join(' ');
-			if (warning) return { ...r.rows[0], warning };
-			return r.rows[0];
+			if (warning) return { ...r.rows[0], wake, warning };
+			return { ...r.rows[0], wake };
 		},
 		db,
+		{ write: true, audience: 'agent_run' },
 	);
 
 	const credentialKindSchema = z.enum([
@@ -3779,6 +3818,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -4013,6 +4053,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -4226,6 +4267,7 @@ export function registerTools(
 			return row;
 		},
 		db,
+		{ write: true },
 	);
 
 	// Costs
@@ -4349,7 +4391,7 @@ export function registerTools(
 				text: system_prompt,
 				offset: args.offset as number | undefined,
 				maxBytes: args.max_bytes as number | undefined,
-				limit: MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompt ?? MCP_RESULT_BYTE_LIMIT,
+				limit: SYSTEM_PROMPT_RESULT_BYTES,
 				reserve: DOC_READ_ENVELOPE_RESERVE,
 				hint: ({ start, end, total }) =>
 					`Prompt is larger than one read. Returned bytes ${start}-${end} of ${total}. Call get_agent_system_prompt again with offset: ${end}; repeat until next_offset is null.`,
@@ -4360,6 +4402,7 @@ export function registerTools(
 			});
 		},
 		db,
+		{ audience: 'agent_or_admin', resultByteLimit: SYSTEM_PROMPT_RESULT_BYTES },
 	);
 
 	tool(
@@ -4403,8 +4446,7 @@ export function registerTools(
 
 			const items = args.items as Array<{ agent_id: string; mode?: SystemPromptMode }>;
 			const startIndex = Math.min((args.start_index as number | undefined) ?? 0, items.length);
-			const byteLimit =
-				MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompts ?? MCP_RESULT_BYTE_LIMIT;
+			const byteLimit = SYSTEM_PROMPT_RESULT_BYTES;
 			const budget = MCP_BATCH_CHUNK_TARGET_BYTES;
 
 			const resolveItem = async (item: (typeof items)[number], index: number) => {
@@ -4485,6 +4527,11 @@ export function registerTools(
 			};
 		},
 		db,
+		{
+			audience: 'agent_or_admin',
+			resultByteLimit: SYSTEM_PROMPT_RESULT_BYTES,
+			batchArrayParam: 'items',
+		},
 	);
 
 	tool(
@@ -4559,6 +4606,7 @@ export function registerTools(
 			return { applied: true, document_id: doc.row.id };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -4659,6 +4707,7 @@ export function registerTools(
 			return { results, applied_count: applied.length };
 		},
 		db,
+		{ write: true, audience: 'coordinator', batchArrayParam: 'updates' },
 	);
 
 	tool(
@@ -4738,6 +4787,40 @@ export function registerTools(
 			return { applied: true, document_id: doc.row.id, length: (args.content as string).length };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
+	);
+
+	tool(
+		server,
+		'update_dashboard_widget_order',
+		"Save the user's preferred widget order for the project dashboard. Pass the full ordered list of widget ids; unknown or duplicate ids are rejected. The order persists across sessions and is returned in subsequent get_project_dashboard calls.",
+		{
+			project: projectArg(),
+			order: z
+				.array(z.enum(DASHBOARD_WIDGET_IDS as unknown as [string, ...string[]]))
+				.describe(`Ordered list of widget ids. Valid values: ${DASHBOARD_WIDGET_IDS.join(', ')}.`),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { projectId } = scope;
+
+			const raw = args.order as string[];
+			const seen = new Set<string>();
+			for (const id of raw) {
+				if (seen.has(id)) return { error: `Duplicate widget id: ${id}` };
+				seen.add(id);
+			}
+
+			await db.query(`UPDATE projects SET dashboard_widget_order = $1 WHERE id = $2`, [
+				JSON.stringify(raw),
+				projectId,
+			]);
+
+			return { order: sanitizeWidgetOrder(raw) };
+		},
+		db,
+		{ write: true },
 	);
 
 	// Description maintenance — used by the Captain (and self) to write back
@@ -4793,6 +4876,104 @@ export function registerTools(
 			return { updated: true };
 		},
 		db,
+		{ write: true, audience: 'agent_or_admin' },
+	);
+
+	// Identity — the name a teammate is addressed by, and the face it shows.
+	tool(
+		server,
+		'set_agent_name',
+		'Give an agent the human name it is addressed by (e.g. "Max" for the Engineer), or clear it with an empty string to fall back to its role. The name displays in place of the role everywhere and becomes a second mention handle, so both @max and @engineer reach the agent. Names must be unique within the team, and the Captain, CEO and Coach are always addressed by role and cannot be named. Callable by the Captain of that team, or the CEO.',
+		{
+			project: projectArg(),
+			agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
+			name: z
+				.string()
+				.trim()
+				.max(AGENT_HUMAN_NAME_MAX, `name too long (max ${AGENT_HUMAN_NAME_MAX})`)
+				.describe('The name to use, or an empty string to clear it'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
+				return { error: 'Only the Captain of this team or the CEO can name an agent' };
+			}
+
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
+			const target = await db.query<{ slug: string }>(
+				`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[agentId, teamId],
+			);
+			const slug = target.rows[0]?.slug;
+			if (!slug) return { error: 'Agent not found in this team' };
+			if (isNameOnlyRole(slug)) {
+				return {
+					error: `${slug} is always addressed by its role and cannot be given a human name`,
+				};
+			}
+
+			const name = (args.name as string).trim();
+			// Checked and applied together so two concurrent renames cannot both
+			// take one handle.
+			const rejection = await withTransaction(db, async () => {
+				const conflict = await checkHumanNameAvailable(db, {
+					teamId,
+					name,
+					excludeMemberId: agentId,
+				});
+				if (conflict) return conflict;
+				await applyAgentHumanName(db, agentId, name, inferGender(name));
+				return null;
+			});
+			if (rejection) return { error: rejection.message };
+
+			return { updated: true, name: name || null };
+		},
+		db,
+		{ write: true, audience: 'coordinator' },
+	);
+
+	tool(
+		server,
+		'generate_agent_avatar',
+		"Generate a fresh pixel avatar for an agent. The face is composed from the agent's role and name, so there is nothing to choose beyond asking for a new one; call it again for a different face. Use it for a newly hired agent, or one that still has no avatar. Callable by the Captain of that team, or the CEO.",
+		{
+			project: projectArg(),
+			agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
+				return { error: 'Only the Captain of this team or the CEO can change an avatar' };
+			}
+
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
+			const target = await db.query<{ slug: string; title: string; gender: AgentGender | null }>(
+				`SELECT ma.slug, ma.title, ma.gender FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[agentId, teamId],
+			);
+			const row = target.rows[0];
+			if (!row) return { error: 'Agent not found in this team' };
+
+			const spec = buildAgentAvatarSpec({ slug: row.slug, title: row.title, gender: row.gender });
+			await db.query(
+				'UPDATE member_agents SET avatar_spec = $2, updated_at = now() WHERE id = $1',
+				[agentId, JSON.stringify(spec)],
+			);
+			return { updated: true };
+		},
+		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -4828,6 +5009,7 @@ export function registerTools(
 			return { updated: true };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -4851,6 +5033,7 @@ export function registerTools(
 			return { ok: true };
 		},
 		db,
+		{ audience: 'agent_run' },
 	);
 
 	tool(
@@ -4896,6 +5079,7 @@ export function registerTools(
 			return { updated: true };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -4958,6 +5142,7 @@ export function registerTools(
 			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -5032,6 +5217,7 @@ export function registerTools(
 			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
 		},
 		db,
+		{ write: true, audience: 'agent_or_admin' },
 	);
 
 	tool(
@@ -5126,6 +5312,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -5160,6 +5347,7 @@ export function registerTools(
 			return r.rows[0];
 		},
 		db,
+		{ audience: 'agent_or_admin' },
 	);
 
 	tool(
@@ -5258,6 +5446,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ audience: 'agent_or_admin' },
 	);
 
 	tool(
@@ -5348,6 +5537,7 @@ export function registerTools(
 			return { updated: true, agent_id: agentId, slug, admin_status: status };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	// Project docs
@@ -5485,6 +5675,9 @@ export function registerTools(
 	> => {
 		const { db: adb, teamId, projectId, filename, blob, contentType } = opts;
 		const assetId = crypto.randomUUID();
+		// Extracted here rather than in each caller so write_project_asset and
+		// edit_project_asset cannot drift apart - the same reason this helper exists.
+		const searchText = await assetSearchTextFromBlob(blob, contentType);
 		const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
 		let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
 		try {
@@ -5499,6 +5692,7 @@ export function registerTools(
 				uploadedByMemberId: opts.uploadedByMemberId,
 				width: opts.width,
 				height: opts.height,
+				searchText,
 			});
 		} catch (e) {
 			await assets.delete(projectId, assetId).catch(() => {});
@@ -5669,6 +5863,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -5806,7 +6001,7 @@ export function registerTools(
 					byte_size: byteSize,
 					binary: true,
 					...(width !== null && height !== null ? { width, height } : {}),
-					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentPort),
+					url: await signAgentAssetUrl(asset.id, masterKeyManager, agentOrigin()),
 					...(archived ? { archived: true } : {}),
 					...reviewField,
 				};
@@ -5944,6 +6139,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6005,6 +6201,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6028,8 +6225,9 @@ export function registerTools(
 				id: string;
 				content_type: string;
 				archived_at: string | null;
+				search_text: string | null;
 			}>(
-				'SELECT id, content_type, archived_at FROM assets WHERE project_id = $1 AND original_filename = $2',
+				'SELECT id, content_type, archived_at, search_text FROM assets WHERE project_id = $1 AND original_filename = $2',
 				[scope.projectId, from],
 			);
 			if (found.rows.length === 0) return { error: `Asset 'assets/${from}' not found` };
@@ -6052,10 +6250,22 @@ export function registerTools(
 			let inserted: { id: string; original_filename: string };
 			try {
 				const r = await db.query<{ id: string; original_filename: string }>(
-					`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+					// The copy has identical bytes, so its search text is the source's -
+					// carry the column across rather than re-extracting it.
+					`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, search_text)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 					 RETURNING id, original_filename`,
-					[assetId, teamId, projectId, source.content_type, byteSize, sha256, to, uploadedBy],
+					[
+						assetId,
+						teamId,
+						projectId,
+						source.content_type,
+						byteSize,
+						sha256,
+						to,
+						uploadedBy,
+						source.search_text,
+					],
 				);
 				inserted = r.rows[0];
 			} catch (e) {
@@ -6088,6 +6298,7 @@ export function registerTools(
 			return { copied: true, id: inserted.id, reference: `assets/${to}` };
 		},
 		db,
+		{ write: true },
 	);
 
 	// Archival is the agent-facing "delete" for assets: reversible, self-serve,
@@ -6162,6 +6373,7 @@ export function registerTools(
 		},
 		async (args, db, auth) => setAssetArchived(args, db, auth, true),
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6174,6 +6386,7 @@ export function registerTools(
 		},
 		async (args, db, auth) => setAssetArchived(args, db, auth, false),
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6248,7 +6461,7 @@ export function registerTools(
 				text: doc.content,
 				offset: args.offset as number | undefined,
 				maxBytes: args.max_bytes as number | undefined,
-				limit: MCP_RESULT_BYTE_LIMIT_OVERRIDES.read_project_doc ?? MCP_RESULT_BYTE_LIMIT,
+				limit: MCP_RESULT_BYTE_LIMIT,
 				reserve: DOC_READ_ENVELOPE_RESERVE,
 				hint: ({ start, end, total }) =>
 					`Doc is larger than one read. Returned bytes ${start}-${end} of ${total}. Call read_project_doc again with offset: ${end}; repeat until next_offset is null.`,
@@ -6267,7 +6480,7 @@ export function registerTools(
 	tool(
 		server,
 		'write_project_doc',
-		"Write a project documentation file, replacing its whole body. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so never author or edit one with the Write/Edit file tools or a shell redirect - a markdown file you save to disk persists nothing, is invisible to every teammate, and leaves the real doc stale. To change PART of an existing doc, prefer edit_project_doc: this tool sends the entire body, so a large doc means a large argument, and a runtime that caps tool-call argument size can cut `content` mid-stream. Pass `content_length` (the exact character count of `content`) so a truncated argument is rejected rather than silently overwriting the doc and wiping its review comments. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tickets and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
+		"Write a project documentation file, replacing its whole body. These docs live in the project-doc store in the database, NOT on the filesystem: there is no /workspace/.hezo/project-docs path, so never author or edit one with the Write/Edit file tools or a shell redirect - a markdown file you save to disk persists nothing, is invisible to every teammate, and leaves the real doc stale. To change PART of an existing doc, prefer edit_project_doc: this tool sends the entire body, so a large doc means a large argument, and a runtime that caps tool-call argument size can cut `content` mid-stream. Pass `content_length` (the exact character count of `content`) so a truncated argument is rejected rather than silently overwriting the doc and wiping its review comments. Project docs are markdown only - the filename must end in .md. For high-level project context: PRD, spec, implementation plan, research. Make ALL desired edits in ONE consolidated write per run, for two reasons: (1) writing a doc deletes ALL of its pending review comments (the admin's highlight feedback returned by read_project_doc) - a single write clears the whole review, so capture every comment in your context before the first write; (2) docs are revisioned - every content-changing write records a revision, so many partial writes bury the history in noise. Pass a `changelog` summarizing what changed in this write and why - it becomes that revision's entry in the document's history; keep update/changelog logs OUT of the document body and put them in `changelog` instead. Also pass a `description`: an overall summary of what the doc is and when to read it, in no more than one or two sentences, shown next to the filename in the Documents list and the doc header so teammates and future runs can tell what the doc is at a glance. Describe the doc's stable purpose, NOT its current contents: do not list its sections, findings, dates, counts, or latest revisions (those live in the body and the `changelog`), so the description stays steady across updates. Keep it short and out of the body. Non-markdown files (mockups, wireframes, images, PDFs) live in the project assets library instead - reference those as `assets/<filename>`. In content, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.",
 		{
 			project: projectArg(),
 			filename: z.string().describe('Markdown filename to write (e.g. "spec.md")'),
@@ -6282,7 +6495,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					"Markdown summary of what changed in THIS update and why - recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tickets/docs/agents by bare identifier as in content.",
+					"Markdown summary of what changed in THIS update and why - recorded as the revision's changelog and shown in the document's revision history. Put update/status notes here, never in the document body. Reference tasks/docs/agents by bare identifier as in content.",
 				),
 			content_length: z
 				.number()
@@ -6369,6 +6582,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	// `edit_` rather than `update_`: the REST/MCP verb table maps PATCH to
@@ -6465,6 +6679,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	// Archival is the agent-facing "delete" for project docs too: reversible,
@@ -6514,6 +6729,7 @@ export function registerTools(
 		},
 		async (args, db, auth) => setDocArchivedTool(args, db, auth, true),
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6526,12 +6742,13 @@ export function registerTools(
 		},
 		async (args, db, auth) => setDocArchivedTool(args, db, auth, false),
 		db,
+		{ write: true },
 	);
 
 	tool(
 		server,
 		'update_chat_memory',
-		"Replace your long-term chat memory - the durable notes carried into every turn of your live operator chat. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/ticket/roster state). Memory is compacted automatically when the conversation window fills - you'll be handed the window and asked to fold it in via this tool - but you may also call it any time to record something standing.",
+		"Replace your long-term chat memory - the durable notes carried into every turn of your live operator chat. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/task/roster state). Memory is compacted automatically when the conversation window fills - you'll be handed the window and asked to fold it in via this tool - but you may also call it any time to record something standing.",
 		{
 			content: z.string().describe('The full long-term memory markdown (replaces existing memory)'),
 		},
@@ -6545,6 +6762,7 @@ export function registerTools(
 			return { written: true, updated_at: mem.updated_at };
 		},
 		db,
+		{ write: true, audience: 'agent' },
 	);
 
 	// Skill proposals
@@ -6601,13 +6819,14 @@ export function registerTools(
 			return { approval_id: row?.id, status: row?.status };
 		},
 		db,
+		{ write: true },
 	);
 
 	// Full-text search
 	tool(
 		server,
 		'full_text_search',
-		'Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first.',
+		'Full-text keyword search across the team skills database, tasks, project docs, task comments, and project assets. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first. Assets match on their library path, folders included, so any segment of "launch/hero-image.png" finds it; textual assets (.md, .txt, .html, .svg, and the script/data formats stored as plain text such as .py, .js, .json, .csv, .yaml) also match on their content, while binary ones (images, PDFs, media, archives) match on path alone. Use it to find work product an earlier run produced before rebuilding it; an asset hit returns its path, which you pass to read_project_asset. An asset saved before this search existed matches on path until it is next written. Archived items are excluded.',
 		{
 			project: projectArg(),
 			query: z.string().describe('Search query (keywords)'),
@@ -6805,12 +7024,13 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
 		server,
 		'list_connectors',
-		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
+		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
 		{
 			project: projectArg(),
 			...listPagingArgs(),
@@ -6818,6 +7038,21 @@ export function registerTools(
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
+			// What this run's runtime actually handed the model, per server. A
+			// connector's status says the session came up, not that its tools arrived,
+			// and that gap is what let an agent report a connector as toolless with
+			// nothing able to confirm or refute it. Null outside an agent run (a CEO
+			// chat principal carries no runId) and on runtimes that report no tool
+			// list, which stays distinct from a recorded zero.
+			const runToolCounts =
+				auth.type === AuthType.Agent && auth.runId
+					? ((
+							await db.query<{ mcp_tool_counts: Record<string, number> | null }>(
+								`SELECT mcp_tool_counts FROM heartbeat_runs WHERE id = $1`,
+								[auth.runId],
+							)
+						).rows[0]?.mcp_tool_counts ?? null)
+					: null;
 			const r = await db.query<{
 				id: string;
 				name: string;
@@ -6861,25 +7096,16 @@ export function registerTools(
 				 ORDER BY mc.name ASC, (mc.project_id IS NULL) ASC`,
 				[scope.projectId],
 			);
-			// Derive a single oauth_status field that's the load-bearing signal
-			// for whether the connector is usable by agents on subsequent runs.
-			const cfg = (row: { config: Record<string, unknown> }): boolean => {
-				const c = row.config as { dcr?: unknown };
-				return !!c?.dcr;
-			};
 			// A project connector shadows a global one of the same name (the run sees
 			// the same set — see loadConnectorsForRun). Rows are ordered project
 			// first, so keep the first occurrence per name.
 			const byName = new Map<string, (typeof r.rows)[number]>();
 			for (const row of r.rows) if (!byName.has(row.name)) byName.set(row.name, row);
 			const connectors = [...byName.values()].map((row) => {
-				let oauth_status: 'active' | 'pending' | 'failed' | 'revoked' | 'none';
-				if (row.kind !== 'saas') oauth_status = 'none';
-				else if (row.revoked_at) oauth_status = 'revoked';
-				else if (row.auth_error && !row.activated_at) oauth_status = 'failed';
-				else if (row.oauth_connection_id && row.activated_at) oauth_status = 'active';
-				else if (cfg(row) || row.created_by_task_id) oauth_status = 'pending';
-				else oauth_status = 'none';
+				// oauth_status is the load-bearing signal for whether the connector is
+				// usable by agents on subsequent runs. Derived by the shared ladder so
+				// it cannot drift from what the operator sees on the Connections page.
+				const oauth_status = connectorOAuthStatus(row);
 
 				// An active OAuth-backed connector can also authenticate raw REST calls
 				// to the provider's API: expose the secret's placeholder (never its
@@ -6896,8 +7122,14 @@ export function registerTools(
 					discovered_methods,
 					...rest
 				} = row;
+				// `degraded` keeps its rest_auth block: the placeholder and host scoping
+				// are unchanged facts about the credential, and dropping them would make
+				// the REST fallback vanish mid-task with no explanation. oauth_status
+				// alone carries the news that the token needs reconnecting.
 				const rest_auth =
-					oauth_status === 'active' && oauth_secret_name && (oauth_allowed_hosts?.length ?? 0) > 0
+					(oauth_status === ConnectorStatus.Active || oauth_status === ConnectorStatus.Degraded) &&
+					oauth_secret_name &&
+					(oauth_allowed_hosts?.length ?? 0) > 0
 						? {
 								placeholder: credentialPlaceholder(oauth_secret_name),
 								allowed_hosts: oauth_allowed_hosts ?? [],
@@ -6960,6 +7192,10 @@ export function registerTools(
 								disabled_write: method_access.writeDisabled,
 							}
 						: null,
+					// A number here is a fact about THIS run, not a guess: 0 means the
+					// server connected and contributed nothing callable, which is worth
+					// reporting to the human. Null means nobody measured it.
+					tools_this_run: runToolCounts ? (runToolCounts[row.name] ?? null) : null,
 				};
 			});
 			// Shadowed duplicates are dropped above, so page the de-duped set.
@@ -6978,7 +7214,7 @@ export function registerTools(
 	tool(
 		server,
 		'test_connector',
-		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?".',
+		'Test an MCP connector end-to-end from the server side. Resolves the stored OAuth token from the vault and makes a direct HTTP call to the MCP server. Returns the upstream status code, a response excerpt, the secret name used, and whether a token was attached - never the token or any part of it. Use this when oauth_status says "active" but the MCP\'s tools are absent from your tool list - it isolates "is the token still valid against the provider?" from "does the proxy chain in the container work?". A 401 here means the stored credential is no longer accepted: report it to the human with an active @admin comment asking them to reconnect the connector. You do not need this call when oauth_status already says "degraded" - that answer is known.',
 		{
 			project: projectArg(),
 			connector_id: z.string().describe('connector id or name (both shown by list_connectors)'),
@@ -7066,6 +7302,28 @@ export function registerTools(
 			// question ("was a token attached?") is answered by `token_sent`.
 			const redact = (s: string): string =>
 				bearerToken ? s.split(bearerToken).join('[redacted]') : s;
+			// The probe just learned first-hand whether the stored credential is
+			// still accepted. Record it so that knowledge reaches the operator's
+			// banner and the card's reconnect button instead of living only in this
+			// tool result, where the previous incident left it: an agent saw the
+			// 401, wrote it into a report as a "known gap", and the connector stayed
+			// broken for days. Only meaningful when a token was actually sent.
+			// A non-auth failure (a 500, a timeout) says nothing about the credential,
+			// so it leaves whatever health is already recorded alone.
+			const credentialVerdict =
+				probeRes.status === 401 || probeRes.status === 403
+					? `probe: HTTP ${probeRes.status}`
+					: probeRes.ok
+						? null
+						: undefined;
+			if (bearerToken && credentialVerdict !== undefined) {
+				await setConnectorAuthError(
+					{ db, masterKeyManager },
+					connector.id,
+					credentialVerdict,
+				).catch(() => {});
+			}
+
 			return {
 				ok: probeRes.ok,
 				status: probeRes.status,
@@ -7192,6 +7450,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -7215,6 +7474,7 @@ export function registerTools(
 			return { removed: true, id: r.rows[0].id };
 		},
 		db,
+		{ write: true },
 	);
 
 	return [...registeredTools];

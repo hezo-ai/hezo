@@ -254,7 +254,7 @@ describe('batch writes for contexts and summaries', () => {
 			project: projectSlug,
 			updates: [
 				{ agent_id: 'engineer', summary: 'Implements features against the approved spec.' },
-				{ agent_id: 'qa-engineer', summary: 'Final approval gate for every ticket.' },
+				{ agent_id: 'qa-engineer', summary: 'Final approval gate for every task.' },
 			],
 		})) as { items: Array<Record<string, unknown>>; updated: number };
 		expect(res.updated).toBe(2);

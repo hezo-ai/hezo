@@ -11,8 +11,9 @@
  * `@hezo/shared` pure-logic tier.
  */
 
+import type { AvatarSpec } from './avatar/pixel-avatar.js';
 import { CAPTAIN_AGENT_SLUG, CEO_AGENT_SLUG, COACH_AGENT_SLUG } from './constants.js';
-import type { AgentEffort } from './types/common.js';
+import type { AgentEffort, AgentGender } from './types/common.js';
 
 /**
  * Current distribution-format version. Bumped only when the JSON *shape* changes
@@ -44,6 +45,28 @@ export interface MarketplaceChangelogEntry {
 export interface MarketplaceRosterAgent {
 	slug: string;
 	title: string;
+	/**
+	 * The fixed human name this role is provisioned with ("Max" for the App
+	 * Team's Engineer), or null for a role that stays name-only.
+	 *
+	 * Authored into the team rather than picked per project, so the same person
+	 * shows up in every project on the team - an admin who learns that Max is the
+	 * Engineer keeps that knowledge across projects. A project can rename its own
+	 * copy; that override lives on the agent and never travels back here.
+	 */
+	human_name: string | null;
+	/**
+	 * Which feature set this role's avatar draws from. Stored rather than inferred
+	 * from `human_name`, because inference mis-genders exactly the short modern
+	 * names a roster wants ("Nova", "Dev", "Kai").
+	 */
+	gender: AgentGender;
+	/**
+	 * The role's shipped avatar, as the spec its sprite is generated from. Tiny
+	 * (a seed plus two keys) and re-renders crisply at any size, so a team bundle
+	 * carries real faces without carrying images.
+	 */
+	avatar_spec: AvatarSpec;
 	/** A sibling roster slug, or null for the top of the roster. */
 	reports_to_slug: string | null;
 	sort_order: number;

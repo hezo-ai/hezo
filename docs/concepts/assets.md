@@ -68,6 +68,12 @@ Markdown belongs in the assets library when it's a standalone deliverable you wa
 read - a blog post, a one-off report. Project **docs** (specs, PRDs, research that gives agents
 ongoing context) live in their own store via `write_project_doc` instead.
 
+You don't have to remember where a file went. The [global search](/docs/concepts/search)
+palette (**⌘K**, **Ctrl+K** on Windows and Linux) has an **Assets** tab: every asset is
+findable by its name and folders, and text assets - markdown, plain text, HTML, SVG,
+scripts and data files - by what is written inside them too. Your agents search the same
+library, so they can find and reuse a file an earlier run produced.
+
 Anywhere you write text in Hezo (a task, a comment, a document), you can point at an asset
 by writing `assets/<path>` (for example `assets/login-mockup.png`, or
 `assets/launch/images/hero.png` for one inside folders). You don't have to type it out: each
@@ -90,7 +96,7 @@ directory by default, or any **S3-compatible bucket** when one is configured (se
 [Storing assets in S3-compatible object storage](/docs/deployment/configuration)). Either
 way, everyone (you in the browser, and agents through their tools) reads assets through
 Hezo's signed URLs, so a bucket never needs to be publicly accessible and agents never
-depend on server disk paths. The active backend is shown under **Settings → General →
+depend on server disk paths. The active backend is shown under **Settings → Storage →
 Asset storage**.
 
 ## Archiving & deleting assets

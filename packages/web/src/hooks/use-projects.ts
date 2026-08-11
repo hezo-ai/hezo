@@ -18,6 +18,7 @@ export interface Project {
 	is_internal?: boolean;
 	/** Per-project container memory override in GiB; null = inherit the instance-wide ram cap. */
 	memory_limit_gib: number | null;
+	container_disk_gb: number | null;
 	daily_budget_cents: number;
 	weekly_budget_cents: number;
 	monthly_budget_cents: number;
@@ -25,6 +26,16 @@ export interface Project {
 	container_id: string | null;
 	container_status: 'creating' | 'running' | 'stopping' | 'stopped' | 'error' | null;
 	container_error: string | null;
+	/** Containers this project holds that the pool has given up on. Derived per
+	 * request from the pool, so it needs no clearing path - see the projects
+	 * route. */
+	failed_container_count: number;
+	/**
+	 * A container in this project holds commits that reached no durable remote.
+	 * It is pinned against suspend and destroy until a later run gets them out,
+	 * so the work is not lost - but it exists in exactly one place.
+	 */
+	has_stranded_commits: boolean;
 	container_last_logs: string | null;
 	dev_ports: Array<{ container: number; host: number }>;
 	repo_count: number;
@@ -67,6 +78,8 @@ export interface Project {
 	/** Captain-maintained progress summary (markdown). Present on the project detail payload. */
 	progress_summary?: string;
 	progress_summary_updated_at?: string | null;
+	/** User's preferred dashboard widget order. Null/absent = default order. */
+	dashboard_widget_order?: string[] | null;
 }
 
 export interface Repo {
@@ -240,6 +253,7 @@ interface UpdateProjectVars {
 	description?: string;
 	/** null clears the override back to the instance-wide default ram cap. */
 	memory_limit_gib?: number | null;
+	container_disk_gb?: number | null;
 	daily_budget_cents?: number;
 	weekly_budget_cents?: number;
 	monthly_budget_cents?: number;

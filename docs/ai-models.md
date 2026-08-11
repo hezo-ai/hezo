@@ -16,15 +16,14 @@ and your agents run on the models you choose.
 |---|---|---|---|
 | **Anthropic** | Claude | Claude Code | API key or subscription |
 | **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
-| **Google** | Gemini | Gemini | API key or subscription |
+| **Google** | Gemini | Gemini CLI | API key or subscription |
 | **xAI** | Grok | Grok Build | API key |
-| **Kimi** (Moonshot) | Kimi | Claude Code | API key |
-| **Kimi Code** (Moonshot) | Kimi | Kimi Code | API key |
+| **Kimi** (Moonshot) | Kimi | Claude Code or Kimi Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
 | **Z.ai** | GLM | Claude Code | API key |
 | **OpenRouter** | Many, via one account | OpenCode | API key |
-| **Ollama** | Whatever you run locally | Claude Code | Server URL (no key) |
-| **LM Studio** | Whatever you run locally | Claude Code | Server URL (no key) |
+| **Ollama** | Whatever you run locally | Claude Code | Server URL (key optional) |
+| **LM Studio** | Whatever you run locally | Claude Code | Server URL (key optional) |
 
 Each provider is driven through a **first-party agentic command-line runtime** inside the
 agent's container - not a lowest-common-denominator wrapper. Anthropic, OpenAI, Google, and
@@ -33,20 +32,35 @@ Kimi, DeepSeek, and Z.ai run through Claude Code against their Anthropic-compati
 endpoints; OpenRouter runs through the **OpenCode** CLI; and Ollama and LM Studio run
 through Claude Code against your own machine.
 
+Where the Runtime column lists more than one, you choose which one that credential runs on.
+The first is the default, and you never have to pick: adding a key without touching the
+setting runs it on the default.
+
+### Choosing the agent CLI
+
+When a provider can be run by more than one command-line agent, the choice lives under
+**Advanced** in the add-provider form, below the API key. A provider that offers only one CLI
+shows no picker there.
+
+You can also change it later without re-entering the key: on **Settings > AI providers**,
+click the CLI name next to the provider and pick another. Existing agents pick up the change
+on their next run.
+
+Nothing about a provider you have already added changes unless you change it. The account,
+key and models are the same whichever CLI you pick - only the harness differs. Pick per
+credential (the Advanced setting), per agent (in the agent's settings) or per task (by
+pinning the task's runtime).
+
 ### Two ways to run Kimi
 
-Moonshot's models are available through either of two entries in the provider list, and you
-can add both:
+Moonshot's models can be run by either of two command-line agents, on one credential:
 
-- **Kimi** runs them through **Claude Code**, pointed at Moonshot's Anthropic-compatible
-  endpoint.
-- **Kimi Code** runs them through **Kimi Code**, Moonshot's own command-line agent.
+- **Claude Code**, pointed at Moonshot's Anthropic-compatible endpoint. This is the default.
+- **Kimi Code**, Moonshot's own command-line agent.
 
-They use the same account, the same API key and the same models - only the harness differs.
-Neither replaces the other, so if you already run Kimi, adding Kimi Code changes nothing
-about your existing setup. Pick between them per agent (in the agent's settings) or per task
-(by pinning the task's runtime); otherwise whichever provider you have marked as default is
-used.
+Hezo used to list these as two separate providers. They are now one **Kimi** entry with the
+choice under Advanced; an existing Kimi Code credential keeps running on Kimi Code, and you
+no longer need a second credential to try the other harness.
 
 ## Local models
 
@@ -62,9 +76,9 @@ Both serve Anthropic's Messages API directly, so agents run on the same **Claude
 runtime the hosted Anthropic-compatible providers use. There is nothing to translate and
 no extra proxy to run.
 
-To connect one, pick it in **Add AI provider** and fill in the **Server URL**. Leave the
-API key blank - Ollama ignores it, and LM Studio only checks one if you turned on
-**Require Authentication**.
+To connect one, pick it in **Add AI provider** and fill in the **Server URL**. That is the
+only field: Ollama ignores an API key, and LM Studio only checks one if you turned on
+**Require Authentication** - if you did, put the key under **Advanced**.
 
 ### Use an address the agents can reach
 
@@ -76,6 +90,12 @@ Use one of these instead:
 
 - `http://host.docker.internal:11434` - a server on the same machine as Hezo.
 - `http://192.168.1.50:11434` - a server elsewhere on your network, by its LAN address.
+
+Both only resolve while the container is on the same machine as the server - that is, on
+[local Docker](/docs/containers/local-docker), the default. On a
+[managed sandbox service](/docs/containers/remote/overview) the container runs on the
+provider's machines, where these addresses mean nothing - use a model endpoint reachable
+over the internet instead.
 
 Hezo warns you in the connect form if you enter a `localhost` address.
 
@@ -109,7 +129,6 @@ form in Hezo walks you through these same steps inline.
 | **Google** | [Google AI Studio → API keys](https://aistudio.google.com/apikey) | Free tier with strict rate limits; enable billing on the key's Google Cloud project for sustained use |
 | **xAI** | [xAI Console → API keys](https://console.x.ai/) | Billed per token; add credits first |
 | **Kimi** (Moonshot) | [Kimi Open Platform → API keys](https://platform.kimi.ai/console/api-keys) | Prepaid balance |
-| **Kimi Code** (Moonshot) | [Kimi Open Platform → API keys](https://platform.kimi.ai/console/api-keys) | Same key as Kimi above |
 | **DeepSeek** | [DeepSeek Platform → API keys](https://platform.deepseek.com/api_keys) | Prepaid balance |
 | **Z.ai** | [Z.ai platform → API keys](https://z.ai/manage-apikey/apikey-list) | Prepaid balance ([billing page](https://z.ai/manage-apikey/billing)) |
 | **OpenRouter** | [OpenRouter → Keys](https://openrouter.ai/keys) | Prepaid credits, billed per token |
@@ -131,6 +150,22 @@ When a key is stored it's checked against the provider and shown as **verified**
 Verify action re-checks it any time). Mark one provider as the **default** with the star:
 that's the single global default every agent uses unless it has its own model override.
 Change the default and agents on the default pick up the new provider on their next run.
+
+## Change a stored key
+
+Keys expire, get rotated, or get revoked at the provider. When that happens the connection
+shows as **invalid** and agents on it stop running, because Hezo only picks up verified
+credentials.
+
+Use the **pencil** at the end of the row to fix it in place. The Edit panel holds the
+connection's name, its credential, and - for the providers that offer more than one - the
+agent CLI it runs on. Paste the new key and save: Hezo checks it against the provider before
+storing it, and a key that passes clears the invalid state on the spot, so there's no
+separate Verify step and nothing else about the connection is lost. A key the provider
+rejects is refused, leaving the stored one exactly as it was.
+
+Leave the credential field **blank** to keep the key you already have - that's how you rename
+a connection or switch its CLI without re-pasting anything.
 
 ## Give an agent its own model
 

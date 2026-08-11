@@ -119,7 +119,19 @@ describe('message catalogs', () => {
 		'theme.system': ['de', 'sv'],
 		'settings.general': ['es'],
 		'settings.chatbox': ['de'],
+		// Dutch really does write "containers" - the loanword, plural and all.
+		// Every other language differs (Container, Conteneurs, Contêineres, ...).
+		'settings.concurrency': ['nl'],
+		'containers.tab.list': ['nl'],
+		// The singular is the same loanword in these four; French and the rest
+		// differ (Conteneur, Contêiner, Kontener, ...).
+		'containers.column.container': ['de', 'it', 'nl', 'sv'],
+		'containers.column.project': ['nl'],
+		'containers.badge.assistant': ['fr'],
 		'setup.step.password': ['it'],
+		// German writes "Name" for a person's name, identically. Dutch (Naam),
+		// Swedish (Namn) and the rest all differ.
+		'agents.identity.nameLabel': ['de'],
 		// "Audio" and "Video" are the same loanword in these languages, colon and
 		// all - German, Spanish, Italian and Dutch all write Audio; German, Italian,
 		// Dutch and Swedish all write Video. Anything else in the attachment

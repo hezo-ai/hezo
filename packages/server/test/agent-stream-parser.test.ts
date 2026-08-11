@@ -639,6 +639,21 @@ describe('getFinalAssistantMessage', () => {
 		);
 		expect(parser.getFinalAssistantMessage()).toBe('blocked — @admin please advise');
 	});
+
+	it('captures the Grok final assistant text once the turn ends', () => {
+		// Grok has no `result` event — the text deltas are flushed on `end`, and
+		// that flush is the only place the final message can be captured. It also
+		// matters most here: Grok is one of the two runtimes whose hooks cannot
+		// host the completeness judge, so the runner's delivery net is its only
+		// guardrail and a null final message disables it entirely.
+		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		parser.onStdout(`${JSON.stringify({ type: 'thought', data: 'thinking' })}\n`);
+		parser.onStdout(`${JSON.stringify({ type: 'text', data: 'done — over ' })}\n`);
+		parser.onStdout(`${JSON.stringify({ type: 'text', data: 'to you @admin' })}\n`);
+		expect(parser.getFinalAssistantMessage()).toBeNull();
+		parser.onStdout(`${JSON.stringify({ type: 'end', stopReason: 'stop' })}\n`);
+		expect(parser.getFinalAssistantMessage()).toBe('done — over to you @admin');
+	});
 });
 
 describe('grok stream parser', () => {

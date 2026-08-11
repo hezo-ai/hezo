@@ -359,6 +359,11 @@ function InstanceConnectorRow({
 					testId="instance-connector-scope-select"
 				/>
 				{status === 'active' && <Badge color="success">Connected</Badge>}
+				{status === 'degraded' && (
+					<Badge color="warning" testId="instance-connector-degraded-badge">
+						{t('connectors.status.needsReconnect')}
+					</Badge>
+				)}
 				{status === 'failed' && <Badge color="danger">Failed</Badge>}
 				{status === 'revoked' && <Badge>Revoked</Badge>}
 				{connector.oauth_account_label && (
@@ -380,9 +385,11 @@ function InstanceConnectorRow({
 						>
 							{authStart.isPending
 								? 'Starting…'
-								: status === 'failed'
-									? t('common.retry')
-									: 'Connect'}
+								: status === 'degraded'
+									? t('connectors.reconnect')
+									: status === 'failed'
+										? t('common.retry')
+										: 'Connect'}
 						</Button>
 					)}
 					<button
@@ -407,11 +414,11 @@ function InstanceConnectorRow({
 					}))}
 				/>
 			)}
-			{connector.kind === 'saas' && status === 'active' && (
+			{connector.kind === 'saas' && (status === 'active' || status === 'degraded') && (
 				<AdminMethodAccess connector={connector} />
 			)}
-			{/* Not gated on status === 'failed': a stale-token refresh failure is
-			    recorded on a row that stays 'active', and would otherwise be invisible. */}
+			{/* The detail under a `degraded`/`failed` badge - the provider's own words
+			    about why the credential stopped being accepted. */}
 			{connector.auth_error && <p className="text-xs text-danger mt-1">{connector.auth_error}</p>}
 			{rowError && <p className="text-xs text-danger mt-1">{rowError}</p>}
 			{rowInfo && <p className="text-xs text-text-3 mt-1">{rowInfo}</p>}

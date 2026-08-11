@@ -4,7 +4,7 @@ import { Check, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
 import type { Approval } from '../hooks/use-approvals';
 import { useResolveApproval } from '../hooks/use-approvals';
-import { defaultAvatarForSlug } from '../lib/default-avatars';
+import { agentAvatarUrl } from '../lib/agent-avatar';
 import { approvalTypeColor } from '../lib/status-meta';
 import { RepoSetupApprovalModal } from './repo-setup-approval-modal';
 import { Avatar, getInitials } from './ui/avatar';
@@ -198,7 +198,11 @@ function CardBody({
 						size="sm"
 						initials={getInitials(approval.requested_by_name)}
 						imageUrl={
-							approval.requested_by_icon_url ?? defaultAvatarForSlug(approval.requested_by_slug)
+							approval.requested_by_icon_url ??
+							agentAvatarUrl({
+								slug: approval.requested_by_slug,
+								avatar_spec: approval.requested_by_avatar_spec,
+							})
 						}
 						className="mr-1.5 align-middle"
 					/>

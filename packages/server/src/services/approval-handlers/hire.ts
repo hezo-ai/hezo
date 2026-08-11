@@ -3,10 +3,13 @@ import {
 	ApprovalStatus,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	DocumentType,
+	inferGender,
 	MemberType,
 } from '@hezo/shared';
+import { buildAgentAvatarSpec, checkHumanNameAvailable } from '../../lib/agent-identity';
 import { trackBackground } from '../../lib/background';
 import { resolveAgentId } from '../../lib/resolve';
+import { toSlug } from '../../lib/slug';
 import { logger } from '../../logger';
 import { enqueueTeamCoherenceReviewTask } from '../description-tasks';
 import { upsertDocument } from '../documents';
@@ -43,10 +46,18 @@ export const hireHandler: ApprovalHandler = {
 			throw new Error(`cannot materialise hire: slug '${slug}' already exists in this team`);
 		}
 
+		// A name proposed at hire time can have been taken in the meantime; the hire
+		// still goes through, just unnamed, and the coherence review that follows
+		// picks a free one. Losing the name is a smaller failure than losing the hire.
+		const proposedName = ((payload.human_name as string | null) ?? '').trim();
+		const nameTaken =
+			proposedName && (await checkHumanNameAvailable(db, { teamId, name: proposedName }));
+		const humanName = nameTaken ? null : proposedName || null;
+
 		const memberResult = await db.query<{ id: string }>(
 			`INSERT INTO members (team_id, member_type, display_name)
 			 VALUES ($1, $2, $3) RETURNING id`,
-			[teamId, MemberType.Agent, title],
+			[teamId, MemberType.Agent, humanName ?? title],
 		);
 		const memberId = memberResult.rows[0].id;
 
@@ -56,16 +67,23 @@ export const hireHandler: ApprovalHandler = {
 		const reportsToRaw = (payload.reports_to as string | null) ?? null;
 		const reportsToId = reportsToRaw ? await resolveAgentId(db, teamId, reportsToRaw) : null;
 
+		const gender = inferGender(humanName);
 		await db.query(
-			`INSERT INTO member_agents (id, title, slug, role_description, reports_to,
+			`INSERT INTO member_agents (id, title, slug, human_name, human_name_slug, gender,
+			                            avatar_spec, role_description, reports_to,
 			                            default_effort, heartbeat_interval_min,
 			                            daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
 			                            touches_code, admin_status)
-			 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10, $11, $12::agent_admin_status)`,
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::agent_effort, $11, $12, $13, $14, $15,
+			         $16::agent_admin_status)`,
 			[
 				memberId,
 				title,
 				slug,
+				humanName,
+				humanName ? toSlug(humanName) : null,
+				gender,
+				JSON.stringify(buildAgentAvatarSpec({ slug, title, gender, seed: memberId })),
 				(payload.role_description as string) ?? '',
 				reportsToId,
 				(payload.default_effort as string) ?? 'medium',

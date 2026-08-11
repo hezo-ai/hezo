@@ -19,12 +19,14 @@ export enum WsMessageType {
 	ChatCompacted = 'chat_compacted',
 	ChatConversationUpdated = 'chat_conversation_updated',
 	ProjectsChanged = 'projects_changed',
+	Pong = 'pong',
 	Error = 'error',
 }
 
 export enum WsClientAction {
 	Subscribe = 'subscribe',
 	Unsubscribe = 'unsubscribe',
+	Ping = 'ping',
 }
 
 export type ChangeAction = 'INSERT' | 'UPDATE' | 'DELETE';
@@ -48,10 +50,26 @@ export interface WsConnectedMessage {
 
 export interface WsContainerLogMessage {
 	type: WsMessageType.ContainerLog;
+	/**
+	 * The container this line came from. Was the project, which could not
+	 * distinguish between the several containers a project now holds - so a
+	 * viewer showed one container's output labelled as another's.
+	 */
+	containerId: string;
 	projectId: string;
 	stream: 'stdout' | 'stderr';
 	text: string;
 	replace?: boolean;
+	/**
+	 * The `replace` text is only the tail of the log, not all of it.
+	 *
+	 * A subscriber that already seeded the **whole** log from REST must not apply
+	 * a trimmed snapshot: doing so replaced a complete log with its last 256 KB
+	 * and rendered "earlier output trimmed" on the very view that had the rest,
+	 * until the next event happened to re-seed it. A client holding nothing still
+	 * applies it - a trimmed log beats no log.
+	 */
+	trimmed?: boolean;
 }
 
 /**
@@ -79,12 +97,26 @@ export interface WsRunLogMessage {
 	stream: 'stdout' | 'stderr';
 	text: string;
 	replace?: boolean;
+	/** See {@link WsContainerLogMessage.trimmed}. */
+	trimmed?: boolean;
 }
 
 export interface WsErrorMessage {
 	type: WsMessageType.Error;
 	code: string;
 	message: string;
+}
+
+/**
+ * Reply to a client liveness probe.
+ *
+ * A socket whose peer has vanished keeps reading OPEN until something tries to write
+ * and gives up, so silence alone never proves the connection is gone. Browsers do not
+ * expose RFC 6455 ping/pong frames to page code, which leaves an ordinary message as
+ * the only probe a client can send - hence this pair rather than protocol frames.
+ */
+export interface WsPongMessage {
+	type: WsMessageType.Pong;
 }
 
 /**
@@ -184,6 +216,7 @@ export type WsServerMessage =
 	| WsChatConversationUpdatedMessage
 	| WsProjectsChangedMessage
 	| WsConnectedMessage
+	| WsPongMessage
 	| WsErrorMessage;
 
 export interface WsSubscribeAction {
@@ -196,4 +229,9 @@ export interface WsUnsubscribeAction {
 	room: string;
 }
 
-export type WsClientMessage = WsSubscribeAction | WsUnsubscribeAction;
+/** Liveness probe; the server answers with {@link WsPongMessage}. */
+export interface WsPingAction {
+	action: WsClientAction.Ping;
+}
+
+export type WsClientMessage = WsSubscribeAction | WsUnsubscribeAction | WsPingAction;

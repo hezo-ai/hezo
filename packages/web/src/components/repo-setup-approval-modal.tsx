@@ -2,6 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from '@tanstack/react-router';
 import { GitBranch, Loader2 } from 'lucide-react';
 import { type Approval, useBlockedTickets } from '../hooks/use-approvals';
+import { useI18n } from '../lib/i18n';
 import { Button } from './ui/button';
 import { DialogContent } from './ui/dialog';
 
@@ -17,7 +18,8 @@ export function RepoSetupApprovalModal({
 	onOpenChange,
 }: RepoSetupApprovalModalProps) {
 	const navigate = useNavigate();
-	const projectName = approval.payload_project_name ?? 'this project';
+	const { t } = useI18n();
+	const projectName = approval.payload_project_name ?? t('repoSetup.thisProject');
 	const projectSlug = approval.payload_project_slug;
 	// blocked-tickets is team-scoped server-side; address it via the project slug
 	// (the public handle) rather than the now-internal team id.
@@ -53,40 +55,45 @@ export function RepoSetupApprovalModal({
 			<DialogContent size="lg" data-testid="repo-setup-approval-modal">
 				<Dialog.Title className="text-base font-semibold mb-1 pr-8 flex items-center gap-2">
 					<GitBranch className="size-4" />
-					Set up GitHub for {projectName}
+					{t('repoSetup.title', { project: projectName })}
 				</Dialog.Title>
 				<Dialog.Description className="text-sm text-text-2 mb-4">
 					{tickets.length === 1
-						? '1 ticket is paused, waiting for a GitHub repository to be configured for this project.'
-						: `${tickets.length} tickets are paused, waiting for a GitHub repository to be configured for this project.`}
+						? t('repoSetup.blockedOne')
+						: t('repoSetup.blockedMany', { count: tickets.length })}
 				</Dialog.Description>
 
 				<div className="rounded-md border border-border bg-surface max-h-72 overflow-y-auto mb-4">
 					{isLoading ? (
 						<div className="flex items-center gap-2 text-sm text-text-2 px-3 py-3">
-							<Loader2 className="size-4 animate-spin" /> Loading tickets…
+							<Loader2 className="size-4 animate-spin" /> {t('repoSetup.loadingTasks')}
 						</div>
 					) : tickets.length === 0 ? (
-						<div className="text-sm text-text-2 px-3 py-3">No blocked tickets.</div>
+						<div className="text-sm text-text-2 px-3 py-3">{t('repoSetup.noBlockedTasks')}</div>
 					) : (
-						tickets.map((t) => (
+						// Bound as `row`, not `t` - `t` is the translate function in this scope.
+						tickets.map((row) => (
 							<button
 								type="button"
-								key={t.comment_id}
-								onClick={() => openTicket(t)}
+								key={row.comment_id}
+								onClick={() => openTicket(row)}
 								className="flex w-full flex-col gap-0.5 items-start px-3 py-2 text-left border-b border-border-subtle last:border-b-0 hover:bg-surface-2"
-								data-testid={`blocked-ticket-${t.identifier}`}
+								data-testid={`blocked-ticket-${row.identifier}`}
 							>
 								<div className="flex items-center gap-2 w-full">
 									<span className="font-mono text-xs px-1.5 py-0.5 rounded bg-surface-2 text-text-2 shrink-0">
-										{t.identifier}
+										{row.identifier}
 									</span>
-									<span className="text-sm font-medium truncate">{t.title}</span>
+									<span className="text-sm font-medium truncate">{row.title}</span>
 								</div>
 								<div className="flex items-center gap-2 w-full text-xs text-text-2">
-									<span className="truncate">by {t.agent_name ?? 'agent'}</span>
+									<span className="truncate">
+										{row.agent_name
+											? t('repoSetup.byAgent', { agent: row.agent_name })
+											: t('repoSetup.byUnknownAgent')}
+									</span>
 									<span className="text-text-3">·</span>
-									<span className="italic truncate text-text-3">"{t.snippet}"</span>
+									<span className="italic truncate text-text-3">"{row.snippet}"</span>
 								</div>
 							</button>
 						))
@@ -95,7 +102,7 @@ export function RepoSetupApprovalModal({
 
 				<div className="flex justify-end gap-2">
 					<Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
-						Close
+						{t('common.close')}
 					</Button>
 					<Button
 						size="sm"
@@ -103,7 +110,7 @@ export function RepoSetupApprovalModal({
 						disabled={!projectSlug}
 						data-testid="repo-setup-approval-cta"
 					>
-						Set up GitHub
+						{t('repoSetup.cta')}
 					</Button>
 				</div>
 			</DialogContent>

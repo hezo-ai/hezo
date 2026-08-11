@@ -12,10 +12,10 @@ agent's sandbox**, and so the commits your agents make land as **Verified** on G
 
 ## One key per project
 
-Each project has its **own [Ed25519](https://en.wikipedia.org/wiki/EdDSA) key**, used for
-two things: signing the project's git commits, and authenticating git transport over SSH.
-The private key is [encrypted at rest](/docs/security/master-key) and lives **on the
-host** - it is never written into the container where agent code runs.
+Each project has its **own [Ed25519](https://en.wikipedia.org/wiki/EdDSA) key**, used to
+sign the project's git commits. The private key is
+[encrypted at rest](/docs/security/master-key) and lives **on your Hezo instance** - it
+is never written into the container where agent code runs, wherever that container is.
 
 ## Connect GitHub once
 
@@ -23,9 +23,9 @@ To give a project access to GitHub, you connect a GitHub account once from the p
 **Connections** page using GitHub's **device flow**: Hezo shows you a short code, you
 enter it on GitHub, and you're done - there's no OAuth app to pre-register and no redirect
 URL to configure. On connect, the project's public key is **automatically registered** on
-your GitHub account as both a *signing* key (so commits show the Verified badge) and an
-*authentication* key (so SSH git operations work). Subsequent repositories reuse that
-connection.
+your GitHub account as a *signing* key, so commits show the Verified badge. Subsequent
+repositories reuse that connection, and the same connection is what authenticates clones,
+fetches and pushes.
 
 When you link or create a repository, Hezo records it right away and prepares the
 checkout **in the background** - starting the project's workspace and cloning the
@@ -75,17 +75,26 @@ Hezo to sign, but never sees the key. Because the project's key is registered as
 key on GitHub, those commits arrive **signed and marked Verified**, so you can trust at a
 glance that work attributed to your project genuinely came through your instance.
 
-## Clone, fetch, and push over SSH
+## Clone, fetch, and push over HTTPS
 
-Git transport runs over **SSH** (`git@github.com:owner/repo.git`), authenticated by the
-same per-project key. The container reaches it through a tightly-scoped, per-run bridge to
-the host - so an agent can clone, fetch, and push during its run without the key ever
-being present inside the sandbox.
+Git transport runs over **HTTPS** (`https://github.com/owner/repo.git`), authenticated by
+the token from the GitHub account you connected.
+
+**That token is never inside the container.** The remote carries a placeholder in place of
+the credential, and Hezo's egress proxy swaps in the real value as each request leaves
+for GitHub - the same mechanism that protects every other secret an agent uses. A request that
+somehow avoided the proxy would carry the placeholder, which is not a valid credential, so
+it fails rather than leaking anything.
+
+HTTPS rather than SSH because it is the transport that works everywhere. A
+[remote container service](/docs/containers/remote/overview) may carry only HTTPS out of
+the sandbox - Daytona, for instance, blocks SSH on every port - and a transport that works
+on your laptop but not in production is worse than one that works in both.
 
 ## Committed work is never lost
 
-Agent runs are time-limited, and each task works in a throwaway copy of the repository that
-is discarded when the run ends. So that committed work always survives - even if a run is
+Agent runs are time-limited, and each task works in a disposable working copy of the
+repository that does not outlive the task. So that committed work always survives - even if a run is
 cut short or reaches its time limit mid-way - Hezo **pushes every commit to the remote the
 moment it is made**. As soon as an agent commits, that commit is on the task's branch on
 GitHub, so nothing an agent has committed is ever lost with the run.
@@ -101,6 +110,25 @@ An automatic push never interrupts the agent's commit; the commit lands locally 
 But if the push itself is rejected, that is reported rather than hidden - the agent sees the
 error immediately, and the run's log carries it too, so a repository whose commits are not
 reaching GitHub is visible without having to go looking for it.
+
+### If a push is rejected
+
+A rejected push is the one case where committed work exists in only one place, so Hezo does
+three things rather than one.
+
+- **The run is marked failed**, even if the agent otherwise finished cleanly. Work that never
+  reached GitHub is not a completed run, and saying so is what puts it in front of you.
+- **A recovery copy is kept.** Hezo packs the undelivered commits and copies them onto your
+  instance, so the next agent to work on that task picks them up automatically - even if it
+  runs in a different container, and even if the original one is long gone. The copy is
+  dropped once the commits do reach GitHub, and is otherwise kept until you delete the
+  project.
+- **The container is held open** if the copy could not be made, so the machine holding the
+  only version of your work is never recycled while it is the only version.
+
+The project's Containers page shows when a project is in this state. The fix is almost always
+the connected GitHub account's write access to that repository - once a later run pushes
+successfully, everything clears on its own.
 
 ## Recovering a stuck repository
 

@@ -4,7 +4,7 @@ When a project is created the server files a **planning task** (labelled `planni
 
 The planning task is the **epic for the plan itself**, not a piece of execution work, so it has its own lifecycle:
 
-{{> partials/common/planning-ticket-children}}
+{{> partials/common/planning-task-children}}
 
 **Working it to close:**
 

@@ -1,3 +1,4 @@
+export type { ProvisionBridgeContext, ProvisionBridgeTarget } from './host';
 export { withProvisionBridge } from './host';
 export type { AgentIdentity, AgentMessage, SignRequest } from './protocol';
 export {
