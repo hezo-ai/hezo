@@ -2035,9 +2035,12 @@ that window - and the detail page renders neither the id nor Remove.
 **A dropped output stream resumes rather than killing the run.** A run's entire stdout
 arrives over one long-lived connection - a `follow=true` log stream on Daytona, a hijacked
 attach socket on Docker - held open for the whole command, so it sits idle whenever the agent
-is thinking or waiting on a tool call and a gateway in front of the provider reaps it.
-(Measured: Bun's `fetch` client imposes no idle timeout of its own, so a mid-stream close is
-always the far end's.) Daytona's adapter reopens the stream and discards the bytes it already
+is thinking or waiting on a tool call, and both ends sever it: a gateway in front of the
+provider reaps idle connections, and Bun's own `fetch` enforces a ~5 minute idle timeout that
+per-request options cannot disable (`.dev/bun-issues.md`). **The wait for response headers is
+idle time too** - measured, Daytona withholds them until the command's first byte of output,
+so a CLI slow to start burns the budget before a single byte exists - which is why the `fetch`
+sits inside the retry rather than in front of it. Daytona's adapter reopens the stream and discards the bytes it already
 delivered, counted at line granularity so the skip can never cut a multi-byte character. That
 client-side skip is the only exact resume available: measured against the live API, the logs
 endpoint accepts `?offset`, `?from`, `?since`, `?tail` and a `Range:` header and **silently
@@ -2832,8 +2835,8 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 **Providers → runtimes is one-to-MANY.** `AiProvider` has **ten** values — `anthropic`, `openai`,
 `google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
-`AgentRuntime` has **seven** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`,
-`prime_agent`. A provider
+`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. A
+provider
 declares the CLI it runs on **by default** plus, optionally, the other CLIs it can be driven by;
 the operator picks per credential and the choice is stored on
 `ai_provider_configs.runtime` (nullable, `NULL` = follow the provider default; migration `052`).
@@ -2854,10 +2857,12 @@ gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
 `XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
 (local runners, see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
-see below), and **every provider except Ollama and LM Studio declares `prime_agent`** (see
-below). Prime Agent is never a default. Ollama and LM Studio therefore offer exactly one CLI
-each and the UI omits the picker for them — their Advanced disclosure holds only the optional
-API key.
+see below), so it is the one provider that offers a choice. Every other provider offers exactly
+one CLI and the UI omits the picker for it — for Ollama and LM Studio the Advanced disclosure
+then holds only the optional API key.
+
+The one-to-many shape is deliberately kept even at one alternate: it is what makes a second CLI
+for a provider a table row rather than a refactor.
 
 **Because the runtime is per credential, it must be resolved from the credential row, never
 from the provider.** `buildProviderEnv` composes from `providerRuntimeBinding(provider,
@@ -2909,40 +2914,6 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   under that home, then priced from `model_pricing` like every other runtime. The runner's
   `recoverOffStreamRunUsage` dispatches both file-based recoveries and scrubs the file
   afterwards (each can carry the provider credential).
-
-**Prime Agent is the first runtime that belongs to no provider.** Prime Intellect's
-`prime-agent` speaks to most upstreams Hezo already supports, so it is declared as an
-*alternate* on every provider except Ollama and LM Studio and is never a default. Two
-consequences run through the code:
-
-- **The upstream is chosen by CLI flag, not by env var.** `PRIME_AGENT_BINDINGS` maps each
-  Hezo provider to Prime Agent's own provider id and the env var it reads that key from — its
-  spellings, not the vendor's, and two are easy to get wrong: Moonshot is `moonshotai` reading
-  `MOONSHOT_API_KEY` (its `kimi-coding` / `KIMI_API_KEY` pair is the separate Kimi-for-Coding
-  subscription plan), and Google is `google` reading `GEMINI_API_KEY`. Because the id travels
-  as `--provider <id>` rather than in the env, it cannot live in a binding's `staticEnv`;
-  `primeAgentProviderArgs` supplies it and `agent-runner.ts` splices it into the command.
-  Ollama and LM Studio are absent because Prime Agent has no built-in entry for either and the
-  custom-provider path is unverified — a provider missing from the map simply offers no Prime
-  Agent option in the picker.
-- **MCP is not a model-tool surface.** Prime Agent runs the protocol Python-side in its
-  IPython kernel; a `settings.json` `mcpServers` entry alone registers the endpoint host-side
-  and gives the agent nothing. So `mcp-injectors/prime-agent.ts` writes, per HTTP server, both
-  the settings entry **and** a generated Python package subclassing `rlm.McpIntegration`, and
-  passes each with `--skill`. Tool discovery is the CLI's job (`McpIntegration.__getattr__`
-  fetches the tool list on first use and binds each as an async method), so the generator never
-  hard-codes tool names. The bearer travels as `bearer_token_env` — an env var *name* — which
-  is what keeps `__HEZO_SECRET_*__` substitution intact. stdio descriptors are dropped: Prime
-  Agent's host discards them, so emitting one would look configured and do nothing.
-
-Its usage rides the stream (`message_end` → `message.usage`), so unlike Grok and Kimi Code it
-needs no off-stream recovery. `createPrimeAgentParser` maps the four buckets **straight
-across**: Prime Agent already normalises every provider to disjoint buckets
-(`input = prompt - cacheRead - cacheWrite`), so subtracting cache again — the Codex/Grok
-posture — would under-count input. Its own `cost` object is ignored, per the always-price-from-
-the-table rule. Effort maps onto `--thinking`, the closest fit of any runtime. The image bakes
-a pinned release plus `ipykernel` and `PRIME_AGENT_KERNEL_PYTHON`, so no run pays to bootstrap
-the kernel over the network.
 
 **Local providers carry their endpoint on the credential, not in `staticEnv`.** Ollama and
 LM Studio serve Anthropic's Messages API natively, so they reuse the Claude Code runtime
@@ -3016,6 +2987,16 @@ adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each b
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
 servers, and wires the stop-hook. OpenCode, Grok and Kimi Code take the prompt as a CLI
 **argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
+**The arg branch redirects stdin from `/dev/null`, and must.** An exec leaves stdin attached to
+a pipe nothing writes to and nothing closes, so a CLI that reads it in headless mode blocks
+forever — no output, no exit, no error, indistinguishable from a slow model until the run's
+deadline. Measured against a CLI that does read it: a byte-identical invocation produced a full
+transcript in ~2s with stdin closed and nothing at all in 15 minutes without it. In arg mode
+the prompt is already on the command line, so stdin has nothing to legitimately carry. Both
+copies of that logic — `PROMPT_DELIVERY_SH` in `agent-runner.ts` and the bridge path in
+`docker/scripts/hezo-run-with-bridge` — carry it, and `agent-prompt-delivery.test.ts` runs the
+script under a real `sh` against a real open stdin, so the regression is a timeout rather than
+a passing string match.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
 TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its

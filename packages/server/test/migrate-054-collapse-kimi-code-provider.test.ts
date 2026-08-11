@@ -158,6 +158,9 @@ describe('054_collapse_kimi_code_provider migration', () => {
 	});
 
 	it('makes the prime_agent runtime selectable', async () => {
+		// 054 added the label and this still asserts exactly that. The runtime it was
+		// added for has since been removed, and the label is left behind because
+		// Postgres cannot drop an enum value - nothing writes it.
 		const labels = await h.db.query<{ enumlabel: string }>(
 			`SELECT enumlabel FROM pg_enum
 			  WHERE enumtypid = 'agent_runtime'::regtype ORDER BY enumsortorder`,

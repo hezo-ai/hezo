@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { SANDBOX_BACKENDS, SandboxBackend } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -37,6 +38,23 @@ const NOT_SUITES = new Set(['index.ts', 'fixture.ts']);
 
 /** Where a backend's entry point may live. Both runners, one contract. */
 const FIXTURE_DIRS = [join(__dirname, 'bun'), join(__dirname, 'live')];
+
+/**
+ * Does this fixture stand up the named backend?
+ *
+ * Matched on the engine class the adapter exports rather than on the enum string,
+ * because a fixture constructs an engine and never needs to name the backend it
+ * is: `DockerClient` for `docker`, `DaytonaEngine` for `daytona`. A new backend
+ * adds its row here alongside its adapter.
+ */
+const BACKEND_ENGINE_CLASS: Record<SandboxBackend, string> = {
+	[SandboxBackend.Docker]: 'DockerClient',
+	[SandboxBackend.Daytona]: 'DaytonaEngine',
+};
+
+function backendMentioned(src: string, backend: SandboxBackend): boolean {
+	return src.includes(BACKEND_ENGINE_CLASS[backend]);
+}
 
 function suiteFiles(): string[] {
 	return readdirSync(CONFORMANCE_DIR)
@@ -85,6 +103,26 @@ describe('conformance coverage', () => {
 		// The set is only a cross-backend contract if more than one backend runs
 		// it; with one, a divergence has nothing to diverge from.
 		expect(fixtureFiles().length).toBeGreaterThanOrEqual(2);
+	});
+
+	it('wires up every backend Hezo actually supports, local and managed alike', () => {
+		// Counted against the production enum rather than a number, because the
+		// failure this prevents is a *new* backend shipping with no fixture: ">= 2"
+		// is satisfied by the two that already exist, so a third would land
+		// uncovered and nothing would say so. Every suite here - the agent-CLI
+		// matrix included - is only a contract to the extent it runs on each
+		// backend a user can actually select.
+		const wired = fixtureFiles().map((p) => readFileSync(p, 'utf8'));
+		const missing = SANDBOX_BACKENDS.filter(
+			(backend) => !wired.some((src) => backendMentioned(src, backend)),
+		);
+		expect(
+			missing,
+			`no conformance fixture for: ${missing.join(', ')}. Every backend in ` +
+				'`SandboxBackend` needs one under test/bun/ (local, runs in CI) or ' +
+				'test/live/ (managed, manual and opt-in), or it is supported in production ' +
+				'and proven nowhere.',
+		).toEqual([]);
 	});
 
 	it('leaves no fixture registering suites by hand', () => {

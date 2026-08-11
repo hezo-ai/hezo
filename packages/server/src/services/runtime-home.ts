@@ -144,17 +144,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 		envVarName: 'KIMI_CODE_HOME',
 		rotates: false,
 	},
-	// `PRIME_AGENT_CODING_AGENT_DIR` is a real variable the CLI consumes, and like
-	// `KIMI_CODE_HOME` it relocates the whole data root: `settings.json` (which
-	// carries the MCP servers), the session JSONL, and `auth.json`. Api-key only
-	// here — the subscription providers Prime Agent supports authenticate through
-	// an interactive `/login` that writes `auth.json`, which Hezo does not drive,
-	// so no authFileRelative.
-	[AgentRuntime.PrimeAgent]: {
-		dirPrefix: 'prime-agent',
-		envVarName: 'PRIME_AGENT_CODING_AGENT_DIR',
-		rotates: false,
-	},
 };
 
 /**

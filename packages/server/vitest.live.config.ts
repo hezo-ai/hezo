@@ -33,11 +33,18 @@ if (process.env.CI) {
 	);
 }
 
+const rawSetup = base.test?.setupFiles;
+const baseSetupFiles = Array.isArray(rawSetup) ? rawSetup : rawSetup ? [rawSetup] : [];
+
 export default defineConfig({
 	test: {
 		...base.test,
 		include: ['test/live/**/*.test.ts'],
 		exclude: [...configDefaults.exclude],
+		// On top of the base setup, not instead of it: `test/live/setup.ts` lifts
+		// undici's 5-minute header/body timeouts, which Bun does not have and which
+		// this tier's long-held log streams run straight into.
+		setupFiles: [...baseSetupFiles, 'test/live/setup.ts'],
 		testTimeout: 600_000,
 		hookTimeout: 600_000,
 		// One worker: the provider's quota is the shared resource, and two files

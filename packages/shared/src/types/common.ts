@@ -16,11 +16,6 @@ export const AgentRuntime = {
 	// provider offers both, defaulting to `claude` against Moonshot's
 	// Anthropic-compatible gateway.
 	Kimi: 'kimi',
-	// Prime Intellect's Prime Agent (`prime-agent`). Unlike every other entry it
-	// is not tied to one vendor: it speaks to most providers Hezo already
-	// supports, so it is offered as an ALTERNATE CLI on eight of them rather than
-	// being any provider's default.
-	PrimeAgent: 'prime_agent',
 } as const;
 export type AgentRuntime = (typeof AgentRuntime)[keyof typeof AgentRuntime];
 
@@ -1682,53 +1677,6 @@ const MOONSHOT_KIMI_CODE_BINDING: ProviderRuntimeBinding = {
 	credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'KIMI_MODEL_API_KEY' },
 };
 
-/**
- * Prime Agent's own provider id for each Hezo provider, and the env var it reads
- * that provider's key from.
- *
- * These are Prime Agent's spellings, taken from its `KnownProvider` union and
- * `env-api-keys` map — not Hezo's and not the vendor's. Two are easy to get
- * wrong: Moonshot is `moonshotai` reading `MOONSHOT_API_KEY` (its `kimi-coding`
- * / `KIMI_API_KEY` pair is the separate Kimi-for-Coding subscription plan, which
- * is not what a Hezo Moonshot credential is), and Google is `google` reading
- * `GEMINI_API_KEY`.
- *
- * Ollama and LM Studio are deliberately absent: Prime Agent has no built-in
- * entry for either, and reaching them would need a custom-provider definition
- * that is unverified. A provider missing here simply offers no Prime Agent
- * option in the picker.
- */
-const PRIME_AGENT_BINDINGS: Partial<Record<AiProvider, { id: string; credentialEnv: string }>> = {
-	[AiProvider.Anthropic]: { id: 'anthropic', credentialEnv: 'ANTHROPIC_API_KEY' },
-	[AiProvider.OpenAI]: { id: 'openai', credentialEnv: 'OPENAI_API_KEY' },
-	[AiProvider.Google]: { id: 'google', credentialEnv: 'GEMINI_API_KEY' },
-	[AiProvider.DeepSeek]: { id: 'deepseek', credentialEnv: 'DEEPSEEK_API_KEY' },
-	[AiProvider.ZAi]: { id: 'zai', credentialEnv: 'ZAI_API_KEY' },
-	[AiProvider.OpenRouter]: { id: 'openrouter', credentialEnv: 'OPENROUTER_API_KEY' },
-	[AiProvider.Kimi]: { id: 'moonshotai', credentialEnv: 'MOONSHOT_API_KEY' },
-	[AiProvider.XAi]: { id: 'xai', credentialEnv: 'XAI_API_KEY' },
-};
-
-/**
- * The `--provider` args for a Prime Agent run, or none when the provider has no
- * Prime Agent mapping. Prime Agent selects the upstream by flag rather than by
- * env var, so this cannot live in a binding's `staticEnv`.
- */
-export function primeAgentProviderArgs(provider: AiProvider): readonly string[] {
-	const id = PRIME_AGENT_BINDINGS[provider]?.id;
-	return id ? ['--provider', id] : [];
-}
-
-/**
- * Prime Agent's startup network chatter (a release-manifest version check),
- * silenced so a run does not depend on reaching primeintellect.ai. Telemetry is
- * turned off in the injected `settings.json` rather than here — it has no env
- * var. Mirrors CLAUDE_CODE_QUIET_ENV.
- */
-export const PRIME_AGENT_QUIET_ENV = {
-	PI_SKIP_VERSION_CHECK: '1',
-} as const;
-
 export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapter> = {
 	[AiProvider.Anthropic]: {
 		runtime: AgentRuntime.ClaudeCode,
@@ -1823,24 +1771,6 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'ANTHROPIC_AUTH_TOKEN' },
 	},
 };
-
-// Attach the Prime Agent alternate to every provider it can drive.
-//
-// A post-pass rather than eight inline `alternateRuntimes` entries so the roster
-// lives in exactly one place: a provider is Prime-Agent-capable if and only if
-// it has a PRIME_AGENT_BINDINGS row, and the `--provider` id and the credential
-// variable cannot drift apart into two lists. Providers already carrying an
-// alternate (the two Moonshot ones) keep it — this only adds a key.
-for (const [key, entry] of Object.entries(PRIME_AGENT_BINDINGS)) {
-	const adapter = PROVIDER_RUNTIME_ADAPTERS[key as AiProvider];
-	if (!adapter) continue;
-	adapter.alternateRuntimes = {
-		...adapter.alternateRuntimes,
-		[AgentRuntime.PrimeAgent]: {
-			credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: entry.credentialEnv },
-		},
-	};
-}
 
 /** Default upstream API hostnames per provider (for egress NO_PROXY). */
 const PROVIDER_UPSTREAM_HOSTS: Record<AiProvider, readonly string[]> = {
@@ -2082,7 +2012,6 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.OpenCode]: 'opencode',
 	[AgentRuntime.Grok]: 'grok',
 	[AgentRuntime.Kimi]: 'kimi',
-	[AgentRuntime.PrimeAgent]: 'prime-agent',
 };
 
 /**
@@ -2098,7 +2027,6 @@ export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
 	[AgentRuntime.OpenCode]: 'OpenCode',
 	[AgentRuntime.Grok]: 'Grok',
 	[AgentRuntime.Kimi]: 'Kimi Code',
-	[AgentRuntime.PrimeAgent]: 'Prime Agent',
 };
 
 /**
@@ -2119,9 +2047,6 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
 	// `kimi -p <PROMPT>` (--prompt) is the same shape as Grok: the prompt is the
 	// flag's value, not stdin. Kimi Code has no stdin-as-prompt mode at all.
 	[AgentRuntime.Kimi]: 'arg',
-	// `prime-agent -p <PROMPT>` takes the prompt as a trailing positional, so the
-	// bridge appends `"$(cat $HEZO_PROMPT_FILE)"`.
-	[AgentRuntime.PrimeAgent]: 'arg',
 };
 
 /**
@@ -2145,10 +2070,6 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	// `--yes`/`--auto-approve` flags or `[permission.rules]` in the injected
 	// config.toml — not a flag that conflicts with `--prompt`.
 	[AgentRuntime.Kimi]: [],
-	// Nothing to pass, and for a different reason than Kimi Code: Prime Agent has
-	// no permission or sandbox system at all - there is no approval prompt in its
-	// core and no approval flag in its CLI - so a headless run cannot stall on one.
-	[AgentRuntime.PrimeAgent]: [],
 };
 
 /**
@@ -2202,7 +2123,6 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 	[AgentRuntime.OpenCode]: [],
 	[AgentRuntime.Grok]: [],
 	[AgentRuntime.Kimi]: [],
-	[AgentRuntime.PrimeAgent]: [],
 };
 
 /**
@@ -2233,11 +2153,6 @@ export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.OpenCode]: true,
 	[AgentRuntime.Grok]: false,
 	[AgentRuntime.Kimi]: true,
-	// Prime Agent does not expose MCP tools as model tools at all: each server
-	// becomes a Python-backed skill the model calls from its IPython kernel, so
-	// there is no tool list to filter. The egress proxy still enforces the
-	// allowlist, which is what actually matters.
-	[AgentRuntime.PrimeAgent]: false,
 };
 
 /**
@@ -2284,11 +2199,6 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	// so cost is recovered post-run from the per-run session log. See
 	// `extractKimiUsageFromSessionLog` in agent-stream-parser.ts.
 	[AgentRuntime.Kimi]: ['--output-format', 'stream-json'],
-	// `--mode json` serializes every session event to stdout verbatim. Unlike Grok
-	// and Kimi Code its stream DOES carry token usage - `message_end` includes the
-	// assistant message, whose `usage` holds the four buckets - so there is no
-	// off-stream recovery for this runtime.
-	[AgentRuntime.PrimeAgent]: ['--mode', 'json'],
 };
 
 /**
@@ -2306,7 +2216,6 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Grok]: [],
 	// `kimi` likewise runs headless directly via the trailing `-p` flag.
 	[AgentRuntime.Kimi]: [],
-	[AgentRuntime.PrimeAgent]: [],
 };
 
 /**
@@ -2327,8 +2236,6 @@ export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[
 	// Kimi Code is the same shape: `-p`/`--prompt` runs one prompt headlessly and
 	// streams to stdout, with the prompt appended as the flag's value.
 	[AgentRuntime.Kimi]: ['-p'],
-	// `prime-agent -p` is print mode; the prompt follows as a positional.
-	[AgentRuntime.PrimeAgent]: ['-p'],
 };
 
 export interface AiProviderVerifyEndpoint {

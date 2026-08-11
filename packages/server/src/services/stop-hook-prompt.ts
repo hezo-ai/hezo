@@ -318,9 +318,9 @@ interface JudgeRuntimeSpec {
 		 */
 		logBasename?: string;
 		/**
-		 * Match by extension instead, for runtimes that name the file after the
-		 * session id (Prime Agent writes `sessions/<uuid>.jsonl`, so there is no
-		 * fixed basename to look for). Set one of these, not both.
+		 * Match by extension instead, for a runtime that names the file after the
+		 * session id and so has no fixed basename to look for. Set one of these,
+		 * not both. No runtime uses it today; the emitted script handles both.
 		 */
 		logSuffix?: string;
 	};
@@ -434,7 +434,7 @@ function messageFromSessionLog(sessionId) {
 			if (!rec || rec.role !== 'assistant') continue;
 			const c = rec.content;
 			// Content is a plain string on some runtimes and a parts array on others
-			// (Prime Agent stores text/thinking/tool-call parts); take the text parts.
+			// (text / thinking / tool-call parts); take the text parts.
 			const text = typeof c === 'string'
 				? c
 				: Array.isArray(c)
@@ -612,43 +612,6 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 		blockReasonToStderr: true,
 		sessionLogLookup: { homeEnvVar: 'KIMI_CODE_HOME', logBasename: 'wire.jsonl' },
 		loopGuardFile: { homeEnvVar: 'KIMI_CODE_HOME', basename: '.hezo-stop-blocked' },
-	},
-	// Prime Agent has no Stop hook. Its equivalent is `--autonomous-gate <cmd>`: a
-	// command that must succeed before the session may finish, whose output is fed
-	// back to the model as the continuation when it fails. Same block-and-continue
-	// shape, reached through a different door — and the CLI supplies the retry
-	// budget and the turn/token/wall-clock ceilings itself.
-	//
-	// The gate is spawned with `stdio: ['ignore', 'pipe', 'pipe']`, so unlike every
-	// Stop hook it gets NO stdin at all. `inputFields` is therefore certain to come
-	// up empty and `sessionLogLookup` is the real source — matched by extension
-	// because Prime Agent names the file after the session id rather than using a
-	// fixed basename. Its assistant records store content as a parts array, which
-	// the shared extractor now handles.
-	//
-	// A failing gate is a non-zero exit; there is no decision JSON to emit, and the
-	// captured output IS the reason (the CLI truncates it at 6000 chars), so stderr
-	// carries it. The loop guard mirrors Kimi Code's: the gate has no
-	// `stop_hook_active` equivalent, so without a marker a persistent verdict would
-	// burn every retry the CLI allows.
-	[AgentRuntime.PrimeAgent]: {
-		...openAiCompatJudgeSpec({
-			// Prime Agent reaches many providers, but the judge has to name one
-			// endpoint. Anthropic's is the safe default: it is the only provider whose
-			// key is guaranteed present when the run itself is on Anthropic, and every
-			// other case fails open rather than mis-judging.
-			baseUrl: 'https://api.anthropic.com/v1',
-			apiKeyEnvVars: ['ANTHROPIC_API_KEY'],
-			model: STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
-			inputFields: ['last_assistant_message'],
-		}),
-		blockExitCode: 1,
-		blockReasonToStderr: true,
-		sessionLogLookup: { homeEnvVar: 'PRIME_AGENT_CODING_AGENT_DIR', logSuffix: '.jsonl' },
-		loopGuardFile: {
-			homeEnvVar: 'PRIME_AGENT_CODING_AGENT_DIR',
-			basename: '.hezo-stop-blocked',
-		},
 	},
 };
 

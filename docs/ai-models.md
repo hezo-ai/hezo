@@ -14,14 +14,14 @@ and your agents run on the models you choose.
 
 | Provider | Models | Runtime | Authentication |
 |---|---|---|---|
-| **Anthropic** | Claude | Claude Code, or Prime Agent | API key or subscription |
-| **OpenAI** | ChatGPT / GPT | Codex, or Prime Agent | API key or subscription |
-| **Google** | Gemini | Gemini, or Prime Agent | API key or subscription |
-| **xAI** | Grok | Grok Build, or Prime Agent | API key |
-| **Kimi** (Moonshot) | Kimi | Claude Code, Kimi Code, or Prime Agent | API key |
-| **DeepSeek** | DeepSeek | Claude Code, or Prime Agent | API key |
-| **Z.ai** | GLM | Claude Code, or Prime Agent | API key |
-| **OpenRouter** | Many, via one account | OpenCode, or Prime Agent | API key |
+| **Anthropic** | Claude | Claude Code | API key or subscription |
+| **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
+| **Google** | Gemini | Gemini | API key or subscription |
+| **xAI** | Grok | Grok Build | API key |
+| **Kimi** (Moonshot) | Kimi | Claude Code or Kimi Code | API key |
+| **DeepSeek** | DeepSeek | Claude Code | API key |
+| **Z.ai** | GLM | Claude Code | API key |
+| **OpenRouter** | Many, via one account | OpenCode | API key |
 | **Ollama** | Whatever you run locally | Claude Code | Server URL (key optional) |
 | **LM Studio** | Whatever you run locally | Claude Code | Server URL (key optional) |
 
@@ -61,14 +61,6 @@ Moonshot's models can be run by either of two command-line agents, on one creden
 Hezo used to list these as two separate providers. They are now one **Kimi** entry with the
 choice under Advanced; an existing Kimi Code credential keeps running on Kimi Code, and you
 no longer need a second credential to try the other harness.
-
-### Prime Agent
-
-**Prime Agent**, from Prime Intellect, is available on every provider above except Ollama and
-LM Studio. It works differently from the rest: rather than calling tools directly, it writes
-and runs Python in a live kernel, which suits data-shaped and long-horizon work. It is never
-a default - you opt in per credential, under Advanced, and it uses the same key as that
-provider's other CLIs.
 
 ## Local models
 
