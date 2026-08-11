@@ -125,10 +125,25 @@ describe('classifyMcpMethods — vendor-namespaced catalogs', () => {
 		expect(out.map((m) => m.readOnly)).toEqual([true, true]);
 	});
 
-	it('cannot infer a namespace from a single tool', () => {
-		// One name gives no way to tell a vendor prefix from a verb, so it stays
-		// strict.
-		expect(classifyMcpMethods([{ name: 'typefully_get_me' }])[0]?.readOnly).toBe(false);
+	it('infers a namespace from a single tool', () => {
+		// A one-tool catalog is still namespaced if it looks namespaced; the token
+		// refusals below are what keep a one-tool guess honest.
+		expect(classifyMcpMethods([{ name: 'typefully_get_me' }])[0]?.readOnly).toBe(true);
+	});
+
+	it('refuses a shared token that is a plain mutation verb', () => {
+		// The mirror of the read-prefix refusal, and the guard that makes a
+		// single-tool namespace safe: stripping `update` here would classify on
+		// `view` - a read prefix - and call a write tool read-only.
+		expect(classifyMcpMethods([{ name: 'update_view' }])[0]?.readOnly).toBe(false);
+		expect(classifyMcpMethods([{ name: 'delete_export' }])[0]?.readOnly).toBe(false);
+		const many = classifyMcpMethods([{ name: 'create_list' }, { name: 'create_preview' }]);
+		expect(many.map((m) => m.readOnly)).toEqual([false, false]);
+	});
+
+	it('keeps a single tool strict when its token carries no verb signal either way', () => {
+		// `typefully_create_draft` strips to `create`, which is not a read prefix.
+		expect(classifyMcpMethods([{ name: 'typefully_create_draft' }])[0]?.readOnly).toBe(false);
 	});
 
 	it('does not infer a namespace when any tool is a bare single word', () => {

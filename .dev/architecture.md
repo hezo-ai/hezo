@@ -3787,9 +3787,13 @@ for every count the card, the dialog, and `list_connectors` show, so they can't 
 a leading token every tool shares, as in `typefully_list_drafts` / `typefully_get_me` - and
 classifies on the word after it. Without that the vendor sits where the verb belongs and an
 entire server classifies as write. Detection is deliberately conservative: every tool must
-share the token, two tools minimum, and a token that is itself a read prefix is refused (a
-server whose tools are all `list_*` is naming them consistently, not namespacing them). A
-single tool can never imply a namespace, so `classifyMcpMethod` alone keeps its old behaviour.
+share the token, and the token is refused when it is itself a read prefix (a server whose
+tools are all `list_*` is naming them consistently, not namespacing them) or a plain mutation
+verb (`WRITE_VERB_PREFIXES`). A single tool can imply a namespace; those two refusals are what
+make that safe, since they reject exactly the tokens a one-tool guess would get wrong -
+`update_view` keeps `update` as its verb rather than stripping to the read prefix `view`.
+`classifyMcpMethod` called directly on one tool, with no namespace passed, keeps its old
+behaviour.
 
 Because of that, an `access: 'read'` request can resolve to an allowlist of nothing when the
 classifier recognises no read method at all. `discoverConnectorMethods` **refuses to persist

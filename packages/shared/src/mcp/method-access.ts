@@ -85,6 +85,46 @@ function splitWords(name: string): string[] {
 }
 
 /**
+ * Verbs that mark a shared token as the tool's own action rather than a vendor
+ * name. The mirror of the read-prefix refusal in {@link sharedVendorPrefix}.
+ *
+ * Load-bearing once a single tool can imply a namespace: with one tool there is
+ * nothing to cross-check the token against, so `update_view` would strip
+ * `update` and classify on `view` - a read prefix - marking a write tool
+ * read-only. That is the one direction this module promises never to fail in,
+ * so a token that is plainly a mutation is refused instead. A vendor genuinely
+ * called `post` or `run` loses its namespace and classifies as write, which is
+ * the safe way round.
+ */
+const WRITE_VERB_PREFIXES = [
+	'create',
+	'update',
+	'delete',
+	'remove',
+	'set',
+	'add',
+	'put',
+	'patch',
+	'post',
+	'write',
+	'send',
+	'reset',
+	'clear',
+	'drop',
+	'insert',
+	'upsert',
+	'move',
+	'rename',
+	'archive',
+	'publish',
+	'cancel',
+	'run',
+	'execute',
+	'start',
+	'stop',
+];
+
+/**
  * The vendor namespace every tool in a catalog is prefixed with, or null when
  * there is no such prefix.
  *
@@ -92,17 +132,21 @@ function splitWords(name: string): string[] {
  * `typefully_get_me` - which puts the vendor where the verb should be and makes
  * the prefix table classify the whole server as write. Detecting the shared
  * token here lets classification look at the word that actually carries the
- * verb, and the whole-catalog view is what makes it safe: one tool cannot tell a
- * namespace from a verb.
+ * verb.
  *
  * Deliberately conservative. It requires **every** tool to share the token (a
- * partial match is a coincidence, not a namespace), needs at least two tools,
- * and refuses a token that is itself a read-only prefix - a server whose tools
- * are all `list_*` is naming them consistently, and stripping that would discard
- * the only signal the heuristic has.
+ * partial match is a coincidence, not a namespace), and refuses a token that is
+ * itself a read-only prefix - a server whose tools are all `list_*` is naming
+ * them consistently, and stripping that would discard the only signal the
+ * heuristic has - or a plain mutation verb, per {@link WRITE_VERB_PREFIXES}.
+ *
+ * A single tool can imply a namespace. The whole-catalog view is weaker evidence
+ * at one tool than at ten, which is what the two refusals above are carrying:
+ * they reject the tokens where a one-tool guess would go wrong, and a vendor
+ * name is not among them.
  */
 function sharedVendorPrefix(tools: readonly McpToolDescriptor[]): string | null {
-	if (tools.length < 2) return null;
+	if (tools.length === 0) return null;
 	let shared: string | null = null;
 	for (const tool of tools) {
 		const words = splitWords(tool.name);
@@ -113,7 +157,9 @@ function sharedVendorPrefix(tools: readonly McpToolDescriptor[]): string | null 
 		if (shared === null) shared = first;
 		else if (shared !== first) return null;
 	}
-	if (shared === null || READ_ONLY_PREFIXES.includes(shared)) return null;
+	if (shared === null) return null;
+	if (READ_ONLY_PREFIXES.includes(shared)) return null;
+	if (WRITE_VERB_PREFIXES.includes(shared)) return null;
 	return shared;
 }
 
