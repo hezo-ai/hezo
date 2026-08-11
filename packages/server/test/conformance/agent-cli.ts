@@ -131,6 +131,27 @@ const HEZO_PROBE_TOOL = 'list_projects';
 const PROMPT =
 	`Call the \`mcp__${HEZO_MCP_SERVER_NAME}__${HEZO_PROBE_TOOL}\` tool once, then reply with ` +
 	`exactly ${SENTINEL} and nothing else.`;
+
+/**
+ * How to ask *this* runtime to call the probe tool.
+ *
+ * Every runtime but one surfaces MCP as model tools named
+ * `mcp__<server>__<tool>`, so naming that tool is the clearest instruction there
+ * is. **Prime Agent has no such tool to name.** Its MCP servers are Python
+ * skills loaded into the kernel, reached as `await hezo.list_projects()` - so
+ * the shared prompt asks it for something that does not exist, and a run that
+ * then made no tool call would be reporting on the prompt rather than on the
+ * plumbing. That is the one failure this suite must never produce, because it
+ * looks exactly like the real defect it exists to catch.
+ */
+function probePrompt(runtime: AgentRuntime): string {
+	if (runtime !== AgentRuntime.PrimeAgent) return PROMPT;
+	return (
+		`Using your Python kernel, run: import ${HEZO_MCP_SERVER_NAME}; ` +
+		`result = await ${HEZO_MCP_SERVER_NAME}.${HEZO_PROBE_TOOL}(); print(result). ` +
+		`Then reply with exactly ${SENTINEL} and nothing else.`
+	);
+}
 /** Where the prompt file lands, mirroring the runner's own per-run prompt file. */
 const PROMPT_FILE = 'live-cli-prompt.txt';
 
@@ -589,7 +610,7 @@ function describeOneAgentCliRun(
 			mark('files-chowned');
 			const files = engine.files(containerId, fixture.workRoot);
 			await files.mkdir('.');
-			await files.write(PROMPT_FILE, PROMPT);
+			await files.write(PROMPT_FILE, probePrompt(runtime));
 
 			const argv = cliArgv(mp, runtime, injection.cliArgs).map(shellQuote).join(' ');
 			const promptPath = shellQuote(`${fixture.workRoot}/${PROMPT_FILE}`);
