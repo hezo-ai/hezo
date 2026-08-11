@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed';
 
 /**
@@ -8,13 +8,14 @@ import { type SeededWorkspace, seedProject, seedWorkspace } from './helpers/seed
  * team's detail (its roster) inside the dialog, and "Select team" is the only way to
  * commit from there. The browse screens carry no create actions.
  */
-async function openCatalogFromHome() {
+async function openCatalogFromHome(afterSeed?: (ws: SeededWorkspace) => Promise<void>) {
 	let ws!: SeededWorkspace;
 	const utils = await renderApp({
 		initialPath: '/home',
 		seed: async () => {
 			ws = await seedWorkspace();
 			await seedProject(ws, { name: 'Existing Project' });
+			await afterSeed?.(ws);
 			sessionStorage.setItem('hezo:activeTeamSlug', ws.team.slug);
 		},
 	});
@@ -118,10 +119,41 @@ test("an existing team's detail lists its live agents and hides the HQ CEO/Coach
 	expect(rows[0].getAttribute('data-testid')).toBe('roster-row-captain');
 	expect(rows.some((r) => r.getAttribute('data-testid') === 'roster-row-engineer')).toBe(true);
 
+	// This team is provisioned from a `team_templates` row, and `agent_types` carries
+	// no identity columns - so its agents have no human name and each row is its role
+	// alone. (Names reach `member_agents` only via the marketplace provisioning path.)
+	expect((await findByTestId('roster-row-engineer')).textContent).toContain('Engineer');
+
 	// HQ's CEO and Coach are surfaced as virtual members of every project but are not
 	// part of the roster a clone would copy, so they get no row.
 	expect(screen.queryByTestId('roster-row-ceo')).toBeNull();
 	expect(screen.queryByTestId('roster-row-coach')).toBeNull();
+});
+
+test("a named agent's roster row leads with the name and keeps the role beneath", async () => {
+	const { user, findByTestId, ws } = await openCatalogFromHome(async (seeded) => {
+		const engineer = seeded.agents.find((a) => a.slug === 'engineer');
+		if (!engineer) throw new Error('seeded roster is missing the engineer');
+		const { apiBase } = getTestContext();
+		const res = await apiBase(`/api/projects/${seeded.internalSlug}/agents/${engineer.id}`, {
+			method: 'PATCH',
+			headers: seeded.headers,
+			body: JSON.stringify({ human_name: 'Max' }),
+		});
+		expect(res.status).toBe(200);
+	});
+
+	await user.click(await findByTestId('team-tab-copy', undefined, { timeout: 15_000 }));
+	await user.click(await findByTestId(`source-team-card-${ws.team.slug}`));
+
+	// Named: "Max" leads and "Engineer" stays as the supporting line, so the roster
+	// matches the name this agent is called by everywhere else in the UI.
+	const engineer = await findByTestId('roster-row-engineer');
+	expect(engineer.textContent).toContain('Max');
+	expect(engineer.textContent).toContain('Engineer');
+
+	// Naming an agent also composes its avatar, so the row shows the sprite.
+	expect(engineer.querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
 });
 
 test('mod+Enter does not create the project from the catalog or the detail', async () => {
