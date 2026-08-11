@@ -173,10 +173,10 @@ describe('GET /projects/:projectId/approvals', () => {
 	});
 });
 
-describe('GET /projects/:projectId/approvals/:approvalId/blocked-tasks', () => {
+describe('GET /projects/:projectId/approvals/:approvalId/blocked-tickets', () => {
 	it('404s for an unknown approval', async () => {
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/approvals/${randomUUID()}/blocked-tasks`,
+			`/api/projects/${projectSlug}/approvals/${randomUUID()}/blocked-tickets`,
 			{ headers: authHeader(ctx.token) },
 		);
 		expect(res.status).toBe(404);
@@ -185,7 +185,7 @@ describe('GET /projects/:projectId/approvals/:approvalId/blocked-tasks', () => {
 	it('400s for a non-designated_repo_request approval', async () => {
 		const other = await createApproval('plan_review', { summary: 'not a repo request' });
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/approvals/${other.id}/blocked-tasks`,
+			`/api/projects/${projectSlug}/approvals/${other.id}/blocked-tickets`,
 			{ headers: authHeader(ctx.token) },
 		);
 		expect(res.status).toBe(400);
@@ -223,7 +223,7 @@ describe('GET /projects/:projectId/approvals/:approvalId/blocked-tasks', () => {
 		}
 
 		const res = await ctx.app.request(
-			`/api/projects/${projectSlug}/approvals/${approval.id}/blocked-tasks`,
+			`/api/projects/${projectSlug}/approvals/${approval.id}/blocked-tickets`,
 			{ headers: authHeader(ctx.token) },
 		);
 		expect(res.status).toBe(200);

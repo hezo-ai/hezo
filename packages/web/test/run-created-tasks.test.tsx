@@ -116,8 +116,8 @@ test('run comment shows created tasks as links to their pages', async () => {
 	});
 
 	const links = Array.from(createdSection.querySelectorAll('a')) as HTMLAnchorElement[];
-	const linkA = links.find((a) => a.textContent === 'Created task SPAWN-900 — Refactor auth');
-	const linkB = links.find((a) => a.textContent === 'Created task SPAWN-901 — Add tests for X');
+	const linkA = links.find((a) => a.textContent === 'Created task SPAWN-900 - Refactor auth');
+	const linkB = links.find((a) => a.textContent === 'Created task SPAWN-901 - Add tests for X');
 	expect(linkA).toBeTruthy();
 	expect(linkB).toBeTruthy();
 	expect(linkA?.getAttribute('href')).toBe(`/projects/${seeded.projectSlug}/tasks/spawn-900`);

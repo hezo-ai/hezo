@@ -189,7 +189,7 @@ describe('POST /approvals/:approvalId/resolve — auth + state arms', () => {
 	});
 });
 
-describe('GET blocked-tasks — cross-team NOT_FOUND arm', () => {
+describe('GET blocked-tickets — cross-team NOT_FOUND arm', () => {
 	it('404s when the approval belongs to a different team', async () => {
 		// An approval created in a different team is not visible via this projectSlug.
 		const otherTeam = await createTestTeam(db, { name: 'Blocked Tasks Other Co' });
@@ -200,7 +200,7 @@ describe('GET blocked-tasks — cross-team NOT_FOUND arm', () => {
 			[otherTeamId, ApprovalType.DesignatedRepoRequest],
 		);
 		const res = await app.request(
-			`/api/projects/${projectSlug}/approvals/${ins.rows[0].id}/blocked-tasks`,
+			`/api/projects/${projectSlug}/approvals/${ins.rows[0].id}/blocked-tickets`,
 			{ headers: authHeader(token) },
 		);
 		expect(res.status).toBe(404);
