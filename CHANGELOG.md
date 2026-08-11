@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.43.0 - 2026-08-11
+
+### Breaking Changes
+
+- **providers:** remove Prime Agent; matrix the live agent-CLI suite over every provider × CLI ([#926](https://github.com/hezo-ai/hezo/pull/926))
+
+### Features
+
+- **web:** ask how to hire before opening the hire form ([#943](https://github.com/hezo-ai/hezo/pull/943))
+- **chat:** drop the task judge from CEO chat turns, catch stranded handoffs structurally ([#944](https://github.com/hezo-ai/hezo/pull/944))
+- **providers:** pin default models from each provider's catalog; fix four broken runtimes ([#941](https://github.com/hezo-ai/hezo/pull/941))
+- **chat:** convert a conversation into a task assigned to the CEO ([#940](https://github.com/hezo-ai/hezo/pull/940))
+- **inbox:** credential requests are inbox rows; dashboards list the inbox's unread set ([#937](https://github.com/hezo-ai/hezo/pull/937))
+- **providers:** remove Prime Agent; matrix the live agent-CLI suite over every provider × CLI ([#926](https://github.com/hezo-ai/hezo/pull/926))
+- **mcp:** tell an agent how many tools each connector gave its run ([#935](https://github.com/hezo-ai/hezo/pull/935))
+
+### Bug Fixes
+
+- **web:** stop the dashboard reporting container state, and reorder its widgets ([#939](https://github.com/hezo-ai/hezo/pull/939))
+- **web:** name each teammate on the team roster instead of listing roles alone ([#938](https://github.com/hezo-ai/hezo/pull/938))
+- **connectors:** classify vendor-namespaced MCP tools by their real verb ([#931](https://github.com/hezo-ai/hezo/pull/931))
+
+### Performance
+
+- **mcp:** project tools/list per caller, and declare per-tool facts on the registration ([#932](https://github.com/hezo-ai/hezo/pull/932))
+
+### Tests
+
+- **shared:** cover sanitizeWidgetOrder in the tier that now owns it ([#942](https://github.com/hezo-ai/hezo/pull/942))
+
+### Other
+
+- Say task, not ticket, and close three gaps in the docs ([#936](https://github.com/hezo-ai/hezo/pull/936))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.42.0...0.43.0
+
 ## 0.42.0 - 2026-08-11
 
 ### Features
