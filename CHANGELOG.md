@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.42.0 - 2026-08-11
+
+### Features
+
+- **web:** add per-project Dashboard as the default landing page ([#786](https://github.com/hezo-ai/hezo/pull/786))
+- **runner:** count each MCP server's tools in the session banner ([#930](https://github.com/hezo-ai/hezo/pull/930))
+- **search:** find assets by name and, for text formats, by their contents ([#929](https://github.com/hezo-ai/hezo/pull/929))
+- **providers:** key the per-run config home by runtime, add Prime Agent, collapse kimi_code ([#925](https://github.com/hezo-ai/hezo/pull/925))
+
+### Bug Fixes
+
+- **web:** open dropdown panels above their anchor when there is no room below ([#927](https://github.com/hezo-ai/hezo/pull/927))
+
+### Documentation
+
+- refresh the README for 0.41.1 ([#923](https://github.com/hezo-ai/hezo/pull/923))
+
+### Other
+
+- Human names and generated pixel avatars for agents ([#924](https://github.com/hezo-ai/hezo/pull/924))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.41.1...0.42.0
+
 ## 0.41.1 - 2026-08-09
 
 ### Bug Fixes
