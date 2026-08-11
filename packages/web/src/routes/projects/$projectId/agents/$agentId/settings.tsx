@@ -247,6 +247,7 @@ function AgentSettingsPage() {
 					>
 						<ExpandableText
 							text={agent.team_context ?? ''}
+							projectId={projectId}
 							placeholder={
 								<span className="italic text-text-2">Team relationships being generated…</span>
 							}

@@ -79,6 +79,7 @@ function AgentLayout() {
 			>
 				<ExpandableText
 					text={agent.summary ?? ''}
+					projectId={projectId}
 					placeholder={<span className="italic text-text-2">Description being generated…</span>}
 				/>
 			</div>
