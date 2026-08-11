@@ -85,7 +85,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_project: {
 		category: 'Projects',
 		returns:
-			'The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup task (`coherence_task_id`, `coherence_task_identifier`). The coherence task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.',
+			"The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial CEO team-setup task (`setup_task_id`, `setup_task_identifier`) - the project's first task, which the planning task is blocked on. The setup task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.",
 		auth: 'CEO only - call after the admin has explicitly approved the scope and team type in intake.',
 	},
 	start_team_setup: {

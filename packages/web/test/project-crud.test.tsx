@@ -33,8 +33,8 @@ function uniqueName(base: string): string {
 
 // The cross-team project list is Home. A team's New-project button + cards live
 // there; there is no per-team projects page in the project-centric IA.
-test('creates a project from Home (Create now) and lands on the Captain planning task', async () => {
-	const { findByRole, findByPlaceholderText, findByTestId, user, router } = await renderApp({
+test('creates a project from Home (Create now) and lands on the project task list', async () => {
+	const { findByText, findByPlaceholderText, findByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -66,10 +66,13 @@ test('creates a project from Home (Create now) and lands on the Captain planning
 	await user.click(await findByTestId('team-detail-select'));
 	await user.click(await findByTestId('create-project-submit'));
 
-	// "Create now" creates the team + project + Captain planning task directly,
-	// then navigates to that planning task inside the new project.
-	await findByRole('heading', { name: `Draft execution plan for "${name}"` }, { timeout: 30_000 });
-	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/.+\/tasks\//));
+	// "Create now" creates the team + project + its seeded tasks directly, then
+	// navigates to the new project's task list — the CEO's "Set up the team" task is
+	// the project's first task and sorts on top there (asserted server-side in
+	// project-with-team.test.ts). This tier sets HEZO_E2E_SKIP_COHERENCE_REVIEW
+	// (vitest.config.ts), so only the Captain's planning task exists here.
+	await findByText(`Draft execution plan for "${name}"`, undefined, { timeout: 30_000 });
+	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/.+\/tasks$/));
 }, 60_000);
 
 test('Home lists a seeded project with its task count and activity', async () => {
@@ -222,7 +225,7 @@ test('dialog attaches a project plan document, with a help tooltip, and persists
 	await user.click(await findByTestId('team-detail-select'));
 	await user.click(await findByTestId('create-project-submit'));
 
-	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/.+\/tasks\//), {
+	await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/projects\/.+\/tasks$/), {
 		timeout: 30_000,
 	});
 	const slug = router.state.location.pathname.split('/')[2];

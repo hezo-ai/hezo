@@ -31,8 +31,9 @@ test('the welcome card opens the dialog exposing both creation flows', async () 
 });
 
 // Direct flow: filling the dialog and clicking "Create now" stands up a brand-new
-// team + its project and lands on the Captain's auto-created planning task.
-test('the direct flow creates a project in its own new team and opens the planning task', async () => {
+// team + its project and lands on that project's task list, where the CEO's
+// auto-created team-setup task sorts first.
+test('the direct flow creates a project in its own new team and opens its task list', async () => {
 	const projectName = uniqueName('Direct Build');
 	const projectSlug = projectName.toLowerCase().replace(/\s+/g, '-');
 
@@ -55,8 +56,8 @@ test('the direct flow creates a project in its own new team and opens the planni
 	await user.click(await findByTestId('team-detail-select'));
 	await user.click(await findByTestId('create-project-submit'));
 
-	// Lands on the new project's Captain planning task.
-	const expected = new RegExp(`^/projects/${projectSlug}/tasks/[a-z0-9-]+$`);
+	// Lands on the new project's task list.
+	const expected = new RegExp(`^/projects/${projectSlug}/tasks$`);
 	await waitFor(() => expect(router.state.location.pathname).toMatch(expected), {
 		timeout: 30_000,
 	});

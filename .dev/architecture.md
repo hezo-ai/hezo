@@ -987,6 +987,12 @@ coherence task **auto-runs** is the one behavioural difference between the two p
 immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
 1. **Direct** — `POST /api/projects`: runs `createProjectWithTeam` in one step. No
    approval gate. The coherence/setup task **auto-runs** (assigned to the CEO and woken).
+   The 201 response carries `setup_task_id`/`setup_task_identifier` alongside the planning
+   pair, and the web dialog (`CreateProjectWithTeamDialog.handleCreateNow`) lands the
+   operator on the project's **task list** rather than a single task: the default
+   `work_order` sort (unblocked before blocked, then priority, then number) puts the setup
+   task on top with the blocked planning task below it, so no deep link is needed and the
+   landing stays correct when no setup task was created.
 2. **CEO-assisted** — `POST /api/project-intakes`: opens a CEO-run intake conversation
    ticket in HQ (label `project-intake`) recording the form data and the admin's chosen
    team type as the CEO's **baseline suggestion**. **Nothing is created up front — no
@@ -994,7 +1000,7 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
    admin approves in the thread (a plain reply — there is no inbox button), the CEO calls
    the `create_project` MCP tool, which runs the same `createProjectWithTeam` and closes
    the intake ticket. On this path the coherence/setup task does **not** auto-run: it is
-   created unassigned, `create_project` returns its `coherence_task_identifier`, and the
+   created unassigned, `create_project` returns its `setup_task_identifier`, and the
    CEO authors the concrete setup (the specific hires, prompt rewrites, reporting
    structure agreed in intake) into it with `update_task`, then calls the
    **`start_team_setup`** MCP tool to assign it to itself and begin the run. There is no

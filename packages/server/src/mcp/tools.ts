@@ -2510,7 +2510,7 @@ export function registerTools(
 	tool(
 		server,
 		'create_project',
-		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned coherence_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and coherence task identifiers.',
+		'Create a new project together with its dedicated team. CEO-only. Call this ONLY after the admin has explicitly approved the finalised scope AND team type in the intake conversation - a plain reply approving it is enough (there is no inbox button to wait on), but do not call it while still scoping, on assumed defaults, or in the same turn you propose the plan; creating a project stands up a full team + container, so wait for the go-ahead. Provisions the team from the chosen source (pass template_id from list_team_templates, source_team_id to clone an existing team, or marketplace_slug to provision a marketplace team; defaults to Blank), creates the project, its planning task, and the initial CEO coherence/setup task the planning task is blocked on, then provisions the container. The coherence/setup task is created unassigned and does NOT start automatically on this path: first author its description (update_task on the returned setup_task_identifier) to capture the concrete setup you agreed in intake - the exact roles to hire, any system-prompt rewrites, and the reporting structure - then call start_team_setup(project) to begin the run. When intake_task_id is given, the intake conversation is closed with a completion note. Returns the new project plus its planning and setup task identifiers.',
 		createProjectShape,
 		async (args, db, auth) => {
 			if (auth.type !== AuthType.Agent) {
@@ -2609,8 +2609,8 @@ export function registerTools(
 				team_slug: team.slug,
 				planning_task_id: planningTask.id,
 				planning_task_identifier: planningTask.identifier,
-				coherence_task_id: coherenceTask?.id ?? null,
-				coherence_task_identifier: coherenceTask?.identifier ?? null,
+				setup_task_id: coherenceTask?.id ?? null,
+				setup_task_identifier: coherenceTask?.identifier ?? null,
 			};
 		},
 		db,
