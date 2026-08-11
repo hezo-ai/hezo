@@ -75,7 +75,20 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 
 		const settingsHostPath = join(ctx.hostHomeDir, 'settings.json');
 		const settingsContainerPath = join(ctx.containerHomeDir, 'settings.json');
-		const settingsContents = `${JSON.stringify(buildClaudeCodeSettings(ctx.provider ?? AiProvider.Anthropic, ctx.runModel, deniedTools, guardCommand), null, 2)}\n`;
+		// The doc-write guard above is emitted either way: it is a deterministic
+		// path match, unaffected by whether this invocation gets a completeness
+		// judge (`stopJudge`, false for the CEO chat).
+		const settingsContents = `${JSON.stringify(
+			buildClaudeCodeSettings(
+				ctx.provider ?? AiProvider.Anthropic,
+				ctx.runModel,
+				deniedTools,
+				guardCommand,
+				ctx.stopJudge !== false,
+			),
+			null,
+			2,
+		)}\n`;
 
 		const cliArgs: string[] = ['--settings', settingsContainerPath];
 		if (descriptors.length > 0) {

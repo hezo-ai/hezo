@@ -278,5 +278,6 @@
 	"chat.converted.bannerTaskGone": "Questa conversazione è stata convertita in un'attività che non esiste più.",
 	"chat.converted.composerPlaceholder": "Chiusa - continua come {identifier}",
 	"chat.converted.badge": "Convertita in attività",
-	"chat.converted.metaMessage": "Continua come {task}"
+	"chat.converted.metaMessage": "Continua come {task}",
+	"chat.toolActivity": "Sta usando {tool}"
 }

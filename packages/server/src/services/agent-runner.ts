@@ -47,9 +47,7 @@ import { withProjectGitLock } from '../lib/git-lock';
 import {
 	detectPassiveTeammateAsks,
 	detectUnlinkedTeammateAsks,
-	detectUnlinkedTeammateReferences,
 	extractMentionSlugs,
-	extractPassiveMentionSlugs,
 } from '../lib/mentions';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { logger } from '../logger';
@@ -68,7 +66,12 @@ import {
 } from './ai-provider-keys';
 import { BackgroundTerminationDetector } from './background-termination';
 import { checkOverBudget, recordRunCost } from './budget';
-import { postAgentComment, resolveWarnableSlugs } from './comment-wakeups';
+import {
+	detectNoWakeExits,
+	formatNoWakeExitWarning,
+	postAgentComment,
+	resolveWarnableSlugs,
+} from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
 import type { ContainerLogStreamer } from './container-logs';
 import {
@@ -586,6 +589,12 @@ export interface RuntimeInvocationInput {
 	connectorDescriptors: McpDescriptor[];
 	/** Caller-specific env entries (e.g. HEZO_TASK_ID for a run). */
 	extraEnv?: string[];
+	/**
+	 * Whether this invocation gets the completeness Stop-hook judge. Defaults to
+	 * true (every task run); the CEO chat passes false. See
+	 * {@link McpAdapterContext.stopJudge}.
+	 */
+	stopJudge?: boolean;
 }
 
 /**
@@ -621,6 +630,7 @@ export async function buildRuntimeInvocation(
 		endpoints,
 		connectorDescriptors,
 		extraEnv = [],
+		stopJudge = true,
 	} = input;
 
 	const subscriptionMount = await buildSubscriptionMount(
@@ -678,6 +688,7 @@ export async function buildRuntimeInvocation(
 		provider,
 		runModel: modelOverride,
 		projectDocSlugs,
+		stopJudge,
 	});
 	validateInjection(adapter, mcpInjection);
 
@@ -2113,77 +2124,17 @@ export async function runAgent(
 						 WHERE created_by_run_id = $1 AND content_type = 'text'`,
 						[heartbeatRunId],
 					);
-					const byTask = new Map<
-						string,
-						{ content: unknown; parent_comment_id: string | null }[]
-					>();
-					for (const row of posted.rows) {
-						const bucket = byTask.get(row.task_id);
-						if (bucket) bucket.push(row);
-						else byTask.set(row.task_id, [row]);
-					}
-					// The run's own task is judged even with no comment on it: that is
-					// where a handoff stranded in the final message lives.
-					if (!byTask.has(task.id)) byTask.set(task.id, []);
-
-					// One read for every touched task rather than one per task, and it
-					// carries team_id so a cross-team comment is warned against the right
-					// roster (an HQ agent acting inside another team's project).
-					const touched = await deps.db.query<{
-						id: string;
-						identifier: string;
-						team_id: string;
-						status: string;
-					}>(
-						`SELECT id, identifier, team_id, status::text AS status
-						 FROM tasks WHERE id = ANY($1)`,
-						[Array.from(byTask.keys())],
-					);
-					// Memoized per team — one call in the ordinary single-team run.
-					const rosterByTeam = new Map<string, string[]>();
-					const rosterFor = async (teamId: string): Promise<string[]> => {
-						const cached = rosterByTeam.get(teamId);
-						if (cached) return cached;
-						const resolved = await resolveWarnableSlugs(deps.db, teamId, agent.id);
-						rosterByTeam.set(teamId, resolved);
-						return resolved;
-					};
-
-					const finalMessage = parser.getFinalAssistantMessage() ?? '';
-					for (const row of touched.rows) {
-						if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(row.status)) continue;
-						const comments = byTask.get(row.id) ?? [];
-						// A wake is an active `@`-mention or a reply (which wakes the parent
-						// author). agent_wakeup_requests carries no created_by_run_id, so this
-						// is derived from the run's own comments rather than queried directly.
-						const wokeSomeone = comments.some(
-							(c) => extractMentionSlugs(c.content).length > 0 || c.parent_comment_id !== null,
-						);
-						if (wokeSomeone) continue;
-						const outward: unknown[] = comments.map((c) => c.content);
-						// The final message is outward-facing on the run's own task only —
-						// it is not addressed to any other task's thread.
-						if (row.id === task.id) outward.push(finalMessage);
-						const roster = await rosterFor(row.team_id);
-						const named = new Set<string>();
-						for (const text of outward) {
-							for (const slug of extractPassiveMentionSlugs(text)) {
-								if (roster.includes(slug)) named.add(slug);
-							}
-							for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
-						}
-						if (named.size === 0) continue;
-						const list = Array.from(named);
-						const namedList = list.map((s) => `**${s}**`).join(', ');
-						const fixes = list.map((s) => `@${s}`).join(', ');
-						emit(
-							'stdout',
-							`\n[runner] WARNING: this run woke no one on ${row.identifier}. It named ` +
-								`${namedList} there without an active @-mention and left ${row.identifier} ` +
-								`open, so whoever acts next was never notified. If you were handing the ` +
-								`work over, post a comment with an active mention (${fixes}); if you were ` +
-								`only referring to them, no action is needed.\n`,
-						);
+					// The run's own task is always judged, even with no comment on it:
+					// that is where a handoff stranded in the final message lives, and the
+					// final message is outward-facing on that task alone (it is not
+					// addressed to any other task's thread).
+					const findings = await detectNoWakeExits(deps.db, {
+						selfMemberId: agent.id,
+						comments: posted.rows,
+						extraOutward: new Map([[task.id, [parser.getFinalAssistantMessage() ?? '']]]),
+					});
+					for (const finding of findings) {
+						emit('stdout', `\n[runner] WARNING: ${formatNoWakeExitWarning(finding, 'this run')}\n`);
 					}
 				} catch (e) {
 					log.error(`Run ${heartbeatRunId} no-wake exit check failed:`, e);

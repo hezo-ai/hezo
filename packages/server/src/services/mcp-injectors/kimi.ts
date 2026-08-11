@@ -128,20 +128,22 @@ function buildStdioEntry(d: McpStdioDescriptor): KimiStdioEntry {
  * it, since a rejected section reports as a warning and not an error.
  */
 function renderConfigToml(
-	judgeScriptContainerPath: string,
+	judgeScriptContainerPath: string | null,
 	docWriteGuardContainerPath: string | null,
 ): string {
-	const lines = [
-		'[[permission.rules]]',
-		'pattern = "*"',
-		'decision = "allow"',
-		'',
-		'[[hooks]]',
-		'event = "Stop"',
-		`command = ${escapeTomlBasicString(`node ${judgeScriptContainerPath}`)}`,
-		`timeout = ${STOP_HOOK_TIMEOUT_SEC}`,
-		'',
-	];
+	const lines = ['[[permission.rules]]', 'pattern = "*"', 'decision = "allow"', ''];
+	// Omitted entirely when the caller wants no completeness judge (the CEO chat),
+	// together with the script it would point at. Exactly the four permitted keys
+	// - any fifth makes the CLI reject the whole config.
+	if (judgeScriptContainerPath) {
+		lines.push(
+			'[[hooks]]',
+			'event = "Stop"',
+			`command = ${escapeTomlBasicString(`node ${judgeScriptContainerPath}`)}`,
+			`timeout = ${STOP_HOOK_TIMEOUT_SEC}`,
+			'',
+		);
+	}
 	// PreToolUse is one of Kimi's three blockable events. Emitted only when the
 	// project has docs to guard, so a run without them keeps a byte-identical
 	// config. Exactly the four permitted keys, in the same order as the Stop
@@ -170,8 +172,11 @@ export const kimiAdapter: RuntimeMcpAdapter = {
 			throw new Error('kimi mcp adapter requires hostHomeDir and containerHomeDir');
 		}
 
+		const stopJudge = ctx.stopJudge !== false;
 		const judgeScriptHostPath = join(ctx.hostHomeDir, JUDGE_SCRIPT_BASENAME);
-		const judgeScriptContainerPath = join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME);
+		const judgeScriptContainerPath = stopJudge
+			? join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME)
+			: null;
 
 		const docSlugs = ctx.projectDocSlugs ?? [];
 		const guardContainerPath =
@@ -183,15 +188,17 @@ export const kimiAdapter: RuntimeMcpAdapter = {
 				mode: 0o600,
 				contents: renderConfigToml(judgeScriptContainerPath, guardContainerPath),
 			},
-			{
+		];
+		if (stopJudge) {
+			files.push({
 				hostPath: judgeScriptHostPath,
 				mode: 0o700,
 				// Non-null: JUDGE_SPECS carries an entry for this runtime. Falling back
 				// to an empty script would install a hook that does nothing, which is
 				// worse than the loud failure of a missing file.
 				contents: buildJudgeScriptForRuntime(AgentRuntime.Kimi) ?? '',
-			},
-		];
+			});
+		}
 		if (guardContainerPath) {
 			files.push({
 				hostPath: join(ctx.hostHomeDir, DOC_WRITE_GUARD_FILENAME),

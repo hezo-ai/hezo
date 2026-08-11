@@ -2,6 +2,7 @@ import {
 	ADMIN_MENTION_SLUG,
 	CommentContentType,
 	DEFAULT_TEAM_ID,
+	TERMINAL_TASK_STATUSES,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -217,6 +218,135 @@ export function buildWakeReceipt(
 		if (!wokeSet.has(slug)) named.add(slug);
 	}
 	return { woke: Array.from(wokeSet), named_not_woken: Array.from(named) };
+}
+
+/** One comment considered by {@link detectNoWakeExits}. */
+export interface NoWakeExitComment {
+	task_id: string;
+	content: unknown;
+	parent_comment_id: string | null;
+}
+
+/** A task an execution left open having notified nobody while naming someone. */
+export interface NoWakeExitFinding {
+	taskId: string;
+	identifier: string;
+	/** Roster teammates named in a form that notifies no one. */
+	named: string[];
+}
+
+/**
+ * The structural no-wake exit check, shared by the task runner and the CEO chat.
+ *
+ * Every other gate in this area classifies TEXT, so each new phrasing that
+ * strands a handoff needs new vocabulary. This one asks a question the system can
+ * answer from its own state: did an execution end having woken NOBODY on a task
+ * it left open, after naming a teammate in a form that notifies no one? That
+ * combination is what a stranded handoff IS, whatever words carried it.
+ *
+ * It is also the only check that looks at what an execution achieved in
+ * AGGREGATE - the runner's delivery net inspects only a final message, and
+ * `create_comment`'s receipt only one comment at a time, so a passively-addressed
+ * ask posted as a comment lives exactly in the gap between them.
+ *
+ * The aggregate is PER TASK, not per execution: judged execution-wide, a run that
+ * woke someone on its own task could strand a handoff on another one and still
+ * pass clean. Terminal tasks are skipped - nobody is expected to act next on a
+ * closed task.
+ *
+ * `extraOutward` carries outward-facing text that belongs to a task without being
+ * a comment on it (the runner's final message, on the run's own task). Its keys
+ * also force those tasks to be judged even with no comment posted, which is how
+ * a handoff that never left the final message is caught.
+ *
+ * Detection only: the caller decides where a finding is reported, and no caller
+ * fabricates a wake from it. Use {@link formatNoWakeExitWarning} for the wording.
+ */
+export async function detectNoWakeExits(
+	db: Db,
+	input: {
+		/** The acting agent, excluded from its own roster so a self-reference never counts. */
+		selfMemberId: string;
+		comments: readonly NoWakeExitComment[];
+		extraOutward?: ReadonlyMap<string, readonly string[]>;
+	},
+): Promise<NoWakeExitFinding[]> {
+	const byTask = new Map<string, NoWakeExitComment[]>();
+	for (const row of input.comments) {
+		const bucket = byTask.get(row.task_id);
+		if (bucket) bucket.push(row);
+		else byTask.set(row.task_id, [row]);
+	}
+	for (const taskId of input.extraOutward?.keys() ?? []) {
+		if (!byTask.has(taskId)) byTask.set(taskId, []);
+	}
+	if (byTask.size === 0) return [];
+
+	// One read for every touched task rather than one per task, and it carries
+	// team_id so a cross-team comment is warned against the right roster (an HQ
+	// agent acting inside another team's project).
+	const touched = await db.query<{
+		id: string;
+		identifier: string;
+		team_id: string;
+		status: string;
+	}>(
+		`SELECT id, identifier, team_id, status::text AS status
+		 FROM tasks WHERE id = ANY($1)`,
+		[Array.from(byTask.keys())],
+	);
+
+	// Memoized per team — one call in the ordinary single-team case.
+	const rosterByTeam = new Map<string, string[]>();
+	const rosterFor = async (teamId: string): Promise<string[]> => {
+		const cached = rosterByTeam.get(teamId);
+		if (cached) return cached;
+		const resolved = await resolveWarnableSlugs(db, teamId, input.selfMemberId);
+		rosterByTeam.set(teamId, resolved);
+		return resolved;
+	};
+
+	const findings: NoWakeExitFinding[] = [];
+	for (const row of touched.rows) {
+		if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(row.status)) continue;
+		const comments = byTask.get(row.id) ?? [];
+		// A wake is an active `@`-mention or a reply (which wakes the parent author).
+		// agent_wakeup_requests carries no originating-execution id, so this is
+		// derived from the execution's own comments rather than queried directly.
+		const wokeSomeone = comments.some(
+			(c) => extractMentionSlugs(c.content).length > 0 || c.parent_comment_id !== null,
+		);
+		if (wokeSomeone) continue;
+		const outward: unknown[] = comments.map((c) => c.content);
+		outward.push(...(input.extraOutward?.get(row.id) ?? []));
+		const roster = await rosterFor(row.team_id);
+		const named = new Set<string>();
+		for (const text of outward) {
+			for (const slug of extractPassiveMentionSlugs(text)) {
+				if (roster.includes(slug)) named.add(slug);
+			}
+			for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
+		}
+		if (named.size === 0) continue;
+		findings.push({ taskId: row.id, identifier: row.identifier, named: Array.from(named) });
+	}
+	return findings;
+}
+
+/**
+ * The warning wording for a {@link detectNoWakeExits} finding. One template, so a
+ * fix reaches the run log and the chat thread alike; `subject` names the
+ * execution that fell short ("this run", "This chat turn").
+ */
+export function formatNoWakeExitWarning(finding: NoWakeExitFinding, subject: string): string {
+	const namedList = finding.named.map((s) => `**${s}**`).join(', ');
+	const fixes = finding.named.map((s) => `@${s}`).join(', ');
+	return (
+		`${subject} woke no one on ${finding.identifier}. It named ${namedList} there ` +
+		`without an active @-mention and left ${finding.identifier} open, so whoever acts ` +
+		`next was never notified. If you were handing the work over, post a comment with an ` +
+		`active mention (${fixes}); if you were only referring to them, no action is needed.`
+	);
 }
 
 export interface PostAgentCommentParams {

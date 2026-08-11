@@ -181,7 +181,11 @@ interface ClaudeCommandHookMatcherGroup {
 
 export interface ClaudeCodeSettings {
 	hooks: {
-		Stop: ClaudeStopHookMatcherGroup[];
+		/**
+		 * Present for every task run; omitted only when the caller asks for no
+		 * completeness judge (the CEO chat - see `McpAdapterContext.stopJudge`).
+		 */
+		Stop?: ClaudeStopHookMatcherGroup[];
 		/**
 		 * Present only when the run has project docs to guard. Deterministic and
 		 * blocking: it refuses a Write/Edit aimed at a path that shadows a project
@@ -218,6 +222,13 @@ export function buildClaudeCodeSettings(
 	 * existed.
 	 */
 	docWriteGuardCommand?: string | null,
+	/**
+	 * Whether to emit the completeness judge at all. Defaults to true, so every
+	 * task run keeps it; the CEO chat passes false. See
+	 * {@link McpAdapterContext.stopJudge} for why a chat turn is not a thing this
+	 * judge can rule on.
+	 */
+	stopJudge = true,
 ): ClaudeCodeSettings {
 	// This settings file is only ever written for a Claude Code run, so the
 	// runtime is known — pass it rather than letting the judge fall back to the
@@ -243,19 +254,23 @@ export function buildClaudeCodeSettings(
 						],
 					}
 				: {}),
-			Stop: [
-				{
-					hooks: [
-						{
-							type: 'prompt',
-							prompt: STOP_HOOK_PROMPT,
-							timeout: 30,
-							model,
-							statusMessage: 'Checking work completeness...',
-						},
-					],
-				},
-			],
+			...(stopJudge
+				? {
+						Stop: [
+							{
+								hooks: [
+									{
+										type: 'prompt' as const,
+										prompt: STOP_HOOK_PROMPT,
+										timeout: 30,
+										model,
+										statusMessage: 'Checking work completeness...',
+									},
+								],
+							},
+						],
+					}
+				: {}),
 		},
 	};
 }

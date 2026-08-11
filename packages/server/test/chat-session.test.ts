@@ -216,6 +216,61 @@ describe('ChatSessionManager', () => {
 		projectId = await seedProviderAndContainer(ctx);
 	});
 
+	test('broadcasts tool activity as progress, keeping it out of the reply text', async () => {
+		// The runtimes emit whole assistant messages, not token deltas, so a turn
+		// that calls a tool after writing its text is indistinguishable from a
+		// finished one - the operator sees only the dots. The activity event is what
+		// gives those dots a reason; it is progress, so it must never land in the
+		// message the conversation keeps.
+		const toolDocker = createStubDocker({
+			execCreate: async () => 'exec-1',
+			execStart: async (
+				_execId: string,
+				opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+			) => {
+				const onChunk = opts.onChunk ?? (() => undefined);
+				await onChunk({ stream: 'stdout', text: assistantText('Checking the roster.') });
+				await onChunk({
+					stream: 'stdout',
+					text: claudeLine({
+						type: 'assistant',
+						message: {
+							role: 'assistant',
+							content: [{ type: 'tool_use', name: 'mcp__hezo__list_agents' }],
+						},
+					}),
+				});
+				await onChunk({ stream: 'stdout', text: resultEvent(10, 5, 0.02) });
+				return { stdout: '', stderr: '' };
+			},
+		});
+		const { manager, wsManager } = makeManager(ctx, toolDocker);
+		const captured = captureCeoRoom(wsManager);
+
+		const { assistantMessageId } = await manager.sendTurn({ text: 'who is on the team?' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+
+		const activity = captured.events.filter((e) => e.type === 'chat_message_tool_activity');
+		expect(activity.length).toBe(1);
+		expect(activity[0].tool).toBe('mcp__hezo__list_agents');
+		expect(activity[0].messageId).toBe(assistantMessageId);
+
+		// The stored reply is the text alone — no tool name leaked into it.
+		const asst = await ctx.db.query<{ content: string }>(
+			'SELECT content FROM chat_messages WHERE id = $1',
+			[assistantMessageId],
+		);
+		expect(asst.rows[0].content).toBe('Checking the roster.');
+
+		await manager.stop();
+	});
+
 	test('streams a reply and finalizes the assistant message with usage', async () => {
 		const { docker } = makeChatDocker(ctx.dataDir, projectId);
 		const { manager, wsManager } = makeManager(ctx, docker);

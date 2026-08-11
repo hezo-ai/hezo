@@ -14,6 +14,7 @@ import {
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
 	credentialKindRequiresAllowedHosts,
+	displayToolName,
 	extensionOf,
 	formatTaskStatus,
 	isAgentEffort,
@@ -34,6 +35,7 @@ import {
 	opencodeModelArg,
 	parseProviderModels,
 	providerDirectUpstreamHosts,
+	qualifiedMcpToolName,
 	ReactionKind,
 	resolveAttachmentContentType,
 	splitAssetPath,
@@ -407,5 +409,26 @@ describe('parseProviderModels', () => {
 			data: [{ id: 'anthropic/claude-sonnet' }],
 		});
 		expect(out).toEqual([{ id: 'anthropic/claude-sonnet', label: 'anthropic/claude-sonnet' }]);
+	});
+});
+
+describe('displayToolName', () => {
+	it('strips the mcp server namespace from a qualified tool name', () => {
+		expect(displayToolName(qualifiedMcpToolName('hezo', 'list_tasks'))).toBe('list_tasks');
+		expect(displayToolName('mcp__linear__save_issue')).toBe('save_issue');
+	});
+
+	it('keeps a native tool name as-is', () => {
+		expect(displayToolName('Bash')).toBe('Bash');
+		expect(displayToolName('Edit')).toBe('Edit');
+	});
+
+	it('keeps a double underscore inside the upstream tool name', () => {
+		expect(displayToolName('mcp__linear__save__issue')).toBe('save__issue');
+	});
+
+	it('leaves a malformed name alone rather than guessing', () => {
+		expect(displayToolName('mcp__hezo')).toBe('mcp__hezo');
+		expect(displayToolName('')).toBe('');
 	});
 });

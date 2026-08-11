@@ -167,3 +167,39 @@ test('the convert action opens a dialog listing real projects, hidden for cowork
 	await findByTestId('chat-readonly-banner');
 	expect(queryByTestId('chat-convert')).toBeNull();
 });
+
+test('a handoff warning in a converted thread stays a warning, not a second task link', async () => {
+	// The regression the message-level `system_kind` exists to prevent: the
+	// converted marker is chosen by the THREAD's converted-task reference, so
+	// without a discriminator every system row in a converted thread rendered as
+	// that link — including a warning written before the conversion.
+	seedConvertedThread();
+	queryClient.setQueryData(queryKeys.chatConversation(), {
+		conversation_id: 'thread-1',
+		messages: [
+			msg('m1', 'The hero feels stale', 'user'),
+			{
+				...msg('w1', 'This chat turn woke no one on WEB-9. It named **captain** there.', 'system'),
+				system_kind: 'handoff_not_delivered',
+			},
+			{
+				...msg('m3', 'Conversation converted to task WEB-12: Landing page hero rewrite', 'system'),
+				system_kind: 'converted_task',
+			},
+		],
+		compacted_count: 0,
+	});
+
+	const { findByTestId, findAllByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+
+	// The converted marker still links the task (in-thread + composer banner)…
+	const links = await findAllByTestId('chat-converted-task-link');
+	expect(links.length).toBe(2);
+	// …while the warning keeps its own text and never becomes a task link.
+	const warningRow = document.querySelector('[data-system-kind="handoff_not_delivered"]');
+	expect(warningRow).toBeTruthy();
+	expect(warningRow?.textContent).toContain('WEB-9');
+	expect(warningRow?.querySelector('[data-testid="chat-converted-task-link"]')).toBeNull();
+});

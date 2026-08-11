@@ -377,7 +377,11 @@ assignment wakeup carries the target team). In-flight work is aborted first
 (`abortConversationRuntime`, shared with close; a partial reply settles as
 `interrupted`), the task is created, and then — atomically — a `system`-role
 `chat_messages` row naming the task is inserted and the row gets
-`converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`. Converted
+`converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`. The system row
+carries `system_kind = 'converted_task'` (`chat_messages.system_kind`, migration 058): which
+marker a system row is has to be a property of the **message**, since the chatbox would otherwise
+choose by the thread's `converted_task_id` and render a handoff warning written before the
+conversion as the converted-task link. Converted
 threads **stay listed**: the default listing predicate is `closed_at IS NULL OR
 converted_task_id IS NOT NULL`, with a joined `converted_task {identifier, title,
 project_slug}` reference for the switcher marker, locked-composer banner and the meta
@@ -396,6 +400,15 @@ topic), and the platform→app direction runs via `parseClose` →
 **single shared lease** per CEO member — a thread is only message-grouping + rolling
 window + memory scope, and each turn is a stateless one-shot `docker exec` reading a
 per-turn prompt file, so N threads run as N independent execs into the one container.
+
+**Tool activity is broadcast as progress.** Alongside the text deltas, the turn broadcasts
+`ChatMessageToolActivity {messageId, tool}` for each tool the parser reports, and the chatbox
+renders the latest one beside the typing dots (`displayToolName` strips the `mcp__<server>__`
+namespace). It is never accumulated into the message and never stored, so it neither rides the
+prompt window nor survives a reload. Without it the dots have no visible cause: the runtimes emit
+**whole assistant messages rather than token deltas**, so a turn that calls a tool after writing
+its text — or is simply tearing the CLI down — looks exactly like a finished one that has not
+settled yet, which is what made the post-reply wait read as the chat being stuck.
 
 **A session survives its container being suspended.** Because it holds no long-lived
 process — each turn is its own exec and continuity lives in `chat_conversations` /
@@ -3139,6 +3152,19 @@ alive), so both run fail-open. File-mount subscription runtimes fail open (no AP
 env); Anthropic subscription still fires via `CLAUDE_CODE_OAUTH_TOKEN`. Full per-runtime
 detail is in `AGENTS.md` › AI runtime hooks.
 
+**The CEO chat gets no judge.** `buildRuntimeInvocation` takes a `stopJudge` flag (default true,
+threaded to `McpAdapterContext`); `chat-session-manager.ts` passes false, and each of the four
+judge-carrying adapters then omits the hook **and** the script it points at together - a hook
+naming a script that was never written is a broken run, not a disabled judge. The judge rules on
+whether an agent is abandoning *task* work and reads only the run's final message; a chat turn has
+no task, and its final message is the reply already streamed to the operator, so rules 10 and 12
+(both premised on a final message reaching nobody) fire on ordinary replies and their block reason
+sends the CEO chasing a `create_comment` on a task that does not exist - paid for with an extra
+LLM round trip at the end of every reply, and on a block a whole extra turn. What a chat turn
+genuinely can strand is caught structurally instead (see the no-wake exit check below). The
+`PreToolUse` doc-write guard is unaffected either way: it is a deterministic path match, not a
+verdict on whether work is finished.
+
 **Project-doc write guard.** Project docs are database records, and every prompt layer says so
 (`SHARED_INSTRUCTIONS` opens with it; the `{{project_docs_context}}` manifest repeats it naming
 the Write/Edit tools), yet agents still reach for the file tools — and the failure is silent,
@@ -3238,6 +3264,22 @@ the ordinary single-team run, and correct for an HQ agent commenting inside anot
 Warn-only, per the standing posture that the system never fabricates a wake from a
 non-`@` signal. It fires on attribution-only runs too, which is the accepted cost of having no
 vocabulary - the run-log wording says so, and a run log is the cheap place to over-report.
+
+**The same check runs for CEO chat turns**, where it is the *only* layer looking for a stranded
+handoff: the net and the run-side check are both on the task-run path, which a chat turn never
+takes, and the chat has no completeness judge. Detection is shared - `detectNoWakeExits` in
+`comment-wakeups.ts`, with `formatNoWakeExitWarning` giving both callers one wording - and three
+things differ. **Only the turn's comments are judged, never its reply**: the premise that makes a
+handoff in a final message stranded is that the message reaches nobody, and a chat reply is the
+delivery. **The turn's comments are found by author and time** (`author_member_id`, `created_by_run_id
+IS NULL`, created since the turn's assistant row), because a chat session authenticates against
+`chat_sessions` and so has no run id - a sibling conversation's concurrent turn can therefore be
+attributed here too, which duplicates a warning but never invents one; `idx_comments_author_created`
+(migration 058) serves the lookup. **The finding is reported as a `system` chat message**, not a log
+line, because unlike a run it has two readers who can act: the operator sees it in the thread, and
+the CEO reads it back in the next turn's window (system rows ride `loadActiveWindow`) and can post
+the mention it missed. It runs only on a turn that completed, mirroring the runner's `exitedClean`
+gate, and after `finalize`, so the operator never waits on it.
 
 **Wake receipt.** Every `create_comment` / `update_comment` result carries a `wake` object:
 `woke` (the teammate slugs the write actually notified - an active `@slug`, `admin` for the inbox

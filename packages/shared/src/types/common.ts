@@ -1193,6 +1193,26 @@ export const ChatMessageRole = {
 } as const;
 export type ChatMessageRole = (typeof ChatMessageRole)[keyof typeof ChatMessageRole];
 
+/**
+ * What a `system`-role chat message records. System rows are meta markers rather
+ * than conversation turns, and the chatbox renders each kind differently, so the
+ * kind is a property of the message: reading it off the conversation (as the
+ * converted-task marker once did) misrenders every other kind in a thread that
+ * was later converted.
+ */
+export const ChatSystemMessageKind = {
+	/** The thread was converted into a task; the marker links it. */
+	ConvertedTask: 'converted_task',
+	/**
+	 * A comment the CEO posted on a project task named a teammate without an
+	 * active `@`-mention and left the task open, so nobody was notified. Written
+	 * by the chat's no-wake exit check.
+	 */
+	HandoffNotDelivered: 'handoff_not_delivered',
+} as const;
+export type ChatSystemMessageKind =
+	(typeof ChatSystemMessageKind)[keyof typeof ChatSystemMessageKind];
+
 export const ChatMessageStatus = {
 	Pending: 'pending',
 	Streaming: 'streaming',
@@ -2228,6 +2248,20 @@ export const MCP_TOOL_NAME_MAX_LENGTH = 64;
 
 export function qualifiedMcpToolName(serverName: string, toolName: string): string {
 	return `mcp__${serverName}__${toolName}`;
+}
+
+/**
+ * The readable half of a tool name a runtime reported, for showing a human what
+ * an agent is doing right now: `mcp__hezo__list_tasks` reads as `list_tasks`,
+ * while a native tool (`Bash`, `Edit`) is already its own label and passes
+ * through. Presentation only - never use it to identify a tool, since two
+ * connectors can expose the same upstream name.
+ */
+export function displayToolName(tool: string): string {
+	const parts = tool.split('__');
+	// `mcp__<server>__<tool>`; a connector tool name may itself contain `__`.
+	if (parts.length >= 3 && parts[0] === 'mcp') return parts.slice(2).join('__');
+	return tool;
 }
 
 /**

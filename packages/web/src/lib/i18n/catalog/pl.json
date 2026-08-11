@@ -278,5 +278,6 @@
 	"chat.converted.bannerTaskGone": "Ta rozmowa została przekształcona w zadanie, które już nie istnieje.",
 	"chat.converted.composerPlaceholder": "Zamknięta - ciąg dalszy w {identifier}",
 	"chat.converted.badge": "Przekształcona w zadanie",
-	"chat.converted.metaMessage": "Ciąg dalszy w {task}"
+	"chat.converted.metaMessage": "Ciąg dalszy w {task}",
+	"chat.toolActivity": "Używa {tool}"
 }

@@ -681,3 +681,41 @@ test('a streaming reply shows no per-message copy button until it settles', asyn
 	// the reply is complete.
 	expect(queryAllByTestId('chat-message-copy')).toHaveLength(0);
 });
+
+test('a handoff warning renders as its own meta row, wrapping rather than as a bubble', async () => {
+	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+
+	const warning =
+		'This chat turn woke no one on TO-3. It named **captain** there without an active ' +
+		'@-mention and left TO-3 open, so whoever acts next was never notified.';
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'complete',
+			content: 'Posted an update.',
+			created_at: now(),
+		},
+		{
+			id: 's1',
+			role: 'system',
+			channel: 'web',
+			status: 'complete',
+			content: warning,
+			created_at: now(),
+			system_kind: 'handoff_not_delivered',
+		},
+	]);
+
+	// The whole sentence is present: naming the task and the teammate is the point
+	// of the warning, so unlike the converted marker this row must not truncate.
+	expect(await findByText(warning)).toBeTruthy();
+	const row = document.querySelector('[data-system-kind="handoff_not_delivered"]');
+	expect(row).toBeTruthy();
+	expect(row?.getAttribute('data-role')).toBe('system');
+	// Never mistaken for the CEO speaking.
+	expect(queryByTestId('chat-converted-task-link')).toBeNull();
+});

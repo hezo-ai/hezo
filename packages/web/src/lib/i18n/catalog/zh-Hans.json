@@ -278,5 +278,6 @@
 	"chat.converted.bannerTaskGone": "此对话已转换为一个不再存在的任务。",
 	"chat.converted.composerPlaceholder": "已关闭 - 已转为 {identifier}",
 	"chat.converted.badge": "已转换为任务",
-	"chat.converted.metaMessage": "已转为 {task}"
+	"chat.converted.metaMessage": "已转为 {task}",
+	"chat.toolActivity": "正在使用 {tool}"
 }

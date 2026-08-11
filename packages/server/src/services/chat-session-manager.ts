@@ -11,6 +11,7 @@ import {
 	ChatMessageRole,
 	ChatMessageStatus,
 	ChatSessionStatus,
+	ChatSystemMessageKind,
 	type CommentAttachment,
 	DEFAULT_TEAM_ID,
 	effectiveRuntime,
@@ -51,6 +52,7 @@ import {
 	selectFlush,
 	type WindowMessage,
 } from './chat-memory';
+import { detectNoWakeExits, formatNoWakeExitWarning } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
@@ -967,6 +969,7 @@ export class ChatSessionManager {
 				channel: ChatChannel.Web,
 				status: ChatMessageStatus.Complete,
 				content: messageContent,
+				systemKind: ChatSystemMessageKind.ConvertedTask,
 				completed: true,
 			});
 			await this.deps.db.query(
@@ -983,6 +986,8 @@ export class ChatSessionManager {
 			ChatMessageRole.System,
 			ChatChannel.Web,
 			messageContent,
+			undefined,
+			ChatSystemMessageKind.ConvertedTask,
 		);
 		this.broadcastChat(input.conversationId, {
 			type: WsMessageType.ChatConversationUpdated,
@@ -1349,6 +1354,16 @@ export class ChatSessionManager {
 				sshSocketContainerPath,
 				bridge,
 				egress,
+				// No completeness judge on a chat turn. The judge rules on whether an
+				// agent is abandoning TASK work, and it reads only the run's final
+				// message: here there is no task, and the final message is the reply
+				// already streamed to the operator - so every rule it could fire on is
+				// inapplicable or false, while a block spends a whole extra turn
+				// chasing a create_comment on a task that does not exist. The thing a
+				// chat turn genuinely can strand - a handoff in a comment it posted on
+				// some project's task - is caught structurally instead, by
+				// create_comment's wake receipt and the no-wake exit check in runTurn.
+				stopJudge: false,
 			});
 
 			return {
@@ -1469,6 +1484,19 @@ export class ChatSessionManager {
 						accumulated.text += ev.text;
 						this.broadcastDelta(conversationId, assistantMessageId, ev.text);
 					}
+					// Progress, not conversation: broadcast but never accumulated into the
+					// message, so it reaches the open chatbox and nothing else. Without it
+					// a turn that keeps working after its last text block - tools called
+					// after the reply is written, or the runtime's own teardown - shows the
+					// operator nothing but dots.
+					if (ev.toolActivity) {
+						this.broadcastChat(conversationId, {
+							type: WsMessageType.ChatMessageToolActivity,
+							conversationId,
+							messageId: assistantMessageId,
+							tool: ev.toolActivity,
+						});
+					}
 				}
 			};
 
@@ -1483,6 +1511,8 @@ export class ChatSessionManager {
 			});
 			handle(parser.flush());
 			await finalize(ChatMessageStatus.Complete, parser.getUsage());
+			// After the reply has settled, so the operator is never kept waiting on it.
+			await this.checkNoWakeExit(session, ctx, assistantMessageId);
 		} catch (err) {
 			if (abort.signal.aborted) {
 				// Aborting only tears down the attach stream — reap the abandoned
@@ -1496,6 +1526,77 @@ export class ChatSessionManager {
 		} finally {
 			await removePrompt();
 			if (convo.current?.assistantMessageId === assistantMessageId) convo.current = null;
+		}
+	}
+
+	/**
+	 * The no-wake exit check for a chat turn: did this turn post a comment on some
+	 * project's task that names a teammate, notifies nobody, and leaves the task
+	 * open? That is a stranded handoff whatever words carried it, and in the chat
+	 * nothing else looks for it - the runner's net and its own exit check are on
+	 * the task-run path, which a chat turn never takes.
+	 *
+	 * Only the turn's COMMENTS are judged, never its reply: on a task run the final
+	 * message is delivered to nobody, which is what makes a handoff left there
+	 * stranded, but here the reply IS the delivery - it streamed to the operator.
+	 * That difference is also why this replaces the completeness judge rather than
+	 * joining it (see `stopJudge` at the invocation).
+	 *
+	 * The turn's comments are identified by author and time rather than by run id:
+	 * a chat session authenticates against `chat_sessions`, so it has no run id and
+	 * its comments carry NULL there. A comment from a sibling conversation's turn
+	 * running concurrently can therefore be attributed here too - it is the same
+	 * agent either way, so the cost is a duplicate warning, never a wrong one.
+	 *
+	 * Reported as a system message rather than a log line, because unlike a run
+	 * this has two readers who can act: the operator sees it in the thread, and the
+	 * CEO reads it back in the next turn's window and can post the mention it
+	 * missed. Warn-only, like the runner's: no wake is fabricated from it.
+	 */
+	private async checkNoWakeExit(
+		session: LiveSession,
+		ctx: ConversationContext,
+		assistantMessageId: string,
+	): Promise<void> {
+		try {
+			const posted = await this.deps.db.query<{
+				task_id: string;
+				content: unknown;
+				parent_comment_id: string | null;
+			}>(
+				`SELECT task_id, content, parent_comment_id FROM task_comments
+				 WHERE author_member_id = $1 AND created_by_run_id IS NULL AND content_type = 'text'
+				   AND created_at >= (SELECT created_at FROM chat_messages WHERE id = $2)`,
+				[session.ceoMemberId, assistantMessageId],
+			);
+			if (posted.rows.length === 0) return;
+			const findings = await detectNoWakeExits(this.deps.db, {
+				selfMemberId: session.ceoMemberId,
+				comments: posted.rows,
+			});
+			for (const finding of findings) {
+				const content = formatNoWakeExitWarning(finding, 'This chat turn');
+				const messageId = await this.insertMessage({
+					conversationId: ctx.conversationId,
+					role: ChatMessageRole.System,
+					channel: ctx.channel,
+					status: ChatMessageStatus.Complete,
+					content,
+					systemKind: ChatSystemMessageKind.HandoffNotDelivered,
+					completed: true,
+				});
+				this.broadcastStart(
+					ctx.conversationId,
+					messageId,
+					ChatMessageRole.System,
+					ctx.channel,
+					content,
+					undefined,
+					ChatSystemMessageKind.HandoffNotDelivered,
+				);
+			}
+		} catch (e) {
+			log.error('CEO chat no-wake exit check failed', e);
 		}
 	}
 
@@ -2003,12 +2104,14 @@ export class ChatSessionManager {
 		authorMemberId?: string | null;
 		authorLabel?: string | null;
 		sessionId?: string | null;
+		/** Required for a `system` row; the chatbox renders each kind differently. */
+		systemKind?: ChatSystemMessageKind | null;
 		completed: boolean;
 	}): Promise<string> {
 		const r = await this.deps.db.query<{ id: string }>(
 			`INSERT INTO chat_messages
-			   (conversation_id, role, channel, status, content, author_user_id, author_member_id, author_label, session_id, completed_at)
-			 VALUES ($1, $2::chat_message_role, $3::chat_channel, $4::chat_message_status, $5, $6, $7, $8, $9, ${input.completed ? 'now()' : 'NULL'})
+			   (conversation_id, role, channel, status, content, author_user_id, author_member_id, author_label, session_id, system_kind, completed_at)
+			 VALUES ($1, $2::chat_message_role, $3::chat_channel, $4::chat_message_status, $5, $6, $7, $8, $9, $10, ${input.completed ? 'now()' : 'NULL'})
 			 RETURNING id`,
 			[
 				input.conversationId,
@@ -2020,6 +2123,7 @@ export class ChatSessionManager {
 				input.authorMemberId ?? null,
 				input.authorLabel ?? null,
 				input.sessionId ?? null,
+				input.systemKind ?? null,
 			],
 		);
 		return r.rows[0].id;
@@ -2075,6 +2179,7 @@ export class ChatSessionManager {
 		channel: ChatChannel,
 		content: string,
 		attachments?: CommentAttachment[],
+		systemKind?: ChatSystemMessageKind,
 	): void {
 		this.broadcastChat(conversationId, {
 			type: WsMessageType.ChatMessageStart,
@@ -2085,6 +2190,7 @@ export class ChatSessionManager {
 			content,
 			createdAt: new Date().toISOString(),
 			...(attachments && attachments.length > 0 ? { attachments } : {}),
+			...(systemKind ? { systemKind } : {}),
 		});
 	}
 
