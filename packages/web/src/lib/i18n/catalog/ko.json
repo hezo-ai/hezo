@@ -278,5 +278,6 @@
 	"chat.converted.bannerTaskGone": "이 대화는 더 이상 존재하지 않는 작업으로 전환되었습니다.",
 	"chat.converted.composerPlaceholder": "종료됨 - {identifier}(으)로 이어짐",
 	"chat.converted.badge": "작업으로 전환됨",
-	"chat.converted.metaMessage": "{task}(으)로 이어짐"
+	"chat.converted.metaMessage": "{task}(으)로 이어짐",
+	"chat.toolActivity": "{tool} 사용 중"
 }

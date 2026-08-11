@@ -814,6 +814,94 @@ const RESTRICTED_DESCRIPTOR: McpDescriptor = {
 	disabledTools: ['save_issue', 'delete_comment'],
 };
 
+/**
+ * `stopJudge: false` (the CEO chat) must take the completeness judge off every
+ * runtime that carries one - and take the hook and the script it points at off
+ * TOGETHER, since a hook naming a script that was never written is a broken run
+ * rather than a disabled judge. The doc-write guard is a deterministic path
+ * match, not a verdict on finished work, so it is unaffected either way.
+ */
+describe('stopJudge: false omits the completeness judge', () => {
+	const HOMES = { hostHomeDir: HOME, containerHomeDir: HOME };
+	const NO_JUDGE = { ...HOMES, stopJudge: false };
+	const fileNamed = (injection: { files: readonly McpInjectionFile[] }, name: string) =>
+		injection.files.find((f) => f.hostPath.endsWith(name));
+
+	it('claude-code drops the Stop group but keeps the doc-write guard', () => {
+		const adapter = MCP_ADAPTERS[AgentRuntime.ClaudeCode];
+		const withJudge = JSON.parse(
+			adapter.build([HEZO_DESCRIPTOR], { ...HOMES, projectDocSlugs: ['prd.md'] }).files[0].contents,
+		) as { hooks: { Stop?: unknown[]; PreToolUse?: unknown[] } };
+		expect(withJudge.hooks.Stop).toBeDefined();
+
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			...NO_JUDGE,
+			projectDocSlugs: ['prd.md'],
+		});
+		const settings = JSON.parse(
+			injection.files.find((f) => f.hostPath.endsWith('settings.json'))?.contents ?? '{}',
+		) as { hooks: { Stop?: unknown[]; PreToolUse?: unknown[] } };
+		expect(settings.hooks.Stop).toBeUndefined();
+		// The judge prompt is inlined in the settings file, so its absence is
+		// checkable directly rather than only through the parsed shape.
+		expect(JSON.stringify(settings)).not.toContain(STOP_HOOK_RULES.slice(0, 60));
+		expect(settings.hooks.PreToolUse).toBeDefined();
+		expect(fileNamed(injection, 'doc-write-guard.mjs')).toBeDefined();
+	});
+
+	it('codex drops both the hook block and the judge script', () => {
+		const adapter = MCP_ADAPTERS[AgentRuntime.Codex];
+		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
+
+		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
+		expect(fileNamed(injection, 'stop-hook-judge.mjs')).toBeUndefined();
+		const config = fileNamed(injection, 'config.toml');
+		expect(config?.contents).not.toContain('[[hooks.Stop]]');
+		// The rest of the config is untouched.
+		expect(config?.contents).toContain('[mcp_servers.hezo]');
+	});
+
+	it('gemini drops both the AfterAgent hook and the judge script', () => {
+		const adapter = MCP_ADAPTERS[AgentRuntime.Gemini];
+		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
+
+		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
+		expect(fileNamed(injection, 'stop-hook-judge.mjs')).toBeUndefined();
+		const settings = JSON.parse(fileNamed(injection, 'settings.json')?.contents ?? '{}') as {
+			hooks: { AfterAgent?: unknown[] };
+			mcpServers?: Record<string, unknown>;
+		};
+		expect(settings.hooks.AfterAgent).toBeUndefined();
+		expect(settings.mcpServers?.hezo).toBeDefined();
+	});
+
+	it('kimi drops the Stop entry while keeping the permission rule the CLI needs', () => {
+		const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
+
+		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
+		expect(fileNamed(injection, 'stop-hook-judge.mjs')).toBeUndefined();
+		const config = fileNamed(injection, 'config.toml');
+		expect(config?.contents).not.toContain('event = "Stop"');
+		expect(config?.contents).toContain('[[permission.rules]]');
+	});
+
+	it('is opt-in: an absent flag still emits the judge on every runtime that has one', () => {
+		for (const runtime of [
+			AgentRuntime.ClaudeCode,
+			AgentRuntime.Codex,
+			AgentRuntime.Gemini,
+			AgentRuntime.Kimi,
+		]) {
+			const injection = MCP_ADAPTERS[runtime].build([HEZO_DESCRIPTOR], HOMES);
+			const emitsJudge =
+				injection.files.some((f) => f.hostPath.endsWith('stop-hook-judge.mjs')) ||
+				injection.files.some((f) => f.contents.includes(STOP_HOOK_RULES.slice(0, 60)));
+			expect(emitsJudge, `${runtime} should still emit a judge by default`).toBe(true);
+		}
+	});
+});
+
 describe('per-connector MCP method filtering', () => {
 	const HOMES = { hostHomeDir: HOME, containerHomeDir: HOME };
 

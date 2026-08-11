@@ -278,5 +278,6 @@
 	"chat.converted.bannerTaskGone": "Den här konversationen omvandlades till en uppgift som inte längre finns.",
 	"chat.converted.composerPlaceholder": "Stängd - fortsätter som {identifier}",
 	"chat.converted.badge": "Omvandlad till uppgift",
-	"chat.converted.metaMessage": "Fortsätter som {task}"
+	"chat.converted.metaMessage": "Fortsätter som {task}",
+	"chat.toolActivity": "Använder {tool}"
 }

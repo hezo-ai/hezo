@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { buildCodexJudgeScript } from '../stop-hook-prompt';
 import { bearerEnvVarName, escapeTomlBasicString, renderHttpBlock, renderStdioBlock } from './toml';
-import type { McpDescriptor, McpInjection, RuntimeMcpAdapter } from './types';
+import type { McpDescriptor, McpInjection, McpInjectionFile, RuntimeMcpAdapter } from './types';
 
 function renderStopHookBlock(judgeScriptContainerPath: string): string {
 	return [
@@ -72,7 +72,11 @@ export const codexAdapter: RuntimeMcpAdapter = {
 			const serverBlock = d.kind === 'http' ? renderHttpBlock(d) : renderStdioBlock(d);
 			blocks.push(withServerTimeouts(serverBlock));
 		}
-		blocks.push(renderStopHookBlock(judgeScriptContainerPath));
+		// Both the hook block and the script it points at are omitted together when
+		// the caller wants no completeness judge (the CEO chat) - a hook naming a
+		// script that was never written is a broken run, not a disabled judge.
+		const stopJudge = ctx.stopJudge !== false;
+		if (stopJudge) blocks.push(renderStopHookBlock(judgeScriptContainerPath));
 		const contents = `${blocks.join('\n\n')}\n`;
 
 		const envEntries: string[] = [];
@@ -82,21 +86,21 @@ export const codexAdapter: RuntimeMcpAdapter = {
 			}
 		}
 
-		return {
-			cliArgs: [],
-			envEntries,
-			files: [
-				{
-					hostPath: join(ctx.hostHomeDir, 'config.toml'),
-					mode: 0o600,
-					contents,
-				},
-				{
-					hostPath: judgeScriptHostPath,
-					mode: 0o700,
-					contents: buildCodexJudgeScript(),
-				},
-			],
-		};
+		const files: McpInjectionFile[] = [
+			{
+				hostPath: join(ctx.hostHomeDir, 'config.toml'),
+				mode: 0o600,
+				contents,
+			},
+		];
+		if (stopJudge) {
+			files.push({
+				hostPath: judgeScriptHostPath,
+				mode: 0o700,
+				contents: buildCodexJudgeScript(),
+			});
+		}
+
+		return { cliArgs: [], envEntries, files };
 	},
 };

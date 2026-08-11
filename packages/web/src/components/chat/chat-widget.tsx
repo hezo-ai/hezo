@@ -1,4 +1,10 @@
-import { assetBasename, ChatMessageStatus, HQ_PROJECT_NAME } from '@hezo/shared';
+import {
+	assetBasename,
+	ChatMessageStatus,
+	ChatSystemMessageKind,
+	displayToolName,
+	HQ_PROJECT_NAME,
+} from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import {
 	ArrowRight,
@@ -15,6 +21,7 @@ import {
 	Plus,
 	SquareCheckBig,
 	StepForward,
+	TriangleAlert,
 	X,
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
@@ -102,6 +109,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		queue,
 		enqueue,
 		dequeue,
+		toolActivity,
 		conversationId: activeConversationId,
 	} = useChat(open, selectedConversationId);
 	const {
@@ -716,6 +724,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 											message={m}
 											projectSlug={hq?.slug}
 											convertedTask={convertedTask}
+											toolActivity={toolActivity}
 										/>
 									))}
 									{queue.length > 0 && <QueuedMessages queue={queue} onRemove={dequeue} />}
@@ -980,12 +989,15 @@ function MessageBubble({
 	message,
 	projectSlug,
 	convertedTask,
+	toolActivity,
 }: {
 	message: ChatMessage;
 	/** HQ project slug — chat uploads land in its asset library. */
 	projectSlug?: string;
 	/** The thread's converted-task reference — renders the system meta message as a link. */
 	convertedTask?: ChatConvertedTaskRef | null;
+	/** Tool the in-flight reply is working with; only ever set on the streaming row. */
+	toolActivity?: string | null;
 }) {
 	const isCeo = message.role === 'assistant';
 	const interrupted = message.status === ChatMessageStatus.Interrupted;
@@ -993,9 +1005,32 @@ function MessageBubble({
 	const streaming = message.status === ChatMessageStatus.Streaming;
 
 	// System rows are meta markers, not bubbles — same centred idiom as the
-	// compaction banner. Today the only producer is convert-to-task; when the
-	// thread's converted-task reference is gone (task deleted) the raw
-	// server-baked text still names the identifier.
+	// compaction banner. Which marker is a property of the MESSAGE, never of the
+	// thread: reading it off the conversation would make every system row in a
+	// converted thread render as the converted-task link.
+	//
+	// A handoff warning carries a full sentence rather than a label, so unlike the
+	// converted marker it wraps instead of truncating — its whole point is naming
+	// the task and the teammate who was not notified.
+	if (
+		message.role === 'system' &&
+		message.system_kind === ChatSystemMessageKind.HandoffNotDelivered
+	) {
+		return (
+			<div
+				className="flex items-start gap-2 rounded-md bg-warning-soft px-3 py-2 text-[11.5px] leading-relaxed text-warning-soft-fg"
+				data-testid="chat-message"
+				data-role="system"
+				data-system-kind="handoff_not_delivered"
+			>
+				<TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+				<span className="min-w-0">{message.content}</span>
+			</div>
+		);
+	}
+
+	// Convert-to-task marker. When the thread's converted-task reference is gone
+	// (task deleted) the raw server-baked text still names the identifier.
 	if (message.role === 'system') {
 		return (
 			<div
@@ -1024,7 +1059,7 @@ function MessageBubble({
 		// Still composing with no text yet → the typing indicator stands in for
 		// the (otherwise empty) bubble.
 		if (streaming && message.content.length === 0) {
-			return <TypingIndicator />;
+			return <TypingIndicator tool={toolActivity} />;
 		}
 		return (
 			<div
@@ -1050,7 +1085,7 @@ function MessageBubble({
 				</div>
 				{/* Reply has begun but the CEO is still working → dots sit just below
 				    the same bubble. */}
-				{streaming && <StreamingDots />}
+				{streaming && <StreamingDots tool={toolActivity} />}
 				{/* Once the reply has settled, a hover-revealed copy affordance for this
 				    single message sits just under the bubble. */}
 				{!streaming && message.content.length > 0 && (
@@ -1179,10 +1214,25 @@ function Dots() {
 }
 
 /**
+ * The tool the reply is working with right now, beside the dots. The runtimes
+ * emit whole assistant messages rather than token deltas, so a turn that calls a
+ * tool after writing its text would otherwise be indistinguishable from one that
+ * has finished — the operator sees dots and no reason for them.
+ */
+function ToolActivity({ tool }: { tool: string }) {
+	const { t } = useI18n();
+	return (
+		<span className="truncate text-[11px] text-text-3" data-testid="chat-tool-activity">
+			{t('chat.toolActivity', { tool: displayToolName(tool) })}
+		</span>
+	);
+}
+
+/**
  * The CEO has begun a reply but produced no text yet — the label + bare dots
  * stand in for the (otherwise empty) bubble until the first tokens land.
  */
-function TypingIndicator() {
+function TypingIndicator({ tool }: { tool?: string | null }) {
 	return (
 		<div
 			className="flex max-w-[90%] flex-col gap-1.5"
@@ -1191,8 +1241,9 @@ function TypingIndicator() {
 			aria-label="CEO is typing"
 		>
 			<RoleLabel>CEO · {HQ_PROJECT_NAME}</RoleLabel>
-			<span className="px-1">
+			<span className="flex min-w-0 items-center gap-2 px-1">
 				<Dots />
+				{tool && <ToolActivity tool={tool} />}
 			</span>
 		</div>
 	);
@@ -1202,15 +1253,16 @@ function TypingIndicator() {
  * Dots pinned just below an in-flight reply bubble — signals the CEO is still
  * working after the first tokens have already landed.
  */
-function StreamingDots() {
+function StreamingDots({ tool }: { tool?: string | null }) {
 	return (
 		<span
-			className="px-1 pt-0.5"
+			className="flex min-w-0 items-center gap-2 px-1 pt-0.5"
 			data-testid="chat-streaming-dots"
 			role="status"
 			aria-label="CEO is still typing"
 		>
 			<Dots />
+			{tool && <ToolActivity tool={tool} />}
 		</span>
 	);
 }

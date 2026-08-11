@@ -12,6 +12,27 @@ up a project or a task, get a status read across the org, or just think out loud
 long-term memory, so it remembers your preferences and past decisions across the
 conversation.
 
+## Why the dots continue after an answer appears
+
+A reply lands as a whole block rather than word by word, so the answer is often fully
+readable while the CEO is still working. When that happens the dots stay under the
+bubble, and if the CEO is using a tool the dots say which one - "Using list_tasks", for
+example. That is the CEO acting on what you asked: reading a project's real state,
+creating a task, writing a document. The reply is finished when the dots disappear.
+
+You never have to wait for them. Typing during that window queues your next message
+(see below), and holding the send button cuts in.
+
+## When a comment the CEO posted reached nobody
+
+The CEO can comment on any project's task from this chat. If one of those comments names
+a teammate without actually notifying them - writing the name plainly, or with the
+passive `@@name` form - nobody is woken, and the task can sit waiting on someone who was
+never told. When that happens a short note appears in the conversation naming the task
+and the teammate, so you can ask the CEO to post a proper `@name` mention. It is a
+notice, not an error: if the CEO was only referring to a teammate rather than handing
+work over, nothing needs doing.
+
 ## Sending while the CEO is still replying
 
 You don't have to wait for a reply to finish before typing the next thing. While the

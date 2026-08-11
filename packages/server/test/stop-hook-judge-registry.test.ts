@@ -5,12 +5,24 @@ import {
 	buildCodexJudgeScript,
 	buildGeminiJudgeScript,
 	buildJudgeScriptForRuntime,
+	type ClaudeCodeSettings,
 	judgeModelForProvider,
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 	STOP_HOOK_JUDGE_MODEL_KIMI,
 	STOP_HOOK_PROMPT,
 	STOP_HOOK_RULES,
 } from '../src/services/stop-hook-prompt';
+
+/**
+ * The judge hook these settings install. `Stop` is optional because a caller can
+ * ask for no judge at all (the CEO chat), so every assertion about the judge
+ * goes through here rather than indexing an optional array.
+ */
+function stopJudgeHook(settings: ClaudeCodeSettings) {
+	const hook = settings.hooks.Stop?.[0]?.hooks[0];
+	if (!hook) throw new Error('expected these settings to install a Stop judge hook');
+	return hook;
+}
 
 /**
  * A2 refactor: the Codex/Gemini judge scripts now come from a JUDGE_SPECS
@@ -46,7 +58,7 @@ describe('stop-hook judge spec registry', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode)).toBeNull();
 		expect(STOP_HOOK_JUDGE_MODEL_KIMI).toBe(KIMI_DEFAULT_MODEL);
 		// No explicit run model → falls back to the per-provider constant.
-		expect(buildClaudeCodeSettings(AiProvider.Kimi).hooks.Stop[0].hooks[0].model).toBe(
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Kimi)).model).toBe(
 			STOP_HOOK_JUDGE_MODEL_KIMI,
 		);
 	});
@@ -83,9 +95,9 @@ describe('judgeModelForProvider derives the judge from the run model', () => {
 			STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 		);
 		// And the settings a run writes reflect the derived model end-to-end.
-		expect(buildClaudeCodeSettings(AiProvider.Kimi, 'k3').hooks.Stop[0].hooks[0].model).toBe('k3');
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Kimi, 'k3')).model).toBe('k3');
 		expect(
-			buildClaudeCodeSettings(AiProvider.Anthropic, 'claude-opus-4-8').hooks.Stop[0].hooks[0].model,
+			stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic, 'claude-opus-4-8')).model,
 		).toBe(STOP_HOOK_JUDGE_MODEL_ANTHROPIC);
 	});
 });
@@ -130,7 +142,7 @@ describe('stop-hook rules require add_task_blocker for cross-task waits', () => 
 
 	it('the Claude Code prompt hook embeds the rule', () => {
 		expect(STOP_HOOK_PROMPT).toContain('add_task_blocker');
-		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(
 			'add_task_blocker',
 		);
 	});
@@ -171,7 +183,7 @@ describe('stop-hook rules block announced-plan abandonment', () => {
 
 	it('every runtime judge embeds the rule', () => {
 		expect(STOP_HOOK_PROMPT).toContain('silent scope reduction');
-		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(
 			'silent scope reduction',
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('silent scope reduction');
@@ -235,7 +247,7 @@ describe('stop-hook rules block handoffs left only in the final message', () => 
 
 	it('every runtime judge embeds the rule', () => {
 		expect(STOP_HOOK_PROMPT).toContain('delivered to NO ONE');
-		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(
 			'delivered to NO ONE',
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('delivered to NO ONE');
@@ -283,7 +295,7 @@ describe('stop-hook rules block closing while an inherited approval is still owe
 
 	it('every runtime judge embeds the rule', () => {
 		expect(STOP_HOOK_PROMPT).toContain('approval requirement INHERITED from the thread');
-		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(
 			'approval requirement INHERITED from the thread',
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(
@@ -324,7 +336,7 @@ describe('stop-hook command judges emit the runtime-correct decision and guard t
 		// once the turn was already continued, matching the command-script guard so a
 		// persistent verdict cannot spin the same headless exec indefinitely.
 		expect(STOP_HOOK_PROMPT).toContain('stop_hook_active');
-		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(
 			'stop_hook_active',
 		);
 	});
@@ -336,7 +348,7 @@ describe('stop-hook command judges emit the runtime-correct decision and guard t
 		// the message text — the input rule 10 turns on — rather than the surrounding
 		// metadata blob.
 		expect(STOP_HOOK_PROMPT).toContain('last_assistant_message');
-		expect(buildClaudeCodeSettings(AiProvider.DeepSeek).hooks.Stop[0].hooks[0].prompt).toContain(
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.DeepSeek)).prompt).toContain(
 			'last_assistant_message',
 		);
 	});
@@ -364,7 +376,7 @@ describe('stop-hook rules bless waiting on a pending admin approval', () => {
 
 	it('the carve-out reaches every runtime judge', () => {
 		expect(STOP_HOOK_PROMPT).toContain('create_hire_proposal');
-		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(
 			'create_hire_proposal',
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('create_hire_proposal');
@@ -395,9 +407,7 @@ describe('stop-hook rules block a reply left only in the final message', () => {
 	it('reaches every runtime judge', () => {
 		const needle = 'woken by someone ASKING this agent for something';
 		expect(STOP_HOOK_PROMPT).toContain(needle);
-		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
-			needle,
-		);
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(needle);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(needle);
 	});
@@ -434,9 +444,7 @@ describe('stop-hook rules block an unescalated broken integration', () => {
 	it('reaches every runtime judge', () => {
 		const needle = 'an integration the work depends on is BROKEN';
 		expect(STOP_HOOK_PROMPT).toContain(needle);
-		expect(buildClaudeCodeSettings(AiProvider.Anthropic).hooks.Stop[0].hooks[0].prompt).toContain(
-			needle,
-		);
+		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(needle);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(needle);
 	});

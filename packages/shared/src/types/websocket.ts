@@ -2,6 +2,7 @@ import type {
 	ChatChannel,
 	ChatMessageRole,
 	ChatMessageStatus,
+	ChatSystemMessageKind,
 	CommentAttachment,
 	ImageBuildStatus,
 } from './common.js';
@@ -15,6 +16,7 @@ export enum WsMessageType {
 	RunLog = 'run_log',
 	ChatMessageStart = 'chat_message_start',
 	ChatMessageDelta = 'chat_message_delta',
+	ChatMessageToolActivity = 'chat_message_tool_activity',
 	ChatMessageComplete = 'chat_message_complete',
 	ChatCompacted = 'chat_compacted',
 	ChatConversationUpdated = 'chat_conversation_updated',
@@ -146,6 +148,8 @@ export interface WsChatMessageStartMessage {
 	createdAt: string;
 	/** Files attached to a user message, so the sent bubble renders chips at once. */
 	attachments?: CommentAttachment[];
+	/** Set on a `system` row: which marker it is, so it renders right without a refetch. */
+	systemKind?: ChatSystemMessageKind;
 }
 
 /** Incremental assistant text appended to the bubble keyed by `messageId`. */
@@ -154,6 +158,23 @@ export interface WsChatMessageDeltaMessage {
 	conversationId: string;
 	messageId: string;
 	text: string;
+}
+
+/**
+ * A tool the CEO called while composing the reply keyed by `messageId`.
+ *
+ * Transient by design: it is progress, not conversation, so it is never stored
+ * as message content and never rides the prompt window. A turn that keeps
+ * working after its last text block - the common shape, since the runtimes emit
+ * whole assistant messages rather than token deltas - would otherwise show the
+ * operator nothing but the typing dots until the process exits.
+ */
+export interface WsChatMessageToolActivityMessage {
+	type: WsMessageType.ChatMessageToolActivity;
+	conversationId: string;
+	messageId: string;
+	/** Tool name as the runtime reported it (e.g. `mcp__hezo__list_tasks`, `Bash`). */
+	tool: string;
 }
 
 /** Terminal event for a CEO message: finalizes content, status, and usage. */
@@ -199,6 +220,7 @@ export interface WsChatConversationUpdatedMessage {
 export type WsChatServerMessage =
 	| WsChatMessageStartMessage
 	| WsChatMessageDeltaMessage
+	| WsChatMessageToolActivityMessage
 	| WsChatMessageCompleteMessage
 	| WsChatCompactedMessage
 	| WsChatConversationUpdatedMessage;
@@ -211,6 +233,7 @@ export type WsServerMessage =
 	| WsRunLogMessage
 	| WsChatMessageStartMessage
 	| WsChatMessageDeltaMessage
+	| WsChatMessageToolActivityMessage
 	| WsChatMessageCompleteMessage
 	| WsChatCompactedMessage
 	| WsChatConversationUpdatedMessage

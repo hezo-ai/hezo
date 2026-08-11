@@ -278,5 +278,6 @@
 	"chat.converted.bannerTaskGone": "Diese Unterhaltung wurde in eine Aufgabe umgewandelt, die nicht mehr existiert.",
 	"chat.converted.composerPlaceholder": "Geschlossen - weiter als {identifier}",
 	"chat.converted.badge": "In Aufgabe umgewandelt",
-	"chat.converted.metaMessage": "Weiter als {task}"
+	"chat.converted.metaMessage": "Weiter als {task}",
+	"chat.toolActivity": "Verwendet {tool}"
 }

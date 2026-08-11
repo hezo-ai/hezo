@@ -278,5 +278,6 @@
 	"chat.converted.bannerTaskGone": "Dit gesprek is omgezet naar een taak die niet meer bestaat.",
 	"chat.converted.composerPlaceholder": "Gesloten - gaat verder als {identifier}",
 	"chat.converted.badge": "Omgezet naar taak",
-	"chat.converted.metaMessage": "Gaat verder als {task}"
+	"chat.converted.metaMessage": "Gaat verder als {task}",
+	"chat.toolActivity": "Gebruikt {tool}"
 }

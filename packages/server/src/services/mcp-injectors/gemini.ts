@@ -3,6 +3,7 @@ import { buildGeminiJudgeScript } from '../stop-hook-prompt';
 import type {
 	McpHttpDescriptor,
 	McpInjection,
+	McpInjectionFile,
 	McpStdioDescriptor,
 	RuntimeMcpAdapter,
 } from './types';
@@ -37,7 +38,11 @@ interface GeminiHookMatcherGroup {
 interface GeminiSettings {
 	mcpServers?: Record<string, GeminiServerEntry>;
 	hooks: {
-		AfterAgent: GeminiHookMatcherGroup[];
+		/**
+		 * Gemini's Stop analogue. Present for every task run; omitted when the
+		 * caller asks for no completeness judge (see `McpAdapterContext.stopJudge`).
+		 */
+		AfterAgent?: GeminiHookMatcherGroup[];
 	};
 	tools: {
 		shell: {
@@ -97,20 +102,26 @@ export const geminiAdapter: RuntimeMcpAdapter = {
 		const judgeScriptHostPath = join(ctx.hostHomeDir, JUDGE_SCRIPT_BASENAME);
 		const judgeScriptContainerPath = join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME);
 
+		// Hook and script are omitted together when the caller wants no
+		// completeness judge (the CEO chat) - a hook pointing at a script that was
+		// never written is a broken run, not a disabled judge.
+		const stopJudge = ctx.stopJudge !== false;
 		const settings: GeminiSettings = {
-			hooks: {
-				AfterAgent: [
-					{
-						hooks: [
+			hooks: stopJudge
+				? {
+						AfterAgent: [
 							{
-								type: 'command',
-								command: `node ${judgeScriptContainerPath}`,
-								timeout: 30_000,
+								hooks: [
+									{
+										type: 'command',
+										command: `node ${judgeScriptContainerPath}`,
+										timeout: 30_000,
+									},
+								],
 							},
 						],
-					},
-				],
-			},
+					}
+				: {},
 			tools: {
 				shell: {
 					inactivityTimeout: SHELL_INACTIVITY_TIMEOUT_DISABLED,
@@ -128,21 +139,21 @@ export const geminiAdapter: RuntimeMcpAdapter = {
 
 		const contents = `${JSON.stringify(settings, null, 2)}\n`;
 
-		return {
-			cliArgs: [],
-			envEntries: [],
-			files: [
-				{
-					hostPath: join(ctx.hostHomeDir, '.gemini', 'settings.json'),
-					mode: 0o600,
-					contents,
-				},
-				{
-					hostPath: judgeScriptHostPath,
-					mode: 0o700,
-					contents: buildGeminiJudgeScript(),
-				},
-			],
-		};
+		const files: McpInjectionFile[] = [
+			{
+				hostPath: join(ctx.hostHomeDir, '.gemini', 'settings.json'),
+				mode: 0o600,
+				contents,
+			},
+		];
+		if (stopJudge) {
+			files.push({
+				hostPath: judgeScriptHostPath,
+				mode: 0o700,
+				contents: buildGeminiJudgeScript(),
+			});
+		}
+
+		return { cliArgs: [], envEntries: [], files };
 	},
 };

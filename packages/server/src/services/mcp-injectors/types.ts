@@ -128,6 +128,23 @@ export interface McpAdapterContext {
 	 */
 	runModel?: string | null;
 	/**
+	 * Whether this invocation gets the completeness Stop-hook judge. Absent or
+	 * true emits it, so every task run keeps it; false omits it on each of the
+	 * four runtimes that carry one (the doc-write guard is unaffected - it is a
+	 * deterministic path match, not a verdict on whether work is finished).
+	 *
+	 * The policy decision belongs to the caller, not the adapter: the judge
+	 * evaluates whether an agent is abandoning TASK work, and it reads only the
+	 * run's final message. A CEO chat turn has no task to abandon and its final
+	 * message is the reply already delivered to the operator, so every rule it
+	 * could fire on is either inapplicable or false there - it would only add a
+	 * round trip to each reply and, on a block, spend a whole extra turn chasing
+	 * a `create_comment` on a task that does not exist. What the chat DOES need -
+	 * catching a handoff stranded in a comment the turn posted - is answered
+	 * structurally by the wake receipt and the no-wake exit check instead.
+	 */
+	stopJudge?: boolean;
+	/**
 	 * Filenames of the project's active project docs. Runtimes with a blockable
 	 * pre-tool hook bake these into a guard script so a `Write`/`Edit` aimed at a
 	 * path that shadows a project doc is refused before it happens - the docs are

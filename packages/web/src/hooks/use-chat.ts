@@ -3,9 +3,11 @@ import {
 	type ChatConversationKind,
 	type ChatMessageRole,
 	ChatMessageStatus,
+	type ChatSystemMessageKind,
 	type WsChatMessageCompleteMessage,
 	type WsChatMessageDeltaMessage,
 	type WsChatMessageStartMessage,
+	type WsChatMessageToolActivityMessage,
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
@@ -26,6 +28,8 @@ export interface ChatMessage {
 	created_at: string;
 	/** Files sent with the message, rendered as chips under the bubble. */
 	attachments?: CommentAttachment[];
+	/** Set on a `system` row: which marker it is. Drives how the row renders. */
+	system_kind?: ChatSystemMessageKind | null;
 }
 
 interface ConversationData {
@@ -240,6 +244,11 @@ export function useChat(active: boolean, conversationId?: string) {
 	// Client-side only: a reload loses the queue, which is the accepted cost of not
 	// making a parked message a `chat_messages` row + migration.
 	const [queues, setQueues] = useState<Record<string, QueuedChatMessage[]>>({});
+	// The tool the in-flight reply last reached for, if any. Transient — see the
+	// subscription below.
+	const [toolActivity, setToolActivity] = useState<{ messageId: string; tool: string } | null>(
+		null,
+	);
 	const queueKey = conversationId ?? DEFAULT_THREAD_QUEUE_KEY;
 	const queue = queues[queueKey] ?? EMPTY_QUEUE;
 	// The socket handler is wired once; this ref lets it read the live open state
@@ -310,6 +319,7 @@ export function useChat(active: boolean, conversationId?: string) {
 								content: m.content,
 								created_at: m.createdAt,
 								attachments: m.attachments,
+								system_kind: m.systemKind,
 							},
 						],
 			);
@@ -321,6 +331,15 @@ export function useChat(active: boolean, conversationId?: string) {
 				messages.map((x) => (x.id === m.messageId ? { ...x, content: x.content + m.text } : x)),
 			);
 		});
+		// Transient: the last tool the CEO reached for on the in-flight reply, shown
+		// beside the dots and dropped when the reply settles. Deliberately not part
+		// of the message cache — it is progress, not conversation, and persisting it
+		// would leave a stale "Using ..." on a reloaded thread.
+		const offToolActivity = subscribe(WsMessageType.ChatMessageToolActivity, (raw) => {
+			const m = raw as WsChatMessageToolActivityMessage;
+			if (!forThisThread(m.conversationId)) return;
+			setToolActivity({ messageId: m.messageId, tool: m.tool });
+		});
 		const offComplete = subscribe(WsMessageType.ChatMessageComplete, (raw) => {
 			const m = raw as WsChatMessageCompleteMessage;
 			if (!forThisThread(m.conversationId)) return;
@@ -329,6 +348,7 @@ export function useChat(active: boolean, conversationId?: string) {
 					x.id === m.messageId ? { ...x, content: m.content, status: m.status } : x,
 				),
 			);
+			setToolActivity((prev) => (prev?.messageId === m.messageId ? null : prev));
 			// Complete events fire only for assistant replies. One that finishes
 			// while the widget is closed is an unread CEO message → badge the launcher.
 			if (m.status === ChatMessageStatus.Complete && !activeRef.current) {
@@ -350,6 +370,7 @@ export function useChat(active: boolean, conversationId?: string) {
 		return () => {
 			offStart();
 			offDelta();
+			offToolActivity();
 			offComplete();
 			offCompacted();
 		};
@@ -471,6 +492,15 @@ export function useChat(active: boolean, conversationId?: string) {
 		send,
 		streaming,
 		sending,
+		// Only while that message is still streaming: a settled reply clears it, and
+		// a stale id from a superseded turn must not label the new one.
+		toolActivity:
+			toolActivity &&
+			messages.some(
+				(m) => m.id === toolActivity.messageId && m.status === ChatMessageStatus.Streaming,
+			)
+				? toolActivity.tool
+				: null,
 		loaded: !query.isPending,
 		unread,
 		// Messages parked for the next turn, plus the two ways to change that queue.

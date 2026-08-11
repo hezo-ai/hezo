@@ -278,5 +278,6 @@
 	"chat.converted.bannerTaskGone": "この会話は変換されましたが、そのタスクはもう存在しません。",
 	"chat.converted.composerPlaceholder": "終了 - {identifier} に続く",
 	"chat.converted.badge": "タスクに変換済み",
-	"chat.converted.metaMessage": "{task} に続く"
+	"chat.converted.metaMessage": "{task} に続く",
+	"chat.toolActivity": "{tool} を使用中"
 }
