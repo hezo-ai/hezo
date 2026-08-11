@@ -56,6 +56,12 @@ add: **the whole team**, or **just the roles you choose** from a checklist. So y
 the Security Engineer, or the Content Editor and the Trend Researcher, into a project that already
 has its own team. The Captain isn't on the list - every project already has one.
 
+You can also reach this from the other direction. **Hire agent** on a project's Team page
+offers **Browse the marketplace** as one of its three ways to hire; taking it opens the catalog
+with that project already chosen, and the add dialog starts on **just the roles you choose**
+rather than on the whole team - you asked for a teammate, not a second roster. The project stays
+changeable in the dialog if you picked the wrong one.
+
 Picking a subset changes what the CEO does. Those roles are being lifted out of a roster they were
 written for, and the rest of that team isn't coming with them, so their prompts assume teammates
 your project may not have. The CEO:

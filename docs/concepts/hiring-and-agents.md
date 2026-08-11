@@ -11,13 +11,25 @@ tune how each agent behaves - both from the web app and by asking the CEO.
 
 ## Hiring a new agent
 
-There are two ways a hire gets started: you fill in the hire screen directly, or you
-tell the CEO you need a new role and let the team draft it for you. In the second case
-the CEO writes the full role spec and files it as a hire proposal (or directs the
-team's Captain to) - so the agents do the drafting work, and the proposal lands in your
-inbox ready to review. Either way you stay in control: a hire always surfaces as an
-**approval**, and you can **modify** the proposed role, system prompt, budget, heartbeat,
-and code access before approving it. Nothing is added to the roster without your sign-off.
+**Hire agent** on the Team page (or the **+** beside Team in the project menu) asks how you
+want to go about it, and offers three ways:
+
+- **Browse the marketplace** - take a proven role out of one of the ready-made teams. It
+  arrives with a written system prompt, a budget and a face, and the CEO fits it to the team
+  you already have. See [Team marketplace](/docs/concepts/marketplace).
+- **Ask the CEO** - opens a chat thread for this project with the opening message written for
+  you. Add what you need, send, and the CEO works out the role and drafts it. It checks the
+  marketplace first and tells you which role it started from.
+- **Write the role yourself** - the hire screen, where you fill in the role and its system
+  prompt directly.
+
+The three differ in where they end. A marketplace role is added by the CEO without a separate
+approval, because you already chose it off the catalog. The other two come back to you as an
+**approval**: the CEO writes or tidies the full role spec and files it, and you can **modify**
+the role, system prompt, budget, heartbeat and code access before approving. Nothing is added
+to the roster that way without your sign-off.
+
+HQ is not staffed from here. It holds the CEO and Coach, who work across every project.
 
 When you hire an agent you set:
 

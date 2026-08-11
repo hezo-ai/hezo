@@ -26,6 +26,7 @@ import { Button } from '../components/ui/button';
 import { PageLogo } from '../components/ui/page-logo';
 import { Tooltip } from '../components/ui/tooltip';
 import { UpdateBanner } from '../components/update-banner';
+import { type ChatLaunch, ChatLaunchContext } from '../contexts/chat-launch-context';
 import { ScrollContentContext } from '../contexts/scroll-content-context';
 import { SocketProvider } from '../contexts/socket-context';
 import { useActiveProject } from '../hooks/use-active-project';
@@ -223,6 +224,17 @@ function ShellLayout() {
 
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [chatOpen, setChatOpen] = useState(false);
+	// A pending "open the chat on this thread, with this draft" request from a route
+	// (today: the hire chooser). The counter, rather than the object identity, is
+	// what the widget's effect keys on, so relaunching the same thread with the same
+	// draft refills a composer the operator has since cleared.
+	const [chatLaunch, setChatLaunch] = useState<ChatLaunch | null>(null);
+	const chatLaunchSeq = useRef(0);
+	const launchChat = useCallback((launch: Omit<ChatLaunch, 'nonce'>) => {
+		chatLaunchSeq.current += 1;
+		setChatLaunch({ ...launch, nonce: chatLaunchSeq.current });
+		setChatOpen(true);
+	}, []);
 
 	// The drawer is shell chrome, not route content: it renders outside the
 	// <Outlet /> below and so survives navigation. It holds nothing but nav links,
@@ -235,11 +247,11 @@ function ShellLayout() {
 	if (bare) return <Outlet />;
 
 	return (
-		<>
+		<ChatLaunchContext.Provider value={launchChat}>
 			<ShellChrome drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
-			<ChatWidget open={chatOpen} onOpenChange={setChatOpen} />
+			<ChatWidget open={chatOpen} onOpenChange={setChatOpen} launch={chatLaunch} />
 			<PwaInstallPrompt />
-		</>
+		</ChatLaunchContext.Provider>
 	);
 }
 

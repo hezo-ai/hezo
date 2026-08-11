@@ -1,3 +1,4 @@
+import { within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
@@ -8,7 +9,7 @@ import { seedWorkspace } from './helpers/seed';
 // initials, which was the "changed avatar but it's not showing" case.
 test('org chart shows the shipped CEO portrait and a generated avatar for the Captain', async () => {
 	let nav!: { projectSlug: string; captainTitle: string };
-	const { container, findByText, router } = await renderApp({
+	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -23,13 +24,19 @@ test('org chart shows the shipped CEO portrait and a generated avatar for the Ca
 		params: { projectId: nav.projectSlug },
 	});
 
+	// Scoped to the chart, not the page: the project menu lists the same agents by
+	// name, so a document-wide query for a role is ambiguous the moment both have
+	// rendered - and which of them wins that race is not something this test is
+	// about. (`agent-detail.test.tsx` scopes to the chart for the same reason.)
+	const chart = await findByTestId('team-org-chart');
+
 	// Org chart rendered once the Captain node is on screen.
-	await findByText(nav.captainTitle);
+	await within(chart).findByText(nav.captainTitle);
 
 	// CEO (HQ singleton) keeps its shipped portrait.
-	expect(container.querySelector('img[src="/avatars/ceo.png"]')).not.toBeNull();
+	expect(chart.querySelector('img[src="/avatars/ceo.png"]')).not.toBeNull();
 
 	// The Captain has no shipped portrait, so it draws its generated sprite -
 	// an inline SVG data URI rather than a fetched image.
-	expect(container.querySelector('img[src^="data:image/svg+xml"]')).not.toBeNull();
+	expect(chart.querySelector('img[src^="data:image/svg+xml"]')).not.toBeNull();
 });

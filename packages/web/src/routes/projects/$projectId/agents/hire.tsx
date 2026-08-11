@@ -6,7 +6,7 @@ import {
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { Check, Loader2, X } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import {
 	HireAgentForm,
@@ -23,6 +23,8 @@ import {
 	useResolveApproval,
 	useUpdateHireProposal,
 } from '../../../../hooks/use-approvals';
+import { useProjectMeta } from '../../../../hooks/use-projects';
+import { useI18n } from '../../../../lib/i18n';
 
 interface HireSearch {
 	approvalId?: string;
@@ -107,6 +109,7 @@ function managerOptionsFrom(agents: Agent[] | undefined, excludeSlug?: string): 
 }
 
 function CreateHireForm({ projectId }: { projectId: string }) {
+	const { t } = useI18n();
 	const onboardAgent = useOnboardAgent(projectId);
 	const navigate = useNavigate();
 	const { data: agents } = useAgents(projectId);
@@ -144,6 +147,17 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 
 	return (
 		<form onSubmit={handleSubmit}>
+			{/* Back to the chooser rather than to the team page: a wrong turn at the
+			    fork should cost one click, not a re-hunt for the button. */}
+			<Link
+				to="/projects/$projectId/agents"
+				params={{ projectId }}
+				search={{ hire: true }}
+				className="mb-4 inline-flex items-center gap-1.5 text-[12.5px] text-text-2 hover:text-text-1"
+				data-testid="hire-back-to-chooser"
+			>
+				<ArrowLeft className="h-3.5 w-3.5" /> {t('agents.hire.back')}
+			</Link>
 			<HireAgentForm values={values} onChange={setValues} managerOptions={managerOptions} />
 			{onboardAgent.error && (
 				<p className="text-[13px] text-danger mt-4">
@@ -285,13 +299,26 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 }
 
 function HireAgentPage() {
+	const { t } = useI18n();
 	const { projectId } = Route.useParams();
 	const { approvalId } = Route.useSearch();
+	const project = useProjectMeta(projectId);
 	const { data: approvals, isLoading } = useApprovals(
 		projectId,
 		ApprovalStatus.Pending,
 		!!approvalId,
 	);
+
+	// HQ is not staffed from the web app - see the team page. Only *starting* a hire
+	// is blocked: a proposal the CEO filed against HQ over MCP still has to be
+	// reviewable, or it would be stuck pending with nowhere to resolve it.
+	if (!approvalId && project?.is_internal) {
+		return (
+			<p className="text-sm text-text-2" data-testid="hire-unavailable">
+				{t('agents.hire.unavailableHq')}
+			</p>
+		);
+	}
 
 	if (!approvalId) return <CreateHireForm projectId={projectId} />;
 

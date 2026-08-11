@@ -25,6 +25,7 @@ import {
 	X,
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import type { ChatLaunch } from '../../contexts/chat-launch-context';
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
 import {
 	type ChatConversationSummary,
@@ -83,9 +84,14 @@ interface ChatWidgetProps {
 	 *  new-task button) can react to the chat being open. */
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	/**
+	 * A route asking for a specific thread with a prefilled composer (see
+	 * `ChatLaunchContext`). Applied once per `nonce`, never sent.
+	 */
+	launch?: ChatLaunch | null;
 }
 
-export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
+export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProps) {
 	const setOpen = onOpenChange;
 	const [expanded, setExpanded] = useState(false);
 	// Draggable launcher on portrait mobile screens (the panel itself never
@@ -176,6 +182,33 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		el.scrollTop = el.scrollHeight;
 	}, [lastId, lastLen, streaming, open, expanded]);
 
+	// A thread just created by a launch request. The thread list is cached, so on a
+	// second open it can report "loaded" from data that predates this thread — which
+	// the stale-selection effect below would read as a closed thread and drop. Held
+	// until the refetch actually lists it, then cleared so closing it later still
+	// drops correctly.
+	const launchedThreadRef = useRef<string | null>(null);
+
+	// Apply a launch request: show its thread and put its text in the composer.
+	// Keyed on the nonce so the same request re-applies, and deliberately stopping
+	// short of sending - see `ChatLaunchContext` for why.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: one application per launch request
+	useEffect(() => {
+		if (!launch) return;
+		launchedThreadRef.current = launch.conversationId;
+		selectThread(launch.conversationId);
+		setDraft(launch.draft);
+		// Focus after the panel has painted, cursor at the end so typing continues
+		// the sentence rather than replacing it.
+		const id = requestAnimationFrame(() => {
+			const el = inputRef.current;
+			if (!el) return;
+			el.focus();
+			el.setSelectionRange(el.value.length, el.value.length);
+		});
+		return () => cancelAnimationFrame(id);
+	}, [launch?.nonce]);
+
 	// A remembered thread can be closed later (from the ✕ here, another tab, or its
 	// own platform), and the server still serves a closed thread's history by id —
 	// so a stale id would restore as a thread that reads fine but rejects every
@@ -183,7 +216,12 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	// back to the default thread.
 	useEffect(() => {
 		if (!open || !threadsLoaded || !selectedConversationId) return;
-		if (conversations.some((t) => t.id === selectedConversationId)) return;
+		if (conversations.some((t) => t.id === selectedConversationId)) {
+			if (launchedThreadRef.current === selectedConversationId) launchedThreadRef.current = null;
+			return;
+		}
+		// A just-launched thread is real even when this list has not caught up yet.
+		if (launchedThreadRef.current === selectedConversationId) return;
 		selectThread(undefined);
 	}, [open, threadsLoaded, selectedConversationId, conversations, selectThread]);
 
