@@ -118,7 +118,7 @@ describe('SlackSocketClient lifecycle', () => {
 		client.stop();
 	});
 
-	it('reconnects with a fresh ticket on a disconnect envelope', async () => {
+	it('reconnects with a fresh task on a disconnect envelope', async () => {
 		const { client, sockets, fetchFn } = makeClient();
 		client.start();
 		await vi.waitFor(() => expect(sockets).toHaveLength(1));

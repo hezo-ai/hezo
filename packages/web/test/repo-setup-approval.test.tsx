@@ -70,7 +70,7 @@ async function seedBlockedProject(): Promise<SeededBlocked> {
 	};
 }
 
-test('inbox card opens popup listing every blocked ticket', async () => {
+test('inbox card opens popup listing every blocked task', async () => {
 	let seed!: SeededBlocked;
 
 	const { findAllByTestId, user, router } = await renderApp({
@@ -99,7 +99,7 @@ test('inbox card opens popup listing every blocked ticket', async () => {
 	}
 });
 
-test('clicking a ticket row navigates to the comment with a brief highlight', async () => {
+test('clicking a task row navigates to the comment with a brief highlight', async () => {
 	let seed!: SeededBlocked;
 
 	const { findAllByTestId, user, router } = await renderApp({

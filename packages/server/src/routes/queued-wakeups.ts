@@ -92,11 +92,11 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 
 // Shared by both manual-dispatch handlers below; keys mirror DispatchNowResult.
 const DISPATCH_CONFLICT_MESSAGES: Record<string, string> = {
-	task_busy: 'This ticket already has a run in progress',
+	task_busy: 'This task already has a run in progress',
 	instance_at_capacity:
 		'Hezo is at its active-container limit; the run will start when a container goes idle',
 	agent_busy: 'This agent is currently running on another task in this project',
-	blocked: 'This ticket is blocked by an open dependency',
+	blocked: 'This task is blocked by an open dependency',
 	not_queued: 'Wakeup is no longer queued and cannot be run',
 };
 

@@ -125,7 +125,7 @@ describe('GET /tasks list filters', () => {
 	});
 
 	it('filters by priority', async () => {
-		await createTask('Urgent ticket', { priority: 'urgent' });
+		await createTask('Urgent task', { priority: 'urgent' });
 		const res = await app.request(`/api/projects/${projectSlug}/tasks?priority=urgent`, {
 			headers: authHeader(token),
 		});
@@ -255,7 +255,7 @@ describe('POST /tasks/resolve validation', () => {
 	});
 
 	it('resolves real identifiers case-insensitively', async () => {
-		const task = await createTask('Resolvable ticket');
+		const task = await createTask('Resolvable task');
 		const res = await app.request(`/api/projects/${projectSlug}/tasks/resolve`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

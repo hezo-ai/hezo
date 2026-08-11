@@ -311,9 +311,7 @@ describe('runAgent — coach review prompt', () => {
 		);
 		expect(result.success).toBe(true);
 
-		expect(capture.prompt).toContain(
-			`## Review Completed Ticket: ${rev.identifier} — Reviewed Task`,
-		);
+		expect(capture.prompt).toContain(`## Review Completed Task: ${rev.identifier} — Reviewed Task`);
 		expect(capture.prompt).toContain('**Final Status:** done');
 		expect(capture.prompt).toContain('### Rules\nBe kind');
 		expect(capture.prompt).toContain('### Progress Summary\nAll done');
@@ -329,7 +327,7 @@ describe('runAgent — coach review prompt', () => {
 });
 
 describe('runAgent — mention and reply handoffs', () => {
-	it('renders the mention handoff with the author fallback, quoted excerpt, and open tickets', async () => {
+	it('renders the mention handoff with the author fallback, quoted excerpt, and open tasks', async () => {
 		const comment = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, NULL, 'text', $2::jsonb) RETURNING id`,
@@ -351,7 +349,7 @@ describe('runAgent — mention and reply handoffs', () => {
 		expect(capture.prompt).toContain(`You were mentioned by Admin in ${taskIdentifier}`);
 		// Multi-line excerpt rendered as a quote block.
 		expect(capture.prompt).toContain('> Please look\n> at the flaky test.');
-		expect(capture.prompt).toContain('### Your open tickets');
+		expect(capture.prompt).toContain('### Your open tasks');
 		expect(capture.prompt).toContain(`- ${taskIdentifier} — Prompt Task`);
 		expect(capture.prompt).toContain(`add_reaction(comment_id='${commentId}', kind='ack')`);
 		expect(capture.prompt).toContain(`parent_task_id = ${taskId}`);
@@ -359,7 +357,7 @@ describe('runAgent — mention and reply handoffs', () => {
 		await db.query('DELETE FROM task_comments WHERE id = $1', [commentId]);
 	});
 
-	it('renders the reply handoff with the agent responder label and referenced tickets', async () => {
+	it('renders the reply handoff with the agent responder label and referenced tasks', async () => {
 		const original = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, NULL, 'text', $2::jsonb) RETURNING id`,
@@ -390,7 +388,7 @@ describe('runAgent — mention and reply handoffs', () => {
 		expect(capture.prompt).toContain(`${agentTitle} (@${agentSlug}) replied on ${taskIdentifier}`);
 		expect(capture.prompt).toContain('> What is the plan?');
 		expect(capture.prompt).toContain(`> The plan is tracked in ${taskIdentifier}.`);
-		expect(capture.prompt).toContain('### Tickets referenced by the reply');
+		expect(capture.prompt).toContain('### Tasks referenced by the reply');
 		expect(capture.prompt).toContain(`- ${taskIdentifier} — Prompt Task`);
 
 		await db.query('DELETE FROM task_comments WHERE id = ANY($1::uuid[])', [
@@ -470,7 +468,7 @@ describe('runAgent — mention and reply handoffs', () => {
 			makeProject(),
 		);
 		expect(result.success).toBe(true);
-		expect(capture.prompt).toContain(`**Parent ticket:** ${parent.identifier} — Parent Work`);
+		expect(capture.prompt).toContain(`**Parent task:** ${parent.identifier} — Parent Work`);
 		expect(capture.prompt).toContain(
 			`**Spawned from:** ${spawner.identifier} — Spawning Work (provenance only`,
 		);
@@ -585,7 +583,7 @@ describe('prompt builders (direct)', () => {
 		expect(prompt).toContain('### Progress Summary\nHalfway');
 	});
 
-	it('mention handoff falls back to "(empty)" excerpt and "none" tickets', () => {
+	it('mention handoff falls back to "(empty)" excerpt and "none" tasks', () => {
 		const prompt = buildTaskPrompt(
 			'SYS',
 			makeTask(),
@@ -601,10 +599,10 @@ describe('prompt builders (direct)', () => {
 		);
 		expect(prompt).toContain('## Mention Handoff');
 		expect(prompt).toContain('> (empty)');
-		expect(prompt).toContain('### Your open tickets\nnone');
+		expect(prompt).toContain('### Your open tasks\nnone');
 	});
 
-	it('reply handoff falls back for empty excerpts, no referenced tickets, and a slugless responder', () => {
+	it('reply handoff falls back for empty excerpts, no referenced tasks, and a slugless responder', () => {
 		const prompt = buildTaskPrompt(
 			'SYS',
 			makeTask(),
@@ -622,7 +620,7 @@ describe('prompt builders (direct)', () => {
 		expect(prompt).toContain('## Reply Received');
 		expect(prompt).toContain(`Sam replied on ${taskIdentifier}`);
 		expect(prompt).not.toContain('(@');
-		expect(prompt).toContain('### Tickets referenced by the reply\nnone');
+		expect(prompt).toContain('### Tasks referenced by the reply\nnone');
 		// Both the reply and original excerpts render the empty quote fallback.
 		expect(prompt.match(/> \(empty\)/g)?.length).toBe(2);
 	});

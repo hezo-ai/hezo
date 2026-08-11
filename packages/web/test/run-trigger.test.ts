@@ -143,7 +143,7 @@ test('assignment without a task id uses generic copy', () => {
 		}),
 		TEAM,
 	);
-	expect(label.text).toBe('Assigned to an task');
+	expect(label.text).toBe('Assigned to a task');
 	expect(label.href).toBeUndefined();
 });
 

@@ -96,22 +96,22 @@ describe('judgeModelForProvider derives the judge from the run model', () => {
  * and strands the work. The judge rule that enforces this is shared verbatim
  * across every runtime's judge, so a single rule edit must reach all of them.
  */
-describe('stop-hook rules require add_task_blocker for cross-ticket waits', () => {
+describe('stop-hook rules require add_task_blocker for cross-task waits', () => {
 	it('the rules block prose-only waits and require add_task_blocker', () => {
 		expect(STOP_HOOK_RULES).toContain('add_task_blocker');
 		expect(STOP_HOOK_RULES).toContain('waiting on');
 		// The closing allow-clause must NOT treat waiting on another ticket as
 		// "waiting on input" — that loophole is what stranded the downstream ticket.
 		expect(STOP_HOOK_RULES).toContain(
-			"Waiting on ANOTHER TICKET's completion does NOT count as waiting on input",
+			"Waiting on ANOTHER TASK's completion does NOT count as waiting on input",
 		);
 	});
 
-	it("blocks offloading the ticket's own deliverable into a sub-task or separate ticket", () => {
+	it("blocks offloading the task's own deliverable into a sub-task or separate task", () => {
 		// A defect in the work THIS ticket is producing is its own remaining work,
 		// not separable follow-up — it cannot be deferred via create_task.
-		expect(STOP_HOOK_RULES).toContain("part of THIS ticket's own deliverable");
-		expect(STOP_HOOK_RULES).toContain('never for fixing this ticket');
+		expect(STOP_HOOK_RULES).toContain("part of THIS task's own deliverable");
+		expect(STOP_HOOK_RULES).toContain('never for fixing this task');
 	});
 
 	it('blocks marking done while the agent awaits an answer to its own outbound ask', () => {
@@ -149,7 +149,7 @@ describe('stop-hook rules require add_task_blocker for cross-ticket waits', () =
  */
 describe('stop-hook rules block announced-plan abandonment', () => {
 	it('blocks closing with an announced plan neither executed nor revised', () => {
-		expect(STOP_HOOK_RULES).toContain('announced a plan or next step on this ticket');
+		expect(STOP_HOOK_RULES).toContain('announced a plan or next step on this task');
 		expect(STOP_HOOK_RULES).toContain('silent scope reduction');
 		expect(STOP_HOOK_RULES).toContain('explicitly revising or retracting the plan');
 	});
@@ -214,7 +214,7 @@ describe('stop-hook rules block handoffs left only in the final message', () => 
 		// INV-86 done.") hands over the next action and wakes nobody, exactly like a
 		// bare name. The exemption is now about who acts next, not how it is spelled.
 		expect(STOP_HOOK_RULES).toContain('NOT itself an exemption');
-		expect(STOP_HOOK_RULES).toContain('who is expected to act next on this ticket?');
+		expect(STOP_HOOK_RULES).toContain('who is expected to act next on this task?');
 		expect(STOP_HOOK_RULES).not.toContain('written passively (@@<slug>), which notifies no one');
 	});
 
@@ -268,7 +268,7 @@ describe('stop-hook rules block closing while an inherited approval is still owe
 		expect(STOP_HOOK_RULES).toContain('does NOT discharge a pending approval');
 	});
 
-	it('the block reason routes the agent to a live @-mention approval ask, ticket non-terminal', () => {
+	it('the block reason routes the agent to a live @-mention approval ask, task non-terminal', () => {
 		expect(STOP_HOOK_RULES).toContain('post the outstanding approval as a live @-mention ask');
 		expect(STOP_HOOK_RULES).toContain(
 			'may become done only after the required approval actually lands',
@@ -277,7 +277,7 @@ describe('stop-hook rules block closing while an inherited approval is still owe
 
 	it('the allow-clause blesses a correctly-posted approval wait as a valid stop', () => {
 		expect(STOP_HOOK_RULES).toContain(
-			"Waiting on an approval or sign-off the ticket's flow requires",
+			"Waiting on an approval or sign-off the task's flow requires",
 		);
 	});
 
@@ -418,7 +418,7 @@ describe('stop-hook rules block an unescalated broken integration', () => {
 
 	it('names the acceptable resolutions and rejects the known-gap dodge', () => {
 		expect(STOP_HOOK_RULES).toContain(
-			'active @admin comment on the current ticket naming the connector',
+			'active @admin comment on the current task naming the connector',
 		);
 		expect(STOP_HOOK_RULES).toContain(
 			'request_credential call where a pasted value is what fixes it',

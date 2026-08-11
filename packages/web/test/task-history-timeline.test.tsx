@@ -50,11 +50,11 @@ test('status changes and cross-task mentions appear as system entries on the tim
 			workspace = await seedWorkspace();
 			const project = await seedProject(workspace, { name: 'History Project' });
 			const target = await seedTask(workspace, project, {
-				title: 'Target ticket',
+				title: 'Target task',
 				assignee_id: workspace.agents[0].id,
 			});
 			const source = await seedTask(workspace, project, {
-				title: 'Source ticket',
+				title: 'Source task',
 				assignee_id: workspace.agents[0].id,
 			});
 			// Close target by patching status to a terminal state.
@@ -79,7 +79,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		},
 	});
 
-	await findByText('Target ticket', undefined, { timeout: 10_000 });
+	await findByText('Target task', undefined, { timeout: 10_000 });
 
 	// The status-change system comment should be present.
 	await waitFor(
@@ -139,7 +139,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		},
 	});
 
-	await findByText('Target ticket', undefined, { timeout: 10_000 });
+	await findByText('Target task', undefined, { timeout: 10_000 });
 	await waitFor(
 		async () => {
 			const items = await findAllByTestId('comment-item');
@@ -163,10 +163,10 @@ test('title renames appear as system entries on the timeline', async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Rename Project' });
 			const task = await seedTask(ws, project, {
-				title: 'Original ticket',
+				title: 'Original task',
 				assignee_id: ws.agents[0].id,
 			});
-			await patchTask(ws, task.id, { title: 'Renamed ticket' });
+			await patchTask(ws, task.id, { title: 'Renamed task' });
 			teamSlug = ws.team.slug;
 			projectSlug = project.slug;
 			taskIdentifier = task.identifier;
@@ -181,7 +181,7 @@ test('title renames appear as system entries on the timeline', async () => {
 		},
 	});
 
-	await findByText('Renamed ticket', undefined, { timeout: 10_000 });
+	await findByText('Renamed task', undefined, { timeout: 10_000 });
 
 	await waitFor(
 		async () => {
@@ -204,7 +204,7 @@ test('description edits appear as system entries with an expandable before/after
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Description Project' });
 			const task = await seedTask(ws, project, {
-				title: 'Described ticket',
+				title: 'Described task',
 				description: 'The original body.',
 				assignee_id: ws.agents[0].id,
 			});
@@ -256,11 +256,11 @@ test('auto-unblock cascade renders as system attribution, not the patcher', asyn
 			closerTitle = closer.title;
 			const project = await seedProject(ws, { name: 'Cascade Project' });
 			const blocker = await seedTask(ws, project, {
-				title: 'Blocker ticket',
+				title: 'Blocker task',
 				assignee_id: closer.id,
 			});
 			const downstream = await createTaskWithBlockers(ws, project.id, {
-				title: 'Downstream ticket',
+				title: 'Downstream task',
 				assignee_id: owner.id,
 				blocked_by_task_ids: [blocker.identifier],
 			});

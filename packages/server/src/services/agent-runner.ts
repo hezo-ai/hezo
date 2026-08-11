@@ -1844,7 +1844,7 @@ export async function runAgent(
 			//
 			// The exception is a run that explicitly declared it had nothing to do
 			// via the `report_no_work` MCP tool (reported_no_work). That is a
-			// legitimate idle wake (e.g. a planning ticket whose sub-tasks are still
+			// legitimate idle wake (e.g. a planning task whose sub-tasks are still
 			// open), so it counts as a success even though it wrote nothing.
 			let producedOutput = false;
 			let reportedNoWork = false;
@@ -1990,7 +1990,7 @@ export async function runAgent(
 								// TEAMMATE'S ACTIVE @-MENTION. That last case is the review-handoff one —
 								// a teammate @-mentions the reviewer, the reviewer does the whole review
 								// and ends the run with its verdict only in the final message, so the
-								// ticket sits in `review` with nobody woken. An agent's *reply* wake stays
+								// task sits in `review` with nobody woken. An agent's *reply* wake stays
 								// excluded as the routine chatter it usually is.
 								//
 								// Admitting agent mentions is safe for a structural reason, not a
@@ -3333,7 +3333,7 @@ export function buildProgressUpdatePrompt(
 	parts.push(
 		'**The summary** is the high-level read: where the project stands, what has taken place, and ' +
 			'what is being planned. Lead with the key points in **bold**, then a short narrative. Do ' +
-			'**not** name individual tickets in it — no identifiers at all — because the columns below ' +
+			'**not** name individual tasks in it — no identifiers at all — because the columns below ' +
 			'already link the specific work. It overwrites the whole summary, so include everything that ' +
 			'should remain.',
 	);
@@ -3361,7 +3361,7 @@ export function buildProgressUpdatePrompt(
 		parts.push('');
 		parts.push(
 			`${ctx.goals.length} goal${ctx.goals.length === 1 ? ' is' : 's are'} also due for a progress check. ` +
-				'For each goal below, assess real progress toward the objective — read the relevant tickets, ' +
+				'For each goal below, assess real progress toward the objective — read the relevant tasks, ' +
 				'comments, and repo state; do not just count tasks. Then call `update_goal_progress` once per ' +
 				'goal with a fresh `progress_percent` (0-100), a `health` (on_track / at_risk / off_track, ' +
 				'weighing progress against any target date), and a one-paragraph `status_blurb` describing where ' +
@@ -3372,11 +3372,11 @@ export function buildProgressUpdatePrompt(
 				'purposes: progress can drop back below 100 if the measurement is no longer met, and some goals ' +
 				'are never-ending and measured continuously forever — so re-assess a 100% goal exactly like any ' +
 				'other and record your honest current estimate, even if that means lowering it (with the reason ' +
-				'in the blurb). When a goal needs a push, you can either comment on an existing in-flight ticket ' +
+				'in the blurb). When a goal needs a push, you can either comment on an existing in-flight task ' +
 				'(`create_comment`) to steer or unblock it, or file new task(s) (with `goal_id` set) when a ' +
 				'concrete next step is actually missing — existing backlog or in-flight work often already ' +
-				'covers the goal. Never re-open a closed ticket (done/cancelled are terminal and the system will ' +
-				'refuse it); if work must be redone, file a new ticket that references the old one by identifier.',
+				'covers the goal. Never re-open a closed task (done/cancelled are terminal and the system will ' +
+				'refuse it); if work must be redone, file a new task that references the old one by identifier.',
 		);
 		parts.push('');
 		for (const g of ctx.goals) {
@@ -3419,7 +3419,7 @@ export function buildTaskPrompt(
 	if (spawnedFrom?.spawnLine) parts.push(spawnedFrom.spawnLine);
 	if (openSubTasks.length > 0) {
 		parts.push(
-			'**Open sub-tasks** (already delegated — route new instructions to these tickets, do not do their work yourself):',
+			'**Open sub-tasks** (already delegated — route new instructions to these tasks, do not do their work yourself):',
 		);
 		for (const sub of openSubTasks) {
 			parts.push(
@@ -3515,11 +3515,11 @@ function renderMentionHandoff(task: TaskInfo, ctx: MentionContext): string[] {
 		'',
 		excerptBlock,
 		'',
-		'### Your open tickets',
+		'### Your open tasks',
 		ticketList,
 		'',
 		'### How to handle this mention',
-		`Follow the **Handling an @-mention** rules in the @-Mentions, Linking & Handoffs section of your system prompt. The triggering ticket referenced in those rules is ${task.identifier}; when creating a sub-task, use \`parent_task_id = ${task.id}\`.`,
+		`Follow the **Handling an @-mention** rules in the @-Mentions, Linking & Handoffs section of your system prompt. The triggering task referenced in those rules is ${task.identifier}; when creating a sub-task, use \`parent_task_id = ${task.id}\`.`,
 		`To acknowledge the handoff, call \`add_reaction(comment_id='${ctx.triggeringCommentId}', kind='ack')\`. That is the triggering comment's UUID — do not call \`list_comments\` to look it up.`,
 		'',
 		'---',
@@ -3625,11 +3625,11 @@ function renderReplyHandoff(task: TaskInfo, ctx: ReplyContext): string[] {
 		'### Their reply',
 		replyBlock,
 		'',
-		'### Tickets referenced by the reply',
+		'### Tasks referenced by the reply',
 		referenced,
 		'',
 		'### How to handle this reply',
-		'1. Read the reply and any referenced tickets.',
+		'1. Read the reply and any referenced tasks.',
 		`2. If more responses to the same original comment are still expected (you mentioned multiple agents), you may choose to wait — another reply wakeup will arrive and you'll see the latest state then.`,
 		`3. If your original comment (quoted above) announced what you would do once this reply arrived — a delegation fan-out, a set of updates, steps contingent on the answer — that announced plan is now due: carry it out this run, or post a comment explicitly revising or retracting it with the reason (e.g. the answer collapsed the scope). Do not merely acknowledge the answer, and do not do a smaller piece than announced and close as if the plan completed.`,
 		`4. Otherwise, update your own plan or post a follow-up comment on ${task.identifier} as appropriate. Do not re-mention the responder unless you need another round-trip.`,
@@ -3672,14 +3672,14 @@ export async function loadSpawnedFromTask(db: Db, task: TaskInfo): Promise<Spawn
 
 	if (parent && spawningTask && parent.id === spawningTask.id) {
 		return {
-			parentLine: `**Parent ticket:** ${parent.identifier} — ${parent.title}`,
+			parentLine: `**Parent task:** ${parent.identifier} — ${parent.title}`,
 			spawnLine: null,
 		};
 	}
 	return {
-		parentLine: parent ? `**Parent ticket:** ${parent.identifier} — ${parent.title}` : null,
+		parentLine: parent ? `**Parent task:** ${parent.identifier} — ${parent.title}` : null,
 		spawnLine: spawningTask
-			? `**Spawned from:** ${spawningTask.identifier} — ${spawningTask.title} (provenance only; this ticket is your own work)`
+			? `**Spawned from:** ${spawningTask.identifier} — ${spawningTask.title} (provenance only; this task is your own work)`
 			: null,
 	};
 }
@@ -3789,7 +3789,7 @@ export async function buildCoachReviewPrompt(
 		'',
 		'---',
 		'',
-		`## Review Completed Ticket: ${task.identifier} — ${task.title}`,
+		`## Review Completed Task: ${task.identifier} — ${task.title}`,
 		`**Final Status:** ${task.status}`,
 		`**Priority:** ${task.priority}`,
 		'',
@@ -3806,7 +3806,7 @@ export async function buildCoachReviewPrompt(
 		'',
 		...(runLog ? ['### Agent Runs', runLog, ''] : []),
 		'### Your Task',
-		'Review this completed ticket. Analyze the comment history for patterns where agents struggled,',
+		'Review this completed task. Analyze the comment history for patterns where agents struggled,',
 		'received feedback, had work rejected, or needed multiple attempts. When the comments do not fully',
 		'explain what happened — a silent plan-vs-outcome gap, an unclear failure, an approach abandoned',
 		'without explanation — call `get_run_log(run_id)` on a run listed under Agent Runs to inspect what',
@@ -3818,7 +3818,7 @@ export async function buildCoachReviewPrompt(
 		'`update_project_custom_prompt` instead of editing each prompt one by one. Updates apply immediately and a',
 		'revision snapshot is recorded so the admin can roll back if needed.',
 		'',
-		'If the ticket completed smoothly without significant rework or feedback, no changes are needed.',
+		'If the task completed smoothly without significant rework or feedback, no changes are needed.',
 		'',
 		'### Final Step',
 		`Post the review summary comment on ${task.identifier} now, following the format defined in your system prompt.`,

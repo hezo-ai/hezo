@@ -25,7 +25,7 @@ async function createSubTask(
 	return ((await res.json()) as { data: SeededSubTask }).data;
 }
 
-test('UI surfaces the depth-cap error when creating a sub-task under a depth-3 ticket', async () => {
+test('UI surfaces the depth-cap error when creating a sub-task under a depth-3 task', async () => {
 	let projectSlug = '';
 	let deepestIdentifier = '';
 
@@ -155,7 +155,7 @@ test('canonical task URL is project-scoped; UUID and wrong-project forms redirec
 	await findByRole('heading', { name: taskTitle });
 });
 
-test('bare ticket identifier renders as a tooltip-ed link and navigates to the target task', async () => {
+test('bare task identifier renders as a tooltip-ed link and navigates to the target task', async () => {
 	let projSlug = '';
 	let sourceIdentifier = '';
 	let targetIdentifier = '';

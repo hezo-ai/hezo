@@ -389,7 +389,7 @@ export function RunCommentBody({
 							}}
 							className="text-xs text-info-soft-fg hover:underline self-start"
 						>
-							Created ticket {task.identifier} — {task.title}
+							Created task {task.identifier} - {task.title}
 						</Link>
 					))}
 				</div>

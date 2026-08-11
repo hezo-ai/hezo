@@ -664,7 +664,7 @@ describe('runAgent — mention handoff', () => {
 		expect(ctx).toBeNull();
 	});
 
-	it('loadMentionContext loads the author, excerpt, and open tickets', async () => {
+	it('loadMentionContext loads the author, excerpt, and open tasks', async () => {
 		const commentRes = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
 			 VALUES ($1, NULL, 'text', $2::jsonb)
@@ -725,7 +725,7 @@ describe('runAgent — reply handoff', () => {
 		expect(capturedPrompt).toContain('My original question about EX-1');
 		expect(capturedPrompt).toContain('Replying — see EX-1 for the answer');
 		// The reply references EX-1, which resolves to a known ticket row.
-		expect(capturedPrompt).toContain('### Tickets referenced by the reply');
+		expect(capturedPrompt).toContain('### Tasks referenced by the reply');
 
 		await db.query('DELETE FROM task_comments WHERE id = ANY($1::uuid[])', [[originalId, replyId]]);
 	});
@@ -750,7 +750,7 @@ describe('runAgent — spawned-from / parent provenance', () => {
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Parent Ticket',
+				title: 'Parent Task',
 				description: 'p',
 				assignee_id: agentId,
 			}),
@@ -763,7 +763,7 @@ describe('runAgent — spawned-from / parent provenance', () => {
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Spawning Ticket',
+				title: 'Spawning Task',
 				description: 's',
 				assignee_id: agentId,
 			}),
@@ -788,14 +788,14 @@ describe('runAgent — spawned-from / parent provenance', () => {
 
 		const out = await loadSpawnedFromTask(db, taskInfo);
 		expect(out).not.toBeNull();
-		expect(out!.parentLine).toContain('Parent ticket');
-		expect(out!.parentLine).toContain('Parent Ticket');
+		expect(out!.parentLine).toContain('Parent task');
+		expect(out!.parentLine).toContain('Parent Task');
 		expect(out!.spawnLine).toContain('Spawned from');
-		expect(out!.spawnLine).toContain('Spawning Ticket');
+		expect(out!.spawnLine).toContain('Spawning Task');
 
 		// And through buildTaskPrompt the lines land in the rendered prompt.
 		const prompt = buildTaskPrompt('SYS', taskInfo, undefined, { spawnedFrom: out });
-		expect(prompt).toContain('**Parent ticket:** ');
+		expect(prompt).toContain('**Parent task:** ');
 		expect(prompt).toContain('**Spawned from:** ');
 
 		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [spawnRun.rows[0].id]);

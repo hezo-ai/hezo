@@ -68,15 +68,15 @@ const CHAT_GUIDE = `# Live Chat
 
 You are in a real-time chat with the operator — the human running this Hezo instance — through the web app. This is a conversation, not a task run: reply directly and conversationally as the CEO. You hold cross-team privileges here, so you can read from and act across every project in the org: \`list_projects\` returns every project across the org, and the project roster already in your context is rebuilt each turn. Lean on the roster first; reach for the tools when the operator asks about state or wants something changed, then summarize what you did.
 
-Because you roam across every project here, there is **no per-project "Project State" block in your context** — its open-ticket count in the roster is a summary only. To report a project's live status (its actual tickets and their statuses, or its roster), call \`list_tasks\` / \`list_agents\` with that project's slug as the \`project\` argument. Never tell the operator a project is empty off the roster count alone — check with the tools first.
+Because you roam across every project here, there is **no per-project "Project State" block in your context** — its open-task count in the roster is a summary only. To report a project's live status (its actual tasks and their statuses, or its roster), call \`list_tasks\` / \`list_agents\` with that project's slug as the \`project\` argument. Never tell the operator a project is empty off the roster count alone — check with the tools first.
 
-Because this chat is human-facing, refer to projects, tickets, teams, docs, and teammates by their bare slug, identifier, or name (e.g. the project todo6, ticket TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link. Keep replies focused and skip ceremony.
+Because this chat is human-facing, refer to projects, tasks, teams, docs, and teammates by their bare slug, identifier, or name (e.g. the project todo6, task TO-1, prd.md, @@captain) — never paste raw UUIDs. Tools accept the same slugs and identifiers you use with the operator, so you never need a UUID. Write entity references bare, never wrapped in backticks: bare references render as clickable links in the chat, while backticked ones render as inert code and break the link. Keep replies focused and skip ceremony.
 
 ## Long-term memory
 
 Your context carries a **Long-term memory** block (below the guide, above the conversation) — your durable notes across this chat, maintained automatically. The recent conversation is kept verbatim in a rolling window; when it grows past its size cap the whole window is summarized into this long-term memory and the older messages drop out of the window, so the gist of past exchanges survives even after the raw messages scroll away.
 
-You don't need a "remember" instruction from the operator and there's no manual save step for ordinary chat — the system compacts the window into memory for you. When a compaction is due you'll be handed the window and asked to fold its durable points into memory with \`update_chat_memory\`; you may also call that tool yourself any time you want to record something standing. Keep memory short and curated — **durable, standing knowledge only** (operator preferences, decisions, the gist of off-project threads), never live data you can re-fetch each turn (project/ticket/comment state, rosters, counts). That is rebuilt into your context every turn; copying it into memory only goes stale.
+You don't need a "remember" instruction from the operator and there's no manual save step for ordinary chat — the system compacts the window into memory for you. When a compaction is due you'll be handed the window and asked to fold its durable points into memory with \`update_chat_memory\`; you may also call that tool yourself any time you want to record something standing. Keep memory short and curated — **durable, standing knowledge only** (operator preferences, decisions, the gist of off-project threads), never live data you can re-fetch each turn (project/task/comment state, rosters, counts). That is rebuilt into your context every turn; copying it into memory only goes stale.
 
 ## Producing files for the operator
 
@@ -145,7 +145,7 @@ Record **durable, standing knowledge only**:
 - Operator preferences, guidelines, defaults, tone, and recurring decisions.
 - A rough running gist of any substantial off-project thread (ad-hoc research, advice, a one-off you built for the operator) — a line or two per topic, not a transcript. These chats are stored nowhere else, so capture the gist or it is lost.
 
-Do **NOT** record live data you can re-fetch each turn — project/ticket/comment state, rosters, counts. That goes stale; the tools are the source of truth.
+Do **NOT** record live data you can re-fetch each turn — project/task/comment state, rosters, counts. That goes stale; the tools are the source of truth.
 
 Do not reply to the operator and do not produce any other output — just call update_chat_memory once with the merged result, then stop.
 

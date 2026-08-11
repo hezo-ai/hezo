@@ -571,7 +571,7 @@ describe('MCP endpoint: tool call integration', () => {
 			task_id: other.id,
 			status: 'in_progress',
 		});
-		expect(result.error).toMatch(/scoped to its own ticket/i);
+		expect(result.error).toMatch(/scoped to its own task/i);
 		expect(result.error).toMatch(/must not start doing its work/i);
 		expect(result.status).toBeUndefined();
 
@@ -604,7 +604,7 @@ describe('MCP endpoint: tool call integration', () => {
 		const summary = await callUpdateTaskScoped(agentToken, {
 			project: projectId,
 			task_id: other.id,
-			progress_summary: 'context folded in from the run ticket',
+			progress_summary: 'context folded in from the run task',
 		});
 		expect(summary.error).toBeUndefined();
 
@@ -810,7 +810,7 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 				method: 'tools/call',
 				params: {
 					name: 'report_no_work',
-					arguments: { reason: 'planning ticket — sub-tasks still open' },
+					arguments: { reason: 'planning task — sub-tasks still open' },
 				},
 				id: 1,
 			}),
@@ -828,7 +828,7 @@ describe('MCP tool handlers: additional data queries via DB', () => {
 			[runId],
 		);
 		expect(after.rows[0].reported_no_work).toBe(true);
-		expect(after.rows[0].no_work_reason).toBe('planning ticket — sub-tasks still open');
+		expect(after.rows[0].no_work_reason).toBe('planning task — sub-tasks still open');
 		expect(after.rows[0].produced_output).toBe(false);
 	});
 
@@ -1568,7 +1568,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		expect(intakeTask.rows[0].status).toBe('done');
 	});
 
-	it('accepts the intake ticket identifier (e.g. HQ-1), not only its UUID', async () => {
+	it('accepts the intake task identifier (e.g. HQ-1), not only its UUID', async () => {
 		const intake = await startIntake(`CEO Identifier ${Date.now()}`);
 		const ceoId = await instanceCeoId(db);
 		const { token: ceoToken } = await mintAgentToken(
@@ -1689,7 +1689,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		return { ceoToken, ceoId, result };
 	}
 
-	it('does NOT auto-run coherence: the setup ticket is created unassigned, with no wakeup, and planning stays blocked on it', async () => {
+	it('does NOT auto-run coherence: the setup task is created unassigned, with no wakeup, and planning stays blocked on it', async () => {
 		const { result } = await createProjectAsCeo('No Auto Coherence');
 		expect(result.coherence_task_id).toBeTruthy();
 		expect(result.coherence_task_identifier).toBeTruthy();
@@ -1718,7 +1718,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		expect(dep.rows[0].n).toBe(1);
 	});
 
-	it('start_team_setup assigns the coherence ticket to the CEO and wakes them', async () => {
+	it('start_team_setup assigns the coherence task to the CEO and wakes them', async () => {
 		const { ceoToken, ceoId, result } = await createProjectAsCeo('Setup Happy');
 		const coherenceId = result.coherence_task_id as string;
 
@@ -1741,13 +1741,13 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 		expect(wakeups.rows[0].source).toBe('assignment');
 	});
 
-	it('start_team_setup errors when there is no open setup ticket', async () => {
+	it('start_team_setup errors when there is no open setup task', async () => {
 		const { ceoToken, result } = await createProjectAsCeo('Setup Done');
 		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [
 			result.coherence_task_id as string,
 		]);
 		const started = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
-		expect(started.error).toContain('No open team-setup ticket');
+		expect(started.error).toContain('No open team-setup task');
 	});
 
 	it('start_team_setup rejects a non-CEO agent', async () => {
@@ -2368,7 +2368,7 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		for (let i = 0; i < 8; i++) {
 			await callToolViaMcp('create_task', {
 				project: fatProjectId,
-				title: `Fat ticket ${i}`,
+				title: `Fat task ${i}`,
 				description: fatBody,
 				assignee_id: agentId,
 			});

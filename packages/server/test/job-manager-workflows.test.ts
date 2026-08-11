@@ -1155,7 +1155,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					nextNumber,
 					`${meta.rows[0].task_prefix}-${nextNumber}`,
-					'Next queued ticket',
+					'Next queued task',
 					TaskStatus.Backlog,
 				],
 			);
@@ -1258,7 +1258,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					meta.rows[0].number,
 					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
-					'Sibling ticket already in flight',
+					'Sibling task already in flight',
 					TaskStatus.InProgress,
 				],
 			);
@@ -1320,7 +1320,7 @@ describe('JobManager workflow methods', () => {
 					agentId,
 					meta.rows[0].number,
 					`${meta.rows[0].task_prefix}-${meta.rows[0].number}`,
-					'Sibling ticket with pending wakeup',
+					'Sibling task with pending wakeup',
 					TaskStatus.Backlog,
 				],
 			);

@@ -507,8 +507,8 @@ describe('parent change system events', () => {
 
 describe('task link system events', () => {
 	it('creates a link comment on the target the first time another task mentions it', async () => {
-		const target = await createTask('Target ticket');
-		const source = await createTask('Source ticket');
+		const target = await createTask('Target task');
+		const source = await createTask('Source task');
 
 		const res = await app.request(`/api/projects/${projectSlug}/tasks/${source.id}/comments`, {
 			method: 'POST',

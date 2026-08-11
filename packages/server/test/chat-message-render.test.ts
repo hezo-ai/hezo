@@ -35,7 +35,7 @@ beforeAll(async () => {
 
 	await db.query(
 		`INSERT INTO tasks (team_id, project_id, number, identifier, title)
-		 VALUES ($1, $2, 901, 'RD-901', 'Render ticket')`,
+		 VALUES ($1, $2, 901, 'RD-901', 'Render task')`,
 		[teamId, project.id],
 	);
 	await db.query(

@@ -278,7 +278,7 @@ describe('list tools page instead of silently truncating', () => {
 		for (let i = 0; i < 12; i++) {
 			const t = (await callTool('create_task', {
 				project: projectId,
-				title: `Paged ticket ${i}`,
+				title: `Paged task ${i}`,
 				description: 'body',
 				assignee_id: agentId,
 			})) as { identifier?: string };

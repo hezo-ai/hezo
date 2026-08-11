@@ -64,7 +64,7 @@ describe('template resolver', () => {
 		expect(result).toContain('report_no_work');
 		// Re-engagement guard: a re-woken agent must recognise an already-handed-off
 		// ticket and no-op rather than redo work that is now in a teammate's court.
-		expect(result).toContain('already handed this ticket off');
+		expect(result).toContain('already handed this task off');
 	});
 
 	it('routes recurring work to standing tasks and frames goals as outcomes', async () => {
@@ -352,9 +352,9 @@ describe('template resolver', () => {
 			'### Hezo Entities Live in the Database, Not on the Container Filesystem',
 		);
 		expect(result).toContain('read_project_doc');
-		expect(result).toContain('### Ticket Maintenance');
-		expect(result).toContain('### Creating Tickets');
-		expect(result).toContain('### Ticket Dependencies');
+		expect(result).toContain('### Task Maintenance');
+		expect(result).toContain('### Creating Tasks');
+		expect(result).toContain('### Task Dependencies');
 		expect(result).toContain('### Completion Handoff');
 		expect(result).toContain('### @-Mentions, Linking & Handoffs');
 		expect(result).toContain('### Knowledge Maintenance');
@@ -367,7 +367,7 @@ describe('template resolver', () => {
 		expect(result).toContain('### Sub-Tasks & Delegation');
 		// A defect in the agent's own in-flight deliverable must be fixed on the
 		// current ticket, not offloaded into a sub-task/peer ticket (PR-cascade fix).
-		expect(result).toContain('A defect in your own in-flight work is NOT a new ticket');
+		expect(result).toContain('A defect in your own in-flight work is NOT a new task');
 		expect(result).toContain('### Assigning Work');
 		expect(result).toContain('### Fetching External URLs');
 		expect(result).toContain('curl');
@@ -395,7 +395,7 @@ describe('template resolver', () => {
 		);
 		// Being the parent ticket's assignee is the exact rationalisation that produced
 		// the incident, so the rule names it and holds for as long as the child is open.
-		expect(result).toContain("Being the parent ticket's assignee does **not** make you");
+		expect(result).toContain("Being the parent task's assignee does **not** make you");
 		expect(result).toContain('While that sub-task is non-terminal you do not write, edit');
 		// The routing mechanics: persist the change on the sub-task, then wake its owner.
 		// `update_task` alone creates no wake, which is why both halves are spelled out.
@@ -418,7 +418,7 @@ describe('template resolver', () => {
 		expect(result).toContain('The ownership question is re-asked on **every** later instruction');
 	});
 
-	it('carves the delegated case out of the "mention on your own ticket is your work" rule', async () => {
+	it('carves the delegated case out of the "mention on your own task is your work" rule', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// The "Assigned to you" branch tells an agent to do what the comment asks *in
 		// this run* — read literally, that is an instruction to execute feedback that
@@ -447,7 +447,7 @@ describe('template resolver', () => {
 		// A baton-passing line with no imperative verb still wakes the next actor —
 		// guards against the passive-mention misclassification that strands review handoffs.
 		expect(result).toContain('baton-passing handoff is an ask even when it reads as a status line');
-		expect(result).toContain('who is expected to act next on this ticket?');
+		expect(result).toContain('who is expected to act next on this task?');
 		expect(result).toContain('ready for review');
 	});
 
@@ -491,7 +491,7 @@ describe('template resolver', () => {
 		expect(result).toContain('You can assign only to yourself or a direct report');
 		// subtask-preference (deliverable-feed test + fan-out tell) + skills discovery
 		expect(result).toContain('deliverable-feed test');
-		expect(result).toContain('Fanning work out from the ticket you are on');
+		expect(result).toContain('Fanning work out from the task you are on');
 		expect(result).toContain('npx skills find');
 		// comment hygiene (no-redundant-comments + comment-formatting)
 		expect(result).toContain("Don't repost when nothing changed");
@@ -548,7 +548,7 @@ describe('template resolver', () => {
 		// The incident: a reviewer marked the ticket done on its own review after a
 		// rework/detour, forgetting the admin's final approval was still owed. A
 		// reviewer's own pass is one link in the chain, not the terminal approval.
-		expect(result).toContain("A reviewer's own pass is not the ticket's final approval");
+		expect(result).toContain("A reviewer's own pass is not the task's final approval");
 		expect(result).toContain('who still owes an approval');
 		expect(result).toContain('stated by **any** participant');
 		// A rework/detour does not discharge a still-outstanding approval.
@@ -573,16 +573,16 @@ describe('template resolver', () => {
 	it('tells agents not to park a done deliverable as blocked and to spin off the gated tail', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain(
-			"Don't park a ticket `blocked` when your own deliverable is already done",
+			"Don't park a task `blocked` when your own deliverable is already done",
 		);
 		expect(result).toContain('blocked_by_task_ids');
 		expect(result).toContain('deliverable-feed test');
 	});
 
-	it('tells reviewers/consolidators to gate the originating ticket blocked_by spawned remediation', async () => {
+	it('tells reviewers/consolidators to gate the originating task blocked_by spawned remediation', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain(
-			"When a ticket can't close until remediation you're routing out is done, GATE it",
+			"When a task can't close until remediation you're routing out is done, GATE it",
 		);
 		// a passive task-link does not re-wake; only a blocked_by edge does
 		expect(result).toContain('add_task_blocker');
@@ -606,7 +606,7 @@ describe('template resolver', () => {
 		expect(result).toContain('A handoff with nothing structural behind it uses active');
 		// the approval-to-merge / hand-back case that stalls on a passive @@
 		expect(result).toContain('the mention is the only wake there is');
-		expect(result).toContain('A passive `@@` there pings no one and the ticket stalls');
+		expect(result).toContain('A passive `@@` there pings no one and the task stalls');
 		// a direct instruction to the assignee leads the section as a co-equal rule
 		expect(result).toContain('A direct instruction or request is the only wake there is');
 		// rubric carries the directive phrasing that misfired as passive
@@ -687,7 +687,7 @@ describe('template resolver', () => {
 		// upward/peer handoff has no structural channel, so the active mention is it
 		expect(result).toContain('`create_task` assigns downward only');
 		// non-blocking follow-ups must be ticketed or actively handed off, never left as prose
-		expect(result).toContain("Follow-ups that *don't* block this ticket still need an owner");
+		expect(result).toContain("Follow-ups that *don't* block this task still need an owner");
 	});
 
 	it('mention discipline makes @@ the explicit default and flags the status-recap antipattern', async () => {
@@ -835,7 +835,7 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain('## Run Context');
 		expect(result).not.toContain('- Project:');
-		expect(result).not.toContain('Current ticket:');
+		expect(result).not.toContain('Current task:');
 	});
 
 	it('Run Context names the project by slug (never a UUID) when projectId is set', async () => {
@@ -845,7 +845,7 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId, projectId });
 		expect(result).toContain(`- Project: \`${proj.rows[0].slug}\``);
 		expect(result).not.toContain(projectId);
-		expect(result).not.toContain('Current ticket:');
+		expect(result).not.toContain('Current task:');
 	});
 
 	it('Repository block steers GitHub work to the connected account before any PAT', async () => {
@@ -866,10 +866,10 @@ describe('template resolver', () => {
 		await db.query(`DELETE FROM repos WHERE project_id = $1`, [projectId]);
 	});
 
-	it('Run Context names the current ticket by identifier when taskId is set', async () => {
+	it('Run Context names the current task by identifier when taskId is set', async () => {
 		const inserted = await db.query<{ id: string; identifier: string }>(
 			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
-			 VALUES ($1, $2, next_project_task_number($2), 'RC-1', 'Run context ticket', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+			 VALUES ($1, $2, next_project_task_number($2), 'RC-1', 'Run context task', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
 			[teamId, projectId],
 		);
@@ -879,7 +879,7 @@ describe('template resolver', () => {
 			projectId,
 			taskId: task.id,
 		});
-		expect(result).toContain(`- Current ticket: \`${task.identifier}\``);
+		expect(result).toContain(`- Current task: \`${task.identifier}\``);
 		expect(result).not.toContain(task.id);
 	});
 
@@ -1387,19 +1387,19 @@ describe('project state block', () => {
 		expect(result).not.toContain('## Project State');
 	});
 
-	it('renders Project State header with active tickets when projectId is set', async () => {
+	it('renders Project State header with active tasks when projectId is set', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', {
 			teamId: psTeamId,
 			projectId: psProjectId,
 		});
 		expect(result).toContain('## Project State');
-		expect(result).toContain('### Active tickets');
+		expect(result).toContain('### Active tasks');
 		// App Team-template projects auto-create a planning ticket assigned to the Captain.
 		expect(result).toMatch(/- PP-\d+ — Draft execution plan/);
 		expect(result).toContain('assigned to Captain');
 	});
 
-	it('renders empty-state when the project has no active tickets', async () => {
+	it('renders empty-state when the project has no active tasks', async () => {
 		// Cancel the auto-created planning ticket on a fresh project so it has no active tickets.
 		const projectRes = await createTestProject(db, psTeamId, {
 			name: 'Empty PS Project',
@@ -1416,10 +1416,10 @@ describe('project state block', () => {
 			projectId: emptyProjectId,
 		});
 		expect(result).toContain('## Project State');
-		expect(result).toContain('No active tickets in this project.');
+		expect(result).toContain('No active tasks in this project.');
 	});
 
-	it('lists active tickets and excludes terminal-status ones', async () => {
+	it('lists active tasks and excludes terminal-status ones', async () => {
 		const activeRes = await app.request(`/api/projects/${psProjectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -1458,13 +1458,13 @@ describe('project state block', () => {
 		expect(result).not.toContain('Already finished item');
 	});
 
-	it('shows "Tickets you created" subsection scoped to the agent\'s prior runs', async () => {
+	it('shows "Tasks you created" subsection scoped to the agent\'s prior runs', async () => {
 		const planningTaskRes = await app.request(`/api/projects/${psProjectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: psProjectId,
-				title: 'Captain planning ticket',
+				title: 'Captain planning task',
 				assignee_id: psCaptainMemberId,
 			}),
 		});
@@ -1489,27 +1489,27 @@ describe('project state block', () => {
 			projectId: psProjectId,
 			agentId: psCaptainMemberId,
 		});
-		expect(result).toContain('### Tickets you created on prior runs');
+		expect(result).toContain('### Tasks you created on prior runs');
 		expect(result).toContain(subRes.rows[0].identifier);
 		expect(result).toContain('Delegated to architect by Captain');
 	});
 
-	it('"Tickets you created" is empty for an agent that hasn\'t created any', async () => {
+	it('"Tasks you created" is empty for an agent that hasn\'t created any', async () => {
 		const result = await resolveSystemPrompt(db, 'X', {
 			teamId: psTeamId,
 			projectId: psProjectId,
 			agentId: psArchitectMemberId,
 		});
-		expect(result).toContain('### Tickets you created on prior runs');
-		expect(result).toContain('You have not created any tickets in this project on prior runs');
+		expect(result).toContain('### Tasks you created on prior runs');
+		expect(result).toContain('You have not created any tasks in this project on prior runs');
 	});
 
-	it('omits "Tickets you created" subsection when agentId is absent', async () => {
+	it('omits "Tasks you created" subsection when agentId is absent', async () => {
 		const result = await resolveSystemPrompt(db, 'X', {
 			teamId: psTeamId,
 			projectId: psProjectId,
 		});
-		expect(result).not.toContain('Tickets you created on prior runs');
+		expect(result).not.toContain('Tasks you created on prior runs');
 	});
 });
 
@@ -1643,7 +1643,7 @@ describe('repository block', () => {
 		await db.query('DELETE FROM repos WHERE id = $1', [readOnly.rows[0].id]);
 	});
 
-	it('names the concrete worktree path of a linked repo when the ticket resolves', async () => {
+	it('names the concrete worktree path of a linked repo when the task resolves', async () => {
 		await db.query(
 			`INSERT INTO repos (project_id, repo_identifier, host_type)
 			 VALUES ($1, 'acme/api', 'github'::repo_host_type)`,
@@ -1651,7 +1651,7 @@ describe('repository block', () => {
 		);
 		const task = await db.query<{ id: string; identifier: string }>(
 			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
-			 VALUES ($1, $2, next_project_task_number($2), 'REPO-1', 'Repo worktree ticket', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+			 VALUES ($1, $2, next_project_task_number($2), 'REPO-1', 'Repo worktree task', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
 			[repoTeamId, repoProjectId],
 		);
@@ -1755,7 +1755,7 @@ describe('cross-team chat resolution (crossTeam: true)', () => {
 			crossTeam: true,
 		});
 		expect(result).not.toContain('## Project State');
-		expect(result).not.toContain('No active tickets in this project');
+		expect(result).not.toContain('No active tasks in this project');
 		expect(result).not.toContain('## Teammates');
 	});
 

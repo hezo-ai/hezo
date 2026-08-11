@@ -32,11 +32,11 @@ describe('MCP_ADAPTERS', () => {
 	});
 
 	describe('STOP_HOOK_RULES deferral semantics', () => {
-		it('admits closing a ticket when the gated tail is filed as a blocked_by follow-up', () => {
+		it('admits closing a task when the gated tail is filed as a blocked_by follow-up', () => {
 			expect(STOP_HOOK_RULES).toContain(
-				'filing the deferred work as a SEPARATE ticket whose blocked_by_task_ids points at',
+				'filing the deferred work as a SEPARATE task whose blocked_by_task_ids points at',
 			);
-			expect(STOP_HOOK_RULES).toContain('marking the current ticket terminal is fine');
+			expect(STOP_HOOK_RULES).toContain('marking the current task terminal is fine');
 		});
 
 		it('still rejects an unguarded top-level task or close-while-deferring', () => {

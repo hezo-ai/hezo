@@ -462,13 +462,13 @@ test('tasks with active runs pin to the top regardless of sort order', async () 
 			const project = await seedProject(ws, { name: 'Pin Project' });
 			const agentId = ws.agents[0].id;
 			const old = await seedTask(ws, project, {
-				title: 'Old running ticket',
+				title: 'Old running task',
 				assignee_id: agentId,
 			});
 			// Newer ticket should sort first by created_at desc but the old one
 			// has an active run so it should pin above it.
 			await seedTask(ws, project, {
-				title: 'New idle ticket',
+				title: 'New idle task',
 				assignee_id: agentId,
 			});
 			await insertActiveRun(agentId, ws.team.id, old.id);
@@ -481,13 +481,13 @@ test('tasks with active runs pin to the top regardless of sort order', async () 
 		params: { projectId: projectSlug },
 	});
 
-	await findByText('Old running ticket', undefined, { timeout: 10_000 });
+	await findByText('Old running task', undefined, { timeout: 10_000 });
 
 	await waitFor(() => {
 		const rows = Array.from(container.querySelectorAll('tr'))
 			.map((r) => r.textContent ?? '')
-			.filter((t) => t.includes('ticket'));
-		expect(rows[0]).toContain('Old running ticket');
+			.filter((t) => t.includes('task'));
+		expect(rows[0]).toContain('Old running task');
 	});
 });
 

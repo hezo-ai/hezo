@@ -147,7 +147,7 @@ describe('create_hire_proposal / update_hire_proposal', () => {
 		taskIdentifier = r.rows[0].identifier;
 	});
 
-	it('captain files a proposal linked to a ticket', async () => {
+	it('captain files a proposal linked to a task', async () => {
 		const at = await agentToken(captainId, teamId, taskId);
 		const r = await call(at, 'create_hire_proposal', {
 			title: 'Support Lead',
@@ -307,7 +307,7 @@ describe('resolve_approval', () => {
 describe('create_project / start_team_setup (CEO)', () => {
 	let newProjectSlug: string;
 
-	it('CEO creates a project, closing an open intake ticket', async () => {
+	it('CEO creates a project, closing an open intake task', async () => {
 		// Seed an intake ticket in HQ.
 		const intake = await admin('create_task', {
 			project: hqProjectSlug,
@@ -340,7 +340,7 @@ describe('create_project / start_team_setup (CEO)', () => {
 		expect(intakeRow.rows[0].status).toBe('done');
 	});
 
-	it('rejects an unknown intake ticket', async () => {
+	it('rejects an unknown intake task', async () => {
 		const t = await ceoToken();
 		const r = await call(t, 'create_project', {
 			name: 'No Intake',
@@ -350,7 +350,7 @@ describe('create_project / start_team_setup (CEO)', () => {
 		expect(r.error).toBe('Intake task not found');
 	});
 
-	it('rejects an intake ticket that is already completed', async () => {
+	it('rejects an intake task that is already completed', async () => {
 		const done = await admin('create_task', {
 			project: hqProjectSlug,
 			title: 'Closed intake',
@@ -366,7 +366,7 @@ describe('create_project / start_team_setup (CEO)', () => {
 		expect(r.error).toBe('This intake has already been completed');
 	});
 
-	it('start_team_setup assigns and wakes the CEO on the coherence ticket', async () => {
+	it('start_team_setup assigns and wakes the CEO on the coherence task', async () => {
 		const t = await ceoToken();
 		const r = await call(t, 'start_team_setup', { project: newProjectSlug });
 		expect(r.started).toBe(true);
@@ -379,7 +379,7 @@ describe('create_project / start_team_setup (CEO)', () => {
 		expect(row.rows[0].assignee_id).toBe(ceoId);
 	});
 
-	it('start_team_setup errors when no open setup ticket exists', async () => {
+	it('start_team_setup errors when no open setup task exists', async () => {
 		// The coherence ticket in `projectSlug`'s team was never created via the
 		// CEO path; close any open one first to guarantee the error branch.
 		await db.query(
@@ -389,7 +389,7 @@ describe('create_project / start_team_setup (CEO)', () => {
 		);
 		const t = await ceoToken();
 		const r = await call(t, 'start_team_setup', { project: projectSlug });
-		expect(r.error).toBe('No open team-setup ticket for this project');
+		expect(r.error).toBe('No open team-setup task for this project');
 	});
 });
 

@@ -23,7 +23,7 @@ export interface ResolvedRuntime {
 export const RUNTIME_CANDIDATE_SCAN_LIMIT = 200;
 
 /**
- * Pick the runtime + provider for an task run. Precedence:
+ * Pick the runtime + provider for a task run. Precedence:
  *   1. The task's explicit `runtime_type`, if set: pick the highest-priority
  *      active credential that RESOLVES to that runtime. Both halves matter —
  *      several providers can share a runtime (Anthropic and DeepSeek both run
