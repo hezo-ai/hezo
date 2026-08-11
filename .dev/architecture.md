@@ -2849,8 +2849,7 @@ one CLI and the UI omits the picker for it — for Ollama and LM Studio the Adva
 then holds only the optional API key.
 
 The one-to-many shape is deliberately kept even at one alternate: it is what makes a second CLI
-for a provider a table row rather than a refactor. Prime Agent was carried here for a release
-and removed in 056 - see that migration for what an operator's stored choice becomes.
+for a provider a table row rather than a refactor.
 
 **Because the runtime is per credential, it must be resolved from the credential row, never
 from the provider.** `buildProviderEnv` composes from `providerRuntimeBinding(provider,
