@@ -125,21 +125,21 @@ afterAll(async () => {
 
 describe('POST /api/mentions/resolve — tasks', () => {
 	it('resolves an instance-unique identifier with its project slug', async () => {
-		await insertTask(teamAId, projectAId, 'QQ-7', 907, 'Unique ticket');
+		await insertTask(teamAId, projectAId, 'QQ-7', 907, 'Unique task');
 		const { status, data } = await resolve({ tasks: ['qq-7'] });
 		expect(status).toBe(200);
 		expect(data.tasks).toEqual([
 			expect.objectContaining({
 				identifier: 'QQ-7',
-				title: 'Unique ticket',
+				title: 'Unique task',
 				project_slug: projectASlug,
 			}),
 		]);
 	});
 
 	it('omits identifiers that collide across teams', async () => {
-		await insertTask(teamAId, projectAId, 'XX-1', 908, 'Alpha ticket');
-		await insertTask(teamBId, projectBId, 'XX-1', 908, 'Beta ticket');
+		await insertTask(teamAId, projectAId, 'XX-1', 908, 'Alpha task');
+		await insertTask(teamBId, projectBId, 'XX-1', 908, 'Beta task');
 		const { data } = await resolve({ tasks: ['xx-1', 'qq-7'] });
 		expect(data.tasks.map((t) => t.identifier)).toEqual(['QQ-7']);
 	});

@@ -74,7 +74,7 @@ export function formatTriggerReason(run: HeartbeatRun, teamSlug: string): Trigge
 			if (taskId) {
 				return { source, text: `Assigned to ${taskId}`, href: taskHref(run, teamSlug) };
 			}
-			return { source, text: 'Assigned to an task' };
+			return { source, text: 'Assigned to a task' };
 		}
 		case WakeupSource.Automation: {
 			const kind =

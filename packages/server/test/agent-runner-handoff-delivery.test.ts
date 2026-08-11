@@ -468,7 +468,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 			createMockDocker({
 				producesOutput: true,
 				execStart: streamResult(
-					`Review complete. Draft passes all checks. The ticket stays in review awaiting ${otherSlug} sign-off.`,
+					`Review complete. Draft passes all checks. The task stays in review awaiting ${otherSlug} sign-off.`,
 				),
 			}),
 		);
@@ -573,7 +573,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 					const event = JSON.stringify({
 						type: 'result',
 						is_error: false,
-						result: `Review complete. The ticket stays in review awaiting ${otherSlug} sign-off.`,
+						result: `Review complete. The task stays in review awaiting ${otherSlug} sign-off.`,
 						usage: {},
 					});
 					await opts.onChunk?.({ stream: 'stdout', text: `${event}\n` });

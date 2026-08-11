@@ -55,11 +55,11 @@ function buildGreetingText(input: CreateProjectIntakeInput): string {
 	// here would just duplicate it, so reference it instead.
 	if (input.baselineTeamTypeName) {
 		lines.push(
-			`I've read your brief for **${input.name}** above (it's captured in full in this ticket's description, so I won't repeat it here). You picked **${input.baselineTeamTypeName}** as the baseline team type.`,
+			`I've read your brief for **${input.name}** above (it's captured in full in this task's description, so I won't repeat it here). You picked **${input.baselineTeamTypeName}** as the baseline team type.`,
 		);
 	} else {
 		lines.push(
-			`I've read your brief for **${input.name}** above — it's captured in full in this ticket's description, so I won't repeat it here.`,
+			`I've read your brief for **${input.name}** above — it's captured in full in this task's description, so I won't repeat it here.`,
 		);
 	}
 	if (input.initialProjectPlan) {
@@ -93,7 +93,7 @@ function buildTaskDescription(input: CreateProjectIntakeInput): string {
 
 ## Open a new project
 
-The admin submitted the Create Project form and chose to plan it with you. Use this ticket as the single conversation thread to confirm scope, check team fit, and finalise the project shape before you create it.
+The admin submitted the Create Project form and chose to plan it with you. Use this task as the single conversation thread to confirm scope, check team fit, and finalise the project shape before you create it.
 
 ### Form data
 
@@ -107,11 +107,11 @@ ${input.description}
 
 ### Your task
 
-1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. Put an active \`@admin\` in any comment where you need them to answer — without it the question reaches no inbox and the ticket stalls.
+1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. Put an active \`@admin\` in any comment where you need them to answer — without it the question reaches no inbox and the task stalls.
 2. **Check team fit.** The admin's chosen team type above is your baseline. Call \`list_team_templates\` to review the local team types (Blank + saved), and — when the baseline is a marketplace team — \`get_marketplace_team\` to review its roster; recommend a different one if it fits the work better. The final call is the admin's.
 3. **Get the go-ahead.** Post a short summary of the agreed shape (name, description, team type), @-mention the admin, and ask them to confirm. A plain reply approving it is all you need — this is a normal conversation, not an inbox approval.
-4. **Create the project.** Once the admin approves in this thread, call \`create_project\` with the agreed \`name\`, \`description\`, and the chosen team source — \`template_id\`, \`source_team_id\`, or \`marketplace_slug\` — passing this ticket's id as \`intake_task_id\`. That creates the project and its team, opens the Captain's planning ticket, and closes this ticket automatically.
-5. **Set up the team, then start it.** \`create_project\` returns the new project's planning **and** coherence ticket identifiers. Because you created this project, the coherence/setup ticket does **not** start on its own: open it (the returned \`coherence_task_identifier\`) and rewrite its description with \`update_task\` to capture the concrete setup you agreed here — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call \`start_team_setup(project)\` to begin the setup run. If the admin decides not to proceed, close this ticket as cancelled with a brief note.`;
+4. **Create the project.** Once the admin approves in this thread, call \`create_project\` with the agreed \`name\`, \`description\`, and the chosen team source — \`template_id\`, \`source_team_id\`, or \`marketplace_slug\` — passing this task's id as \`intake_task_id\`. That creates the project and its team, opens the Captain's planning task, and closes this task automatically.
+5. **Set up the team, then start it.** \`create_project\` returns the new project's planning **and** coherence task identifiers. Because you created this project, the coherence/setup task does **not** start on its own: open it (the returned \`coherence_task_identifier\`) and rewrite its description with \`update_task\` to capture the concrete setup you agreed here — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call \`start_team_setup(project)\` to begin the setup run. If the admin decides not to proceed, close this task as cancelled with a brief note.`;
 }
 
 /**

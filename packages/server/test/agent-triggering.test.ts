@@ -201,7 +201,7 @@ describe('agent triggering', () => {
 	});
 
 	it('creates wakeup for container start with pending agent work', async () => {
-		// Create an task assigned to the agent
+		// Create a task assigned to the agent
 		await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
@@ -241,7 +241,7 @@ describe('agent triggering', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Captain ticket that mentions architect',
+				title: 'Captain task that mentions architect',
 				assignee_id: agentId,
 			}),
 		});
@@ -284,7 +284,7 @@ describe('agent triggering', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Multi-mention ticket',
+				title: 'Multi-mention task',
 				assignee_id: agentId,
 			}),
 		});
@@ -370,7 +370,7 @@ describe('agent triggering', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Self-mention ticket',
+				title: 'Self-mention task',
 				assignee_id: architect.id,
 			}),
 		});
@@ -414,7 +414,7 @@ describe('agent triggering', () => {
 	});
 
 	it('releases execution locks when container stops', async () => {
-		// Create an task and fake an execution lock
+		// Create a task and fake an execution lock
 		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },

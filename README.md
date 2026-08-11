@@ -210,7 +210,7 @@ tooling, guardrails and security stay the same underneath whichever model you pi
 |---|---|---|---|
 | **Anthropic** | Claude | Claude Code | API key or subscription |
 | **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
-| **Google** | Gemini | Gemini | API key or subscription |
+| **Google** | Gemini | Gemini CLI | API key or subscription |
 | **xAI** | Grok | Grok Build | API key |
 | **Kimi** (Moonshot) | Kimi | Claude Code or Kimi Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |

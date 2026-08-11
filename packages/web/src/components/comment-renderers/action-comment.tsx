@@ -65,7 +65,7 @@ export function ActionComment({ comment, projectId }: Props) {
 				<GitBranch className="w-4 h-4 text-info-soft-fg" />
 				<span>
 					This project has no designated repository yet. Add a repo on the Git settings page, then
-					this ticket will resume.
+					this task will resume.
 				</span>
 			</div>
 			<div className="pl-6">

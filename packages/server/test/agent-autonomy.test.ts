@@ -61,7 +61,7 @@ afterAll(async () => {
 });
 
 describe('task schema', () => {
-	it('creates an task with backlog status by default', async () => {
+	it('creates a task with backlog status by default', async () => {
 		const res = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
@@ -260,7 +260,7 @@ describe('approval: skill_proposal type', () => {
 					skill_name: 'Database Migration',
 					skill_slug: 'db-migration',
 					content: '# Database Migration\nSteps for safe migrations...',
-					reason: 'Codified migration pattern from ticket AUT-5',
+					reason: 'Codified migration pattern from task AUT-5',
 				},
 			}),
 		});
@@ -430,7 +430,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		expect(prompt.indexOf('## Mention Handoff')).toBeLessThan(prompt.indexOf('## Current Task'));
 	});
 
-	it('renders "none" in open tickets when agent has no assigned work', async () => {
+	it('renders "none" in open tasks when agent has no assigned work', async () => {
 		const { buildTaskPrompt } = await import('../src/services/agent-runner');
 
 		const ctx = {
@@ -444,7 +444,7 @@ describe('agent-runner: mention handoff prompt', () => {
 			mentionContext: ctx,
 		});
 
-		expect(prompt).toContain('### Your open tickets\nnone');
+		expect(prompt).toContain('### Your open tasks\nnone');
 		expect(prompt).toContain('Handling an @-mention');
 	});
 

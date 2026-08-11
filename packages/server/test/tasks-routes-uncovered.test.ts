@@ -492,7 +492,7 @@ describe('PATCH /tasks/:taskId — field matrix', () => {
 		);
 		const denied = await patchTask(other.id, { status: 'in_progress' }, agentToken);
 		expect(denied.status).toBe(403);
-		expect((await denied.json()).error.message).toMatch(/scoped to its own ticket/);
+		expect((await denied.json()).error.message).toMatch(/scoped to its own task/);
 
 		// The same transition on the run's own task is allowed.
 		const allowed = await patchTask(own.id, { status: 'in_progress' }, agentToken);

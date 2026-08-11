@@ -218,7 +218,7 @@ describe('placeholder substitution', () => {
 		expect(result).toContain('Hezo is project-centric');
 		expect(result).toContain(`slug: ${projectSlug}`);
 		expect(result).toContain(`prefix: ${taskPrefix}`);
-		expect(result).toMatch(/\d+ open tickets?/);
+		expect(result).toMatch(/\d+ open tasks?/);
 		expect(result).not.toContain(projectId);
 		const hq = await ctx.db.query<{ slug: string }>(
 			'SELECT slug FROM projects WHERE is_internal = true LIMIT 1',
@@ -300,10 +300,10 @@ describe('mode gating', () => {
 });
 
 describe('run context block', () => {
-	it('names the project by slug and the ticket by identifier, never UUIDs', async () => {
+	it('names the project by slug and the task by identifier, never UUIDs', async () => {
 		const task = await ctx.db.query<{ id: string; identifier: string }>(
 			`INSERT INTO tasks (team_id, project_id, number, identifier, title, status, priority, labels)
-			 VALUES ($1, $2, next_project_task_number($2), 'RCF-1', 'Run ctx ticket', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
+			 VALUES ($1, $2, next_project_task_number($2), 'RCF-1', 'Run ctx task', 'backlog'::task_status, 'medium'::task_priority, '[]'::jsonb)
 			 RETURNING id, identifier`,
 			[teamId, projectId],
 		);
@@ -313,7 +313,7 @@ describe('run context block', () => {
 			taskId: task.rows[0].id,
 		});
 		expect(result).toContain(`- Project: \`${projectSlug}\``);
-		expect(result).toContain(`- Current ticket: \`${task.rows[0].identifier}\``);
+		expect(result).toContain(`- Current task: \`${task.rows[0].identifier}\``);
 		expect(result).not.toContain(task.rows[0].id);
 		expect(result).not.toContain(projectId);
 	});
@@ -375,10 +375,10 @@ describe('team context / teammates blocks', () => {
 });
 
 describe('project state block', () => {
-	it('lists active tickets with status, priority and assignee', async () => {
+	it('lists active tasks with status, priority and assignee', async () => {
 		const result = await resolveSystemPrompt(ctx.db, 'Base', { teamId, projectId });
 		expect(result).toContain('## Project State');
-		expect(result).toContain('### Active tickets');
+		expect(result).toContain('### Active tasks');
 		// The planning ticket seeded by createTestProject is open and Captain-assigned.
 		expect(result).toMatch(/- .+ — Draft execution plan.*\(backlog, high, assigned to Captain\)/);
 		// The unassigned run-context ticket renders the fallback assignee.
@@ -402,7 +402,7 @@ describe('project state block', () => {
 			projectId,
 			agentId: captainId,
 		});
-		expect(result).toContain('### Tickets you created on prior runs (newest first)');
+		expect(result).toContain('### Tasks you created on prior runs (newest first)');
 		expect(result).toContain('Fan-out to engineer');
 		expect(result).toContain('(backlog, assigned to Engineer)');
 	});
@@ -413,15 +413,15 @@ describe('project state block', () => {
 			projectId,
 			agentId: engineerId,
 		});
-		expect(result).toContain('You have not created any tickets in this project on prior runs.');
+		expect(result).toContain('You have not created any tasks in this project on prior runs.');
 	});
 
-	it('renders the no-active-tickets empty state', async () => {
+	it('renders the no-active-tasks empty state', async () => {
 		await ctx.db.query(`UPDATE tasks SET status = 'cancelled'::task_status WHERE project_id = $1`, [
 			projectId,
 		]);
 		const result = await resolveSystemPrompt(ctx.db, 'Base', { teamId, projectId });
-		expect(result).toContain('_No active tickets in this project._');
+		expect(result).toContain('_No active tasks in this project._');
 	});
 });
 

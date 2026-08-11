@@ -181,7 +181,7 @@ function RunningAgentRow({
  * run. Mirrors the gating order of `JobManager.dispatchWakeupNow` on the server.
  */
 function runNowBlockReason(wakeup: QueuedWakeup, dispatch: QueuedDispatchState): string | null {
-	if (dispatch.task_busy) return 'This ticket already has a run in progress';
+	if (dispatch.task_busy) return 'This task already has a run in progress';
 	if (dispatch.instance_at_capacity) return 'Hezo is at its active-container limit';
 	if (wakeup.agent_busy) return 'This agent is currently running on another task in this project';
 	if (wakeup.run_now_blocked === 'blocked_by_dependency') return 'Blocked by an open dependency';

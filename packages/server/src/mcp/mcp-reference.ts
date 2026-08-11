@@ -85,14 +85,14 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	create_project: {
 		category: 'Projects',
 		returns:
-			'The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup ticket (`coherence_task_id`, `coherence_task_identifier`). The coherence ticket is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.',
+			'The new project row plus `team_slug`, `planning_task_id`, `planning_task_identifier`, and the initial coherence/setup task (`coherence_task_id`, `coherence_task_identifier`). The coherence task is created unassigned and does NOT auto-run on this path - draft its description then call `start_team_setup`. Returns `{ error }` if validation fails.',
 		auth: 'CEO only - call after the admin has explicitly approved the scope and team type in intake.',
 	},
 	start_team_setup: {
 		category: 'Projects',
 		returns:
-			'`{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup ticket to the CEO and waking them to run it. Returns `{ error }` if there is no open setup ticket for the project or a run is already active on it.',
-		auth: 'CEO only - for a project the CEO created via `create_project`; author the coherence ticket description first.',
+			'`{ started: true, task_id, task_identifier }` after assigning the project’s open coherence/setup task to the CEO and waking them to run it. Returns `{ error }` if there is no open setup task for the project or a run is already active on it.',
+		auth: 'CEO only - for a project the CEO created via `create_project`; author the coherence task description first.',
 	},
 	list_team_templates: {
 		category: 'Projects',
@@ -157,7 +157,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		category: 'Tasks',
 		returns:
 			'The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.',
-		auth: '`done` is the final completed state; marking a ticket `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
+		auth: '`done` is the final completed state; marking a task `done` wakes Coach to review it but the task stays `done`. `cancelled` is for abandoned work. Agents cannot set `done` while an @admin mention on the task is unanswered by a human; human admins are exempt. Only the admin can re-open a completed (`done`/`cancelled`) task. An agent run is scoped to its own task and may reassign only to itself or a direct subordinate. A `parent_task_id` change is rejected when the new parent is in a different project, is the task itself or one of its own sub-tasks, would push the moved sub-tree past the depth cap of 3, or is already done or cancelled while the task being moved is still open. Moving a task out of its former parent wakes that parent when it was the last open sub-task, exactly as closing it would.',
 	},
 	add_task_blocker: {
 		category: 'Tasks',

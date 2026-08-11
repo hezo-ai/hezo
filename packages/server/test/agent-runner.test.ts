@@ -578,7 +578,7 @@ describe('runAgent', () => {
 			docker: createMockDocker({
 				producesOutput: false,
 				reportsNoWork: true,
-				noWorkReason: 'planning ticket — sub-tasks still open',
+				noWorkReason: 'planning task — sub-tasks still open',
 			}),
 			masterKeyManager,
 			serverPort: 3000,
@@ -604,7 +604,7 @@ describe('runAgent', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
 		expect(run.rows[0].produced_output).toBe(false);
 		expect(run.rows[0].reported_no_work).toBe(true);
-		expect(run.rows[0].no_work_reason).toBe('planning ticket — sub-tasks still open');
+		expect(run.rows[0].no_work_reason).toBe('planning task — sub-tasks still open');
 		expect(run.rows[0].error).toBeNull();
 	});
 
@@ -872,7 +872,7 @@ describe('runAgent', () => {
 		expect(capturedUser).toBe('node');
 	});
 
-	it('injects Run Context with the project slug and current ticket into the system prompt', async () => {
+	it('injects Run Context with the project slug and current task into the system prompt', async () => {
 		const project = makeProject();
 		let capturedPrompt = '';
 		const docker = createMockDocker({
@@ -901,7 +901,7 @@ describe('runAgent', () => {
 
 		expect(capturedPrompt).toContain('## Run Context');
 		expect(capturedPrompt).toContain(`- Project: \`${projectSlug}\``);
-		expect(capturedPrompt).toContain(`- Current ticket: \`${taskIdentifier}\``);
+		expect(capturedPrompt).toContain(`- Current task: \`${taskIdentifier}\``);
 	});
 
 	it('handles coach review trigger', async () => {
@@ -930,7 +930,7 @@ describe('runAgent', () => {
 		});
 
 		expect(result.success).toBe(true);
-		expect(capturedPrompt).toContain('Review Completed Ticket');
+		expect(capturedPrompt).toContain('Review Completed Task');
 		expect(capturedPrompt).toContain('Comment History');
 	});
 

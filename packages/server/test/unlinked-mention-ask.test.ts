@@ -198,7 +198,7 @@ describe('detectUnlinkedTeammateAsks', () => {
 			// bound to the sign-off gate — no bold, no leading-line address, no @.
 			expect(
 				detectUnlinkedTeammateAsks(
-					'Review complete. The ticket stays in `review` awaiting Captain sign-off.',
+					'Review complete. The task stays in `review` awaiting Captain sign-off.',
 					signoffSlugs,
 				),
 			).toEqual(['captain']);

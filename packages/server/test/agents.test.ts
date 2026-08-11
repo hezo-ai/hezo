@@ -183,7 +183,7 @@ describe('agents CRUD', () => {
 		expect(prompt).toMatch(/PRD gate/i);
 	});
 
-	it('seeds the architect with a deploy-ticket gate on the reviews', async () => {
+	it('seeds the architect with a deploy-task gate on the reviews', async () => {
 		const listRes = await app.request(`/api/projects/${projectSlug}/agents`, {
 			headers: authHeader(token),
 		});

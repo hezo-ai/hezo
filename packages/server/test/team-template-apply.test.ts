@@ -120,7 +120,7 @@ describe('applyTemplateToTeam', () => {
 		expect(after).toEqual(before);
 	});
 
-	it('enqueues a team-coherence-review ticket when the roster actually changed', async () => {
+	it('enqueues a team-coherence-review task when the roster actually changed', async () => {
 		const blankId = await getTemplateId('Blank');
 		const startupId = await getTemplateId('App Team');
 

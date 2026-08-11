@@ -47,7 +47,7 @@ async function wakeupsForComment(commentId: string): Promise<WakeupRow[]> {
 	return res.rows;
 }
 
-// Inserts an task directly so no side-effect wakeups fire (the REST
+// Inserts a task directly so no side-effect wakeups fire (the REST
 // create-task path queues an assignment wakeup that would coalesce with
 // the comment wakeups we're trying to observe).
 async function insertTask(assigneeId: string, title: string): Promise<string> {
@@ -158,7 +158,7 @@ beforeEach(async () => {
 
 describe('MCP create_comment fires mention-only wakeups', () => {
 	it('wakes a mentioned agent who is not the author or assignee', async () => {
-		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Captain roadmap ticket');
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Captain roadmap task');
 		const commentId = await postMcpComment(
 			agentToken,
 			taskId,
@@ -183,7 +183,7 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 
 	it('wakes only @-mentioned agents, not the assignee, on a mention-bearing comment', async () => {
-		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Cross-team ticket');
+		const { taskId, agentToken } = await setup(captainId, productLeadId, 'Cross-team task');
 		const commentId = await postMcpComment(
 			agentToken,
 			taskId,
@@ -199,7 +199,7 @@ describe('MCP create_comment fires mention-only wakeups', () => {
 	});
 
 	it('skips self-mentions', async () => {
-		const { taskId, agentToken } = await setup(architectId, architectId, 'Architect own ticket');
+		const { taskId, agentToken } = await setup(architectId, architectId, 'Architect own task');
 		const commentId = await postMcpComment(
 			agentToken,
 			taskId,
@@ -289,7 +289,7 @@ describe('non-text comments skip mention wakeups', () => {
 	// must never fire mention wakeups. fireCommentWakeups is the single guard, so
 	// exercise it directly with a non-text content type.
 	it('does not fire mention wakeups for a system-typed comment', async () => {
-		const taskId = await insertTask(productLeadId, 'System ticket');
+		const taskId = await insertTask(productLeadId, 'System task');
 		const content = { text: '@architect tool output' };
 		const inserted = await db.query<{ id: string }>(
 			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
@@ -531,7 +531,7 @@ describe('explicit reply wakeups via parent_comment_id', () => {
 		const replyId = await postMcpReply(
 			architectToken,
 			taskId,
-			'@captain done — follow-up in new ticket.',
+			'@captain done — follow-up in new task.',
 			parentId,
 		);
 

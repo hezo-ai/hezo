@@ -194,7 +194,7 @@ describe('MCP create_comment warns on unlinked teammate references', () => {
 	});
 
 	it('does not warn on a self-reference in bold', async () => {
-		const taskId = await insertTask(architectId, 'Architect own ticket');
+		const taskId = await insertTask(architectId, 'Architect own task');
 		const result = await postComment(architectId, taskId, '**architect** notes to self');
 		expect(result.warning).toBeUndefined();
 	});
