@@ -32,10 +32,10 @@
  * follows.
  *
  * **A provider is not a runtime, and this registers per runtime.** A credential
- * carries its own CLI choice, and Prime Agent is never any provider's default -
- * so a fixture entry names the runtime and the suite runs once per entry, each
- * with its own container. Resolving the CLI from the provider alone, which this
- * did until Prime Agent arrived, can only ever exercise defaults.
+ * carries its own CLI choice, and a provider can drive more than one CLI - so a
+ * fixture entry names the runtime and the suite runs once per entry, each with
+ * its own container. Resolving the CLI from the provider alone, which this did
+ * until the matrix arrived, can only ever exercise defaults.
  *
  * Cost: one short completion per fixture entry, on whatever model it pins (pick
  * the provider's cheapest). It is opt-in for the same reason the Daytona suites
@@ -60,7 +60,6 @@ import {
 	claudeCodeModelArg,
 	opencodeModelArg,
 	PROVIDER_TO_RUNTIME,
-	primeAgentProviderArgs,
 	providerSupportsRuntime,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
@@ -71,7 +70,10 @@ import {
 	RUNTIME_STREAM_ARGS,
 } from '@hezo/shared';
 import { buildProviderEnv } from '../../src/services/agent-runner';
-import { createAgentStreamParser } from '../../src/services/agent-stream-parser';
+import {
+	type AgentRunUsage,
+	createAgentStreamParser,
+} from '../../src/services/agent-stream-parser';
 import type { AiProviderCredential } from '../../src/services/ai-provider-keys';
 import { type ContainerRunUser, chownToRunUser } from '../../src/services/container-user';
 import {
@@ -135,22 +137,16 @@ const PROMPT =
 /**
  * How to ask *this* runtime to call the probe tool.
  *
- * Every runtime but one surfaces MCP as model tools named
+ * Every runtime Hezo supports surfaces MCP as model tools named
  * `mcp__<server>__<tool>`, so naming that tool is the clearest instruction there
- * is. **Prime Agent has no such tool to name.** Its MCP servers are Python
- * skills loaded into the kernel, reached as `await hezo.list_projects()` - so
- * the shared prompt asks it for something that does not exist, and a run that
- * then made no tool call would be reporting on the prompt rather than on the
- * plumbing. That is the one failure this suite must never produce, because it
- * looks exactly like the real defect it exists to catch.
+ * is, and one prompt serves them all. Keep this a function rather than a
+ * constant: a runtime that reaches its MCP servers some other way needs its own
+ * phrasing, and asking it for a tool that does not exist would produce a run
+ * that made no tool call - which looks exactly like the real defect this suite
+ * exists to catch.
  */
-function probePrompt(runtime: AgentRuntime): string {
-	if (runtime !== AgentRuntime.PrimeAgent) return PROMPT;
-	return (
-		`Using your Python kernel, run: import ${HEZO_MCP_SERVER_NAME}; ` +
-		`result = await ${HEZO_MCP_SERVER_NAME}.${HEZO_PROBE_TOOL}(); print(result). ` +
-		`Then reply with exactly ${SENTINEL} and nothing else.`
-	);
+function probePrompt(_runtime: AgentRuntime): string {
+	return PROMPT;
 }
 /** Where the prompt file lands, mirroring the runner's own per-run prompt file. */
 const PROMPT_FILE = 'live-cli-prompt.txt';
@@ -174,10 +170,6 @@ const RUNTIME_REPORTS_MCP_STATUS: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.OpenCode]: false,
 	[AgentRuntime.Grok]: false,
 	[AgentRuntime.Kimi]: false,
-	// Prime Agent reports no MCP connection status either — and could not usefully:
-	// its servers are Python skills imported inside the kernel, so a server is only
-	// contacted when the model actually calls one, not at session start.
-	[AgentRuntime.PrimeAgent]: false,
 };
 
 /**
@@ -210,8 +202,8 @@ function jsonEvents(transcript: string): Array<Record<string, unknown>> {
  * Which CLI this entry runs on: its own choice, else the provider's default.
  *
  * Never `PROVIDER_RUNTIME_ADAPTERS[provider].runtime` on its own. That reads the
- * *default*, so it can only ever exercise defaults - and Prime Agent is never any
- * provider's default, so a provider-keyed lookup cannot reach it at all.
+ * *default*, so it can only ever exercise defaults - and an alternate runtime is
+ * by definition not one, so a provider-keyed lookup cannot reach it at all.
  */
 function resolvedRuntime(mp: LiveModelProvider): AgentRuntime {
 	return mp.runtime ?? PROVIDER_TO_RUNTIME[mp.provider];
@@ -310,10 +302,6 @@ function cliArgv(
 		if (runtime === AgentRuntime.ClaudeCode) cliModel = claudeCodeModelArg(mp.provider, cliModel);
 		else if (runtime === AgentRuntime.OpenCode) cliModel = opencodeModelArg(mp.provider, cliModel);
 	}
-	// Prime Agent selects its upstream by flag rather than env var, so the provider
-	// has to be named on the command line. Empty for every other runtime.
-	const providerArgs =
-		runtime === AgentRuntime.PrimeAgent ? [...primeAgentProviderArgs(mp.provider)] : [];
 	return [
 		RUNTIME_COMMANDS[runtime],
 		...RUNTIME_HEADLESS_PREFIX_ARGS[runtime],
@@ -321,7 +309,6 @@ function cliArgv(
 		...RUNTIME_STREAM_ARGS[runtime],
 		...RUNTIME_AUTO_APPROVE_ARGS[runtime],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtime],
-		...providerArgs,
 		...(cliModel ? ['--model', cliModel] : []),
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtime],
 	];
@@ -402,6 +389,19 @@ function describeOneAgentCliRun(
 		/** What the production stream parser made of it, line for line. */
 		let renderedLog = '';
 		let terminalError: string | null = null;
+		/**
+		 * The other two things the production parser concluded about this run.
+		 *
+		 * Read from the parser rather than off the transcript, because the shape a
+		 * runtime reports them in is the runtime's business and only the parser
+		 * knows it: Claude Code ends on a `result` event carrying `usage`, Prime
+		 * Agent on `agent_end` with usage on each `message_end`, and Grok and Kimi
+		 * Code stream no usage at all and have it recovered from a file afterwards.
+		 * An assertion written against one of those shapes fails every runtime that
+		 * does not share it - which is a bug in the suite, not a finding.
+		 */
+		let usage: AgentRunUsage | null = null;
+		let finalMessage: string | null = null;
 		let exitCode = -1;
 		/** JSON-RPC methods that arrived on the host's `/mcp` endpoint. */
 		const mcpMethods: string[] = [];
@@ -411,9 +411,9 @@ function describeOneAgentCliRun(
 		 * Arrival and success are different claims. A client that reaches `/mcp`
 		 * and is rejected produces exactly the same `mcpMethods` as one that is
 		 * served, so the arrival list alone would pass a run where every tool call
-		 * came back 401. That matters most for a runtime whose MCP client is not
-		 * the CLI's own - Prime Agent builds the request in Python - because that
-		 * is where an auth header goes missing without anything else changing.
+		 * came back 401. It matters most for a runtime whose MCP client is not the
+		 * CLI's own, since that is where an auth header goes missing without
+		 * anything else changing.
 		 */
 		const mcpAnswers: string[] = [];
 		/** Set if the tunnel died on its own at any point during the run. */
@@ -617,9 +617,9 @@ function describeOneAgentCliRun(
 			// Prompt delivery is the runtime's own convention, and getting it wrong is
 			// a hang rather than an error - a CLI waiting on a stdin that never closes
 			// looks exactly like a slow model. The `< /dev/null` on the arg branch is
-			// not a harness nicety: it is what `PROMPT_DELIVERY_SH` does, and without
-			// it Prime Agent produces no output at all. Mirror production or the suite
-			// proves the wrong invocation.
+			// not a harness nicety: it is what `PROMPT_DELIVERY_SH` does, and a CLI
+			// that reads stdin hangs forever without it. Mirror production or the
+			// suite proves the wrong invocation.
 			const line =
 				RUNTIME_PROMPT_DELIVERY[runtime] === 'arg'
 					? `${argv} "$(cat ${promptPath})" < /dev/null`
@@ -665,6 +665,8 @@ function describeOneAgentCliRun(
 			mark('cli-exec-end');
 			renderedLog += parser.flush();
 			terminalError = parser.getTerminalError();
+			usage = parser.getUsage();
+			finalMessage = parser.getFinalAssistantMessage();
 			exitCode = (await engine.execInspect(execId)).ExitCode;
 			mark('exec-inspected');
 			if (process.env.HEZO_CONFORMANCE_DUMP) {
@@ -728,10 +730,16 @@ function describeOneAgentCliRun(
 			// Every line parses: this is what catches a transport that interleaves or
 			// splits frames. Daytona merges stdout and stderr onto one channel, so a
 			// stray write landing mid-line would surface exactly here.
-			const events = lines.map((l) => JSON.parse(l) as { type?: string; subtype?: string });
-			const result = events.find((e) => e.type === 'result');
-			expect(result).toBeDefined();
-			expect(result?.subtype).toBe('success');
+			for (const l of lines) JSON.parse(l);
+			// What the *runner* would conclude, rather than a search for one runtime's
+			// terminal event: no error reported on the stream, and a final assistant
+			// message recovered. Both come from the production parser, which is the
+			// only thing that knows each runtime's shape - and the second is
+			// load-bearing beyond this suite, since the handoff-delivery net in
+			// `agent-runner.ts` delivers exactly that message when a run leaves one
+			// stranded.
+			expect(terminalError).toBeNull();
+			expect(finalMessage?.trim()).toBeTruthy();
 		});
 
 		it('round-trips the prompt through the model', () => {
@@ -745,10 +753,7 @@ function describeOneAgentCliRun(
 			// so a runtime that streams no usage prices every run at $0. That failure
 			// is invisible in production (a $0 run looks like a cheap run), and this is
 			// the only place it surfaces.
-			const usage = jsonEvents(transcript).find((e) => e.type === 'result')?.usage as
-				| Record<string, unknown>
-				| undefined;
-			expect(usage).toBeDefined();
+			expect(usage).not.toBeNull();
 			const total = Object.values(usage ?? {}).reduce<number>(
 				(sum, v) => sum + (typeof v === 'number' ? v : 0),
 				0,
@@ -792,10 +797,9 @@ function describeOneAgentCliRun(
 			// a run where every call came back 401, because the request reached `/mcp`
 			// either way - so on its own it proves the transport, not the credential.
 			//
-			// This is where a runtime whose MCP client is not the CLI's own gets
-			// caught: Prime Agent's requests are built in Python by a generated skill,
-			// so its bearer travels a different path from every other runtime's and
-			// can go missing without anything upstream changing.
+			// This is where a runtime whose MCP client is not the CLI's own would get
+			// caught: a bearer that travels a different path from every other
+			// runtime's can go missing without anything upstream changing.
 			//
 			// A 2xx is the honest limit of what this can claim. Streamable HTTP
 			// answers a tool that *errored* with 200 and a JSON-RPC error body, so

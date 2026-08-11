@@ -107,9 +107,9 @@ describe('describeAgentCliConformance registration', () => {
 			fixtureWith([
 				{ name: 'DeepSeek', provider: AiProvider.DeepSeek, credential: KEY },
 				{
-					name: 'DeepSeek',
-					provider: AiProvider.DeepSeek,
-					runtime: AgentRuntime.PrimeAgent,
+					name: 'Moonshot',
+					provider: AiProvider.Kimi,
+					runtime: AgentRuntime.Kimi,
 					credential: KEY,
 				},
 			]),
@@ -120,7 +120,7 @@ describe('describeAgentCliConformance registration', () => {
 		// the title so a failure names which CLI broke, not just which backend.
 		expect(registered.titles).toEqual([
 			`Stub: live agent CLI run (DeepSeek on ${PROVIDER_TO_RUNTIME[AiProvider.DeepSeek]})`,
-			`Stub: live agent CLI run (DeepSeek on ${AgentRuntime.PrimeAgent})`,
+			`Stub: live agent CLI run (Moonshot on ${AgentRuntime.Kimi})`,
 		]);
 	});
 
@@ -156,18 +156,18 @@ describe('describeAgentCliConformance registration', () => {
 		expect(registered.titles).toHaveLength(1);
 	});
 
-	it('gives Prime Agent the same assertions as any other runtime', () => {
-		// It reports no MCP status of its own, so the two report-reading tests are
-		// registered as named skips - but every host-side assertion still runs. A
-		// runtime silently exempted from the tool-call assertions would be the one
-		// failure this suite exists to catch.
+	it('gives an alternate runtime the same assertions as a default one', () => {
+		// A runtime that reports no MCP status of its own gets the two
+		// report-reading tests as named skips - but every host-side assertion still
+		// runs. A runtime silently exempted from the tool-call assertions would be
+		// the one failure this suite exists to catch.
 		const { harness, registered } = recordingHarness();
 		describeAgentCliConformance(
 			fixtureWith([
 				{
-					name: 'DeepSeek',
-					provider: AiProvider.DeepSeek,
-					runtime: AgentRuntime.PrimeAgent,
+					name: 'Moonshot',
+					provider: AiProvider.Kimi,
+					runtime: AgentRuntime.Kimi,
 					credential: KEY,
 				},
 			]),
@@ -225,9 +225,9 @@ describe('liveModelProviders', () => {
 		expect(got.map((p) => p.runtime)).toEqual([...providerRuntimes(AiProvider.DeepSeek)]);
 		expect(new Set(got.map((p) => p.provider))).toEqual(new Set([AiProvider.DeepSeek]));
 		expect(got.every((p) => p.credential === 'sk-x')).toBe(true);
-		// Prime Agent is in there, and it is the entry a provider-keyed lookup could
-		// never have produced.
-		expect(got.some((p) => p.runtime === AgentRuntime.PrimeAgent)).toBe(true);
+		// More than one, so the list really is per-pairing rather than per-provider -
+		// the entries a provider-keyed lookup could never have produced.
+		expect(got.length).toBe(providerRuntimes(AiProvider.DeepSeek).length);
 	});
 
 	it('covers every supported pairing when every key is supplied', () => {
@@ -334,15 +334,14 @@ describe('liveModelProviders with subscription credentials', () => {
 		const got = withSubscription(vars, liveModelProviders);
 
 		// One per provider, each on the CLI that provider's subscription actually
-		// drives. Prime Agent declares no subscription binding on any provider, so
-		// its absence here is the derivation working rather than an omission.
+		// drives - a pairing with no subscription binding is absent because the
+		// derivation excluded it, not because anyone listed it out.
 		expect(got.map((p) => `${p.provider}:${p.runtime}`).sort()).toEqual([
 			'anthropic:claude_code',
 			'google:gemini',
 			'openai:codex',
 		]);
 		expect(got.every((p) => p.authMethod === AiAuthMethod.Subscription)).toBe(true);
-		expect(got.some((p) => p.runtime === AgentRuntime.PrimeAgent)).toBe(false);
 	});
 
 	it('carries the blob itself, read from the file', () => {

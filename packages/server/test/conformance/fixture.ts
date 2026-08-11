@@ -140,10 +140,10 @@ export interface LiveModelProvider {
 	 * Which CLI this credential runs on. Omit for the provider's default.
 	 *
 	 * A provider is not one runtime: a credential carries its own choice
-	 * (`ai_provider_configs.runtime`), and Prime Agent is never any provider's
-	 * default, so it is only reachable by naming it here. Resolving the runtime
-	 * from the provider alone - which this suite used to do - can only ever
-	 * exercise defaults, and is the same mistake that shipped a broken
+	 * (`ai_provider_configs.runtime`), and an alternate CLI is by definition not
+	 * the default, so it is only reachable by naming it here. Resolving the
+	 * runtime from the provider alone - which this suite used to do - can only
+	 * ever exercise defaults, and is the same mistake that shipped a broken
 	 * config-home mapping in #909.
 	 *
 	 * Must be a pairing the provider actually supports (`providerSupportsRuntime`);
@@ -342,10 +342,9 @@ export function liveModelProviders(): LiveModelProvider[] {
  *
  * Narrower than `providerRuntimes`, and derived rather than listed: a pairing
  * qualifies when it names a credential variable for `Subscription` (the
- * env-delivered kind) or when its runtime mounts a credential file. Prime Agent
- * declares neither on any provider, so it correctly contributes nothing here -
- * an alternate CLI that gains subscription support later is picked up with no
- * edit.
+ * env-delivered kind) or when its runtime mounts a credential file. An
+ * alternate CLI declaring neither contributes nothing here, and one that gains
+ * subscription support later is picked up with no edit.
  */
 function subscriptionRuntimes(provider: AiProvider): AgentRuntime[] {
 	return providerRuntimes(provider).filter((runtime) => {

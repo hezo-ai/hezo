@@ -60,34 +60,21 @@ describe('provider runtime roster', () => {
 	});
 
 	it('offers Moonshot both of its CLIs from one provider', () => {
-		// The pair used to be two providers; now it is one offering both, plus Prime
-		// Agent, which reaches Moonshot too. The default stays first.
-		expect(providerRuntimes(AiProvider.Kimi)).toEqual([
-			AgentRuntime.ClaudeCode,
-			AgentRuntime.Kimi,
-			AgentRuntime.PrimeAgent,
-		]);
+		// The pair used to be two providers; now it is one offering both, with the
+		// default first.
+		expect(providerRuntimes(AiProvider.Kimi)).toEqual([AgentRuntime.ClaudeCode, AgentRuntime.Kimi]);
 	});
 
-	it('offers Prime Agent on every provider it can drive, and nowhere else', () => {
-		// Ollama and LM Studio have no built-in Prime Agent provider, so they must
-		// not advertise a CLI the run would fail to authenticate.
-		for (const provider of [AiProvider.Ollama, AiProvider.LmStudio]) {
-			expect(providerSupportsRuntime(provider, AgentRuntime.PrimeAgent)).toBe(false);
-		}
-		for (const provider of [
-			AiProvider.Anthropic,
-			AiProvider.OpenAI,
-			AiProvider.Google,
-			AiProvider.DeepSeek,
-			AiProvider.ZAi,
-			AiProvider.OpenRouter,
-			AiProvider.Kimi,
-			AiProvider.XAi,
-		]) {
-			expect(providerSupportsRuntime(provider, AgentRuntime.PrimeAgent)).toBe(true);
-			// Prime Agent is never a default — it is only ever an alternate.
-			expect(PROVIDER_TO_RUNTIME[provider]).not.toBe(AgentRuntime.PrimeAgent);
+	it('advertises no CLI a provider cannot authenticate', () => {
+		// The rule an alternate runtime has to keep: a provider only offers a CLI it
+		// has a credential binding for, so the picker can never present one whose
+		// run would fail at auth.
+		for (const provider of ALL_AI_PROVIDERS) {
+			for (const runtime of Object.values(AgentRuntime)) {
+				expect(providerRuntimes(provider).includes(runtime), `${provider} on ${runtime}`).toBe(
+					providerSupportsRuntime(provider, runtime),
+				);
+			}
 		}
 	});
 
@@ -110,7 +97,6 @@ describe('provider runtime roster', () => {
 	it('lists a multi-runtime provider under each of its runtimes', () => {
 		expect(PROVIDERS_BY_RUNTIME[AgentRuntime.ClaudeCode]).toContain(AiProvider.Kimi);
 		expect(PROVIDERS_BY_RUNTIME[AgentRuntime.Kimi]).toContain(AiProvider.Kimi);
-		expect(PROVIDERS_BY_RUNTIME[AgentRuntime.PrimeAgent]).toContain(AiProvider.Kimi);
 	});
 
 	it('names every runtime for the picker', () => {
@@ -128,9 +114,6 @@ describe('effectiveRuntime', () => {
 
 	it('honours a supported stored choice', () => {
 		expect(effectiveRuntime(AiProvider.Kimi, AgentRuntime.Kimi)).toBe(AgentRuntime.Kimi);
-		expect(effectiveRuntime(AiProvider.OpenAI, AgentRuntime.PrimeAgent)).toBe(
-			AgentRuntime.PrimeAgent,
-		);
 	});
 
 	it('degrades to the default when the stored choice is no longer supported', () => {
@@ -158,18 +141,6 @@ describe('buildProviderEnv follows the credential runtime', () => {
 		expect(envValue(env, 'KIMI_MODEL_NAME')).toBeTruthy();
 		expect(envValue(env, 'ANTHROPIC_AUTH_TOKEN')).toBeUndefined();
 		expect(envValue(env, 'ANTHROPIC_BASE_URL')).toBeUndefined();
-	});
-
-	it('builds the Prime Agent bag for the same credential switched again', () => {
-		const env = buildProviderEnv(AiProvider.Kimi, {
-			...credential,
-			runtime: AgentRuntime.PrimeAgent,
-		});
-		// Prime Agent reads Moonshot's key from MOONSHOT_API_KEY, not from either
-		// of the other two CLIs' variables.
-		expect(envValue(env, 'MOONSHOT_API_KEY')).toBe('sk-moonshot');
-		expect(envValue(env, 'ANTHROPIC_AUTH_TOKEN')).toBeUndefined();
-		expect(envValue(env, 'KIMI_MODEL_API_KEY')).toBeUndefined();
 	});
 
 	it('carries the quiet-env bag only on the runtime that needs it', () => {

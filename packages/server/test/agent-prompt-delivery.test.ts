@@ -13,11 +13,11 @@ import { PROMPT_DELIVERY_SH } from '../src/services/agent-runner';
  * the container process's stdin attached to a pipe nothing ever writes to and
  * nothing ever closes. A CLI that reads stdin in headless mode then blocks
  * forever - no output, no exit, no error - which reads as a slow model until the
- * run's deadline. Measured on Prime Agent 0.7.1: the same invocation produced a
- * full transcript in ~2s with stdin closed and nothing at all in 15 minutes
- * without it. Every arg-mode runtime is exposed to it (OpenCode, Grok, Kimi
- * Code, Prime Agent), because in arg mode the prompt is already on the command
- * line and stdin has nothing to legitimately carry.
+ * run's deadline. Measured against a CLI that does read it: the same invocation
+ * produced a full transcript in ~2s with stdin closed and nothing at all in 15
+ * minutes without it. Every arg-mode runtime is exposed (OpenCode, Grok, Kimi
+ * Code), because in arg mode the prompt is already on the command line and
+ * stdin has nothing to legitimately carry.
  *
  * So the parent's stdin here is a pipe that is deliberately never written to and
  * never closed - the exact condition inside a container. A child that reads it

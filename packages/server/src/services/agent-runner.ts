@@ -16,10 +16,8 @@ import {
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	opencodeModelArg,
-	PRIME_AGENT_QUIET_ENV,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type ProgressActivityKind,
-	primeAgentProviderArgs,
 	providerDirectUpstreamHosts,
 	providerRuntimeBinding,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -295,11 +293,6 @@ export function buildProviderEnv(
 			out.push(`${key}=${value}`);
 		}
 	}
-	if (runtime === AgentRuntime.PrimeAgent) {
-		for (const [key, value] of Object.entries(PRIME_AGENT_QUIET_ENV)) {
-			out.push(`${key}=${value}`);
-		}
-	}
 	if (binding?.staticEnv) {
 		// For a third-party Anthropic-compatible provider (DeepSeek/Z.ai/Kimi), the
 		// Claude Code subagent default should track the run's own selected model
@@ -503,7 +496,7 @@ export async function recoverOffStreamRunUsage(
 }
 
 // Deliver the prompt either on stdin (default) or as a trailing arg (OpenCode,
-// Grok, Kimi Code, Prime Agent), selected per runtime via the HEZO_PROMPT_MODE
+// Grok, Kimi Code), selected per runtime via the HEZO_PROMPT_MODE
 // env var — see RUNTIME_PROMPT_DELIVERY. The bridge wrapper script honors the
 // same env var.
 //
@@ -511,10 +504,10 @@ export async function recoverOffStreamRunUsage(
 // stdin attached to a pipe nothing ever writes to and nothing ever closes, so a
 // CLI that reads it in headless mode blocks forever — no output, no exit, no
 // error, indistinguishable from a slow model until the run's deadline. Measured
-// on Prime Agent 0.7.1: byte-identical invocations produce a full stream-json
-// transcript in ~2s with `< /dev/null` and nothing at all in 15 minutes without
-// it. In arg mode the prompt is already on the command line, so there is by
-// definition nothing stdin can legitimately carry.
+// against a CLI that does read it: byte-identical invocations produced a full
+// stream-json transcript in ~2s with `< /dev/null` and nothing at all in 15
+// minutes without it. In arg mode the prompt is already on the command line, so
+// there is by definition nothing stdin can legitimately carry.
 export const PROMPT_DELIVERY_SH =
 	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")" < /dev/null; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
 
@@ -805,11 +798,6 @@ export async function buildRuntimeInvocation(
 	}
 	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
-	// Prime Agent selects the upstream by flag, not by env var, so the provider
-	// has to be named on the command line alongside the model.
-	const providerArgs =
-		runtimeType === AgentRuntime.PrimeAgent ? [...primeAgentProviderArgs(provider)] : [];
-
 	// Grok reports no token usage on its stdout stream, so point it at a per-run
 	// debug log (inside the home mount, hence readable host-side) that the runner
 	// parses for cost after the run and then scrubs. Other runtimes report usage
@@ -828,7 +816,6 @@ export async function buildRuntimeInvocation(
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
 		...effortApplication.extraArgs,
-		...providerArgs,
 		...modelArgs,
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
 	];

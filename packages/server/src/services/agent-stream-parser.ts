@@ -113,11 +113,6 @@ export function createAgentStreamParser(
 		// parser's getUsage() stays null.
 		case AgentRuntime.Kimi:
 			return createKimiParser();
-		// Prime Agent's `--mode json` DOES carry usage on the stream (`message_end`
-		// includes the assistant message, whose `usage` holds all four buckets), so
-		// unlike Grok and Kimi Code there is no off-stream recovery for it.
-		case AgentRuntime.PrimeAgent:
-			return createPrimeAgentParser(price);
 		default:
 			return createPassthroughParser();
 	}
@@ -1040,100 +1035,6 @@ function extractGenericUsage(
 		outputTokens: output,
 	});
 	return { inputTokens: input, outputTokens: output, costCents };
-}
-
-/**
- * Prime Agent (`--mode json`) — one JSON object per session event, verbatim.
- *
- * The one thing to get right here is the token accounting. Prime Agent
- * normalises every provider to DISJOINT buckets before it records them: its
- * `input` is `promptTokens - cacheRead - cacheWrite`, so the cached portion is
- * already excluded. Feeding these through `extractGenericUsage` (which does
- * `input - cached`, the Codex/Grok posture) would subtract the cache a second
- * time and under-report every cached run. Hence a bespoke parser that maps the
- * four buckets straight across — the Kimi Code posture.
- *
- * Its own `usage.cost` object is ignored, like every other runtime's: runs price
- * only from `model_pricing`.
- */
-function createPrimeAgentParser(price: PriceModelFn): AgentStreamParser {
-	let usage: AgentRunUsage | null = null;
-	let modelId: string | undefined;
-	let finalMessage: string | null = null;
-
-	/** Text parts of a message's content array, in order. */
-	const contentText = (content: unknown): string => {
-		if (typeof content === 'string') return content;
-		if (!Array.isArray(content)) return '';
-		return content
-			.filter(isRecord)
-			.filter((part) => part.type === 'text' && typeof part.text === 'string')
-			.map((part) => part.text as string)
-			.join('');
-	};
-
-	const thinkingText = (content: unknown): string => {
-		if (!Array.isArray(content)) return '';
-		return content
-			.filter(isRecord)
-			.filter((part) => part.type === 'thinking' && typeof part.thinking === 'string')
-			.map((part) => part.thinking as string)
-			.join('');
-	};
-
-	const renderEvent = (raw: unknown): string[] => {
-		if (!isRecord(raw)) return [];
-		const type = typeof raw.type === 'string' ? raw.type : '';
-
-		if (type === 'tool_execution_start') {
-			const name = typeof raw.toolName === 'string' ? raw.toolName : 'tool';
-			return [formatToolUse(name, raw.args)];
-		}
-
-		if (type !== 'message_end') return [];
-		const message = isRecord(raw.message) ? raw.message : null;
-		if (!message || message.role !== 'assistant') return [];
-
-		if (typeof message.model === 'string') modelId = message.model;
-
-		const out: string[] = [];
-		const thinking = thinkingText(message.content);
-		if (thinking.trim()) out.push(formatThinking(thinking));
-		const text = contentText(message.content);
-		if (text.trim()) {
-			finalMessage = text;
-			out.push(text);
-		}
-
-		const u = isRecord(message.usage) ? message.usage : null;
-		if (u) {
-			const input = firstNumber(u, ['input']);
-			const output = firstNumber(u, ['output']);
-			const cacheRead = firstNumber(u, ['cacheRead']);
-			const cacheWrite = firstNumber(u, ['cacheWrite']);
-			if (input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0) {
-				usage = {
-					inputTokens: input,
-					outputTokens: output,
-					// No `- cacheRead` here, deliberately: see the note above.
-					costCents: price(modelId, {
-						inputTokens: input,
-						cacheReadTokens: cacheRead,
-						cacheCreationTokens: cacheWrite,
-						outputTokens: output,
-					}),
-				};
-			}
-		}
-		return out;
-	};
-
-	return createJsonlParser(
-		renderEvent,
-		() => usage,
-		() => null,
-		() => finalMessage,
-	);
 }
 
 const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;

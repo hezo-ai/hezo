@@ -78,13 +78,11 @@ test('a provider with a CLI choice discloses it, collapsed, with the default pre
 	await findByRole('heading', { name: 'Set up an AI provider' });
 
 	// Every CLI this provider can run is offered, and its own default carries the
-	// marker — Moonshot's key reaches the same upstream on all three.
+	// marker — Moonshot's key reaches the same upstream on both.
 	const claudeCode = getByRole('button', { name: /^Claude Code/ });
 	const kimiCode = getByRole('button', { name: /^Kimi Code/ });
-	const primeAgent = getByRole('button', { name: /^Prime Agent/ });
 	expect(claudeCode.textContent).toContain('Default');
 	expect(kimiCode.textContent).not.toContain('Default');
-	expect(primeAgent.textContent).not.toContain('Default');
 });
 
 test('the chosen CLI is submitted with the credential', async () => {
