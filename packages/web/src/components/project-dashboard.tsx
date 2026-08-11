@@ -16,11 +16,11 @@ import {
 	type DashboardWidgetId,
 	type DashboardWidgetOrder,
 	type ProjectDashboardNeedsYouItem,
+	sanitizeWidgetOrder,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import {
 	Activity,
-	AlertTriangle,
 	DollarSign,
 	GripVertical,
 	Inbox,
@@ -38,7 +38,6 @@ import { useNeedsYou } from '../hooks/use-inbox-count';
 import { useProject, useProjectMeta, useProjectProgress } from '../hooks/use-projects';
 import { useTasks } from '../hooks/use-tasks';
 import { agentAvatarUrl } from '../lib/agent-avatar';
-import { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder } from '../lib/dashboard-widget-order';
 import { agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { GoalHealthPill } from './goal-health-pill';
@@ -51,8 +50,6 @@ import { BudgetBar } from './ui/budget-bar';
 import { Card } from './ui/card';
 import { EmptyState } from './ui/empty-state';
 import { StatusDot } from './ui/status-dot';
-
-export { DEFAULT_WIDGET_ORDER, sanitizeWidgetOrder };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -568,11 +565,14 @@ function TeamSnapshotWidget({
 	const currentProjectId = project?.id;
 
 	const runningAgents = (agents ?? []).filter((a) => a.active_run?.run_status === 'running');
-	const containerIssue =
-		project?.container_status === 'error' ||
-		project?.container_status === 'stopped' ||
-		project?.container_status === 'creating';
 
+	// No container line here, deliberately. A project does not own a container
+	// any more - the pool hands each run one and the idle-stop cron parks it
+	// again - so `container_status` describes only whichever container was
+	// provisioned or stopped last, and `stopped`/`creating` are its two most
+	// ordinary values. The one state worth an operator's attention is a failed
+	// pool member, and `ContainerStatusBanner` already announces that at the top
+	// of every project page, this one included.
 	return (
 		<section data-testid="project-dashboard-team">
 			<WidgetHeader
@@ -591,23 +591,15 @@ function TeamSnapshotWidget({
 				}
 			/>
 			<Card className="flex flex-col gap-0 p-0 text-[13px] text-text-2">
-				<div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-					<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-						{runningAgents.length > 0 ? (
-							<span className="text-live">{runningAgents.length} running</span>
-						) : (
-							<span>No agents running</span>
-						)}
-						<span>{project?.open_task_count ?? 0} open tasks</span>
-						{project?.last_activity_at && (
-							<span>Active {relativeTimeAgo(project.last_activity_at)}</span>
-						)}
-					</div>
-					{containerIssue && (
-						<span className="inline-flex items-center gap-1 text-danger">
-							<AlertTriangle className="h-3.5 w-3.5" aria-hidden />
-							Container {project?.container_status}
-						</span>
+				<div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+					{runningAgents.length > 0 ? (
+						<span className="text-live">{runningAgents.length} running</span>
+					) : (
+						<span>No agents running</span>
+					)}
+					<span>{project?.open_task_count ?? 0} open tasks</span>
+					{project?.last_activity_at && (
+						<span>Active {relativeTimeAgo(project.last_activity_at)}</span>
 					)}
 				</div>
 				{runningAgents.length > 0 && (

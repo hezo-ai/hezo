@@ -5,6 +5,42 @@ export const DASHBOARD_WIDGET_IDS = ['goals', 'team_snapshot', 'in_progress', 's
 export type DashboardWidgetId = (typeof DASHBOARD_WIDGET_IDS)[number];
 export type DashboardWidgetOrder = DashboardWidgetId[];
 
+/**
+ * Default widget render order, in descending order of how often an operator
+ * acts on it. Status and the action items sit above the grid, so this list
+ * continues from there: the work in flight, then who is on it, then the
+ * longer-horizon readouts.
+ *
+ * A project that has never been reordered renders in this order; a saved order
+ * is a deliberate choice and is returned untouched.
+ */
+export const DEFAULT_WIDGET_ORDER: DashboardWidgetOrder = [
+	'in_progress',
+	'team_snapshot',
+	'goals',
+	'spend',
+];
+
+/** Sanitise a stored order: drop unknown ids, append any missing ones at the end. */
+export function sanitizeWidgetOrder(raw: unknown): DashboardWidgetOrder {
+	const known = new Set(DASHBOARD_WIDGET_IDS as readonly string[]);
+	const valid: DashboardWidgetId[] = [];
+	const seen = new Set<string>();
+	if (Array.isArray(raw)) {
+		for (const item of raw) {
+			if (typeof item === 'string' && known.has(item) && !seen.has(item)) {
+				valid.push(item as DashboardWidgetId);
+				seen.add(item);
+			}
+		}
+	}
+	// Append any widget ids that are missing from the stored order.
+	for (const id of DEFAULT_WIDGET_ORDER) {
+		if (!seen.has(id)) valid.push(id);
+	}
+	return valid;
+}
+
 /** All-time spend for a project (windowed spend lives on `budget.*.spentCents`). */
 export interface ProjectDashboardSpend {
 	all_time_cents: number;

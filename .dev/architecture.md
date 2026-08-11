@@ -4177,13 +4177,25 @@ Every UI change must work at all three, and its browser test must verify mobile
 (`AGENTS.md` › UX).
 
 **Project Dashboard.** Opening a project (`/projects/:slug` or a rail click) redirects to
-`/projects/:slug/dashboard`, which is also the first item in the project sidebar. The page
-loads a single aggregate payload from `GET /api/projects/:projectId/dashboard`
-(`services/project-dashboard.ts`): action items (approvals, unread @admin mentions,
-pending credential requests), calendar-window spend + budget caps, in-progress/review
-tasks, progress summary + goals preview, and a team snapshot including running agents.
-HQ (`is_internal`) omits spend, progress, and goals. Query keys use the route-param slug;
-WebSocket invalidation covers the tables that feed the aggregate.
+`/projects/:slug/dashboard`, which is also the first item in the project sidebar. Each
+widget reads its own resource hook rather than one aggregate payload, so a widget refetches
+on the invalidation that already covers its own table. Two sections are fixed at the top -
+the progress summary, then action items (approvals, unread @admin mentions, pending
+credential requests). Below them sits a drag-reorderable grid: in-progress/review tasks, a
+team snapshot of running agents, a goals preview, and calendar-window spend + budget caps.
+The order is per project, saved via `PATCH /api/projects/:projectId/dashboard-widget-order`
+(`projects.dashboard_widget_order`, migration 053) and read back through
+`sanitizeWidgetOrder` in `@hezo/shared`, which both the route and the web app call so a
+stored order can never be validated two different ways. A project that has never been
+reordered renders `DEFAULT_WIDGET_ORDER`. HQ (`is_internal`) omits spend, progress, and
+goals. Query keys use the route-param slug.
+
+The dashboard shows **no per-project container state**. A project does not own a container
+any more (see § Container pool), so `projects.container_status` names only whichever
+container was provisioned or stopped last, and its `stopped`/`creating` values are the
+ordinary case rather than a fault. The one container state worth an operator's attention -
+a pool member the pool has given up on - reaches every project page through
+`ContainerStatusBanner`, which reads `failed_container_count` via `useContainerHealth`.
 
 **PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
 `display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**

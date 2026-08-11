@@ -50,6 +50,7 @@ import {
 	ReactionKind,
 	requiredSystemPromptVarsError,
 	SEARCH_SCOPES,
+	sanitizeWidgetOrder,
 	summarizeMethodAccess,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -169,7 +170,6 @@ import {
 	type ProgressActivityInput,
 } from '../services/project-activity';
 import { createProjectWithTeam } from '../services/project-create';
-import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
 import {

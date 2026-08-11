@@ -314,8 +314,12 @@ function ActiveProjectCard({
 	);
 }
 
+// No container state on this row. Everything in "Other projects" is quiet by
+// definition, and `container_status` no longer says whether a project is
+// paused: containers are pooled per run, so `stopped` is what an idle project
+// looks like and `error` latches on a column nothing reads. A real container
+// failure is announced on the project's own page.
 function OtherProjectRow({ project }: { project: ProjectWithTeam }) {
-	const paused = project.container_status === 'stopped' || project.container_status === 'error';
 	return (
 		<Link
 			to="/projects/$projectId"
@@ -325,9 +329,6 @@ function OtherProjectRow({ project }: { project: ProjectWithTeam }) {
 			<div className="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2">
 				<Avatar initials={getInitials(project.name)} imageUrl={project.icon_url} size="sm" />
 				<span className="min-w-0 flex-1 truncate text-[13px] text-text-1">{project.name}</span>
-				<span className="shrink-0 font-mono text-[11px] text-text-3">
-					{paused ? 'paused' : 'idle'}
-				</span>
 				<span className="shrink-0 font-mono text-[11px] text-text-3">
 					{project.open_task_count} tasks · <RelativeTime iso={project.last_activity_at} compact />
 				</span>

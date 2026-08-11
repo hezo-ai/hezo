@@ -25,16 +25,21 @@ nothing.
 Opening a project - from the rail or its URL - lands on the **Dashboard**. It is the
 at-a-glance home for that project, listed first in the project sidebar (above **Inbox**).
 
-A normal project dashboard shows:
+A normal project dashboard shows, top to bottom:
 
+- **Status** - the Captain's latest project summary (see
+  [Goals & progress](/docs/concepts/goals)).
 - **Action items** - pending approvals, unread @admin mentions, and credential requests
   that need you.
+- **In progress** - tasks currently in progress or review.
+- **Team snapshot** - open-task count, last activity, and any agents currently running.
+- **Goals** - the top goals by health.
 - **Spend** - Today / This week / This month / All time, with the same calendar budget
   windows and caps as the [budget page](/docs/concepts/budgets-and-costs).
-- **In progress** - tasks currently in progress or review.
-- **Progress** and **Goals** previews - the Captain's latest project summary and the top
-  goals by health (see [Goals & progress](/docs/concepts/goals)).
-- **Team snapshot** - open-task count, last activity, and any agents currently running.
+
+Status and action items stay at the top. The four below them are yours to arrange: drag a
+widget by the handle that appears at its top-left on hover, and the new order is saved for
+that project.
 
 **HQ** gets a minimal dashboard: action items, in-progress work, and the team snapshot -
 no spend, progress summary, or goals (those belong to ordinary projects).
