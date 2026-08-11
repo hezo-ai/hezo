@@ -56,6 +56,22 @@ export interface AgentStreamParser {
 	 * a real comment (see the handoff-delivery guardrail in `agent-runner.ts`).
 	 */
 	getFinalAssistantMessage(): string | null;
+	/**
+	 * How many tools each MCP server contributed to this run, keyed by server
+	 * name, or null when the runtime reported nothing usable.
+	 *
+	 * The same figures the `[session]` banner carries, kept so the runner can
+	 * persist them on the run row. `=connected` only ever meant the transport came
+	 * up, so an agent suspecting a connector is broken has no first-party way to
+	 * check what it actually received — it infers, and a wrong inference has
+	 * already outlived several runs by way of a progress summary. This is that
+	 * fact, reachable from inside the run through `list_connectors`.
+	 *
+	 * Null rather than `{}` when the tool array was unreadable or the runtime
+	 * emits no such event, so "not reported" stays distinguishable from "reported
+	 * zero" — the latter is the actionable one.
+	 */
+	getMcpToolCounts(): Record<string, number> | null;
 }
 
 /**
@@ -131,6 +147,7 @@ function createPassthroughParser(): AgentStreamParser {
 		getUsage: () => null,
 		getTerminalError: () => null,
 		getFinalAssistantMessage: () => null,
+		getMcpToolCounts: () => null,
 	};
 }
 
@@ -146,6 +163,7 @@ function createJsonlParser(
 	getUsage: () => AgentRunUsage | null,
 	getTerminalError: () => string | null = () => null,
 	getFinalAssistantMessage: () => string | null = () => null,
+	getMcpToolCounts: () => Record<string, number> | null = () => null,
 ): AgentStreamParser {
 	let buffer = '';
 
@@ -182,6 +200,7 @@ function createJsonlParser(
 		getUsage,
 		getTerminalError,
 		getFinalAssistantMessage,
+		getMcpToolCounts,
 	};
 }
 
@@ -540,6 +559,10 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 	const run = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
 	let sawResult = false;
 	let finalMessage: string | null = null;
+	// Kept past the session line so the runner can persist it on the run row and
+	// `list_connectors` can answer, from inside the run, what each connector
+	// actually contributed. Stays null when no tool name parsed.
+	let mcpCounts: Record<string, number> | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as ClaudeStreamEvent;
@@ -560,6 +583,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 			// misleading zero for every server.
 			const toolNames = initToolNames(event.tools);
 			const counts = toolNames.length > 0 ? mcpToolCounts(toolNames, mcpServers) : null;
+			if (counts) mcpCounts = Object.fromEntries(counts);
 			const servers = mcpServers
 				.map((s) => {
 					const count = s?.name === undefined ? undefined : counts?.get(s.name);
@@ -685,6 +709,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		() => usage,
 		() => terminalError,
 		() => finalMessage,
+		() => mcpCounts,
 	);
 }
 

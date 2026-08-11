@@ -1739,6 +1739,32 @@ export async function runAgent(
 			// ExecStartOpts.onChunk).
 			const backgroundTermination = new BackgroundTerminationDetector();
 
+			// The runtime states its per-server tool counts once, in the session-init
+			// event at the very start of the stream, so this is persisted mid-run
+			// rather than on the completion path - a run that dies later still leaves
+			// behind what it was given. Written once: `init` fires once, and a repeat
+			// write would be a no-op UPDATE leaving a dead tuple behind.
+			let wroteMcpToolCounts = false;
+			const persistMcpToolCounts = async () => {
+				if (wroteMcpToolCounts) return;
+				const counts = parser.getMcpToolCounts();
+				if (!counts) return;
+				wroteMcpToolCounts = true;
+				try {
+					await deps.db.query(
+						`UPDATE heartbeat_runs SET mcp_tool_counts = $1::jsonb WHERE id = $2`,
+						[JSON.stringify(counts), heartbeatRunId],
+					);
+				} catch (e) {
+					// Diagnostic state only. A run must never fail because we could not
+					// record what its tool list looked like.
+					log.warn('could not record MCP tool counts', {
+						runId: heartbeatRunId,
+						error: (e as Error).message,
+					});
+				}
+			};
+
 			const onChunk = async (chunk: ExecLogChunk) => {
 				backgroundTermination.push(chunk.stream, chunk.text);
 				const rendered =
@@ -1747,6 +1773,7 @@ export async function runAgent(
 				// Surface the latest running usage to the log flush so it's persisted
 				// crash-safely (see currentUsage / onFlush above).
 				currentUsage = parser.getUsage();
+				await persistMcpToolCounts();
 			};
 
 			// Unelevated: the agent writes into the bind-mounted worktree, and those

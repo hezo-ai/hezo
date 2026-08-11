@@ -403,3 +403,83 @@ describe('list_connectors method_access', () => {
 		expect(rows.find((r) => r.name === 'tracker')?.method_access).toBeNull();
 	});
 });
+
+/**
+ * `tools_this_run` answers, from inside a run, how many of a connector's tools
+ * that run actually received. The question it exists for is the one an agent
+ * previously had to guess at: a connector reads Connected, its tools are not
+ * where the agent expected them, and nothing could confirm or refute whether
+ * they arrived. A guess written into a progress summary then outlived several
+ * runs. This is the measurement instead.
+ */
+describe('list_connectors tools_this_run', () => {
+	async function connectorAndRun(prefix: string): Promise<{ agentToken: string; runId: string }> {
+		await createOrFetchConnector(db, {
+			name: 'tracker',
+			displayName: 'Tracker',
+			mcpUrl,
+			mcpTransport: 'http',
+			projectId,
+		});
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title)
+			 SELECT $1, $2, $3, COALESCE(MAX(number), 0) + 1, $4 || '-' || (COALESCE(MAX(number), 0) + 1)::text, 'needs a connector'
+			 FROM tasks WHERE project_id = $2
+			 RETURNING id`,
+			[teamId, projectId, captainId, prefix],
+		);
+		const { token: agentToken, runId } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captainId,
+			teamId,
+			r.rows[0]?.id,
+		);
+		return { agentToken, runId };
+	}
+
+	async function trackerToolsThisRun(agentToken: string): Promise<number | null | undefined> {
+		const rows = (
+			(await callTool(agentToken, 'list_connectors', { project: projectSlug })) as {
+				items: Array<{ name: string; tools_this_run: number | null }>;
+			}
+		).items;
+		return rows.find((r) => r.name === 'tracker')?.tools_this_run;
+	}
+
+	it("reports the count the run's runtime recorded for that connector", async () => {
+		const { agentToken, runId } = await connectorAndRun('TTR');
+		await db.query(`UPDATE heartbeat_runs SET mcp_tool_counts = $1::jsonb WHERE id = $2`, [
+			JSON.stringify({ hezo: 82, tracker: 4 }),
+			runId,
+		]);
+		expect(await trackerToolsThisRun(agentToken)).toBe(4);
+	});
+
+	it('reports 0 distinctly, since that is the actionable answer', async () => {
+		// Connected and contributing nothing callable is a real fault worth
+		// escalating; it must not read the same as "nobody measured it".
+		const { agentToken, runId } = await connectorAndRun('TZR');
+		await db.query(`UPDATE heartbeat_runs SET mcp_tool_counts = $1::jsonb WHERE id = $2`, [
+			JSON.stringify({ hezo: 82, tracker: 0 }),
+			runId,
+		]);
+		expect(await trackerToolsThisRun(agentToken)).toBe(0);
+	});
+
+	it('is null when the run recorded no counts at all', async () => {
+		const { agentToken } = await connectorAndRun('TNR');
+		expect(await trackerToolsThisRun(agentToken)).toBeNull();
+	});
+
+	it('is null for a connector the run recorded no entry for', async () => {
+		// A connector added mid-run, or one the runtime never reported: absent from
+		// the recorded object is "not measured", not zero.
+		const { agentToken, runId } = await connectorAndRun('TMR');
+		await db.query(`UPDATE heartbeat_runs SET mcp_tool_counts = $1::jsonb WHERE id = $2`, [
+			JSON.stringify({ hezo: 82 }),
+			runId,
+		]);
+		expect(await trackerToolsThisRun(agentToken)).toBeNull();
+	});
+});
