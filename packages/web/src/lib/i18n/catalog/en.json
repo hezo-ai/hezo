@@ -263,5 +263,20 @@
 	"toast.dismiss": "Dismiss",
 	"toast.error": "Something went wrong",
 	"toast.info": "Heads up",
-	"toast.success": "Done"
+	"toast.success": "Done",
+	"chat.convert.action": "Convert to task",
+	"chat.convert.dialogTitle": "Convert to task",
+	"chat.convert.dialogDescription": "Creates a task from this conversation and closes the thread.",
+	"chat.convert.projectLabel": "Project",
+	"chat.convert.selectProject": "Select project",
+	"chat.convert.titleLabel": "Task title",
+	"chat.convert.note": "The conversation transcript becomes the task description. The CEO is assigned and picks it up from there.",
+	"chat.convert.confirm": "Create task",
+	"chat.convert.converting": "Converting…",
+	"chat.convert.failed": "Failed to convert conversation",
+	"chat.converted.banner": "This conversation became task {task}. The CEO has it from here.",
+	"chat.converted.bannerTaskGone": "This conversation was converted to a task that no longer exists.",
+	"chat.converted.composerPlaceholder": "Closed - continued as {identifier}",
+	"chat.converted.badge": "Converted to task",
+	"chat.converted.metaMessage": "Continued as {task}"
 }

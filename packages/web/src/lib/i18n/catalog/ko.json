@@ -263,5 +263,20 @@
 	"toast.dismiss": "숨기기",
 	"toast.error": "문제가 발생했습니다",
 	"toast.info": "알림",
-	"toast.success": "완료"
+	"toast.success": "완료",
+	"chat.convert.action": "작업으로 전환",
+	"chat.convert.dialogTitle": "작업으로 전환",
+	"chat.convert.dialogDescription": "이 대화로 작업을 만들고 스레드를 닫습니다.",
+	"chat.convert.projectLabel": "프로젝트",
+	"chat.convert.selectProject": "프로젝트 선택",
+	"chat.convert.titleLabel": "작업 제목",
+	"chat.convert.note": "대화 기록이 작업 설명이 됩니다. CEO가 담당자로 지정되어 이후를 맡습니다.",
+	"chat.convert.confirm": "작업 만들기",
+	"chat.convert.converting": "전환 중…",
+	"chat.convert.failed": "대화를 전환하지 못했습니다",
+	"chat.converted.banner": "이 대화는 작업 {task}(으)로 전환되었습니다. 이후는 CEO가 맡습니다.",
+	"chat.converted.bannerTaskGone": "이 대화는 더 이상 존재하지 않는 작업으로 전환되었습니다.",
+	"chat.converted.composerPlaceholder": "종료됨 - {identifier}(으)로 이어짐",
+	"chat.converted.badge": "작업으로 전환됨",
+	"chat.converted.metaMessage": "{task}(으)로 이어짐"
 }

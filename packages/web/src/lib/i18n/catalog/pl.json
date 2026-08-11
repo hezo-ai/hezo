@@ -263,5 +263,20 @@
 	"toast.dismiss": "Ukryj",
 	"toast.error": "Coś poszło nie tak",
 	"toast.info": "Uwaga",
-	"toast.success": "Gotowe"
+	"toast.success": "Gotowe",
+	"chat.convert.action": "Przekształć w zadanie",
+	"chat.convert.dialogTitle": "Przekształć w zadanie",
+	"chat.convert.dialogDescription": "Tworzy zadanie z tej rozmowy i zamyka wątek.",
+	"chat.convert.projectLabel": "Projekt",
+	"chat.convert.selectProject": "Wybierz projekt",
+	"chat.convert.titleLabel": "Tytuł zadania",
+	"chat.convert.note": "Zapis rozmowy staje się opisem zadania. CEO zostaje przypisany i przejmuje dalsze kroki.",
+	"chat.convert.confirm": "Utwórz zadanie",
+	"chat.convert.converting": "Przekształcanie…",
+	"chat.convert.failed": "Nie udało się przekształcić rozmowy",
+	"chat.converted.banner": "Ta rozmowa stała się zadaniem {task}. Dalej zajmuje się nim CEO.",
+	"chat.converted.bannerTaskGone": "Ta rozmowa została przekształcona w zadanie, które już nie istnieje.",
+	"chat.converted.composerPlaceholder": "Zamknięta - ciąg dalszy w {identifier}",
+	"chat.converted.badge": "Przekształcona w zadanie",
+	"chat.converted.metaMessage": "Ciąg dalszy w {task}"
 }

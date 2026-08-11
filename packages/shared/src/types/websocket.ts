@@ -181,14 +181,18 @@ export interface WsChatCompactedMessage {
 }
 
 /**
- * A conversation's title changed (e.g. the CEO auto-titled a previously untitled
- * thread from its content). Every mirrored surface reacts by refetching the thread
- * list so the switcher/rail label updates live, without a reload.
+ * A conversation's lifecycle metadata changed: the CEO auto-titled a previously
+ * untitled thread, the thread was closed, or it was converted into a task.
+ * Every mirrored surface reacts by refetching the thread list so the
+ * switcher/rail updates live, without a reload. Only the fields that changed
+ * are present.
  */
 export interface WsChatConversationUpdatedMessage {
 	type: WsMessageType.ChatConversationUpdated;
 	conversationId: string;
-	title: string;
+	title?: string;
+	closedAt?: string | null;
+	convertedTaskId?: string | null;
 }
 
 /** Any CEO chat WebSocket event, all carrying `conversationId` for thread routing. */

@@ -263,5 +263,20 @@
 	"toast.dismiss": "非表示",
 	"toast.error": "問題が発生しました",
 	"toast.info": "お知らせ",
-	"toast.success": "完了"
+	"toast.success": "完了",
+	"chat.convert.action": "タスクに変換",
+	"chat.convert.dialogTitle": "タスクに変換",
+	"chat.convert.dialogDescription": "この会話からタスクを作成し、スレッドを閉じます。",
+	"chat.convert.projectLabel": "プロジェクト",
+	"chat.convert.selectProject": "プロジェクトを選択",
+	"chat.convert.titleLabel": "タスクのタイトル",
+	"chat.convert.note": "会話の記録がタスクの説明になります。CEO が担当者として割り当てられ、以後の対応を引き継ぎます。",
+	"chat.convert.confirm": "タスクを作成",
+	"chat.convert.converting": "変換中…",
+	"chat.convert.failed": "会話を変換できませんでした",
+	"chat.converted.banner": "この会話はタスク {task} になりました。以後は CEO が対応します。",
+	"chat.converted.bannerTaskGone": "この会話は変換されましたが、そのタスクはもう存在しません。",
+	"chat.converted.composerPlaceholder": "終了 - {identifier} に続く",
+	"chat.converted.badge": "タスクに変換済み",
+	"chat.converted.metaMessage": "{task} に続く"
 }

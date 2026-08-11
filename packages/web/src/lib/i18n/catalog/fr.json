@@ -263,5 +263,20 @@
 	"toast.dismiss": "Ignorer",
 	"toast.error": "Une erreur est survenue",
 	"toast.info": "À noter",
-	"toast.success": "Terminé"
+	"toast.success": "Terminé",
+	"chat.convert.action": "Convertir en tâche",
+	"chat.convert.dialogTitle": "Convertir en tâche",
+	"chat.convert.dialogDescription": "Crée une tâche à partir de cette conversation et ferme le fil.",
+	"chat.convert.projectLabel": "Projet",
+	"chat.convert.selectProject": "Sélectionner un projet",
+	"chat.convert.titleLabel": "Titre de la tâche",
+	"chat.convert.note": "La transcription de la conversation devient la description de la tâche. Le CEO est assigné et prend le relais.",
+	"chat.convert.confirm": "Créer la tâche",
+	"chat.convert.converting": "Conversion en cours…",
+	"chat.convert.failed": "Impossible de convertir la conversation",
+	"chat.converted.banner": "Cette conversation est devenue la tâche {task}. Le CEO prend le relais.",
+	"chat.converted.bannerTaskGone": "Cette conversation a été convertie en une tâche qui n'existe plus.",
+	"chat.converted.composerPlaceholder": "Fermée - se poursuit dans {identifier}",
+	"chat.converted.badge": "Convertie en tâche",
+	"chat.converted.metaMessage": "Se poursuit dans {task}"
 }

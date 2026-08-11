@@ -263,5 +263,20 @@
 	"toast.dismiss": "忽略",
 	"toast.error": "出错了",
 	"toast.info": "提示",
-	"toast.success": "完成"
+	"toast.success": "完成",
+	"chat.convert.action": "转换为任务",
+	"chat.convert.dialogTitle": "转换为任务",
+	"chat.convert.dialogDescription": "从此对话创建一个任务并关闭该会话。",
+	"chat.convert.projectLabel": "项目",
+	"chat.convert.selectProject": "选择项目",
+	"chat.convert.titleLabel": "任务标题",
+	"chat.convert.note": "对话记录将成为任务描述。CEO 将被指派，并从这里接手。",
+	"chat.convert.confirm": "创建任务",
+	"chat.convert.converting": "正在转换…",
+	"chat.convert.failed": "无法转换对话",
+	"chat.converted.banner": "此对话已转为任务 {task}。之后由 CEO 负责。",
+	"chat.converted.bannerTaskGone": "此对话已转换为一个不再存在的任务。",
+	"chat.converted.composerPlaceholder": "已关闭 - 已转为 {identifier}",
+	"chat.converted.badge": "已转换为任务",
+	"chat.converted.metaMessage": "已转为 {task}"
 }

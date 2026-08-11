@@ -117,6 +117,14 @@ export function writeStoredThreadId(id: string | undefined): void {
 	}
 }
 
+/** The task a converted thread became — drives the meta message and banner link. */
+export interface ChatConvertedTaskRef {
+	id: string;
+	identifier: string;
+	title: string;
+	project_slug: string;
+}
+
 /** A conversation thread in the switcher list. */
 export interface ChatConversationSummary {
 	id: string;
@@ -128,6 +136,10 @@ export interface ChatConversationSummary {
 	title: string | null;
 	last_activity_at: string;
 	closed_at: string | null;
+	/** Set when the thread was converted into a task (it stays listed, read-only). */
+	converted_task_id: string | null;
+	/** Joined reference; null when not converted or the task was since deleted. */
+	converted_task: ChatConvertedTaskRef | null;
 }
 
 /**
@@ -164,11 +176,35 @@ export function useChatConversations(active: boolean) {
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.chatConversations() }),
 		onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to close thread'),
 	});
+	// Invalidate + refetch, not optimistic: the server creates the task, writes
+	// the meta message, and closes the thread in one go — the UI must only ever
+	// show that state as read back. Both keys matter: the list carries the
+	// converted flag, and the conversation query (staleTime: Infinity) needs the
+	// invalidation to pull in the system meta message for tabs that missed the
+	// WebSocket event. No success toast — the in-thread meta message is the
+	// confirmation.
+	const convert = useMutation({
+		mutationFn: (input: { id: string; projectId: string; title?: string }) =>
+			api.post<{
+				task: ChatConvertedTaskRef;
+				conversation: ChatConversationSummary;
+			}>(`/api/chat/conversations/${input.id}/convert-to-task`, {
+				project_id: input.projectId,
+				title: input.title,
+			}),
+		onSuccess: (_data, input) => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.chatConversations() });
+			queryClient.invalidateQueries({ queryKey: queryKeys.chatConversation(input.id) });
+		},
+	});
 	return {
 		conversations: query.data?.conversations ?? [],
 		loaded: !query.isPending,
 		createThread: (title?: string) => create.mutateAsync(title),
 		closeThread: (id: string) => close.mutateAsync(id),
+		convertThread: (input: { id: string; projectId: string; title?: string }) =>
+			convert.mutateAsync(input),
+		converting: convert.isPending,
 	};
 }
 

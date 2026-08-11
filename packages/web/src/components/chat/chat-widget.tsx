@@ -13,6 +13,7 @@ import {
 	MessageSquare,
 	Minimize2,
 	Plus,
+	SquareCheckBig,
 	StepForward,
 	X,
 } from 'lucide-react';
@@ -20,6 +21,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
 import {
 	type ChatConversationSummary,
+	type ChatConvertedTaskRef,
 	type ChatMessage,
 	type QueuedChatMessage,
 	readStoredThreadId,
@@ -37,6 +39,7 @@ import { useMediaQuery } from '../../hooks/use-media-query';
 import { useHqProject } from '../../hooks/use-projects';
 import { useUploadChatAttachment } from '../../hooks/use-upload-chat-attachment';
 import { copyToClipboard } from '../../lib/clipboard';
+import { Trans, useI18n } from '../../lib/i18n';
 import { AssetIcon } from '../asset-icon';
 import {
 	ATTACHMENT_ACCEPT,
@@ -48,6 +51,7 @@ import { HqContainerNotice } from '../hq-container-notice';
 import { MarkdownProse } from '../markdown-prose';
 import { CountOverlayBadge } from '../ui/count-overlay-badge';
 import { Tooltip } from '../ui/tooltip';
+import { ConvertToTaskDialog } from './convert-to-task-dialog';
 
 /**
  * Floating chat with the CEO, pinned bottom-right (on portrait mobile screens
@@ -105,7 +109,12 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 		loaded: threadsLoaded,
 		createThread,
 		closeThread,
+		convertThread,
+		converting,
 	} = useChatConversations(open);
+	const { t } = useI18n();
+	// Convert-to-task dialog visibility (header action, assistant web threads only).
+	const [convertOpen, setConvertOpen] = useState(false);
 	// The one writer for the thread selection — dropdown, rail, new thread, and the
 	// fall-back-to-default paths all go through it, so what's rendered and what's
 	// remembered can never drift. `undefined` (back to the server's default web
@@ -214,9 +223,24 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	const coworkerThreads = conversations.filter((t) => t.kind === 'coworker');
 	const activeThread = conversations.find((t) => t.id === activeConversationId);
 	const activeReadOnly = activeThread?.kind === 'coworker';
+	// A converted thread stays listed as a read-only record; its meta message and
+	// banner link the task that continues it.
+	const activeConverted = activeThread?.converted_task_id != null;
+	const convertedTask = activeThread?.converted_task ?? null;
+	// Convert is offered on interactive web threads with something to convert.
+	// Disabled (not hidden) while a reply streams — converting would abort it.
+	const canConvert =
+		!!activeThread &&
+		activeThread.kind !== 'coworker' &&
+		activeThread.channel === 'web' &&
+		!activeConverted &&
+		!activeThread.closed_at &&
+		messages.length > 0;
 	// Untitled threads render as "New thread" until the CEO auto-titles them from the
 	// conversation; there is no special "Main" default anymore.
 	const threadLabel = (t: (typeof conversations)[number]) => t.title?.trim() || 'New thread';
+	// Resolved outside the thread-map callbacks, whose `(t)` params shadow i18n's `t`.
+	const convertedBadgeLabel = t('chat.converted.badge');
 
 	// The thread is busy from the moment a send leaves until its reply settles.
 	// `canInterrupt` narrows that to a reply that is actually running: during
@@ -225,7 +249,10 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	const busy = sending || streaming;
 	const canInterrupt = streaming && !sending;
 	const hasContent = draft.trim().length > 0 || visibleAttachments.length > 0;
-	const canSubmit = !activeReadOnly && hasContent && uploading.length === 0;
+	// Coworker threads write in their channel; converted threads continue on
+	// their task. Both lock the composer here.
+	const composerLocked = activeReadOnly || activeConverted;
+	const canSubmit = !composerLocked && hasContent && uploading.length === 0;
 
 	/**
 	 * Commit the draft. `sendNow` is the deliberate interrupt (button held, or
@@ -306,7 +333,15 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 	const copyConversation = async () => {
 		const transcript = messages
 			.filter((m) => m.content.trim().length > 0)
-			.map((m) => `${m.role === 'assistant' ? `CEO · ${HQ_PROJECT_NAME}` : 'You'}: ${m.content}`)
+			.map((m) => {
+				const speaker =
+					m.role === 'assistant'
+						? `CEO · ${HQ_PROJECT_NAME}`
+						: m.role === 'system'
+							? 'System'
+							: 'You';
+				return `${speaker}: ${m.content}`;
+			})
 			.join('\n\n');
 		if (!transcript) return;
 		if (await copyToClipboard(transcript)) {
@@ -394,6 +429,23 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 						)}
 					</div>
 					<div className="flex items-center gap-1">
+						{/* Convert this conversation into a task (assistant web threads only).
+						    Disabled while a reply streams — converting aborts the in-flight
+						    turn, so the honest affordance is to wait it out. */}
+						{canConvert && (
+							<Tooltip content={t('chat.convert.action')} side="bottom">
+								<button
+									type="button"
+									onClick={() => setConvertOpen(true)}
+									disabled={busy}
+									aria-label={t('chat.convert.action')}
+									data-testid="chat-convert"
+									className="flex h-9 w-9 items-center justify-center rounded-md text-text-2 hover:bg-surface-2 hover:text-text-1 disabled:pointer-events-none disabled:opacity-40"
+								>
+									<SquareCheckBig className="h-4 w-4" />
+								</button>
+							</Tooltip>
+						)}
 						{/* Copy the full transcript to the clipboard. Disabled until there's
 					    something to copy; the icon flips to a check for 2s on success. */}
 						<button
@@ -473,16 +525,26 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 											<button
 												type="button"
 												onClick={() => selectThread(t.id)}
-												className="min-w-0 flex-1 truncate text-left"
+												className="flex min-w-0 flex-1 items-center gap-1 truncate text-left"
 											>
-												{threadLabel(t)}
+												<span className="truncate">{threadLabel(t)}</span>
+												{/* Converted marker as a suffix to the name, mirroring the
+												    coworker Lock idiom. */}
+												{t.converted_task_id && (
+													<SquareCheckBig
+														aria-label={convertedBadgeLabel}
+														className="h-3 w-3 shrink-0 text-text-3"
+													/>
+												)}
 											</button>
 											{chip && (
 												<span className="shrink-0 rounded-sm border border-border px-1 text-[9px] font-semibold tracking-wide text-text-3">
 													{chip}
 												</span>
 											)}
-											{conversations.length > 1 && (
+											{/* No ✕ on a converted thread: close is a no-op on an
+											    already-closed row, and the record is meant to stay. */}
+											{conversations.length > 1 && !t.converted_task_id && (
 												<button
 													type="button"
 													onClick={() => handleCloseThread(t.id)}
@@ -586,7 +648,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 							>
 								<Plus className="h-4 w-4" />
 							</button>
-							{activeThread && conversations.length > 1 && (
+							{activeThread && conversations.length > 1 && !activeConverted && (
 								<button
 									type="button"
 									onClick={() => handleCloseThread()}
@@ -649,7 +711,12 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 										</div>
 									)}
 									{messages.map((m) => (
-										<MessageBubble key={m.id} message={m} projectSlug={hq?.slug} />
+										<MessageBubble
+											key={m.id}
+											message={m}
+											projectSlug={hq?.slug}
+											convertedTask={convertedTask}
+										/>
 									))}
 									{queue.length > 0 && <QueuedMessages queue={queue} onRemove={dequeue} />}
 								</div>
@@ -670,6 +737,30 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 											</span>
 										</div>
 									)}
+									{/* Converted threads stay readable but continue on their task; the
+									    banner links it. Falls back to a plain closed notice if the task
+									    was since deleted (the thread then drops from the list anyway). */}
+									{activeConverted && (
+										<div
+											data-testid="chat-converted-banner"
+											className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2"
+										>
+											<SquareCheckBig
+												aria-hidden
+												className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3"
+											/>
+											<span>
+												{convertedTask ? (
+													<Trans
+														k="chat.converted.banner"
+														vars={{ task: <ConvertedTaskLink task={convertedTask} /> }}
+													/>
+												) : (
+													t('chat.converted.bannerTaskGone')
+												)}
+											</span>
+										</div>
+									)}
 									{hasAnyChip && (
 										<AttachmentChips
 											attachments={visibleAttachments}
@@ -685,7 +776,7 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 									)}
 									<div
 										className={`flex items-end gap-1 rounded-2xl border border-border bg-surface px-1.5 py-1 transition-colors focus-within:border-border-strong ${
-											activeReadOnly ? 'opacity-50' : ''
+											composerLocked ? 'opacity-50' : ''
 										}`}
 									>
 										<UploadButton
@@ -706,13 +797,17 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 												}
 											}}
 											rows={1}
-											disabled={activeReadOnly}
+											disabled={composerLocked}
 											placeholder={
-												activeReadOnly
-													? `Read-only — reply from ${channelDisplayName(activeThread?.channel ?? '')}`
-													: busy
-														? 'Queue your next message…'
-														: 'Ask the CEO anything, across every project…'
+												activeConverted
+													? t('chat.converted.composerPlaceholder', {
+															identifier: convertedTask?.identifier ?? '',
+														})
+													: activeReadOnly
+														? `Read-only — reply from ${channelDisplayName(activeThread?.channel ?? '')}`
+														: busy
+															? 'Queue your next message…'
+															: 'Ask the CEO anything, across every project…'
 											}
 											data-testid="chat-input"
 											// `min-w-0` lets the row absorb the send button's widened labelled
@@ -775,6 +870,15 @@ export function ChatWidget({ open, onOpenChange }: ChatWidgetProps) {
 					</div>
 				</div>
 			</div>
+			{activeThread && (
+				<ConvertToTaskDialog
+					open={convertOpen}
+					onOpenChange={setConvertOpen}
+					thread={activeThread}
+					convertThread={convertThread}
+					converting={converting}
+				/>
+			)}
 		</>
 	);
 }
@@ -855,18 +959,66 @@ function RoleLabel({ children }: { children: ReactNode }) {
 	return <span className="text-eyebrow px-1 text-text-3">{children}</span>;
 }
 
+/**
+ * The task link a converted thread points at — shared by the in-thread meta
+ * message and the locked-composer banner.
+ */
+function ConvertedTaskLink({ task }: { task: ChatConvertedTaskRef }) {
+	return (
+		<Link
+			to="/projects/$projectId/tasks/$taskId"
+			params={{ projectId: task.project_slug, taskId: task.identifier.toLowerCase() }}
+			data-testid="chat-converted-task-link"
+			className="font-semibold text-info-soft-fg hover:underline"
+		>
+			{task.identifier}
+		</Link>
+	);
+}
+
 function MessageBubble({
 	message,
 	projectSlug,
+	convertedTask,
 }: {
 	message: ChatMessage;
 	/** HQ project slug — chat uploads land in its asset library. */
 	projectSlug?: string;
+	/** The thread's converted-task reference — renders the system meta message as a link. */
+	convertedTask?: ChatConvertedTaskRef | null;
 }) {
 	const isCeo = message.role === 'assistant';
 	const interrupted = message.status === ChatMessageStatus.Interrupted;
 	const failed = message.status === ChatMessageStatus.Failed;
 	const streaming = message.status === ChatMessageStatus.Streaming;
+
+	// System rows are meta markers, not bubbles — same centred idiom as the
+	// compaction banner. Today the only producer is convert-to-task; when the
+	// thread's converted-task reference is gone (task deleted) the raw
+	// server-baked text still names the identifier.
+	if (message.role === 'system') {
+		return (
+			<div
+				className="flex items-center gap-2 px-1 py-1 text-[11px] text-text-3"
+				data-testid="chat-message"
+				data-role="system"
+			>
+				<span className="h-px flex-1 bg-border" />
+				<span className="inline-flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
+					<SquareCheckBig className="h-3 w-3 shrink-0" aria-hidden="true" />
+					{convertedTask ? (
+						<Trans
+							k="chat.converted.metaMessage"
+							vars={{ task: <ConvertedTaskLink task={convertedTask} /> }}
+						/>
+					) : (
+						<span className="truncate">{message.content}</span>
+					)}
+				</span>
+				<span className="h-px flex-1 bg-border" />
+			</div>
+		);
+	}
 
 	if (isCeo) {
 		// Still composing with no text yet → the typing indicator stands in for

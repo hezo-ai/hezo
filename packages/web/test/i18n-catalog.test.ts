@@ -138,6 +138,9 @@ describe('message catalogs', () => {
 		// category list does differ (Bilder, Imágenes, Archiwa, Ljud, ...).
 		'attachments.category.audio': ['de', 'es', 'it', 'nl'],
 		'attachments.category.video': ['de', 'it', 'nl', 'sv'],
+		// Dutch writes the same loanword, capital and all (German/Polish/Swedish
+		// spell it Projekt, so only nl coincides).
+		'chat.convert.projectLabel': ['nl'],
 	};
 
 	test('no message was left identical to the English source', () => {
