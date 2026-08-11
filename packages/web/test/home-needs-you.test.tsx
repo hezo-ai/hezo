@@ -228,15 +228,15 @@ test('a project with pending needs-you items ranks as Active and the card shows 
 	expect(card.textContent).toContain('2 need you');
 });
 
-test('an idle project with a stopped container renders as a paused Other-projects row', async () => {
+test('an idle project with a stopped container is an Other-projects row, not a paused one', async () => {
 	const ref = { name: '' };
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
-			const project = await seedProject(ws, { name: 'Paused Project' });
+			const project = await seedProject(ws, { name: 'Quiet Project' });
 			ref.name = project.name;
-			// Stopped container, no running agents, no needs-you → an "Other" paused row.
+			// Stopped container, no running agents, no needs-you → an "Other" row.
 			await getTestContext().db.query(
 				`UPDATE projects SET container_status = 'stopped' WHERE id = $1`,
 				[project.id],
@@ -252,5 +252,7 @@ test('an idle project with a stopped container renders as a paused Other-project
 		return el;
 	});
 	expect(row.textContent).toContain(ref.name);
-	expect(row.textContent).toContain('paused');
+	// A parked container is what an idle pooled project looks like, so the row
+	// must not report it as paused (or report container state at all).
+	expect(row.textContent).not.toMatch(/paused/i);
 });

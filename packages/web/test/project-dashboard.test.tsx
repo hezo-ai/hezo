@@ -77,6 +77,60 @@ test('project dashboard shows spend, progress, goals, and in-progress tasks', as
 	);
 });
 
+test('widgets render in the default order and the team snapshot reports no container state', async () => {
+	const ref = { slug: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Order Demo' });
+			ref.slug = project.slug;
+			const db = getTestContext().db;
+			// The resting state of a pooled project: its last container was parked
+			// by the idle-stop cron. Nothing is wrong, so nothing may be flagged.
+			await db.query(
+				`UPDATE projects SET container_status = 'stopped'::container_status,
+				        progress_summary = $1, progress_summary_updated_at = now()
+				 WHERE slug = $2`,
+				['**Steady.** Work is flowing.', project.slug],
+			);
+			await db.query(
+				`INSERT INTO goals (team_id, project_id, title, measurement, actions, health, progress_percent)
+				 SELECT team_id, id, 'Ship it', 'Shipped', 'Build', $1::goal_health, 10
+				 FROM projects WHERE slug = $2`,
+				[GoalHealth.AtRisk, project.slug],
+			);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/dashboard',
+		params: { projectId: ref.slug },
+	});
+
+	await findByTestId('project-dashboard-goals', undefined, { timeout: 15_000 });
+
+	const dashboard = document.body.querySelector('[data-testid="project-dashboard"]')!;
+	const ordered = Array.from(
+		dashboard.querySelectorAll(
+			'[data-testid="project-dashboard-progress"], [data-testid="project-dashboard-needs-you"], [data-testid="project-dashboard-in-progress"], [data-testid="project-dashboard-team"], [data-testid="project-dashboard-goals"], [data-testid="project-dashboard-spend"]',
+		),
+	).map((el) => el.getAttribute('data-testid'));
+	expect(ordered).toEqual([
+		'project-dashboard-progress',
+		'project-dashboard-needs-you',
+		'project-dashboard-in-progress',
+		'project-dashboard-team',
+		'project-dashboard-goals',
+		'project-dashboard-spend',
+	]);
+
+	// A parked container is the ordinary idle state - the snapshot must not
+	// report it as a fault (or at all).
+	const team = dashboard.querySelector('[data-testid="project-dashboard-team"]')!;
+	expect(team.textContent).not.toMatch(/container/i);
+});
+
 test('team snapshot links to the running task on slug-based dashboard routes', async () => {
 	const ref = { slug: '', taskIdentifier: '' };
 	const { findByTestId, router } = await renderApp({

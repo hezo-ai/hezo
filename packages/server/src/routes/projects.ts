@@ -12,6 +12,7 @@ import {
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
 	projectMemoryFitsBudget,
+	sanitizeWidgetOrder,
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -44,7 +45,6 @@ import {
 	enqueueAddMarketplaceTeamTask,
 } from '../services/marketplace-add-team';
 import { createProjectWithTeam } from '../services/project-create';
-import { sanitizeWidgetOrder } from '../services/project-dashboard';
 import { createProjectIntake, getOpenProjectIntakeForHome } from '../services/project-intake';
 import { getProjectProgress } from '../services/projects';
 import { createBundleVault } from '../services/sandbox/bundle-vault';

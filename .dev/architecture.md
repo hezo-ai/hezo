@@ -4200,11 +4200,22 @@ Every UI change must work at all three, and its browser test must verify mobile
 `/projects/:slug/dashboard`, which is also the first item in the project sidebar. Each
 widget loads from the endpoint that already serves it - budget status + costs,
 in-progress/review tasks, progress summary, goals, agents (for the running-agents
-snapshot) - so the page adds no aggregate route of its own. Widget order is stored per
-project and saved with `PATCH /api/projects/:projectId/dashboard-widget-order`, sanitized
-through `services/project-dashboard.ts`. HQ (`is_internal`) omits spend, progress, and
-goals. Query keys use the route-param slug; WebSocket invalidation covers the tables that
-feed each widget.
+snapshot) - so the page adds no aggregate route of its own. Two sections are fixed at the
+top, the progress summary then action items; below them sits a drag-reorderable grid of
+the other four. Widget order is stored per project and saved with
+`PATCH /api/projects/:projectId/dashboard-widget-order`, sanitized through
+`sanitizeWidgetOrder` in `@hezo/shared` - which both the route and the web app call, so a
+stored order can never be validated two different ways. A project that has never been
+reordered renders `DEFAULT_WIDGET_ORDER` (tasks, team snapshot, goals, spend). HQ
+(`is_internal`) omits spend, progress, and goals. Query keys use the route-param slug;
+WebSocket invalidation covers the tables that feed each widget.
+
+The dashboard shows **no per-project container state**. A project does not own a container
+any more (see § Container pool), so `projects.container_status` names only whichever
+container was provisioned or stopped last, and its `stopped`/`creating` values are the
+ordinary case rather than a fault. The one container state worth an operator's attention -
+a pool member the pool has given up on - reaches every project page through
+`ContainerStatusBanner`, which reads `failed_container_count` via `useContainerHealth`.
 
 Action items come from `GET /api/projects/:projectId/inbox/needs-you` (`routes/inbox.ts`),
 which returns pending approvals + unread `admin_mentions` rows and an `action_count`. That
