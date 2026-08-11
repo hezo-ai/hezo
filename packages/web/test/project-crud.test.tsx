@@ -86,7 +86,9 @@ test('Home lists a seeded project with its task count and activity', async () =>
 	await router.navigate({ to: '/home' });
 
 	// An idle project (no running agents) lands in the dashboard's Other-projects
-	// list: task count + idle status + last-activity, not the old "N repos".
+	// list: task count + last-activity, not the old "N repos". No container state
+	// - everything in that list is quiet by definition, and `container_status`
+	// stopped meaning "paused" once containers became pooled per run.
 	const card = await waitFor(
 		() => {
 			const main = document.querySelector('main');
@@ -96,7 +98,7 @@ test('Home lists a seeded project with its task count and activity', async () =>
 		{ timeout: 15_000 },
 	);
 	expect(card.textContent).toMatch(/tasks/);
-	expect(card.textContent).toMatch(/idle/);
+	expect(card.textContent).not.toMatch(/idle|paused/i);
 }, 60_000);
 
 test('Home project card links to the project detail', async () => {
