@@ -7,6 +7,8 @@ import {
 	ContainerStatus,
 	formatContainerMetaLogLine,
 	HeartbeatRunStatus,
+	KIMI_DEFAULT_MODEL,
+	kimiModelContextSize,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2293,6 +2295,68 @@ describe('runAgent', () => {
 			expect(capturedCmd).not.toContain('--model');
 		});
 
+		// Kimi Code resolves `--model` against a `[models."<id>"]` table in its
+		// config.toml, which Hezo never writes - the model is registered through the
+		// shell-read KIMI_MODEL_* family instead. Passing the flag kills the run with
+		// `config.invalid: Model "…" is not configured in config.toml`, before it
+		// reaches a model at all, so every Kimi Code run with an assigned model
+		// failed. The id has to travel on KIMI_MODEL_NAME only.
+		it('sends the model on the environment, not --model, for Kimi Code', async () => {
+			// Added rather than swapped in: the sibling cases in this block share the
+			// database and read the seeded Anthropic config, so the agent names the
+			// provider it wants instead of the suite deleting one.
+			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+			await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider: 'kimi',
+					api_key: 'sk-kimi-code-model',
+					label: 'kimi-code',
+					runtime: 'kimi',
+				}),
+			});
+			globalThis.fetch = originalFetch;
+
+			let capturedCmd: string[] = [];
+			let capturedEnv: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					capturedEnv = opts.Env ?? [];
+					return 'exec-kimi-model';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+
+			await runAgent(
+				{
+					db,
+					docker,
+					masterKeyManager,
+					serverPort: 3000,
+					dataDir: testDataDir,
+					logs: new LogStreamBroker(),
+				},
+				{
+					...makeAgent(),
+					model_override_provider: 'kimi',
+					model_override_model: 'kimi-k3',
+				},
+				makeTask(),
+				makeProject(),
+			);
+
+			expect(capturedCmd).not.toContain('--model');
+			expect(capturedEnv).toContain('KIMI_MODEL_NAME=kimi-k3');
+			// The window travels with the model: declaring the pinned default's for a
+			// smaller one makes the CLI compact too late and the endpoint refuse.
+			expect(capturedEnv).toContain(
+				`KIMI_MODEL_MAX_CONTEXT_SIZE=${kimiModelContextSize('kimi-k3')}`,
+			);
+		});
+
 		it('passes --model when the active config has default_model', async () => {
 			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
@@ -2498,16 +2562,20 @@ describe('runAgent', () => {
 			expect(await staged.read(mount!.authFileRelative)).toBe(validAuthJson);
 		});
 
-		it('returns null mount for providers without a paste flow', async () => {
+		it('returns null mount for an api key the CLI reads from the environment', async () => {
+			// Codex is deliberately absent: it will not authenticate from
+			// OPENAI_API_KEY, so its api key is written to the same auth file its
+			// subscription blob uses (covered in runtime-home.test.ts). Every runtime
+			// that does read the variable writes nothing.
 			expect(
 				await buildSubscriptionMount(
 					'/tmp',
 					'co',
 					'pj',
 					'r1',
-					AiProvider.OpenAI,
-					AgentRuntime.Codex,
-					{ value: 'sk-x', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
+					AiProvider.Google,
+					AgentRuntime.Gemini,
+					{ value: 'AIza-x', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
 				),
@@ -2930,8 +2998,11 @@ describe('buildProviderEnv derives the subagent model from the run model', () =>
 	});
 
 	it('keeps the staticEnv constant when no run model is selected', () => {
+		// Against the constant, not a copy of its current value: the pinned model
+		// moves as the provider ships new ones, and a literal here turns every such
+		// bump into a test edit that says nothing.
 		expect(buildProviderEnv(AiProvider.Kimi, cred)).toContain(
-			'CLAUDE_CODE_SUBAGENT_MODEL=kimi-k2.7-code',
+			`CLAUDE_CODE_SUBAGENT_MODEL=${KIMI_DEFAULT_MODEL}`,
 		);
 		expect(buildProviderEnv(AiProvider.DeepSeek, cred, null)).toContain(
 			'CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash',

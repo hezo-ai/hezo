@@ -730,7 +730,16 @@ describe('kimi adapter', () => {
 		expect(contents).toContain('event = "Stop"');
 		expect(contents).toContain(`command = "node ${KIMI_HOME}/stop-hook-judge.mjs"`);
 		expect(contents).toContain('timeout = 30');
-		expect(contents).toContain('[permission.rules]');
+
+		// `permission.rules` is an ARRAY of {pattern, decision}. Written as a plain
+		// table with a `default` key it parses as one malformed rule and the CLI
+		// drops the whole section with a WARNING, not an error - so the allow-all
+		// silently was not applied and nothing failed. Assert the array-of-tables
+		// form and its two required keys rather than the header alone.
+		expect(contents).toContain('[[permission.rules]]');
+		expect(contents).toContain('pattern = "*"');
+		expect(contents).toContain('decision = "allow"');
+		expect(contents).not.toContain('default = "allow"');
 
 		// Kimi refuses to LOAD a config whose [[hooks]] entry carries any key beyond
 		// these four, which would break every run on this runtime rather than just

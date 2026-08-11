@@ -66,10 +66,15 @@ import {
 	RUNTIME_DISALLOWED_TOOLS_ARGS,
 	RUNTIME_HEADLESS_PREFIX_ARGS,
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
+	RUNTIME_MODEL_DELIVERY,
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
 } from '@hezo/shared';
-import { buildProviderEnv } from '../../src/services/agent-runner';
+import {
+	buildProviderEnv,
+	GROK_DEBUG_BASENAME,
+	recoverOffStreamRunUsage,
+} from '../../src/services/agent-runner';
 import {
 	type AgentRunUsage,
 	createAgentStreamParser,
@@ -288,12 +293,17 @@ function providerEnv(mp: LiveModelProvider, runtime: AgentRuntime): string[] {
  * The argv the runner would build for this runtime, in the runner's own order -
  * including the MCP injection, which is where `--mcp-config` and `--settings`
  * come from. Mirrors `buildRuntimeInvocation`'s `cmd` (`agent-runner.ts`), minus
- * the effort args and Grok's debug-file flag.
+ * the effort args.
+ *
+ * Grok's `--debug-file` is included rather than dropped: it is the *only* place
+ * that runtime states what a run cost, so a suite that omitted it could not
+ * assert usage at all and recorded the runtime's real behaviour as a failure.
  */
 function cliArgv(
 	mp: LiveModelProvider,
 	runtime: AgentRuntime,
 	mcpArgs: readonly string[],
+	containerHomeDir: string | null,
 ): string[] {
 	// The model id is remapped per runtime, not per provider: Claude Code and
 	// OpenCode each want their own spelling, everything else takes it verbatim.
@@ -302,14 +312,19 @@ function cliArgv(
 		if (runtime === AgentRuntime.ClaudeCode) cliModel = claudeCodeModelArg(mp.provider, cliModel);
 		else if (runtime === AgentRuntime.OpenCode) cliModel = opencodeModelArg(mp.provider, cliModel);
 	}
+	const grokDebugArgs =
+		runtime === AgentRuntime.Grok && containerHomeDir
+			? ['--debug-file', `${containerHomeDir}/${GROK_DEBUG_BASENAME}`]
+			: [];
 	return [
 		RUNTIME_COMMANDS[runtime],
 		...RUNTIME_HEADLESS_PREFIX_ARGS[runtime],
 		...mcpArgs,
 		...RUNTIME_STREAM_ARGS[runtime],
+		...grokDebugArgs,
 		...RUNTIME_AUTO_APPROVE_ARGS[runtime],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtime],
-		...(cliModel ? ['--model', cliModel] : []),
+		...(cliModel && RUNTIME_MODEL_DELIVERY[runtime] === 'flag' ? ['--model', cliModel] : []),
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtime],
 	];
 }
@@ -401,6 +416,8 @@ function describeOneAgentCliRun(
 		 * does not share it - which is a bug in the suite, not a finding.
 		 */
 		let usage: AgentRunUsage | null = null;
+		/** Why the off-stream usage recovery found nothing, if it was reached. */
+		let offStreamUsageError: string | null = null;
 		let finalMessage: string | null = null;
 		let exitCode = -1;
 		/** JSON-RPC methods that arrived on the host's `/mcp` endpoint. */
@@ -612,7 +629,9 @@ function describeOneAgentCliRun(
 			await files.mkdir('.');
 			await files.write(PROMPT_FILE, probePrompt(runtime));
 
-			const argv = cliArgv(mp, runtime, injection.cliArgs).map(shellQuote).join(' ');
+			const argv = cliArgv(mp, runtime, injection.cliArgs, homeMount?.containerDir ?? null)
+				.map(shellQuote)
+				.join(' ');
 			const promptPath = shellQuote(`${fixture.workRoot}/${PROMPT_FILE}`);
 			// Prompt delivery is the runtime's own convention, and getting it wrong is
 			// a hang rather than an error - a CLI waiting on a stdin that never closes
@@ -668,6 +687,19 @@ function describeOneAgentCliRun(
 			usage = parser.getUsage();
 			finalMessage = parser.getFinalAssistantMessage();
 			exitCode = (await engine.execInspect(execId)).ExitCode;
+			// Two runtimes stream no usage at all and have it recovered from a file
+			// afterwards. Production does that in `agent-runner.ts`; a suite that
+			// stopped at the stream recorded a correct run as a $0 one, which is the
+			// very failure the usage assertion exists to catch. Same helper, so what
+			// is asserted here is what the runner would actually have charged.
+			usage ??= await recoverOffStreamRunUsage(
+				runtime,
+				homeMount ? engine.files(containerId, homeMount.containerDir) : null,
+				undefined,
+				(msg) => {
+					offStreamUsageError = msg;
+				},
+			);
 			mark('exec-inspected');
 			if (process.env.HEZO_CONFORMANCE_DUMP) {
 				const { mkdirSync, writeFileSync } = await import('node:fs');
@@ -745,7 +777,14 @@ function describeOneAgentCliRun(
 		it('round-trips the prompt through the model', () => {
 			// The prompt reached the CLI on the channel its runtime expects, the CLI
 			// reached the provider, and the answer came back through the exec stream.
-			expect(transcript).toContain(SENTINEL);
+			//
+			// Asserted against what the PARSER made of the stream, not the raw bytes.
+			// A runtime that streams per-token deltas never puts the sentinel on the
+			// wire contiguously - Grok emits it as `HE`,`ZO`,`-`,`LIVE`,`-`,`OK` - so
+			// a substring search of the transcript fails a run that answered
+			// perfectly. Reassembling those chunks is the parser's job, and the
+			// parser's output is what the runner acts on.
+			expect(`${finalMessage ?? ''}\n${renderedLog}`).toContain(SENTINEL);
 		});
 
 		it('reports token usage the pricing table can charge against', () => {
@@ -753,7 +792,9 @@ function describeOneAgentCliRun(
 			// so a runtime that streams no usage prices every run at $0. That failure
 			// is invisible in production (a $0 run looks like a cheap run), and this is
 			// the only place it surfaces.
-			expect(usage).not.toBeNull();
+			expect(`usage=${JSON.stringify(usage)} recovery=${offStreamUsageError ?? 'none'}`).toContain(
+				'"inputTokens"',
+			);
 			const total = Object.values(usage ?? {}).reduce<number>(
 				(sum, v) => sum + (typeof v === 'number' ? v : 0),
 				0,

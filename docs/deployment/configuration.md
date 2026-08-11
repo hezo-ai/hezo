@@ -44,6 +44,7 @@ handy for baking defaults into a service definition while still overriding per r
 | `--auto-install-updates` | `HEZO_AUTO_INSTALL_UPDATES` | off | Install staged updates automatically: once a newer release is downloaded and verified, Hezo gracefully restarts onto it without waiting for "Install & restart" in the web UI. The restart is deferred while agent runs are in flight, and only happens where in-app auto-update is available at all (the self-managed binary - not inside a container). The instance comes back **unlocked**: the unlock key is handed to the new process in memory, never written to disk. See [Updating](/docs/deployment/self-hosting#updating). |
 | - | `HEZO_AUTO_INSTALL_CRON` | `0 */5 * * * *` | Cron schedule (seconds-precision) for the auto-install check that restarts onto a staged update once no agent runs are in flight. Only registered when auto-install is enabled. |
 | - | `HEZO_PRICING_REFRESH_CRON` | `0 0 2 * * *` | Cron schedule (seconds-precision) for the daily model-pricing refresh from [pricepertoken.com](https://pricepertoken.com). Pricing also refreshes at startup; a failed refresh keeps the existing rates. |
+| - | `HEZO_MODEL_PIN_REFRESH_CRON` | `0 0 3 * * *` | Cron schedule (seconds-precision) for the daily re-read of each connected provider's model catalog, which keeps the model a **newly added** connection starts on current. Connections you already have keep the model you chose. A provider Hezo cannot reach keeps its previous default. |
 
 ## Examples
 

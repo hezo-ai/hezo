@@ -99,9 +99,16 @@ export function classifyRuntimeError(raw: string | undefined | null): string | n
 	return text;
 }
 
+/**
+ * @param runModel the model the run was launched with, for the runtimes whose
+ *   stream names no model. OpenCode reports token counts but never a model id,
+ *   so without this every OpenCode run priced at $0 no matter what it spent. A
+ *   model named in the stream still wins - this is the floor, not an override.
+ */
 export function createAgentStreamParser(
 	runtime: AgentRuntime,
 	price: PriceModelFn = NO_PRICE,
+	runModel?: string | null,
 ): AgentStreamParser {
 	switch (runtime) {
 		case AgentRuntime.ClaudeCode:
@@ -114,10 +121,10 @@ export function createAgentStreamParser(
 		// across versions and aren't fully documented. The generic parser is
 		// lenient — it renders recognizable assistant text / tool activity and
 		// captures token usage from whatever terminal event carries it, dropping
-		// anything it doesn't recognize so the log stays clean. Tighten into a
-		// bespoke parser once a real run's events are captured (see PR notes).
+		// anything it doesn't recognize so the log stays clean. It names no model
+		// anywhere in the stream, so pricing depends on the run's own model.
 		case AgentRuntime.OpenCode:
-			return createGenericJsonlParser(price);
+			return createGenericJsonlParser(price, runModel?.trim() || undefined);
 		// Grok's `streaming-json` emits thought/text/end events and NO token usage;
 		// usage is recovered post-run from the `--debug-file` (see the runner and
 		// `extractGrokUsageFromDebugLog`), so this parser's getUsage() stays null.
@@ -262,6 +269,7 @@ function createJsonlEventReader<T>(render: (event: unknown) => T[]): {
 export function createAgentChatParser(
 	runtime: AgentRuntime,
 	price: PriceModelFn = NO_PRICE,
+	runModel?: string | null,
 ): AgentChatParser {
 	switch (runtime) {
 		case AgentRuntime.ClaudeCode:
@@ -271,7 +279,7 @@ export function createAgentChatParser(
 		case AgentRuntime.Gemini:
 			return createGeminiChatParser(price);
 		case AgentRuntime.OpenCode:
-			return createGenericChatParser(price);
+			return createGenericChatParser(price, runModel?.trim() || undefined);
 		case AgentRuntime.Grok:
 			return createGrokChatParser();
 		case AgentRuntime.Kimi:
@@ -851,12 +859,57 @@ interface GeminiTokens {
 	tool?: number;
 }
 
+/**
+ * One model's counts, in either of the two shapes the CLI has emitted.
+ *
+ * `tokens` is the telemetry object's own field names. The stream-json writer
+ * does not emit that object - it flattens it into the `*_tokens` names below,
+ * and drops the reasoning bucket while doing so. Both are read because only the
+ * flat one appears on the wire today and the nested one costs nothing to keep.
+ */
 interface GeminiModelStats {
 	tokens?: GeminiTokens;
+	total_tokens?: number;
+	input_tokens?: number;
+	output_tokens?: number;
+	cached?: number;
 }
 
 interface GeminiStats {
 	models?: Record<string, GeminiModelStats>;
+}
+
+/**
+ * One model's counts, normalized to what a run is billed for.
+ *
+ * The flat projection carries no reasoning bucket, so it is recovered as the
+ * residual the total leaves after the prompt and the visible answer. That
+ * residual also absorbs tool-prompt tokens, which bill at the input rate - a
+ * bounded over-attribution to output, against a guaranteed total loss of every
+ * reasoning token if the residual is ignored, which for a thinking model is
+ * most of what the run generated.
+ */
+function geminiModelTokens(model: GeminiModelStats): {
+	prompt: number;
+	cached: number;
+	output: number;
+} {
+	const t = model.tokens;
+	if (t) {
+		return {
+			prompt: t.prompt ?? 0,
+			cached: t.cached ?? 0,
+			output: (t.candidates ?? 0) + (t.thoughts ?? 0),
+		};
+	}
+	const prompt = model.input_tokens ?? 0;
+	const visible = model.output_tokens ?? 0;
+	const total = model.total_tokens ?? 0;
+	return {
+		prompt,
+		cached: model.cached ?? 0,
+		output: visible + Math.max(0, total - prompt - visible),
+	};
 }
 
 interface GeminiEvent {
@@ -879,24 +932,46 @@ interface GeminiEvent {
 function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let finalMessage: string | null = null;
+	/**
+	 * Assistant text arrives as consecutive `message` events that are CHUNKS of
+	 * one answer, not whole answers - a reply of `HEZO-LIVE-OK` streams as
+	 * `HEZO-LIVE-` then `OK`. Treating each as complete left `getFinalAssistantMessage`
+	 * holding the last fragment, and the runner's handoff-delivery net posts that
+	 * value verbatim, so a stranded Gemini handoff was delivered as its final few
+	 * characters. Buffered and flushed on the next non-message event, the same way
+	 * the Grok parser handles its deltas.
+	 */
+	let textBuf = '';
+	const flushText = (out: string[]): void => {
+		const t = textBuf.trim();
+		textBuf = '';
+		if (!t) return;
+		finalMessage = t;
+		out.push(t);
+	};
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as GeminiEvent;
 		const type = event.type ?? '';
 
-		if (type === 'init') {
-			return [`[session] model=${event.model ?? 'gemini'} tools=0`];
+		if (type === 'message' && event.role !== 'user') {
+			textBuf += event.content ?? event.text ?? '';
+			return [];
 		}
 
-		if (type === 'message') {
-			if (event.role === 'user') return [];
-			const text = (event.content ?? event.text ?? '').trim();
-			if (text) finalMessage = text;
-			return text ? [text] : [];
+		const out: string[] = [];
+		flushText(out);
+
+		if (type === 'init') {
+			out.push(`[session] model=${event.model ?? 'gemini'} tools=0`);
+			return out;
 		}
+
+		if (type === 'message') return out;
 
 		if (type === 'tool_use') {
-			return [formatToolUse(event.name ?? 'tool', event.input ?? event.args)];
+			out.push(formatToolUse(event.name ?? 'tool', event.input ?? event.args));
+			return out;
 		}
 
 		if (type === 'tool_result') {
@@ -904,7 +979,8 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 				.replace(/\s+/g, ' ')
 				.trim();
 			const label = event.is_error ? '[tool-error]' : '[tool-result]';
-			return [body ? `${label} ${body}` : label];
+			out.push(body ? `${label} ${body}` : label);
+			return out;
 		}
 
 		if (type === 'result') {
@@ -912,59 +988,63 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 			const costCents = priceGeminiModels(event.stats, price);
 			usage = { inputTokens: input, outputTokens: output, costCents };
 			const status = event.error ? 'error' : 'success';
-			return [`[done] ${status} tokens=${input}/${output}`];
+			out.push(`[done] ${status} tokens=${input}/${output}`);
+			return out;
 		}
 
 		if (type === 'error') {
 			const msg = extractErrorMessage(event.error, event.message);
-			return msg ? [msg.replace(/\s+/g, ' ').trim()] : [];
+			if (msg) out.push(msg.replace(/\s+/g, ' ').trim());
+			return out;
 		}
 
-		return [];
+		return out;
 	};
 
 	return createJsonlParser(
 		renderEvent,
 		() => usage,
 		() => null,
-		() => finalMessage,
+		// Flushed here too: a run whose last event is an assistant chunk has text
+		// still buffered, and the final message is exactly what the handoff net
+		// would deliver.
+		() => {
+			const pending: string[] = [];
+			flushText(pending);
+			return finalMessage;
+		},
 	);
 }
 
 /**
- * Sum token usage across every model Gemini reports. `prompt` is the full
- * input (the `cached` count is a subset of it, not additive); billed output is
- * the generated `candidates` plus reasoning `thoughts` tokens.
+ * Sum token usage across every model Gemini reports. The prompt count is the
+ * full input (the cached count is a subset of it, not additive); billed output
+ * is the visible answer plus reasoning.
  */
 function sumGeminiTokens(stats: GeminiStats | undefined): { input: number; output: number } {
 	let input = 0;
 	let output = 0;
 	for (const model of Object.values(stats?.models ?? {})) {
-		const t = model.tokens;
-		if (!t) continue;
-		input += t.prompt ?? 0;
-		output += (t.candidates ?? 0) + (t.thoughts ?? 0);
+		const t = geminiModelTokens(model);
+		input += t.prompt;
+		output += t.output;
 	}
 	return { input, output };
 }
 
 /**
- * Price each model Gemini reports separately and sum the cents. `cached` is a
- * subset of `prompt` billed at the cache-read rate; the rest of `prompt` is
- * full-rate input, and billed output is `candidates` + reasoning `thoughts`.
+ * Price each model Gemini reports separately and sum the cents. The cached
+ * count is a subset of the prompt billed at the cache-read rate; the rest of
+ * the prompt is full-rate input.
  */
 function priceGeminiModels(stats: GeminiStats | undefined, price: PriceModelFn): number {
 	let cents = 0;
 	for (const [modelId, model] of Object.entries(stats?.models ?? {})) {
-		const t = model.tokens;
-		if (!t) continue;
-		const prompt = t.prompt ?? 0;
-		const cached = t.cached ?? 0;
-		const output = (t.candidates ?? 0) + (t.thoughts ?? 0);
+		const t = geminiModelTokens(model);
 		cents += price(modelId, {
-			inputTokens: Math.max(0, prompt - cached),
-			cacheReadTokens: cached,
-			outputTokens: output,
+			inputTokens: Math.max(0, t.prompt - t.cached),
+			cacheReadTokens: t.cached,
+			outputTokens: t.output,
 		});
 	}
 	return cents;
@@ -1040,33 +1120,96 @@ function extractGenericTool(event: Record<string, unknown>, type: string): strin
 	return null;
 }
 
-/** Find a token-usage object on the event and normalize it. */
-function extractGenericUsage(
-	event: Record<string, unknown>,
-	price: PriceModelFn,
-	modelId: string | undefined,
-): AgentRunUsage | null {
-	const u = [event.usage, event.tokens, event.stats].find(isRecord);
+/** One event's token counts, before they are folded into a run total. */
+interface GenericTokenBuckets {
+	/** Input excluding anything the cache buckets already account for. */
+	input: number;
+	cacheRead: number;
+	cacheWrite: number;
+	output: number;
+}
+
+/**
+ * Find a token-usage object on the event and normalize it.
+ *
+ * Probed one level into `part` as well as at the top level: OpenCode reports
+ * per-step usage on `step_finish.part.tokens`, and a probe that only looked at
+ * the event root found nothing and priced every run at $0.
+ *
+ * The cache halves are read from a nested `cache` object as well as from flat
+ * names, and cache-creation is kept rather than dropped - it is the dominant
+ * bucket on a first step and is billed at its own rate.
+ */
+function extractGenericUsage(event: Record<string, unknown>): GenericTokenBuckets | null {
+	const part = isRecord(event.part) ? event.part : undefined;
+	const u = [event.usage, event.tokens, event.stats, part?.usage, part?.tokens].find(isRecord);
 	if (!u) return null;
-	const input = firstNumber(u, ['input_tokens', 'prompt_tokens', 'prompt', 'input']);
-	const cached = firstNumber(u, ['cached_input_tokens', 'cache_read_input_tokens', 'cached']);
+	const cache = isRecord(u.cache) ? u.cache : undefined;
+	const flatRead = firstNumber(u, ['cached_input_tokens', 'cache_read_input_tokens', 'cached']);
+	const flatWrite = firstNumber(u, ['cache_creation_input_tokens', 'cache_write_input_tokens']);
+	const cacheRead = flatRead + (cache ? firstNumber(cache, ['read']) : 0);
+	const cacheWrite = flatWrite + (cache ? firstNumber(cache, ['write']) : 0);
 	const output =
 		firstNumber(u, ['output_tokens', 'completion_tokens', 'candidates', 'output']) +
-		firstNumber(u, ['reasoning_output_tokens', 'thoughts']);
-	if (input === 0 && output === 0) return null;
-	const costCents = price(modelId, {
-		inputTokens: Math.max(0, input - cached),
-		cacheReadTokens: cached,
-		outputTokens: output,
-	});
-	return { inputTokens: input, outputTokens: output, costCents };
+		firstNumber(u, ['reasoning_output_tokens', 'reasoning', 'thoughts']);
+	const stated = firstNumber(u, ['input_tokens', 'prompt_tokens', 'prompt', 'input']);
+	// Whether the stated input already excludes the cache is a property of the
+	// shape, and the two shapes say which they are. A nested `cache` object is a
+	// per-bucket breakdown whose siblings are peers of it (OpenCode: total =
+	// input + output + read + write). Flat cache keys accompany a full prompt
+	// count that contains them, so there they must come off or the run is billed
+	// for its cache twice.
+	const input = cache ? stated : Math.max(0, stated - flatRead - flatWrite);
+	if (input === 0 && output === 0 && cacheRead === 0 && cacheWrite === 0) return null;
+	return { input, cacheRead, cacheWrite, output };
+}
+
+/**
+ * Fold one event's counts into the run total.
+ *
+ * Accumulated rather than replaced, because these arrive per step: OpenCode
+ * emits a `step_finish` per turn and the last one describes that turn alone, so
+ * taking the latest recorded a multi-step run as whatever its final step cost.
+ */
+function addGenericUsage(
+	total: GenericTokenBuckets | null,
+	next: GenericTokenBuckets,
+): GenericTokenBuckets {
+	if (!total) return next;
+	return {
+		input: total.input + next.input,
+		cacheRead: total.cacheRead + next.cacheRead,
+		cacheWrite: total.cacheWrite + next.cacheWrite,
+		output: total.output + next.output,
+	};
+}
+
+/** Price an accumulated total, reporting input as everything the run read. */
+function priceGenericUsage(
+	total: GenericTokenBuckets,
+	price: PriceModelFn,
+	modelId: string | undefined,
+): AgentRunUsage {
+	return {
+		inputTokens: total.input + total.cacheRead + total.cacheWrite,
+		outputTokens: total.output,
+		costCents: price(modelId, {
+			inputTokens: total.input,
+			cacheReadTokens: total.cacheRead,
+			cacheCreationTokens: total.cacheWrite,
+			outputTokens: total.output,
+		}),
+	};
 }
 
 const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;
 
-function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
-	let usage: AgentRunUsage | null = null;
-	let modelId: string | undefined;
+function createGenericJsonlParser(
+	price: PriceModelFn,
+	fallbackModelId: string | undefined,
+): AgentStreamParser {
+	let tokens: GenericTokenBuckets | null = null;
+	let modelId: string | undefined = fallbackModelId;
 	let finalMessage: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
@@ -1076,8 +1219,8 @@ function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
 		const model = firstString(event, ['model']);
 		if (model) modelId = model;
 
-		const captured = extractGenericUsage(event, price, modelId);
-		if (captured) usage = captured;
+		const captured = extractGenericUsage(event);
+		if (captured) tokens = addGenericUsage(tokens, captured);
 
 		const errText = extractErrorMessage(
 			event.error as { message?: string } | string | undefined,
@@ -1104,37 +1247,47 @@ function createGenericJsonlParser(price: PriceModelFn): AgentStreamParser {
 		}
 
 		if (captured && GENERIC_TERMINAL_RE.test(type)) {
-			return [`[done] success tokens=${captured.inputTokens}/${captured.outputTokens}`];
+			// The running total rather than this step's own counts: the line reads as
+			// the run's cost so far, which is what it is once several steps report.
+			const soFar = priceGenericUsage(tokens ?? captured, price, modelId);
+			return [`[done] success tokens=${soFar.inputTokens}/${soFar.outputTokens}`];
 		}
 		return [];
 	};
 
 	return createJsonlParser(
 		renderEvent,
-		() => usage,
+		() => (tokens ? priceGenericUsage(tokens, price, modelId) : null),
 		() => null,
 		() => finalMessage,
 	);
 }
 
-function createGenericChatParser(price: PriceModelFn): AgentChatParser {
-	let usage: AgentRunUsage | null = null;
-	let modelId: string | undefined;
+function createGenericChatParser(
+	price: PriceModelFn,
+	fallbackModelId: string | undefined,
+): AgentChatParser {
+	let tokens: GenericTokenBuckets | null = null;
+	let modelId: string | undefined = fallbackModelId;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
 		if (!isRecord(raw)) return [];
 		const event = raw;
 		const type = typeof event.type === 'string' ? event.type : '';
 		const model = firstString(event, ['model']);
 		if (model) modelId = model;
-		const captured = extractGenericUsage(event, price, modelId);
-		if (captured) usage = captured;
+		const captured = extractGenericUsage(event);
+		if (captured) tokens = addGenericUsage(tokens, captured);
 		const toolName = extractGenericTool(event, type);
 		if (toolName) return [{ toolActivity: toolName }];
 		const text = extractGenericText(event);
 		return text ? [{ text }] : [];
 	};
 	const reader = createJsonlEventReader(render);
-	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
+	return {
+		onStdout: reader.onStdout,
+		flush: reader.flush,
+		getUsage: () => (tokens ? priceGenericUsage(tokens, price, modelId) : null),
+	};
 }
 
 // ---------------------------------------------------------------------------

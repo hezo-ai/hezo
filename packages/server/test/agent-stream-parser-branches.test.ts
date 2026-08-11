@@ -552,7 +552,10 @@ describe('Gemini — message/tool/result edge arms', () => {
 
 	it('reads message text from the text field when content is absent', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'message', text: 'via text' }])).toBe('via text\n');
+		// Buffered until the chunk run ends, so the flush is what emits it.
+		expect(feed(parser, [{ type: 'message', text: 'via text' }, { type: 'result' }])).toContain(
+			'via text',
+		);
 	});
 
 	it('drops a whitespace-only assistant message', () => {
@@ -731,6 +734,9 @@ describe('generic parser — usage/error/terminal arms', () => {
 			{ type: 'session', model: 'kimi-9' },
 			{ type: 'usage', usage: { input_tokens: 5, output_tokens: 2 } },
 		]);
+		// Priced when the total is read, not per event: the counts arrive per step
+		// and only their sum is what the run is charged for.
+		parser.getUsage();
 		expect(seen).toContain('kimi-9');
 	});
 

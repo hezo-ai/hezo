@@ -179,3 +179,20 @@ Wherever you pick a specific model - a provider's default model, or an agent's o
 Hezo loads the list of choices **live from that provider**, so you always see the models
 your key can actually use. Providers you signed in to with a subscription instead of an API
 key use the model their CLI selects, so there's no list to choose from there.
+
+## How the starting model is chosen
+
+A connection you add starts on a sensible current model for that provider rather than on
+nothing, so a key you paste and leave alone still runs. Hezo keeps that starting point
+fresh by re-reading each connected provider's catalog once a day and following the
+provider's own naming, so a new generation becomes the starting model without an update to
+Hezo. It stays within the same class of model, so the choice never jumps to a different
+price tier or to an image model.
+
+**Connections you already have are never changed.** The model on a stored connection is
+yours until you change it, and a refresh only moves the default offered to the *next*
+connection you add. If a provider is unreachable when the refresh runs, its previous
+default stands.
+
+Local model servers have no pinned default: the catalog is whatever you have pulled, so
+the CLI's own choice applies until you pick one.

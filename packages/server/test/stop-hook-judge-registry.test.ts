@@ -1,4 +1,4 @@
-import { AgentRuntime, AiProvider } from '@hezo/shared';
+import { AgentRuntime, AiProvider, KIMI_DEFAULT_MODEL } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
 	buildClaudeCodeSettings,
@@ -44,7 +44,7 @@ describe('stop-hook judge spec registry', () => {
 		// Kimi runs on Claude Code (no command script), so it resolves to null in the
 		// registry and judges via buildClaudeCodeSettings with Moonshot's own model.
 		expect(buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode)).toBeNull();
-		expect(STOP_HOOK_JUDGE_MODEL_KIMI).toBe('kimi-k2.7-code');
+		expect(STOP_HOOK_JUDGE_MODEL_KIMI).toBe(KIMI_DEFAULT_MODEL);
 		// No explicit run model → falls back to the per-provider constant.
 		expect(buildClaudeCodeSettings(AiProvider.Kimi).hooks.Stop[0].hooks[0].model).toBe(
 			STOP_HOOK_JUDGE_MODEL_KIMI,

@@ -120,14 +120,21 @@ function buildStdioEntry(d: McpStdioDescriptor): KimiStdioEntry {
  * answer. Approvals are safe to skip here for the same reason they are on every
  * other runtime: the container is an ephemeral, egress-constrained sandbox in
  * which the agent already executes arbitrary code.
+ *
+ * `permission.rules` is an ARRAY of `{pattern, decision}` — an inline table with
+ * a `default` key parses as one malformed rule, and the CLI then drops the whole
+ * `permission` section with a warning rather than failing, so the belt silently
+ * was not there. `kimi doctor` is what states the schema; check a change against
+ * it, since a rejected section reports as a warning and not an error.
  */
 function renderConfigToml(
 	judgeScriptContainerPath: string,
 	docWriteGuardContainerPath: string | null,
 ): string {
 	const lines = [
-		'[permission.rules]',
-		'default = "allow"',
+		'[[permission.rules]]',
+		'pattern = "*"',
+		'decision = "allow"',
 		'',
 		'[[hooks]]',
 		'event = "Stop"',

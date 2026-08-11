@@ -26,6 +26,8 @@ import {
 	storeAiProviderKey,
 	updateAiProviderConfig,
 } from '../services/ai-provider-keys';
+import { getPinnedModel, refreshModelPins } from '../services/model-pins';
+import { fetchProviderCatalog, probeProviderCatalog } from '../services/provider-catalog';
 import { validateSubscriptionBlob } from '../services/subscription-auth';
 
 const log = logger.child('routes');
@@ -147,20 +149,11 @@ async function prepareProviderCredential(
 	}
 
 	if (authMethod === AiAuthMethod.ApiKey && !process.env.SKIP_AI_KEY_VALIDATION) {
-		try {
-			const valid = await verifyProviderKey(provider, value, authMethod, baseUrl);
-			if (!valid) {
-				return {
-					ok: false,
-					code: 'INVALID_KEY',
-					message: `API key validation failed — the key was rejected by ${info.name}`,
-					status: 400,
-				};
-			}
-		} catch {
-			// For a local provider the usual cause is that the runner is not listening
-			// at the given URL, so name the endpoint rather than blaming a key that
-			// may not even be required.
+		const probe = await probeProviderCatalog(provider, value, baseUrl);
+		// "We could not ask" is not "your key is wrong", and the difference is the
+		// whole diagnosis for a local runner that simply is not running. Keep the
+		// two apart: only a provider that answered and refused blames the key.
+		if (!probe.ok && probe.reason === 'unreachable') {
 			return {
 				ok: false,
 				code: 'VALIDATION_FAILED',
@@ -168,6 +161,14 @@ async function prepareProviderCredential(
 					? `Could not reach ${info.name} at ${baseUrl}. Check the server is running and the URL is reachable from Hezo.`
 					: 'Could not reach the provider to validate the key. Please try again.',
 				status: 503,
+			};
+		}
+		if (!probe.ok) {
+			return {
+				ok: false,
+				code: 'INVALID_KEY',
+				message: `API key validation failed — the key was rejected by ${info.name}`,
+				status: 400,
 			};
 		}
 	}
@@ -252,6 +253,17 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 			runtimeChoice.value,
 		);
 
+		// A new credential starts on the provider's pinned model rather than on
+		// "none". Only ever here, on creation: an existing config's model is the
+		// operator's choice and no refresh may move it (see services/model-pins).
+		// A subscription picks its own model inside the CLI, so it gets none.
+		if (authMethod !== AiAuthMethod.Subscription) {
+			const pinned = await getPinnedModel(db, provider);
+			if (pinned) {
+				await updateAiProviderConfig(db, configId, { defaultModel: pinned });
+			}
+		}
+
 		return ok(c, { id: configId }, 201);
 	} catch (e) {
 		const message = e instanceof Error ? e.message : 'Failed to store AI provider config';
@@ -260,6 +272,19 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 		}
 		return err(c, 'INTERNAL', message, 500);
 	}
+});
+
+// Re-read every configured provider's catalog and move its pinned default model
+// to the newest in that provider's family. The same pass the daily cron runs,
+// exposed so an operator does not have to wait a day after a provider ships a
+// generation. Existing configs keep their model; only the default a NEW
+// credential starts on moves.
+aiProvidersRoutes.post('/ai-providers/refresh-model-pins', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+
+	const result = await refreshModelPins(c.get('db'), c.get('masterKeyManager'));
+	return ok(c, result);
 });
 
 // Delete an AI provider config
@@ -313,13 +338,14 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 	}
 
 	try {
-		const valid = await verifyProviderKey(
-			cred.provider as AiProvider,
-			cred.value,
-			cred.authMethod,
-			cred.baseUrl,
-		);
-		if (valid) {
+		// A subscription blob is not an API key any catalog endpoint accepts, so it
+		// is taken as verified rather than probed - the same rule the create path
+		// applies, kept in step with it here.
+		const probe =
+			cred.authMethod === AiAuthMethod.Subscription
+				? ({ ok: true } as const)
+				: await probeProviderCatalog(cred.provider as AiProvider, cred.value, cred.baseUrl);
+		if (probe.ok) {
 			// Persist the healthy state so the badge is truthful and a key that was
 			// previously marked `invalid` recovers on a successful re-verify.
 			await db.query(
@@ -327,6 +353,13 @@ aiProvidersRoutes.post('/ai-providers/:configId/verify', async (c) => {
 				[AiProviderStatus.Verified, configId],
 			);
 			return ok(c, { valid: true });
+		}
+		// An unreachable provider says nothing about the key, so the stored status
+		// is left alone rather than being marked invalid on a network blip - a
+		// badge that flips to "invalid" because the operator's laptop was offline
+		// is worse than no badge.
+		if (probe.reason === 'unreachable') {
+			return ok(c, { valid: false, message: 'Could not reach provider to verify key' });
 		}
 		await db.query(`UPDATE ai_provider_configs SET status = $1, updated_at = now() WHERE id = $2`, [
 			AiProviderStatus.Invalid,
@@ -515,90 +548,27 @@ aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
 		);
 	}
 
-	const endpoint = resolveCatalogEndpoint(provider, cred.value, cred.baseUrl);
-	if (!endpoint) {
-		return err(c, 'UNSUPPORTED', `No models endpoint for provider "${provider}"`, 400);
-	}
-
-	let res: Response;
-	try {
-		res = await fetch(endpoint.url, {
-			method: 'GET',
-			headers: endpoint.headers,
-			signal: AbortSignal.timeout(10000),
-		});
-	} catch {
-		// For a local provider this is the expected error when the operator's server
-		// simply is not running, which is exactly what PROVIDER_UNREACHABLE conveys.
-		return err(c, 'PROVIDER_UNREACHABLE', 'Could not reach provider to list models', 503);
-	}
-
-	if (!res.ok) {
-		if (res.status === 401 || res.status === 403) {
+	const catalog = await fetchProviderCatalog(provider, cred.value, cred.baseUrl);
+	if (!catalog.ok) {
+		if (catalog.reason === 'unsupported') {
+			return err(c, 'UNSUPPORTED', `No models endpoint for provider "${provider}"`, 400);
+		}
+		if (catalog.reason === 'unreachable') {
+			return err(c, 'PROVIDER_UNREACHABLE', 'Could not reach provider to list models', 503);
+		}
+		if (catalog.reason === 'rejected') {
 			return err(c, 'INVALID_KEY', 'Provider rejected the stored credential', 401);
 		}
-		return err(c, 'PROVIDER_ERROR', `Provider returned status ${res.status}`, 503);
+		return err(
+			c,
+			'PROVIDER_ERROR',
+			catalog.status
+				? `Provider returned status ${catalog.status}`
+				: 'Provider returned unparseable response',
+			503,
+		);
 	}
 
-	let json: unknown;
-	try {
-		json = await res.json();
-	} catch {
-		return err(c, 'PROVIDER_ERROR', 'Provider returned unparseable response', 503);
-	}
-
-	const models = parseProviderModels(provider, json);
+	const models = parseProviderModels(provider, catalog.json);
 	return ok(c, models);
 });
-
-/**
- * Resolve the catalog endpoint used both to verify a credential and to list a
- * provider's models. Hosted providers use their fixed `verifyEndpoint`; a
- * locally-hosted one (Ollama, LM Studio) has no fixed endpoint, so the URL is
- * built from the operator's configured base URL, falling back to the runner's
- * documented default port. Both runners expose the OpenAI-shaped `/v1/models`,
- * which `parseProviderModels` already handles via its generic `data[]` branch.
- */
-function resolveCatalogEndpoint(
-	provider: AiProvider,
-	apiKey: string,
-	baseUrl?: string | null,
-): { url: string; headers: Record<string, string> } | null {
-	const info = AI_PROVIDER_INFO[provider];
-	if (!info) return null;
-
-	if (info.local) {
-		const root = (baseUrl?.trim() || info.local.defaultBaseUrl).replace(/\/+$/, '');
-		return {
-			url: `${root}/v1/models`,
-			headers: { Authorization: `Bearer ${apiKey}` },
-		};
-	}
-
-	const endpoint = info.verifyEndpoint;
-	if (!endpoint) return null;
-	return {
-		url: typeof endpoint.url === 'function' ? endpoint.url(apiKey) : endpoint.url,
-		headers: typeof endpoint.headers === 'function' ? endpoint.headers(apiKey) : endpoint.headers,
-	};
-}
-
-async function verifyProviderKey(
-	provider: AiProvider,
-	apiKey: string,
-	authMethod: string,
-	baseUrl?: string | null,
-): Promise<boolean> {
-	if (authMethod === AiAuthMethod.Subscription) return true;
-
-	const endpoint = resolveCatalogEndpoint(provider, apiKey, baseUrl);
-	if (!endpoint) return false;
-
-	const res = await fetch(endpoint.url, {
-		method: 'GET',
-		headers: endpoint.headers,
-		signal: AbortSignal.timeout(10000),
-	});
-
-	return res.ok;
-}

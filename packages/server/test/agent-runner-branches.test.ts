@@ -5,7 +5,7 @@
 // agent-runner-extended.test.ts; this file fills the reachable per-branch gaps
 // in the building blocks those tests only touch on the happy path.
 
-import { AiAuthMethod, AiProvider } from '@hezo/shared';
+import { AiAuthMethod, AiProvider, KIMI_DEFAULT_MODEL } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -178,7 +178,7 @@ describe('buildProviderEnv', () => {
 		// → quiet env present, plus the Moonshot base URL + model defaults.
 		expect(env).toContain('DISABLE_TELEMETRY=1');
 		expect(env).toContain('ANTHROPIC_BASE_URL=https://api.moonshot.ai/anthropic');
-		expect(env).toContain('ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.7-code');
+		expect(env).toContain(`ANTHROPIC_DEFAULT_SONNET_MODEL=${KIMI_DEFAULT_MODEL}`);
 		expect(env).toContain('ENABLE_TOOL_SEARCH=false');
 		expect(env).toContain('CLAUDE_CODE_AUTO_COMPACT_WINDOW=262144');
 		// Kimi's api-key var is ANTHROPIC_AUTH_TOKEN (Moonshot endpoint).

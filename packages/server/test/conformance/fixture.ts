@@ -204,15 +204,20 @@ export interface LiveModelProvider {
  * (OpenRouter).
  */
 const LIVE_PROVIDER_ENV: Record<AiProvider, { slug: string; model?: string }> = {
-	[AiProvider.Anthropic]: { slug: 'ANTHROPIC', model: 'claude-sonnet-4-6' },
-	[AiProvider.OpenAI]: { slug: 'OPENAI', model: 'gpt-4o-mini' },
-	[AiProvider.Google]: { slug: 'GOOGLE', model: 'gemini-1.5-flash' },
+	[AiProvider.Anthropic]: { slug: 'ANTHROPIC', model: 'claude-sonnet-5' },
+	// A codex-family id, not a general chat one: the CLI warns "model metadata
+	// not found" for anything else and falls back to guessed metadata.
+	[AiProvider.OpenAI]: { slug: 'OPENAI', model: 'gpt-5.3-codex' },
+	[AiProvider.Google]: { slug: 'GOOGLE', model: 'gemini-3.6-flash' },
 	[AiProvider.DeepSeek]: { slug: 'DEEPSEEK', model: 'deepseek-v4-flash' },
 	// Slugs, not `provider.toUpperCase()`: the enum values are `z_ai` / `x_ai`, and
 	// nobody types `HEZO_Z_AI_API_KEY`. One stem per provider, so the key variable
 	// and the model override below cannot drift apart.
 	[AiProvider.ZAi]: { slug: 'ZAI', model: 'GLM-4.7' },
-	[AiProvider.OpenRouter]: { slug: 'OPENROUTER' },
+	// OpenRouter routes by capability, and its own default resolves to endpoints
+	// that may not serve tool use at all - which fails as a 404 naming neither the
+	// model nor the cause. Pin one known to carry tools.
+	[AiProvider.OpenRouter]: { slug: 'OPENROUTER', model: 'anthropic/claude-haiku-4.5' },
 	[AiProvider.Kimi]: { slug: 'KIMI', model: KIMI_DEFAULT_MODEL },
 	[AiProvider.XAi]: { slug: 'XAI', model: 'grok-4.5' },
 	// The local runners take a server URL in place of a key - see `baseUrl`.

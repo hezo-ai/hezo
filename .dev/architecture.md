@@ -2853,7 +2853,7 @@ task-level `runtime_type` pin searches.
 
 Defaults: Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
-gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI → `codex`,
+gateway — Kimi at `api.moonshot.ai/anthropic`, model `KIMI_DEFAULT_MODEL`), OpenAI → `codex`,
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
 `XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
 (local runners, see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
@@ -2936,7 +2936,13 @@ runs price at `$0`, which for local inference is correct rather than the usual f
 **Provider config.** `ai_provider_configs` is instance-level (shared across teams), one
 row per `(provider, label)`, each inlining an encrypted credential. `auth_method`
 distinguishes an **API key** (injected as env at run start) from a **subscription** blob
-(materialized to a per-run mount in the container). Subscription auth is supported by
+(materialized to a per-run mount in the container). **One api-key exception:** Codex will not
+authenticate a request from `OPENAI_API_KEY` — `codex doctor` reports the variable as present
+and then reports `auth mode: none`, and every request 401s — so its key is written to the same
+per-run `auth.json` its subscription blob uses, in the `{auth_mode: "apikey", …}` shape
+`codex login --with-api-key` produces (`RUNTIME_HOME_LAYOUTS[codex].apiKeyAuthFile`). The mount
+reports `rotates: false` for a key, so the rotated-credential read-back never writes a
+key-derived file back over the operator's stored value. Subscription auth is supported by
 Anthropic, OpenAI, and Google (xAI is API-key only). A config's `status` is `verified` (the healthy default —
 the add flow live-verifies the key, the Verify action persists the result, and replacing the
 credential re-verifies it — each restoring `verified` on a key that had gone `invalid`),
@@ -2961,7 +2967,11 @@ it, and `setDefaultAiProvider` moves it atomically. `resolveRuntimeForTask` filt
 `status = 'verified'` and `PROVIDERS_BY_RUNTIME[runtime]`, then orders
 `is_default DESC, created_at ASC`, so the global default wins whenever it's a candidate
 for the chosen runtime, else the oldest verified config; an agent's `model_override_*`
-(or the config's `default_model`) sets the CLI `--model`.
+(or the config's `default_model`) selects the run's model. **How that reaches the CLI is per
+runtime** (`RUNTIME_MODEL_DELIVERY`): nearly all take `--model <id>`, but Kimi Code resolves
+`--model` against a `[models."<id>"]` table in its own `config.toml` — which Hezo never writes,
+because the model is registered through the shell-read `KIMI_MODEL_*` family instead — so
+passing the flag there fails the run outright and the id travels on `KIMI_MODEL_NAME` alone.
 
 **Live model listing.** Every UI surface that picks a specific model — the provider
 `default_model` selector and the per-agent model override — populates its options from
@@ -2973,6 +2983,22 @@ proxy). Subscription-auth configs short-circuit with `SUBSCRIPTION_UNSUPPORTED` 
 not an API key the catalog endpoint accepts), and the pickers degrade to the CLI's default
 model; the pricing-override model-id field stays free-text but offers the aggregated live
 catalog as autocomplete suggestions.
+
+**Pinned starting model.** A newly created config does not start on `NULL`: the create route
+sets `default_model` from that provider's *pin* (`services/model-pins.ts`). A pin names a
+**family** rather than a model (`MODEL_PIN_SPECS` in `@hezo/shared`) — `claude-opus-*`,
+`*-codex`, `gemini-*-flash` — and the daily `model-pin-refresh` cron re-reads each configured
+provider's catalog and moves the pin to the highest version inside that family, storing it in
+`system_meta` under `model_pin:<provider>`. A family rather than "the newest model" because a
+catalog mixes tiers, modalities and vendors, so an unrestricted maximum would pin an image
+model or jump price tier; version comparison reads `.` and `-` alike and drops dated snapshot
+suffixes, so `claude-haiku-4-5-20251001` cannot outrank a later release on a date. The refresh
+**never touches an existing row** — it moves only the default offered to the next config
+added — and holds the previous pin on an unreachable provider, a rejected key or a family that
+matched nothing. Providers with no spec (the local runners) get no pin at all. Why it exists:
+a hardcoded id cannot notice its own retirement, which is how `gemini-1.5-flash` stayed the
+Google stop-hook judge long after Google withdrew it, 404ing on every run while the hook
+failed open.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →

@@ -69,6 +69,20 @@ export interface RuntimeHomeLayout {
 	 * omitted, `buildSubscriptionMount` writes no file and returns null.
 	 */
 	authFileRelative?: string;
+	/**
+	 * Renders {@link authFileRelative}'s contents for an **api key**, on a CLI
+	 * that will not authenticate a request from an environment variable.
+	 *
+	 * Codex is the case: it reports the env key as present (`codex doctor` says
+	 * "auth is provided by environment") and then sends no bearer at all, so every
+	 * api-key run 401s. The key it does honour is the one in its auth file, which
+	 * is the same file its subscription blob lands in - hence one mechanism here
+	 * rather than a second delivery path.
+	 *
+	 * Omitted for every CLI that does read the env var; those write no file and
+	 * keep the env-only delivery `credentialEnvByAuthMethod` describes.
+	 */
+	apiKeyAuthFile?: (apiKey: string) => string;
 	envVarName: string;
 	/** True when the runtime CLI rotates a single-use refresh token in place,
 	 *  so runs on the credential must serialise and the rotated file persist back. */
@@ -94,6 +108,11 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.Codex]: {
 		dirPrefix: 'codex',
 		authFileRelative: 'auth.json',
+		// The shape `codex login --with-api-key` writes. Rendered rather than
+		// piped through that command because the run has no interactive step to
+		// hang it off, and the file is what the CLI reads either way.
+		apiKeyAuthFile: (apiKey) =>
+			`${JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: apiKey }, null, 2)}\n`,
 		envVarName: 'CODEX_HOME',
 		rotates: true,
 	},
@@ -218,14 +237,18 @@ export async function buildSubscriptionMount(
 	engine: ContainerEngine,
 	containerId: string,
 ): Promise<SubscriptionMount | null> {
-	if (credential.authMethod !== AiAuthMethod.Subscription) return null;
-
 	const layout = RUNTIME_HOME_LAYOUTS[runtime];
 	if (!layout) return null;
-	// No credential file for this runtime — the subscription credential is
-	// delivered via env var (buildProviderEnv), so there is nothing to mount.
+	// No credential file for this runtime — the credential is delivered via env
+	// var (buildProviderEnv), so there is nothing to mount.
 	const { authFileRelative } = layout;
 	if (!authFileRelative) return null;
+
+	const isSubscription = credential.authMethod === AiAuthMethod.Subscription;
+	// An api key only gets a file on a CLI that will not read it from the
+	// environment; everywhere else env delivery stands and this returns null.
+	const contents = isSubscription ? credential.value : layout.apiKeyAuthFile?.(credential.value);
+	if (contents === undefined) return null;
 
 	const hostDir = getHostSubscriptionRoot(
 		provider,
@@ -243,7 +266,7 @@ export async function buildSubscriptionMount(
 	// itself stays 0o600 (and is chowned to the run-user), never world-readable.
 	await subscriptionFiles(engine, containerId).write(
 		join(layoutDirName(layout, provider), heartbeatRunId, authFileRelative),
-		credential.value,
+		contents,
 		{ mode: 0o600, dirMode: SUBSCRIPTION_DIR_MODE },
 	);
 
@@ -253,7 +276,10 @@ export async function buildSubscriptionMount(
 		authFileRelative,
 		containerDir,
 		envEntries: [`${layout.envVarName}=${containerDir}`],
-		rotates: layout.rotates,
+		// Only a subscription blob rotates. An api-key file is written from the
+		// stored key every run, so reading it back would persist a rotation that
+		// never happened over the operator's own credential.
+		rotates: layout.rotates && isSubscription,
 	};
 }
 
