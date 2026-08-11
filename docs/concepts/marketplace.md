@@ -18,7 +18,9 @@ Open it from the **Marketplace** button in the top navigation (just left of Sett
 The marketplace lists every available team with its name, a short description, how many roles it
 includes, and its version. Click a team to see its full details:
 
-- the **roster** - every role, who it reports to, and what it's responsible for;
+- the **roster** - every teammate by name and face, their role, who they report to, and what
+  they're responsible for. A team ships a fixed name per role, so you meet the same people here
+  that you'll work with once the project exists. The Captain is listed by role alone;
 - the **version** and **changelog** - what changed in each release of the team;
 - two actions: **Launch new project** and **Add to a project**.
 

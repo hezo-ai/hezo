@@ -129,6 +129,7 @@ import { resolveApproval } from '../services/approval-resolve';
 import { upsertChatMemory } from '../services/chat-memory';
 import {
 	buildWakeReceipt,
+	fireAdminMention,
 	fireCommentWakeups,
 	postAgentComment,
 	resolveWarnableSlugs,
@@ -3753,6 +3754,25 @@ export function registerTools(
 
 			const placeholder = credentialPlaceholder(name);
 
+			/**
+			 * Put the request in the admin's inbox. Nothing here carries `@admin`
+			 * text, so it rides the same seam asset-deletion requests do: an
+			 * `admin_mentions` row per admin, which is what makes the ask visible
+			 * (and dismissable) outside the task thread it was posted in.
+			 */
+			const raiseCredentialRequestInInbox = async (commentId: string): Promise<void> => {
+				await fireAdminMention({
+					db,
+					teamId,
+					taskId,
+					commentId,
+					// The author is the requesting agent, never a human - so no
+					// recipient is excluded as "you asked for this yourself".
+					authorUserId: null,
+					wsManager,
+				}).catch((e) => log.error('Failed to raise credential request in the admin inbox:', e));
+			};
+
 			const existing = await db.query<{ id: string; content: Record<string, unknown> }>(
 				`SELECT id, content FROM task_comments
 				 WHERE task_id = $1
@@ -3763,6 +3783,10 @@ export function registerTools(
 				[taskId, name],
 			);
 			if (existing.rows.length > 0) {
+				// Re-raise for any admin who has no row yet (one added to the team
+				// after the ask). `ON CONFLICT DO NOTHING` leaves a row someone has
+				// already read alone, so re-asking never nags.
+				await raiseCredentialRequestInInbox(existing.rows[0].id);
 				return {
 					placeholder,
 					comment_id: existing.rows[0].id,
@@ -3799,6 +3823,7 @@ export function registerTools(
 				'INSERT',
 				inserted.rows[0],
 			);
+			await raiseCredentialRequestInInbox(inserted.rows[0].id);
 
 			events?.emit({
 				type: 'credential.requested',

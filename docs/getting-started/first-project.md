@@ -52,6 +52,7 @@ look for work, so the team keeps moving without you driving each step.
   [progress summary](/docs/concepts/tasks) an agent keeps as it goes.
 - **Approve sensitive actions** when an agent asks - including pasting in a credential
   it needs (which it will only ever use as a [protected placeholder](/docs/security/secret-protection)).
-  Pending approvals and credential requests also surface on the Dashboard's action items.
+  Pending approvals and credential requests reach your Inbox and the Dashboard's action
+  items; opening one takes you to the task thread where it was asked.
 - **Keep an eye on spend** from the Dashboard or the full budget view. See
   [Budgets & cost control](/docs/concepts/budgets-and-costs).

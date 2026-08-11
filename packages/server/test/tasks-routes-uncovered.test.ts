@@ -569,6 +569,37 @@ describe('PATCH /tasks/:taskId — field matrix', () => {
 		expect((await human.json()).data.status).toBe('done');
 	});
 
+	it('does not hold done over a credential request, whose answer is never a text reply', async () => {
+		// A credential request raises an admin_mentions row too, but it is answered
+		// by pasting a value (which posts a `system` comment), so the @admin-question
+		// gate would never clear if it counted one.
+		const task = await createTask('Done gate credential ask');
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'credential_request'::comment_content_type, $3::jsonb)
+			 RETURNING id`,
+			[
+				task.id,
+				agentId,
+				JSON.stringify({ name: 'GATE_API_KEY', kind: 'api_key', instructions: 'Paste it.' }),
+			],
+		);
+		await db.query(
+			'INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id) VALUES ($1, $2, $3, $4)',
+			[teamId, task.id, comment.rows[0].id, adminUserId],
+		);
+		const { token: agentToken, runId } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			task.id,
+		);
+		const res = await patchTask(task.id, { status: 'done' }, agentToken);
+		expect(res.status).toBe(200);
+		await finalizeAgentRun(db, runId);
+	});
+
 	it('coerces a non-terminal target to blocked while blockers are open', async () => {
 		const blocker = await createTask('Coerce blocker');
 		const task = await createTask('Coerce target');

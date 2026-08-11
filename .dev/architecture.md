@@ -4178,17 +4178,17 @@ Every UI change must work at all three, and its browser test must verify mobile
 
 **Project Dashboard.** Opening a project (`/projects/:slug` or a rail click) redirects to
 `/projects/:slug/dashboard`, which is also the first item in the project sidebar. Each
-widget reads its own resource hook rather than one aggregate payload, so a widget refetches
-on the invalidation that already covers its own table. Two sections are fixed at the top -
-the progress summary, then action items (approvals, unread @admin mentions, pending
-credential requests). Below them sits a drag-reorderable grid: in-progress/review tasks, a
-team snapshot of running agents, a goals preview, and calendar-window spend + budget caps.
-The order is per project, saved via `PATCH /api/projects/:projectId/dashboard-widget-order`
-(`projects.dashboard_widget_order`, migration 053) and read back through
-`sanitizeWidgetOrder` in `@hezo/shared`, which both the route and the web app call so a
+widget loads from the endpoint that already serves it - budget status + costs,
+in-progress/review tasks, progress summary, goals, agents (for the running-agents
+snapshot) - so the page adds no aggregate route of its own. Two sections are fixed at the
+top, the progress summary then action items; below them sits a drag-reorderable grid of
+the other four. Widget order is stored per project and saved with
+`PATCH /api/projects/:projectId/dashboard-widget-order`, sanitized through
+`sanitizeWidgetOrder` in `@hezo/shared` - which both the route and the web app call, so a
 stored order can never be validated two different ways. A project that has never been
-reordered renders `DEFAULT_WIDGET_ORDER`. HQ (`is_internal`) omits spend, progress, and
-goals. Query keys use the route-param slug.
+reordered renders `DEFAULT_WIDGET_ORDER` (tasks, team snapshot, goals, spend). HQ
+(`is_internal`) omits spend, progress, and goals. Query keys use the route-param slug;
+WebSocket invalidation covers the tables that feed each widget.
 
 The dashboard shows **no per-project container state**. A project does not own a container
 any more (see § Container pool), so `projects.container_status` names only whichever
@@ -4196,6 +4196,27 @@ container was provisioned or stopped last, and its `stopped`/`creating` values a
 ordinary case rather than a fault. The one container state worth an operator's attention -
 a pool member the pool has given up on - reaches every project page through
 `ContainerStatusBanner`, which reads `failed_container_count` via `useContainerHealth`.
+
+Action items come from `GET /api/projects/:projectId/inbox/needs-you` (`routes/inbox.ts`),
+which returns pending approvals + unread `admin_mentions` rows and an `action_count`. That
+set is deliberately **the project inbox's unread set, exactly**: the widget is headed by an
+"Open inbox" link, so it may not carry a row the inbox cannot render, and reading a row in
+the inbox drops it from the dashboard while the inbox keeps it under Read. The global
+home's "Needs you" section reads the same two cross-project endpoints the global inbox
+does, for the same reason. `test/inbox-parity.test.ts` and
+`packages/web/test/dashboard-inbox-parity.test.tsx` hold both dashboards to their inboxes.
+
+**An `admin_mentions` row is an inbox row, not only an `@admin` mention.** `fireAdminMention`
+raises one per admin (team admin member_users ∪ all superusers) for any comment that needs a
+human, whether or not it carries `@admin` text - `request_credential` raises one so a
+credential ask is visible and dismissable outside the task thread it was posted in.
+Consumers discriminate on the anchored comment's `content_type`, which the inbox and
+needs-you projections both carry along with `credential_name`; `packages/web/src/lib/inbox-row-kind.ts`
+is the single home for how each kind is labelled across the three surfaces that render
+them. Read state is per user (`read_at`), and acting on the request clears it for everyone -
+`fulfill-credential` and `resolve-asset-deletion` both mark the comment's rows read, the
+same way resolving an approval retires it. Migration `057` backfilled rows for the
+credential requests that predate the fan-out.
 
 **PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
 `display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**

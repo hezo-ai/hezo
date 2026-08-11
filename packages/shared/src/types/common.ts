@@ -776,6 +776,12 @@ export const ApprovalStatus = {
 } as const;
 export type ApprovalStatus = (typeof ApprovalStatus)[keyof typeof ApprovalStatus];
 
+/**
+ * One row of the admin's inbox, anchored to the comment that needs them. Most
+ * are literal `@admin` mentions; `fireAdminMention` also raises one for an
+ * actionable comment carrying no `@admin` text, so read `content_type` to know
+ * which kind of ask this is rather than assuming a mention.
+ */
 export interface AdminMentionItem {
 	id: string;
 	team_id: string;
@@ -787,6 +793,10 @@ export interface AdminMentionItem {
 	comment_id: string;
 	/** Timestamp slug for the comment's deep-link anchor (`#comment-<public_id>`). */
 	comment_public_id: string;
+	/** The anchored comment's kind - what the admin is being asked for. */
+	content_type: CommentContentType;
+	/** Secret name on a `credential_request` row, null on every other kind. */
+	credential_name: string | null;
 	snippet: string;
 	author_member_id: string | null;
 	author_display_name: string;

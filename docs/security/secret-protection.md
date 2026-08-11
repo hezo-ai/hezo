@@ -117,8 +117,9 @@ start Hezo with `--egress-allow-private-targets` (or
 You're always the one who provides a secret:
 
 - **An agent asks** - when an agent hits something it needs a credential for, it
-  requests one, and you paste the value into the task thread. It's encrypted and stored
-  immediately, and the agent only ever references it by placeholder afterwards.
+  requests one. The request lands in your Inbox (and the project Dashboard's action items)
+  and you paste the value into the task thread. It's encrypted and stored immediately, and
+  the agent only ever references it by placeholder afterwards.
 - **You add it directly** in the web app, scoping its allowed hosts.
 - **You connect an account** via OAuth (for example GitHub, or a SaaS tool), and Hezo
   stores and refreshes the token for you.

@@ -84,6 +84,11 @@ export function useMarkMentionRead() {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.inboxMentions(projectSlug) });
 			queryClient.invalidateQueries({ queryKey: queryKeys.inboxMentions.root() });
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.inboxCount(projectSlug) });
+			// The dashboard's action items are this project's *unread* inbox rows, so
+			// reading one here has to drop it there. The WebSocket admin_mentions
+			// invalidation covers the same key, but a mutation must not depend on a
+			// socket frame to settle its own caches.
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.needsYou(projectSlug) });
 		},
 	});
 }
@@ -96,6 +101,7 @@ export function useMarkAllMentionsRead() {
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.inboxMentions(projectSlug) });
 			queryClient.invalidateQueries({ queryKey: queryKeys.inboxMentions.root() });
 			queryClient.invalidateQueries({ queryKey: queryKeys.projects.inboxCount(projectSlug) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.needsYou(projectSlug) });
 		},
 	});
 }

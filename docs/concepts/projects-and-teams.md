@@ -29,8 +29,10 @@ A normal project dashboard shows, top to bottom:
 
 - **Status** - the Captain's latest project summary (see
   [Goals & progress](/docs/concepts/goals)).
-- **Action items** - pending approvals, unread @admin mentions, and credential requests
-  that need you.
+- **Action items** - what the project's **Inbox** holds unread: pending approvals, @admin
+  mentions and credential requests. **Open inbox** always lands on the rows listed here,
+  and reading one there clears it from the dashboard while the Inbox keeps it under
+  **Read**.
 - **In progress** - tasks currently in progress or review.
 - **Team snapshot** - open-task count, last activity, and any agents currently running.
 - **Goals** - the top goals by health.
