@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { AiProvider } from '@hezo/shared';
+import { AiProvider, qualifiedMcpToolName } from '@hezo/shared';
 import { buildDocWriteGuardScript, DOC_WRITE_GUARD_FILENAME } from '../doc-write-guard';
 import { buildClaudeCodeSettings } from '../stop-hook-prompt';
 import type {
@@ -61,7 +61,8 @@ export const claudeCodeAdapter: RuntimeMcpAdapter = {
 		// of the withheld tools, addressed by their fully-qualified names.
 		const deniedTools: string[] = [];
 		for (const d of descriptors) {
-			for (const tool of d.disabledTools ?? []) deniedTools.push(`mcp__${d.name}__${tool}`);
+			for (const tool of d.disabledTools ?? [])
+				deniedTools.push(qualifiedMcpToolName(d.name, tool));
 		}
 
 		// Blocking doc-write guard, emitted only when the project actually has docs

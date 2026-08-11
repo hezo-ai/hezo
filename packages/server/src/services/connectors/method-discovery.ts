@@ -18,7 +18,9 @@
 import {
 	ConnectorTransport,
 	classifyMcpMethods,
+	MCP_TOOL_NAME_MAX_LENGTH,
 	type McpMethodInfo,
+	qualifiedMcpToolName,
 	readOnlyMethodNames,
 } from '@hezo/shared';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -295,11 +297,43 @@ export async function discoverConnectorMethods(
 
 	const methods = classifyMcpMethods(tools);
 
+	// Warned here, once per catalog refresh, rather than on every descriptor
+	// build: the condition is a property of the connector's name plus the server's
+	// tool names, so repeating it per run would be noise on a green log without
+	// telling an operator anything new. Not fatal - what an over-long name costs
+	// is decided upstream by the provider, so the run still gets the descriptor.
+	const overLong = methods
+		.map((m) => qualifiedMcpToolName(row.name, m.name))
+		.filter((n) => n.length > MCP_TOOL_NAME_MAX_LENGTH);
+	if (overLong.length > 0) {
+		log.warn('connector tool names exceed the provider tool-name limit', {
+			connectorId,
+			name: row.name,
+			limit: MCP_TOOL_NAME_MAX_LENGTH,
+			count: overLong.length,
+			examples: overLong.slice(0, 3),
+		});
+	}
+
 	// Apply a pending read-only request in the same statement that stores the
 	// catalog, so there is no window where the methods are known but the
 	// requested restriction has not been applied.
-	const applyReadOnly =
+	const readOnlyNames = readOnlyMethodNames(methods);
+	const wantsReadOnly =
 		row.requested_access === 'read' && !row.access_applied_at && row.enabled_methods === null;
+	// An allowlist that enables nothing is never what `access: 'read'` asked for -
+	// it means the classifier recognised no read method at all, which a server
+	// that names every tool after itself can produce for its whole catalog.
+	// Applying it would withhold every tool while the connector still reports
+	// Connected, so leave it unrestricted and make the miss visible instead.
+	const applyReadOnly = wantsReadOnly && readOnlyNames.length > 0;
+	if (wantsReadOnly && readOnlyNames.length === 0 && methods.length > 0) {
+		log.warn('connector read-access request not applied: no method classified read-only', {
+			connectorId,
+			name: row.name,
+			methodCount: methods.length,
+		});
+	}
 
 	if (applyReadOnly) {
 		await deps.db.query(
@@ -310,7 +344,7 @@ export async function discoverConnectorMethods(
 			     access_applied_at = now(),
 			     updated_at = now()
 			 WHERE id = $3 AND access_applied_at IS NULL AND enabled_methods IS NULL`,
-			[JSON.stringify(methods), JSON.stringify(readOnlyMethodNames(methods)), connectorId],
+			[JSON.stringify(methods), JSON.stringify(readOnlyNames), connectorId],
 		);
 	} else {
 		await deps.db.query(

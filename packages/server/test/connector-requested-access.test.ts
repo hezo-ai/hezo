@@ -315,6 +315,121 @@ describe('the request reaches discovery', () => {
 		expect(after.rows[0].enabled_methods.sort()).toEqual(['get_issue', 'list_issues']);
 		expect(after.rows[0].access_applied_at).not.toBeNull();
 	});
+
+	it('resolves a vendor-namespaced catalog to its real read methods', async () => {
+		// A server that names every tool after itself put the vendor where the verb
+		// belongs, so the whole catalog classified as write and `access: 'read'`
+		// resolved to an allowlist of nothing.
+		const vendor = await startTestMcpHttpServer({
+			tools: [
+				{ name: 'typefully_list_drafts' },
+				{ name: 'typefully_get_me' },
+				{ name: 'typefully_create_draft' },
+			],
+		});
+		try {
+			const { row } = await createOrFetchConnector(db, {
+				name: 'typefully',
+				displayName: 'Typefully',
+				mcpUrl: `http://127.0.0.1:${vendor.port}/mcp`,
+				mcpTransport: 'http',
+				projectId,
+				requestedAccess: ConnectorAccess.Read,
+			});
+			await db.query(`UPDATE mcp_connections SET activated_at = now() WHERE id = $1`, [row.id]);
+
+			const result = await discoverConnectorMethods({ db, masterKeyManager }, row.id, 'connect');
+			expect(result.ok).toBe(true);
+
+			const after = await db.query<{ enabled_methods: string[] }>(
+				`SELECT enabled_methods FROM mcp_connections WHERE id = $1`,
+				[row.id],
+			);
+			expect(after.rows[0].enabled_methods.sort()).toEqual([
+				'typefully_get_me',
+				'typefully_list_drafts',
+			]);
+		} finally {
+			await vendor.close();
+		}
+	});
+
+	it('warns about tool names that cross the provider limit without withholding them', async () => {
+		// `mcp__<connector>__<tool>` has to fit in 64 characters. Past that the
+		// provider decides what happens to the tool, so this is diagnosable rather
+		// than silent - but it never costs the run the descriptor.
+		const long = await startTestMcpHttpServer({
+			tools: [
+				{ name: 'typefully_linkedin_resolve_linkedin_organization_from_url' },
+				{ name: 'typefully_get_me' },
+			],
+		});
+		try {
+			const { row } = await createOrFetchConnector(db, {
+				name: 'typefully',
+				displayName: 'Typefully',
+				mcpUrl: `http://127.0.0.1:${long.port}/mcp`,
+				mcpTransport: 'http',
+				projectId,
+			});
+			await db.query(`UPDATE mcp_connections SET activated_at = now() WHERE id = $1`, [row.id]);
+
+			const result = await discoverConnectorMethods({ db, masterKeyManager }, row.id, 'connect');
+			expect(result.ok).toBe(true);
+
+			// Both tools are still catalogued - the warning is advisory.
+			const after = await db.query<{ discovered_methods: Array<{ name: string }> }>(
+				`SELECT discovered_methods FROM mcp_connections WHERE id = $1`,
+				[row.id],
+			);
+			expect(after.rows[0].discovered_methods.map((m) => m.name)).toEqual([
+				'typefully_linkedin_resolve_linkedin_organization_from_url',
+				'typefully_get_me',
+			]);
+		} finally {
+			await long.close();
+		}
+	});
+
+	it('leaves the connector unrestricted when no method classifies read-only', async () => {
+		// An allowlist enabling nothing would withhold every tool while the card
+		// still read Connected. NULL means unrestricted, `[]` means restricted to
+		// nothing, and keeping that distinction honest is the whole point.
+		const writeOnly = await startTestMcpHttpServer({
+			tools: [{ name: 'tracker_create_issue' }, { name: 'tracker_delete_issue' }],
+		});
+		try {
+			const { row } = await createOrFetchConnector(db, {
+				name: 'tracker-write-only',
+				displayName: 'Tracker',
+				mcpUrl: `http://127.0.0.1:${writeOnly.port}/mcp`,
+				mcpTransport: 'http',
+				projectId,
+				requestedAccess: ConnectorAccess.Read,
+			});
+			await db.query(`UPDATE mcp_connections SET activated_at = now() WHERE id = $1`, [row.id]);
+
+			const result = await discoverConnectorMethods({ db, masterKeyManager }, row.id, 'connect');
+			expect(result.ok).toBe(true);
+
+			const after = await db.query<{
+				enabled_methods: string[] | null;
+				discovered_methods: unknown[] | null;
+				access_applied_at: string | null;
+			}>(
+				`SELECT enabled_methods, discovered_methods, access_applied_at::text AS access_applied_at
+				 FROM mcp_connections WHERE id = $1`,
+				[row.id],
+			);
+			// The catalog is still cached - only the narrowing was withheld.
+			expect(after.rows[0].discovered_methods).toHaveLength(2);
+			expect(after.rows[0].enabled_methods).toBeNull();
+			// The request stays pending, so a later refresh can still satisfy it.
+			expect(after.rows[0].access_applied_at).toBeNull();
+		} finally {
+			await writeOnly.close();
+		}
+	});
 });
 
 describe('list_connectors method_access', () => {
