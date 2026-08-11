@@ -72,6 +72,7 @@ import {
 } from '@hezo/shared';
 import { buildProviderEnv } from '../../src/services/agent-runner';
 import { createAgentStreamParser } from '../../src/services/agent-stream-parser';
+import type { AiProviderCredential } from '../../src/services/ai-provider-keys';
 import { type ContainerRunUser, chownToRunUser } from '../../src/services/container-user';
 import {
 	HEZO_MCP_SERVER_NAME,
@@ -80,10 +81,13 @@ import {
 	validateInjection,
 } from '../../src/services/mcp-injectors';
 import {
+	buildSubscriptionMount,
 	ensureRuntimeHomeDir,
 	getHostSubscriptionBase,
+	RUNTIME_HOME_LAYOUTS,
 	type RuntimeHomeMount,
 	SUBSCRIPTION_DIR_MODE,
+	type SubscriptionMount,
 	subscriptionFiles,
 } from '../../src/services/runtime-home';
 import { type RunTunnel, startRunTunnel } from '../../src/services/sandbox/tunnel/run-tunnel';
@@ -97,6 +101,7 @@ import {
 	conformanceRunId,
 	type LiveAdapterFixture,
 	type LiveModelProvider,
+	SUBSCRIPTION_ROTATION_WARNING,
 	sweepConformanceContainers,
 } from './fixture';
 
@@ -212,6 +217,25 @@ function assertSupportedPairing(mp: LiveModelProvider, runtime: AgentRuntime): v
 }
 
 /**
+ * Says so, loudly, when a live run will invalidate the credential it was given.
+ *
+ * Codex's subscription blob carries a single-use refresh token: production
+ * serialises runs on it (`acquireCredentialLock`) and writes the rotated value
+ * back afterwards. This suite does neither, so a run consumes the token and
+ * leaves the operator's copy stale. That is a real cost to whoever supplied it,
+ * and the honest place to say so is before the run rather than in a doc nobody
+ * reads at 2am - so it goes to stderr as the suite starts.
+ *
+ * A warning rather than a refusal: the user asked for this pairing to be
+ * covered, and declining to run it would be deciding for them.
+ */
+function warnIfCredentialRotates(mp: LiveModelProvider, runtime: AgentRuntime): void {
+	if ((mp.authMethod ?? AiAuthMethod.ApiKey) !== AiAuthMethod.Subscription) return;
+	if (!RUNTIME_HOME_LAYOUTS[runtime]?.rotates) return;
+	console.warn(`[conformance] ${mp.name} on ${runtime}: ${SUBSCRIPTION_ROTATION_WARNING}.`);
+}
+
+/**
  * Environment for the run, from the production builder itself.
  *
  * `buildProviderEnv` resolves the binding from the credential's runtime rather
@@ -228,20 +252,20 @@ function assertSupportedPairing(mp: LiveModelProvider, runtime: AgentRuntime): v
  * container is a fresh sandbox whose image sets no such variable, so there is
  * nothing to inherit here anyway.
  */
+function liveCredential(mp: LiveModelProvider, runtime: AgentRuntime): AiProviderCredential {
+	return {
+		value: mp.credential,
+		authMethod: mp.authMethod ?? AiAuthMethod.ApiKey,
+		// Only a local runner carries one; it is what makes `buildProviderEnv`
+		// stamp ANTHROPIC_BASE_URL at the operator's own server.
+		baseUrl: mp.baseUrl ?? null,
+		runtime,
+	};
+}
+
 function providerEnv(mp: LiveModelProvider, runtime: AgentRuntime): string[] {
 	return [
-		...buildProviderEnv(
-			mp.provider,
-			{
-				value: mp.apiKey,
-				authMethod: AiAuthMethod.ApiKey,
-				// Only a local runner carries one; it is what makes `buildProviderEnv`
-				// stamp ANTHROPIC_BASE_URL at the operator's own server.
-				baseUrl: mp.baseUrl ?? null,
-				runtime,
-			},
-			mp.model ?? null,
-		),
+		...buildProviderEnv(mp.provider, liveCredential(mp, runtime), mp.model ?? null),
 		'HOME=/home/node',
 		'CI=1',
 	];
@@ -341,8 +365,15 @@ function describeOneAgentCliRun(
 ): void {
 	const { describe, it, expect, beforeAll, afterAll } = h;
 	const runtime = resolvedRuntime(mp);
+	const authMethod = mp.authMethod ?? AiAuthMethod.ApiKey;
+	// The auth method is in the title because a provider can appear twice - once
+	// per key and once per subscription - and those exercise different delivery
+	// paths. A failure has to say which one broke.
+	const label = `${mp.name} on ${runtime}${
+		authMethod === AiAuthMethod.Subscription ? ' (subscription)' : ''
+	}`;
 
-	describe(`${fixture.name}: live agent CLI run (${mp.name} on ${runtime})`, () => {
+	describe(`${fixture.name}: live agent CLI run (${label})`, () => {
 		const engine: ContainerEngine = fixture.engine;
 		const runUser: ContainerRunUser = { name: fixture.runUser, uid: 1000, gid: 1000 };
 		let containerId = '';
@@ -366,6 +397,8 @@ function describeOneAgentCliRun(
 		const mcpAnswers: string[] = [];
 		/** Set if the tunnel died on its own at any point during the run. */
 		let tunnelDeath: string | null = null;
+		/** Set for a subscription credential the runtime materialises as a file. */
+		let subscriptionMount: SubscriptionMount | null = null;
 		/**
 		 * `<phase> +<ms>` markers, so a failure says *when* as well as what.
 		 *
@@ -384,6 +417,7 @@ function describeOneAgentCliRun(
 
 		beforeAll(async () => {
 			assertSupportedPairing(mp, runtime);
+			warnIfCredentialRotates(mp, runtime);
 			await sweepConformanceContainers(engine);
 			const created = await engine.createContainer(`hezo-conf-cli-${conformanceRunId()}`, {
 				Image: fixture.image,
@@ -482,9 +516,31 @@ function describeOneAgentCliRun(
 			mark('tunnel-up');
 
 			// From here to the exec, this is `buildRuntimeInvocation` with the runner's
-			// own helpers rather than a re-implementation: the per-run config home, the
-			// injector, the file writes through SandboxFiles, and the chown that makes
-			// them readable by the non-root user the CLI runs as.
+			// own helpers rather than a re-implementation: the subscription mount, the
+			// per-run config home, the injector, the file writes through SandboxFiles,
+			// and the chown that makes them readable by the non-root user the CLI runs
+			// as.
+			//
+			// A subscription credential is materialised exactly as production does it -
+			// a 0600 file under the per-run home for the runtimes that mount one
+			// (Codex's `auth.json`, Gemini's `oauth_creds.json`), and nothing at all for
+			// the ones that take it as an env var (Anthropic's `CLAUDE_CODE_OAUTH_TOKEN`,
+			// which `buildProviderEnv` already emitted). `null` for an api-key
+			// credential, which is what makes this a no-op on most of the matrix.
+			subscriptionMount = await buildSubscriptionMount(
+				host.dataDir,
+				seat.team_id,
+				seat.project_id,
+				runId,
+				mp.provider,
+				runtime,
+				liveCredential(mp, runtime),
+				engine,
+				containerId,
+			);
+			// The home dir is handed the subscription mount, so the two share one
+			// directory rather than the CLI being pointed at a home that does not hold
+			// the credential it was just given.
 			const homeMount: RuntimeHomeMount | null = MCP_ADAPTERS[runtime].capabilities.requiresHomeDir
 				? await ensureRuntimeHomeDir(
 						mp.provider,
@@ -493,7 +549,7 @@ function describeOneAgentCliRun(
 						seat.team_id,
 						seat.project_id,
 						runId,
-						null,
+						subscriptionMount,
 						engine,
 						containerId,
 					)
@@ -549,7 +605,10 @@ function describeOneAgentCliRun(
 				Cmd: ['sh', '-c', line],
 				Env: [
 					...providerEnv(mp, runtime),
-					...(homeMount ? [homeMount.envEntry] : []),
+					// The runner's own precedence: a subscription mount sets the runtime's
+					// home variable itself, so the bare home entry is the fallback rather
+					// than an addition - setting both would point the CLI at two homes.
+					...(subscriptionMount?.envEntries ?? (homeMount ? [homeMount.envEntry] : [])),
 					...injection.envEntries,
 				],
 				WorkingDir: fixture.workRoot,
@@ -590,9 +649,10 @@ function describeOneAgentCliRun(
 				// running several. Fixed filenames under the dump root meant each entry
 				// overwrote the last, so a two-entry run left the evidence of exactly
 				// one of them - and silently, since the surviving file looks complete.
-				const dir = `${process.env.HEZO_CONFORMANCE_DUMP}/${fixture.name}-${mp.provider}-${runtime}`
-					.toLowerCase()
-					.replaceAll(/[^a-z0-9/._-]+/g, '-');
+				const dir =
+					`${process.env.HEZO_CONFORMANCE_DUMP}/${fixture.name}-${mp.provider}-${runtime}-${authMethod}`
+						.toLowerCase()
+						.replaceAll(/[^a-z0-9/._-]+/g, '-');
 				mkdirSync(dir, { recursive: true });
 				writeFileSync(`${dir}/transcript.txt`, transcript);
 				writeFileSync(`${dir}/rendered.txt`, renderedLog);
@@ -603,6 +663,7 @@ function describeOneAgentCliRun(
 							backend: fixture.name,
 							provider: mp.provider,
 							runtime,
+							authMethod,
 							model: mp.model ?? null,
 							exitCode,
 							tunnelDeath,

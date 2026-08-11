@@ -22,15 +22,20 @@
  * paid-provider fixture is manual and opt-in - see `test/live/`.
  */
 
+import { readFileSync } from 'node:fs';
 import {
 	type AgentRuntime,
 	AI_PROVIDER_INFO,
+	AiAuthMethod,
 	AiProvider,
 	ALL_AI_PROVIDERS,
 	KIMI_DEFAULT_MODEL,
+	providerRuntimeBinding,
 	providerRuntimes,
 } from '@hezo/shared';
+import { RUNTIME_HOME_LAYOUTS } from '../../src/services/runtime-home';
 import type { ContainerEngine } from '../../src/services/sandbox/types';
+import { validateSubscriptionBlob } from '../../src/services/subscription-auth';
 
 /**
  * The test API the shared suites register through.
@@ -147,8 +152,23 @@ export interface LiveModelProvider {
 	 * it. Only that suite fails - the backend's other conformance suites still run.
 	 */
 	runtime?: AgentRuntime;
-	/** The API key. Never logged - it reaches the container as an env var only. */
-	apiKey: string;
+	/**
+	 * How the credential authenticates. Defaults to an API key.
+	 *
+	 * A subscription is not a second-class case here: production hands one to a
+	 * container on every run, either as an env var (Anthropic's long-lived
+	 * `claude setup-token` token) or as a mounted credential file (Codex's
+	 * `auth.json`, Gemini's `oauth_creds.json`). The suite uses the same
+	 * production helpers for both, so what it proves about a subscription run is
+	 * what a real one does.
+	 */
+	authMethod?: AiAuthMethod;
+	/**
+	 * The credential itself: an API key, or the subscription blob when
+	 * `authMethod` is `Subscription`. Never logged - it reaches the container as
+	 * an env var or a 0600 mounted file and nowhere else.
+	 */
+	credential: string;
 	/**
 	 * Model to pin. Pick the provider's cheapest: the suite asks for one short
 	 * completion and the answer is a single word, so nothing is gained by a
@@ -211,48 +231,129 @@ export function liveProviderEnvVar(provider: AiProvider): string {
 }
 
 /**
- * Every (provider, runtime) pairing the environment has a credential for.
+ * Where a provider's subscription blob is read from - a **file path**, not the
+ * blob itself.
+ *
+ * A path rather than an inline value because two of the three are multi-line
+ * JSON (`auth.json`, `oauth_creds.json`), and because it keeps a live credential
+ * out of the process list and the shell history that `HEZO_…=… bun run` would
+ * put it in. Anthropic's is a bare token, but it reads from a file too: one rule
+ * for all three beats a per-provider exception.
+ */
+export function liveProviderSubscriptionEnvVar(provider: AiProvider): string {
+	return `HEZO_${LIVE_PROVIDER_ENV[provider].slug}_SUBSCRIPTION_FILE`;
+}
+
+/**
+ * Subscription credentials rotate on some providers, and the harness cannot
+ * write the rotation back.
+ *
+ * Production does: `acquireCredentialLock` serialises runs on the credential row
+ * and the runner persists the refreshed token afterwards. This suite has no such
+ * write-back, so on a `rotates` runtime a live run consumes a single-use refresh
+ * token and leaves the operator's stored copy stale. That is a real cost to the
+ * person supplying the credential, so it is surfaced loudly at run time rather
+ * than discovered later - see `warnIfCredentialRotates` in `agent-cli.ts`.
+ */
+export const SUBSCRIPTION_ROTATION_WARNING =
+	'this provider rotates its subscription refresh token on use, and the conformance ' +
+	'suite does not write the rotation back - the credential you supplied will be stale ' +
+	'afterwards and must be re-issued before it is used elsewhere';
+
+/**
+ * Every (provider, runtime, auth-method) combination the environment has a
+ * credential for.
  *
  * **The matrix is derived, never listed.** Providers come from `ALL_AI_PROVIDERS`
  * and their CLIs from `providerRuntimes`, so the coverage a fixture gets is
  * whatever production currently supports - a provider gaining an alternate CLI is
  * covered with no edit here, and cannot be quietly missed. What gates each entry
- * is only whether its key is present, so supplying one key runs that provider on
- * every CLI it can drive and nothing else.
+ * is only whether its credential is present, so supplying one key runs that
+ * provider on every CLI it can drive and nothing else.
  *
- * Deliberately api-key only: subscription and file-mount auth have no credential
- * that can be handed to a container, so those pairings are unreachable from here
- * however the fixture is configured.
+ * **Subscriptions are in the matrix too**, on the pairings that accept one:
+ * `credentialEnvByAuthMethod[Subscription]` for the env-delivered kind
+ * (Anthropic) and a runtime `authFileRelative` for the mounted kind (Codex,
+ * Gemini). A provider can therefore contribute both an api-key entry and a
+ * subscription entry for the same runtime - they exercise genuinely different
+ * delivery paths, which is the point.
  *
  * Each entry bills a completion and provisions a container, so a full-matrix run
- * is not free - which is why this is opt-in per key rather than all-or-nothing.
+ * is not free - which is why this is opt-in per credential rather than
+ * all-or-nothing.
  */
 export function liveModelProviders(): LiveModelProvider[] {
 	const out: LiveModelProvider[] = [];
 	for (const provider of ALL_AI_PROVIDERS) {
 		const spec = LIVE_PROVIDER_ENV[provider];
-		const supplied = process.env[liveProviderEnvVar(provider)]?.trim();
-		if (!supplied) continue;
-
 		const info = AI_PROVIDER_INFO[provider];
 		const model = process.env[`HEZO_LIVE_MODEL_${spec.slug}`]?.trim() || spec.model;
-		for (const runtime of providerRuntimes(provider)) {
-			out.push({
-				name: info.name,
-				provider,
-				runtime,
-				// A local runner authenticates only if the operator turned auth on, so
-				// what its env var carries is the URL; the credential is the documented
-				// sentinel, exactly as the create route stores it.
-				apiKey: info.local ? info.local.authTokenSentinel : supplied,
-				...(info.local ? { baseUrl: supplied } : {}),
-				...(model ? { model } : {}),
-			});
+		const base = { name: info.name, provider, ...(model ? { model } : {}) };
+
+		const key = process.env[liveProviderEnvVar(provider)]?.trim();
+		if (key) {
+			for (const runtime of providerRuntimes(provider)) {
+				out.push({
+					...base,
+					runtime,
+					authMethod: AiAuthMethod.ApiKey,
+					// A local runner authenticates only if the operator turned auth on, so
+					// what its env var carries is the URL; the credential is the documented
+					// sentinel, exactly as the create route stores it.
+					credential: info.local ? info.local.authTokenSentinel : key,
+					...(info.local ? { baseUrl: key } : {}),
+				});
+			}
+		}
+
+		if (!info.supportsSubscription) continue;
+		const blobPath = process.env[liveProviderSubscriptionEnvVar(provider)]?.trim();
+		if (!blobPath) continue;
+		// Read eagerly so a missing or unreadable file fails here, naming the
+		// variable - not deep inside a provisioned container ten minutes later.
+		let blob: string;
+		try {
+			blob = readFileSync(blobPath, 'utf8').trim();
+		} catch (e) {
+			throw new Error(
+				`${liveProviderSubscriptionEnvVar(provider)} points at ${blobPath}, which could not ` +
+					`be read: ${(e as Error).message}`,
+			);
+		}
+		// The same check the add-provider route runs, so a blob of the wrong shape is
+		// rejected with production's own message rather than surfacing as an opaque
+		// CLI auth failure inside the sandbox.
+		const validation = validateSubscriptionBlob(provider, blob);
+		if (!validation.ok) {
+			throw new Error(
+				`${liveProviderSubscriptionEnvVar(provider)} (${blobPath}) is not a valid ` +
+					`${info.name} subscription credential: ${validation.error}`,
+			);
+		}
+		for (const runtime of subscriptionRuntimes(provider)) {
+			out.push({ ...base, runtime, authMethod: AiAuthMethod.Subscription, credential: blob });
 		}
 	}
 	return out;
 }
 
+/**
+ * The CLIs a provider can run a *subscription* on.
+ *
+ * Narrower than `providerRuntimes`, and derived rather than listed: a pairing
+ * qualifies when it names a credential variable for `Subscription` (the
+ * env-delivered kind) or when its runtime mounts a credential file. Prime Agent
+ * declares neither on any provider, so it correctly contributes nothing here -
+ * an alternate CLI that gains subscription support later is picked up with no
+ * edit.
+ */
+function subscriptionRuntimes(provider: AiProvider): AgentRuntime[] {
+	return providerRuntimes(provider).filter((runtime) => {
+		const binding = providerRuntimeBinding(provider, runtime);
+		if (binding?.credentialEnvByAuthMethod[AiAuthMethod.Subscription]) return true;
+		return Boolean(RUNTIME_HOME_LAYOUTS[runtime]?.authFileRelative);
+	});
+}
 /** A label every container this suite creates carries, so a sweep can find them. */
 export const CONFORMANCE_LABEL = 'hezo.conformance';
 

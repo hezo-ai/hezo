@@ -1,6 +1,10 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	AgentRuntime,
 	AI_PROVIDER_INFO,
+	AiAuthMethod,
 	AiProvider,
 	ALL_AI_PROVIDERS,
 	PROVIDER_TO_RUNTIME,
@@ -16,6 +20,7 @@ import {
 	type LiveModelProvider,
 	liveModelProviders,
 	liveProviderEnvVar,
+	liveProviderSubscriptionEnvVar,
 } from './conformance/fixture';
 
 /**
@@ -100,12 +105,12 @@ describe('describeAgentCliConformance registration', () => {
 		const { harness, registered } = recordingHarness();
 		describeAgentCliConformance(
 			fixtureWith([
-				{ name: 'DeepSeek', provider: AiProvider.DeepSeek, apiKey: KEY },
+				{ name: 'DeepSeek', provider: AiProvider.DeepSeek, credential: KEY },
 				{
 					name: 'DeepSeek',
 					provider: AiProvider.DeepSeek,
 					runtime: AgentRuntime.PrimeAgent,
-					apiKey: KEY,
+					credential: KEY,
 				},
 			]),
 			harness,
@@ -122,7 +127,7 @@ describe('describeAgentCliConformance registration', () => {
 	it('falls back to the provider default when an entry names no runtime', () => {
 		const { harness, registered } = recordingHarness();
 		describeAgentCliConformance(
-			fixtureWith([{ name: 'OpenAI', provider: AiProvider.OpenAI, apiKey: KEY }]),
+			fixtureWith([{ name: 'OpenAI', provider: AiProvider.OpenAI, credential: KEY }]),
 			harness,
 		);
 		expect(registered.titles[0]).toContain(`on ${PROVIDER_TO_RUNTIME[AiProvider.OpenAI]}`);
@@ -142,7 +147,7 @@ describe('describeAgentCliConformance registration', () => {
 						name: 'Anthropic',
 						provider: AiProvider.Anthropic,
 						runtime: AgentRuntime.Kimi,
-						apiKey: KEY,
+						credential: KEY,
 					},
 				]),
 				harness,
@@ -163,7 +168,7 @@ describe('describeAgentCliConformance registration', () => {
 					name: 'DeepSeek',
 					provider: AiProvider.DeepSeek,
 					runtime: AgentRuntime.PrimeAgent,
-					apiKey: KEY,
+					credential: KEY,
 				},
 			]),
 			harness,
@@ -219,7 +224,7 @@ describe('liveModelProviders', () => {
 		// what gets covered, so a runtime added to it lands here with no edit.
 		expect(got.map((p) => p.runtime)).toEqual([...providerRuntimes(AiProvider.DeepSeek)]);
 		expect(new Set(got.map((p) => p.provider))).toEqual(new Set([AiProvider.DeepSeek]));
-		expect(got.every((p) => p.apiKey === 'sk-x')).toBe(true);
+		expect(got.every((p) => p.credential === 'sk-x')).toBe(true);
 		// Prime Agent is in there, and it is the entry a provider-keyed lookup could
 		// never have produced.
 		expect(got.some((p) => p.runtime === AgentRuntime.PrimeAgent)).toBe(true);
@@ -258,7 +263,7 @@ describe('liveModelProviders', () => {
 		// The env var carries a URL, not a key: a local runner authenticates only if
 		// the operator turned auth on, and the stored credential is the sentinel.
 		expect(ollama.baseUrl).toBe('http://host.docker.internal:11434');
-		expect(ollama.apiKey).toBe(AI_PROVIDER_INFO[AiProvider.Ollama].local?.authTokenSentinel);
+		expect(ollama.credential).toBe(AI_PROVIDER_INFO[AiProvider.Ollama].local?.authTokenSentinel);
 	});
 
 	it('lets a per-provider env var override the pinned model', () => {
@@ -267,5 +272,142 @@ describe('liveModelProviders', () => {
 			liveModelProviders,
 		);
 		expect(new Set(got.map((p) => p.model))).toEqual(new Set(['deepseek-custom']));
+	});
+});
+
+/**
+ * The subscription half of the matrix.
+ *
+ * Worth its own coverage because it is the half that can silently contribute
+ * *nothing*: it is gated on a file, on `supportsSubscription`, and on a pairing
+ * declaring either a subscription credential variable or a mounted credential
+ * file. Any of those going wrong yields fewer combinations rather than an error,
+ * which is exactly the failure mode a derived matrix is supposed to remove.
+ */
+describe('liveModelProviders with subscription credentials', () => {
+	/** Blob shapes taken from the production validators, not invented here. */
+	const BLOBS: Partial<Record<AiProvider, string>> = {
+		[AiProvider.Anthropic]: `sk-ant-oat01-${'x'.repeat(80)}`,
+		[AiProvider.OpenAI]: JSON.stringify({
+			tokens: { refresh_token: `rt-${'y'.repeat(20)}`, access_token: 'at', account_id: 'a' },
+		}),
+		[AiProvider.Google]: JSON.stringify({
+			refresh_token: 'rt',
+			access_token: 'at',
+			token_type: 'Bearer',
+		}),
+	};
+
+	function writeBlob(provider: AiProvider, contents: string): string {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-sub-'));
+		const file = join(dir, 'cred');
+		writeFileSync(file, contents);
+		return file;
+	}
+
+	function withSubscription<T>(vars: Record<string, string>, fn: () => T): T {
+		const saved = new Map(Object.keys(vars).map((k) => [k, process.env[k]]));
+		const keys = Object.keys(process.env).filter(
+			(k) => k.startsWith('HEZO_') && (k.endsWith('_API_KEY') || k.endsWith('_SUBSCRIPTION_FILE')),
+		);
+		for (const k of keys) saved.set(k, process.env[k]);
+		for (const k of keys) delete process.env[k];
+		Object.assign(process.env, vars);
+		try {
+			return fn();
+		} finally {
+			for (const [k, v] of saved) {
+				if (v === undefined) delete process.env[k];
+				else process.env[k] = v;
+			}
+		}
+	}
+
+	it('covers exactly the pairings that accept a subscription', () => {
+		const vars: Record<string, string> = {};
+		for (const [provider, blob] of Object.entries(BLOBS)) {
+			vars[liveProviderSubscriptionEnvVar(provider as AiProvider)] = writeBlob(
+				provider as AiProvider,
+				blob,
+			);
+		}
+		const got = withSubscription(vars, liveModelProviders);
+
+		// One per provider, each on the CLI that provider's subscription actually
+		// drives. Prime Agent declares no subscription binding on any provider, so
+		// its absence here is the derivation working rather than an omission.
+		expect(got.map((p) => `${p.provider}:${p.runtime}`).sort()).toEqual([
+			'anthropic:claude_code',
+			'google:gemini',
+			'openai:codex',
+		]);
+		expect(got.every((p) => p.authMethod === AiAuthMethod.Subscription)).toBe(true);
+		expect(got.some((p) => p.runtime === AgentRuntime.PrimeAgent)).toBe(false);
+	});
+
+	it('carries the blob itself, read from the file', () => {
+		const [entry] = withSubscription(
+			{
+				[liveProviderSubscriptionEnvVar(AiProvider.Anthropic)]: writeBlob(
+					AiProvider.Anthropic,
+					BLOBS[AiProvider.Anthropic] as string,
+				),
+			},
+			liveModelProviders,
+		);
+		expect(entry.credential).toBe(BLOBS[AiProvider.Anthropic]);
+	});
+
+	it('runs a provider on both auth methods when both are supplied', () => {
+		// Not either/or: an api key and a subscription reach the container by
+		// genuinely different paths (env var vs mounted file), so both are worth
+		// proving and the matrix must not collapse them.
+		const got = withSubscription(
+			{
+				[liveProviderEnvVar(AiProvider.Anthropic)]: 'sk-ant-key',
+				[liveProviderSubscriptionEnvVar(AiProvider.Anthropic)]: writeBlob(
+					AiProvider.Anthropic,
+					BLOBS[AiProvider.Anthropic] as string,
+				),
+			},
+			liveModelProviders,
+		);
+		const onClaudeCode = got.filter((p) => p.runtime === AgentRuntime.ClaudeCode);
+		expect(onClaudeCode.map((p) => p.authMethod).sort()).toEqual([
+			AiAuthMethod.ApiKey,
+			AiAuthMethod.Subscription,
+		]);
+	});
+
+	it('refuses a blob of the wrong shape, naming the variable', () => {
+		const file = writeBlob(AiProvider.OpenAI, '{"not":"a codex auth.json"}');
+		expect(
+			() =>
+				withSubscription({ [liveProviderSubscriptionEnvVar(AiProvider.OpenAI)]: file }, () =>
+					liveModelProviders(),
+				),
+			// Production's own validator, so a bad paste fails here with the message
+			// the add-provider route would give rather than as an opaque CLI auth
+			// error inside a sandbox ten minutes later.
+		).toThrow(/HEZO_OPENAI_SUBSCRIPTION_FILE/);
+	});
+
+	it('refuses an unreadable file rather than running without the credential', () => {
+		expect(() =>
+			withSubscription(
+				{ [liveProviderSubscriptionEnvVar(AiProvider.Google)]: '/nonexistent/creds.json' },
+				() => liveModelProviders(),
+			),
+		).toThrow(/could not be read/);
+	});
+
+	it('ignores a subscription file for a provider that has no subscription flow', () => {
+		// DeepSeek is api-key only. Honouring the variable would fabricate a pairing
+		// production cannot configure.
+		const got = withSubscription(
+			{ HEZO_DEEPSEEK_SUBSCRIPTION_FILE: writeBlob(AiProvider.DeepSeek, 'anything') },
+			liveModelProviders,
+		);
+		expect(got).toEqual([]);
 	});
 });
