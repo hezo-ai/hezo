@@ -70,7 +70,7 @@
 			"slug": "investment",
 			"name": "Investment Portfolio",
 			"description": "Research-grade stock research and tracking - analysts, verifiers, and a monitor that keeps a living document on every stock you care about up to date",
-			"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding - the stocks and categories to watch, the investor's objective, risk appetite, and horizon - and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
+			"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding - the stocks and categories to watch, the investor's objective, risk appetite, and horizon - and suggests goals for the admin to approve. Work flows through three quality gates the Captain enforces: the Market Researcher screens on a standing cadence and hands ranked candidates to the Captain for triage; the Equity Analyst runs structured deep-dives (a 13-section per-stock research document with valuation scenarios and pre-submission checks) that must pass the Risk Verifier's adversarial review before reaching the admin; and the Report Writer's portfolio reviews and per-stock summary reports pass through the Captain. The Catalyst Monitor sweeps filings, news, and the trade press daily as the team's earliest detection point for material events and stale data. Portfolio membership changes only on the admin's explicit instruction - research status never implies a holding.",
 			"keywords": [
 				"stock",
 				"stocks",
@@ -125,11 +125,17 @@
 				"tracking",
 				"monitoring",
 				"report",
-				"review"
+				"review",
+				"deep dive",
+				"dilution",
+				"spac",
+				"short interest",
+				"insider activity",
+				"price target"
 			],
-			"version": 12,
+			"version": 13,
 			"roster_count": 6,
-			"latest_notes": "Renamed ticket to task throughout the roster copy and every role prompt, matching the term Hezo uses everywhere else, and replaced em dashes with hyphens in the operator-facing team and role descriptions."
+			"latest_notes": "Consolidated the learnings of a long-running live investment team back into the template, generalized to any stock or industry. The Equity Analyst now works a 13-section deep-dive framework (thesis with invalidation triggers, capital and share-class structure, comprehensive dilution analysis, sourced catalyst calendar, probability-weighted valuation scenarios with traceable bridges) through a four-phase process ending in thematic pre-submission checks; per-stock research moves to a folder per stock in the assets library, with filings stored alongside and compact indexes kept as project docs. The Risk Verifier gained an independent freshness step, a section-by-section PASS/CHALLENGE/GAP checklist, and posts structured verdicts before a run ends. The Catalyst Monitor sweeps three channels (filings, news, trade press) as the team's earliest detection point and makes targeted, verified edits. Candidates now flow through the Captain for triage, the Report Writer's output passes the Captain's review before the admin, and portfolio membership changes only on explicit admin instruction."
 		},
 		{
 			"slug": "software-development",
