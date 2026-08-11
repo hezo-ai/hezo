@@ -56,6 +56,22 @@ export interface AgentStreamParser {
 	 * a real comment (see the handoff-delivery guardrail in `agent-runner.ts`).
 	 */
 	getFinalAssistantMessage(): string | null;
+	/**
+	 * How many tools each MCP server contributed to this run, keyed by server
+	 * name, or null when the runtime reported nothing usable.
+	 *
+	 * The same figures the `[session]` banner carries, kept so the runner can
+	 * persist them on the run row. `=connected` only ever meant the transport came
+	 * up, so an agent suspecting a connector is broken has no first-party way to
+	 * check what it actually received — it infers, and a wrong inference has
+	 * already outlived several runs by way of a progress summary. This is that
+	 * fact, reachable from inside the run through `list_connectors`.
+	 *
+	 * Null rather than `{}` when the tool array was unreadable or the runtime
+	 * emits no such event, so "not reported" stays distinguishable from "reported
+	 * zero" — the latter is the actionable one.
+	 */
+	getMcpToolCounts(): Record<string, number> | null;
 }
 
 /**
@@ -113,11 +129,6 @@ export function createAgentStreamParser(
 		// parser's getUsage() stays null.
 		case AgentRuntime.Kimi:
 			return createKimiParser();
-		// Prime Agent's `--mode json` DOES carry usage on the stream (`message_end`
-		// includes the assistant message, whose `usage` holds all four buckets), so
-		// unlike Grok and Kimi Code there is no off-stream recovery for it.
-		case AgentRuntime.PrimeAgent:
-			return createPrimeAgentParser(price);
 		default:
 			return createPassthroughParser();
 	}
@@ -131,6 +142,7 @@ function createPassthroughParser(): AgentStreamParser {
 		getUsage: () => null,
 		getTerminalError: () => null,
 		getFinalAssistantMessage: () => null,
+		getMcpToolCounts: () => null,
 	};
 }
 
@@ -146,6 +158,7 @@ function createJsonlParser(
 	getUsage: () => AgentRunUsage | null,
 	getTerminalError: () => string | null = () => null,
 	getFinalAssistantMessage: () => string | null = () => null,
+	getMcpToolCounts: () => Record<string, number> | null = () => null,
 ): AgentStreamParser {
 	let buffer = '';
 
@@ -182,6 +195,7 @@ function createJsonlParser(
 		getUsage,
 		getTerminalError,
 		getFinalAssistantMessage,
+		getMcpToolCounts,
 	};
 }
 
@@ -540,6 +554,10 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 	const run = { input: 0, cacheCreation: 0, cacheRead: 0, output: 0 };
 	let sawResult = false;
 	let finalMessage: string | null = null;
+	// Kept past the session line so the runner can persist it on the run row and
+	// `list_connectors` can answer, from inside the run, what each connector
+	// actually contributed. Stays null when no tool name parsed.
+	let mcpCounts: Record<string, number> | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as ClaudeStreamEvent;
@@ -560,6 +578,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 			// misleading zero for every server.
 			const toolNames = initToolNames(event.tools);
 			const counts = toolNames.length > 0 ? mcpToolCounts(toolNames, mcpServers) : null;
+			if (counts) mcpCounts = Object.fromEntries(counts);
 			const servers = mcpServers
 				.map((s) => {
 					const count = s?.name === undefined ? undefined : counts?.get(s.name);
@@ -685,6 +704,7 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		() => usage,
 		() => terminalError,
 		() => finalMessage,
+		() => mcpCounts,
 	);
 }
 
@@ -1040,100 +1060,6 @@ function extractGenericUsage(
 		outputTokens: output,
 	});
 	return { inputTokens: input, outputTokens: output, costCents };
-}
-
-/**
- * Prime Agent (`--mode json`) — one JSON object per session event, verbatim.
- *
- * The one thing to get right here is the token accounting. Prime Agent
- * normalises every provider to DISJOINT buckets before it records them: its
- * `input` is `promptTokens - cacheRead - cacheWrite`, so the cached portion is
- * already excluded. Feeding these through `extractGenericUsage` (which does
- * `input - cached`, the Codex/Grok posture) would subtract the cache a second
- * time and under-report every cached run. Hence a bespoke parser that maps the
- * four buckets straight across — the Kimi Code posture.
- *
- * Its own `usage.cost` object is ignored, like every other runtime's: runs price
- * only from `model_pricing`.
- */
-function createPrimeAgentParser(price: PriceModelFn): AgentStreamParser {
-	let usage: AgentRunUsage | null = null;
-	let modelId: string | undefined;
-	let finalMessage: string | null = null;
-
-	/** Text parts of a message's content array, in order. */
-	const contentText = (content: unknown): string => {
-		if (typeof content === 'string') return content;
-		if (!Array.isArray(content)) return '';
-		return content
-			.filter(isRecord)
-			.filter((part) => part.type === 'text' && typeof part.text === 'string')
-			.map((part) => part.text as string)
-			.join('');
-	};
-
-	const thinkingText = (content: unknown): string => {
-		if (!Array.isArray(content)) return '';
-		return content
-			.filter(isRecord)
-			.filter((part) => part.type === 'thinking' && typeof part.thinking === 'string')
-			.map((part) => part.thinking as string)
-			.join('');
-	};
-
-	const renderEvent = (raw: unknown): string[] => {
-		if (!isRecord(raw)) return [];
-		const type = typeof raw.type === 'string' ? raw.type : '';
-
-		if (type === 'tool_execution_start') {
-			const name = typeof raw.toolName === 'string' ? raw.toolName : 'tool';
-			return [formatToolUse(name, raw.args)];
-		}
-
-		if (type !== 'message_end') return [];
-		const message = isRecord(raw.message) ? raw.message : null;
-		if (!message || message.role !== 'assistant') return [];
-
-		if (typeof message.model === 'string') modelId = message.model;
-
-		const out: string[] = [];
-		const thinking = thinkingText(message.content);
-		if (thinking.trim()) out.push(formatThinking(thinking));
-		const text = contentText(message.content);
-		if (text.trim()) {
-			finalMessage = text;
-			out.push(text);
-		}
-
-		const u = isRecord(message.usage) ? message.usage : null;
-		if (u) {
-			const input = firstNumber(u, ['input']);
-			const output = firstNumber(u, ['output']);
-			const cacheRead = firstNumber(u, ['cacheRead']);
-			const cacheWrite = firstNumber(u, ['cacheWrite']);
-			if (input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0) {
-				usage = {
-					inputTokens: input,
-					outputTokens: output,
-					// No `- cacheRead` here, deliberately: see the note above.
-					costCents: price(modelId, {
-						inputTokens: input,
-						cacheReadTokens: cacheRead,
-						cacheCreationTokens: cacheWrite,
-						outputTokens: output,
-					}),
-				};
-			}
-		}
-		return out;
-	};
-
-	return createJsonlParser(
-		renderEvent,
-		() => usage,
-		() => null,
-		() => finalMessage,
-	);
 }
 
 const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;

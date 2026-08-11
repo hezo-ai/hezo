@@ -74,20 +74,107 @@ const READ_ONLY_PREFIXES = [
  * casing convention in the wild: `list_issues`, `listIssues`, `list-issues`,
  * `ListIssues` all yield `['list', 'issues']`.
  */
-function leadingWord(name: string): string {
-	const spaced = name
+function splitWords(name: string): string[] {
+	return name
 		.replace(/[_\-.\s]+/g, ' ')
 		.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-		.trim();
-	const first = spaced.split(' ')[0] ?? '';
-	return first.toLowerCase();
+		.trim()
+		.split(' ')
+		.filter(Boolean)
+		.map((word) => word.toLowerCase());
+}
+
+/**
+ * Verbs that mark a shared token as the tool's own action rather than a vendor
+ * name. The mirror of the read-prefix refusal in {@link sharedVendorPrefix}.
+ *
+ * Load-bearing once a single tool can imply a namespace: with one tool there is
+ * nothing to cross-check the token against, so `update_view` would strip
+ * `update` and classify on `view` - a read prefix - marking a write tool
+ * read-only. That is the one direction this module promises never to fail in,
+ * so a token that is plainly a mutation is refused instead. A vendor genuinely
+ * called `post` or `run` loses its namespace and classifies as write, which is
+ * the safe way round.
+ */
+const WRITE_VERB_PREFIXES = [
+	'create',
+	'update',
+	'delete',
+	'remove',
+	'set',
+	'add',
+	'put',
+	'patch',
+	'post',
+	'write',
+	'send',
+	'reset',
+	'clear',
+	'drop',
+	'insert',
+	'upsert',
+	'move',
+	'rename',
+	'archive',
+	'publish',
+	'cancel',
+	'run',
+	'execute',
+	'start',
+	'stop',
+];
+
+/**
+ * The vendor namespace every tool in a catalog is prefixed with, or null when
+ * there is no such prefix.
+ *
+ * Many servers name every tool after themselves - `typefully_list_drafts`,
+ * `typefully_get_me` - which puts the vendor where the verb should be and makes
+ * the prefix table classify the whole server as write. Detecting the shared
+ * token here lets classification look at the word that actually carries the
+ * verb.
+ *
+ * Deliberately conservative. It requires **every** tool to share the token (a
+ * partial match is a coincidence, not a namespace), and refuses a token that is
+ * itself a read-only prefix - a server whose tools are all `list_*` is naming
+ * them consistently, and stripping that would discard the only signal the
+ * heuristic has - or a plain mutation verb, per {@link WRITE_VERB_PREFIXES}.
+ *
+ * A single tool can imply a namespace. The whole-catalog view is weaker evidence
+ * at one tool than at ten, which is what the two refusals above are carrying:
+ * they reject the tokens where a one-tool guess would go wrong, and a vendor
+ * name is not among them.
+ */
+function sharedVendorPrefix(tools: readonly McpToolDescriptor[]): string | null {
+	if (tools.length === 0) return null;
+	let shared: string | null = null;
+	for (const tool of tools) {
+		const words = splitWords(tool.name);
+		// A single-word name has no room for a namespace plus a verb, so the
+		// catalog as a whole is not namespaced.
+		if (words.length < 2) return null;
+		const first = words[0] ?? '';
+		if (shared === null) shared = first;
+		else if (shared !== first) return null;
+	}
+	if (shared === null) return null;
+	if (READ_ONLY_PREFIXES.includes(shared)) return null;
+	if (WRITE_VERB_PREFIXES.includes(shared)) return null;
+	return shared;
 }
 
 /**
  * Classify one advertised tool. The server's `readOnlyHint` wins whenever it is
  * set (either way); otherwise the leading word decides and `inferred` is set.
+ *
+ * `namespace`, when given, is a vendor prefix shared across the whole catalog
+ * (see {@link sharedVendorPrefix}); the word after it is what gets tested.
+ * Callers holding one tool omit it and get the historic behaviour.
  */
-export function classifyMcpMethod(tool: McpToolDescriptor): McpMethodInfo {
+export function classifyMcpMethod(
+	tool: McpToolDescriptor,
+	namespace?: string | null,
+): McpMethodInfo {
 	const declared = tool.annotations?.readOnlyHint;
 	if (typeof declared === 'boolean') {
 		return {
@@ -97,17 +184,20 @@ export function classifyMcpMethod(tool: McpToolDescriptor): McpMethodInfo {
 			inferred: false,
 		};
 	}
+	const words = splitWords(tool.name);
+	const verb = (namespace && words[0] === namespace ? words[1] : words[0]) ?? '';
 	return {
 		name: tool.name,
 		...(tool.description ? { description: tool.description } : {}),
-		readOnly: READ_ONLY_PREFIXES.includes(leadingWord(tool.name)),
+		readOnly: READ_ONLY_PREFIXES.includes(verb),
 		inferred: true,
 	};
 }
 
 /** Classify a whole `tools/list` payload, preserving the server's ordering. */
 export function classifyMcpMethods(tools: readonly McpToolDescriptor[]): McpMethodInfo[] {
-	return tools.map(classifyMcpMethod);
+	const namespace = sharedVendorPrefix(tools);
+	return tools.map((tool) => classifyMcpMethod(tool, namespace));
 }
 
 /** Whether a connector restricts its methods at all. */

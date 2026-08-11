@@ -64,9 +64,15 @@ esac
 
 # Deliver the prompt either on stdin (default) or as a trailing arg when
 # HEZO_PROMPT_MODE=arg (OpenCode `run <message>`).
+#
+# Arg mode redirects stdin from /dev/null: an exec's stdin is a pipe nothing
+# writes to and nothing closes, and a CLI that reads it in headless mode hangs
+# with no output and no exit. The prompt is already on the command line here, so
+# stdin has nothing to carry. Same reasoning as PROMPT_DELIVERY_SH in
+# agent-runner.ts, which this script mirrors.
 if [ -n "${HEZO_PROMPT_FILE:-}" ] && [ -r "$HEZO_PROMPT_FILE" ]; then
     if [ "${HEZO_PROMPT_MODE:-stdin}" = arg ]; then
-        "$@" "$(cat "$HEZO_PROMPT_FILE")"
+        "$@" "$(cat "$HEZO_PROMPT_FILE")" < /dev/null
     else
         "$@" < "$HEZO_PROMPT_FILE"
     fi

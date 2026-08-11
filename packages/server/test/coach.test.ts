@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { getToolDefs } from '../src/mcp/server';
 import { buildCoachReviewPrompt, type TaskInfo } from '../src/services/agent-runner';
 import { safeClose } from './helpers';
 import {
@@ -301,15 +302,12 @@ describe('Coach review prompt builder', () => {
 });
 
 describe('MCP tools registration', () => {
-	it('registers get_agent_system_prompt and update_agent_system_prompt tools', async () => {
-		const res = await app.request('/mcp', {
-			method: 'POST',
-			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
-		});
-		expect(res.status).toBe(200);
-		const body = await res.json();
-		const toolNames = body.result.tools.map((t: any) => t.name);
+	it('registers get_agent_system_prompt and update_agent_system_prompt tools', () => {
+		// The registry, not `tools/list`: listing is projected per caller
+		// (`mcp/tool-visibility.ts`) and `update_agent_system_prompt` is
+		// Captain-or-HQ-agent only, so the admin token here is correctly not shown
+		// it. Registration is what this test is about.
+		const toolNames = getToolDefs().map((t) => t.name);
 		expect(toolNames).toContain('get_agent_system_prompt');
 		expect(toolNames).toContain('update_agent_system_prompt');
 	});

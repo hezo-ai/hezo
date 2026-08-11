@@ -718,12 +718,19 @@ export class DaytonaClient implements DaytonaApi {
 	 * the stream drops.
 	 *
 	 * **Why it drops.** The stream is held open for the whole command, so it sits
-	 * idle whenever the agent is thinking or waiting on a tool call - tens of
-	 * seconds at a time - and a gateway in front of the provider reaps idle
-	 * connections. Measured: Bun's `fetch` client imposes no idle timeout of its
-	 * own (a local stream survives a 30s gap untouched), so a mid-stream close is
-	 * always the far end's. Left unhandled it killed the run outright, with Bun's
-	 * `socket connection was closed unexpectedly` for a diagnosis.
+	 * idle whenever the agent is thinking or waiting on a tool call - minutes at a
+	 * time - and it is severed from both ends: a gateway in front of the provider
+	 * reaps idle connections, and Bun's own `fetch` enforces a ~5 minute idle
+	 * timeout that per-request options cannot disable (see `.dev/bun-issues.md`).
+	 * Left unhandled either one killed the run outright, with Bun's `socket
+	 * connection was closed unexpectedly` for a diagnosis.
+	 *
+	 * **The wait for response headers counts as idle too**, which is why the
+	 * `fetch` itself is inside the retry rather than in front of it. Measured: the
+	 * endpoint withholds headers until the command's first byte of output, so a
+	 * CLI that is slow to start - or one that hangs - burns the idle budget before
+	 * a single byte exists, and a throw there would end the run rather than
+	 * reconnect. Same bounded counter covers it; nothing else needs to change.
 	 *
 	 * **How the resume is exact**, measured against the live API rather than read
 	 * off the docs:
@@ -758,10 +765,28 @@ export class DaytonaClient implements DaytonaApi {
 			// Deliberately no timeout: the stream stays open for the whole command,
 			// and an agent run legitimately runs for its full budget. `signal` is how
 			// a caller ends it early.
-			const res = await fetch(`${logsUrl}?follow=true`, {
-				headers: { Authorization: `Bearer ${this.apiKey}` },
-				signal,
-			});
+			let res: Response;
+			try {
+				res = await fetch(`${logsUrl}?follow=true`, {
+					headers: { Authorization: `Bearer ${this.apiKey}` },
+					signal,
+				});
+			} catch (e) {
+				// A transport failure before any response, which the body loop below
+				// cannot see. Reuses that loop's counter and backoff rather than adding
+				// a second retry mechanism - the resume is identical either way, since
+				// `delivered` is unchanged by a connection that carried nothing.
+				if (signal?.aborted) throw e;
+				reconnects += 1;
+				if (reconnects > MAX_LOG_STREAM_RECONNECTS) {
+					throw new ExecStreamLostError('Daytona session logs (no response headers)', { cause: e });
+				}
+				log.warn(
+					`log stream failed before responding; retrying (attempt ${reconnects}/${MAX_LOG_STREAM_RECONNECTS})`,
+				);
+				await new Promise((r) => setTimeout(r, this.retryDelaysMs[0] ?? 0));
+				continue;
+			}
 			// Checked **before** the body is touched, because a gateway failure here
 			// is not an empty response - it is an HTML error page with a perfectly
 			// good body, which the reader below would decode and hand to `onLine` as

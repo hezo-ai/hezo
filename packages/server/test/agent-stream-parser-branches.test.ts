@@ -212,6 +212,48 @@ describe('Claude Code — per-server MCP tool counts', () => {
 			},
 		]);
 		expect(out).toContain('tools=5 mcp: hezo=connected(2) typefully=connected(1)');
+		// Kept past the log line so the runner can persist it and `list_connectors`
+		// can answer the same question from inside the run.
+		expect(parser.getMcpToolCounts()).toEqual({ hezo: 2, typefully: 1 });
+	});
+
+	it('exposes a zero count, which is the actionable one', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: ['Bash', 'mcp__hezo__list_tasks'],
+				mcp_servers: [
+					{ name: 'hezo', status: 'connected' },
+					{ name: 'typefully', status: 'connected' },
+				],
+			},
+		]);
+		expect(parser.getMcpToolCounts()).toEqual({ hezo: 1, typefully: 0 });
+	});
+
+	it('reports null counts, not zeroes, when no tool name could be parsed', () => {
+		// "not measured" and "measured zero" lead to different conclusions, so an
+		// unreadable tools array must not masquerade as a server contributing none.
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		feed(parser, [
+			{
+				type: 'system',
+				subtype: 'init',
+				model: 'm',
+				tools: [{ unexpected: 'shape' }, 42],
+				mcp_servers: [{ name: 'hezo', status: 'connected' }],
+			},
+		]);
+		expect(parser.getMcpToolCounts()).toBeNull();
+	});
+
+	it('reports null counts before any init event, and on a runtime that emits none', () => {
+		expect(createAgentStreamParser(AgentRuntime.ClaudeCode).getMcpToolCounts()).toBeNull();
+		expect(createAgentStreamParser(AgentRuntime.Codex).getMcpToolCounts()).toBeNull();
+		expect(createAgentStreamParser(AgentRuntime.Gemini).getMcpToolCounts()).toBeNull();
 	});
 
 	it('warns when a server reports connected but contributed no tools', () => {

@@ -70,9 +70,7 @@ agent can't hurt you. A few guarantees sit underneath everything:
   Grok through their own first-party command-line tooling, DeepSeek, Z.ai, and Kimi through
   Claude Code against their Anthropic-compatible endpoints (Kimi can alternatively run on
   Moonshot's own Kimi Code CLI), and OpenRouter through OpenCode - not a
-  lowest-common-denominator wrapper. Any of them can instead be run on Prime Intellect's
-  **Prime Agent**, which writes and runs Python in a live kernel rather than calling tools
-  directly. You can also run **entirely on your own hardware**
+  lowest-common-denominator wrapper. You can also run **entirely on your own hardware**
   with Ollama or LM Studio, at no per-token cost. You can give any individual agent its own
   model. See [AI model support](/docs/ai-models).
 - **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost

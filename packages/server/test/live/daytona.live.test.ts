@@ -18,34 +18,22 @@
  * backend rather than as an assertion nobody wrote for it.
  */
 
-import { AiProvider } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from '../../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../../src/services/sandbox/daytona/engine';
 import { describeContainerBackendConformance } from '../conformance';
-import type {
-	ConformanceHarness,
-	LiveAdapterFixture,
-	LiveModelProvider,
+import {
+	type ConformanceHarness,
+	type LiveAdapterFixture,
+	liveModelProviders,
 } from '../conformance/fixture';
 
 const apiKey = process.env.HEZO_DAYTONA_API_KEY;
-// A second, independent key: the Daytona key buys a sandbox, this buys the
-// completion that proves an agent can actually run in one. Supplying it turns on
-// the agent-CLI suite; without it the sandbox suites run alone and that suite
-// self-skips with a reason. DeepSeek because it drives the Claude Code runtime
-// through an Anthropic-compatible endpoint and its flash model is the cheapest
-// way to buy a real run.
-const modelKey = process.env.HEZO_DEEPSEEK_API_KEY;
-const modelProvider: LiveModelProvider | undefined = modelKey
-	? {
-			name: 'DeepSeek',
-			provider: AiProvider.DeepSeek,
-			apiKey: modelKey,
-			// The cheapest model the provider serves - the suite asks for one word.
-			model: process.env.HEZO_LIVE_MODEL || 'deepseek-v4-flash',
-		}
-	: undefined;
+// Model-provider keys are separate from the Daytona key: that one buys a sandbox,
+// these buy the completions that prove an agent can actually run in one. Each key
+// supplied turns on every CLI that provider can drive; supplying none leaves the
+// sandbox suites running alone and the agent-CLI suite self-skipping with a reason.
+const modelProviders = liveModelProviders();
 
 if (!apiKey) {
 	describe('Daytona backend conformance', () => {
@@ -74,7 +62,7 @@ if (!apiKey) {
 		// of view the identity is still honoured, which is what this asserts.
 		honoursExecUser: true,
 		runUser: 'node',
-		modelProvider,
+		modelProviders,
 	};
 
 	const harness: ConformanceHarness = { describe, it, expect, beforeAll, afterAll };

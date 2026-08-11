@@ -214,6 +214,7 @@ import {
 	utf8FloorBoundary,
 	windowContent,
 } from './paging';
+import type { ToolAudience } from './tool-visibility';
 
 /**
  * Minimal row shape the keyset pager needs. List tools select far more columns;
@@ -251,71 +252,40 @@ export interface ToolDef {
 	 */
 	params: Record<string, unknown>;
 	/**
-	 * True when the tool persists data (it is in `MCP_WRITE_TOOLS`): a successful
-	 * call from an agent run marks the run as having produced output.
+	 * True when the tool persists data: a successful call from an agent run marks
+	 * the run as having produced output.
 	 */
 	write: boolean;
+	/**
+	 * The caller class this tool's handler gates on, or undefined when any
+	 * authenticated caller may see it. Read by `tool-visibility.ts` to project
+	 * `tools/list`; it hides, it never forbids.
+	 */
+	audience?: ToolAudience;
+	/** Raised result cap for an inherently large resource. */
+	resultByteLimit?: number;
+	/** For a batch tool, the argument holding the array it chunks over. */
+	batchArrayParam?: string;
+}
+
+/**
+ * The per-tool facts that used to live in name-keyed side tables beside the
+ * registry (`MCP_WRITE_TOOLS`, `TOOL_AUDIENCE`, `MCP_RESULT_BYTE_LIMIT_OVERRIDES`,
+ * `MCP_BATCH_ARRAY_PARAMS`).
+ *
+ * Declared at the registration instead, because a second list keyed by tool name
+ * can only ever drift from the first: a rename left a stale entry behind, and a
+ * new tool needing one simply never got it, with nothing to say so. Here the
+ * fact and the tool cannot separate - there is no second place to forget.
+ */
+export interface ToolOptions {
+	write?: boolean;
+	audience?: ToolAudience;
+	resultByteLimit?: number;
+	batchArrayParam?: string;
 }
 
 const registeredTools: ToolDef[] = [];
-
-// Tools that persist data. When an agent run invokes one of these and it
-// succeeds, the run has produced output — recorded on the run row so the
-// completion path can distinguish a useful run from a no-op that merely exited
-// cleanly. Read-only tools (list_*/get_*/read_*/full_text_search/test_connector)
-// and run-local fetches (fetch_skill_file) are excluded.
-const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
-	'create_team',
-	'create_task',
-	'create_tasks',
-	'update_task',
-	'add_task_blocker',
-	'remove_task_blocker',
-	'update_hire_proposal',
-	'create_hire_proposal',
-	'create_project',
-	'start_team_setup',
-	'add_reaction',
-	'remove_reaction',
-	'create_comment',
-	'update_comment',
-	'request_credential',
-	'register_connector',
-	'resolve_approval',
-	'update_agent_system_prompt',
-	'update_agent_system_prompts',
-	'set_agent_status',
-	'set_agent_name',
-	'generate_agent_avatar',
-	'set_agent_summary',
-	'set_agent_summaries',
-	'set_team_summary',
-	'set_agent_team_context',
-	'set_agent_team_contexts',
-	'set_agent_reports_to',
-	'write_project_asset',
-	'edit_project_asset',
-	'move_project_asset',
-	'copy_project_asset',
-	'archive_project_asset',
-	'unarchive_project_asset',
-	'write_project_doc',
-	'edit_project_doc',
-	'archive_project_doc',
-	'unarchive_project_doc',
-	'update_chat_memory',
-	'propose_skill',
-	'create_skill',
-	'add_connector',
-	'remove_connector',
-	'suggest_goal',
-	'update_goal_progress',
-	'update_project_progress',
-	'update_project_custom_prompt',
-	'update_dashboard_widget_order',
-	'apply_marketplace_team',
-	'apply_marketplace_agent',
-]);
 
 /** A handler result that signals failure rather than a persisted write. */
 function isErrorResult(result: unknown): boolean {
@@ -632,9 +602,20 @@ const APPROVAL_COLUMNS_ALIASED = APPROVAL_COLUMNS.replace(/[A-Za-z_][A-Za-z_0-9]
 // An oversized result is discarded whole and replaced with a `result_too_large`
 // error, because a runtime that instead persists a large result to disk would make
 // it unreadable anyway (the persisted file trips the same cap). A few single-
-// resource readers raise this via MCP_RESULT_BYTE_LIMIT_OVERRIDES; read_project_doc
-// keeps this cap and pages a large doc into byte windows rather than tripping it.
+// resource readers raise this with `resultByteLimit` on their registration;
+// read_project_doc keeps this cap and pages a large doc into byte windows
+// rather than tripping it.
 export const MCP_RESULT_BYTE_LIMIT = 64_000;
+
+/**
+ * The raised cap for the system-prompt readers, which return one inherently
+ * large resource rather than a list that could page.
+ *
+ * A named constant rather than a lookup keyed by tool name: the handler windows
+ * its content against this value and the registration declares it, so both read
+ * the same binding and neither can drift from the other.
+ */
+export const SYSTEM_PROMPT_RESULT_BYTES = 131_072;
 
 // A few inspection tools return a single, inherently large resource rather than
 // a list — a fully-resolved agent system prompt already fills most of the 64 KB
@@ -642,26 +623,6 @@ export const MCP_RESULT_BYTE_LIMIT = 64_000;
 // limit so a legitimate single-resource read isn't rejected as
 // `result_too_large`; the generic cap still guards every list/query tool against
 // context bloat. Keyed by tool name; falls back to MCP_RESULT_BYTE_LIMIT.
-export const MCP_RESULT_BYTE_LIMIT_OVERRIDES: Readonly<Record<string, number>> = {
-	get_agent_system_prompt: 131_072,
-	get_agent_system_prompts: 131_072,
-};
-
-/**
- * Tools taking an array of work items, keyed by the argument holding it.
- *
- * Used by the `result_too_large` guard to turn an overflow into a concrete
- * "retry with at most N items" instruction. Without it the guard can only
- * offer generic advice, and the only generic remedy that fits a batch tool is
- * "fetch a single resource" - which collapses one call into N and is almost
- * never what the cap was asking for.
- */
-export const MCP_BATCH_ARRAY_PARAMS: Readonly<Record<string, string>> = {
-	create_tasks: 'items',
-	get_agent_system_prompts: 'items',
-	update_agent_system_prompts: 'updates',
-};
-
 /**
  * Fraction of the theoretical fit to actually suggest on a batch retry. Rows
  * vary in size, so proposing exactly `limit / size` of the batch would put the
@@ -684,10 +645,10 @@ export function oversizeRemedies(
 	args: Record<string, unknown>,
 	sizeBytes: number,
 	byteLimit: number,
+	batchParam?: string,
 ): string[] {
 	const remedies: string[] = [];
 
-	const batchParam = MCP_BATCH_ARRAY_PARAMS[name];
 	const batch = batchParam ? args[batchParam] : undefined;
 	if (batchParam && Array.isArray(batch) && batch.length > 1) {
 		const safe = Math.max(
@@ -738,7 +699,7 @@ const DOC_READ_ENVELOPE_RESERVE = 4_096;
  * that decides whether a result is admitted at all.
  *
  * The two are not the same number, and conflating them is a real failure we hit:
- * chunking to the raised `MCP_RESULT_BYTE_LIMIT_OVERRIDES` value (128 KB) let a
+ * chunking to the raised `resultByteLimit` (128 KB) let a
  * batch return ~125 KB, which is roughly 31k tokens - over the ~25k-token
  * tool-result ceiling a runtime like the Claude Code harness enforces. The
  * chunker had "succeeded" into a result the client could not accept, so the
@@ -936,13 +897,17 @@ function tool(
 	schema: Record<string, z.ZodType>,
 	handler: (args: Record<string, unknown>, db: Db, auth: AuthInfo) => Promise<unknown>,
 	db: Db,
+	opts: ToolOptions = {},
 ) {
 	registeredTools.push({
 		name,
 		description,
 		schema: Object.fromEntries(Object.entries(schema).map(([k, v]) => [k, v.description ?? k])),
 		params: z.toJSONSchema(z.object(schema)) as Record<string, unknown>,
-		write: MCP_WRITE_TOOLS.has(name),
+		write: opts.write ?? false,
+		...(opts.audience ? { audience: opts.audience } : {}),
+		...(opts.resultByteLimit ? { resultByteLimit: opts.resultByteLimit } : {}),
+		...(opts.batchArrayParam ? { batchArrayParam: opts.batchArrayParam } : {}),
 	});
 	server.tool(name, description, schema, async (args: Record<string, unknown>) => {
 		const auth = authContext.getStore();
@@ -957,12 +922,7 @@ function tool(
 			};
 		}
 		const result = await handler(args, db, auth);
-		if (
-			auth.type === AuthType.Agent &&
-			auth.runId &&
-			MCP_WRITE_TOOLS.has(name) &&
-			!isErrorResult(result)
-		) {
+		if (auth.type === AuthType.Agent && auth.runId && opts.write && !isErrorResult(result)) {
 			await markRunProducedOutput(db, auth.runId);
 		}
 		// A handler may return pre-shaped MCP content blocks (e.g. an image);
@@ -972,7 +932,7 @@ function tool(
 		}
 		const text = JSON.stringify(result, null, 2);
 		const sizeBytes = Buffer.byteLength(text, 'utf8');
-		const byteLimit = MCP_RESULT_BYTE_LIMIT_OVERRIDES[name] ?? MCP_RESULT_BYTE_LIMIT;
+		const byteLimit = opts.resultByteLimit ?? MCP_RESULT_BYTE_LIMIT;
 		if (sizeBytes > byteLimit) {
 			const guard = JSON.stringify(
 				{
@@ -981,7 +941,14 @@ function tool(
 					size_bytes: sizeBytes,
 					limit_bytes: byteLimit,
 					hint: 'This result exceeded the cap and was discarded whole - nothing was returned. Split the work and retry; do not narrow what you cover to whatever fits in one call.',
-					remedies: oversizeRemedies(name, schema, args, sizeBytes, byteLimit),
+					remedies: oversizeRemedies(
+						name,
+						schema,
+						args,
+						sizeBytes,
+						byteLimit,
+						opts.batchArrayParam,
+					),
 				},
 				null,
 				2,
@@ -1341,6 +1308,7 @@ export function registerTools(
 			return r.rows[0];
 		},
 		db,
+		{ write: true, audience: 'admin_superuser' },
 	);
 
 	// Tasks
@@ -1537,6 +1505,7 @@ export function registerTools(
 			);
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -1638,6 +1607,7 @@ export function registerTools(
 			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,
+		{ write: true, audience: 'captain_or_ceo' },
 	);
 
 	tool(
@@ -1721,6 +1691,7 @@ export function registerTools(
 			}
 		},
 		db,
+		{ write: true, audience: 'agent_run' },
 	);
 
 	tool(
@@ -1773,6 +1744,7 @@ export function registerTools(
 			}
 		},
 		db,
+		{ write: true, audience: 'agent_run' },
 	);
 
 	tool(
@@ -1851,6 +1823,7 @@ export function registerTools(
 			);
 		},
 		db,
+		{ write: true, batchArrayParam: 'items' },
 	);
 
 	tool(
@@ -2177,6 +2150,7 @@ export function registerTools(
 			);
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -2210,6 +2184,7 @@ export function registerTools(
 			return r.rows[0];
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -2238,6 +2213,7 @@ export function registerTools(
 			return { removed: true };
 		},
 		db,
+		{ write: true },
 	);
 
 	// Agents
@@ -2379,6 +2355,7 @@ export function registerTools(
 			return updated.rows[0] ?? null;
 		},
 		db,
+		{ write: true, audience: 'captain' },
 	);
 
 	tool(
@@ -2486,6 +2463,7 @@ export function registerTools(
 			return { approval_id: row.id, status: row.status, payload: row.payload };
 		},
 		db,
+		{ write: true, audience: 'captain_or_ceo' },
 	);
 
 	const createProjectShape = {
@@ -2635,6 +2613,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true, audience: 'ceo' },
 	);
 
 	tool(
@@ -2707,6 +2686,7 @@ export function registerTools(
 			return { started: true, task_id: row.id, task_identifier: row.identifier };
 		},
 		db,
+		{ write: true, audience: 'ceo' },
 	);
 
 	tool(
@@ -2864,6 +2844,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true, audience: 'ceo_if_agent' },
 	);
 
 	tool(
@@ -2917,6 +2898,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true, audience: 'ceo_if_agent' },
 	);
 
 	// Projects
@@ -3372,6 +3354,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -3426,6 +3409,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -3555,6 +3539,7 @@ export function registerTools(
 			return row;
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -3677,6 +3662,7 @@ export function registerTools(
 			return { ...r.rows[0], wake };
 		},
 		db,
+		{ write: true, audience: 'agent_run' },
 	);
 
 	const credentialKindSchema = z.enum([
@@ -3832,6 +3818,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -4066,6 +4053,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -4279,6 +4267,7 @@ export function registerTools(
 			return row;
 		},
 		db,
+		{ write: true },
 	);
 
 	// Costs
@@ -4402,7 +4391,7 @@ export function registerTools(
 				text: system_prompt,
 				offset: args.offset as number | undefined,
 				maxBytes: args.max_bytes as number | undefined,
-				limit: MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompt ?? MCP_RESULT_BYTE_LIMIT,
+				limit: SYSTEM_PROMPT_RESULT_BYTES,
 				reserve: DOC_READ_ENVELOPE_RESERVE,
 				hint: ({ start, end, total }) =>
 					`Prompt is larger than one read. Returned bytes ${start}-${end} of ${total}. Call get_agent_system_prompt again with offset: ${end}; repeat until next_offset is null.`,
@@ -4413,6 +4402,7 @@ export function registerTools(
 			});
 		},
 		db,
+		{ audience: 'agent_or_admin', resultByteLimit: SYSTEM_PROMPT_RESULT_BYTES },
 	);
 
 	tool(
@@ -4456,8 +4446,7 @@ export function registerTools(
 
 			const items = args.items as Array<{ agent_id: string; mode?: SystemPromptMode }>;
 			const startIndex = Math.min((args.start_index as number | undefined) ?? 0, items.length);
-			const byteLimit =
-				MCP_RESULT_BYTE_LIMIT_OVERRIDES.get_agent_system_prompts ?? MCP_RESULT_BYTE_LIMIT;
+			const byteLimit = SYSTEM_PROMPT_RESULT_BYTES;
 			const budget = MCP_BATCH_CHUNK_TARGET_BYTES;
 
 			const resolveItem = async (item: (typeof items)[number], index: number) => {
@@ -4538,6 +4527,11 @@ export function registerTools(
 			};
 		},
 		db,
+		{
+			audience: 'agent_or_admin',
+			resultByteLimit: SYSTEM_PROMPT_RESULT_BYTES,
+			batchArrayParam: 'items',
+		},
 	);
 
 	tool(
@@ -4612,6 +4606,7 @@ export function registerTools(
 			return { applied: true, document_id: doc.row.id };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -4712,6 +4707,7 @@ export function registerTools(
 			return { results, applied_count: applied.length };
 		},
 		db,
+		{ write: true, audience: 'coordinator', batchArrayParam: 'updates' },
 	);
 
 	tool(
@@ -4791,6 +4787,7 @@ export function registerTools(
 			return { applied: true, document_id: doc.row.id, length: (args.content as string).length };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -4823,6 +4820,7 @@ export function registerTools(
 			return { order: sanitizeWidgetOrder(raw) };
 		},
 		db,
+		{ write: true },
 	);
 
 	// Description maintenance — used by the Captain (and self) to write back
@@ -4878,6 +4876,7 @@ export function registerTools(
 			return { updated: true };
 		},
 		db,
+		{ write: true, audience: 'agent_or_admin' },
 	);
 
 	// Identity — the name a teammate is addressed by, and the face it shows.
@@ -4936,6 +4935,7 @@ export function registerTools(
 			return { updated: true, name: name || null };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -4973,6 +4973,7 @@ export function registerTools(
 			return { updated: true };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -5008,6 +5009,7 @@ export function registerTools(
 			return { updated: true };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -5031,6 +5033,7 @@ export function registerTools(
 			return { ok: true };
 		},
 		db,
+		{ audience: 'agent_run' },
 	);
 
 	tool(
@@ -5076,6 +5079,7 @@ export function registerTools(
 			return { updated: true };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -5138,6 +5142,7 @@ export function registerTools(
 			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -5212,6 +5217,7 @@ export function registerTools(
 			return { items: results, updated: results.filter((r) => r.ok).length, total: updates.length };
 		},
 		db,
+		{ write: true, audience: 'agent_or_admin' },
 	);
 
 	tool(
@@ -5306,6 +5312,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	tool(
@@ -5340,6 +5347,7 @@ export function registerTools(
 			return r.rows[0];
 		},
 		db,
+		{ audience: 'agent_or_admin' },
 	);
 
 	tool(
@@ -5438,6 +5446,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ audience: 'agent_or_admin' },
 	);
 
 	tool(
@@ -5528,6 +5537,7 @@ export function registerTools(
 			return { updated: true, agent_id: agentId, slug, admin_status: status };
 		},
 		db,
+		{ write: true, audience: 'coordinator' },
 	);
 
 	// Project docs
@@ -5853,6 +5863,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6128,6 +6139,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6189,6 +6201,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6285,6 +6298,7 @@ export function registerTools(
 			return { copied: true, id: inserted.id, reference: `assets/${to}` };
 		},
 		db,
+		{ write: true },
 	);
 
 	// Archival is the agent-facing "delete" for assets: reversible, self-serve,
@@ -6359,6 +6373,7 @@ export function registerTools(
 		},
 		async (args, db, auth) => setAssetArchived(args, db, auth, true),
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6371,6 +6386,7 @@ export function registerTools(
 		},
 		async (args, db, auth) => setAssetArchived(args, db, auth, false),
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6445,7 +6461,7 @@ export function registerTools(
 				text: doc.content,
 				offset: args.offset as number | undefined,
 				maxBytes: args.max_bytes as number | undefined,
-				limit: MCP_RESULT_BYTE_LIMIT_OVERRIDES.read_project_doc ?? MCP_RESULT_BYTE_LIMIT,
+				limit: MCP_RESULT_BYTE_LIMIT,
 				reserve: DOC_READ_ENVELOPE_RESERVE,
 				hint: ({ start, end, total }) =>
 					`Doc is larger than one read. Returned bytes ${start}-${end} of ${total}. Call read_project_doc again with offset: ${end}; repeat until next_offset is null.`,
@@ -6566,6 +6582,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	// `edit_` rather than `update_`: the REST/MCP verb table maps PATCH to
@@ -6662,6 +6679,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	// Archival is the agent-facing "delete" for project docs too: reversible,
@@ -6711,6 +6729,7 @@ export function registerTools(
 		},
 		async (args, db, auth) => setDocArchivedTool(args, db, auth, true),
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6723,6 +6742,7 @@ export function registerTools(
 		},
 		async (args, db, auth) => setDocArchivedTool(args, db, auth, false),
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -6742,6 +6762,7 @@ export function registerTools(
 			return { written: true, updated_at: mem.updated_at };
 		},
 		db,
+		{ write: true, audience: 'agent' },
 	);
 
 	// Skill proposals
@@ -6798,6 +6819,7 @@ export function registerTools(
 			return { approval_id: row?.id, status: row?.status };
 		},
 		db,
+		{ write: true },
 	);
 
 	// Full-text search
@@ -7002,6 +7024,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -7015,6 +7038,21 @@ export function registerTools(
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
+			// What this run's runtime actually handed the model, per server. A
+			// connector's status says the session came up, not that its tools arrived,
+			// and that gap is what let an agent report a connector as toolless with
+			// nothing able to confirm or refute it. Null outside an agent run (a CEO
+			// chat principal carries no runId) and on runtimes that report no tool
+			// list, which stays distinct from a recorded zero.
+			const runToolCounts =
+				auth.type === AuthType.Agent && auth.runId
+					? ((
+							await db.query<{ mcp_tool_counts: Record<string, number> | null }>(
+								`SELECT mcp_tool_counts FROM heartbeat_runs WHERE id = $1`,
+								[auth.runId],
+							)
+						).rows[0]?.mcp_tool_counts ?? null)
+					: null;
 			const r = await db.query<{
 				id: string;
 				name: string;
@@ -7154,6 +7192,10 @@ export function registerTools(
 								disabled_write: method_access.writeDisabled,
 							}
 						: null,
+					// A number here is a fact about THIS run, not a guess: 0 means the
+					// server connected and contributed nothing callable, which is worth
+					// reporting to the human. Null means nobody measured it.
+					tools_this_run: runToolCounts ? (runToolCounts[row.name] ?? null) : null,
 				};
 			});
 			// Shadowed duplicates are dropped above, so page the de-duped set.
@@ -7408,6 +7450,7 @@ export function registerTools(
 			};
 		},
 		db,
+		{ write: true },
 	);
 
 	tool(
@@ -7431,6 +7474,7 @@ export function registerTools(
 			return { removed: true, id: r.rows[0].id };
 		},
 		db,
+		{ write: true },
 	);
 
 	return [...registeredTools];

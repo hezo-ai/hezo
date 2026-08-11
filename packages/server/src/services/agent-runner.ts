@@ -16,10 +16,8 @@ import {
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	opencodeModelArg,
-	PRIME_AGENT_QUIET_ENV,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type ProgressActivityKind,
-	primeAgentProviderArgs,
 	providerDirectUpstreamHosts,
 	providerRuntimeBinding,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -295,11 +293,6 @@ export function buildProviderEnv(
 			out.push(`${key}=${value}`);
 		}
 	}
-	if (runtime === AgentRuntime.PrimeAgent) {
-		for (const [key, value] of Object.entries(PRIME_AGENT_QUIET_ENV)) {
-			out.push(`${key}=${value}`);
-		}
-	}
 	if (binding?.staticEnv) {
 		// For a third-party Anthropic-compatible provider (DeepSeek/Z.ai/Kimi), the
 		// Claude Code subagent default should track the run's own selected model
@@ -503,10 +496,20 @@ export async function recoverOffStreamRunUsage(
 }
 
 // Deliver the prompt either on stdin (default) or as a trailing arg (OpenCode,
-// Grok, Kimi Code), selected per runtime via the HEZO_PROMPT_MODE env var — see
-// RUNTIME_PROMPT_DELIVERY. The bridge wrapper script honors the same env var.
-const PROMPT_DELIVERY_SH =
-	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")"; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
+// Grok, Kimi Code), selected per runtime via the HEZO_PROMPT_MODE
+// env var — see RUNTIME_PROMPT_DELIVERY. The bridge wrapper script honors the
+// same env var.
+//
+// **Arg mode closes stdin, and must.** An exec leaves the container process's
+// stdin attached to a pipe nothing ever writes to and nothing ever closes, so a
+// CLI that reads it in headless mode blocks forever — no output, no exit, no
+// error, indistinguishable from a slow model until the run's deadline. Measured
+// against a CLI that does read it: byte-identical invocations produced a full
+// stream-json transcript in ~2s with `< /dev/null` and nothing at all in 15
+// minutes without it. In arg mode the prompt is already on the command line, so
+// there is by definition nothing stdin can legitimately carry.
+export const PROMPT_DELIVERY_SH =
+	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")" < /dev/null; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
 
 function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
 	if (bridge) {
@@ -795,11 +798,6 @@ export async function buildRuntimeInvocation(
 	}
 	const modelArgs = cliModel ? ['--model', cliModel] : [];
 
-	// Prime Agent selects the upstream by flag, not by env var, so the provider
-	// has to be named on the command line alongside the model.
-	const providerArgs =
-		runtimeType === AgentRuntime.PrimeAgent ? [...primeAgentProviderArgs(provider)] : [];
-
 	// Grok reports no token usage on its stdout stream, so point it at a per-run
 	// debug log (inside the home mount, hence readable host-side) that the runner
 	// parses for cost after the run and then scrubs. Other runtimes report usage
@@ -818,7 +816,6 @@ export async function buildRuntimeInvocation(
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
 		...effortApplication.extraArgs,
-		...providerArgs,
 		...modelArgs,
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
 	];
@@ -1739,6 +1736,32 @@ export async function runAgent(
 			// ExecStartOpts.onChunk).
 			const backgroundTermination = new BackgroundTerminationDetector();
 
+			// The runtime states its per-server tool counts once, in the session-init
+			// event at the very start of the stream, so this is persisted mid-run
+			// rather than on the completion path - a run that dies later still leaves
+			// behind what it was given. Written once: `init` fires once, and a repeat
+			// write would be a no-op UPDATE leaving a dead tuple behind.
+			let wroteMcpToolCounts = false;
+			const persistMcpToolCounts = async () => {
+				if (wroteMcpToolCounts) return;
+				const counts = parser.getMcpToolCounts();
+				if (!counts) return;
+				wroteMcpToolCounts = true;
+				try {
+					await deps.db.query(
+						`UPDATE heartbeat_runs SET mcp_tool_counts = $1::jsonb WHERE id = $2`,
+						[JSON.stringify(counts), heartbeatRunId],
+					);
+				} catch (e) {
+					// Diagnostic state only. A run must never fail because we could not
+					// record what its tool list looked like.
+					log.warn('could not record MCP tool counts', {
+						runId: heartbeatRunId,
+						error: (e as Error).message,
+					});
+				}
+			};
+
 			const onChunk = async (chunk: ExecLogChunk) => {
 				backgroundTermination.push(chunk.stream, chunk.text);
 				const rendered =
@@ -1747,6 +1770,7 @@ export async function runAgent(
 				// Surface the latest running usage to the log flush so it's persisted
 				// crash-safely (see currentUsage / onFlush above).
 				currentUsage = parser.getUsage();
+				await persistMcpToolCounts();
 			};
 
 			// Unelevated: the agent writes into the bind-mounted worktree, and those

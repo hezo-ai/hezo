@@ -1064,7 +1064,7 @@ override. `marketplace/index.json` is the catalog listing.
   role instead of authoring one from scratch. Guidance lives in `agents/_partials/captain/hire-workflow.md`
   (a partial, since only the seeded Captain/CEO file hires — runtime hires never do) and
   `agents/_instance/ceo.md` § Roster changes. Both `apply_marketplace_*` tools are in
-  `MCP_WRITE_TOOLS`, so a run that only provisions is not recorded as a no-op.
+  `write: true` on its registration, so a run that only provisions is not recorded as a no-op.
 - **Export a live team as a bundle.** `GET /api/projects/:projectId/team-bundle`
   (`services/team-bundle-export.ts`, `exportTeamBundle`) serializes a project's current team
   into a self-contained `MarketplaceTeamDef` — the inverse of `applyMarketplaceTeamToTeam`. It
@@ -1546,6 +1546,19 @@ cover the rest of the run:
   else is skipped; when no name parses, the counts are omitted entirely rather than
   printing a misleading zero for every server.
 
+  **The same counts reach the agent, not just the log.** The parser keeps them
+  (`getMcpToolCounts()`), the runner persists them once at `init` onto
+  `heartbeat_runs.mcp_tool_counts` (migration 056; a mid-run write, since a run that dies
+  later should still leave behind what it was given), and `list_connectors` returns
+  `tools_this_run` per connector - resolved from the caller's own `auth.runId`. NULL means
+  nothing measured it, which is the honest reading outside an agent run and on every runtime
+  but Claude Code; it stays distinct from a recorded zero, because only the zero is
+  actionable. This exists because a prose rule could not do the job: an agent reported a
+  connector as toolless, nothing could confirm or refute it, and the claim then propagated
+  through its progress summary across several runs. The first real measurement -
+  `typefully=connected(25)` on a DeepSeek run - showed the tools had been there all along.
+  Before assuming a connector is broken, read this field.
+
 The runner also orders these: a signal kill outranks a captured terminal error, which in
 turn outranks "produced no output" on the run row - each is the cause of the one below it,
 and reporting the symptom first sends the reader after the wrong thing. A process a signal
@@ -2022,9 +2035,12 @@ that window - and the detail page renders neither the id nor Remove.
 **A dropped output stream resumes rather than killing the run.** A run's entire stdout
 arrives over one long-lived connection - a `follow=true` log stream on Daytona, a hijacked
 attach socket on Docker - held open for the whole command, so it sits idle whenever the agent
-is thinking or waiting on a tool call and a gateway in front of the provider reaps it.
-(Measured: Bun's `fetch` client imposes no idle timeout of its own, so a mid-stream close is
-always the far end's.) Daytona's adapter reopens the stream and discards the bytes it already
+is thinking or waiting on a tool call, and both ends sever it: a gateway in front of the
+provider reaps idle connections, and Bun's own `fetch` enforces a ~5 minute idle timeout that
+per-request options cannot disable (`.dev/bun-issues.md`). **The wait for response headers is
+idle time too** - measured, Daytona withholds them until the command's first byte of output,
+so a CLI slow to start burns the budget before a single byte exists - which is why the `fetch`
+sits inside the retry rather than in front of it. Daytona's adapter reopens the stream and discards the bytes it already
 delivered, counted at line granularity so the skip can never cut a multi-byte character. That
 client-side skip is the only exact resume available: measured against the live API, the logs
 endpoint accepts `?offset`, `?from`, `?since`, `?tail` and a `Range:` header and **silently
@@ -2819,8 +2835,8 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 **Providers → runtimes is one-to-MANY.** `AiProvider` has **ten** values — `anthropic`, `openai`,
 `google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
-`AgentRuntime` has **seven** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`,
-`prime_agent`. A provider
+`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. A
+provider
 declares the CLI it runs on **by default** plus, optionally, the other CLIs it can be driven by;
 the operator picks per credential and the choice is stored on
 `ai_provider_configs.runtime` (nullable, `NULL` = follow the provider default; migration `052`).
@@ -2841,10 +2857,12 @@ gateway — Kimi at `api.moonshot.ai/anthropic`, model `kimi-k2.7-code`), OpenAI
 Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
 `XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
 (local runners, see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
-see below), and **every provider except Ollama and LM Studio declares `prime_agent`** (see
-below). Prime Agent is never a default. Ollama and LM Studio therefore offer exactly one CLI
-each and the UI omits the picker for them — their Advanced disclosure holds only the optional
-API key.
+see below), so it is the one provider that offers a choice. Every other provider offers exactly
+one CLI and the UI omits the picker for it — for Ollama and LM Studio the Advanced disclosure
+then holds only the optional API key.
+
+The one-to-many shape is deliberately kept even at one alternate: it is what makes a second CLI
+for a provider a table row rather than a refactor.
 
 **Because the runtime is per credential, it must be resolved from the credential row, never
 from the provider.** `buildProviderEnv` composes from `providerRuntimeBinding(provider,
@@ -2896,40 +2914,6 @@ Three things make this runtime unlike the Claude-Code-driven providers:
   under that home, then priced from `model_pricing` like every other runtime. The runner's
   `recoverOffStreamRunUsage` dispatches both file-based recoveries and scrubs the file
   afterwards (each can carry the provider credential).
-
-**Prime Agent is the first runtime that belongs to no provider.** Prime Intellect's
-`prime-agent` speaks to most upstreams Hezo already supports, so it is declared as an
-*alternate* on every provider except Ollama and LM Studio and is never a default. Two
-consequences run through the code:
-
-- **The upstream is chosen by CLI flag, not by env var.** `PRIME_AGENT_BINDINGS` maps each
-  Hezo provider to Prime Agent's own provider id and the env var it reads that key from — its
-  spellings, not the vendor's, and two are easy to get wrong: Moonshot is `moonshotai` reading
-  `MOONSHOT_API_KEY` (its `kimi-coding` / `KIMI_API_KEY` pair is the separate Kimi-for-Coding
-  subscription plan), and Google is `google` reading `GEMINI_API_KEY`. Because the id travels
-  as `--provider <id>` rather than in the env, it cannot live in a binding's `staticEnv`;
-  `primeAgentProviderArgs` supplies it and `agent-runner.ts` splices it into the command.
-  Ollama and LM Studio are absent because Prime Agent has no built-in entry for either and the
-  custom-provider path is unverified — a provider missing from the map simply offers no Prime
-  Agent option in the picker.
-- **MCP is not a model-tool surface.** Prime Agent runs the protocol Python-side in its
-  IPython kernel; a `settings.json` `mcpServers` entry alone registers the endpoint host-side
-  and gives the agent nothing. So `mcp-injectors/prime-agent.ts` writes, per HTTP server, both
-  the settings entry **and** a generated Python package subclassing `rlm.McpIntegration`, and
-  passes each with `--skill`. Tool discovery is the CLI's job (`McpIntegration.__getattr__`
-  fetches the tool list on first use and binds each as an async method), so the generator never
-  hard-codes tool names. The bearer travels as `bearer_token_env` — an env var *name* — which
-  is what keeps `__HEZO_SECRET_*__` substitution intact. stdio descriptors are dropped: Prime
-  Agent's host discards them, so emitting one would look configured and do nothing.
-
-Its usage rides the stream (`message_end` → `message.usage`), so unlike Grok and Kimi Code it
-needs no off-stream recovery. `createPrimeAgentParser` maps the four buckets **straight
-across**: Prime Agent already normalises every provider to disjoint buckets
-(`input = prompt - cacheRead - cacheWrite`), so subtracting cache again — the Codex/Grok
-posture — would under-count input. Its own `cost` object is ignored, per the always-price-from-
-the-table rule. Effort maps onto `--thinking`, the closest fit of any runtime. The image bakes
-a pinned release plus `ipykernel` and `PRIME_AGENT_KERNEL_PYTHON`, so no run pays to bootstrap
-the kernel over the network.
 
 **Local providers carry their endpoint on the credential, not in `staticEnv`.** Ollama and
 LM Studio serve Anthropic's Messages API natively, so they reuse the Claude Code runtime
@@ -3003,6 +2987,16 @@ adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each b
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
 servers, and wires the stop-hook. OpenCode, Grok and Kimi Code take the prompt as a CLI
 **argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
+**The arg branch redirects stdin from `/dev/null`, and must.** An exec leaves stdin attached to
+a pipe nothing writes to and nothing closes, so a CLI that reads it in headless mode blocks
+forever — no output, no exit, no error, indistinguishable from a slow model until the run's
+deadline. Measured against a CLI that does read it: a byte-identical invocation produced a full
+transcript in ~2s with stdin closed and nothing at all in 15 minutes without it. In arg mode
+the prompt is already on the command line, so stdin has nothing to legitimately carry. Both
+copies of that logic — `PROMPT_DELIVERY_SH` in `agent-runner.ts` and the bridge path in
+`docker/scripts/hezo-run-with-bridge` — carry it, and `agent-prompt-delivery.test.ts` runs the
+script under a real `sh` against a real open stdin, so the regression is a timeout rather than
+a passing string match.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
 TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its
@@ -3798,6 +3792,30 @@ spec's `annotations.readOnlyHint` wins when the server sets it (`inferred: false
 otherwise a leading-word heuristic. An unrecognised name classifies as **write**, so the
 heuristic can never widen access by accident. `summarizeMethodAccess` is the single source
 for every count the card, the dialog, and `list_connectors` show, so they can't disagree.
+
+`classifyMcpMethods` (the whole-catalog entry point) first detects a **vendor namespace** -
+a leading token every tool shares, as in `typefully_list_drafts` / `typefully_get_me` - and
+classifies on the word after it. Without that the vendor sits where the verb belongs and an
+entire server classifies as write. Detection is deliberately conservative: every tool must
+share the token, and the token is refused when it is itself a read prefix (a server whose
+tools are all `list_*` is naming them consistently, not namespacing them) or a plain mutation
+verb (`WRITE_VERB_PREFIXES`). A single tool can imply a namespace; those two refusals are what
+make that safe, since they reject exactly the tokens a one-tool guess would get wrong -
+`update_view` keeps `update` as its verb rather than stripping to the read prefix `view`.
+`classifyMcpMethod` called directly on one tool, with no namespace passed, keeps its old
+behaviour.
+
+Because of that, an `access: 'read'` request can resolve to an allowlist of nothing when the
+classifier recognises no read method at all. `discoverConnectorMethods` **refuses to persist
+an empty allowlist**: `enabled_methods` stays NULL (unrestricted) and the miss is logged,
+because `[]` means restricted-to-nothing and would withhold every tool while the card still
+read Connected. The request stays pending, so a later refresh can still satisfy it.
+
+Discovery also warns when a fully-qualified `mcp__<server>__<tool>` name exceeds
+`MCP_TOOL_NAME_MAX_LENGTH` (64, the cap Anthropic and the OpenAI-compatible endpoints share).
+Advisory only - what happens past the limit is the provider's call, so the descriptor is
+unaffected - and the warning names the connector, since renaming it shortens every one of its
+tools at once.
 
 `discoverConnectorMethods` (`services/connectors/method-discovery.ts`) probes a connected
 `saas` connector over the MCP SDK's Streamable HTTP transport (SSE fallback) and caches the
@@ -4741,6 +4759,36 @@ directly, since the registry's connection has already negotiated initialization;
 unapproved caller is served the onboarding tools (`register`, `connection_status`) and
 nothing else. Only `tools/list` and `tools/call` from an authenticated principal reach the
 registry.
+
+**`tools/list` is projected per caller** (`mcp/tool-visibility.ts`). Every authenticated
+principal used to receive the whole registry, so a worker agent scoped to one project carried
+`create_team`, the CEO's project-creation tools and every Captain-only prompt editor — schemas
+resident in its context on every turn for tools its own handler would refuse. Each tool declares
+an `audience` on its own `tool(...)` registration, naming the caller class its handler actually
+gates on; no `audience` means everyone, which is right for the ~50 gated only by project scope.
+
+**These per-tool facts are declared at the registration, never in a table beside it.** `write`,
+`audience`, `resultByteLimit` and `batchArrayParam` all ride on `ToolOptions`. They used to be
+four separate `Record<toolName, …>` tables, which is a shape that can only drift: a rename left
+a stale entry pointing at nothing, and a new tool needing one simply never got it, with nothing
+to say so - three of the four had no drift test at all. Declared on the tool, the fact and the
+tool cannot separate, and naming a tool that does not exist stops being a bug a test has to
+catch and becomes a call that cannot be written. `TOOL_DOC_META` deliberately stays a table:
+it holds documentation prose, not behaviour, and `mcp-reference.test.ts` already asserts it
+covers exactly the registered tools. Role-shaped
+audiences (CEO, Captain, coordinator) need facts `AuthInfo` does not carry, so one query per
+`tools/list` resolves the agent's slug and whether it is an HQ member; `tools/list` runs once
+per session, not per request. The same projection strips the per-tool `$schema` key, which is
+inert for every model. Measured on the registry: 132,627 bytes full, 102,580 for a worker
+agent — 22.7% off.
+
+**Projection hides, it never forbids.** Every gate still runs on `tools/call`, so nothing here
+is load-bearing for authorization, and the audiences are allowed to be *coarser* than the
+handler's own check but never narrower — where a handler scopes by team as well as role, the
+audience keeps only the role half. A tool shown to a caller who cannot call it costs one
+refused call; a tool hidden from a caller who could call it is a defect with no feedback at
+all. `getToolDefs()` stays unfiltered: `GET /SKILL.md` is unauthenticated and the docs
+generator is build-time, and both must keep describing the whole registry.
 
 Those two are proxied to the singleton `McpServer` over an **`InMemoryTransport` pair that
 is linked once and shared by every request**, with the per-request principal carried into

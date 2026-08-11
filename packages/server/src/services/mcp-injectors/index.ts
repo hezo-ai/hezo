@@ -5,7 +5,6 @@ import { geminiAdapter } from './gemini';
 import { grokAdapter } from './grok';
 import { kimiAdapter } from './kimi';
 import { opencodeAdapter } from './opencode';
-import { primeAgentAdapter } from './prime-agent';
 import type { RuntimeMcpAdapter } from './types';
 
 /**
@@ -20,7 +19,6 @@ export const MCP_ADAPTERS: Record<AgentRuntime, RuntimeMcpAdapter> = {
 	[AgentRuntime.OpenCode]: opencodeAdapter,
 	[AgentRuntime.Grok]: grokAdapter,
 	[AgentRuntime.Kimi]: kimiAdapter,
-	[AgentRuntime.PrimeAgent]: primeAgentAdapter,
 };
 
 export type {
