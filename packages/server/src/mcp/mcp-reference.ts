@@ -310,6 +310,17 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'`{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.',
 	},
+	set_agent_name: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ updated: true, name }` where `name` is the stored name or null when cleared, or `{ error }` (name taken, reserved, malformed, a name-only role, or agent not in team).',
+		auth: 'The Captain of that team, or the CEO.',
+	},
+	generate_agent_avatar: {
+		category: 'Agent prompts & context',
+		returns: '`{ updated: true }`, or `{ error }` (agent not in team).',
+		auth: 'The Captain of that team, or the CEO.',
+	},
 	set_agent_summary: {
 		category: 'Agent prompts & context',
 		returns:
@@ -392,7 +403,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	full_text_search: {
 		category: 'Skills & search',
 		returns:
-			'`{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, and comments. A bare task number or full identifier resolves directly to that task, ranked first.',
+			'`{ results, count }` - full-text (keyword + stemming) matches ranked by relevance across skills, tasks, project docs, comments, and assets. A bare task number or full identifier resolves directly to that task, ranked first. An asset result carries `assetFilename` (its library path) and `assetContentType`; pass the path to read_project_asset. Assets match on any segment of their path, and textual ones on their content as well.',
 	},
 
 	// Credentials & connectors

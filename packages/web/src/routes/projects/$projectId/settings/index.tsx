@@ -12,7 +12,7 @@ import { useInstanceSettings } from '../../../../hooks/use-instance-settings';
 import { useMe } from '../../../../hooks/use-me';
 import { useArchiveProject, useProject, useUpdateProject } from '../../../../hooks/use-projects';
 import { useScrollToHash } from '../../../../hooks/use-scroll-to-hash';
-import { useI18n } from '../../../../lib/i18n';
+import { Trans, useI18n } from '../../../../lib/i18n';
 
 function ProjectSettingsPage() {
 	const { t } = useI18n();
@@ -127,11 +127,20 @@ function ProjectSettingsPage() {
 
 			{me?.is_superuser && (
 				<section className="border-t border-border pt-6">
-					<h2 className="text-sm font-medium text-danger mb-1">Danger zone</h2>
+					<h2 className="text-sm font-medium text-danger mb-1">
+						{t('projectSettings.dangerZone')}
+					</h2>
 					<p className="text-xs text-text-3 mb-3 max-w-prose">
-						Archiving removes this project from the project rail and stops its container. Its tasks
-						and history are kept — you can restore it later from{' '}
-						<span className="text-text-2">Settings → Archived projects</span>.
+						<Trans
+							k="projectSettings.archive.blurb"
+							vars={{
+								location: (
+									<span className="text-text-2">
+										{t('projectSettings.archive.restoreLocation')}
+									</span>
+								),
+							}}
+						/>
 					</p>
 					<Button
 						variant="destructive"
@@ -139,19 +148,19 @@ function ProjectSettingsPage() {
 						onClick={() => setArchiveOpen(true)}
 						data-testid="archive-project-button"
 					>
-						Archive this project
+						{t('projectSettings.archive.action')}
 					</Button>
 					<ConfirmDialog
 						open={archiveOpen}
 						onOpenChange={setArchiveOpen}
-						title="Archive this project?"
+						title={t('projectSettings.archive.confirmTitle')}
 						description={
-							<>
-								<strong>{project.name}</strong> will be hidden from the project rail and its
-								container will be stopped. You can unarchive it later from global Settings.
-							</>
+							<Trans
+								k="projectSettings.archive.confirmDescription"
+								vars={{ name: <strong>{project.name}</strong> }}
+							/>
 						}
-						confirmLabel="Archive"
+						confirmLabel={t('projectSettings.archive.confirmAction')}
 						variant="danger"
 						loading={archiveProject.isPending}
 						onConfirm={async () => {

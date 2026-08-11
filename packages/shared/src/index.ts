@@ -1,3 +1,5 @@
+export * from './avatar/name-gender.js';
+export * from './avatar/pixel-avatar.js';
 export * from './budget.js';
 export * from './constants.js';
 export * from './credentials/host-match.js';

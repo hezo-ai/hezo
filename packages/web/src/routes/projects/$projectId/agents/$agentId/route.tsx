@@ -1,13 +1,14 @@
 import { AgentAdminStatus } from '@hezo/shared';
 import { createFileRoute, Link, Outlet } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
+import { agentDisplayName } from '../../../../../components/agent-identity-tooltip';
 import { NextHeartbeatIndicator } from '../../../../../components/next-heartbeat-indicator';
 import { Avatar, getInitials } from '../../../../../components/ui/avatar';
 import { Badge } from '../../../../../components/ui/badge';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
 import { Tabs } from '../../../../../components/ui/tabs';
 import { useAgent } from '../../../../../hooks/use-agents';
-import { defaultAvatarForSlug } from '../../../../../lib/default-avatars';
+import { agentAvatarUrl } from '../../../../../lib/agent-avatar';
 import { agentRuntimeStatusMeta } from '../../../../../lib/status-meta';
 
 const executionsTab = {
@@ -48,17 +49,20 @@ function AgentLayout() {
 
 			<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-4">
 				<Avatar
-					initials={getInitials(agent.title)}
-					imageUrl={agent.icon_url ?? defaultAvatarForSlug(agent.slug)}
+					initials={getInitials(agentDisplayName(agent))}
+					imageUrl={agentAvatarUrl(agent)}
 					size="md"
 					running={agent.runtime_status === 'active'}
 				/>
 				<h1
 					className={`text-lg font-semibold${agent.admin_status === AgentAdminStatus.Disabled ? ' text-text-2' : ''}`}
 				>
-					{agent.title}
+					{agentDisplayName(agent)}
 					{agent.admin_status === AgentAdminStatus.Disabled ? ' (disabled)' : ''}
 				</h1>
+				{/* Named agents keep their role visible, so the page still says what
+				    this teammate is here to do. */}
+				{agent.human_name?.trim() && <span className="text-sm text-text-2">{agent.title}</span>}
 				<Badge color={agentRuntimeStatusMeta(agent.runtime_status).color}>
 					{agentRuntimeStatusMeta(agent.runtime_status).label}
 				</Badge>

@@ -8,6 +8,7 @@ import {
 	requiredSystemPromptVarsError,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { checkHumanNameAvailable } from '../lib/agent-identity';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
@@ -17,6 +18,11 @@ const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
 /** Raw hire spec as supplied by the admin form or an agent tool. */
 export interface HireProposalInput {
 	title: string;
+	/**
+	 * What the new teammate will be called. Optional: left blank, the Captain
+	 * picks a fitting name during the coherence review that follows the hire.
+	 */
+	human_name?: string;
 	role_description?: string;
 	system_prompt?: string;
 	/** The manager this agent reports to — an existing agent's slug (or id). */
@@ -32,6 +38,7 @@ export interface HireProposalInput {
 /** Normalized hire spec stored in the approval payload. */
 export interface HireProposalPayload {
 	title: string;
+	human_name: string | null;
 	slug: string;
 	role_description: string;
 	system_prompt: string;
@@ -58,6 +65,12 @@ export async function prepareHireProposal(
 ): Promise<{ error: string; conflict?: boolean } | { payload: HireProposalPayload }> {
 	const title = input.title?.trim();
 	if (!title) return { error: 'title is required' };
+
+	const humanName = input.human_name?.trim() || null;
+	if (humanName) {
+		const rejection = await checkHumanNameAvailable(db, { teamId, name: humanName });
+		if (rejection) return { error: rejection.message, conflict: rejection.code === 'TAKEN' };
+	}
 
 	if (input.default_effort !== undefined && !isAgentEffort(input.default_effort)) {
 		return { error: `Invalid default_effort: ${input.default_effort}` };
@@ -120,6 +133,7 @@ export async function prepareHireProposal(
 	return {
 		payload: {
 			title,
+			human_name: humanName,
 			slug,
 			role_description: input.role_description ?? '',
 			system_prompt: input.system_prompt ?? '',
@@ -165,6 +179,7 @@ export async function insertHireApproval(
 /** Fields an agent or admin may revise on a pending hire proposal. */
 export interface HirePayloadPatchInput {
 	title?: string;
+	human_name?: string;
 	role_description?: string;
 	system_prompt?: string;
 	/** Manager slug (or id); '' / null clears the reporting line. */
@@ -184,6 +199,7 @@ export interface HirePayloadPatchInput {
 export function buildHirePayloadPatch(input: HirePayloadPatchInput): Record<string, unknown> {
 	const patch: Record<string, unknown> = {};
 	if (input.title !== undefined) patch.title = input.title.trim();
+	if (input.human_name !== undefined) patch.human_name = input.human_name?.trim() || null;
 	if (input.role_description !== undefined) patch.role_description = input.role_description;
 	if (input.system_prompt !== undefined) patch.system_prompt = input.system_prompt;
 	if (input.reports_to !== undefined) patch.reports_to = input.reports_to?.trim() || null;

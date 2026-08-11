@@ -36,8 +36,9 @@ agent can't hurt you. A few guarantees sit underneath everything:
   [Container isolation](/docs/security/container-isolation), and
   [Containers](/docs/containers/overview) for where those containers run (your own Docker
   daemon or a managed service).
-- **Agents work in real repos without holding the keys.** Git signing and SSH happen
-  on the host, so commits land **verified** while the key never enters the sandbox. See
+- **Agents work in real repos without holding the keys.** Commit signing and git
+  credentials stay on your instance, so commits land **verified** while nothing secret
+  enters the sandbox. See
   [Git & verified commits](/docs/security/git-and-verified-commits).
 
 ## What you can do with it
@@ -59,8 +60,10 @@ agent can't hurt you. A few guarantees sit underneath everything:
   Grok, DeepSeek, Z.ai, Kimi, and OpenRouter are all supported - Claude, ChatGPT, Gemini, and
   Grok through their own first-party command-line tooling, DeepSeek, Z.ai, and Kimi through
   Claude Code against their Anthropic-compatible endpoints (Kimi can alternatively run on
-  Moonshot's own Kimi Code CLI), and OpenRouter through OpenCode -
-  not a lowest-common-denominator wrapper. You can also run **entirely on your own hardware**
+  Moonshot's own Kimi Code CLI), and OpenRouter through OpenCode - not a
+  lowest-common-denominator wrapper. Any of them can instead be run on Prime Intellect's
+  **Prime Agent**, which writes and runs Python in a live kernel rather than calling tools
+  directly. You can also run **entirely on your own hardware**
   with Ollama or LM Studio, at no per-token cost. You can give any individual agent its own
   model. See [AI model support](/docs/ai-models).
 - **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost

@@ -80,6 +80,7 @@
 | A user-facing string | the 11 non-English catalogs | `i18n-catalog.test.ts` |
 | A team prompt or `team.json` | committed `marketplace/teams/*.json` + `index.json` | `marketplace-build.test.ts` |
 | A docs page (add / remove / frontmatter) | the embedded docs bundle | `docs-bundle.test.ts` |
+| A link in a `docs/` page (another page, an anchor, a repo file, an external URL) | the target it names | `docs-links.test.ts` + the `check-docs-links.ts` hook |
 | A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
 | A new doc- or string-bearing path | `DOC_BEARING_PATTERNS` / `STRING_BEARING_PATTERNS` | its ack-hook test |
 | Container backend behaviour | `SANDBOX_AGENT_ENVIRONMENTS`, that provider's `docs/containers/remote/` page, the Containers settings UI | compile error, **new backend only** |
@@ -99,7 +100,9 @@
 
 **Verify, don't assume.** Generated surfaces have drift tests (`{mcp-reference,llms-txt,docs-bundle}.test.ts`); hand-written prose has one guard, `docs-terminology.test.ts`, checking punctuation only. Nothing checks whether prose is *true* — re-read the pages describing what you changed and confirm every concrete claim still matches the code.
 
-**Two husky hooks run on every commit.** `.husky/pre-commit`: `bunx biome check --diagnostic-level=error .`, `bun run typecheck`, `bun run build`. `.husky/commit-msg`: `bunx commitlint --edit`, `scripts/check-docs-ack.ts`, `scripts/check-translations-ack.ts`.
+**Two husky hooks run on every commit.** `.husky/pre-commit`: `bunx biome check --diagnostic-level=error .`, `bun run typecheck`, `bun run build`. `.husky/commit-msg`: `bunx commitlint --edit`, `scripts/check-docs-ack.ts`, `scripts/check-translations-ack.ts`, `scripts/check-docs-links.ts`.
+
+**`check-docs-links.ts` fails a commit staging any `docs/**/*.md` on a broken link.** Internal links (docs-to-docs incl. `#anchors`, relative paths, `github.com/hezo-ai/hezo/{blob,raw,tree}/main/<path>`) are checked across the whole tree - a rename or delete breaks *other* files' links. External URLs are probed for staged files only (7-day success cache in `.git/`); a definitive 404/410 blocks, network-shaped failures (403 bot walls, timeouts, DNS) only warn, so an offline commit passes. Fix the link, never bypass; `docs-links.test.ts` re-runs the internal check in CI.
 
 **`Docs-Checked:` is enforced at commit time.** Any commit staging doc-bearing code (`packages/*/src/`, `packages/*/migrations/`, `agents/`, `skills/`, `docker/`, `deploy/`, `marketplace/`, `scripts/`) is rejected without a `Docs-Checked:` trailer recording the pass you did across **both** `docs/` and `.dev/`. Bare values (`yes`, `n/a`, `done`, anything under 10 characters) are rejected:
 
@@ -155,7 +158,7 @@ All changes ship with tests exercising functionality, not "code runs without thr
 - Use `ctx.app` / `ctx.baseUrl` / `ctx.port` — never a shared singleton, never a hardcoded port. No mutable state shared between files.
 - Pure logic tests can call functions directly.
 - GitHub OAuth/repo/SSH-key tests use `test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the context boots.
-- `HEZO_SKIP_DOCKER=1` swaps in the in-process fake (`services/fake-docker.ts`). **Test/CI-only — never expose it to users.** A Docker-compatible runtime is a hard prerequisite, so it must not appear in CLI/preflight output, `docs/`, README or `--help`; `docker-preflight.test.ts` guards this. Code comments and `.dev/` may reference it.
+- `HEZO_SKIP_DOCKER=1` swaps in the in-process fake (`services/fake-docker.ts`). **Test/CI-only — never expose it to users.** The supported backends are the real ones (a local Docker-compatible runtime, or a managed sandbox service), so the fake must not appear in CLI/preflight output, `docs/`, README or `--help`; `docker-preflight.test.ts` guards this. Code comments and `.dev/` may reference it.
 
 ### Test-setup performance
 
@@ -274,6 +277,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
 | An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
 | Date formatting | `packages/web/src/lib/format-date.ts` |
+| A dropdown panel's vertical side + height clamp | `usePanelPlacement` (`hooks/use-panel-placement.ts`), pure math in `lib/panel-placement.ts` |
 | An optimistic mutation | `useOptimisticMutation` (`hooks/use-optimistic-mutation.ts`) |
 | A server test context | `createTestContext()` (`test/helpers/context.ts`) |
 | A migration test | `createDataPreservationHarness()` (`test/helpers/migrate.ts`) |
@@ -504,7 +508,7 @@ Agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`) in any header
 
 - Put the placeholder in the agent's container env, never the real value. The real value lives in `secrets` with `allowed_hosts` constraining which upstream hosts substitution may fire for.
 - To obtain a raw secret at runtime the agent calls `request_credential` and a human pastes the value via the task thread. The three HTTP-auth `CredentialKind`s (`api_key`, `oauth_token`, `github_pat`) MUST pass `allowed_hosts` — the tool rejects the request otherwise. The other three (`ssh_private_key`, `webhook_secret`, `other`) are exempt, never riding an outbound HTTP header. Agents request the narrowest scope and shortest expiry, and prefer a registered connector (`register_connector`) where one covers the provider.
-- For GitHub repo access, the human connects an OAuth account once via device flow on the project's Connections page. The OAuth token is for REST calls only (listing orgs/repos, creating repos); clone/fetch/push run over SSH authenticated by the project's Ed25519 key, which is also the commit-signing key. On first connect the public key is registered on the connecting user's account as both a signing and an authentication key. Host-side and in-container git both go through `SshAgentServer` — host via its Unix socket, container via the per-run socat bridge.
+- For GitHub repo access, the human connects an OAuth account once via device flow on the project's Connections page. The OAuth token authenticates REST calls and the git transport: clone/fetch/push run over HTTPS with the token as a `__HEZO_SECRET_*__` placeholder the egress proxy substitutes. The project's Ed25519 key signs commits only, reached through `SshAgentServer` over the per-run bridge; on first connect its public half is registered on the connecting user's account as a signing (and authentication) key.
 - For SaaS MCPs requiring OAuth, the operator starts the auth-code flow from the MCP-connection form; the resulting `oauth_connection_id` links to the `mcp_connections` row and the injector emits a placeholder Authorization header.
 
 The egress proxy does not audit substitution events. Secret values are never logged; substitution failures surface to the agent as explicit HTTP errors.
@@ -534,13 +538,14 @@ Wiring lives in `services/mcp-injectors/<runtime>.ts`, specs in `JUDGE_SPECS`, t
 | Codex | helper script | Its `type: "prompt"` is parsed-but-skipped — the hook must be `type: "command"`. |
 | Gemini | helper script | The Stop analogue is `AfterAgent`, not `Stop`. |
 | Kimi Code | helper script | `[[hooks]]` entries accept **exactly four keys** (`event`, `matcher`, `command`, `timeout`) — any other makes the CLI refuse the whole config, breaking every run on the runtime. Block via exit code **2**; any other non-zero reads as a broken script and fails open. Its stdin payload carries neither the final assistant message nor `stop_hook_active`, so the spec opts into a session-log lookup and an on-disk loop-guard marker. |
+| Prime Agent | helper script | Runs as `--autonomous --autonomous-gate <cmd>`, which gets **no stdin** — so the spec reads the final message from the `<sessionId>.jsonl` session log under `PRIME_AGENT_CODING_AGENT_DIR`, whose `content` is an array of parts. No `stop_hook_active` either, so the loop guard is an on-disk marker. Blocks via exit code **1**, with the reason on stderr. |
 | OpenCode | **none** | Its plugin API can't block-and-continue in headless mode. Fails open. |
 | Grok | **none** | Its hooks block only on pre-tool-use; Stop is a passive notification. Fails open. |
 
 **Two structural layers sit alongside it, and neither reads prose.** Every text-classifying check above needs new vocabulary for each new phrasing that strands a handoff, which is how `lib/mentions.ts` accumulated one positional branch per incident. The two below need none, and are the preferred place to strengthen this area:
 
 - **The wake receipt.** `create_comment` / `update_comment` always return `wake: { woke, named_not_woken }` — who the write actually notified, and which roster teammates it names without notifying (a passive `@@slug`, or a bare/bold name in an addressing position). It is built inside `fireCommentWakeups` at the points wakeups are created, so it can never drift from the delivery it describes. It is a **fact about the write, not an advisory that fires when a heuristic guessed right**, so it stays true for phrasings no detector recognises; `SHARED_INSTRUCTIONS` tells agents to check it after any comment that hands work over. This is parity with the web composer's long-standing "Wake:" preview for human authors.
-- **The no-wake exit check** (`agent-runner.ts`, after the net). A run that ends having woken **nobody**, on a task left **non-terminal**, while **naming a teammate** in a form that notifies no one, gets a run-log warning. That combination is what a stranded handoff *is*, whatever words carried it, and it covers the hole the net cannot reach — the net only inspects the **final message** and `create_comment` only inspects **one comment at a time**, so nothing else looks at what a run achieved in aggregate.
+- **The no-wake exit check** (`agent-runner.ts`, after the net). A run that ends having woken **nobody**, on a task left **non-terminal**, while **naming a teammate** in a form that notifies no one, gets a run-log warning. That combination is what a stranded handoff *is*, whatever words carried it, and it covers the hole the net cannot reach — the net only inspects the **final message** and `create_comment` only inspects **one comment at a time**, so nothing else looks at what a run achieved in aggregate. **The aggregate is per task, not per run** — judged run-wide, a run that woke someone on its own task could strand a handoff in a comment on another task and pass clean. Each task the run commented on is judged on its own comments, wakes and status; the run's own task is always judged, and the final message counts only there.
 
 **When this area needs strengthening again, reach for a structural signal before a phrase.** A new regex branch is the last resort, not the first: prefer reporting what the system did (the receipt), or asking a question answerable from its own state (the exit check). If a phrase genuinely is needed, it belongs as one row in `DIRECTED_ASK_RES` — the single shared ask vocabulary every gate in `lib/mentions.ts` reads — never as a new positional branch on a detector.
 
@@ -554,7 +559,7 @@ A runtime is reachable by any credential configured onto it, not only by the pro
 2. **A name-only address that reads as an ask** — the unlinked bold/leading-line form or the passive one, matched against the run team's roster + HQ + `@admin` and gated on directed-ask intent so a name written for emphasis is never touched — is **not** rewritten or auto-delivered; guessing intent to force a wake overreaches. The runner logs the same warning `create_comment` gives interactively and leaves the handoff undelivered.
 3. **A plain direct answer** to a human who addressed this agent: when the run was woken by a reply or mention from a human (not another agent) and posted no comment of its own, the final message is delivered verbatim, threaded under the waking comment.
 
-OpenCode, Grok and Kimi Code take the task prompt as a CLI **argument** rather than on stdin, so the runner sets `HEZO_PROMPT_MODE=arg` (`RUNTIME_PROMPT_DELIVERY`) and the exec wrapper appends `"$(cat $HEZO_PROMPT_FILE)"`. Kimi Code additionally gets **no auto-approve flag** — `--yolo`/`--auto`/`--plan` are mutually exclusive with `--prompt`; `-p` already applies the `auto` permission policy and the injected `[permission.rules]` covers the rest.
+OpenCode, Grok, Kimi Code and Prime Agent take the task prompt as a CLI **argument** rather than on stdin, so the runner sets `HEZO_PROMPT_MODE=arg` (`RUNTIME_PROMPT_DELIVERY`) and the exec wrapper appends `"$(cat $HEZO_PROMPT_FILE)"`. Kimi Code additionally gets **no auto-approve flag** — `--yolo`/`--auto`/`--plan` are mutually exclusive with `--prompt`; `-p` already applies the `auto` permission policy and the injected `[permission.rules]` covers the rest.
 
 ## Cost: always priced from the table
 

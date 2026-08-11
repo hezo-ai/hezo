@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import {
 	AgentEffort,
+	AgentRuntime,
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
@@ -1497,6 +1498,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						stagedTomlPath = `${getHostSubscriptionRoot(
 							AiProvider.OpenAI,
+							AgentRuntime.Codex,
 							testDataDir,
 							teamId,
 							projectId,
@@ -1582,6 +1584,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						const hostDir = getHostSubscriptionRoot(
 							AiProvider.OpenAI,
+							AgentRuntime.Codex,
 							testDataDir,
 							teamId,
 							projectId,
@@ -1670,6 +1673,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						settingsPath = `${getHostSubscriptionRoot(
 							AiProvider.Google,
+							AgentRuntime.Gemini,
 							testDataDir,
 							teamId,
 							projectId,
@@ -2472,6 +2476,7 @@ describe('runAgent', () => {
 				'pj',
 				runId,
 				AiProvider.OpenAI,
+				AgentRuntime.Codex,
 				{
 					value: validAuthJson,
 					authMethod: AiAuthMethod.Subscription,
@@ -2482,9 +2487,12 @@ describe('runAgent', () => {
 				'container-123',
 			);
 			expect(mount).not.toBeNull();
-			expect(mount!.containerDir).toBe(`/workspace/.hezo/subscription/codex/${runId}`);
+			// `codex-openai`, not `codex`: the layout is keyed by runtime now, so the
+			// per-provider isolation that used to come from the dir name itself is
+			// the provider suffix.
+			expect(mount!.containerDir).toBe(`/workspace/.hezo/subscription/codex-openai/${runId}`);
 			expect(mount!.envEntries).toEqual([
-				`CODEX_HOME=/workspace/.hezo/subscription/codex/${runId}`,
+				`CODEX_HOME=/workspace/.hezo/subscription/codex-openai/${runId}`,
 			]);
 			const staged = engine.files('container-123', mount!.containerDir);
 			expect(await staged.read(mount!.authFileRelative)).toBe(validAuthJson);
@@ -2498,6 +2506,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.OpenAI,
+					AgentRuntime.Codex,
 					{ value: 'sk-x', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
@@ -2510,6 +2519,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Anthropic,
+					AgentRuntime.ClaudeCode,
 					{ value: 'sk-ant', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
@@ -2527,6 +2537,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Anthropic,
+					AgentRuntime.ClaudeCode,
 					{
 						value: 'sk-ant-oat01-token',
 						authMethod: AiAuthMethod.Subscription,
@@ -2550,6 +2561,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Kimi,
+					AgentRuntime.ClaudeCode,
 					{ value: 'sk-kimi', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',
@@ -2582,6 +2594,7 @@ describe('runAgent', () => {
 						const runId = containerDir.split('/').pop()!;
 						stagedFile = `${getHostSubscriptionRoot(
 							AiProvider.OpenAI,
+							AgentRuntime.Codex,
 							testDataDir,
 							teamId,
 							projectId,
@@ -2638,6 +2651,7 @@ describe('runAgent', () => {
 					const runId = containerDir.split('/').pop()!;
 					const hostFile = `${getHostSubscriptionRoot(
 						AiProvider.OpenAI,
+						AgentRuntime.Codex,
 						testDataDir,
 						teamId,
 						projectId,

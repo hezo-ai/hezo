@@ -378,7 +378,7 @@ describe('provisionContainer', () => {
 					// allocatable and suspendable. A container with no CA trusted and
 					// no repos must be neither.
 					usable: members.length,
-					suspendable: planIdleShutdown(members).suspend === null ? 0 : 1,
+					suspendable: planIdleShutdown(members).suspend.length,
 				});
 			},
 		});

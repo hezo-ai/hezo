@@ -1,5 +1,6 @@
 import {
 	AgentAdminStatus,
+	type AgentGender,
 	AgentRuntimeStatus,
 	type AiProvider,
 	ALL_AI_PROVIDERS,
@@ -13,6 +14,7 @@ import {
 	HeartbeatRunStatus,
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
+	inferGender,
 	isAgentEffort,
 	isAllowedProjectIconStoredMime,
 	isBudgetPauseStatus,
@@ -30,6 +32,12 @@ import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Db } from '../db/database';
 import { runLogLengthSql, runLogTextSql } from '../db/run-log-chunks';
+import {
+	applyAgentHumanName,
+	buildAgentAvatarSpec,
+	checkHumanNameAvailable,
+	isNameOnlyRole,
+} from '../lib/agent-identity';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
@@ -91,56 +99,15 @@ export const agentsRoutes = new Hono<Env>();
  */
 const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.agent_type_id, ma.title, ma.slug, ma.role_description, ma.summary, ma.team_context,
+	ma.human_name, ma.human_name_slug, ma.gender, ma.avatar_spec,
 	ma.default_effort,
 	ma.heartbeat_interval_min, ma.run_timeout_min,
 	ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
 	ma.touches_code,
 	ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at,
-	(SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = m.id) AS icon_updated_at,
 	${NEXT_HEARTBEAT_AT_SQL} AS next_heartbeat_at,
 	${HAS_ACTIONABLE_WORK_SQL} AS has_actionable_work`;
-
-// --- Agent avatar (icon) ------------------------------------------------------
-// An optional user-uploaded image shown for an agent in place of its initials.
-// Stored as bytes in the DB (agent_icons, 1:1 with member_agents). Served via an
-// HMAC-signed public URL (rendered in an <img>, which can't carry a bearer
-// token) — mirrors the project-icon feature, generalized in `entity-icon-urls`.
-const AGENT_ICON_KEY_PURPOSE = 'agent-icon-url';
-const AGENT_ICON_BASE_PATH = '/api/agents';
-
-/** Sign an agent's icon URL from its `icon_updated_at` version, or null when unset. */
-async function signAgentIcon(
-	c: Context<Env>,
-	id: string,
-	iconUpdatedAt: unknown,
-): Promise<string | null> {
-	if (typeof iconUpdatedAt === 'string' || iconUpdatedAt instanceof Date) {
-		const version = Math.floor(new Date(iconUpdatedAt).getTime() / 1000);
-		return signEntityIconUrl(
-			AGENT_ICON_BASE_PATH,
-			AGENT_ICON_KEY_PURPOSE,
-			id,
-			c.get('masterKeyManager'),
-			version,
-		);
-	}
-	return null;
-}
-
-/**
- * Attach a freshly-signed `icon_url` to a serialized agent row (from the
- * correlated `icon_updated_at` subselect in AGENT_BASE_COLUMNS). The icon bytes
- * themselves are never selected onto the row.
- */
-async function withAgentIconUrl(
-	c: Context<Env>,
-	row: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-	row.icon_url = await signAgentIcon(c, row.id as string, row.icon_updated_at);
-	if (!row.icon_url) row.icon_updated_at = null;
-	return row;
-}
 
 /**
  * Every run column except the log itself.
@@ -305,10 +272,7 @@ agentsRoutes.get('/projects/:projectId/agents', async (c) => {
 	query += ' ORDER BY is_instance ASC, ma.title ASC';
 
 	const result = await db.query(query, params);
-	const rows = await Promise.all(
-		result.rows.map((r) => withAgentIconUrl(c, r as Record<string, unknown>)),
-	);
-	return ok(c, rows);
+	return ok(c, result.rows);
 });
 
 agentsRoutes.post('/projects/:projectId/agents', async (c) => {
@@ -322,6 +286,7 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 
 	const body = await c.req.json<{
 		title: string;
+		human_name?: string;
 		role_description?: string;
 		system_prompt?: string;
 		reports_to?: string;
@@ -340,6 +305,21 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
+	}
+
+	// The name is optional at hire time - left blank, the Captain picks one during
+	// the coherence review that follows.
+	const humanName = body.human_name?.trim() || null;
+	if (humanName) {
+		const rejection = await checkHumanNameAvailable(db, { teamId, name: humanName });
+		if (rejection) {
+			return err(
+				c,
+				rejection.code === 'TAKEN' ? 'CONFLICT' : 'INVALID_REQUEST',
+				rejection.message,
+				rejection.code === 'TAKEN' ? 409 : 400,
+			);
+		}
 	}
 
 	const budgetError = budgetWindowsError({
@@ -381,17 +361,34 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 				`INSERT INTO members (team_id, member_type, display_name)
        VALUES ($1, $2, $3)
        RETURNING id`,
-				[teamId, MemberType.Agent, body.title.trim()],
+				[teamId, MemberType.Agent, humanName ?? body.title.trim()],
 			);
 			const newMemberId = memberResult.rows[0].id;
 
+			// A new agent gets a face immediately, seeded from its own member id, so
+			// the roster never shows a blank where a teammate should be.
+			const newGender = inferGender(humanName);
 			await db.query(
-				`INSERT INTO member_agents (id, title, slug, role_description, reports_to, default_effort, heartbeat_interval_min, daily_budget_cents, weekly_budget_cents, monthly_budget_cents, touches_code, mcp_servers)
-       VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10, $11, $12::jsonb)`,
+				`INSERT INTO member_agents (id, title, slug, human_name, human_name_slug, gender,
+                                   avatar_spec, role_description, reports_to, default_effort,
+                                   heartbeat_interval_min, daily_budget_cents, weekly_budget_cents,
+                                   monthly_budget_cents, touches_code, mcp_servers)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::agent_effort, $11, $12, $13, $14, $15, $16::jsonb)`,
 				[
 					newMemberId,
 					body.title.trim(),
 					slug,
+					humanName,
+					humanName ? toSlug(humanName) : null,
+					newGender,
+					JSON.stringify(
+						buildAgentAvatarSpec({
+							slug,
+							title: body.title.trim(),
+							gender: newGender,
+							seed: newMemberId,
+						}),
+					),
 					body.role_description ?? '',
 					body.reports_to ?? null,
 					body.default_effort ?? DEFAULT_EFFORT,
@@ -477,7 +474,7 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 				`INSERT INTO members (team_id, member_type, display_name)
 				 VALUES ($1, $2, $3)
 				 RETURNING id`,
-				[teamId, MemberType.Agent, proposal.title],
+				[teamId, MemberType.Agent, proposal.human_name || proposal.title],
 			);
 			const memberId = memberResult.rows[0].id;
 
@@ -486,16 +483,30 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 				? await resolveAgentId(db, teamId, proposal.reports_to)
 				: null;
 
+			const hiredGender = inferGender(proposal.human_name);
 			await db.query(
-				`INSERT INTO member_agents (id, title, slug, role_description, reports_to,
+				`INSERT INTO member_agents (id, title, slug, human_name, human_name_slug, gender,
+				                            avatar_spec, role_description, reports_to,
 				                            default_effort, heartbeat_interval_min,
 				                            daily_budget_cents, weekly_budget_cents, monthly_budget_cents,
 				                            touches_code, admin_status)
-				 VALUES ($1, $2, $3, $4, $5, $6::agent_effort, $7, $8, $9, $10, $11, $12::agent_admin_status)`,
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::agent_effort, $11, $12, $13, $14, $15,
+				         $16::agent_admin_status)`,
 				[
 					memberId,
 					proposal.title,
 					proposal.slug,
+					proposal.human_name ?? null,
+					proposal.human_name ? toSlug(proposal.human_name) : null,
+					hiredGender,
+					JSON.stringify(
+						buildAgentAvatarSpec({
+							slug: proposal.slug,
+							title: proposal.title,
+							gender: hiredGender,
+							seed: memberId,
+						}),
+					),
 					proposal.role_description,
 					reportsToId,
 					proposal.default_effort,
@@ -656,101 +667,7 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId', async (c) => {
 
 	const row = result.rows[0];
 	if (!row) return err(c, 'NOT_FOUND', 'Agent not found', 404);
-	return ok(c, await withAgentIconUrl(c, row as Record<string, unknown>));
-});
-
-// Upload (or replace) an agent's avatar. The client normalizes any picked image
-// to a square PNG ≤ PROJECT_ICON_MAX_DIMENSION before upload; the server
-// re-validates content-type, byte size, and pixel dimensions defensively.
-agentsRoutes.put(
-	'/projects/:projectId/agents/:agentId/icon',
-	bodyLimit({
-		maxSize: PROJECT_ICON_MAX_BYTES,
-		onError: (c) => err(c, 'TOO_LARGE', 'Image exceeds the size limit', 400),
-	}),
-	async (c) => {
-		const teamId = c.get('teamId') as string;
-		const db = c.get('db');
-		const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
-		if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
-
-		let form: Awaited<ReturnType<typeof c.req.parseBody>>;
-		try {
-			form = await c.req.parseBody({ all: false });
-		} catch (e) {
-			log.error('agent icon parseBody failed:', e);
-			return err(c, 'INVALID_REQUEST', 'Malformed upload', 400);
-		}
-		const file = form.file;
-		if (!(file instanceof Blob)) {
-			return err(c, 'INVALID_REQUEST', 'Missing file field', 400);
-		}
-
-		const contentType = file.type || 'application/octet-stream';
-		if (!isAllowedProjectIconStoredMime(contentType)) {
-			return err(c, 'INVALID_ATTACHMENT', `Unsupported content type: ${contentType}`, 400);
-		}
-		if (file.size > PROJECT_ICON_MAX_BYTES) {
-			return err(c, 'TOO_LARGE', 'Image exceeds the size limit', 400);
-		}
-
-		const buf = Buffer.from(await file.arrayBuffer());
-		const dims = readImageDimensions(buf);
-		if (!dims) {
-			return err(c, 'INVALID_ATTACHMENT', 'Could not read image dimensions', 400);
-		}
-		if (dims.width > PROJECT_ICON_MAX_DIMENSION || dims.height > PROJECT_ICON_MAX_DIMENSION) {
-			return err(
-				c,
-				'INVALID_ATTACHMENT',
-				`Image exceeds ${PROJECT_ICON_MAX_DIMENSION}×${PROJECT_ICON_MAX_DIMENSION} pixels`,
-				400,
-			);
-		}
-
-		const updated = await db.query<{ updated_at: string }>(
-			`INSERT INTO agent_icons (member_id, content_type, data, byte_size, width, height, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, now())
-			 ON CONFLICT (member_id) DO UPDATE SET
-			   content_type = EXCLUDED.content_type,
-			   data         = EXCLUDED.data,
-			   byte_size    = EXCLUDED.byte_size,
-			   width        = EXCLUDED.width,
-			   height       = EXCLUDED.height,
-			   updated_at   = now()
-			 RETURNING updated_at`,
-			[agentId, contentType, buf, buf.byteLength, dims.width, dims.height],
-		);
-
-		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-			id: agentId,
-			team_id: teamId,
-		});
-
-		const version = Math.floor(new Date(updated.rows[0].updated_at).getTime() / 1000);
-		const iconUrl = await signEntityIconUrl(
-			AGENT_ICON_BASE_PATH,
-			AGENT_ICON_KEY_PURPOSE,
-			agentId,
-			c.get('masterKeyManager'),
-			version,
-		);
-		return ok(c, { icon_url: iconUrl, icon_updated_at: updated.rows[0].updated_at });
-	},
-);
-
-agentsRoutes.delete('/projects/:projectId/agents/:agentId/icon', async (c) => {
-	const teamId = c.get('teamId') as string;
-	const db = c.get('db');
-	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
-	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
-
-	await db.query('DELETE FROM agent_icons WHERE member_id = $1', [agentId]);
-	broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'UPDATE', {
-		id: agentId,
-		team_id: teamId,
-	});
-	return ok(c, { icon_url: null, icon_updated_at: null });
+	return ok(c, row);
 });
 
 // The agent's long-term chat memory (the compacted history shown on the Chat
@@ -952,6 +869,8 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 
 	const body = await c.req.json<{
 		title?: string;
+		human_name?: string | null;
+		avatar_seed?: string;
 		role_description?: string;
 		system_prompt?: string;
 		system_prompt_change_summary?: string;
@@ -970,6 +889,23 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 
 	if (body.default_effort !== undefined && !isAgentEffort(body.default_effort)) {
 		return err(c, 'INVALID_REQUEST', `Invalid default_effort: ${body.default_effort}`, 400);
+	}
+
+	// Identity: the human name and the avatar. Both are resolved before the generic
+	// update below because they write columns the update set doesn't own
+	// (`human_name_slug`, `members.display_name`, a server-composed `avatar_spec`).
+	const identity = await db.query<{ slug: string; title: string; gender: AgentGender | null }>(
+		'SELECT slug, title, gender FROM member_agents WHERE id = $1',
+		[agentId],
+	);
+	const agentSlug = identity.rows[0]?.slug ?? '';
+	if (body.human_name !== undefined && isNameOnlyRole(agentSlug)) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'This role is always addressed by its role and cannot be given a name',
+			400,
+		);
 	}
 
 	// Structurally-fixed reporting lines (Captain → CEO, CEO/Coach → admin) are
@@ -1089,6 +1025,45 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 		}
 	}
 
+	// A rename or a regenerated face, applied inside the same transaction as the
+	// availability check so two concurrent renames cannot both take one handle.
+	if (body.human_name !== undefined || body.avatar_seed !== undefined) {
+		const conflict = await withTransaction(db, async () => {
+			if (body.human_name !== undefined) {
+				const rejection = await checkHumanNameAvailable(db, {
+					teamId,
+					name: body.human_name ?? '',
+					excludeMemberId: agentId,
+				});
+				if (rejection) return rejection;
+				await applyAgentHumanName(db, agentId, body.human_name ?? '', inferGender(body.human_name));
+			}
+			if (body.avatar_seed !== undefined) {
+				const row = identity.rows[0];
+				const spec = buildAgentAvatarSpec({
+					slug: row?.slug ?? '',
+					title: row?.title ?? '',
+					gender:
+						body.human_name !== undefined ? inferGender(body.human_name) : (row?.gender ?? null),
+					seed: body.avatar_seed,
+				});
+				await db.query(
+					'UPDATE member_agents SET avatar_spec = $2, updated_at = now() WHERE id = $1',
+					[agentId, JSON.stringify(spec)],
+				);
+			}
+			return null;
+		});
+		if (conflict) {
+			return err(
+				c,
+				conflict.code === 'TAKEN' ? 'CONFLICT' : 'INVALID_REQUEST',
+				conflict.message,
+				conflict.code === 'TAKEN' ? 409 : 400,
+			);
+		}
+	}
+
 	const {
 		clauses: sets,
 		params,
@@ -1110,7 +1085,8 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 	]);
 	const idx = nextIdx;
 
-	if (sets.length === 0 && body.system_prompt === undefined) {
+	const identityChanged = body.human_name !== undefined || body.avatar_seed !== undefined;
+	if (sets.length === 0 && body.system_prompt === undefined && !identityChanged) {
 		const result = await db.query(
 			`SELECT m.*, ma.* FROM members m JOIN member_agents ma ON ma.id = m.id WHERE m.id = $1`,
 			[agentId],
@@ -1119,10 +1095,14 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 	}
 
 	if (body.title?.trim()) {
-		await db.query('UPDATE members SET display_name = $1 WHERE id = $2', [
-			body.title.trim(),
-			agentId,
-		]);
+		// Renaming the *role* only moves the displayed label when the agent has no
+		// name of its own to show instead.
+		await db.query(
+			`UPDATE members SET display_name = COALESCE(NULLIF(
+			   (SELECT human_name FROM member_agents WHERE id = $2), ''), $1)
+			 WHERE id = $2`,
+			[body.title.trim(), agentId],
+		);
 	}
 
 	let updatedRow: Record<string, unknown>;
@@ -1265,8 +1245,8 @@ agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 	const teamId = c.get('teamId') as string;
 	const db = c.get('db');
 
-	const ORG_COLUMNS = `m.id, ma.title, ma.slug, ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to,
-     (SELECT ai.updated_at FROM agent_icons ai WHERE ai.member_id = m.id) AS icon_updated_at`;
+	const ORG_COLUMNS = `m.id, ma.title, ma.slug, ma.human_name, ma.avatar_spec,
+     ma.role_description, ma.runtime_status, ma.admin_status, ma.reports_to`;
 	const result = await db.query(
 		`SELECT ${ORG_COLUMNS}
      FROM members m
@@ -1283,12 +1263,10 @@ agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 		runtime_status: string;
 		admin_status: string;
 		reports_to: string | null;
-		icon_updated_at: string | null;
-		icon_url?: string | null;
+		human_name: string | null;
+		avatar_spec: unknown;
 	};
 	const agents = result.rows as OrgAgentRow[];
-	// Sign each node's avatar URL (null when the agent has no icon).
-	for (const a of agents) a.icon_url = await signAgentIcon(c, a.id, a.icon_updated_at);
 	type AgentNode = OrgAgentRow & { children: AgentNode[] };
 	const byId = new Map<string, AgentNode>(
 		agents.map((a) => [a.id, { ...a, children: [] as AgentNode[] }]),
@@ -1308,7 +1286,6 @@ agentsRoutes.get('/projects/:projectId/org-chart', async (c) => {
 	);
 	const ceoRow = ceoResult.rows[0] as OrgAgentRow | undefined;
 	if (ceoRow && !byId.has(ceoRow.id)) {
-		ceoRow.icon_url = await signAgentIcon(c, ceoRow.id, ceoRow.icon_updated_at);
 		byId.set(ceoRow.id, { ...ceoRow, children: [] });
 	}
 
@@ -1429,51 +1406,3 @@ agentsRoutes.post(
 		return ok(c, { ...row, terminated: result.terminated });
 	},
 );
-
-// Public signed-URL read endpoint for an agent avatar. Rendered in an `<img>`
-// tag, which can't carry a bearer token, so the HMAC `sig` query param is the
-// credential. Must be mounted before the `/api/*` auth middleware.
-export const publicAgentsRoutes = new Hono<Env>();
-
-publicAgentsRoutes.get('/api/agents/:agentId/icon', async (c) => {
-	const agentId = c.req.param('agentId');
-	const expRaw = c.req.query('exp');
-	const sig = c.req.query('sig');
-	if (!expRaw || !sig) {
-		return err(c, 'UNAUTHORIZED', 'Missing signature', 401);
-	}
-	const exp = Number.parseInt(expRaw, 10);
-	const masterKeyManager = c.get('masterKeyManager');
-	const valid = await verifyEntityIconUrl(
-		AGENT_ICON_KEY_PURPOSE,
-		agentId,
-		exp,
-		sig,
-		masterKeyManager,
-	);
-	if (!valid) {
-		return err(c, 'UNAUTHORIZED', 'Invalid or expired signature', 401);
-	}
-
-	const row = await c.get('db').query<{
-		content_type: string;
-		data: Uint8Array;
-		updated_at: string;
-	}>('SELECT content_type, data, updated_at FROM agent_icons WHERE member_id = $1', [agentId]);
-	if (row.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Icon not found', 404);
-	}
-	const { content_type, data, updated_at } = row.rows[0];
-	const src = data instanceof Uint8Array ? data : new Uint8Array(data);
-	// Copy into a fresh ArrayBuffer so the body type is Uint8Array<ArrayBuffer>
-	// (PGlite hands back a Uint8Array<ArrayBufferLike>).
-	const ab = new ArrayBuffer(src.byteLength);
-	new Uint8Array(ab).set(src);
-
-	return c.body(new Uint8Array(ab), 200, {
-		'Content-Type': content_type,
-		'Content-Length': String(src.byteLength),
-		'Cache-Control': 'private, max-age=3600',
-		ETag: `"${new Date(updated_at).getTime()}"`,
-	});
-});

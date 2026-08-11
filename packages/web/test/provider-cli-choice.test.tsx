@@ -1,5 +1,5 @@
 import { AgentRuntime, AiProvider } from '@hezo/shared';
-import { fireEvent } from '@testing-library/react';
+import { fireEvent, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 
@@ -39,18 +39,24 @@ async function listProviders(): Promise<ProviderListResponse['data']> {
 	return ((await res.json()) as ProviderListResponse).data;
 }
 
-test('a provider that runs on one CLI shows no Advanced section', async () => {
-	const { findByRole, getByRole, queryByRole, user } = await renderApp({
+test('a local provider discloses its optional API key and no CLI picker', async () => {
+	const { container, findByRole, getByRole, queryByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: clearAiProviders,
 	});
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
-	await user.click(getByRole('button', { name: 'Anthropic' }));
+	await user.click(getByRole('button', { name: 'Ollama' }));
 
-	// Anthropic runs only on Claude Code, so there is nothing to disclose and the
-	// trigger is omitted rather than opening onto an empty box.
-	expect(queryByRole('button', { name: 'Advanced' })).toBeNull();
+	// A self-hosted runner usually has no auth, so the key must not sit on the
+	// default path where it reads as required. Server URL is the only field.
+	expect(container.querySelector('input[type="password"]')).toBeNull();
+	expect(container.querySelector('input[type="url"]')).not.toBeNull();
+
+	await user.click(await findByRole('button', { name: 'Advanced' }));
+	expect(container.querySelector('input[type="password"]')).not.toBeNull();
+	// Ollama runs only on Claude Code, so Advanced holds the key and nothing else.
+	expect(queryByText('Agent CLI')).toBeNull();
 });
 
 test('a provider with a CLI choice discloses it, collapsed, with the default preselected', async () => {
@@ -60,7 +66,7 @@ test('a provider with a CLI choice discloses it, collapsed, with the default pre
 	});
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
-	await user.click(getByRole('button', { name: 'Kimi Code' }));
+	await user.click(getByRole('button', { name: 'Kimi' }));
 
 	const advanced = await findByRole('button', { name: 'Advanced' });
 	// Collapsed by default: the ordinary add-a-key path never sees the picker.
@@ -71,11 +77,14 @@ test('a provider with a CLI choice discloses it, collapsed, with the default pre
 	expect(advanced.getAttribute('aria-expanded')).toBe('true');
 	await findByRole('heading', { name: 'Set up an AI provider' });
 
-	// Both CLIs are offered and this provider's own default carries the marker.
-	const kimiCode = getByRole('button', { name: /^Kimi Code/ });
+	// Every CLI this provider can run is offered, and its own default carries the
+	// marker — Moonshot's key reaches the same upstream on all three.
 	const claudeCode = getByRole('button', { name: /^Claude Code/ });
-	expect(kimiCode.textContent).toContain('Default');
-	expect(claudeCode.textContent).not.toContain('Default');
+	const kimiCode = getByRole('button', { name: /^Kimi Code/ });
+	const primeAgent = getByRole('button', { name: /^Prime Agent/ });
+	expect(claudeCode.textContent).toContain('Default');
+	expect(kimiCode.textContent).not.toContain('Default');
+	expect(primeAgent.textContent).not.toContain('Default');
 });
 
 test('the chosen CLI is submitted with the credential', async () => {
@@ -101,7 +110,7 @@ test('the chosen CLI is submitted with the credential', async () => {
 	expect(configs[0].runtime).toBe(AgentRuntime.Kimi);
 });
 
-test('the provider list renders the resolved CLI and changes it in place', async () => {
+test('the provider list renders the resolved CLI and changes it from the Edit dialog', async () => {
 	const { findByRole, findByText, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
@@ -113,25 +122,41 @@ test('the provider list renders the resolved CLI and changes it in place', async
 	});
 
 	await findByRole('heading', { name: 'AI providers' }, { timeout: 15_000 });
+	await findByText('Claude Code');
 
-	const trigger = await findByRole('button', { name: 'Change agent CLI' });
-	expect(trigger.textContent).toBe('Claude Code');
-
-	await user.click(trigger);
-	await user.click(getByRole('button', { name: /^Kimi Code/ }));
+	await user.click(getByRole('button', { name: 'Edit Kimi' }));
+	const dialog = await findByRole('dialog');
+	// The CLI picker lives behind the Advanced disclosure, same as when adding.
+	await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
+	await user.click(within(dialog).getByRole('button', { name: /^Kimi Code/ }));
+	await user.click(within(dialog).getByRole('button', { name: 'Save' }));
 
 	await findByText('Kimi Code', undefined, { timeout: 15_000 });
 	const configs = await listProviders();
 	expect(configs.find((c) => c.label === 'Kimi')?.runtime).toBe(AgentRuntime.Kimi);
 });
 
-test('a single-CLI provider row shows its runtime as plain text, not a control', async () => {
-	const { findByRole, findByText, queryByRole } = await renderApp({
+test('a single-CLI provider offers no CLI picker in its Edit dialog', async () => {
+	const { findByRole, findByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			await postProvider({
+				provider: AiProvider.Ollama,
+				base_url: 'http://host.docker.internal:11434',
+				label: 'Ollama',
+			});
+		},
 	});
 
-	// The harness seeds an Anthropic credential, which runs only on Claude Code.
 	await findByRole('heading', { name: 'AI providers' }, { timeout: 15_000 });
 	await findByText('Claude Code');
-	expect(queryByRole('button', { name: 'Change agent CLI' })).toBeNull();
+
+	await user.click(await findByRole('button', { name: 'Edit Ollama' }));
+	const dialog = await findByRole('dialog');
+	// Ollama runs only on Claude Code, so Advanced carries its optional key and
+	// no picker — a one-CLI choice is not a choice.
+	await user.click(within(dialog).getByRole('button', { name: 'Advanced' }));
+	expect(within(dialog).queryByText('Agent CLI')).toBeNull();
+	expect(dialog.querySelector('input[type="password"]')).not.toBeNull();
 });

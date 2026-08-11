@@ -11,6 +11,12 @@ boundary**, not a packaging convenience - it keeps agents off your host so a bug
 compromised agent can't reach your files, credentials, or wider network (see
 [Container isolation](/docs/security/container-isolation)).
 
+This page is about the default setup, where containers run on **your own machine**. If
+the instance runs its agent containers on a
+[managed sandbox service](/docs/containers/remote/overview), there is no local runtime to
+install and nothing below applies. You choose - and can switch - between the two in
+**Settings -> Containers**.
+
 Hezo talks to the container runtime over the **Docker Engine API on a Unix socket**, so it
 works with any Docker-compatible runtime. You do not have to run Docker Desktop.
 

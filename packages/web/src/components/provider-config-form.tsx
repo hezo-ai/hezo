@@ -5,6 +5,7 @@ import {
 	type AiProviderConfig,
 	useAiProviders,
 	useCreateAiProvider,
+	useUpdateAiProviderConfig,
 } from '../hooks/use-ai-providers';
 import { useI18n } from '../lib/i18n';
 import { AgentCliPicker, providerHasCliChoice } from './agent-cli-picker';
@@ -27,7 +28,6 @@ export const ADD_PROVIDER_ORDER: readonly AiProvider[] = [
 	AiProvider.OpenAI,
 	AiProvider.Google,
 	AiProvider.Kimi,
-	AiProvider.KimiCode,
 	AiProvider.XAi,
 	AiProvider.OpenRouter,
 	AiProvider.Ollama,
@@ -71,9 +71,15 @@ export function defaultLabel(
 	return `${info.name} ${n}`;
 }
 
+/** Read the stored server URL off a config's metadata, if it has one. */
+function storedBaseUrl(config: AiProviderConfig): string | null {
+	const raw = config.metadata?.base_url;
+	return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
 interface ProviderConfigFormProps {
 	provider: AiProvider;
-	/** Called after the credential is successfully created. */
+	/** Called after the credential is successfully created or saved. */
 	onDone: () => void;
 	/** Called when the user cancels out of the form. */
 	onCancel: () => void;
@@ -81,16 +87,23 @@ interface ProviderConfigFormProps {
 	showName?: boolean;
 	/** Submit-button label. */
 	submitLabel?: string;
+	/**
+	 * Edit this existing config instead of creating a new one. Every field is
+	 * seeded from it except the credential, which stays blank and means "keep the
+	 * stored one" — so a rename never requires re-pasting a key.
+	 */
+	editing?: AiProviderConfig;
 }
 
 /**
- * The provider credential form, shared by the onboarding picker and the
- * settings "Add provider" modal. Renders only the inputs the selected provider
- * supports — an API key, or (where available) a runtime-subscription paste —
- * plus an optional name field. Owns no surrounding chrome (heading, stepper,
- * back affordance); the caller supplies that so the same form works in both an
- * onboarding page and a modal. Mount with a `key={provider}` so switching
- * providers resets the in-progress credential.
+ * The provider credential form, shared by the onboarding picker, the settings
+ * "Add provider" modal and the settings "Edit provider" modal. Renders only the
+ * inputs the selected provider supports — an API key, or (where available) a
+ * runtime-subscription paste — plus an optional name field. Owns no surrounding
+ * chrome (heading, stepper, back affordance); the caller supplies that so the
+ * same form works in both an onboarding page and a modal. Mount with a
+ * `key={provider}` (or `key={config.id}`) so switching subject resets the
+ * in-progress credential.
  */
 export function ProviderConfigForm({
 	provider,
@@ -98,56 +111,108 @@ export function ProviderConfigForm({
 	onCancel,
 	showName = false,
 	submitLabel = 'Add provider',
+	editing,
 }: ProviderConfigFormProps) {
 	const { t } = useI18n();
 	const { data: configs } = useAiProviders();
 	const createProvider = useCreateAiProvider();
+	const updateProvider = useUpdateAiProviderConfig(editing?.id ?? '');
 	const info = AI_PROVIDER_INFO[provider];
 
-	const [authMethod, setAuthMethod] = useState<AiAuthMethod>(AiAuthMethod.ApiKey);
-	const [name, setName] = useState(() => defaultLabel(provider, configs));
+	const [authMethod, setAuthMethod] = useState<AiAuthMethod>(
+		(editing?.auth_method as AiAuthMethod) ?? AiAuthMethod.ApiKey,
+	);
+	const [name, setName] = useState(() => editing?.label ?? defaultLabel(provider, configs));
 	const [nameEdited, setNameEdited] = useState(false);
 	const [apiKey, setApiKey] = useState('');
 	const [authJson, setAuthJson] = useState('');
-	const [baseUrl, setBaseUrl] = useState(info.local?.defaultBaseUrl ?? '');
+	const [baseUrl, setBaseUrl] = useState(
+		() => (editing && storedBaseUrl(editing)) || info.local?.defaultBaseUrl || '',
+	);
 	const [error, setError] = useState<string | null>(null);
 	// null = follow the provider default, which is what the picker preselects.
 	// Only sent when the operator actually opened Advanced and picked something.
-	const [runtime, setRuntime] = useState<AgentRuntime | null>(null);
+	const [runtime, setRuntime] = useState<AgentRuntime | null>(editing?.runtime ?? null);
 	const [advancedOpen, setAdvancedOpen] = useState(false);
-	// A provider with one CLI has nothing to put behind the disclosure, so the
-	// whole Advanced affordance is omitted rather than opening onto an empty box.
-	const hasAdvanced = providerHasCliChoice(provider);
 
 	// Keep the name pinned to the generated default until the user edits it
-	// (also re-syncs once the async configs query resolves).
+	// (also re-syncs once the async configs query resolves). Never when editing —
+	// it would rename the row out from under the operator.
 	useEffect(() => {
-		if (!nameEdited) setName(defaultLabel(provider, configs));
-	}, [configs, nameEdited, provider]);
+		if (!editing && !nameEdited) setName(defaultLabel(provider, configs));
+	}, [configs, editing, nameEdited, provider]);
 
 	const credential = authMethod === AiAuthMethod.Subscription ? authJson : apiKey;
 	// A local runner needs a reachable server URL, not a credential: it either
 	// ignores the token or only checks one when the operator has enabled auth.
 	const isLocal = Boolean(info.local);
-	const canSubmit = isLocal ? Boolean(baseUrl.trim()) : Boolean(credential.trim());
+	// What Advanced holds: the CLI picker where the provider runs on more than one,
+	// and a local runner's API key — optional, because a self-hosted server usually
+	// has no auth, so a prominent key field reads as a requirement it is not.
+	// Nothing to disclose means no trigger, rather than one opening on an empty box.
+	const hasCliChoice = providerHasCliChoice(provider);
+	const hasAdvanced = hasCliChoice || isLocal;
+	// Editing already has a stored credential, so name or CLI alone is a valid save —
+	// except when the auth method is being switched, where the stored credential is
+	// the wrong shape for the new one and a replacement is the whole point.
+	const switchingAuth = Boolean(editing) && authMethod !== editing?.auth_method;
+	const canSubmit = editing
+		? Boolean(name.trim()) && (!switchingAuth || Boolean(credential.trim()))
+		: isLocal
+			? Boolean(baseUrl.trim())
+			: Boolean(credential.trim());
 	const loopbackWarning = isLocal ? loopbackHostWarning(baseUrl) : null;
+	const pending = editing ? updateProvider.isPending : createProvider.isPending;
+
+	const apiKeyField = (
+		<>
+			<Input
+				label={isLocal ? t('settings.provider.apiKeyOptional') : 'API key'}
+				type="password"
+				placeholder={info.keyPlaceholder}
+				value={apiKey}
+				onChange={(e) => setApiKey(e.target.value)}
+			/>
+			{editing && (
+				<p className="text-[13px] text-text-3">{t('settings.provider.credentialUnchangedHint')}</p>
+			)}
+		</>
+	);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		setError(null);
 		if (!canSubmit) return;
 		try {
-			await createProvider.mutateAsync({
-				provider,
-				api_key: credential,
-				label: showName ? name.trim() || undefined : undefined,
-				auth_method: authMethod,
-				...(isLocal ? { base_url: baseUrl.trim() } : {}),
-				...(runtime ? { runtime } : {}),
-			});
+			if (editing) {
+				const rotating = Boolean(credential.trim());
+				await updateProvider.mutateAsync({
+					label: name.trim(),
+					runtime,
+					// A blank credential means "keep the stored one" — sending it would ask
+					// the server to store an empty key.
+					...(rotating ? { api_key: credential, auth_method: authMethod } : {}),
+					...(isLocal ? { base_url: baseUrl.trim() } : {}),
+				});
+			} else {
+				await createProvider.mutateAsync({
+					provider,
+					api_key: credential,
+					label: showName ? name.trim() || undefined : undefined,
+					auth_method: authMethod,
+					...(isLocal ? { base_url: baseUrl.trim() } : {}),
+					...(runtime ? { runtime } : {}),
+				});
+			}
 			onDone();
 		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to add provider');
+			setError(
+				err instanceof Error
+					? err.message
+					: editing
+						? t('settings.provider.editFailed')
+						: 'Failed to add provider',
+			);
 		}
 	}
 
@@ -199,7 +264,7 @@ export function ProviderConfigForm({
 				<div className="flex flex-col gap-2">
 					<SubscriptionInstructions provider={provider} />
 					<textarea
-						required
+						required={!editing}
 						aria-label="Subscription credential"
 						value={authJson}
 						onChange={(e) => setAuthJson(e.target.value)}
@@ -227,13 +292,7 @@ export function ProviderConfigForm({
 							)}
 						</div>
 					)}
-					<Input
-						label={isLocal ? 'API key (optional)' : 'API key'}
-						type="password"
-						placeholder={info.keyPlaceholder}
-						value={apiKey}
-						onChange={(e) => setApiKey(e.target.value)}
-					/>
+					{!isLocal && apiKeyField}
 				</div>
 			)}
 
@@ -253,8 +312,11 @@ export function ProviderConfigForm({
 						{t('settings.provider.advanced')}
 					</button>
 					{advancedOpen && (
-						<div className="ml-1 border-l-2 border-border pl-3">
-							<AgentCliPicker provider={provider} value={runtime} onChange={setRuntime} />
+						<div className="ml-1 flex flex-col gap-3 border-l-2 border-border pl-3">
+							{hasCliChoice && (
+								<AgentCliPicker provider={provider} value={runtime} onChange={setRuntime} />
+							)}
+							{isLocal && authMethod !== AiAuthMethod.Subscription && apiKeyField}
 						</div>
 					)}
 				</div>
@@ -266,8 +328,8 @@ export function ProviderConfigForm({
 				<Button type="button" variant="ghost" onClick={onCancel}>
 					Cancel
 				</Button>
-				<Button type="submit" disabled={!canSubmit || createProvider.isPending}>
-					{createProvider.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+				<Button type="submit" disabled={!canSubmit || pending}>
+					{pending && <Loader2 className="w-4 h-4 animate-spin" />}
 					{submitLabel}
 				</Button>
 			</div>

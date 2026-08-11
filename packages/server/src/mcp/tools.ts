@@ -2,7 +2,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { SearchScope } from '@hezo/shared';
 import {
 	ADMIN_MENTION_SLUG,
+	AGENT_HUMAN_NAME_MAX,
 	AgentAdminStatus,
+	type AgentGender,
 	ApprovalStatus,
 	ApprovalType,
 	ArchiveFilter,
@@ -35,6 +37,7 @@ import {
 	getConnectorCapability,
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
+	inferGender,
 	isAllowedAttachmentMime,
 	isMarkdownDocSlug,
 	isTextAssetMime,
@@ -62,8 +65,15 @@ import type { Db } from '../db/database';
 import { readRunLogTail, readRunLogWindow, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { assertNoActiveRun } from '../lib/active-run';
+import {
+	applyAgentHumanName,
+	buildAgentAvatarSpec,
+	checkHumanNameAvailable,
+	isNameOnlyRole,
+} from '../lib/agent-identity';
 import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
+import { assetSearchTextFromBlob } from '../lib/asset-search-text';
 import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
@@ -96,7 +106,7 @@ import {
 } from '../lib/resolve';
 import { assertRunTaskScope } from '../lib/run-scope';
 import { deriveSkillSummary } from '../lib/skill-summary';
-import { isUniqueViolation } from '../lib/sql';
+import { isUniqueViolation, withTransaction } from '../lib/sql';
 import { applyStringEdit } from '../lib/string-edit';
 import {
 	assertChildrenAllClosed,
@@ -275,6 +285,8 @@ const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 	'update_agent_system_prompt',
 	'update_agent_system_prompts',
 	'set_agent_status',
+	'set_agent_name',
+	'generate_agent_avatar',
 	'set_agent_summary',
 	'set_agent_summaries',
 	'set_team_summary',
@@ -2276,6 +2288,12 @@ export function registerTools(
 		{
 			approval_id: z.string().describe('Hire approval ID'),
 			title: z.string().optional().describe('Updated role title'),
+			human_name: z
+				.string()
+				.trim()
+				.max(AGENT_HUMAN_NAME_MAX)
+				.optional()
+				.describe('Updated human name for the new teammate, or an empty string to clear it'),
 			role_description: z.string().optional().describe('Updated short role description'),
 			system_prompt: z
 				.string()
@@ -2370,6 +2388,14 @@ export function registerTools(
 		{
 			project: projectArg(),
 			title: z.string().describe('Role title (the slug is derived from it)'),
+			human_name: z
+				.string()
+				.trim()
+				.max(AGENT_HUMAN_NAME_MAX)
+				.optional()
+				.describe(
+					'Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out to name them during the coherence review that follows the hire.',
+				),
 			role_description: z.string().optional().describe('Short role description'),
 			system_prompt: z
 				.string()
@@ -4854,6 +4880,101 @@ export function registerTools(
 		db,
 	);
 
+	// Identity — the name a teammate is addressed by, and the face it shows.
+	tool(
+		server,
+		'set_agent_name',
+		'Give an agent the human name it is addressed by (e.g. "Max" for the Engineer), or clear it with an empty string to fall back to its role. The name displays in place of the role everywhere and becomes a second mention handle, so both @max and @engineer reach the agent. Names must be unique within the team, and the Captain, CEO and Coach are always addressed by role and cannot be named. Callable by the Captain of that team, or the CEO.',
+		{
+			project: projectArg(),
+			agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
+			name: z
+				.string()
+				.trim()
+				.max(AGENT_HUMAN_NAME_MAX, `name too long (max ${AGENT_HUMAN_NAME_MAX})`)
+				.describe('The name to use, or an empty string to clear it'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
+				return { error: 'Only the Captain of this team or the CEO can name an agent' };
+			}
+
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
+			const target = await db.query<{ slug: string }>(
+				`SELECT ma.slug FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[agentId, teamId],
+			);
+			const slug = target.rows[0]?.slug;
+			if (!slug) return { error: 'Agent not found in this team' };
+			if (isNameOnlyRole(slug)) {
+				return {
+					error: `${slug} is always addressed by its role and cannot be given a human name`,
+				};
+			}
+
+			const name = (args.name as string).trim();
+			// Checked and applied together so two concurrent renames cannot both
+			// take one handle.
+			const rejection = await withTransaction(db, async () => {
+				const conflict = await checkHumanNameAvailable(db, {
+					teamId,
+					name,
+					excludeMemberId: agentId,
+				});
+				if (conflict) return conflict;
+				await applyAgentHumanName(db, agentId, name, inferGender(name));
+				return null;
+			});
+			if (rejection) return { error: rejection.message };
+
+			return { updated: true, name: name || null };
+		},
+		db,
+	);
+
+	tool(
+		server,
+		'generate_agent_avatar',
+		"Generate a fresh pixel avatar for an agent. The face is composed from the agent's role and name, so there is nothing to choose beyond asking for a new one; call it again for a different face. Use it for a newly hired agent, or one that still has no avatar. Callable by the Captain of that team, or the CEO.",
+		{
+			project: projectArg(),
+			agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			if (!(await canCoordinateTeam(db, auth, teamId))) {
+				return { error: 'Only the Captain of this team or the CEO can change an avatar' };
+			}
+
+			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
+			if (!agentId) return { error: 'Agent not found in this team' };
+			const target = await db.query<{ slug: string; title: string; gender: AgentGender | null }>(
+				`SELECT ma.slug, ma.title, ma.gender FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[agentId, teamId],
+			);
+			const row = target.rows[0];
+			if (!row) return { error: 'Agent not found in this team' };
+
+			const spec = buildAgentAvatarSpec({ slug: row.slug, title: row.title, gender: row.gender });
+			await db.query(
+				'UPDATE member_agents SET avatar_spec = $2, updated_at = now() WHERE id = $1',
+				[agentId, JSON.stringify(spec)],
+			);
+			return { updated: true };
+		},
+		db,
+	);
+
 	tool(
 		server,
 		'set_team_summary',
@@ -5544,6 +5665,9 @@ export function registerTools(
 	> => {
 		const { db: adb, teamId, projectId, filename, blob, contentType } = opts;
 		const assetId = crypto.randomUUID();
+		// Extracted here rather than in each caller so write_project_asset and
+		// edit_project_asset cannot drift apart - the same reason this helper exists.
+		const searchText = await assetSearchTextFromBlob(blob, contentType);
 		const { byteSize, sha256 } = await assets.write(projectId, assetId, blob);
 		let result: Awaited<ReturnType<typeof upsertProjectAsset>>;
 		try {
@@ -5558,6 +5682,7 @@ export function registerTools(
 				uploadedByMemberId: opts.uploadedByMemberId,
 				width: opts.width,
 				height: opts.height,
+				searchText,
 			});
 		} catch (e) {
 			await assets.delete(projectId, assetId).catch(() => {});
@@ -6087,8 +6212,9 @@ export function registerTools(
 				id: string;
 				content_type: string;
 				archived_at: string | null;
+				search_text: string | null;
 			}>(
-				'SELECT id, content_type, archived_at FROM assets WHERE project_id = $1 AND original_filename = $2',
+				'SELECT id, content_type, archived_at, search_text FROM assets WHERE project_id = $1 AND original_filename = $2',
 				[scope.projectId, from],
 			);
 			if (found.rows.length === 0) return { error: `Asset 'assets/${from}' not found` };
@@ -6111,10 +6237,22 @@ export function registerTools(
 			let inserted: { id: string; original_filename: string };
 			try {
 				const r = await db.query<{ id: string; original_filename: string }>(
-					`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+					// The copy has identical bytes, so its search text is the source's -
+					// carry the column across rather than re-extracting it.
+					`INSERT INTO assets (id, team_id, project_id, content_type, byte_size, sha256, original_filename, uploaded_by_member_id, search_text)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 					 RETURNING id, original_filename`,
-					[assetId, teamId, projectId, source.content_type, byteSize, sha256, to, uploadedBy],
+					[
+						assetId,
+						teamId,
+						projectId,
+						source.content_type,
+						byteSize,
+						sha256,
+						to,
+						uploadedBy,
+						source.search_text,
+					],
 				);
 				inserted = r.rows[0];
 			} catch (e) {
@@ -6666,7 +6804,7 @@ export function registerTools(
 	tool(
 		server,
 		'full_text_search',
-		'Full-text keyword search across the team skills database, tasks, project docs, and task comments. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first.',
+		'Full-text keyword search across the team skills database, tasks, project docs, task comments, and project assets. Returns results ranked by relevance (keyword + stemming match). A bare task number or full identifier (e.g. "169" or "HM-169") resolves directly to that task, ranked first. Assets match on their library path, folders included, so any segment of "launch/hero-image.png" finds it; textual assets (.md, .txt, .html, .svg, and the script/data formats stored as plain text such as .py, .js, .json, .csv, .yaml) also match on their content, while binary ones (images, PDFs, media, archives) match on path alone. Use it to find work product an earlier run produced before rebuilding it; an asset hit returns its path, which you pass to read_project_asset. An asset saved before this search existed matches on path until it is next written. Archived items are excluded.',
 		{
 			project: projectArg(),
 			query: z.string().describe('Search query (keywords)'),

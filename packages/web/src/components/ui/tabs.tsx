@@ -40,8 +40,11 @@ interface TabsProps {
 // others, merging into that panel. A *transparent* bottom border wouldn't do it:
 // the strip's baseline shows straight through, so the active tab reads as a
 // closed box with a bottom border. Inactive tabs stay recessed on the baseline.
+// `shrink-0 whitespace-nowrap` keeps a tab at its natural width: in a strip that
+// scrolls (`className="overflow-x-auto"`), the tabs must overflow rather than
+// compress into unreadable slivers.
 const BASE_TAB =
-	'relative flex items-center gap-1.5 rounded-t-md border px-3 py-2 text-[13px] font-medium transition-colors';
+	'relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-t-md border px-3 py-2 text-[13px] font-medium transition-colors';
 
 // Maps each supported active-surface fill to the matching bottom-border colour.
 // The `!` (important) is load-bearing: a global unlayered `* { border-color }`

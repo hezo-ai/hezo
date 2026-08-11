@@ -261,9 +261,11 @@ describe('acquireRunContainer', () => {
 		// a warm idle container is correctly *not* blocked, because reusing a
 		// container already running consumes no new budget. The budget only bites
 		// when the pool has nothing left to give.
-		await db.query(`UPDATE container_pool_members SET state = 'busy' WHERE project_id = $1`, [
-			projectId,
-		]);
+		//
+		// Instance-wide rather than for this project alone, because an idle member
+		// anywhere is now headroom - the acquire path reclaims it rather than
+		// queueing. This case is the one where there is genuinely nothing to take.
+		await db.query(`UPDATE container_pool_members SET state = 'busy'`);
 		await setMaxContainerMemoryGb(db, 1);
 		try {
 			await expect(
@@ -271,9 +273,139 @@ describe('acquireRunContainer', () => {
 			).rejects.toBeInstanceOf(PoolCapacityError);
 		} finally {
 			await setMaxContainerMemoryGb(db, 40);
-			await db.query(`UPDATE container_pool_members SET state = 'idle' WHERE project_id = $1`, [
-				projectId,
-			]);
+			await db.query(`UPDATE container_pool_members SET state = 'idle'`);
+		}
+	});
+});
+
+/**
+ * The other half of the reported failure. Retiring a working project's surplus
+ * containers on the idle cron frees the budget within a minute; this is what
+ * closes the gap in between, when a run would otherwise sit queued behind memory
+ * its neighbour is demonstrably not using.
+ *
+ * A container belongs to its project for life - it is built around that project's
+ * workspace mount, repo clone and git identity - so the only way that memory can
+ * serve another project is for the container to go and a fresh one to be built.
+ */
+describe('acquireRunContainer reclaiming from another project', () => {
+	const TASK_STARVED = randomUUID();
+	const CAP_BYTES = 2 * 1024 ** 3;
+	let removed: string[];
+	let stopped: string[];
+
+	function reclaimingDocker(): ContainerEngine {
+		return createStubDocker({
+			createContainer: vi.fn(async () => ({ Id: `reclaim-cid-${seq++}`, Warnings: [] })),
+			startContainer: vi.fn(async () => {}),
+			execCreate: vi.fn(async () => 'exec-x'),
+			execStart: vi.fn(async () => ({ stdout: '', stderr: '' })),
+			execInspect: vi.fn(async () => ({ ExitCode: 0, Running: false, Pid: 0 })),
+			inspectContainer: vi.fn(async (id: string) => ({
+				Id: id,
+				State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+				Config: { Image: 'stub' },
+			})),
+			removeContainer: vi.fn(async (id: string) => {
+				removed.push(id);
+			}),
+			stopContainer: vi.fn(async (id: string) => {
+				stopped.push(id);
+			}),
+		});
+	}
+
+	/** Start from an empty fleet so the budget arithmetic is exactly what each case states. */
+	async function emptyFleet(): Promise<void> {
+		await db.query('DELETE FROM container_pool_members');
+		await db.query('UPDATE projects SET container_id = NULL, container_status = NULL');
+		removed = [];
+		stopped = [];
+	}
+
+	async function seedIdle(
+		project: string,
+		containerId: string,
+		over: { idleMin?: number; unpushed?: boolean } = {},
+	): Promise<void> {
+		await db.query(
+			`INSERT INTO container_pool_members
+			   (project_id, container_id, state, memory_bytes, has_unpushed_commits, last_released_at)
+			 VALUES ($1, $2, 'idle', $3, $4, now() - ($5 || ' minutes')::interval)`,
+			[project, containerId, CAP_BYTES, over.unpushed ?? false, over.idleMin ?? 10],
+		);
+	}
+
+	it('retires another project’s long-idle container rather than queueing', async () => {
+		await emptyFleet();
+		const donor = await freshProject('Reclaim Donor');
+		const starved = await freshProject('Reclaim Starved');
+		await seedIdle(donor, 'donor-idle');
+		// Room for exactly one container, which the donor is holding.
+		await setMaxContainerMemoryGb(db, 2);
+		try {
+			const acquired = await acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED);
+			expect(removed).toContain('donor-idle');
+			expect(acquired.containerId).not.toBe('donor-idle');
+			// The donor's row goes with the container - it is destroyed, never handed over.
+			const left = await db.query<{ container_id: string }>(
+				'SELECT container_id FROM container_pool_members WHERE project_id = $1',
+				[donor],
+			);
+			expect(left.rows).toEqual([]);
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
+		}
+	});
+
+	it('suspends rather than destroys a donor container holding unpushed commits', async () => {
+		// Suspending frees the memory and keeps the only copy of the work.
+		await emptyFleet();
+		const donor = await freshProject('Reclaim Risky Donor');
+		const starved = await freshProject('Reclaim Risky Starved');
+		await seedIdle(donor, 'donor-risky', { unpushed: true });
+		await setMaxContainerMemoryGb(db, 2);
+		try {
+			await acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED);
+			expect(stopped).toContain('donor-risky');
+			expect(removed).not.toContain('donor-risky');
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
+		}
+	});
+
+	it('never reclaims a container that has only just gone idle', async () => {
+		// A project releasing a container between two runs seconds apart is
+		// mid-burst. Stripping it there makes both runs pay a cold start to hand
+		// memory to a third project that would lose it the same way.
+		await emptyFleet();
+		const donor = await freshProject('Reclaim Fresh Donor');
+		const starved = await freshProject('Reclaim Fresh Starved');
+		await seedIdle(donor, 'donor-fresh', { idleMin: 0 });
+		await setMaxContainerMemoryGb(db, 2);
+		try {
+			await expect(
+				acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED),
+			).rejects.toBeInstanceOf(PoolCapacityError);
+			expect(removed).toEqual([]);
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
+		}
+	});
+
+	it('reuses its own warm container rather than reclaiming somebody else’s', async () => {
+		await emptyFleet();
+		const donor = await freshProject('Reclaim Untouched Donor');
+		const mine = await freshProject('Reclaim Self Server');
+		await seedIdle(donor, 'donor-untouched');
+		await seedIdle(mine, 'my-warm');
+		await setMaxContainerMemoryGb(db, 2);
+		try {
+			const acquired = await acquireRunContainer(deps(reclaimingDocker()), mine, TASK_STARVED);
+			expect(acquired.containerId).toBe('my-warm');
+			expect(removed).toEqual([]);
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
 		}
 	});
 });

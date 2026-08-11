@@ -15,6 +15,16 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
 > HTTPS, systemd, and the firewall - on DigitalOcean, Hetzner, Vultr, Linode, or
 > Lightsail. This page covers the manual shape if you'd rather set it up yourself.
 
+> **Running agent containers on a
+> [managed sandbox service](/docs/containers/remote/overview) instead?** Then the server
+> needs no Docker at all, and a much smaller VPS will do - the containers' memory lives
+> with the provider, not on this host. Skip the Docker steps below and pass
+> `--sandbox-backend` on first start
+> ([configuration](/docs/deployment/configuration#running-agent-containers-on-a-managed-sandbox-service)),
+> or move an already-running instance over from **Settings -> Containers**
+> ([Switching at any time](/docs/containers/overview#switching-at-any-time)) - restarting
+> with different environment variables does not switch an existing instance.
+
 ## The shape of a cloud deployment
 
 1. **Provision a host with Docker** and install the `hezo` binary

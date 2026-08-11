@@ -10,7 +10,13 @@ import {
 	type WsServerMessage,
 } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { WebSocketClient } from '../src/lib/ws';
+import {
+	HEARTBEAT_INTERVAL_MS,
+	HEARTBEAT_TIMEOUT_MS,
+	RESUME_STALE_HIDDEN_MS,
+	WebSocketClient,
+} from '../src/lib/ws';
+import { restorePageVisibility, setPageHidden } from './helpers/page-visibility';
 
 /** A minimal hand-rolled socket exposing the surface WebSocketClient reads/writes. */
 interface FakeSocket {
@@ -47,6 +53,18 @@ function injectSocket(client: WebSocketClient, socket: FakeSocket): void {
 	(client as unknown as { ws: FakeSocket }).ws = socket;
 }
 
+/** Wire the real handlers the client installed onto its RWS into a fake socket. */
+function adoptHandlers(client: WebSocketClient, fake: FakeSocket): void {
+	const real = (client as unknown as { ws: Pick<FakeSocket, 'onopen' | 'onmessage'> }).ws;
+	fake.onopen = real.onopen;
+	fake.onmessage = real.onmessage;
+	injectSocket(client, fake);
+}
+
+function pingsIn(fake: FakeSocket): unknown[] {
+	return fake.sent.map((s) => JSON.parse(s)).filter((m) => m.action === WsClientAction.Ping);
+}
+
 const OPEN = WebSocket.OPEN;
 const CLOSED = WebSocket.CLOSED;
 
@@ -66,6 +84,8 @@ describe('WebSocketClient', () => {
 			configurable: true,
 			value: originalLocation,
 		});
+		restorePageVisibility();
+		vi.useRealTimers();
 		vi.restoreAllMocks();
 	});
 
@@ -406,6 +426,129 @@ describe('WebSocketClient', () => {
 
 			expect(fake.closed).toBe(1);
 			client.disconnect();
+		});
+	});
+
+	// A mobile OS freezes a backgrounded PWA and kills its socket. Returning to the
+	// foreground must redial immediately rather than wait out the backoff ladder,
+	// which is what made a freshly-opened app show "Connection lost".
+	describe('returning to the foreground', () => {
+		test('redials when the socket is no longer open', () => {
+			const client = new WebSocketClient();
+			client.connect('tok');
+			const fake = makeFakeSocket(CLOSED);
+			injectSocket(client, fake);
+
+			setPageHidden(true);
+			setPageHidden(false);
+
+			expect(fake.closed).toBe(1);
+			client.disconnect();
+		});
+
+		test('leaves a healthy socket alone after a brief tab switch', () => {
+			const client = new WebSocketClient();
+			client.connect('tok');
+			const fake = makeFakeSocket(OPEN);
+			injectSocket(client, fake);
+
+			setPageHidden(true);
+			setPageHidden(false);
+
+			expect(fake.closed).toBe(0);
+			client.disconnect();
+		});
+
+		// The zombie case: a socket frozen long enough can keep reading OPEN over a
+		// TCP connection that is already dead, so readyState alone can't be trusted.
+		test('redials after a long background even when the socket still reads OPEN', () => {
+			let now = 1_000_000;
+			vi.spyOn(Date, 'now').mockImplementation(() => now);
+			const client = new WebSocketClient();
+			client.connect('tok');
+			const fake = makeFakeSocket(OPEN);
+			injectSocket(client, fake);
+
+			setPageHidden(true);
+			now += RESUME_STALE_HIDDEN_MS + 1_000;
+			setPageHidden(false);
+
+			expect(fake.closed).toBe(1);
+			client.disconnect();
+		});
+
+		test('stops listening once disconnected', () => {
+			const client = new WebSocketClient();
+			client.connect('tok');
+			client.disconnect();
+			const fake = makeFakeSocket(CLOSED);
+			injectSocket(client, fake);
+
+			setPageHidden(true);
+			setPageHidden(false);
+
+			expect(fake.closed).toBe(0);
+		});
+	});
+
+	describe('heartbeat', () => {
+		/** Open a client against a fake socket with the heartbeat running. */
+		function openClient(): { client: WebSocketClient; fake: FakeSocket } {
+			const client = new WebSocketClient();
+			client.connect('tok');
+			const fake = makeFakeSocket(OPEN);
+			adoptHandlers(client, fake);
+			fake.onopen?.();
+			return { client, fake };
+		}
+
+		test('probes an idle socket and redials when nothing answers', () => {
+			vi.useFakeTimers();
+			const { client, fake } = openClient();
+
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+			expect(pingsIn(fake)).toEqual([{ action: WsClientAction.Ping }]);
+			expect(fake.closed).toBe(0);
+
+			vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS);
+			expect(fake.closed).toBe(1);
+			client.disconnect();
+		});
+
+		// Any inbound frame is proof of life, so a busy socket never trips the probe
+		// even if the pong itself is stuck behind a burst of log frames.
+		test('an inbound frame settles an outstanding probe', () => {
+			vi.useFakeTimers();
+			const { client, fake } = openClient();
+
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+			fake.onmessage?.({ data: JSON.stringify({ type: WsMessageType.Pong }) });
+			vi.advanceTimersByTime(HEARTBEAT_TIMEOUT_MS);
+
+			expect(fake.closed).toBe(0);
+			client.disconnect();
+		});
+
+		test('sends no probes while the page is backgrounded', () => {
+			vi.useFakeTimers();
+			const { client, fake } = openClient();
+
+			setPageHidden(true);
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
+
+			expect(pingsIn(fake)).toEqual([]);
+			expect(fake.closed).toBe(0);
+			client.disconnect();
+		});
+
+		test('stops probing once disconnected', () => {
+			vi.useFakeTimers();
+			const { client, fake } = openClient();
+
+			client.disconnect();
+			vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
+
+			expect(pingsIn(fake)).toEqual([]);
 		});
 	});
 });

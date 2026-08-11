@@ -49,6 +49,7 @@ Describe this agent's role and responsibilities here.
 
 const emptyValues: HireFormValues = {
 	title: '',
+	humanName: '',
 	roleDesc: '',
 	systemPrompt: STARTER_SYSTEM_PROMPT,
 	// Default a new hire to reporting to the Captain (every team has one).
@@ -65,6 +66,7 @@ const emptyValues: HireFormValues = {
 function valuesFromPayload(p: Record<string, unknown>): HireFormValues {
 	return {
 		title: (p.title as string) ?? '',
+		humanName: (p.human_name as string) ?? '',
 		roleDesc: (p.role_description as string) ?? '',
 		systemPrompt: (p.system_prompt as string) ?? '',
 		reportsTo: (p.reports_to as string) ?? '',
@@ -81,6 +83,7 @@ function valuesFromPayload(p: Record<string, unknown>): HireFormValues {
 function editsFromValues(v: HireFormValues): HireProposalEdits {
 	return {
 		title: v.title,
+		human_name: v.humanName,
 		role_description: v.roleDesc,
 		system_prompt: v.systemPrompt,
 		reports_to: v.reportsTo,
@@ -114,6 +117,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 		e.preventDefault();
 		const result = await onboardAgent.mutateAsync({
 			title: values.title,
+			human_name: values.humanName || undefined,
 			role_description: values.roleDesc || undefined,
 			system_prompt: values.systemPrompt || undefined,
 			reports_to: values.reportsTo || undefined,

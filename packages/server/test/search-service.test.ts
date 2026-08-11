@@ -58,6 +58,21 @@ beforeAll(async () => {
 		        ('Retired Skill', 'retired-skill', 'Old deployment notes', false)`,
 	);
 
+	// Assets: a text one indexed on content, a binary one on filename alone, a
+	// foldered/hyphenated path, and an archived row that must never surface.
+	// `search_text` is written by the app at upload time, so it is set explicitly
+	// here exactly as `InsertAssetInput.searchText` would.
+	await db.query(
+		`INSERT INTO assets (team_id, project_id, content_type, byte_size, sha256, original_filename, search_text)
+		 VALUES ($1, $2, 'text/markdown', 128, 'aa', 'reports/retention.md', 'Churn analysis for the onboarding funnel'),
+		        ($1, $2, 'image/png', 256, 'bb', 'launch/hero-image.png', NULL),
+		        ($1, $2, 'text/plain', 64, 'cc', 'archived-notes.txt', 'Superseded onboarding notes')`,
+		[teamId, projectId],
+	);
+	await db.query(
+		"UPDATE assets SET archived_at = now() WHERE original_filename = 'archived-notes.txt'",
+	);
+
 	// A text comment (searchable) plus a system comment (must be excluded).
 	const commentTask = await seedTask('Payment flow', 'Stripe checkout');
 	await db.query(
@@ -187,6 +202,64 @@ describe('fullTextSearch', () => {
 		expect(results[0].type).toBe('comment');
 		expect(results[0].projectSlug).toBe('search-project');
 		expect(results[0].snippet).toContain(`${HIGHLIGHT_SENTINEL}Stripe${HIGHLIGHT_SENTINEL}`);
+	});
+
+	it('finds an asset by any segment of its foldered filename', async () => {
+		// Raw tokenization emits `launch/hero-image.png` as one lexeme, so each of
+		// these would miss without the normalized copy in the generated column.
+		for (const term of ['launch', 'hero', 'image', 'png']) {
+			const results = await fullTextSearch(db, [teamId], term, { scope: 'assets' });
+			expect(
+				results.map((r) => r.assetFilename),
+				term,
+			).toContain('launch/hero-image.png');
+		}
+	});
+
+	it('finds a text asset by its content and carries viewer navigation hints', async () => {
+		const results = await fullTextSearch(db, [teamId], 'churn', { scope: 'assets' });
+		expect(results.length).toBe(1);
+		expect(results[0].type).toBe('asset');
+		expect(results[0].title).toBe('reports/retention.md');
+		expect(results[0].projectSlug).toBe('search-project');
+		expect(results[0].assetFilename).toBe('reports/retention.md');
+		expect(results[0].assetContentType).toBe('text/markdown');
+		expect(results[0].snippet).toContain(`${HIGHLIGHT_SENTINEL}Churn${HIGHLIGHT_SENTINEL}`);
+	});
+
+	it('matches a binary asset on its filename only, with no snippet', async () => {
+		const byName = await fullTextSearch(db, [teamId], 'hero', { scope: 'assets' });
+		const hit = byName.find((r) => r.assetFilename === 'launch/hero-image.png');
+		expect(hit).toBeDefined();
+		expect(hit?.snippet).toBe('');
+		// A content term cannot reach a binary asset - there is nothing indexed.
+		const byContent = await fullTextSearch(db, [teamId], 'churn', { scope: 'assets' });
+		expect(byContent.map((r) => r.assetFilename)).not.toContain('launch/hero-image.png');
+	});
+
+	it('ranks a filename match above a content-only match for the same term', async () => {
+		const results = await fullTextSearch(db, [teamId], 'retention', { scope: 'assets' });
+		expect(results[0].assetFilename).toBe('reports/retention.md');
+	});
+
+	it('excludes archived assets, like archived docs', async () => {
+		const results = await fullTextSearch(db, [teamId], 'superseded', { scope: 'assets' });
+		expect(results).toEqual([]);
+	});
+
+	it('scopes assets to the given teams', async () => {
+		const other = await db.query<{ id: string }>(
+			"INSERT INTO teams (name, slug) VALUES ('Asset Other Co', 'asset-other-co') RETURNING id",
+		);
+		const results = await fullTextSearch(db, [other.rows[0].id], 'churn', { scope: 'assets' });
+		expect(results).toEqual([]);
+	});
+
+	it("scope 'tasks' excludes assets and vice versa", async () => {
+		const asTasks = await fullTextSearch(db, [teamId], 'retention', { scope: 'tasks' });
+		expect(asTasks).toEqual([]);
+		const asAssets = await fullTextSearch(db, [teamId], 'login', { scope: 'assets' });
+		expect(asAssets).toEqual([]);
 	});
 
 	it('scopes team-owned content to the given teams', async () => {

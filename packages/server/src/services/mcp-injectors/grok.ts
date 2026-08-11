@@ -16,7 +16,7 @@ import type {
  * xAI Grok Build (`grok`) CLI runtime adapter.
  *
  * The grok CLI reads its config from `$GROK_HOME/config.toml` (GROK_HOME is set
- * per-run to the home mount — see SUBSCRIPTION_LAYOUTS). MCP servers are declared
+ * per-run to the home mount — see RUNTIME_HOME_LAYOUTS). MCP servers are declared
  * as `[mcp_servers.<name>]` tables: HTTP servers carry a `url` + `enabled` and an
  * inline `[mcp_servers.<name>.headers]` sub-table for the bearer `Authorization`
  * header (verified against `grok mcp add`); stdio servers carry `command`/`args`

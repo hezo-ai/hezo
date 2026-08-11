@@ -38,7 +38,7 @@ import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
 import { useShellWebSockets } from '../hooks/use-websocket';
 import { api } from '../lib/api';
-import { useSyncInstanceLocale } from '../lib/i18n';
+import { useI18n, useSyncInstanceLocale } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
 
 function RootLayout() {
@@ -74,6 +74,7 @@ export function UnreachableScreen({
 	isNetwork: boolean;
 	onRetry: () => Promise<unknown>;
 }) {
+	const { t } = useI18n();
 	const [retrying, setRetrying] = useState(false);
 	const handleRetry = useCallback(async () => {
 		setRetrying(true);
@@ -97,14 +98,12 @@ export function UnreachableScreen({
 					{message}
 				</p>
 				{isNetwork && (
-					<p className="max-w-sm text-sm text-text-2">
-						We'll reconnect automatically the moment the server is back.
-					</p>
+					<p className="max-w-sm text-sm text-text-2">{t('connection.unreachableHint')}</p>
 				)}
 			</div>
 			<Button onClick={handleRetry} disabled={retrying}>
 				<RefreshCw className="h-4 w-4" aria-hidden="true" />
-				{retrying ? 'Retrying…' : 'Retry now'}
+				{retrying ? t('connection.retrying') : t('connection.retryNow')}
 			</Button>
 		</div>
 	);
@@ -113,6 +112,7 @@ export function UnreachableScreen({
 function AppShell() {
 	const { data: status, isPending, isError, error, errorUpdatedAt, refetch } = useStatus();
 	const navigate = useNavigate();
+	const { t } = useI18n();
 	// The instance locale rides on /api/status, so the provider adopts it from
 	// the payload already being fetched rather than requesting it again. Absent
 	// while the server is booting, in which case the stored hint stands; and
@@ -163,7 +163,7 @@ function AppShell() {
 		const isNetwork = !raw || /failed to fetch|load failed|networkerror/i.test(raw);
 		// The query already auto-retries on an interval, so the copy doesn't claim
 		// "Retrying…" — that state is surfaced only on the explicit Retry-now button.
-		const message = isNetwork ? "Can't reach the server." : (raw ?? '');
+		const message = isNetwork ? t('connection.unreachable') : (raw ?? '');
 		return <UnreachableScreen message={message} isNetwork={isNetwork} onRetry={refetch} />;
 	}
 

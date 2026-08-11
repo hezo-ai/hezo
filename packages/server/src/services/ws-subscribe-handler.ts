@@ -1,4 +1,4 @@
-import { DEFAULT_TEAM_ID, wsRoom } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, WsMessageType, type WsPongMessage, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
 import type { ContainerLogStreamer } from './container-logs';
 import type { ContainerEngine } from './docker';
@@ -114,6 +114,15 @@ export async function handleWsSubscribe(
 		});
 		return;
 	}
+}
+
+/**
+ * Answer a client liveness probe. Deliberately depends on nothing but the socket: it
+ * is dispatched ahead of the manager guards so a probe is still answered on a socket
+ * that opened while some subsystem was still coming up.
+ */
+export function handleWsPing(ws: WsSocket, deps: Pick<WsSubscribeDeps, 'sendToSocket'>): void {
+	deps.sendToSocket(ws, { type: WsMessageType.Pong } satisfies WsPongMessage);
 }
 
 export function handleWsUnsubscribe(

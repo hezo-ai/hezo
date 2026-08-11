@@ -18,14 +18,16 @@
  * point for a published team, not a signed artifact.
  */
 
-import type { AgentEffort } from '@hezo/shared';
+import type { AgentEffort, AgentGender, AvatarSpec } from '@hezo/shared';
 import {
 	CAPTAIN_AGENT_SLUG,
 	generateTeamKeywords,
+	inferGender,
 	MARKETPLACE_SCHEMA_VERSION,
 	type MarketplaceCaptainOverride,
 	type MarketplaceRosterAgent,
 	type MarketplaceTeamDef,
+	makeAvatarSpec,
 	RESERVED_ROSTER_SLUGS,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
@@ -48,6 +50,9 @@ interface MemberRow {
 	id: string;
 	slug: string;
 	title: string;
+	human_name: string | null;
+	gender: AgentGender | null;
+	avatar_spec: AvatarSpec | null;
 	role_description: string;
 	summary: string;
 	team_context: string;
@@ -80,7 +85,8 @@ export async function exportTeamBundle(db: Db, teamId: string): Promise<Marketpl
 	// Cross-team instance agents (CEO/Coach) live in HQ, not here, so this scope
 	// already excludes them; the reserved-slug filter below is belt-and-braces.
 	const membersRes = await db.query<MemberRow>(
-		`SELECT ma.id, ma.slug, ma.title, ma.role_description, ma.summary, ma.team_context,
+		`SELECT ma.id, ma.slug, ma.title, ma.human_name, ma.gender, ma.avatar_spec,
+		        ma.role_description, ma.summary, ma.team_context,
 		        ma.default_effort::text AS default_effort,
 		        ma.heartbeat_interval_min, ma.run_timeout_min,
 		        ma.monthly_budget_cents, ma.daily_budget_cents, ma.weekly_budget_cents,
@@ -129,6 +135,19 @@ export async function exportTeamBundle(db: Db, teamId: string): Promise<Marketpl
 		roster.push({
 			slug: m.slug,
 			title: m.title,
+			// The team travels with the people on it: whatever this project named
+			// the role and whichever avatar it settled on is what a project
+			// provisioned from the exported bundle will start with.
+			human_name: m.human_name,
+			gender: m.gender ?? inferGender(m.human_name),
+			avatar_spec:
+				m.avatar_spec ??
+				makeAvatarSpec({
+					seed: m.id,
+					gender: m.gender ?? inferGender(m.human_name),
+					roleSlug: m.slug,
+					roleTitle: m.title,
+				}),
 			reports_to_slug: resolveReportsToSlug(m.reports_to),
 			sort_order: sortOrder++,
 			role_description: m.role_description,

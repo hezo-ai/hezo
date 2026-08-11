@@ -7,7 +7,7 @@ import {
 	useCommentBody,
 } from '../../hooks/use-comments';
 import { useCopyFeedback } from '../../hooks/use-copy-feedback';
-import { defaultAvatarForSlug } from '../../lib/default-avatars';
+import { agentAvatarUrl } from '../../lib/agent-avatar';
 import { AgentLink } from '../agent-link';
 import {
 	type CommentData,
@@ -177,7 +177,10 @@ export function CommentRow({
 						initials={authorName.slice(0, 2)}
 						size="sm"
 						color={avatarColorFromString(authorName)}
-						imageUrl={c.author_icon_url ?? defaultAvatarForSlug(authorAgentSlug)}
+						imageUrl={
+							c.author_icon_url ??
+							agentAvatarUrl({ slug: authorAgentSlug, avatar_spec: c.author_avatar_spec })
+						}
 					/>
 				</AgentLink>
 			) : (

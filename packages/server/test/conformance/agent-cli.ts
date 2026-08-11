@@ -137,6 +137,10 @@ const RUNTIME_REPORTS_MCP_STATUS: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.OpenCode]: false,
 	[AgentRuntime.Grok]: false,
 	[AgentRuntime.Kimi]: false,
+	// Prime Agent reports no MCP connection status either — and could not usefully:
+	// its servers are Python skills imported inside the kernel, so a server is only
+	// contacted when the model actually calls one, not at session start.
+	[AgentRuntime.PrimeAgent]: false,
 };
 
 /**
@@ -383,6 +387,7 @@ export function describeAgentCliConformance(
 			const homeMount: RuntimeHomeMount | null = MCP_ADAPTERS[runtime].capabilities.requiresHomeDir
 				? await ensureRuntimeHomeDir(
 						mp.provider,
+						runtime,
 						host.dataDir,
 						seat.team_id,
 						seat.project_id,

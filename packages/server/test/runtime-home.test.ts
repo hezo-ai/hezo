@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { AiAuthMethod, AiProvider } from '@hezo/shared';
+import { AgentRuntime, AiAuthMethod, AiProvider, PROVIDER_TO_RUNTIME } from '@hezo/shared';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createFakeDockerClient, registerFakeContainerRoot } from '../src/services/fake-docker';
 import {
@@ -44,6 +44,7 @@ function buildSubscriptionMountWithEngine(
 	runId: string,
 	provider: AiProvider,
 	credential: { value: string; authMethod: AiAuthMethod },
+	runtime: AgentRuntime = PROVIDER_TO_RUNTIME[provider],
 ) {
 	return buildSubscriptionMount(
 		base,
@@ -51,6 +52,7 @@ function buildSubscriptionMountWithEngine(
 		PROJECT,
 		runId,
 		provider,
+		runtime,
 		{ ...credential, baseUrl: null, runtime: null },
 		fakeEngine(base),
 		CONTAINER,
@@ -126,6 +128,7 @@ describe('ensureRuntimeHomeDir under a strict umask', () => {
 		const mount = await withUmask(0o077, () =>
 			ensureRuntimeHomeDir(
 				AiProvider.DeepSeek,
+				AgentRuntime.ClaudeCode,
 				base,
 				TEAM,
 				PROJECT,
@@ -137,7 +140,14 @@ describe('ensureRuntimeHomeDir under a strict umask', () => {
 		);
 		expect(mount).not.toBeNull();
 
-		const leaf = getHostSubscriptionRoot(AiProvider.DeepSeek, base, TEAM, PROJECT, RUN);
+		const leaf = getHostSubscriptionRoot(
+			AiProvider.DeepSeek,
+			AgentRuntime.ClaudeCode,
+			base,
+			TEAM,
+			PROJECT,
+			RUN,
+		);
 		expect(leaf).not.toBeNull();
 		const providerDir = dirname(leaf as string); // .../subscription/claude-code-deepseek
 		const subscriptionDir = dirname(providerDir); // .../subscription
@@ -146,6 +156,62 @@ describe('ensureRuntimeHomeDir under a strict umask', () => {
 		expect(mode(subscriptionDir) & 0o001).toBe(0o001);
 		expect(mode(providerDir) & 0o001).toBe(0o001);
 		expect(mode(leaf as string) & 0o001).toBe(0o001);
+	});
+});
+
+/**
+ * The home layout must follow the credential's RESOLVED runtime, not the
+ * provider's default.
+ *
+ * When the layout was keyed by provider, a Moonshot credential switched onto
+ * Kimi Code was handed `HEZO_CLAUDE_CONFIG_DIR` and never got `KIMI_CODE_HOME`
+ * — so the CLI never read its injected MCP config, the Stop hook could not find
+ * the session log, and the usage scrape found nothing and priced the run at $0.
+ * Nothing failed loudly; the run just did the wrong thing.
+ */
+describe('the home layout follows the resolved runtime', () => {
+	let base: string;
+	afterEach(() => {
+		if (base) rmSync(base, { recursive: true, force: true });
+	});
+
+	async function homeFor(provider: AiProvider, runtime: AgentRuntime) {
+		base ||= mkdtempSync(join(tmpdir(), 'hezo-rt-'));
+		return ensureRuntimeHomeDir(
+			provider,
+			runtime,
+			base,
+			TEAM,
+			PROJECT,
+			RUN,
+			null,
+			fakeEngine(base),
+			CONTAINER,
+		);
+	}
+
+	it('gives a Moonshot credential KIMI_CODE_HOME when it runs on Kimi Code', async () => {
+		const mount = await homeFor(AiProvider.Kimi, AgentRuntime.Kimi);
+		expect(mount?.envEntry.startsWith('KIMI_CODE_HOME=')).toBe(true);
+	});
+
+	it('gives the same provider HEZO_CLAUDE_CONFIG_DIR when it runs on Claude Code', async () => {
+		const mount = await homeFor(AiProvider.Kimi, AgentRuntime.ClaudeCode);
+		expect(mount?.envEntry.startsWith('HEZO_CLAUDE_CONFIG_DIR=')).toBe(true);
+	});
+
+	it('separates the two runtimes into different directories', async () => {
+		const onKimi = await homeFor(AiProvider.Kimi, AgentRuntime.Kimi);
+		const onClaude = await homeFor(AiProvider.Kimi, AgentRuntime.ClaudeCode);
+		expect(onKimi?.containerDir).not.toBe(onClaude?.containerDir);
+	});
+
+	it('keeps two providers on one runtime in different directories', async () => {
+		// The prefix is per-CLI now, so the provider suffix is the only thing
+		// stopping two Claude Code accounts sharing a config dir.
+		const anthropic = await homeFor(AiProvider.Anthropic, AgentRuntime.ClaudeCode);
+		const deepseek = await homeFor(AiProvider.DeepSeek, AgentRuntime.ClaudeCode);
+		expect(anthropic?.containerDir).not.toBe(deepseek?.containerDir);
 	});
 });
 
@@ -171,7 +237,14 @@ describe('buildSubscriptionMount under a strict umask', () => {
 		expect(mode(dirname(hostAuthFile)) & 0o001).toBe(0o001);
 
 		// .../subscription/codex/<run> → .../subscription is two levels up from the leaf.
-		const leaf = getHostSubscriptionRoot(AiProvider.OpenAI, base, TEAM, PROJECT, RUN);
+		const leaf = getHostSubscriptionRoot(
+			AiProvider.OpenAI,
+			AgentRuntime.Codex,
+			base,
+			TEAM,
+			PROJECT,
+			RUN,
+		);
 		const subscriptionDir = dirname(dirname(leaf as string));
 		expect(mode(subscriptionDir) & 0o001).toBe(0o001);
 	});

@@ -110,14 +110,26 @@ test.describe('Task list — ID never wraps, truncated titles get a tooltip', ()
 		// --- The depth indent still renders on the now `max-w-0` title cell ---
 		const subRow = page.getByRole('row').filter({ hasText: subTitle });
 		await expect(subRow).toBeVisible({ timeout: 20_000 });
-		const parentTitleLeft = await shortRow
-			.getByText(shortTitle, { exact: true })
-			.evaluate((el) => el.getBoundingClientRect().left);
-		const subTitleLeft = await subRow
-			.getByText(subTitle, { exact: true })
-			.evaluate((el) => el.getBoundingClientRect().left);
-		// pl-5 sm:pl-6 (20-24px) plus the ↳ marker and its gap.
-		expect(subTitleLeft).toBeGreaterThan(parentTitleLeft + 20);
+		// Polled, and both edges read inside the same attempt: the sub-task row
+		// arrives via a list refetch that re-flows the table, so measuring the two
+		// rows in separate awaits could straddle layout passes and compare a
+		// settled parent against a mid-reflow child. Retrying keeps the assertion's
+		// teeth - a genuinely missing indent still never satisfies it.
+		await expect
+			.poll(
+				async () => {
+					const parentLeft = await shortRow
+						.getByText(shortTitle, { exact: true })
+						.evaluate((el) => el.getBoundingClientRect().left);
+					const subLeft = await subRow
+						.getByText(subTitle, { exact: true })
+						.evaluate((el) => el.getBoundingClientRect().left);
+					return subLeft - parentLeft;
+				},
+				{ timeout: 10_000 },
+			)
+			// pl-5 sm:pl-6 (20-24px) plus the ↳ marker and its gap.
+			.toBeGreaterThan(20);
 
 		// --- A title that fits gets no tooltip (the truncation gate) ---
 		// Radix keeps hoverable tooltip content open across a grace area between the
