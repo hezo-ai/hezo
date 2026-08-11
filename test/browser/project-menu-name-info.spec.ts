@@ -23,7 +23,7 @@ test('the info tooltip is suffixed to the project name, not pushed to the panel 
 	await page.goto(HQ_TASKS);
 	await waitForPageLoad(page);
 
-	const name = page.getByTestId('project-sidebar-name');
+	const name = page.getByTestId('project-sidebar-dashboard');
 	const info = page.getByTestId('project-sidebar-info');
 	await expect(name).toBeVisible({ timeout: 20000 });
 	await expect(info).toBeVisible();
@@ -72,7 +72,7 @@ test('a long project name truncates and still keeps the info icon beside it', as
 	await page.goto(HQ_TASKS);
 	await waitForPageLoad(page);
 
-	const name = page.getByTestId('project-sidebar-name');
+	const name = page.getByTestId('project-sidebar-dashboard');
 	const info = page.getByTestId('project-sidebar-info');
 	await expect(name).toHaveText(LONG_NAME, { timeout: 20000 });
 
