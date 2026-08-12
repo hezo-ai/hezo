@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 16,
+			"notes": "Role prompts are rewritten to a shorter, more direct register, and the shared Captain guidance they include is tightened. No workflow, approval gate or rule changed."
+		},
+		{
 			"version": 14,
 			"notes": "Role prompts no longer each carry their own copy of the team-preferences reminder, which every agent now receives from the shared instructions."
 		},

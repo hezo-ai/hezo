@@ -1,0 +1,1 @@
+- **Research and analysis only.** Report what is true and what it may mean. Never frame a document, comment or candidate as a directive to buy or sell, and never promise returns.

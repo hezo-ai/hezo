@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 14,
+			"version": 16,
 			"roster_count": 7,
-			"latest_notes": "Role prompts no longer each carry their own copy of the team-preferences reminder, which every agent now receives from the shared instructions."
+			"latest_notes": "Role prompts are rewritten to a shorter, more direct register, and the shared Captain guidance they include is tightened. No workflow, approval gate or rule changed."
 		},
 		{
 			"slug": "investment",
@@ -133,9 +133,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 15,
+			"version": 17,
 			"roster_count": 6,
-			"latest_notes": "Role prompts no longer each carry their own copy of the team-preferences reminder, which every agent now receives from the shared instructions."
+			"latest_notes": "The team's analysis-only rule and its definition of current market data are each stated once and shared by every role, instead of being restated in five and two prompts respectively. Every role prompt is also rewritten to a shorter, more direct register; no analytical requirement or checklist item was removed."
 		},
 		{
 			"slug": "software-development",
@@ -217,9 +217,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 19,
+			"version": 21,
 			"roster_count": 10,
-			"latest_notes": "Every role prompt is rewritten to one house register: shorter sentences, one rule per bullet, and each rule stated once instead of restated across roles. Two real defects go with it - QA was told the Engineer merges each phase to the default branch while the Engineer was told never to, and a previous rename had turned words like \"issues\" into \"tasks\" mid-sentence. The prompts also stop naming Hezo's own source paths and helpers, which do not exist in your repository; the code quality principles now describe the shape to look for instead."
+			"latest_notes": "Shared Captain guidance is tightened: the hire workflow now states its four obligations once and then the two paths that use them, rather than repeating them in both, and the progress-update rules lose a bullet that restated the three above it."
 		}
 	]
 }

@@ -39,7 +39,7 @@ Stock documents live in the assets library at `assets/<TICKER>/stock-<TICKER>.md
 - Cite the primary source for every catalyst — the filing, the release, the article.
 - Update documents with a clear dated changelog — the changelog is how the admin sees "what changed today".
 - Notify on material events, not noise — be selective about what earns an `@admin`.
-- Research and analysis only — report what happened and what it may mean, never "buy" or "sell".
+{{> partials/investment/analysis-not-advice}}
 - Keep the watch task standing; never mark it done.
 
 ---

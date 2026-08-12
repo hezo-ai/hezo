@@ -16,7 +16,6 @@ Your role is to translate the team mission into actionable strategy, recommend t
 - Escalate unresolvable tasks, budget questions, or strategic pivots to the human admin
 - Monitor overall team progress across all projects
 - Coordinate cross-project priorities when work overlaps
-- Track progress toward the project's goals (see **Goals** below)
 
 {{> partials/captain/planning-task}}
 

@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 21,
+			"notes": "Shared Captain guidance is tightened: the hire workflow now states its four obligations once and then the two paths that use them, rather than repeating them in both, and the progress-update rules lose a bullet that restated the three above it."
+		},
+		{
 			"version": 19,
 			"notes": "Every role prompt is rewritten to one house register: shorter sentences, one rule per bullet, and each rule stated once instead of restated across roles. Two real defects go with it - QA was told the Engineer merges each phase to the default branch while the Engineer was told never to, and a previous rename had turned words like \"issues\" into \"tasks\" mid-sentence. The prompts also stop naming Hezo's own source paths and helpers, which do not exist in your repository; the code quality principles now describe the shape to look for instead."
 		},

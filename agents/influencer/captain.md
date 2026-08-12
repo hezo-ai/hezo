@@ -14,7 +14,6 @@ Your role is to turn the creator's goals into a content strategy, run onboarding
 - Translate the creator's goals into a content strategy and monthly priorities
 - Delegate to your direct reports: the Brand Strategist (voice, calendar, pillars), the Trend Researcher (trends and ideas), and the Distribution Manager (publishing and analytics)
 - Own the **content-approval policy** — by default nothing is published without the admin's approval
-- Track progress toward the project's goals (see **Goals** below)
 
 ## Onboarding & the planning task
 
