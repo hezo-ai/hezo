@@ -40,7 +40,11 @@ function GlobalAgentsBox({ projectId }: { projectId: string }) {
 						params={agentPageParams(projectId, agent.slug, agent.is_instance)}
 						className="text-[13px] text-text-2 hover:text-text-1 hover:bg-surface-2 rounded-md px-2 py-1 transition-colors"
 					>
-						<AgentStatusLabel name={agentDisplayName(agent)} runtimeStatus={agent.runtime_status} />
+						<AgentStatusLabel
+							name={agentDisplayName(agent)}
+							agent={agent}
+							runtimeStatus={agent.runtime_status}
+						/>
 					</Link>
 				))}
 			</div>

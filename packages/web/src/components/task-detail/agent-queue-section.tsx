@@ -5,7 +5,7 @@ import { useCancelQueuedWakeup } from '../../hooks/use-cancel-queued-wakeup';
 import type { ExecutionLock } from '../../hooks/use-execution-locks';
 import type { QueuedDispatchState, QueuedWakeup } from '../../hooks/use-queued-wakeups';
 import { useRunQueuedWakeup } from '../../hooks/use-run-queued-wakeup';
-import { AgentLink } from '../agent-link';
+import { AgentRef } from '../agent-ref';
 import { TerminateRunButton } from '../terminate-run-button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { Tooltip } from '../ui/tooltip';
@@ -18,8 +18,9 @@ type RunCommentRef = { id: string; public_id: string; content_type: string; cont
 interface AgentQueueSectionProps {
 	projectId: string;
 	taskId: string;
-	/** Team roster, used to resolve a member id to its slug for the agent-page
-	 * link. Agents not in this list (cross-team CEO / Coach) render unlinked. */
+	/** Team roster, used to resolve a member id to the agent behind it for the
+	 * agent-page link and its identity card. Agents not in this list (cross-team
+	 * CEO / Coach) render unlinked. */
 	agents?: Agent[];
 	locks: ExecutionLock[];
 	comments: RunCommentRef[];
@@ -44,8 +45,8 @@ export function AgentQueueSection({
 }: AgentQueueSectionProps) {
 	if (locks.length === 0 && wakeups.length === 0) return null;
 
-	const slugByMemberId = new Map<string, string>();
-	for (const a of agents ?? []) slugByMemberId.set(a.id, a.slug);
+	const agentByMemberId = new Map<string, Agent>();
+	for (const a of agents ?? []) agentByMemberId.set(a.id, a);
 
 	// Map each running agent to its current run via the run comment, which is the
 	// only place the heartbeat run id surfaces to the client. Iterate in order so
@@ -76,7 +77,7 @@ export function AgentQueueSection({
 						projectId={projectId}
 						taskId={taskId}
 						lock={lock}
-						agentSlug={slugByMemberId.get(lock.member_id)}
+						agent={agentByMemberId.get(lock.member_id)}
 						run={runByMemberId.get(lock.member_id)}
 					/>
 				))}
@@ -88,7 +89,7 @@ export function AgentQueueSection({
 								projectId={projectId}
 								taskId={taskId}
 								wakeup={w}
-								agentSlug={slugByMemberId.get(w.member_id)}
+								agent={agentByMemberId.get(w.member_id)}
 								dispatch={dispatch}
 							/>
 						))}
@@ -103,13 +104,13 @@ function RunningAgentRow({
 	projectId,
 	taskId,
 	lock,
-	agentSlug,
+	agent,
 	run,
 }: {
 	projectId: string;
 	taskId: string;
 	lock: ExecutionLock;
-	agentSlug: string | undefined;
+	agent: Agent | undefined;
 	run: { runId: string; commentId: string } | undefined;
 }) {
 	// Reuse the run page's terminate control verbatim. The active run id comes
@@ -123,18 +124,14 @@ function RunningAgentRow({
 			data-testid={`running-agent-${lock.member_id}`}
 			className="flex items-center justify-between gap-2 text-[13px] text-text-1"
 		>
-			{agentSlug ? (
-				<AgentLink
-					projectId={projectId}
-					agentId={agentSlug}
-					className="text-info-soft-fg font-medium hover:underline truncate min-w-0"
-					testId={`running-agent-link-${lock.member_id}`}
-				>
-					{lock.member_name}
-				</AgentLink>
-			) : (
-				<span className="text-info-soft-fg font-medium truncate min-w-0">{lock.member_name}</span>
-			)}
+			<AgentRef
+				agent={agent}
+				projectId={projectId}
+				link={!!agent}
+				fallbackName={lock.member_name}
+				className="text-info-soft-fg font-medium hover:underline truncate min-w-0"
+				testId={`running-agent-link-${lock.member_id}`}
+			/>
 			<div className="flex items-center gap-1 shrink-0">
 				{run ? (
 					<Tooltip content="Jump to run">
@@ -192,13 +189,13 @@ function QueuedAgentRow({
 	projectId,
 	taskId,
 	wakeup,
-	agentSlug,
+	agent,
 	dispatch,
 }: {
 	projectId: string;
 	taskId: string;
 	wakeup: QueuedWakeup;
-	agentSlug: string | undefined;
+	agent: Agent | undefined;
 	dispatch: QueuedDispatchState;
 }) {
 	const [open, setOpen] = useState(false);
@@ -211,18 +208,14 @@ function QueuedAgentRow({
 			data-testid={`queued-agent-${wakeup.id}`}
 			className="flex items-center justify-between gap-2 text-[13px] text-text-1"
 		>
-			{agentSlug ? (
-				<AgentLink
-					projectId={projectId}
-					agentId={agentSlug}
-					className="truncate min-w-0 hover:text-info-soft-fg transition-colors"
-					testId={`queued-agent-link-${wakeup.id}`}
-				>
-					{wakeup.member_name}
-				</AgentLink>
-			) : (
-				<span className="truncate min-w-0">{wakeup.member_name}</span>
-			)}
+			<AgentRef
+				agent={agent}
+				projectId={projectId}
+				link={!!agent}
+				fallbackName={wakeup.member_name}
+				className="truncate min-w-0 hover:text-info-soft-fg transition-colors"
+				testId={`queued-agent-link-${wakeup.id}`}
+			/>
 			<div className="flex items-center gap-1 shrink-0">
 				{blockReason ? (
 					// aria-disabled (not the native `disabled` attribute) keeps the button

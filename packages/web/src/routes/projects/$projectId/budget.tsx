@@ -1,7 +1,9 @@
 import { centsToDollars, HQ_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { BarChart3, Pencil, Users } from 'lucide-react';
+import { agentDisplayName } from '../../../components/agent-identity-tooltip';
 import { agentPageParams } from '../../../components/agent-link';
+import { AgentRef } from '../../../components/agent-ref';
 import { BudgetCharts } from '../../../components/budget/budget-charts';
 import { ProjectBudgetPanel } from '../../../components/budget/project-budget-panel';
 import { type SpendCell, StackedSpendChart } from '../../../components/budget/stacked-spend-chart';
@@ -62,7 +64,7 @@ function toAgentCells(points: AgentDailyCostPoint[] | undefined): SpendCell[] {
 	return (points ?? []).map((p) => ({
 		day: p.day,
 		seriesKey: p.agent_id,
-		seriesLabel: p.agent_title,
+		seriesLabel: agentDisplayName({ human_name: p.agent_name, title: p.agent_title }),
 		total_cents: p.total_cents,
 	}));
 }
@@ -144,14 +146,19 @@ function BudgetPage() {
 									<div className="flex items-center justify-between gap-2">
 										<div className="flex min-w-0 items-center gap-2.5">
 											<Avatar
-												initials={getInitials(agent.agent_title)}
+												initials={getInitials(agentLabel(agent))}
 												imageUrl={agent.agent_icon_url ?? defaultAvatarForSlug(agent.agent_slug)}
 												size="sm"
 												running={agent.runtime_status === 'running'}
 											/>
-											<span className="truncate text-[13px] font-medium text-text-1">
-												{agent.agent_title}
-											</span>
+											<AgentRef
+												agent={{
+													human_name: agent.agent_name,
+													title: agent.agent_title,
+													slug: agent.agent_slug,
+												}}
+												className="truncate text-[13px] font-medium text-text-1"
+											/>
 										</div>
 										<div className="flex shrink-0 items-center gap-2">
 											{agent.agent_over_budget && <Badge color="danger">Over budget</Badge>}
@@ -159,7 +166,7 @@ function BudgetPage() {
 												to="/projects/$projectId/agents/$agentId/settings"
 												params={agentPageParams(projectId, agent.agent_slug)}
 												hash="budget"
-												aria-label={`Edit ${agent.agent_title} budget`}
+												aria-label={`Edit ${agentLabel(agent)} budget`}
 												title="Edit budget"
 												data-testid={`edit-agent-budget-${agent.agent_slug}`}
 												className="rounded-sm p-1 text-text-3 transition-colors hover:bg-surface-3 hover:text-text-1"
@@ -177,6 +184,11 @@ function BudgetPage() {
 			)}
 		</div>
 	);
+}
+
+/** What a budget row's agent is called: its own name when set, else its role. */
+function agentLabel(agent: { agent_name: string | null; agent_title: string }): string {
+	return agentDisplayName({ human_name: agent.agent_name, title: agent.agent_title });
 }
 
 export const Route = createFileRoute('/projects/$projectId/budget')({

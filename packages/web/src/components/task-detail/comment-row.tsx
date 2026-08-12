@@ -1,5 +1,6 @@
 import { CommentContentType } from '@hezo/shared';
 import { Check, Copy, CornerDownRight, Reply } from 'lucide-react';
+import type { Agent } from '../../hooks/use-agents';
 import {
 	type Comment,
 	type CommentSkeleton,
@@ -8,7 +9,8 @@ import {
 } from '../../hooks/use-comments';
 import { useCopyFeedback } from '../../hooks/use-copy-feedback';
 import { agentAvatarUrl } from '../../lib/agent-avatar';
-import { AgentLink } from '../agent-link';
+import { agentDisplayName } from '../agent-identity-tooltip';
+import { AgentRef } from '../agent-ref';
 import {
 	type CommentData,
 	CommentReactions,
@@ -74,7 +76,7 @@ interface CommentRowProps {
 	taskId: string;
 	retryableRunId: string | null;
 	isHighlighted: boolean;
-	agentSlugById: Map<string, string>;
+	agentsByMemberId: Map<string, Agent>;
 	observeCommentRow: (el: HTMLDivElement | null) => void;
 	onStartReply: (comment: Comment) => void;
 }
@@ -94,7 +96,7 @@ export function CommentRow({
 	taskId,
 	retryableRunId,
 	isHighlighted,
-	agentSlugById,
+	agentsByMemberId,
 	observeCommentRow,
 	onStartReply,
 }: CommentRowProps) {
@@ -102,10 +104,13 @@ export function CommentRow({
 	const { data: body } = useCommentBody(projectId, taskId, c.id);
 	const bodyLoaded = !needsBody || body !== undefined;
 
-	const authorName = c.author_name ?? 'Admin';
 	const isAgent = c.author_type === 'agent';
-	const authorAgentSlug =
-		isAgent && c.author_member_id ? agentSlugById.get(c.author_member_id) : undefined;
+	// Resolve the author against the live roster so the header follows a rename,
+	// rather than showing whatever label was current when the row was written.
+	const authorAgent =
+		isAgent && c.author_member_id ? agentsByMemberId.get(c.author_member_id) : undefined;
+	const authorName = (authorAgent && agentDisplayName(authorAgent)) || c.author_name || 'Admin';
+	const authorAgentSlug = authorAgent?.slug;
 	const contentObj = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
 	const isPendingSetupRepo =
 		c.content_type === 'action' && contentObj?.kind === 'setup_repo' && !c.chosen_option;
@@ -165,11 +170,11 @@ export function CommentRow({
 			data-comment-highlighted={isHighlighted ? 'true' : undefined}
 			{...(isPendingSetupRepo ? { 'data-setup-repo-anchor': '' } : {})}
 		>
-			{authorAgentSlug ? (
-				<AgentLink
+			{authorAgent ? (
+				<AgentRef
+					agent={authorAgent}
 					projectId={projectId}
-					agentId={authorAgentSlug}
-					title={`View ${authorName}`}
+					link
 					testId="comment-author-avatar-link"
 					className="shrink-0 rounded-full"
 				>
@@ -182,7 +187,7 @@ export function CommentRow({
 							agentAvatarUrl({ slug: authorAgentSlug, avatar_spec: c.author_avatar_spec })
 						}
 					/>
-				</AgentLink>
+				</AgentRef>
 			) : (
 				<Avatar
 					initials={authorName.slice(0, 2)}
@@ -193,15 +198,14 @@ export function CommentRow({
 			)}
 			<div className="flex-1 min-w-0 rounded-md border border-border bg-surface overflow-hidden">
 				<div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface-3">
-					{authorAgentSlug ? (
-						<AgentLink
+					{authorAgent ? (
+						<AgentRef
+							agent={authorAgent}
 							projectId={projectId}
-							agentId={authorAgentSlug}
+							link
 							className="text-xs font-medium text-text-1 hover:text-info-soft-fg transition-colors"
 							testId="comment-author"
-						>
-							{authorName}
-						</AgentLink>
+						/>
 					) : (
 						<span
 							className={`text-xs font-medium ${isAgent ? 'text-text-1' : 'text-text-2'}`}

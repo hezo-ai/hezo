@@ -23,7 +23,7 @@ export interface SeededWorkspace {
 	team: { id: string; slug: string };
 	/** The team's single project slug — the project handle for team-wide ops. */
 	internalSlug: string;
-	agents: Array<{ id: string; slug: string; title: string }>;
+	agents: Array<{ id: string; slug: string; title: string; human_name?: string | null }>;
 	token: string;
 	headers: Auth;
 }
@@ -54,7 +54,7 @@ export async function seedWorkspace(): Promise<SeededWorkspace> {
 	const agentsRes = await apiBase(`/api/projects/${internalSlug}/agents`, { headers });
 	const agents = (
 		(await agentsRes.json()) as {
-			data: Array<{ id: string; slug: string; title: string }>;
+			data: Array<{ id: string; slug: string; title: string; human_name?: string | null }>;
 		}
 	).data;
 

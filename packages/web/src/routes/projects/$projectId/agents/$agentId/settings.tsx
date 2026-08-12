@@ -14,6 +14,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentIdentitySection } from '../../../../../components/agent-identity-section';
+import { agentDisplayName } from '../../../../../components/agent-identity-tooltip';
 import { BudgetWindowsEditor } from '../../../../../components/budget/budget-windows-editor';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
 import { RevisionsPanel } from '../../../../../components/revisions-panel';
@@ -226,7 +227,7 @@ function AgentSettingsPage() {
 						<option value="">None (Admin)</option>
 						{otherAgents.map((a) => (
 							<option key={a.id} value={a.id}>
-								{a.title}
+								{agentDisplayName(a)}
 							</option>
 						))}
 					</select>

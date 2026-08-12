@@ -6,6 +6,7 @@ import { useAgents } from '../../hooks/use-agents';
 import { useAutoGrowTextarea } from '../../hooks/use-auto-grow-textarea';
 import type { Comment, useCreateComment } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
+import { agentDisplayName } from '../agent-identity-tooltip';
 import { CommentAttachmentsDrop } from '../comment-attachments-drop';
 import { MentionTextarea } from '../mention-textarea';
 import { Badge } from '../ui/badge';
@@ -93,17 +94,24 @@ export function CommentComposer({
 	// mentioned and replied-to shows once. Mirrors the server's wakeup fan-out.
 	const wakeAgents = useMemo(() => {
 		const roster = agents ?? [];
-		const bySlug = new Map(roster.map((a) => [a.slug.toLowerCase(), a] as const));
+		// An agent answers to both handles, so `@riley` must preview the same wake
+		// `@market-researcher` does - keying on the role slug alone silently showed
+		// no pill for a name mention that would in fact wake someone.
+		const bySlug = new Map<string, (typeof roster)[number]>();
+		for (const a of roster) {
+			bySlug.set(a.slug.toLowerCase(), a);
+			if (a.human_name_slug) bySlug.set(a.human_name_slug.toLowerCase(), a);
+		}
 		const picked = new Map<string, { id: string; name: string }>();
 		for (const slug of extractActiveAgentMentionSlugs(commentText)) {
 			const a = bySlug.get(slug);
-			if (a) picked.set(a.id, { id: a.id, name: a.title });
+			if (a) picked.set(a.id, { id: a.id, name: agentDisplayName(a) });
 		}
 		if (replyingToAgent && replyTarget) {
 			const replyId = replyTarget.author_member_id;
 			const a = replyId ? roster.find((r) => r.id === replyId) : undefined;
 			const id = a?.id ?? replyId ?? `reply:${replyTarget.id}`;
-			picked.set(id, { id, name: a?.title ?? replyTarget.author_name });
+			picked.set(id, { id, name: a ? agentDisplayName(a) : replyTarget.author_name });
 		}
 		return Array.from(picked.values());
 	}, [agents, commentText, replyingToAgent, replyTarget]);

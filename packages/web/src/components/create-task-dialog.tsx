@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAgents } from '../hooks/use-agents';
 import { useAllVisibleProjects, useProjectMeta } from '../hooks/use-projects';
 import { useCreateSubTask, useCreateTask } from '../hooks/use-tasks';
+import { agentDisplayName } from './agent-identity-tooltip';
 import { MarkdownEditor } from './markdown-editor';
 import { Button } from './ui/button';
 import { DialogContent } from './ui/dialog';
@@ -210,7 +211,7 @@ export function CreateTaskDialog({
 							<option value="">Select assignee</option>
 							{selectableAgents.map((a) => (
 								<option key={a.id} value={a.id}>
-									{a.title}
+									{agentDisplayName(a)}
 								</option>
 							))}
 						</select>

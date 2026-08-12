@@ -8,6 +8,7 @@ import {
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, Check, Loader2, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { agentDisplayName } from '../../../../components/agent-identity-tooltip';
 import {
 	HireAgentForm,
 	type HireFormValues,
@@ -104,7 +105,7 @@ function managerOptionsFrom(agents: Agent[] | undefined, excludeSlug?: string): 
 			(a) =>
 				a.admin_status === AgentAdminStatus.Enabled && !a.is_instance && a.slug !== excludeSlug,
 		)
-		.map((a) => ({ slug: a.slug, title: a.title }))
+		.map((a) => ({ slug: a.slug, title: agentDisplayName(a) }))
 		.sort((x, y) => x.title.localeCompare(y.title));
 }
 
