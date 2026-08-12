@@ -12,6 +12,7 @@ import {
 	createTestTeam,
 	finalizeAgentRun,
 	mintAgentToken,
+	settleTeamSetupReview,
 } from './helpers/app';
 
 // Line-coverage tests for packages/server/src/routes/tasks.ts driven over real
@@ -67,6 +68,10 @@ beforeAll(async () => {
 		'SELECT id FROM users WHERE is_superuser = true ORDER BY created_at LIMIT 1',
 	);
 	adminUserId = admin.rows[0].id;
+
+	// This fixture's subject is task behaviour, not agent onboarding: settle the
+	// setup review the new agents filed so their tasks start unblocked.
+	await settleTeamSetupReview(db, teamId);
 });
 
 afterAll(async () => {

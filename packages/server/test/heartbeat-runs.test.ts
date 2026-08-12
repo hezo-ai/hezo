@@ -16,6 +16,7 @@ import {
 	createTestProject,
 	createTestTeam,
 	mintAgentToken,
+	settleTeamSetupReview,
 } from './helpers/app';
 
 let app: Hono<Env>;
@@ -74,6 +75,10 @@ beforeAll(async () => {
 		}),
 	});
 	taskId = (await taskRes.json()).data.id;
+
+	// This fixture's subject is task behaviour, not agent onboarding: settle the
+	// setup review the new agents filed so their tasks start unblocked.
+	await settleTeamSetupReview(db, teamId);
 });
 
 afterAll(async () => {
@@ -434,6 +439,9 @@ describe('task status auto-transition on run start', () => {
 			body: JSON.stringify({ title: 'Other Runner' }),
 		});
 		const otherAgentId = (await otherRes.json()).data.id as string;
+		// Adding an agent files a fresh setup review; settle it so this task is
+		// about run/assignee status, not the onboarding gate.
+		await settleTeamSetupReview(db, teamId);
 		const localTaskId = await createTask({ assigneeId: otherAgentId });
 		const task = buildTask(localTaskId, { assignee_id: otherAgentId });
 

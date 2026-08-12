@@ -10,6 +10,7 @@ import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { assertChildDepthAllowed } from '../lib/task-relationships';
 import { logger } from '../logger';
+import { pendingSetupReviewBlockerId } from './description-tasks';
 import { recordTaskLinks } from './task-events';
 import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -133,6 +134,13 @@ export async function createTask(
 		goalId = g.rows[0].id;
 	}
 
+	// An agent that has not yet been through its team setup review gets every
+	// task filed for it gated on that review, so it never runs on an
+	// unreconciled prompt with no team context. Resolved before the transaction
+	// — one PK-keyed lookup — and attached as an ordinary dependency edge, so the
+	// existing cascade unblocks and wakes the assignee when the review closes.
+	const setupBlockerId = await pendingSetupReviewBlockerId(db, assigneeId);
+
 	// Identifier allocation, the insert, and blocker attachment must land
 	// atomically — a rejected blocker reference would otherwise leave an
 	// orphan task row behind.
@@ -169,6 +177,18 @@ export async function createTask(
 
 		if (input.blocked_by_task_ids?.length) {
 			await attachBlockers(db, teamId, created.id, input.blocked_by_task_ids);
+		}
+		// No cycle check for the setup edge: the task was just inserted and has no
+		// dependents yet, so it cannot close a loop. A later `add_task_blocker`
+		// pointing the review back at this task is still caught by wouldCreateCycle.
+		if (setupBlockerId) {
+			await db.query(
+				`INSERT INTO task_dependencies (task_id, blocked_by_task_id)
+				 VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				[created.id, setupBlockerId],
+			);
+		}
+		if (input.blocked_by_task_ids?.length || setupBlockerId) {
 			if (await hasOpenBlockers(db, created.id)) {
 				const updated = await db.query<typeof created>(
 					'UPDATE tasks SET status = $1::task_status WHERE id = $2 RETURNING *',

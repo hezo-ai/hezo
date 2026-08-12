@@ -64,7 +64,10 @@ import {
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
 import { getChatMemory, upsertChatMemory } from '../services/chat-memory';
-import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
+import {
+	enqueueSetupReviewForNewAgents,
+	enqueueTeamCoherenceReviewTask,
+} from '../services/description-tasks';
 import {
 	getDocument,
 	initAgentSystemPrompt,
@@ -427,11 +430,14 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 		result.rows[0] as Record<string, unknown>,
 	);
 
-	trackBackground(
-		enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
-			log.error('Failed to enqueue team coherence review after agent create:', e),
-		),
-	);
+	// Awaited, not backgrounded: the review's id is stamped onto the new agent as
+	// its setup gate, and the very next create_task for them must see it. A
+	// failure here still must not fail the agent creation.
+	try {
+		await enqueueSetupReviewForNewAgents(db, teamId, 'agent_hired', [slug]);
+	} catch (e) {
+		log.error('Failed to enqueue team coherence review after agent create:', e);
+	}
 
 	const createActor = await resolveActor(db, c.get('auth'), teamId);
 	c.get('events').emit({
@@ -532,11 +538,13 @@ agentsRoutes.post('/projects/:projectId/agents/onboard', async (c) => {
 		const agentRow = agentResult.rows[0] as Record<string, unknown>;
 
 		broadcastChange(c, wsRoom.team(teamId), 'member_agents', 'INSERT', agentRow);
-		trackBackground(
-			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
-				log.error('Failed to enqueue team coherence review after onboard:', e),
-			),
-		);
+		// Awaited so the review's id lands on the new agent as its setup gate
+		// before any task can be filed for them; a failure must not fail onboard.
+		try {
+			await enqueueSetupReviewForNewAgents(db, teamId, 'agent_hired', [slug]);
+		} catch (e) {
+			log.error('Failed to enqueue team coherence review after onboard:', e);
+		}
 
 		return ok(c, { agent: agentRow, task: null, approval: null, bootstrap: true }, 201);
 	}

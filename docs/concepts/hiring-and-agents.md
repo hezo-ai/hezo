@@ -55,6 +55,23 @@ When you hire an agent you set:
 Once approved, the agent is onboarded into the team and starts picking up work on its
 heartbeat.
 
+## New agents wait for the team setup review
+
+Adding an agent - by hiring one, or by provisioning a whole roster when a project is
+created - files a **team setup review** task automatically. That review is what fits the
+new agent to the team: it reconciles reporting lines, rewrites the descriptive blobs
+teammates read, and gives the agent the team context its every run is built on.
+
+Until that review is done, any task assigned to the new agent is created **Blocked**, with
+the setup review listed as its blocker on the task page. Nothing is lost and nobody has to
+remember to sequence it: when the review is marked done, every task waiting on it moves
+back to Backlog and its assignee is woken automatically. This applies however the task was
+filed - by you in the web app, or by the CEO, a Captain or a teammate.
+
+Agents already on the team are unaffected: they keep picking up work as normal while a new
+teammate's setup review is open. If you deliberately want a new agent to start before its
+review lands, remove the blocker from the task's page.
+
 ## Editing system prompts
 
 Every agent's system prompt is editable from its settings at any time. Changes take

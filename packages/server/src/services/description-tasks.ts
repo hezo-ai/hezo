@@ -208,6 +208,86 @@ ${intro} — including whether every role's output gets verified by someone othe
 8. Move this task to **done** once the audit and rewrites are complete.${changesSection}`;
 }
 
+/**
+ * Stamp `setup_review_task_id` on agents that just joined `teamId`, so any task
+ * later created for them is auto-gated on `reviewTaskId` until that review is
+ * terminal. `slugs` of `null` means "every agent on this team is new" — the
+ * fresh-project path, where the whole roster was provisioned moments ago.
+ *
+ * Two guards, both load-bearing:
+ * - `setup_review_task_id IS NULL` — an agent is stamped once, so a later review
+ *   never re-gates an agent that has already been through setup (and a no-op
+ *   UPDATE never leaves a dead tuple behind).
+ * - the review's own assignee is skipped — an agent can never be gated on a
+ *   review it owns, which rules out the self-block class outright.
+ */
+async function stampAgentsAwaitingSetupReview(
+	db: Db,
+	teamId: string,
+	reviewTaskId: string,
+	slugs: readonly string[] | null,
+): Promise<void> {
+	if (slugs && slugs.length === 0) return;
+	const slugFilter = slugs ? 'AND ma.slug = ANY($3::text[])' : '';
+	await db.query(
+		`UPDATE member_agents ma
+		    SET setup_review_task_id = $1
+		   FROM members m
+		  WHERE m.id = ma.id
+		    AND m.team_id = $2
+		    AND ma.setup_review_task_id IS NULL
+		    AND ma.id IS DISTINCT FROM (SELECT assignee_id FROM tasks WHERE id = $1)
+		    ${slugFilter}`,
+		slugs ? [reviewTaskId, teamId, slugs] : [reviewTaskId, teamId],
+	);
+}
+
+/**
+ * Enqueue (or coalesce onto) the team's setup/coherence review and record it as
+ * the setup gate for the agents that just joined. Use this from every path that
+ * *creates* agents; reactive reviews on an established roster call
+ * {@link enqueueTeamCoherenceReviewTask} directly.
+ *
+ * Returns the review task id, or null when no review was filed (a team with no
+ * coordination context, or the E2E skip) — in which case nothing is stamped and
+ * no task is ever gated.
+ */
+export async function enqueueSetupReviewForNewAgents(
+	db: Db,
+	teamId: string,
+	reason: TeamCoherenceReviewReason,
+	newAgentSlugs: readonly string[] | null,
+	opts: { autoStart?: boolean; changeSummary?: string } = {},
+): Promise<string | null> {
+	const reviewTaskId = await enqueueTeamCoherenceReviewTask(db, teamId, reason, opts);
+	if (reviewTaskId) {
+		await stampAgentsAwaitingSetupReview(db, teamId, reviewTaskId, newAgentSlugs);
+	}
+	return reviewTaskId;
+}
+
+/**
+ * The setup review gating `memberAgentId`, or null when it has none or the
+ * review is already terminal (done/cancelled). A stamped pointer stops gating on
+ * its own once the review closes, so it is never cleared — it stays as the record
+ * of which review onboarded the agent.
+ */
+export async function pendingSetupReviewBlockerId(
+	db: Db,
+	memberAgentId: string,
+): Promise<string | null> {
+	const placeholders = TERMINAL_TASK_STATUSES.map((_, i) => `$${i + 2}::task_status`).join(', ');
+	const r = await db.query<{ id: string }>(
+		`SELECT t.id
+		   FROM member_agents ma
+		   JOIN tasks t ON t.id = ma.setup_review_task_id
+		  WHERE ma.id = $1
+		    AND t.status NOT IN (${placeholders})`,
+		[memberAgentId, ...TERMINAL_TASK_STATUSES],
+	);
+	return r.rows[0]?.id ?? null;
+}
+
 export async function enqueueTeamCoherenceReviewTask(
 	db: Db,
 	teamId: string,

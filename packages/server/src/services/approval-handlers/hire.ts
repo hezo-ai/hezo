@@ -7,11 +7,10 @@ import {
 	MemberType,
 } from '@hezo/shared';
 import { buildAgentAvatarSpec, checkHumanNameAvailable } from '../../lib/agent-identity';
-import { trackBackground } from '../../lib/background';
 import { resolveAgentId } from '../../lib/resolve';
 import { toSlug } from '../../lib/slug';
 import { logger } from '../../logger';
-import { enqueueTeamCoherenceReviewTask } from '../description-tasks';
+import { enqueueSetupReviewForNewAgents } from '../description-tasks';
 import { upsertDocument } from '../documents';
 import { resolveHireProposalCommentAndWake } from '../hire-proposal-comment';
 import type { ApprovalHandler, ApprovalSideEffectCtx, SideEffectBroadcast } from './types';
@@ -126,11 +125,14 @@ export const hireHandler: ApprovalHandler = {
 			broadcasts.push({ table: 'member_agents', op: 'INSERT', row: newAgent.rows[0] });
 		}
 
-		trackBackground(
-			enqueueTeamCoherenceReviewTask(db, teamId, 'agent_hired').catch((e) =>
-				log.error('Failed to enqueue team coherence review after hire:', e),
-			),
-		);
+		// Awaited, not backgrounded: the review's id is stamped onto the new agent
+		// as its setup gate, and the very next create_task for them must see it.
+		// A failure here still must not fail the hire.
+		try {
+			await enqueueSetupReviewForNewAgents(db, teamId, 'agent_hired', [slug]);
+		} catch (e) {
+			log.error('Failed to enqueue team coherence review after hire:', e);
+		}
 
 		// Flip the proposal comment on the originating ticket to "hired" and re-wake
 		// the requester (the CEO) so it can review the new hire and resume setup. The

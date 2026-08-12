@@ -10,6 +10,7 @@ import {
 	createTestProject,
 	createTestTeam,
 	projectSlugFor,
+	settleTeamSetupReview,
 } from './helpers/app';
 import {
 	clearContainerCapacityForTest,
@@ -175,6 +176,9 @@ beforeAll(async () => {
 
 	agentA = await createAgent('Covfill Alpha');
 	agentB = await createAgent('Covfill Beta');
+	// This fixture's subject is wakeup listing, not agent onboarding: settle the
+	// setup review the new agents filed so their task starts unblocked.
+	await settleTeamSetupReview(db, teamId);
 	taskId = await createTask('Covfill Task');
 	// Let the fire-and-forget assignment wakeup land before tests clear it.
 	await new Promise((r) => setTimeout(r, 50));
