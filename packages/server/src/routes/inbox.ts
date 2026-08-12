@@ -1,5 +1,6 @@
 import { ApprovalStatus, ApprovalType, AuthType, CommentContentType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import { err, ok } from '../lib/response';
@@ -75,7 +76,7 @@ inboxRoutes.get('/projects/:projectId/inbox/mentions', async (c) => {
 		        (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = tc.author_user_id)
 		          AS author_user_icon_updated_at,
 		        ma.avatar_spec AS author_avatar_spec,
-		        COALESCE(NULLIF(ma.human_name, ''), ma.title, m.display_name) AS author_display_name,
+		        ${agentDisplayNameSql('ma', 'm')} AS author_display_name,
 		        ma.slug AS author_slug,
 		        bm.created_at, bm.read_at
 		 FROM admin_mentions bm
@@ -242,7 +243,7 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 			payload_task_identifier: string | null;
 		}>(
 			`SELECT a.id, a.type, a.created_at,
-			        COALESCE(ma.title, m.display_name) AS requested_by_name,
+			        ${agentDisplayNameSql('ma', 'm')} AS requested_by_name,
 			        pi.identifier AS payload_task_identifier
 			 FROM approvals a
 			 LEFT JOIN members m ON m.id = a.requested_by_member_id
@@ -274,7 +275,7 @@ inboxRoutes.get('/projects/:projectId/inbox/needs-you', async (c) => {
 		}>(
 			`SELECT bm.id, bm.task_id, i.identifier AS task_identifier, i.title AS task_title,
 			        tc.public_id AS comment_public_id, tc.content_type, tc.content,
-			        COALESCE(ma.title, m.display_name) AS author_display_name,
+			        ${agentDisplayNameSql('ma', 'm')} AS author_display_name,
 			        bm.created_at
 			 FROM admin_mentions bm
 			 JOIN tasks i ON i.id = bm.task_id

@@ -185,7 +185,8 @@ test('agent mentions link to the agent home project; HQ singletons resolve to hq
 
 	const agentLink = await findByTestId('agent-mention-link');
 	expect(agentLink.getAttribute('href')).toBe('/projects/hq/agents/ceo');
-	expect(agentLink.textContent).toBe('ceo');
+	// The chip prints the agent's display name; the link keeps the role slug.
+	expect(agentLink.textContent).toBe('CEO');
 });
 
 test('an unresolved passive @@mention sheds its @@ prefix and renders as the bare slug', async () => {

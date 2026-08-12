@@ -190,20 +190,24 @@ test('a plain external markdown link renders as a new-tab anchor (the non-mentio
 });
 
 test('a passive @@agent mention renders the bare slug as a passive-flagged link', async () => {
-	const seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const seeded = { projectSlug: '', taskId: '', agentSlug: '', agentLabel: '' };
 	const { container, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Passive Mention Project' });
 			const task = await seedTask(ws, project, { title: 'Passive Mention Task' });
-			const agentSlug = ws.agents.find((a) => a.slug === 'captain')?.slug ?? ws.agents[0].slug;
+			const agent = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			const agentSlug = agent.slug;
 			// `@@slug` is a *passive* mention — links to the agent but renders the bare
 			// slug (no leading @) and carries data-mention-passive.
 			await seedComment(ws, task, `Context for @@${agentSlug} without pinging them.`);
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentSlug = agentSlug;
+			// The chip prints what the agent is *called*, not the handle that was
+			// typed: its own name when it has one, else its role.
+			seeded.agentLabel = agent.human_name?.trim() || agent.title;
 		},
 	});
 
@@ -223,8 +227,9 @@ test('a passive @@agent mention renders the bare slug as a passive-flagged link'
 	expect(passiveLink.getAttribute('href')).toBe(
 		`/projects/${seeded.projectSlug}/agents/${seeded.agentSlug}`,
 	);
-	// Passive form drops the leading "@" in the visible label.
-	expect(passiveLink.textContent).toBe(seeded.agentSlug);
+	// Passive form drops the leading "@" in the visible label, and prints the
+	// agent's display name rather than the raw slug the author typed.
+	expect(passiveLink.textContent).toBe(seeded.agentLabel);
 	// …and is muted rather than sharing the active chip's colour. Without this the
 	// only difference between "notified" and "merely named" is the missing "@", so
 	// a reader scanning a thread cannot tell a routed handoff from a stranded one.
@@ -233,18 +238,22 @@ test('a passive @@agent mention renders the bare slug as a passive-flagged link'
 });
 
 test('an active @agent mention keeps the emphasised chip styling', async () => {
-	const seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const seeded = { projectSlug: '', taskId: '', agentSlug: '', agentLabel: '' };
 	const { container, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Active Mention Project' });
 			const task = await seedTask(ws, project, { title: 'Active Mention Task' });
-			const agentSlug = ws.agents.find((a) => a.slug === 'captain')?.slug ?? ws.agents[0].slug;
+			const agent = ws.agents.find((a) => a.slug === 'captain') ?? ws.agents[0];
+			const agentSlug = agent.slug;
 			await seedComment(ws, task, `@${agentSlug} - please take a look at this one.`);
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentSlug = agentSlug;
+			// The chip prints what the agent is *called*, not the handle that was
+			// typed: its own name when it has one, else its role.
+			seeded.agentLabel = agent.human_name?.trim() || agent.title;
 		},
 	});
 
@@ -262,8 +271,9 @@ test('an active @agent mention keeps the emphasised chip styling', async () => {
 		return el;
 	});
 	// The active chip keeps the leading "@" and the emphasised treatment — the
-	// contrast with the passive case above is the whole affordance.
-	expect(activeLink.textContent).toBe(`@${seeded.agentSlug}`);
+	// contrast with the passive case above is the whole affordance. The label is
+	// the agent's display name, so `@riley` and `@market-researcher` read alike.
+	expect(activeLink.textContent).toBe(`@${seeded.agentLabel}`);
 	expect(activeLink.className).toContain('text-info-soft-fg');
 	expect(activeLink.className).toContain('font-semibold');
 });

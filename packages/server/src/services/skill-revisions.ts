@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { SkillRecord, SkillRevisionRecord } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { withTransaction } from '../lib/sql';
 
 // Skill revisions mirror the document/agent-prompt revision model (see
@@ -52,7 +53,7 @@ async function recordSkillRevision(
 export async function listSkillRevisions(db: Db, skillId: string): Promise<SkillRevisionRecord[]> {
 	const result = await db.query<SkillRevisionRecord>(
 		`SELECT r.id, r.revision_number, r.content, r.change_summary, r.created_at,
-		        COALESCE(ma.title, m.display_name) AS author_name,
+		        ${agentDisplayNameSql('ma', 'm')} AS author_name,
 		        CASE WHEN ma.id IS NOT NULL THEN 'agent' ELSE 'admin' END AS author_type
 		 FROM skill_revisions r
 		 LEFT JOIN members m ON m.id = r.author_member_id

@@ -2,6 +2,7 @@ import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
 import { normalizeAllowedHosts } from '../lib/credential-placeholder';
@@ -99,7 +100,7 @@ async function getCommentsFull(
 	const result = await db.query(
 		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
-            COALESCE(ca.name, NULLIF(ma.human_name, ''), ma.title, m.display_name, 'Admin') AS author_name,
+            COALESCE(ca.name, ${agentDisplayNameSql('ma', 'm')}, 'Admin') AS author_name,
             ic.author_member_id,
             ic.author_api_key_id,
             ic.author_user_id,
@@ -157,7 +158,7 @@ async function getCommentSkeletons(
             CASE WHEN ic.content_type = 'text' THEN NULL ELSE ic.content END AS content,
             ic.chosen_option, ic.created_at,
             CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
-            COALESCE(ca.name, NULLIF(ma.human_name, ''), ma.title, m.display_name, 'Admin') AS author_name,
+            COALESCE(ca.name, ${agentDisplayNameSql('ma', 'm')}, 'Admin') AS author_name,
             ic.author_member_id,
             ic.author_api_key_id,
             ic.author_user_id,

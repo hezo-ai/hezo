@@ -250,6 +250,7 @@ export function ProjectSidebar({
 						<AgentStatusLabel
 							variant="sidebar"
 							name={agentDisplayName(agent)}
+							agent={agent}
 							runtimeStatus={agent.runtime_status}
 						/>
 					),
@@ -266,6 +267,7 @@ export function ProjectSidebar({
 							<AgentStatusLabel
 								variant="sidebar"
 								name={agentDisplayName(agent)}
+								agent={agent}
 								runtimeStatus={agent.runtime_status}
 							/>
 						</span>

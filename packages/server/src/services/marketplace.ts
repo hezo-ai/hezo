@@ -38,7 +38,9 @@ const FETCH_TIMEOUT_MS = 8000;
 const rosterAgentSchema = z.object({
 	slug: z.string().min(1),
 	title: z.string().min(1),
-	human_name: z.string().nullable(),
+	// Omitting it is the normal case - a role is addressed by its role - so an
+	// absent key means "no name" rather than an invalid team.
+	human_name: z.string().nullish().default(null),
 	gender: z.enum(['f', 'm', 'n']),
 	avatar_spec: z.object({
 		seed: z.string(),

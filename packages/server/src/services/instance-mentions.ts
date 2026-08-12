@@ -45,6 +45,7 @@ export interface InstanceResolvedAgent {
 	slug: string;
 	title: string;
 	human_name: string | null;
+	role_description: string | null;
 	project_slug: string;
 }
 
@@ -132,7 +133,7 @@ export async function resolveInstanceMentions(
 		// answer to "max", regardless of which handle each got it from.
 		const result = await db.query<InstanceResolvedAgent>(
 			`WITH m AS (
-				SELECT tok, ma.slug, ma.title, ma.human_name, p.slug AS project_slug,
+				SELECT tok, ma.slug, ma.title, ma.human_name, ma.role_description, p.slug AS project_slug,
 				       COUNT(*) OVER (PARTITION BY tok) AS n
 				FROM unnest($1::text[]) AS tok
 				JOIN member_agents ma
@@ -141,7 +142,7 @@ export async function resolveInstanceMentions(
 				JOIN projects p ON p.team_id = mem.team_id
 				WHERE ma.admin_status = 'enabled'
 			)
-			SELECT slug, title, human_name, project_slug FROM m WHERE n = 1`,
+			SELECT slug, title, human_name, role_description, project_slug FROM m WHERE n = 1`,
 			[candidates.agents],
 		);
 		out.agents = result.rows;

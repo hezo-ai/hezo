@@ -79,9 +79,13 @@
 		"testing",
 		"security review"
 	],
-	"version": 17,
-	"content_hash": "09199c388074bfacceed67ed4439c9f78cda70b3a6411dc63180740aad3cf2e7",
+	"version": 18,
+	"content_hash": "d14a25a4142f120909d098a39fa758d53ce6010f0e23adbc8046aea00e5d00d1",
 	"changelog": [
+		{
+			"version": 18,
+			"notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
+		},
 		{
 			"version": 17,
 			"notes": "Renamed ticket to task throughout the roster copy and every role prompt, matching the term Hezo uses everywhere else, and replaced em dashes with hyphens in the operator-facing team and role descriptions."
@@ -159,10 +163,9 @@
 		{
 			"slug": "architect",
 			"title": "Architect",
-			"human_name": "Ada",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "software-development:ada",
+				"seed": "software-development:architect",
 				"gender": "f",
 				"style": "engineering"
 			},
@@ -183,10 +186,9 @@
 		{
 			"slug": "product-lead",
 			"title": "Product Lead",
-			"human_name": "Leo",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "software-development:leo",
+				"seed": "software-development:product-lead",
 				"gender": "m",
 				"style": "lead"
 			},
@@ -207,10 +209,9 @@
 		{
 			"slug": "engineer",
 			"title": "Engineer",
-			"human_name": "Max",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "software-development:max",
+				"seed": "software-development:engineer",
 				"gender": "m",
 				"style": "engineering"
 			},
@@ -231,10 +232,9 @@
 		{
 			"slug": "qa-engineer",
 			"title": "QA Engineer",
-			"human_name": "Priya",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "software-development:priya",
+				"seed": "software-development:qa-engineer",
 				"gender": "f",
 				"style": "engineering"
 			},
@@ -255,10 +255,9 @@
 		{
 			"slug": "security-engineer",
 			"title": "Security Engineer",
-			"human_name": "Omar",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "software-development:omar",
+				"seed": "software-development:security-engineer",
 				"gender": "m",
 				"style": "security"
 			},
@@ -279,10 +278,9 @@
 		{
 			"slug": "ui-designer",
 			"title": "UI Designer",
-			"human_name": "Mia",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "software-development:mia",
+				"seed": "software-development:ui-designer",
 				"gender": "f",
 				"style": "design"
 			},
@@ -303,10 +301,9 @@
 		{
 			"slug": "devops-engineer",
 			"title": "DevOps Engineer",
-			"human_name": "Kai",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "software-development:kai",
+				"seed": "software-development:devops-engineer",
 				"gender": "m",
 				"style": "ops"
 			},
@@ -327,10 +324,9 @@
 		{
 			"slug": "marketing-lead",
 			"title": "Marketing Lead",
-			"human_name": "Lena",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "software-development:lena",
+				"seed": "software-development:marketing-lead",
 				"gender": "f",
 				"style": "marketing"
 			},
@@ -351,10 +347,9 @@
 		{
 			"slug": "researcher",
 			"title": "Researcher",
-			"human_name": "Theo",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "software-development:theo",
+				"seed": "software-development:researcher",
 				"gender": "m",
 				"style": "research"
 			},

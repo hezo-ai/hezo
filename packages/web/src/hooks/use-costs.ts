@@ -48,6 +48,8 @@ export interface EntityBudgetStatus {
 export interface AgentBudgetStatus extends EntityBudgetStatus {
 	agent_id: string;
 	agent_title: string;
+	/** The agent's own name, when it has one. Null means it goes by its role. */
+	agent_name: string | null;
 	agent_slug: string;
 	runtime_status: string;
 	/** Uploaded avatar (signed URL); null when unset. Built-in CEO/Coach defaults
@@ -100,6 +102,8 @@ export interface AgentDailyCostPoint {
 	day: string;
 	agent_id: string;
 	agent_title: string;
+	/** The agent's own name, when it has one. Null means it goes by its role. */
+	agent_name: string | null;
 	total_cents: number;
 }
 

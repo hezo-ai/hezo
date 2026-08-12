@@ -2,6 +2,7 @@ import { HeartbeatRunStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { DoorOpen, Loader2, RotateCw } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
+import { useAgentLookup } from '../../hooks/use-agent-lookup';
 import { type ContainerHealth, useContainerHealth } from '../../hooks/use-container-health';
 import { formatElapsed } from '../../hooks/use-elapsed-duration';
 import {
@@ -12,6 +13,7 @@ import {
 import { useProjectMeta } from '../../hooks/use-projects';
 import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import { useRunLogs } from '../../hooks/use-run-logs';
+import { agentDisplayName } from '../agent-identity-tooltip';
 import { agentPageParams } from '../agent-link';
 import { LazyMount } from '../lazy-mount';
 import { LogViewer } from '../log-viewer';
@@ -151,6 +153,12 @@ export function RunCommentBody({
 	retryableRunId?: string | null;
 	inline?: boolean;
 }) {
+	// The comment bakes the role title at write time; resolve the agent live so a
+	// later rename shows through, and fall back to the baked label for an agent
+	// no longer on the roster.
+	const { bySlug } = useAgentLookup(projectId);
+	const resolvedAgent = agentSlug ? bySlug.get(agentSlug) : undefined;
+	const agentLabel = (resolvedAgent && agentDisplayName(resolvedAgent)) || agentTitle;
 	const runQuery = useHeartbeatRun(projectId, agentId, runId);
 	const run = runQuery.data;
 	const status = run?.status ?? 'queued';
@@ -208,7 +216,7 @@ export function RunCommentBody({
 				onClick={(e) => e.stopPropagation()}
 				className="text-xs text-text-2 whitespace-nowrap max-w-full truncate hover:text-text-1 hover:underline"
 			>
-				{agentTitle} run
+				{agentLabel} run
 			</Link>
 			{actorName && (
 				<span
@@ -348,7 +356,7 @@ export function RunCommentBody({
 									className={`inline-block w-2 h-2 rounded-full ${runStatusDotClass(status)}`}
 								/>
 								<span className="hidden sm:inline">
-									{agentTitle} — {runStatusLabel(status)}
+									{agentLabel} - {runStatusLabel(status)}
 								</span>
 							</span>
 						}

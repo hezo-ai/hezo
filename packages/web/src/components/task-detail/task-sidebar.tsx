@@ -20,7 +20,7 @@ import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
 import { TASK_RUN_STATUS_META } from '../../lib/status-meta';
 import { agentDisplayName } from '../agent-identity-tooltip';
-import { AgentLink } from '../agent-link';
+import { AgentRef } from '../agent-ref';
 import { AgentStatusLabel } from '../agent-status-label';
 import { TaskStatusBadge } from '../task-status-badge';
 import { Button } from '../ui/button';
@@ -196,9 +196,10 @@ export function TaskSidebar({
 					{assigneeLock ? (
 						<div className="flex items-center gap-1 w-full text-[13px] text-text-1 px-1 py-0.5">
 							{assignedAgent ? (
-								<AgentLink
+								<AgentRef
+									agent={assignedAgent}
 									projectId={projectId}
-									agentId={assignedAgent.slug}
+									link
 									className="flex flex-1 min-w-0 items-center hover:text-info-soft-fg transition-colors"
 									testId="task-assignee-link"
 								>
@@ -208,7 +209,7 @@ export function TaskSidebar({
 										badge={assigneeRunBadge}
 										className="min-w-0"
 									/>
-								</AgentLink>
+								</AgentRef>
 							) : (
 								<AgentStatusLabel
 									name="—"
@@ -223,9 +224,10 @@ export function TaskSidebar({
 						<>
 							<div className="flex items-center gap-1 w-full text-[13px] text-text-1 px-1 py-0.5">
 								{assignedAgent ? (
-									<AgentLink
+									<AgentRef
+										agent={assignedAgent}
 										projectId={projectId}
-										agentId={assignedAgent.slug}
+										link
 										className="flex flex-1 min-w-0 items-center hover:text-info-soft-fg transition-colors"
 										testId="task-assignee-link"
 									>
@@ -234,7 +236,7 @@ export function TaskSidebar({
 											runtimeStatus={AgentRuntimeStatus.Idle}
 											className="min-w-0"
 										/>
-									</AgentLink>
+									</AgentRef>
 								) : (
 									<span className="flex flex-1 min-w-0 items-center">
 										<AgentStatusLabel
@@ -276,6 +278,7 @@ export function TaskSidebar({
 										>
 											<AgentStatusLabel
 												name={agentDisplayName(a)}
+												agent={a}
 												runtimeStatus={AgentRuntimeStatus.Idle}
 											/>
 										</button>

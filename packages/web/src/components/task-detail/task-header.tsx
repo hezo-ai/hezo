@@ -1,8 +1,10 @@
 import { Link } from '@tanstack/react-router';
 import { Check, ChevronRight, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
+import { useAgentLookup } from '../../hooks/use-agent-lookup';
 import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
 import { useI18n } from '../../lib/i18n';
+import { AgentRef } from '../agent-ref';
 import { MarkdownProse } from '../markdown-prose';
 import { TaskPriorityBadge } from '../task-priority-badge';
 import { TaskStatusBadge } from '../task-status-badge';
@@ -54,6 +56,10 @@ export function TaskHeader({
 	// inherit the parent's project), so the current task's slug is the right
 	// link target — for the task-list crumb too.
 	const { data: ancestors } = useTaskAncestors(projectId, taskId);
+	// The badge showed the raw role slug; resolve the assignee so it reads the
+	// same label as every other surface, and carries the identity card.
+	const { byMemberId: agentsByMemberId } = useAgentLookup(projectId);
+	const assigneeAgent = task.assignee_id ? agentsByMemberId.get(task.assignee_id) : undefined;
 	const { t } = useI18n();
 	const [editingDescription, setEditingDescription] = useState(false);
 	return (
@@ -101,7 +107,11 @@ export function TaskHeader({
 				<TaskPriorityBadge priority={task.priority} testId="task-priority-inline" />
 				{task.assignee_id && (
 					<Badge color="neutral" className="max-w-[12rem]" testId="task-assignee-inline">
-						<span className="truncate">{task.assignee_slug ?? task.assignee_name}</span>
+						<AgentRef
+							agent={assigneeAgent}
+							fallbackName={task.assignee_name ?? task.assignee_slug ?? undefined}
+							className="truncate"
+						/>
 					</Badge>
 				)}
 				{!task.has_active_run && task.queued_wakeup && (

@@ -50,6 +50,17 @@ export interface AgentMentionData {
 	canonicalSlug?: string;
 	/** Set in instance scope: the agent's home project (HQ agents → `hq`). */
 	projectSlug?: string;
+	/** The role's own description, carried through to the chip's hover card. */
+	roleDescription?: string | null;
+}
+
+/**
+ * What a chip prints: the agent's own name when it has one, else its role. The
+ * label follows the agent, not the handle the author happened to type, so
+ * `@riley` and `@market-researcher` read identically in the thread.
+ */
+function mentionLabel(data: AgentMentionData): string {
+	return data.humanName?.trim() || data.title;
 }
 
 export interface TaskMentionData {
@@ -241,12 +252,15 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 		return {
 			type: 'link',
 			url: agentPath(agentProject, token.slug),
-			children: [{ type: 'text', value: passiveDisplay }],
+			children: [{ type: 'text', value: mentionLabel(data) }],
 			data: {
 				hProperties: {
 					'data-mention-agent-slug': token.slug,
 					'data-mention-agent-title': data.title,
 					...(data.humanName ? { 'data-mention-agent-name': data.humanName } : {}),
+					...(data.roleDescription
+						? { 'data-mention-agent-role-description': data.roleDescription }
+						: {}),
 					...(data.canonicalSlug
 						? { 'data-mention-agent-canonical-slug': data.canonicalSlug }
 						: {}),
@@ -277,12 +291,15 @@ function buildLink(token: MentionToken, opts: Options): LinkNode | null {
 		return {
 			type: 'link',
 			url: agentPath(agentProject, token.slug),
-			children: [{ type: 'text', value: display }],
+			children: [{ type: 'text', value: `@${mentionLabel(data)}` }],
 			data: {
 				hProperties: {
 					'data-mention-agent-slug': token.slug,
 					'data-mention-agent-title': data.title,
 					...(data.humanName ? { 'data-mention-agent-name': data.humanName } : {}),
+					...(data.roleDescription
+						? { 'data-mention-agent-role-description': data.roleDescription }
+						: {}),
 					...(data.canonicalSlug
 						? { 'data-mention-agent-canonical-slug': data.canonicalSlug }
 						: {}),

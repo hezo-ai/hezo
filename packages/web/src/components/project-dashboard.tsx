@@ -41,6 +41,7 @@ import { agentAvatarUrl } from '../lib/agent-avatar';
 import { inboxRowKind, inboxRowLead } from '../lib/inbox-row-kind';
 import { agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
+import { AgentRef } from './agent-ref';
 import { GoalHealthPill } from './goal-health-pill';
 import { MarkdownProse } from './markdown-prose';
 import { TaskRunDot } from './task-run-dot';
@@ -603,9 +604,10 @@ function TeamSnapshotWidget({
 									className="flex items-center gap-2 px-3 py-2"
 									data-testid="project-dashboard-running-agent"
 								>
-									<Link
-										to="/projects/$projectId/agents/$agentId"
-										params={agentPageParams(projectId, agent.slug)}
+									<AgentRef
+										agent={agent}
+										projectId={projectId}
+										link
 										className="flex min-w-0 flex-1 items-center gap-2 hover:opacity-80"
 									>
 										<Avatar
@@ -619,7 +621,7 @@ function TeamSnapshotWidget({
 										<span className="min-w-0 truncate text-[13px] font-medium text-text-1">
 											{agentDisplayName(agent)}
 										</span>
-									</Link>
+									</AgentRef>
 									{run?.task_identifier &&
 									run.task_id &&
 									currentProjectId &&

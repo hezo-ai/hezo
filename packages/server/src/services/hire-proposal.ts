@@ -19,8 +19,8 @@ const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
 export interface HireProposalInput {
 	title: string;
 	/**
-	 * What the new teammate will be called. Optional: left blank, the Captain
-	 * picks a fitting name during the coherence review that follows the hire.
+	 * A human name for the new teammate. Optional, and normally left blank: an
+	 * agent is addressed by its role unless the admin asks for a name.
 	 */
 	human_name?: string;
 	role_description?: string;

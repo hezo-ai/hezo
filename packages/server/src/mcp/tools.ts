@@ -2243,7 +2243,12 @@ export function registerTools(
 				// only way to detect an orphan or a cycle. The manager's slug/title
 				// ride along because agents address each other by slug, so without
 				// them every caller pays a second lookup per row to resolve the id.
+				// human_name/_slug match the REST listing: an agent goes by its role
+				// unless a human named it, and both are mention handles, so a
+				// coherence review can otherwise neither see who is named nor
+				// address them the way the thread does.
 				`SELECT m.id, ma.agent_type_id, ma.title, ma.slug,
+				        ma.human_name, ma.human_name_slug,
 				        ma.daily_budget_cents, ma.weekly_budget_cents, ma.monthly_budget_cents,
 				        ma.runtime_status, ma.admin_status,
 				        ma.reports_to, mgr.slug AS reports_to_slug, mgr.title AS reports_to_title
@@ -2372,7 +2377,7 @@ export function registerTools(
 				.max(AGENT_HUMAN_NAME_MAX)
 				.optional()
 				.describe(
-					'Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out to name them during the coherence review that follows the hire.',
+					'Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out unless the admin asked for a name - an agent is normally addressed by its role.',
 				),
 			role_description: z.string().optional().describe('Short role description'),
 			system_prompt: z

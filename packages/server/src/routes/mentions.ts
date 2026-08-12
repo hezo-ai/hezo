@@ -1,5 +1,6 @@
 import { ADMIN_MENTION_SLUG, DEFAULT_TEAM_ID, type MentionCandidates } from '@hezo/shared';
 import { Hono } from 'hono';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { signAssetUrl } from '../lib/asset-urls';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -265,7 +266,7 @@ mentionsRoutes.get('/projects/:projectId/mentions/search', async (c) => {
 			 WHERE (m.team_id = $1 OR (m.team_id = $5 AND $1 <> $5))
 			   AND ma.admin_status = 'enabled'
 			   AND ($2 = '' OR ma.slug ILIKE $3 OR ma.title ILIKE $3 OR ma.human_name ILIKE $3)
-			 ORDER BY (m.team_id <> $1), COALESCE(NULLIF(ma.human_name, ''), ma.title)
+			 ORDER BY (m.team_id <> $1), ${agentDisplayNameSql('ma')}
 			 LIMIT $4`,
 			[teamId, q, pattern, perKind, DEFAULT_TEAM_ID],
 		);

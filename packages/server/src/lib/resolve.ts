@@ -173,12 +173,20 @@ export async function resolveAssigneeId(
  * any project's endpoints during cross-team runs.
  */
 export async function resolveAgentId(db: Db, teamId: string, raw: string): Promise<string | null> {
-	const column = UUID_RE.test(raw) ? 'm.id' : 'ma.slug';
+	// An agent answers to both handles - `@riley` and `@market-researcher` reach
+	// the same teammate - so an id resolved from a tool argument must too, and a
+	// role slug outranks someone's name on a collision (matching the mention
+	// fan-out). Both clauses stay inside the slug branch: in the UUID branch
+	// Postgres has already inferred `$2` as uuid from `m.id = $2`, so comparing it
+	// against `ma.slug` there is a `text = uuid` type error.
+	const byUuid = UUID_RE.test(raw);
+	const match = byUuid ? 'm.id = $2' : '(ma.slug = $2 OR ma.human_name_slug = $2)';
+	const preferRoleSlug = byUuid ? '' : ', (ma.slug = $2) DESC';
 	const result = await db.query<{ id: string }>(
 		`SELECT m.id FROM members m
 		 JOIN member_agents ma ON ma.id = m.id
-		 WHERE ${column} = $2 AND m.team_id IN ($1, $3)
-		 ORDER BY (m.team_id = $1) DESC
+		 WHERE ${match} AND m.team_id IN ($1, $3)
+		 ORDER BY (m.team_id = $1) DESC${preferRoleSlug}
 		 LIMIT 1`,
 		[teamId, raw, DEFAULT_TEAM_ID],
 	);

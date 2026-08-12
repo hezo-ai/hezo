@@ -2,7 +2,7 @@ import { useLocation } from '@tanstack/react-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useAdminMentions, useMarkMentionRead } from '../../hooks/use-admin-mentions';
-import { useAgents } from '../../hooks/use-agents';
+import { useAgentLookup } from '../../hooks/use-agent-lookup';
 import {
 	type Comment,
 	type CommentSkeleton,
@@ -220,15 +220,11 @@ export function CommentsSection({
 		for (const commentId of visibleCommentsRef.current) markCommentReadIfPending(commentId);
 	}, [markCommentReadIfPending]);
 
-	// Resolve agent comment authors to their slug so the avatar + name link to
-	// the agent's page. Reads the already-cached team roster; cross-team authors
-	// (CEO / Coach) aren't in it and stay unlinked.
-	const { data: agents } = useAgents(projectId);
-	const agentSlugById = useMemo(() => {
-		const m = new Map<string, string>();
-		for (const a of agents ?? []) m.set(a.id, a.slug);
-		return m;
-	}, [agents]);
+	// Resolve agent comment authors to the full roster entry, so the avatar + name
+	// link to the agent's page and carry the identity hover card. Reads the
+	// already-cached team roster; cross-team authors (CEO / Coach) aren't in it
+	// and stay unlinked.
+	const { byMemberId: agentsByMemberId } = useAgentLookup(projectId);
 	// The run_id whose failed run-entry comment may show a Retry button: the most
 	// recent run referenced in the thread, and only when no run is currently
 	// active or queued. Run comments (any outcome) and run_failed comments both
@@ -459,7 +455,7 @@ export function CommentsSection({
 							taskId={taskId}
 							retryableRunId={retryableRunId}
 							isHighlighted={highlightedCommentId === c.public_id}
-							agentSlugById={agentSlugById}
+							agentsByMemberId={agentsByMemberId}
 							observeCommentRow={observeCommentRow}
 							onStartReply={onStartReply}
 						/>

@@ -118,7 +118,12 @@ describe('set_agent_name', () => {
 
 	it('refuses a name another teammate already answers to', async () => {
 		const t = await mintAgentToken(db, masterKeyManager, captainId, teamId);
-		// Max is the Engineer on this team.
+		// Nobody arrives named, so the collision has to be created first.
+		await call(t.token, 'set_agent_name', {
+			project: projectSlug,
+			agent_id: 'engineer',
+			name: 'Max',
+		});
 		const r = await call(t.token, 'set_agent_name', {
 			project: projectSlug,
 			agent_id: 'qa-engineer',

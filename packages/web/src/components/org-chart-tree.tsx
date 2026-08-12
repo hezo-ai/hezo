@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import type { OrgNode } from '../hooks/use-org-chart';
 import { agentAvatarUrl } from '../lib/agent-avatar';
+import { useI18n } from '../lib/i18n';
 import { AgentIdentityTooltipContent, agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { Avatar, getInitials } from './ui/avatar';
@@ -97,44 +98,63 @@ const CONNECTOR_COLUMN =
 
 export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartTreeProps) {
 	const { containerRef, contentRef, scale, height } = useOrgChartAutoFit();
+	const { t } = useI18n();
 
 	const renderNode = (node: OrgNode): ReactNode => {
 		const status = mode === 'interactive' ? orgDotStatus(node) : null;
+		const displayName = agentDisplayName(node);
+		const role = node.title?.trim();
+		// Only a *named* agent needs its role spelled out beneath: for everyone else
+		// the label already is the role, and a second line would just repeat it.
+		const roleLine = role && role !== displayName ? role : null;
 		const label = (
 			<>
 				{mode === 'interactive' && (
-					<Avatar
-						size="sm"
-						initials={getInitials(agentDisplayName(node))}
-						imageUrl={agentAvatarUrl(node)}
-					/>
+					<Avatar size="sm" initials={getInitials(displayName)} imageUrl={agentAvatarUrl(node)} />
 				)}
 				{status && <StatusDot status={status} />}
-				{agentDisplayName(node)}
+				<span className="flex min-w-0 flex-col items-start leading-tight">
+					<span className="truncate">{displayName}</span>
+					{roleLine && (
+						<span className="truncate text-[11px] font-normal text-text-3">
+							{/* Sighted readers get the second line from its position and weight;
+							    a screen reader needs it said, so the label is read aloud only. */}
+							<span className="sr-only">{t('agents.identity.roleLabel')} </span>
+							{roleLine}
+						</span>
+					)}
+				</span>
 			</>
 		);
 
+		// Both modes carry the identity card: on the team page it is the only way to
+		// learn which role a named agent fills, which is the whole point of the node.
+		const tooltipProps = {
+			content: <AgentRoleTooltipContent node={node} />,
+			side: 'top' as const,
+			delayDuration: 200,
+			contentClassName: 'max-w-[min(18rem,calc(100vw-2rem))] px-3 py-2.5 text-[12px] leading-snug',
+		};
+
 		const nodeBody =
 			mode === 'interactive' && projectId ? (
-				<Link
-					to="/projects/$projectId/agents/$agentId"
-					params={agentPageParams(projectId, node.slug)}
-					className="relative inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3.5 py-2 text-[13px] font-medium cursor-pointer transition-[border-color,background-color,box-shadow] duration-150 hover:border-border-strong hover:bg-surface-2 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inverse/40"
-				>
-					{label}
-				</Link>
+				<Tooltip {...tooltipProps}>
+					<Link
+						to="/projects/$projectId/agents/$agentId"
+						params={agentPageParams(projectId, node.slug)}
+						className="relative inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3.5 py-2 text-[13px] font-medium cursor-pointer transition-[border-color,background-color,box-shadow] duration-150 hover:border-border-strong hover:bg-surface-2 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inverse/40"
+						data-testid={`org-node-${node.slug}`}
+					>
+						{label}
+					</Link>
+				</Tooltip>
 			) : (
-				<Tooltip
-					content={<AgentRoleTooltipContent node={node} />}
-					side="top"
-					delayDuration={200}
-					contentClassName="max-w-[min(18rem,calc(100vw-2rem))] px-3 py-2.5 text-[12px] leading-snug"
-				>
+				<Tooltip {...tooltipProps}>
 					<button
 						type="button"
 						className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3.5 py-2 text-[13px] font-medium transition-[border-color,background-color] duration-150 hover:border-border-strong hover:bg-surface-2 cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inverse/40"
 						data-testid={`onboarding-org-node-${node.slug}`}
-						aria-label={`${node.title} — tap or hover for role description`}
+						aria-label={t('agents.identity.tooltipHint', { name: displayName })}
 					>
 						{label}
 					</button>

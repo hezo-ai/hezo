@@ -79,29 +79,31 @@ using this Hezo install.
 
 ## Agent names
 
-Every agent has a **role** - what it does, like "Engineer" or "Content Writer" - and most
-also have a **name**, like Max or Priya. The name is what you see: the roster, the org
-chart, the sidebar, the comments an agent writes, and the assignee on a task all show the
-name, with the role alongside it. Hover a name anywhere to see both.
+Every agent has a **role** - what it does, like "Engineer" or "Content Writer" - and that
+role is what you see by default: the roster, the org chart, the sidebar, the comments an
+agent writes, and the assignee on a task all show it. A team you start from the
+marketplace arrives addressed entirely by role.
 
-Names come with the team. Hezo's built-in teams ship a fixed name for each role, so the
-App Team's Engineer is Max in every project you start from it - once you learn who does
-what, that knowledge carries across your projects. Pulling a single role out of a team
-into another project brings its name along too.
+An agent can also have a **name**, like Max or Priya. Giving it one is your call, not
+something the team decides for you: open the agent's **Settings** and set it. From then on
+the name is what shows everywhere, with the role alongside it - on the team page the role
+sits beneath the name, and hovering a name anywhere shows both plus what the role does.
+Clear the name to go back to the role.
 
-You can rename any agent from its **Settings**. Your rename applies to that project only,
-and it sticks: updating the team later never renames a teammate you have been working
-with. Clear the name to fall back to the role.
+A name belongs to that project's copy of the agent, and it sticks: updating the team later
+never renames a teammate you have been working with. Pulling a single role out of a team
+into another project starts it unnamed there.
 
 The Captain, the CEO and the Coach are always shown by their role rather than a name -
 there is one of each, and their role is who they are.
 
 ### Mentioning an agent
 
-An agent answers to two handles, and both wake it: its role (`@engineer`) and its name
-(`@max`). Type `@` in a comment and the picker searches names and roles together, so
-looking for "engineer" finds Max and inserting him writes `@max`. Renaming an agent moves
-its name handle; the role handle never changes, so older comments keep working.
+An agent always answers to its role (`@engineer`). Once you name it, it answers to the
+name as well (`@max`), and both wake it. Type `@` in a comment and the picker searches
+names and roles together. Whichever handle you type, the posted comment shows the agent's
+display name - so `@max` and `@engineer` read the same in the thread. Renaming an agent
+moves its name handle; the role handle never changes, so older comments keep working.
 
 Names are unique within a team, and a name can never collide with a role handle already in
 use.

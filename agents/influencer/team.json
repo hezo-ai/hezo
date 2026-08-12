@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 13,
+			"notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
+		},
+		{
 			"version": 12,
 			"notes": "Renamed ticket to task throughout the roster copy and every role prompt, matching the term Hezo uses everywhere else, and replaced em dashes with hyphens in the operator-facing team and role descriptions."
 		},
@@ -117,10 +121,9 @@
 		{
 			"slug": "brand-strategist",
 			"title": "Brand Strategist",
-			"human_name": "Nova",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "influencer:nova",
+				"seed": "influencer:brand-strategist",
 				"gender": "f",
 				"style": "design"
 			},
@@ -140,10 +143,9 @@
 		{
 			"slug": "trend-researcher",
 			"title": "Trend Researcher",
-			"human_name": "Dev",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "influencer:dev",
+				"seed": "influencer:trend-researcher",
 				"gender": "m",
 				"style": "research"
 			},
@@ -163,10 +165,9 @@
 		{
 			"slug": "content-writer",
 			"title": "Content Writer",
-			"human_name": "Cleo",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "influencer:cleo",
+				"seed": "influencer:content-writer",
 				"gender": "f",
 				"style": "writer"
 			},
@@ -186,10 +187,9 @@
 		{
 			"slug": "media-producer",
 			"title": "Media Producer",
-			"human_name": "Hugo",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "influencer:hugo",
+				"seed": "influencer:media-producer",
 				"gender": "m",
 				"style": "default"
 			},
@@ -209,10 +209,9 @@
 		{
 			"slug": "content-editor",
 			"title": "Content Editor",
-			"human_name": "Sara",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "influencer:sara",
+				"seed": "influencer:content-editor",
 				"gender": "f",
 				"style": "writer"
 			},
@@ -232,10 +231,9 @@
 		{
 			"slug": "distribution-manager",
 			"title": "Distribution Manager",
-			"human_name": "Marco",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "influencer:marco",
+				"seed": "influencer:distribution-manager",
 				"gender": "m",
 				"style": "marketing"
 			},

@@ -68,6 +68,10 @@
 	],
 	"changelog": [
 		{
+			"version": 14,
+			"notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
+		},
+		{
 			"version": 13,
 			"notes": "Consolidated the learnings of a long-running live investment team back into the template, generalized to any stock or industry. The Equity Analyst now works a 13-section deep-dive framework (thesis with invalidation triggers, capital and share-class structure, comprehensive dilution analysis, sourced catalyst calendar, probability-weighted valuation scenarios with traceable bridges) through a four-phase process ending in thematic pre-submission checks; per-stock research moves to a folder per stock in the assets library, with filings stored alongside and compact indexes kept as project docs. The Risk Verifier gained an independent freshness step, a section-by-section PASS/CHALLENGE/GAP checklist, and posts structured verdicts before a run ends. The Catalyst Monitor sweeps three channels (filings, news, trade press) as the team's earliest detection point and makes targeted, verified edits. Candidates now flow through the Captain for triage, the Report Writer's output passes the Captain's review before the admin, and portfolio membership changes only on explicit admin instruction."
 		},
@@ -127,10 +131,9 @@
 		{
 			"slug": "market-researcher",
 			"title": "Market Researcher",
-			"human_name": "Ravi",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "investment:ravi",
+				"seed": "investment:market-researcher",
 				"gender": "m",
 				"style": "research"
 			},
@@ -150,10 +153,9 @@
 		{
 			"slug": "equity-analyst",
 			"title": "Equity Analyst",
-			"human_name": "Elena",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "investment:elena",
+				"seed": "investment:equity-analyst",
 				"gender": "f",
 				"style": "research"
 			},
@@ -173,10 +175,9 @@
 		{
 			"slug": "catalyst-monitor",
 			"title": "Catalyst Monitor",
-			"human_name": "Niko",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "investment:niko",
+				"seed": "investment:catalyst-monitor",
 				"gender": "m",
 				"style": "research"
 			},
@@ -196,10 +197,9 @@
 		{
 			"slug": "risk-verifier",
 			"title": "Risk Verifier",
-			"human_name": "Clara",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "investment:clara",
+				"seed": "investment:risk-verifier",
 				"gender": "f",
 				"style": "research"
 			},
@@ -219,10 +219,9 @@
 		{
 			"slug": "report-writer",
 			"title": "Report Writer",
-			"human_name": "Jonas",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "investment:jonas",
+				"seed": "investment:report-writer",
 				"gender": "m",
 				"style": "writer"
 			},

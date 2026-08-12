@@ -116,6 +116,7 @@ export function MarkdownProse({
 				m.set(a.slug.toLowerCase(), {
 					title: a.title,
 					humanName: a.human_name,
+					roleDescription: a.role_description,
 					canonicalSlug: a.slug,
 					projectSlug: a.project_slug,
 				});
@@ -126,7 +127,12 @@ export function MarkdownProse({
 		for (const a of agents) {
 			// An agent answers to both handles, so a mention written either way
 			// resolves to the same teammate.
-			const data = { title: a.title, humanName: a.human_name, canonicalSlug: a.slug };
+			const data = {
+				title: a.title,
+				humanName: a.human_name,
+				roleDescription: a.role_description,
+				canonicalSlug: a.slug,
+			};
 			m.set(a.slug.toLowerCase(), data);
 			if (a.human_name_slug) m.set(a.human_name_slug.toLowerCase(), data);
 		}
@@ -281,6 +287,7 @@ export function MarkdownProse({
 					'data-mention-agent-slug'?: string;
 					'data-mention-agent-title'?: string;
 					'data-mention-agent-name'?: string;
+					'data-mention-agent-role-description'?: string;
 					'data-mention-agent-canonical-slug'?: string;
 					'data-mention-agent-project-slug'?: string;
 					'data-mention-passive'?: string;
@@ -439,6 +446,7 @@ export function MarkdownProse({
 				const agentSlug = attrs['data-mention-agent-slug'];
 				const agentTitle = attrs['data-mention-agent-title'];
 				const agentName = attrs['data-mention-agent-name'];
+				const agentRoleDescription = attrs['data-mention-agent-role-description'];
 				const agentPassive = attrs['data-mention-passive'] === 'true';
 				const agentProjectSlug = attrs['data-mention-agent-project-slug'] ?? projectId;
 				// The link uses the role slug whichever handle was typed, so it keeps
@@ -450,7 +458,11 @@ export function MarkdownProse({
 							content={
 								agentName || agentTitle ? (
 									<AgentIdentityTooltipContent
-										agent={{ human_name: agentName, title: agentTitle }}
+										agent={{
+											human_name: agentName,
+											title: agentTitle,
+											role_description: agentRoleDescription,
+										}}
 									/>
 								) : (
 									`@${agentSlug}`

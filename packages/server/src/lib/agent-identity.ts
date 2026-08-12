@@ -27,10 +27,17 @@ export { isNameOnlyRole };
  * role. Used by every `*_name` projection in a feed, so a comment shows "Max"
  * rather than "Engineer". Fields named `*_title` keep reading the role.
  *
- * Takes the table alias because the joins differ per query.
+ * The whole expression, not a fragment, so the fallback order is spelled once:
+ * a projection that inlined its own COALESCE is how the Agent Queue came to read
+ * a role while the Assignee beside it read a name.
+ *
+ * Takes the table aliases because the joins differ per query. Pass
+ * `memberAlias` where the row may name a human as well as an agent, so it falls
+ * through to the member's display name.
  */
-export function agentDisplayNameSql(alias: string): string {
-	return `NULLIF(${alias}.human_name, '')`;
+export function agentDisplayNameSql(agentAlias: string, memberAlias?: string): string {
+	const memberFallback = memberAlias ? `, ${memberAlias}.display_name` : '';
+	return `COALESCE(NULLIF(${agentAlias}.human_name, ''), ${agentAlias}.title${memberFallback})`;
 }
 
 /** Why a human name was refused. `null` means it is available. */

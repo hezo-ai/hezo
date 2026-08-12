@@ -7,6 +7,7 @@ import {
 import { useNavigate } from '@tanstack/react-router';
 import { AlertTriangle, AtSign, ChevronDown, ListPlus, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAgentLookup } from '../hooks/use-agent-lookup';
 import { useAgents } from '../hooks/use-agents';
 import { usePanelPlacement } from '../hooks/use-panel-placement';
 import { type Task, useInfiniteTasks, useTasks } from '../hooks/use-tasks';
@@ -21,6 +22,8 @@ import {
 	writeStoredTaskFilters,
 } from '../lib/task-filter-storage';
 import { AdminApprovalsBanner } from './admin-approvals-banner';
+import { agentDisplayName } from './agent-identity-tooltip';
+import { AgentRef } from './agent-ref';
 import { CreateTaskDialog } from './create-task-dialog';
 import { InfiniteScrollSentinel } from './infinite-scroll-sentinel';
 import { TaskMentionTooltipContent } from './task-mention-tooltip';
@@ -81,6 +84,7 @@ type TaskRow = Pick<
 	| 'parent_task_id'
 	| 'project_name'
 	| 'project_slug'
+	| 'assignee_id'
 	| 'assignee_name'
 	| 'assignee_type'
 	| 'has_active_run'
@@ -182,6 +186,7 @@ export function TaskList({ projectId }: TaskListProps) {
 	const { t } = useI18n();
 	const navigate = useNavigate();
 	const { data: agents } = useAgents(projectId);
+	const { byMemberId: agentsByMemberId } = useAgentLookup(projectId);
 	const [expanded, setExpanded] = useState(false);
 	// Hydrate the filter bar from this project's last-set selections (or defaults).
 	const [stored] = useState(() => readStoredTaskFilters(projectId));
@@ -250,7 +255,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		() =>
 			(agents ?? [])
 				.filter((a) => a.admin_status !== 'disabled')
-				.map((a) => ({ value: a.id, label: a.title })),
+				.map((a) => ({ value: a.id, label: agentDisplayName(a) })),
 		[agents],
 	);
 
@@ -484,9 +489,18 @@ export function TaskList({ projectId }: TaskListProps) {
 			header: 'Assignee',
 			width: '120px',
 			hideOnMobile: true,
-			render: (row) => (
-				<span className="block max-w-[140px] truncate text-text-2">{row.assignee_name || '—'}</span>
-			),
+			render: (row) =>
+				row.assignee_id && agentsByMemberId.get(row.assignee_id) ? (
+					<AgentRef
+						agent={agentsByMemberId.get(row.assignee_id)}
+						fallbackName={row.assignee_name ?? undefined}
+						className="block max-w-[140px] truncate text-text-2"
+					/>
+				) : (
+					<span className="block max-w-[140px] truncate text-text-2">
+						{row.assignee_name || '—'}
+					</span>
+				),
 		},
 	];
 

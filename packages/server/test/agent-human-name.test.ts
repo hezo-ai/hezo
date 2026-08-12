@@ -89,7 +89,11 @@ describe('renaming an agent', () => {
 	it('refuses a name already taken by a teammate, by role slug or by name', async () => {
 		const { projectSlug } = await appTeamProject('Clash Co');
 
-		// Someone else's human name.
+		// Someone else's human name - which, since no team ships one, this test has
+		// to establish before it can be clashed with.
+		expect((await patchAgent(projectSlug, 'qa-engineer', { human_name: 'Priya' })).status).toBe(
+			200,
+		);
 		const byName = await patchAgent(projectSlug, 'engineer', { human_name: 'Priya' });
 		expect(byName.status).toBe(409);
 
@@ -164,14 +168,25 @@ describe('regenerating an avatar', () => {
 describe('the agent listing', () => {
 	it('carries the identity agents and the UI address each other by', async () => {
 		const { projectSlug } = await appTeamProject('Listing Co');
-		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
-			headers: authHeader(token),
-		});
-		const rows = (await res.json()).data as Array<Record<string, unknown>>;
-		const engineer = rows.find((r) => r.slug === 'engineer');
-		expect(engineer).toMatchObject({ human_name: 'Max', human_name_slug: 'max', gender: 'm' });
-		expect(engineer?.avatar_spec).toMatchObject({ style: 'engineering' });
+		const listing = async () => {
+			const res = await app.request(`/api/projects/${projectSlug}/agents`, {
+				headers: authHeader(token),
+			});
+			const rows = (await res.json()).data as Array<Record<string, unknown>>;
+			return rows.find((r) => r.slug === 'engineer');
+		};
+
+		// No built-in team ships a name, so the listing starts unnamed - but it must
+		// still expose both handle fields, since that is what the UI and the
+		// coherence review read to know whether anyone has been named.
+		const unnamed = await listing();
+		expect(unnamed).toMatchObject({ human_name: null, human_name_slug: null, gender: 'm' });
+		expect(unnamed?.avatar_spec).toMatchObject({ style: 'engineering' });
 		// The retired upload surface leaves nothing behind.
-		expect(engineer).not.toHaveProperty('icon_url');
+		expect(unnamed).not.toHaveProperty('icon_url');
+
+		// Once an admin names the agent, both handles show up in the same listing.
+		expect((await patchAgent(projectSlug, 'engineer', { human_name: 'Max' })).status).toBe(200);
+		expect(await listing()).toMatchObject({ human_name: 'Max', human_name_slug: 'max' });
 	});
 });
