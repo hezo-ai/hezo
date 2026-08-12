@@ -1,5 +1,6 @@
 import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { resolveTaskId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
@@ -15,7 +16,9 @@ executionLocksRoutes.get('/projects/:projectId/tasks/:taskId/lock', async (c) =>
 
 	const result = await db.query(
 		`SELECT el.id, el.task_id, el.member_id, el.lock_type, el.locked_at,
-		        COALESCE(ma.title, m.display_name) AS member_name,
+		        ${agentDisplayNameSql('ma', 'm')} AS member_name,
+		        ma.title AS member_title,
+		        ma.slug AS member_slug,
 		        (
 		          SELECT hr.id FROM heartbeat_runs hr
 		          WHERE hr.task_id = el.task_id

@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import type { Db } from '../db/database';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { buildCursorPage, encodeCursor, parseCursorPagination } from '../lib/pagination';
 import { err } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -73,7 +74,7 @@ async function queryAuditLog(
 		`SELECT al.id, al.project_id, al.actor_type, al.actor_member_id,
 		        al.actor_api_key_id,
 		        al.action, al.entity_type, al.entity_id, al.details, al.created_at,
-		        COALESCE(ma.title, m.display_name, ca.name) AS actor_name,
+		        COALESCE(${agentDisplayNameSql('ma', 'm')}, ca.name) AS actor_name,
 		        p.slug AS project_slug,
 		        p.name AS project_name,
 		        tk.identifier AS entity_identifier,

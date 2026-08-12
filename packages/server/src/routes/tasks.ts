@@ -3,6 +3,7 @@ import { type Context, Hono } from 'hono';
 import type { Db } from '../db/database';
 import { readRunLogTail } from '../db/run-log-chunks';
 import { assertNoActiveRun } from '../lib/active-run';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import {
@@ -203,7 +204,8 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
             i.number, i.identifier, i.title, i.description, i.status, i.priority,
             i.labels, i.created_at, i.updated_at,
             p.name AS project_name,
-            COALESCE(ma.title, m.display_name) AS assignee_name,
+            ${agentDisplayNameSql('ma', 'm')} AS assignee_name,
+            ma.slug AS assignee_slug,
             m.member_type AS assignee_type,
             EXISTS (
               SELECT 1 FROM heartbeat_runs hr
@@ -319,10 +321,10 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
 		`SELECT i.*,
             p.name AS project_name, p.slug AS project_slug, p.description AS project_description,
             co.description AS team_description,
-            COALESCE(ma.title, m.display_name) AS assignee_name,
+            ${agentDisplayNameSql('ma', 'm')} AS assignee_name,
             ma.slug AS assignee_slug,
             m.member_type AS assignee_type,
-            COALESCE(ma_ps.title, m_ps.display_name) AS progress_summary_updated_by_name,
+            ${agentDisplayNameSql('ma_ps', 'm_ps')} AS progress_summary_updated_by_name,
             (SELECT count(*)::int FROM task_comments ic WHERE ic.task_id = i.id) AS comment_count,
             ra.run_count, ra.total_duration_seconds, ca.total_cost_cents,
             (ar.status IS NOT NULL) AS has_active_run,

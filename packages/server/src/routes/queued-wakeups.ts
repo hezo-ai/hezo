@@ -1,5 +1,6 @@
 import { WakeupSource, WakeupStatus, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { shouldDeferWakeupForBlockers } from '../lib/dependencies';
 import { apiKeyIdFromAuth, resolveActorMemberId, resolveTaskId } from '../lib/resolve';
@@ -28,13 +29,17 @@ queuedWakeupsRoutes.get('/projects/:projectId/tasks/:taskId/queued-wakeups', asy
 		id: string;
 		member_id: string;
 		member_name: string;
+		member_title: string | null;
+		member_slug: string | null;
 		source: string;
 		created_at: string;
 		coalesced_count: number;
 		last_skipped_reason: string | null;
 	}>(
 		`SELECT w.id, w.member_id,
-		        COALESCE(ma.title, m.display_name) AS member_name,
+		        ${agentDisplayNameSql('ma', 'm')} AS member_name,
+		        ma.title AS member_title,
+		        ma.slug AS member_slug,
 		        w.source, w.created_at, w.coalesced_count, w.last_skipped_reason
 		 FROM agent_wakeup_requests w
 		 JOIN members m ON m.id = w.member_id
@@ -144,7 +149,7 @@ queuedWakeupsRoutes.post(
 		});
 
 		const nameRes = await db.query<{ member_name: string }>(
-			`SELECT COALESCE(ma.title, m.display_name) AS member_name
+			`SELECT ${agentDisplayNameSql('ma', 'm')} AS member_name
 			 FROM members m LEFT JOIN member_agents ma ON ma.id = m.id
 			 WHERE m.id = $1`,
 			[row.member_id],

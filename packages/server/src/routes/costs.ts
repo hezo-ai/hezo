@@ -1,5 +1,6 @@
 import { wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -55,12 +56,13 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 		const result = await db.query<{ total_cents: number }>(
 			`SELECT ce.member_id AS agent_id,
               COALESCE(ma.title, m.display_name) AS agent_title,
+              ${agentDisplayNameSql('ma', 'm')} AS agent_name,
               sum(ce.amount_cents)::int AS total_cents
        FROM cost_entries ce
        LEFT JOIN members m ON m.id = ce.member_id
        LEFT JOIN member_agents ma ON ma.id = ce.member_id
        WHERE ${where}
-       GROUP BY ce.member_id, ma.title, m.display_name`,
+       GROUP BY ce.member_id, ma.title, ma.human_name, m.display_name`,
 			params,
 		);
 		const totalCents = result.rows.reduce((sum, r) => sum + r.total_cents, 0);
@@ -77,12 +79,13 @@ costsRoutes.get('/projects/:projectId/costs', async (c) => {
 			`SELECT date_trunc('day', ce.created_at)::date::text AS day,
               ce.member_id AS agent_id,
               COALESCE(ma.title, m.display_name) AS agent_title,
+              ${agentDisplayNameSql('ma', 'm')} AS agent_name,
               sum(ce.amount_cents)::int AS total_cents
        FROM cost_entries ce
        LEFT JOIN members m ON m.id = ce.member_id
        LEFT JOIN member_agents ma ON ma.id = ce.member_id
        WHERE ${where}
-       GROUP BY day, ce.member_id, ma.title, m.display_name
+       GROUP BY day, ce.member_id, ma.title, ma.human_name, m.display_name
        ORDER BY day`,
 			params,
 		);

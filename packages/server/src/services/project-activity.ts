@@ -107,6 +107,9 @@ export async function buildProgressActivityCandidates(
 		 actioned AS (
 		   SELECT 'actioned'::text AS kind,
 		          t.identifier, t.title, t.status::text AS status,
+		          -- Deliberately the role, not the display name: this feed is read by
+		          -- agents (via MCP), and SHARED_INSTRUCTIONS has them match an actor
+		          -- against their own role title.
 		          COALESCE(ma.title, m.display_name) AS actor,
 		          GREATEST(t.updated_at, COALESCE(rr.at, t.updated_at)) AS at,
 		          left(COALESCE(NULLIF(t.progress_summary, ''), t.description), ${EXCERPT_CHARS}) AS excerpt

@@ -6,6 +6,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
 import { resolveAgentId } from '../lib/resolve';
@@ -34,14 +35,14 @@ approvalsRoutes.get('/projects/:projectId/approvals', async (c) => {
             a.resolved_at, a.archived_at, a.created_at,
             co.name AS team_name,
             co.slug AS team_slug,
-            COALESCE(ma.title, m.display_name) AS requested_by_name,
+            ${agentDisplayNameSql('ma', 'm')} AS requested_by_name,
             a.requested_by_member_id,
             ma.slug AS requested_by_slug,
             mu.user_id AS requested_by_user_id,
             (SELECT ui.updated_at FROM user_icons ui WHERE ui.user_id = mu.user_id)
               AS requested_by_user_icon_updated_at,
             ma.avatar_spec AS requested_by_avatar_spec,
-            COALESCE(NULLIF(pma.human_name, ''), pma.title, pm.display_name) AS payload_member_name,
+            ${agentDisplayNameSql('pma', 'pm')} AS payload_member_name,
             pma.slug AS payload_member_slug,
             pp.name AS payload_project_name,
             pp.slug AS payload_project_slug,
@@ -118,7 +119,7 @@ approvalsRoutes.get('/projects/:projectId/approvals/:approvalId/blocked-tickets'
 			   ic.id AS comment_id,
 			   ic.public_id AS comment_public_id,
 			   ic.created_at AS comment_created_at,
-			   COALESCE(ma.title, m.display_name) AS agent_name,
+			   ${agentDisplayNameSql('ma', 'm')} AS agent_name,
 			   ma.slug AS agent_slug,
 			   (
 			     SELECT LEFT(prev.content->>'text', 120)
