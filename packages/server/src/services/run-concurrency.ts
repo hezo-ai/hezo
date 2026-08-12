@@ -15,9 +15,12 @@ import type { ContainerEngine } from './sandbox/types';
  * Shared by the scheduler (`JobManager`, which layers its in-memory dispatch
  * guards on top) and the stateless run-now route.
  *
- * `lib/active-run.ts` and the `has_active_run` flag in `routes/tasks.ts` run
- * similar task-scoped checks for assignee-lock / badge purposes; they have
- * different return shapes and are intentionally left untouched.
+ * `isTaskBusyInDb` is the only home for the one-run-per-task rule; call it
+ * directly rather than reaching for a lookalike. `lib/reassign-guard.ts` and the
+ * `has_active_run` flag in `routes/tasks.ts` run task-scoped checks over the same
+ * rows for assignee-lock / badge purposes, but neither answers this question:
+ * the guard exempts the caller and the incoming assignee by design, so a claim
+ * path built on it would let a second run queue behind the first.
  */
 
 export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {

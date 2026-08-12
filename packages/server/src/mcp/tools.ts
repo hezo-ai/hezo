@@ -65,7 +65,6 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import { readRunLogTail, readRunLogWindow, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
-import { assertNoActiveRun } from '../lib/active-run';
 import {
 	applyAgentHumanName,
 	buildAgentAvatarSpec,
@@ -95,6 +94,7 @@ import {
 	detectUnlinkedTeammateReferences,
 	extractMentionSlugs,
 } from '../lib/mentions';
+import { assertNoBlockingRun } from '../lib/reassign-guard';
 import {
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
@@ -179,9 +179,11 @@ import {
 	removeCommentReaction,
 } from '../services/reactions';
 import { listReviewComments } from '../services/review-comments';
+import { isTaskBusyInDb } from '../services/run-concurrency';
 import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
 import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
 import {
+	recordAssigneeChange,
 	recordDescriptionChange,
 	recordParentChange,
 	recordTaskLinks,
@@ -200,7 +202,7 @@ import {
 	applyMarketplaceTeamToTeam,
 } from '../services/team-template-apply';
 import { resolveSystemPrompt } from '../services/template-resolver';
-import { createWakeup } from '../services/wakeup';
+import { createWakeup, wakeAgentIfAssigned } from '../services/wakeup';
 import type { WebSocketManager } from '../services/ws';
 import {
 	type ContentWindow,
@@ -1830,7 +1832,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update a task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a task, set status to `done` - that is the final completed state and wakes Coach to review the task for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
+		'Update a task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a task, set status to `done` - that is the final completed state and wakes Coach to review the task for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. A run on the task blocks a reassignment only when it belongs to some other agent - your own run never blocks you, so you can hand off a task you are running, and neither does a run belonging to the agent you are assigning to. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1938,8 +1940,11 @@ export function registerTools(
 
 			if (args.assignee_id && currentRow) {
 				if (args.assignee_id !== previousAssigneeId) {
-					const activeRunCheck = await assertNoActiveRun(db, taskId);
-					if (!activeRunCheck.ok) return { error: activeRunCheck.message };
+					const blocking = await assertNoBlockingRun(db, taskId, {
+						callerMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+						incomingAssigneeId: args.assignee_id as string,
+					});
+					if (!blocking.ok) return { error: blocking.message };
 				}
 				if (auth.type === AuthType.Agent && args.assignee_id !== previousAssigneeId) {
 					const hierarchyCheck = await assertSubordinateAssignee(
@@ -2107,6 +2112,43 @@ export function registerTools(
 				}
 			}
 
+			// Ordered to match the REST route (description, title, parent, assignee,
+			// status) so both surfaces lay the same sequence of system comments into
+			// the thread.
+			if (currentRow && args.assignee_id && args.assignee_id !== previousAssigneeId) {
+				// Awaited: a human watching the task page depends on the broadcast that
+				// lands with this comment.
+				try {
+					const names = await recordAssigneeChange(
+						db,
+						teamId,
+						taskId,
+						previousAssigneeId,
+						args.assignee_id as string,
+						actorMemberId,
+						actorApiKeyId,
+						wsManager,
+					);
+					events?.emit({
+						type: 'task.updated',
+						teamId,
+						projectId,
+						actorType: actorTypeFromAuth(auth),
+						actorMemberId,
+						actorApiKeyId,
+						taskId,
+						field: 'assignee',
+						from: previousAssigneeId,
+						to: args.assignee_id as string,
+						fromLabel: names?.fromName ?? null,
+						toLabel: names?.toName ?? null,
+					});
+				} catch (e) {
+					log.error('Failed to record assignee change:', e);
+				}
+				wakeAgentIfAssigned(db, args.assignee_id as string, teamId, taskId);
+			}
+
 			if (args.status && currentStatus) {
 				try {
 					await triggerStatusAutomations(
@@ -2122,19 +2164,6 @@ export function registerTools(
 					);
 				} catch (e) {
 					log.error('Failed to trigger status automations:', e);
-				}
-			}
-
-			if (args.assignee_id && args.assignee_id !== previousAssigneeId) {
-				const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [
-					args.assignee_id,
-				]);
-				if (isAgent.rows.length > 0) {
-					trackBackground(
-						createWakeup(db, args.assignee_id as string, teamId, WakeupSource.Assignment, {
-							task_id: taskId,
-						}).catch((e) => log.error('Failed to wake agent:', e)),
-					);
 				}
 			}
 
@@ -2666,8 +2695,14 @@ export function registerTools(
 			const row = ticket.rows[0];
 			if (!row) return { error: 'No open team-setup task for this project' };
 
-			const active = await assertNoActiveRun(db, row.id);
-			if (!active.ok) return { error: active.message };
+			// Run-concurrency, not a reassignment guard: this claims the ticket for
+			// the caller, so the reassignment guard's caller/incoming exemptions would
+			// both fire on the CEO and let a second run queue behind the first.
+			if (await isTaskBusyInDb(db, row.id)) {
+				return {
+					error: `A run is already active on ${row.identifier}. Wait for it to finish, or cancel it from the task page, then call start_team_setup again.`,
+				};
+			}
 
 			if (row.assignee_id !== auth.memberId) {
 				const updated = await db.query<Record<string, unknown>>(

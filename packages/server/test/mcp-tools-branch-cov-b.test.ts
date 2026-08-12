@@ -379,6 +379,35 @@ describe('create_project / start_team_setup (CEO)', () => {
 		expect(row.rows[0].assignee_id).toBe(ceoId);
 	});
 
+	// This guard is run-concurrency, not the reassignment guard. The CEO is both
+	// the caller and the incoming assignee here, so building it on
+	// `assertNoBlockingRun` would exempt itself twice over and queue a second run
+	// behind the first.
+	it('start_team_setup refuses while a run is active, even the CEO own run', async () => {
+		const t = await ceoToken();
+		const ticket = await db.query<{ id: string }>(
+			`SELECT id FROM tasks
+			 WHERE labels @> '["team-coherence-review"]'::jsonb
+			   AND status NOT IN ('done'::task_status, 'cancelled'::task_status)
+			   AND team_id = (SELECT team_id FROM projects WHERE slug = $1)
+			 LIMIT 1`,
+			[newProjectSlug],
+		);
+		const taskId = ticket.rows[0].id;
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
+			 SELECT $1, team_id, $2, 'running'::heartbeat_run_status, now() FROM tasks WHERE id = $2
+			 RETURNING id`,
+			[ceoId, taskId],
+		);
+		try {
+			const r = await call(t, 'start_team_setup', { project: newProjectSlug });
+			expect(r.error).toContain('A run is already active');
+		} finally {
+			await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
+		}
+	});
+
 	it('start_team_setup errors when no open setup task exists', async () => {
 		// The coherence ticket in `projectSlug`'s team was never created via the
 		// CEO path; close any open one first to guarantee the error branch.
