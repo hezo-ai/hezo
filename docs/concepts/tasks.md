@@ -93,6 +93,24 @@ If a run is stranded (its process vanished, or it never managed to start), Hezo 
 within a couple of minutes and marks it failed, which releases the task and returns the
 assignee to **Idle**. You do not need to restart Hezo to clear a stuck task.
 
+## How the task list is ordered
+
+Every task list puts the tasks you are most likely to care about first, in three bands,
+whichever sort you have chosen:
+
+1. **Tasks an agent is working on right now** - a run in flight or queued. These carry the
+   pulsing amber dot next to the task ID.
+2. **Tasks waiting on you** - the task has an unread item in your inbox (an @admin
+   question, a credential request, an asset-deletion request), or it is holding on a
+   choice nobody has made yet, such as a pending hire proposal, a goal suggestion, or a
+   repo to work in. The inbox ones carry the blue @ icon.
+3. **Everything else.**
+
+Your chosen sort - work order, newest, or recently updated - orders the tasks inside each
+band rather than across them, so a task that needs you never sinks out of sight just
+because something newer arrived. The **Done** section is the exception: finished work
+always reads most-recently-updated first.
+
 ## Sub-tasks and hierarchy
 
 A task can be filed **under** another one as a sub-task. Agents reach for this when the

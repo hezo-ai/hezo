@@ -56,6 +56,13 @@ export interface Task {
 	/** Summed cost across the task's runs, in cents. */
 	total_cost_cents: number;
 	has_unread_admin_mention: boolean;
+	/**
+	 * The task is parked on the admin: an unread inbox row for the viewing admin, or
+	 * an ask comment (hire, goal, repo-setup card, credential request) nobody has
+	 * answered. This is the list's second ordering tier, below active runs. List rows
+	 * only, like `has_unread_admin_mention`.
+	 */
+	admin_action_pending: boolean;
 	last_run_status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | null;
 	/** Id of the last completed run — the target of a manual retry. */
 	last_run_id: string | null;

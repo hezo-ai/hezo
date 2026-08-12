@@ -491,6 +491,59 @@ test('tasks with active runs pin to the top regardless of sort order', async () 
 	});
 });
 
+test('in progress section orders running, then waiting-on-admin, then the rest', async () => {
+	let projectSlug = '';
+	const titles = {
+		running: 'Zeta running task',
+		mentioned: 'Yankee mention task',
+		idle: 'Xray idle task',
+	};
+
+	const { findByText, findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Tier Project' });
+			const agentId = ws.agents[0].id;
+
+			const running = await seedTask(ws, project, { title: titles.running, assignee_id: agentId });
+			const mentioned = await seedTask(ws, project, {
+				title: titles.mentioned,
+				assignee_id: agentId,
+			});
+			const idle = await seedTask(ws, project, { title: titles.idle, assignee_id: agentId });
+
+			await insertActiveRun(agentId, ws.team.id, running.id);
+			await seedAdminMention(ws, mentioned.id, '@admin your call please.');
+
+			// The section sorts updated_at:desc within a tier, and a status PATCH
+			// bumps updated_at — so patching the idle task last makes it the most
+			// recently updated. Only the tiers can keep it below the other two.
+			await patchStatus(ws, running.id, 'in_progress');
+			await patchStatus(ws, mentioned.id, 'in_progress');
+			await patchStatus(ws, idle.id, 'in_progress');
+
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+
+	await findByText(titles.idle, undefined, { timeout: 10_000 });
+	const section = await findByTestId('task-list-in-progress');
+
+	await waitFor(() => {
+		const ordered = Array.from(section.querySelectorAll('tbody tr'))
+			.map((row) => row.textContent ?? '')
+			.map((text) => Object.values(titles).find((title) => text.includes(title)))
+			.filter((title): title is string => title !== undefined);
+		expect(ordered).toEqual([titles.running, titles.mentioned, titles.idle]);
+	});
+});
+
 test('in progress tasks render in a pinned section without duplicating in the main list', async () => {
 	let projectSlug = '';
 

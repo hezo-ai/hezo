@@ -29,9 +29,12 @@ import {
 	resolveParentAssignment,
 } from '../lib/task-relationships';
 import {
+	adminActionPendingSql,
+	adminUnreadMentionExistsSql,
 	buildSearchRelevanceOrderSql,
 	buildTaskListOrderBy,
 	parseTaskListSort,
+	taskActiveRunExistsSql,
 } from '../lib/task-sort';
 import type { Env } from '../lib/types';
 import { logger } from '../logger';
@@ -195,10 +198,21 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
 		idx = rel.nextIdx;
 	}
 
-	const orderBy = buildTaskListOrderBy(sortField, sortDirection, params, idx);
+	// The viewing admin's id is read by both the projection and the ordering, so it
+	// takes a placeholder of its own ahead of the ORDER BY params rather than being
+	// appended after them.
+	const adminUserIdx = idx;
+	params.push(adminUserId);
+	idx++;
+
+	// One expression, two uses: the `admin_action_pending` column and the ordering
+	// tier below active runs. Building it once keeps the two from drifting.
+	const adminActionPending = adminActionPendingSql('i', adminUserIdx);
+
+	const orderBy = buildTaskListOrderBy(sortField, sortDirection, params, idx, adminActionPending);
 	idx = orderBy.nextIdx;
 
-	const dataParams = [...params, adminUserId, perPage, offset];
+	const dataParams = [...params, perPage, offset];
 	const result = await db.query(
 		`SELECT i.id, i.team_id, i.project_id, i.assignee_id, i.parent_task_id,
             i.number, i.identifier, i.title, i.description, i.status, i.priority,
@@ -207,15 +221,9 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
             ${agentDisplayNameSql('ma', 'm')} AS assignee_name,
             ma.slug AS assignee_slug,
             m.member_type AS assignee_type,
-            EXISTS (
-              SELECT 1 FROM heartbeat_runs hr
-              WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
-            ) AS has_active_run,
-            EXISTS (
-              SELECT 1 FROM admin_mentions bm
-              WHERE bm.task_id = i.id AND bm.user_id = $${idx}
-                AND bm.read_at IS NULL AND bm.archived_at IS NULL
-            ) AS has_unread_admin_mention,
+            ${taskActiveRunExistsSql('i')} AS has_active_run,
+            ${adminUnreadMentionExistsSql('i', adminUserIdx)} AS has_unread_admin_mention,
+            ${adminActionPending} AS admin_action_pending,
             lr.status AS last_run_status,
             CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
               'reason', qw.last_skipped_reason,
@@ -252,7 +260,7 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
      ) lr ON true
      WHERE ${where}
      ORDER BY ${relevancePrefix}${orderBy.sql}
-     LIMIT $${idx + 1} OFFSET $${idx + 2}`,
+     LIMIT $${idx} OFFSET $${idx + 1}`,
 		dataParams,
 	);
 
@@ -1015,10 +1023,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId/dependencies', async (c) => 
 		`SELECT d.id, d.task_id, d.blocked_by_task_id, d.created_at,
             i.identifier AS blocked_by_identifier, i.title AS blocked_by_title, i.status AS blocked_by_status,
             p.slug AS blocked_by_project_slug,
-            EXISTS (
-              SELECT 1 FROM heartbeat_runs hr
-              WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
-            ) AS blocked_by_has_active_run,
+            ${taskActiveRunExistsSql('i')} AS blocked_by_has_active_run,
             CASE WHEN qw.last_skipped_reason IS NOT NULL THEN json_build_object(
               'reason', qw.last_skipped_reason,
               'since', qw.last_skipped_at,

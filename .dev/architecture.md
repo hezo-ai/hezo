@@ -1004,10 +1004,12 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
    approval gate. The coherence/setup task **auto-runs** (assigned to the CEO and woken).
    The 201 response carries `setup_task_id`/`setup_task_identifier` alongside the planning
    pair, and the web dialog (`CreateProjectWithTeamDialog.handleCreateNow`) lands the
-   operator on the project's **task list** rather than a single task: the default
-   `work_order` sort (unblocked before blocked, then priority, then number) puts the setup
-   task on top with the blocked planning task below it, so no deep link is needed and the
-   landing stays correct when no setup task was created.
+   operator on the project's **task list** rather than a single task: neither task is
+   running or waiting on the admin, so both fall past the list's two ordering tiers (§ 11 ›
+   Task list ordering) into the default `work_order` sort (unblocked before blocked, then
+   priority, then number), which puts the setup task on top with the blocked planning task
+   below it. No deep link is needed and the landing stays correct when no setup task was
+   created.
 2. **CEO-assisted** — `POST /api/project-intakes`: opens a CEO-run intake conversation
    ticket in HQ (label `project-intake`) recording the form data and the admin's chosen
    team type as the CEO's **baseline suggestion**. **Nothing is created up front — no
@@ -4327,6 +4329,35 @@ them. Read state is per user (`read_at`), and acting on the request clears it fo
 `fulfill-credential` and `resolve-asset-deletion` both mark the comment's rows read, the
 same way resolving an approval retires it. Migration `057` backfilled rows for the
 credential requests that predate the fan-out.
+
+**Task list ordering: two tiers, then the chosen sort.** `buildTaskListOrderBy`
+(`lib/task-sort.ts`) prefixes every sort mode of `GET /api/projects/:projectId/tasks` with
+two boolean keys, so the caller's sort only orders *within* a tier:
+
+1. **A run is in flight or queued** - `taskActiveRunExistsSql`, the same fact the row's
+   `has_active_run` and the amber pulsing dot carry.
+2. **The task is waiting on the admin** - `adminActionPendingSql`, projected on the row as
+   `admin_action_pending`. Two legs OR'd: an unread `admin_mentions` row for the *viewing*
+   admin (what the blue `@` icon shows), or an ask comment nobody has answered
+   (`chosen_option IS NULL` on an `action` / `credential_request` / `asset_deletion_request`
+   comment). The second leg is what the icon misses: a pending hire, goal-suggestion or
+   repo-setup card parks a task on a human while raising no inbox row at all, and a
+   read-but-unresolved credential request drops out of the first leg while still being
+   unanswered. `connect_required` is excluded - it never sets `chosen_option` (a
+   connector's resolved state lives on its `oauth_status`), so it would read as unanswered
+   forever.
+
+Because it is server-side it reaches every consumer at once - the pinned In-progress
+section, the infinitely-paged Backlog (where a client-side sort could only reorder pages
+already fetched), and the dashboard's in-progress widget. Only the first leg of tier 2 is
+per-user, so an agent or API key sees the tier driven by unanswered asks alone, the same
+way `has_unread_admin_mention` already reads false for them. Two deliberate exclusions:
+the web "Done" section re-sorts terminal rows by `updated_at` client-side, overriding the
+tiers; and MCP `list_tasks` keeps its keyset `created_at` order, which the tiers would
+break. The ask leg's predicate is spelled with enum **literals** so it matches migration
+`059`'s partial index (`idx_comments_pending_ask`) verbatim - a parameterized `IN` list
+leaves the planner unable to prove the implication under a generic plan, and the index
+goes unused.
 
 **PWA / installability.** The SPA ships a web manifest (`packages/web/public/manifest.webmanifest`,
 `display: standalone`, brand icons under `public/icons/`) and a deliberately **network-only**
