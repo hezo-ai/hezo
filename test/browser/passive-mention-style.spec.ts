@@ -26,7 +26,11 @@ test.describe('Passive mention styling', () => {
 		const agentsRes = await page.request.get(`/api/projects/${project.slug}/agents`, {
 			headers: { Authorization: `Bearer ${token}` },
 		});
-		const agents = ((await agentsRes.json()) as { data: Array<{ id: string; slug: string }> }).data;
+		const agents = (
+			(await agentsRes.json()) as {
+				data: Array<{ id: string; slug: string; title: string; human_name: string | null }>;
+			}
+		).data;
 
 		const taskRes = await page.request.post(`/api/projects/${project.slug}/tasks`, {
 			headers,
@@ -54,8 +58,9 @@ test.describe('Passive mention styling', () => {
 
 		const passive = page.locator('[data-testid="agent-mention-link"][data-mention-passive="true"]');
 		await expect(passive).toBeVisible({ timeout: 20_000 });
-		// The `@@` is stripped — the chip shows the bare slug.
-		await expect(passive).toHaveText(agents[0].slug);
+		// The `@@` is stripped, and the chip shows what the agent is *called* rather
+		// than the handle the author typed - its name when it has one, else its role.
+		await expect(passive).toHaveText(agents[0].human_name?.trim() || agents[0].title);
 
 		const styles = await page.evaluate(() => {
 			const pick = (sel: string) => {
