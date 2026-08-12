@@ -81,6 +81,20 @@ must remain in the prompt; an edit that drops one is rejected so an agent never 
 identity or live context. (The global CEO and Coach are exempt - they have no
 manager.)
 
+## Reviewing an agent's runs
+
+Every agent has an **Executions** tab listing its runs - what triggered each one, how long
+it took, what it cost, and the full log. The list opens on the runs that did work: runs
+that ended in an error are filtered out by default, because a busy agent accumulates more
+of them than you are usually looking for. The filter above the list switches between
+**Runs**, **Errored** and **All**, and the choice is part of the page address, so a
+filtered view can be bookmarked or shared. Runs that are still queued or running are never
+hidden, whichever filter is selected.
+
+A run waiting for a container to free up shows as queued, not as an error - it keeps its
+place and starts as soon as memory is available. See
+[how much can run at once](/docs/containers/overview#how-much-can-run-at-once).
+
 ## Per-agent model override
 
 By default the agents on a team share the team's model. You can override the model for

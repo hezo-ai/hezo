@@ -2196,6 +2196,24 @@ kinds are distinguished only by their recorded `error` (`Orphaned: run never sta
 repairs the *surroundings* (execution locks, agent `runtime_status`, claimed wakeups) but
 never the run row itself.
 
+**Capacity park.** The one `queued` state that is *not* stranded is a run waiting for
+container capacity. When the pool ladder can only queue (`PoolCapacityError`), `runAgent`
+does not return: it stamps `queued_reason` (`CAPACITY_PARK_QUEUED_REASON`,
+`services/run-concurrency.ts`) and re-tries the ladder on a short poll, up to a ceiling of
+its own that is deliberately shorter than the agent's `run_timeout_min` — running to that
+deadline would finalize the run `timed_out`, trading one errored row for another. Waiting
+*inside* `runAgent` is the whole mechanism: the run id is only in the live-run registry
+while that call is in flight, so the orphan pass leaves the row alone for exactly as long as
+a driver owns it, and the run resumes on the same row rather than being replaced by a second
+one. Returning instead left the row unowned — blocking the retry of its own wakeup through
+`isTaskBusyInDb`, then failing 120 s later as `Orphaned: run never started`, and counting
+toward the lost-run escalation. Past the ceiling the row is finalized `Cancelled` (never
+`Failed` — a full instance is not the agent failing) and the wakeup is re-queued. Two
+consequences elsewhere: the idle-stop scan's busy set excludes a parked run
+(`BUSY_PROJECTS_SQL`), since it holds no container and is waiting on the very reclaim that
+scan feeds; and the run reads honestly while parked, the run comment and run detail page
+both rendering "Queued - waiting for container capacity" from `queued_reason`.
+
 **Run.** `agent-runner.ts` builds the run context (provider/runtime resolution, MCP
 descriptors, egress proxy, ssh-agent socket, container env), starts a `heartbeat_runs`
 row, and drives a streaming `docker exec` of the runtime CLI. The long-lived Docker streams

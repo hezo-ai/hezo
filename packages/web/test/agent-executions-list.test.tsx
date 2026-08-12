@@ -8,7 +8,12 @@
 // impractical; the server's own list shape is covered by
 // packages/server/test/heartbeat-runs.test.ts.
 
-import { INSTANCE_AGENT_SLUGS } from '@hezo/shared';
+import {
+	INSTANCE_AGENT_SLUGS,
+	isRunOutcomeFilter,
+	matchesRunOutcomeFilter,
+	RunOutcomeFilter,
+} from '@hezo/shared';
 import { afterEach, expect, test } from 'vitest';
 import type { HeartbeatRun } from '../src/hooks/use-heartbeat-runs';
 import { renderApp } from './helpers/render';
@@ -89,7 +94,13 @@ function installRunsListMock(opts: {
 			method === 'GET' &&
 			new RegExp(`/api/projects/[^/]+/agents/${opts.agentId}/heartbeat-runs(\\?.*)?$`).test(url)
 		) {
-			return new Response(JSON.stringify({ data: opts.runs }), {
+			// Honour `filter` exactly as the route does, so a test asserting on the
+			// pills exercises the real URL → hook → query-param → render round trip
+			// rather than just the pill's own click handler.
+			const requested = new URL(url, 'http://localhost').searchParams.get('filter');
+			const filter = isRunOutcomeFilter(requested) ? requested : RunOutcomeFilter.All;
+			const data = opts.runs.filter((r) => matchesRunOutcomeFilter(r.status, filter));
+			return new Response(JSON.stringify({ data }), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' },
 			});
@@ -146,7 +157,10 @@ function installPagedRunsMock(opts: { agentId: string; pages: HeartbeatRun[][]; 
 	}) as typeof globalThis.fetch;
 }
 
-async function renderExecutions(runs: HeartbeatRun[], opts?: { agentSlugOverride?: string }) {
+async function renderExecutions(
+	runs: HeartbeatRun[],
+	opts?: { agentSlugOverride?: string; filter?: RunOutcomeFilter },
+) {
 	const seeded = { projectSlug: '', agentId: '' };
 	const helpers = await renderApp({
 		initialPath: '/',
@@ -166,6 +180,7 @@ async function renderExecutions(runs: HeartbeatRun[], opts?: { agentSlugOverride
 	await helpers.router.navigate({
 		to: '/projects/$projectId/agents/$agentId/executions',
 		params: { projectId: seeded.projectSlug, agentId: seeded.agentId },
+		search: opts?.filter ? { filter: opts.filter } : {},
 	});
 	return { ...helpers, seeded };
 }
@@ -186,15 +201,19 @@ test('renders a succeeded run row with status badge, task identifier+title, and 
 });
 
 test('a non-zero exit code and a non-zero cost are surfaced on the row', async () => {
-	const { findByText } = await renderExecutions([
-		makeRun({
-			id: 'run-2',
-			status: 'failed',
-			exit_code: 137,
-			cost_cents: 425,
-			task_identifier: 'DEMO-9',
-		}),
-	]);
+	// Errored, so only the non-default filters show it at all.
+	const { findByText } = await renderExecutions(
+		[
+			makeRun({
+				id: 'run-2',
+				status: 'failed',
+				exit_code: 137,
+				cost_cents: 425,
+				task_identifier: 'DEMO-9',
+			}),
+		],
+		{ filter: RunOutcomeFilter.All },
+	);
 
 	// $4.25 from cost_cents=425, and the exit code suffix.
 	await findByText('$4.25', undefined, { timeout: 20_000 });
@@ -255,8 +274,14 @@ test('a non-instance agent omits the project suffix even when the run carries a 
 });
 
 test('shows the empty state when the agent has no runs', async () => {
-	const { findByText } = await renderExecutions([]);
+	// Only the unfiltered view may claim the agent has never run. Every other
+	// view is hiding something by definition, so it says so instead - an agent
+	// whose runs all errored must not be described as having no runs at all.
+	const { findByText } = await renderExecutions([], { filter: RunOutcomeFilter.All });
 	await findByText('No executions yet.', undefined, { timeout: 20_000 });
+
+	const filtered = await renderExecutions([]);
+	await filtered.findByText('No executions match this filter.', undefined, { timeout: 20_000 });
 });
 
 test('infinite-scroll auto-loads the second page of runs via the sentinel', async () => {
@@ -314,4 +339,68 @@ test('a cancelled run renders with the neutral status (no exit/cost suffixes)', 
 	// exit_code null and cost 0 → neither the exit-code nor the $ suffix renders.
 	expect(row.textContent).not.toContain('exit:');
 	expect(row.textContent).not.toContain('$');
+});
+
+test('the default view hides errored runs, and the pills reveal them', async () => {
+	const { findByRole, queryByRole, user, router } = await renderExecutions([
+		makeRun({ id: 'run-ok', status: 'succeeded', task_identifier: 'DEMO-OK' }),
+		makeRun({ id: 'run-bad', status: 'failed', exit_code: 1, task_identifier: 'DEMO-BAD' }),
+		makeRun({ id: 'run-slow', status: 'timed_out', task_identifier: 'DEMO-SLOW' }),
+	]);
+
+	// Default: the succeeded run only. `failed` and `timed_out` are both errored.
+	await findByRole('link', { name: /DEMO-OK/ }, { timeout: 20_000 });
+	expect(queryByRole('link', { name: /DEMO-BAD/ })).toBeNull();
+	expect(queryByRole('link', { name: /DEMO-SLOW/ })).toBeNull();
+
+	await user.click(await findByRole('button', { name: 'Errored' }));
+	await findByRole('link', { name: /DEMO-BAD/ }, { timeout: 20_000 });
+	await findByRole('link', { name: /DEMO-SLOW/ }, { timeout: 20_000 });
+	// The complement: the clean run is the one hidden now.
+	expect(queryByRole('link', { name: /DEMO-OK/ })).toBeNull();
+	expect(router.state.location.search).toEqual({ filter: 'errored' });
+
+	await user.click(await findByRole('button', { name: 'All' }));
+	await findByRole('link', { name: /DEMO-OK/ }, { timeout: 20_000 });
+	await findByRole('link', { name: /DEMO-BAD/ }, { timeout: 20_000 });
+
+	// Back to the default, which is dropped from the URL rather than written -
+	// otherwise `?filter=runs` and no param are two cache entries of one view.
+	await user.click(await findByRole('button', { name: 'Runs' }));
+	await findByRole('link', { name: /DEMO-OK/ }, { timeout: 20_000 });
+	expect(router.state.location.search).toEqual({});
+});
+
+test('a live queued run is never hidden by the default filter', async () => {
+	// The whole point of filtering on the outcome rather than on "did it start":
+	// a run that has not started yet is the most interesting row on the page.
+	const { findByRole } = await renderExecutions([
+		makeRun({
+			id: 'run-live',
+			status: 'queued',
+			started_at: null,
+			finished_at: null,
+			queued_reason: 'waiting for container capacity',
+			task_identifier: 'DEMO-LIVE',
+		}),
+	]);
+
+	const row = await findByRole('link', { name: /DEMO-LIVE/ }, { timeout: 20_000 });
+	expect(row.textContent).toContain('queued');
+});
+
+test('the filter pills stay on screen when the filtered view is empty', async () => {
+	// A reader who filters down to nothing must still have the control that gets
+	// them back, and the empty copy must not claim the agent never ran.
+	const { findByRole, findByText, user, queryByText } = await renderExecutions([
+		makeRun({ id: 'run-ok', status: 'succeeded', task_identifier: 'DEMO-OK' }),
+	]);
+
+	await findByRole('link', { name: /DEMO-OK/ }, { timeout: 20_000 });
+	await user.click(await findByRole('button', { name: 'Errored' }));
+
+	await findByText('No executions match this filter.', undefined, { timeout: 20_000 });
+	expect(queryByText('No executions yet.')).toBeNull();
+	// Still escapable.
+	await findByRole('button', { name: 'Runs' });
 });

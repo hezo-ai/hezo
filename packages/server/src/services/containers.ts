@@ -39,6 +39,7 @@ import { resolveAgentBaseImage } from './image-registry';
 import type { LogStreamBroker } from './log-stream-broker';
 import { ensureProjectRepos } from './repo-sync';
 import {
+	CAPACITY_PARK_QUEUED_REASON,
 	getActiveContainers,
 	projectContainerMemoryGb,
 	reclaimableForOthers,
@@ -1709,7 +1710,10 @@ export async function stopContainerGracefully(
  * Activity that holds a project's container up, shared by the idle-stop cron's
  * candidate scan and its under-lock recheck. Evaluated activity-side so an idle
  * instance's cost tracks activity inside the window, not table history. A
- * project is busy when it has: an active (queued/running) run; a run finished
+ * project is busy when it has: an active (queued/running) run, except one parked
+ * waiting for container capacity — that run holds no container and is waiting on
+ * the very reclaim this scan feeds, so counting it busy deadlocks it, exactly as
+ * capacity-skipped wakeups are excluded below; a run finished
  * inside the idle window (idx_runs_finished); a queued wakeup that could
  * actually dispatch — capacity-skipped wakeups deliberately do NOT hold a
  * container, else a backlog waiting on the container cap would pin containers
@@ -1722,7 +1726,9 @@ const UUID_RE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 const BUSY_PROJECTS_SQL = `
 	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
 	 JOIN tasks t ON t.id = hr.task_id
-	 WHERE hr.status IN ('queued', 'running')
+	 WHERE (hr.status = 'running'
+	     OR (hr.status = 'queued'
+	         AND hr.queued_reason IS DISTINCT FROM '${CAPACITY_PARK_QUEUED_REASON}'))
 	UNION
 	SELECT DISTINCT t.project_id FROM heartbeat_runs hr
 	 JOIN tasks t ON t.id = hr.task_id

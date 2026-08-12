@@ -241,7 +241,11 @@ test('run list row shows the trigger reason summary', async ({ page }) => {
 		(r) => r.trigger_source !== null,
 	);
 
-	await page.goto(`/projects/${project.slug}/agents/${captain.id}/executions`);
+	// `filter=all`: the list hides errored runs by default, and a run in this
+	// environment has no real model provider to reach, so it ends `failed`. What
+	// this test is about is the trigger-reason summary on a row, not which rows
+	// the default view shows.
+	await page.goto(`/projects/${project.slug}/agents/${captain.id}/executions?filter=all`);
 
 	const firstRow = page.locator('a[href*="/executions/"]').first();
 	await expect(firstRow).toBeVisible({ timeout: 15000 });
