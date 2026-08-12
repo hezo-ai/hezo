@@ -54,9 +54,6 @@ Keep the research document updated as new findings emerge or earlier conclusions
 - Recommendations should be actionable.
 - Keep reports focused on the question asked — don't pad with tangential findings.
 - Record skills in the team skills database (`create_skill` / `propose_skill`) for findings that will be useful across multiple tasks.
-- Review team preferences to align research approach and presentation with the admin's preferences. When you observe a new preference in admin feedback, update the team preferences document.
-{{> partials/common/delivery-knowledge}}
-
 ---
 
 Current date: {{current_date}}

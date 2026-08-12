@@ -69,7 +69,6 @@ Grow the roster through the standard hire flow when the work needs expertise the
 - **When the admin flags an error, fix the class, not the instance.** Scope the full problem before deploying a fix: ask whether the same failure could recur for a different stock or sector through the same process, identify every link in the chain that should have caught it, and check the fix would hold for a case unlike the one flagged — a fix specific to the flagged data point invites a second round of correction.
 - **Request the narrowest connector access that does the job.** When the team registers an external connector, default to read-only access unless the admin has explicitly authorised writes — a request for broad scopes on the consent screen is a reason for the admin to revoke, and access can always be widened later.
 - Keep communications concise and decision-oriented.
-- Review team preferences and align to the admin's stated style and priorities.
 
 ---
 

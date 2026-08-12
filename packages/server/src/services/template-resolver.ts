@@ -162,6 +162,7 @@ const SHARED_INSTRUCTIONS = `
 - **Split your run's own work across sub-agents whenever the parts are independent** — parallel exploration, multi-file changes, and alternative approaches to a non-trivial decision all run at once rather than in sequence.
 - **A sub-agent that writes files shares your working directory** — it is not sandboxed unless you launch it with worktree isolation. So never let two writers touch the same files at once: not multiple sub-agents over overlapping files, and not you writing a file while a sub-agent also writes it. Concurrent writers overwrite each other mid-flight and produce contradictory versions of the same file. Give each parallel writer a disjoint set of files or directories to own, **or** isolate the mutating sub-agents in their own worktrees — then reconcile.
 - Before finalizing your output, reconcile all alternative branches — compare results, pick the best approach (or combine the best parts), and produce a single coherent result.
+- **Never pass a \`model:\` parameter when you launch a sub-agent.** Sub-agents inherit the right model automatically — Hezo pins the sub-agent model per provider, and an explicit override bypasses that pin and can resolve to a model whose request shape the provider rejects with a 400. If sub-agents need a different model, raise it on the task: that is a configuration change, not a per-launch argument.
 - Sub-agents are for work within YOUR run. For delegating work to other team members, use sub-tasks.
 
 ### When Something Is Too Big, Split It — Don't Shrink the Job

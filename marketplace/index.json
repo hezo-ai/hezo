@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 13,
+			"version": 14,
 			"roster_count": 7,
-			"latest_notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
+			"latest_notes": "Role prompts no longer each carry their own copy of the team-preferences reminder, which every agent now receives from the shared instructions."
 		},
 		{
 			"slug": "investment",
@@ -133,9 +133,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 14,
+			"version": 15,
 			"roster_count": 6,
-			"latest_notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
+			"latest_notes": "Role prompts no longer each carry their own copy of the team-preferences reminder, which every agent now receives from the shared instructions."
 		},
 		{
 			"slug": "software-development",
@@ -217,9 +217,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 18,
+			"version": 19,
 			"roster_count": 10,
-			"latest_notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
+			"latest_notes": "Every role prompt is rewritten to one house register: shorter sentences, one rule per bullet, and each rule stated once instead of restated across roles. Two real defects go with it - QA was told the Engineer merges each phase to the default branch while the Engineer was told never to, and a previous rename had turned words like \"issues\" into \"tasks\" mid-sentence. The prompts also stop naming Hezo's own source paths and helpers, which do not exist in your repository; the code quality principles now describe the shape to look for instead."
 		}
 	]
 }
