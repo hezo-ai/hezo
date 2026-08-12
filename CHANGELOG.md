@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.44.0 - 2026-08-12
+
+### Features
+
+- **marketplace:** fold live-team learnings into the Investment Portfolio team ([#947](https://github.com/hezo-ai/hezo/pull/947))
+- surface the team setup task first after creating a project ([#948](https://github.com/hezo-ai/hezo/pull/948))
+- **web:** render team and agent summaries as markdown ([#946](https://github.com/hezo-ai/hezo/pull/946))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.43.0...0.44.0
+
 ## 0.43.0 - 2026-08-11
 
 ### Breaking Changes
