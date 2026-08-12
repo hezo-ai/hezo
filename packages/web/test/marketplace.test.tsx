@@ -33,25 +33,26 @@ test('marketplace detail shows the roster, version, and changelog with breadcrum
 	await findByTestId('marketplace-add-existing');
 });
 
-test('the marketplace roster names each teammate and shows their avatar', async () => {
+test('the marketplace roster shows each role and its avatar, and ships no names', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/marketplace/software-development' });
 	await findByTestId('marketplace-roster');
 
-	// The team authors a fixed human name per role, so the roster introduces the
-	// person and keeps the role as the supporting line - not the role alone.
+	// No built-in team ships a human name, so every row is addressed by its role.
+	// A name is something the admin gives an agent later, from its settings.
 	const engineer = await findByTestId('roster-row-engineer');
-	expect(engineer.textContent).toContain('Max');
 	expect(engineer.textContent).toContain('Engineer');
+	expect(engineer.textContent).not.toContain('Max');
 	const architect = await findByTestId('roster-row-architect');
-	expect(architect.textContent).toContain('Ada');
+	expect(architect.textContent).toContain('Architect');
+	expect(architect.textContent).not.toContain('Ada');
 
 	// The row's avatar is drawn from the team's own `avatar_spec`, so it is a real
-	// generated sprite rather than the initials fallback.
+	// generated sprite rather than the initials fallback - the face still ships
+	// even though the name does not.
 	const img = engineer.querySelector('img');
 	expect(img?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
 
-	// The Captain carries no human name, so its row stays role-only and falls back
-	// to initials - asserting no name line got invented for it.
+	// The Captain ships no avatar_spec either, so its row falls back to initials.
 	const captain = await findByTestId('roster-row-captain');
 	expect(captain.textContent).toContain('Captain');
 	expect(captain.querySelector('img')).toBeNull();
@@ -111,10 +112,10 @@ test('arriving mid-hire preselects the project and defaults to picking roles', a
 	expect(pickRoles.checked).toBe(true);
 	await findByTestId('add-role-picker');
 
-	// Each role is offered as the person it ships as, face and all.
+	// Each role is offered by its role, face and all - the team ships no names.
 	const securityEngineer = await findByTestId('add-role-security-engineer');
 	const row = securityEngineer.closest('label');
-	expect(row?.textContent).toContain('Omar');
+	expect(row?.textContent).toContain('Security Engineer');
 	expect(row?.querySelector('img')?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
 });
 

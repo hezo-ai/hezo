@@ -94,7 +94,15 @@ async function wokeBy(content: string, authorMemberId: string): Promise<string[]
  */
 describe('mentioning an agent by its human name', () => {
 	it('wakes the agent by name and by role alike', async () => {
-		// Max is the App Team's Engineer, shipped with the team.
+		// Nobody arrives named, so the second handle has to be created first - which
+		// is exactly the state this is about: an agent an admin has named.
+		const named = await app.request(`/api/projects/${projectSlug}/agents/engineer`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ human_name: 'Max' }),
+		});
+		expect(named.status).toBe(200);
+
 		expect(await wokeBy('@max can you take this?', architectId)).toEqual(['max']);
 		expect(await wokeBy('@engineer can you take this?', architectId)).toEqual(['engineer']);
 	});
@@ -125,6 +133,17 @@ describe('mentioning an agent by its human name', () => {
 });
 
 describe('the mention picker', () => {
+	// The team ships nobody named, so the name half of the picker needs one made
+	// the way a human makes it - which is also what the test is really about.
+	beforeAll(async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/ui-designer`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ human_name: 'Mia' }),
+		});
+		if (res.status !== 200) throw new Error(`naming the UI Designer failed: ${res.status}`);
+	});
+
 	async function search(q: string) {
 		const res = await app.request(
 			`/api/projects/${projectSlug}/mentions/search?q=${encodeURIComponent(q)}&kind=agent`,
