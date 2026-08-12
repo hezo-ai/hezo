@@ -386,7 +386,14 @@ describe('PATCH /tasks/:taskId branches', () => {
 			body: JSON.stringify({ assignee_id: secondAgentId }),
 		});
 		expect(res.status).toBe(409);
-		expect((await res.json()).error.message).toMatch(/running/i);
+		// The message must name the blocking agent - an unnamed "a run is active"
+		// is what left agents with no next move but a human escalation.
+		const message = (await res.json()).error.message as string;
+		expect(message).toMatch(/running/i);
+		const slug = await db.query<{ slug: string }>('SELECT slug FROM member_agents WHERE id = $1', [
+			agentId,
+		]);
+		expect(message).toContain(`@${slug.rows[0].slug}`);
 
 		// The assignee must not have changed.
 		const row = await db.query<{ assignee_id: string }>(
@@ -402,7 +409,7 @@ describe('PATCH /tasks/:taskId branches', () => {
 		);
 	});
 
-	it('allows reassigning the same agent (no-change skips the active-run check)', async () => {
+	it('allows reassigning the same agent (no-change skips the blocking-run check)', async () => {
 		const task = await createTask('Same-assignee target');
 		const runId = await createAgentRun(db, agentId, teamId, task.id);
 		// Passing the SAME assignee_id skips assertNoActiveRun, so this succeeds

@@ -84,6 +84,12 @@ running or still queued. Swapping the owner mid-run would leave the task's work 
 so Hezo holds the field until the run finishes. The assignee field is locked in that case
 and hovering the info icon explains which of the three cases applies.
 
+Agents themselves have one narrow exception. An agent can hand over a task it is running,
+and a task can be moved to whichever agent is already running it. Neither case can orphan
+work, because the run and the new owner are the same agent either way. A handover posts to
+the task thread like any other reassignment, and wakes the incoming owner. What no one can
+do, agent or human, is take a task away from a different agent's live run.
+
 More than one agent can work a single task, so a run belonging to someone other than the
 assignee (a reviewer, for example) also holds the assignee field. When that happens the
 assignee still reads **Idle**, because the badge describes the assignee and not whoever

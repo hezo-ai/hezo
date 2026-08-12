@@ -2160,7 +2160,12 @@ Instance agents (CEO/Coach) select work across *all* teams here.
 **Stranded-run recovery.** A `heartbeat_runs` row is inserted `queued` and only flips to
 `running` (stamping `started_at`) once a credential is resolved and the credential lock
 held, so both states can strand — and while either persists the run counts as *active*,
-which blocks reassignment on its task and reads as live agent activity in the UI. The ~30 s
+which blocks reassignment on its task by anyone other than the run's own agent or the agent
+being assigned to (`lib/reassign-guard.ts`), and reads as live agent activity in the UI. Those
+two exemptions are why the guard is not the one-run-per-task check: keying it on the task
+alone made it a deadlock, because an agent JWT only authenticates while its own run row is
+`running`, so a calling agent's own run always matched and no agent could ever hand off the
+task it was running. Run concurrency stays in `isTaskBusyInDb`. The ~30 s
 orphan pass (`services/orphan-detector.ts`) therefore reaps both, each aged against the only
 clock it has: a `running` row against `started_at` (30 s safety window), a `queued` row
 against `created_at` (the 120 s grace window, which spans the whole not-yet-started phase).

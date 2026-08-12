@@ -2,8 +2,8 @@ import { AuthType, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource, wsRoom } fr
 import { type Context, Hono } from 'hono';
 import type { Db } from '../db/database';
 import { readRunLogTail } from '../db/run-log-chunks';
-import { assertNoActiveRun } from '../lib/active-run';
 import { agentDisplayNameSql } from '../lib/agent-identity';
+import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
 import {
@@ -13,6 +13,7 @@ import {
 	wouldCreateCycle,
 } from '../lib/dependencies';
 import { buildMeta, parsePagination } from '../lib/pagination';
+import { assertNoBlockingRun } from '../lib/reassign-guard';
 import {
 	actorTypeFromAuth,
 	apiKeyIdFromAuth,
@@ -51,7 +52,7 @@ import {
 	createTask,
 	createTaskBatch,
 } from '../services/tasks';
-import { createWakeup } from '../services/wakeup';
+import { createWakeup, wakeAgentIfAssigned } from '../services/wakeup';
 
 const log = logger.child('routes');
 
@@ -76,31 +77,6 @@ async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<C
 		caller.runId = auth.runId ?? undefined;
 	}
 	return caller;
-}
-
-// Fire-and-forget: the agent's run is inherently async, so callers don't await
-// this. The whole body — including the member-agent lookup — is wrapped in
-// trackBackground + catch so a rejection from either query can't surface as an
-// unhandled rejection or race test teardown (the tracker is drained on close).
-function wakeAgentIfAssigned(
-	db: Db,
-	assigneeId: string | null | undefined,
-	teamId: string,
-	taskId: string,
-	source: WakeupSource = WakeupSource.Assignment,
-	extraPayload: Record<string, unknown> = {},
-): void {
-	if (!assigneeId) return;
-	trackBackground(
-		(async () => {
-			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
-			if (isAgent.rows.length === 0) return;
-			await createWakeup(db, assigneeId, teamId, source, {
-				task_id: taskId,
-				...extraPayload,
-			});
-		})().catch((e) => log.error('Failed to create wakeup for assignment:', e)),
-	);
 }
 
 async function resolveActorMemberId(c: Context<Env>, teamId: string): Promise<string | null> {
@@ -616,9 +592,23 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
 		}
 		if (body.assignee_id !== existing.rows[0].assignee_id) {
-			const activeRunCheck = await assertNoActiveRun(db, taskId);
-			if (!activeRunCheck.ok) {
-				return err(c, 'CONFLICT', activeRunCheck.message, 409);
+			const blocking = await assertNoBlockingRun(db, taskId, {
+				callerMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+				incomingAssigneeId: body.assignee_id,
+			});
+			if (!blocking.ok) {
+				return err(c, 'CONFLICT', blocking.message, 409);
+			}
+			// The MCP twin has always enforced this (`update_task` in mcp/tools.ts);
+			// REST never did, because the unconditional run guard above incidentally
+			// 409'd any agent reaching here from inside its own run. Exempting the
+			// caller's own run opens that path, so the rule has to be stated here too
+			// or an agent could dump its live task on a peer or its manager.
+			if (auth.type === AuthType.Agent) {
+				const hierarchy = await assertSubordinateAssignee(db, auth.memberId, body.assignee_id);
+				if (!hierarchy.ok) {
+					return err(c, 'FORBIDDEN', hierarchy.message, 403);
+				}
 			}
 		}
 		sets.push(`assignee_id = $${idx}`);

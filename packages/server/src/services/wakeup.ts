@@ -1,5 +1,9 @@
-import { HeartbeatRunStatus, type WakeupSource, WakeupStatus } from '@hezo/shared';
+import { HeartbeatRunStatus, WakeupSource, WakeupStatus } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { trackBackground } from '../lib/background';
+import { logger } from '../logger';
+
+const log = logger.child('wakeup');
 
 export async function createWakeup(
 	db: Db,
@@ -193,4 +197,31 @@ function mergePayloads(
 	}
 
 	return merged;
+}
+
+// Fire-and-forget: the agent's run is inherently async, so callers don't await
+// this. The whole body — including the member-agent lookup — is wrapped in
+// trackBackground + catch so a rejection from either query can't surface as an
+// unhandled rejection or race test teardown (the tracker is drained on close).
+//
+// Humans get no wakeup, hence the member_agents lookup rather than a bare insert.
+export function wakeAgentIfAssigned(
+	db: Db,
+	assigneeId: string | null | undefined,
+	teamId: string,
+	taskId: string,
+	source: WakeupSource = WakeupSource.Assignment,
+	extraPayload: Record<string, unknown> = {},
+): void {
+	if (!assigneeId) return;
+	trackBackground(
+		(async () => {
+			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
+			if (isAgent.rows.length === 0) return;
+			await createWakeup(db, assigneeId, teamId, source, {
+				task_id: taskId,
+				...extraPayload,
+			});
+		})().catch((e) => log.error('Failed to create wakeup for assignment:', e)),
+	);
 }

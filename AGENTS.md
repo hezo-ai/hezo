@@ -273,6 +273,8 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | A chat platform | `ChatChannelAdapter` (`services/chat-channels/`) |
 | A host-side call to a repo's git host, with that repo's own credential | `resolveRepoGitHub` (`services/repo-github.ts`) - returns a verdict, never an upstream body |
 | "Did this execution strand a handoff?" | `detectNoWakeExits` (`services/comment-wakeups.ts`) |
+| Waking the assignee after an assignment write | `wakeAgentIfAssigned` (`services/wakeup.ts`) |
+| "May this caller move this task's assignee?" | `assertNoBlockingRun` (`lib/reassign-guard.ts`) - not the one-run-per-task check, which is `isTaskBusyInDb` (`services/run-concurrency.ts`) |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |

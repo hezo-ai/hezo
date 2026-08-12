@@ -117,10 +117,13 @@ export function TaskSidebar({
 	});
 
 	// Reassignment is blocked whenever the task carries any non-terminal run —
-	// that mirrors the server, which 409s on a queued run just as it does on a
-	// running one, and on any agent's run rather than only the assignee's. The
-	// pill, though, labels *the assignee*, so it stays Idle unless the active run
-	// is theirs, and distinguishes a run that is executing from one still waiting.
+	// that mirrors the server for a human caller, which 409s on a queued run just
+	// as it does on a running one, and on any agent's run rather than only the
+	// assignee's. (The server exempts an *agent* caller's own run and the incoming
+	// assignee's, so an agent can hand off a task it is running; neither exemption
+	// can fire for a human, who has no member id on the call.) The pill, though,
+	// labels *the assignee*, so it stays Idle unless the active run is theirs, and
+	// distinguishes a run that is executing from one still waiting.
 	const activeRun = task.active_run ?? null;
 	const assigneeOwnsRun = activeRun !== null && activeRun.member_id === task.assignee_id;
 	const assigneeRunBadge = assigneeOwnsRun ? TASK_RUN_STATUS_META[activeRun.status] : undefined;
