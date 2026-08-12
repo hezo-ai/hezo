@@ -274,8 +274,14 @@ test('a non-instance agent omits the project suffix even when the run carries a 
 });
 
 test('shows the empty state when the agent has no runs', async () => {
-	const { findByText } = await renderExecutions([]);
+	// Only the unfiltered view may claim the agent has never run. Every other
+	// view is hiding something by definition, so it says so instead - an agent
+	// whose runs all errored must not be described as having no runs at all.
+	const { findByText } = await renderExecutions([], { filter: RunOutcomeFilter.All });
 	await findByText('No executions yet.', undefined, { timeout: 20_000 });
+
+	const filtered = await renderExecutions([]);
+	await filtered.findByText('No executions match this filter.', undefined, { timeout: 20_000 });
 });
 
 test('infinite-scroll auto-loads the second page of runs via the sentinel', async () => {

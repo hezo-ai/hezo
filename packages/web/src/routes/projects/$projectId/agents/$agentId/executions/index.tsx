@@ -153,7 +153,10 @@ function ExecutionListPage() {
 				<div className="text-text-2 text-sm">{t('executions.loading')}</div>
 			) : runs.length === 0 ? (
 				<div className="text-text-2 text-sm py-4">
-					{filter === RunOutcomeFilter.Runs ? t('executions.empty') : t('executions.emptyFiltered')}
+					{/* "No executions yet" is only true of the unfiltered view. The
+					    default view hides errored runs, so an agent whose runs all
+					    errored would otherwise be told it has never run at all. */}
+					{filter === RunOutcomeFilter.All ? t('executions.empty') : t('executions.emptyFiltered')}
 				</div>
 			) : (
 				<>
