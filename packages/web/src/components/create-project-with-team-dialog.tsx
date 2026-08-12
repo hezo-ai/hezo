@@ -413,14 +413,11 @@ export function CreateProjectWithTeamDialog({
 		setActiveTeamSlug(res.team_slug);
 		onOpenChange(false);
 		reset();
-		// The project + team are created directly; land on the Captain's planning task.
-		navigate({
-			to: '/projects/$projectId/tasks/$taskId',
-			params: {
-				projectId: res.slug,
-				taskId: res.planning_task_identifier.toLowerCase(),
-			},
-		});
+		// The project + team are created directly. Land on the task list rather than a
+		// single task: the CEO's "Set up the team" task is the project's first task and
+		// the default work-order sort puts it on top (unblocked before blocked), with
+		// the Captain's planning task visible below it as blocked on it.
+		navigate({ to: '/projects/$projectId/tasks', params: { projectId: res.slug } });
 	}
 
 	async function handlePlanWithCeo() {

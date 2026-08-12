@@ -21,6 +21,8 @@ interface CreatedProjectTeam {
 	is_internal: boolean;
 	planning_task_id: string;
 	planning_task_identifier: string;
+	setup_task_id: string | null;
+	setup_task_identifier: string | null;
 }
 
 async function createProjectWithTeam(name: string, description = 'A test project.') {
@@ -92,6 +94,29 @@ describe('POST /projects — create a project with its own team', () => {
 			[data.planning_task_id],
 		);
 		expect(dep.rows).toHaveLength(1);
+
+		// That setup task is surfaced on the response: it is the project's FIRST task
+		// (number 1) and the one the planning task is blocked by, so the creator can
+		// land the operator on it.
+		expect(data.setup_task_id).toBe(dep.rows[0].blocked_by_task_id);
+		const setup = await db.query<{ number: number; identifier: string; title: string }>(
+			'SELECT number, identifier, title FROM tasks WHERE id = $1',
+			[data.setup_task_id],
+		);
+		expect(setup.rows[0].number).toBe(1);
+		expect(setup.rows[0].title).toBe('Set up the team');
+		expect(data.setup_task_identifier).toBe(setup.rows[0].identifier);
+
+		// …and it sorts first in the project's task list under the default work-order
+		// sort (unblocked before blocked), which is what the post-create landing relies
+		// on to show it at the top.
+		const listRes = await app.request(`/api/projects/${data.slug}/tasks`, {
+			headers: authHeader(token),
+		});
+		expect(listRes.status).toBe(200);
+		const listed = (await listRes.json()).data as { id: string }[];
+		expect(listed[0].id).toBe(data.setup_task_id);
+		expect(listed.map((t) => t.id)).toContain(data.planning_task_id);
 	});
 
 	it('gives each project its own distinct team', async () => {
