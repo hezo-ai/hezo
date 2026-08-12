@@ -1,5 +1,6 @@
 import { createTestTeam } from '@hezo/server/test/helpers/app';
-import { test } from 'vitest';
+import { waitFor } from '@testing-library/react';
+import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedWorkspace } from './helpers/seed';
 
@@ -48,4 +49,36 @@ test('renders the team-summary box with attribution caption', async () => {
 	await findByText("Auto-generated from the agents' system prompts.", undefined, {
 		timeout: 10_000,
 	});
+});
+
+test('renders the team summary as markdown, not raw characters', async () => {
+	const seeded = { projectSlug: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			seeded.projectSlug = ws.internalSlug;
+			const { db } = getTestContext();
+			await db.query(`UPDATE teams SET summary = $1 WHERE id = $2`, [
+				'**Reporting structure:** the Captain routes work to the roster.\n\n1. **Sourcing:** weekly screening cadence.',
+				ws.team.id,
+			]);
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/agents',
+		params: { projectId: seeded.projectSlug },
+	});
+
+	const box = await findByTestId('team-summary', undefined, { timeout: 10_000 });
+	await waitFor(
+		() => {
+			const strong = box.querySelector('strong');
+			expect(strong?.textContent ?? '').toContain('Reporting structure:');
+			expect(box.querySelector('ol li')).not.toBeNull();
+			expect(box.textContent ?? '').not.toContain('**');
+		},
+		{ timeout: 10_000 },
+	);
 });

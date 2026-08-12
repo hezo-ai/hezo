@@ -104,6 +104,7 @@ function TeamPage() {
 				>
 					<ExpandableText
 						text={team?.summary ?? ''}
+						projectId={projectId}
 						placeholder={
 							<span className="italic text-text-2">Team description being generated…</span>
 						}
