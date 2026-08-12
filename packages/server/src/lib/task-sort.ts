@@ -1,4 +1,4 @@
-import { TaskPriority, TERMINAL_TASK_STATUSES } from '@hezo/shared';
+import { CommentContentType, TaskPriority, TERMINAL_TASK_STATUSES } from '@hezo/shared';
 
 const TASK_ALIAS = 'i';
 
@@ -15,6 +15,62 @@ export function taskActiveRunExistsSql(alias = TASK_ALIAS): string {
 	return `EXISTS (
     SELECT 1 FROM heartbeat_runs hr
     WHERE hr.task_id = ${alias}.id AND hr.status IN ('running', 'queued')
+  )`;
+}
+
+/**
+ * The comment kinds that park a task on a human until they answer, identified by
+ * `chosen_option IS NULL`. `connect_required` is deliberately absent: it never
+ * sets `chosen_option` (a connector's resolved state lives on its `oauth_status`),
+ * so it would read as unanswered forever.
+ */
+const PENDING_ASK_CONTENT_TYPES = [
+	CommentContentType.Action,
+	CommentContentType.CredentialRequest,
+	CommentContentType.AssetDeletionRequest,
+] as const;
+
+// Spelled as literals rather than placeholders so the predicate matches migration
+// 059's partial-index WHERE clause verbatim - a parameterized IN list leaves the
+// planner unable to prove the implication under a generic plan, and the index goes
+// unused. The values come from a frozen enum, never from a request.
+const PENDING_ASK_CONTENT_TYPE_LIST = PENDING_ASK_CONTENT_TYPES.map(
+	(kind) => `'${kind}'::comment_content_type`,
+).join(', ');
+
+/**
+ * EXISTS for an unread admin-inbox row on the task, scoped to one admin user.
+ * `adminUserIdx` is the placeholder holding that user's id; a non-admin caller
+ * passes NULL there and the predicate matches nothing.
+ */
+export function adminUnreadMentionExistsSql(alias: string, adminUserIdx: number): string {
+	return `EXISTS (
+    SELECT 1 FROM admin_mentions bm
+    WHERE bm.task_id = ${alias}.id AND bm.user_id = $${adminUserIdx}
+      AND bm.read_at IS NULL AND bm.archived_at IS NULL
+  )`;
+}
+
+/**
+ * "This task is waiting on the admin" - the task list's second ordering tier, and
+ * a column on its rows. Two legs: an unread inbox row for the viewing admin (an
+ * `@admin` ask, a credential request, an asset-deletion ask), or an ask comment
+ * nobody has answered yet (the hire, goal and repo-setup choice cards, which park
+ * a task on a human without raising an inbox row at all).
+ *
+ * Only the first leg is per-user, so a non-admin caller sees this driven by
+ * unanswered asks alone - the same way `has_unread_admin_mention` already reads
+ * false for them.
+ */
+export function adminActionPendingSql(alias: string, adminUserIdx: number): string {
+	return `(
+    ${adminUnreadMentionExistsSql(alias, adminUserIdx)}
+    OR EXISTS (
+      SELECT 1 FROM task_comments ask
+      WHERE ask.task_id = ${alias}.id
+        AND ask.chosen_option IS NULL
+        AND ask.content_type IN (${PENDING_ASK_CONTENT_TYPE_LIST})
+    )
   )`;
 }
 
@@ -69,16 +125,23 @@ export function parseTaskListSort(sortParam: string | undefined): {
 }
 
 /**
- * Build ORDER BY for the task list. Always pins active runs first.
+ * Build ORDER BY for the task list. Every sort mode is tiered first: tasks with a
+ * run in flight or queued, then tasks waiting on the admin, then the rest. The
+ * chosen field only orders within a tier.
  * `work_order`: ready → priority → ticket number (matches agent dispatch).
+ *
+ * `adminActionPending` is the expression from {@link adminActionPendingSql}, passed
+ * in rather than built here so the caller can project the same tier as a column
+ * without pushing its params twice.
  */
 export function buildTaskListOrderBy(
 	field: TaskListSortField,
 	direction: 'ASC' | 'DESC',
 	params: unknown[],
 	idx: number,
+	adminActionPending: string,
 ): { sql: string; nextIdx: number } {
-	const activeRun = taskActiveRunExistsSql();
+	const tiers = `${taskActiveRunExistsSql()} DESC, ${adminActionPending} DESC`;
 	if (field === 'work_order') {
 		const blockerStart = idx;
 		const blockerSql = appendOpenBlockerExistsSql(TASK_ALIAS, blockerStart, params);
@@ -87,12 +150,12 @@ export function buildTaskListOrderBy(
 		const prioritySql = appendPriorityOrderSql(TASK_ALIAS, priorityStart, params);
 		idx += 4;
 		return {
-			sql: `${activeRun} DESC, ${blockerSql} ASC, ${prioritySql} ASC, ${TASK_ALIAS}.number ASC`,
+			sql: `${tiers}, ${blockerSql} ASC, ${prioritySql} ASC, ${TASK_ALIAS}.number ASC`,
 			nextIdx: idx,
 		};
 	}
 	return {
-		sql: `${activeRun} DESC, ${TASK_ALIAS}.${field} ${direction}`,
+		sql: `${tiers}, ${TASK_ALIAS}.${field} ${direction}`,
 		nextIdx: idx,
 	};
 }
