@@ -123,7 +123,7 @@ import type { ProgressActivityCandidates } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
-import { projectContainerMemoryGb } from './run-concurrency';
+import { CAPACITY_PARK_QUEUED_REASON, projectContainerMemoryGb } from './run-concurrency';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
 	ensureRuntimeHomeDir,
@@ -246,6 +246,13 @@ export interface RunnerDeps {
 	containerLogStreamer?: ContainerLogStreamer;
 	/** Runtime model pricing; when present, the parser computes run cost from it. */
 	pricing?: PricingService;
+	/**
+	 * How long a run blocked on container capacity waits, and how often it
+	 * re-tries. Defaults to {@link CAPACITY_PARK_POLL_MS} /
+	 * {@link CAPACITY_PARK_MAX_MS}; overridden only by tests, which cannot
+	 * otherwise reach a wait measured in minutes.
+	 */
+	capacityPark?: { pollMs: number; maxMs: number };
 }
 
 interface RepoRow {
@@ -1052,6 +1059,44 @@ function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 	return HeartbeatRunStatus.Cancelled;
 }
 
+/**
+ * How often a run blocked on container capacity re-tries the pool ladder.
+ *
+ * Nothing is event-driven on container release — `releasePoolMember` just marks
+ * a member idle — so polling is the only signal available. Matched to
+ * `WAKEUP_CRON` (5s), since the pass that actually frees the capacity being
+ * waited on (`retireSurplusIdleContainers`) runs on the job manager's clock.
+ */
+const CAPACITY_PARK_POLL_MS = 5_000;
+
+/**
+ * How long a run waits for capacity before giving up and returning to the queue.
+ *
+ * Deliberately not the agent's own `run_timeout_min`: letting the park run to
+ * that deadline aborts with `run_timeout`, which finalizes the run `timed_out` —
+ * trading one errored row for another. The dispatcher's pre-flight gate already
+ * refuses to dispatch while at capacity, so a run that reaches the ladder and
+ * finds nothing lost a race, and a race resolves in seconds or was never one.
+ */
+const CAPACITY_PARK_MAX_MS = 3 * 60_000;
+
+/**
+ * Sleep that returns early when the run is aborted, so a cancel or a shutdown
+ * during a capacity park is not held for the rest of the poll interval.
+ */
+function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+	if (signal.aborted) return Promise.resolve();
+	return new Promise((resolve) => {
+		const done = () => {
+			clearTimeout(timer);
+			signal.removeEventListener('abort', done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		signal.addEventListener('abort', done, { once: true });
+	});
+}
+
 /** Error string stamped on an aborted run row — a friendly line for a timeout, else the raw reason. */
 function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	if (reason === 'run_timeout') return 'run reached its time limit';
@@ -1307,27 +1352,58 @@ export async function runAgent(
 	if (signal?.aborted) return finalizeAbort();
 
 	/**
-	 * Hand the run back to the queue instead of failing it.
+	 * Record that this run is parked waiting for container capacity.
 	 *
-	 * The instance is at its memory budget - a state the dispatcher's own gate
-	 * already tests for, and which a moment later may not hold. Failing here would
-	 * burn the agent's turn and post a failure ping for what is a scheduling race,
-	 * so the run stays `queued` (it was never marked running) with the wait
-	 * recorded, and the caller re-queues the wakeup.
+	 * The run row stays `queued` — it was never marked running — and stays inside
+	 * `runAgent`, which is what keeps it in the live-run registry and therefore
+	 * invisible to the orphan pass. Same shape as the rotating-credential wait
+	 * below: the reason is written so the run comment and the run detail page read
+	 * honestly ("Queued - waiting for container capacity…") while blocked.
 	 */
-	const finalizeRequeue = async (reason: string): Promise<RunResult> => {
-		emit('stdout', `[runner] ${reason} - returning this run to the queue.\n`);
-		await deps.logs.end(streamId);
+	const recordCapacityPark = async (): Promise<void> => {
 		await deps.db.query(
 			`UPDATE heartbeat_runs SET queued_reason = $1
-			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
-			['waiting for container capacity', heartbeatRunId, HeartbeatRunStatus.Queued],
+			 WHERE id = $2 AND status = $3::heartbeat_run_status
+			   AND queued_reason IS DISTINCT FROM $1`,
+			[CAPACITY_PARK_QUEUED_REASON, heartbeatRunId, HeartbeatRunStatus.Queued],
+		);
+	};
+
+	/**
+	 * Give up waiting for capacity and hand the work back to the queue.
+	 *
+	 * Reached only after `CAPACITY_PARK_MAX_MS` of parking. Not a failure - the
+	 * instance is simply still at its memory budget - so the row is finalized
+	 * `Cancelled` rather than `Failed`, and the caller re-queues the wakeup.
+	 *
+	 * Finalizing it is the load-bearing part. A row left `queued` here is
+	 * abandoned: nothing returns to it, it still matches `isTaskBusyInDb` so it
+	 * blocks the retry of the very wakeup it came from, and 120s later the orphan
+	 * pass reaps it as `Orphaned: run never started` and counts it toward the
+	 * lost-run escalation. A terminal row does none of that, so the requeued
+	 * wakeup is free to dispatch on the next tick.
+	 */
+	const finalizeRequeue = async (reason: string): Promise<RunResult> => {
+		const message = `${reason} - returning this run to the queue.`;
+		emit('stdout', `[runner] ${message}\n`);
+		const durationMs = Date.now() - startTime;
+		await deps.logs.end(streamId);
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: HeartbeatRunStatus.Cancelled,
+				exitCode: -1,
+				durationMs,
+				error: message,
+			},
+			runBroadcast,
 		);
 		return {
 			success: false,
 			exitCode: -1,
 			stderr: reason,
-			durationMs: Date.now() - startTime,
+			durationMs,
 			heartbeatRunId,
 			requeued: true,
 		};
@@ -1355,27 +1431,56 @@ export async function runAgent(
 	}
 	let containerId: string;
 	let releaseContainer: () => Promise<void> = async () => undefined;
+	// Park rather than bail when the instance is at its memory budget. The wait
+	// happens here, inside `runAgent`, for one reason: the run id is only in the
+	// live-run registry while this call is in flight, and that registry is the
+	// sole thing telling the orphan pass a queued row still has a driver. Return
+	// to the caller and the row is unowned - reaped as a failure 120s later, and
+	// replaced by a second run row when the wakeup redispatches. Same pattern as
+	// the rotating-credential wait below.
+	const parkPollMs = deps.capacityPark?.pollMs ?? CAPACITY_PARK_POLL_MS;
+	const parkDeadline = Date.now() + (deps.capacityPark?.maxMs ?? CAPACITY_PARK_MAX_MS);
+	let parked = false;
 	try {
-		const acquired = await acquireRunContainer(
-			{
-				db: deps.db,
-				docker: deps.docker,
-				dataDir: deps.dataDir,
-				wsManager: deps.wsManager,
-				masterKeyManager: deps.masterKeyManager,
-				logs: deps.logs,
-				containerLogStreamer: deps.containerLogStreamer,
-				sshAgentServer: deps.sshAgentServer,
-				// A run that has to provision its container clones through the
-				// provisioning bridge, which needs this to substitute the remote's
-				// credential placeholder — the run's own allocation comes later and is
-				// a different one.
-				egressProxy: deps.egressProxy,
-				egressCAPath: deps.egressCAPath,
-			},
-			project.id,
-			task?.id ?? null,
-		);
+		let acquired: Awaited<ReturnType<typeof acquireRunContainer>> | undefined;
+		while (!acquired) {
+			try {
+				acquired = await acquireRunContainer(
+					{
+						db: deps.db,
+						docker: deps.docker,
+						dataDir: deps.dataDir,
+						wsManager: deps.wsManager,
+						masterKeyManager: deps.masterKeyManager,
+						logs: deps.logs,
+						containerLogStreamer: deps.containerLogStreamer,
+						sshAgentServer: deps.sshAgentServer,
+						// A run that has to provision its container clones through the
+						// provisioning bridge, which needs this to substitute the remote's
+						// credential placeholder — the run's own allocation comes later and is
+						// a different one.
+						egressProxy: deps.egressProxy,
+						egressCAPath: deps.egressCAPath,
+					},
+					project.id,
+					task?.id ?? null,
+				);
+			} catch (e) {
+				if (!(e instanceof PoolCapacityError)) throw e;
+				if (Date.now() >= parkDeadline) return finalizeRequeue(e.message);
+				if (!parked) {
+					// Once, not per poll: a line every 5s would make the run log the
+					// new noise, and the wait itself is already on the row as
+					// `queued_reason`.
+					parked = true;
+					emit('stdout', `[runner] ${e.message} - waiting for capacity.\n`);
+					await recordCapacityPark();
+				}
+				await sleepUnlessAborted(parkPollMs, runAbort.signal);
+				if (runAbort.signal.aborted) return finalizeAbort();
+			}
+		}
+		if (parked) emit('stdout', '[runner] Capacity freed up, starting the run.\n');
 		containerId = acquired.containerId;
 		releaseContainer = acquired.release;
 		// Before anything can go wrong inside it: from here on this run can be
@@ -1393,13 +1498,8 @@ export async function runAgent(
 			);
 		}
 	} catch (e) {
-		if (e instanceof PoolCapacityError) {
-			// Not a failure: the instance is at its memory budget, which the gate
-			// already knew and which a moment from now may not be true. Requeue so
-			// the run is dispatched again rather than burning the agent's turn on a
-			// transient capacity race - the contract PoolCapacityError documents.
-			return finalizeRequeue(e.message);
-		}
+		// PoolCapacityError never reaches here — the acquire loop above parks on it
+		// and only rethrows what it cannot wait out.
 		const message = e instanceof Error ? e.message : String(e);
 		await broadcastProjectUpdate(deps.db, deps.wsManager, project.team_id, project.id);
 		return finalizeFailure(

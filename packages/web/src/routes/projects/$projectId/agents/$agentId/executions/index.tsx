@@ -1,13 +1,15 @@
-import { INSTANCE_AGENT_SLUGS } from '@hezo/shared';
+import { INSTANCE_AGENT_SLUGS, isRunOutcomeFilter, RunOutcomeFilter } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useMemo } from 'react';
 import { InfiniteScrollSentinel } from '../../../../../../components/infinite-scroll-sentinel';
 import { Badge } from '../../../../../../components/ui/badge';
+import { FilterPills } from '../../../../../../components/ui/filter-pills';
 import { RelativeTime } from '../../../../../../components/ui/relative-time';
 import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useAgent } from '../../../../../../hooks/use-agents';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
 import { type HeartbeatRun, useHeartbeatRuns } from '../../../../../../hooks/use-heartbeat-runs';
+import { useI18n } from '../../../../../../lib/i18n';
 import { formatTriggerReason } from '../../../../../../lib/run-trigger';
 
 function statusColor(status: string): string {
@@ -93,13 +95,16 @@ function ExecutionRow({
 
 function ExecutionListPage() {
 	const { projectId, agentId } = Route.useParams();
+	const { filter = RunOutcomeFilter.Runs } = Route.useSearch();
+	const navigate = Route.useNavigate();
+	const { t } = useI18n();
 	const {
 		data: runPages,
 		isLoading,
 		hasNextPage,
 		isFetchingNextPage,
 		fetchNextPage,
-	} = useHeartbeatRuns(projectId, agentId);
+	} = useHeartbeatRuns(projectId, agentId, { filter });
 	const { data: agent } = useAgent(projectId, agentId);
 
 	// Flatten the accumulated pages, deduping by id: offset pagination + the 10s
@@ -120,33 +125,72 @@ function ExecutionListPage() {
 	const isInstanceAgent =
 		!!agent && (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agent.slug);
 
-	if (isLoading) return <div className="text-text-2 text-sm">Loading executions...</div>;
-
-	if (runs.length === 0) {
-		return <div className="text-text-2 text-sm py-4">No executions yet.</div>;
+	function setFilter(next: RunOutcomeFilter) {
+		navigate({
+			search: (prev) => ({
+				...(prev as ExecutionsSearch),
+				filter: next === RunOutcomeFilter.Runs ? undefined : next,
+			}),
+			replace: true,
+		});
 	}
 
+	// The pills render above every state, never inside the list branch: a reader
+	// who filters down to nothing must still have the control that gets them back.
 	return (
 		<div className="flex flex-col gap-1">
-			{runs.map((run) => (
-				<ExecutionRow
-					key={run.id}
-					run={run}
-					projectId={projectId}
-					agentId={agentId}
-					isInstanceAgent={isInstanceAgent}
-				/>
-			))}
-			<InfiniteScrollSentinel
-				hasNextPage={hasNextPage}
-				isFetchingNextPage={isFetchingNextPage}
-				onLoadMore={fetchNextPage}
-				testId="executions"
+			<FilterPills
+				className="mb-3"
+				options={[
+					{ value: RunOutcomeFilter.Runs, label: t('executions.filter.runs') },
+					{ value: RunOutcomeFilter.Errored, label: t('executions.filter.errored') },
+					{ value: RunOutcomeFilter.All, label: t('executions.filter.all') },
+				]}
+				value={filter}
+				onChange={setFilter}
 			/>
+			{isLoading ? (
+				<div className="text-text-2 text-sm">{t('executions.loading')}</div>
+			) : runs.length === 0 ? (
+				<div className="text-text-2 text-sm py-4">
+					{filter === RunOutcomeFilter.Runs ? t('executions.empty') : t('executions.emptyFiltered')}
+				</div>
+			) : (
+				<>
+					{runs.map((run) => (
+						<ExecutionRow
+							key={run.id}
+							run={run}
+							projectId={projectId}
+							agentId={agentId}
+							isInstanceAgent={isInstanceAgent}
+						/>
+					))}
+					<InfiniteScrollSentinel
+						hasNextPage={hasNextPage}
+						isFetchingNextPage={isFetchingNextPage}
+						onLoadMore={fetchNextPage}
+						testId="executions"
+					/>
+				</>
+			)}
 		</div>
 	);
 }
 
+interface ExecutionsSearch {
+	/** Run-outcome filter - absent means the default Runs view. */
+	filter?: RunOutcomeFilter;
+}
+
 export const Route = createFileRoute('/projects/$projectId/agents/$agentId/executions/')({
+	// The default is dropped rather than written, so `?filter=runs` and no param
+	// cannot become two cache entries holding the same rows.
+	validateSearch: (search: Record<string, unknown>): ExecutionsSearch => ({
+		filter:
+			isRunOutcomeFilter(search.filter) && search.filter !== RunOutcomeFilter.Runs
+				? search.filter
+				: undefined,
+	}),
 	component: ExecutionListPage,
 });

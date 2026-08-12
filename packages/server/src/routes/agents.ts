@@ -11,6 +11,7 @@ import {
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	DEFAULT_TEAM_ID,
 	DocumentType,
+	ERRORED_RUN_STATUSES,
 	HeartbeatRunStatus,
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
@@ -19,9 +20,11 @@ import {
 	isAllowedProjectIconStoredMime,
 	isBudgetPauseStatus,
 	isReservedAgentSlug,
+	isRunOutcomeFilter,
 	MemberType,
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
+	RunOutcomeFilter,
 	requiredSystemPromptVarsError,
 	TaskPriority,
 	TaskStatus,
@@ -1333,9 +1336,31 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs', async (c
 	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
 
 	const { page, perPage, offset } = parsePagination(c);
+
+	// Unfiltered by default so the route keeps answering for every caller; the
+	// Executions page is the one that asks to hide errored runs.
+	const filterParam = c.req.query('filter');
+	const filter: RunOutcomeFilter = isRunOutcomeFilter(filterParam)
+		? filterParam
+		: RunOutcomeFilter.All;
+	// One predicate, both queries: a count that disagrees with the page makes
+	// `meta.total` promise rows the caller can never reach, so infinite scroll
+	// keeps asking for a page that comes back empty. The two carry the status
+	// array at different positions, so the predicate takes its param index.
+	// `= ANY` to include, `<> ALL` to exclude — `<> ANY` would read "differs from
+	// at least one of them", which is true of every status once the array holds
+	// more than one.
+	const whereFor = (statusIdx: number) =>
+		filter === RunOutcomeFilter.All
+			? 'hr.member_id = $1'
+			: `hr.member_id = $1 AND hr.status ${
+					filter === RunOutcomeFilter.Errored ? '= ANY' : '<> ALL'
+				}($${statusIdx}::heartbeat_run_status[])`;
+	const filterParams = filter === RunOutcomeFilter.All ? [] : [[...ERRORED_RUN_STATUSES]];
+
 	const countResult = await db.query<{ total: number }>(
-		`SELECT count(*)::int AS total FROM heartbeat_runs hr WHERE hr.member_id = $1`,
-		[agentId],
+		`SELECT count(*)::int AS total FROM heartbeat_runs hr WHERE ${whereFor(2)}`,
+		[agentId, ...filterParams],
 	);
 	const total = countResult.rows[0]?.total ?? 0;
 	const result = await db.query(
@@ -1344,10 +1369,15 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs', async (c
 		 LEFT JOIN tasks i ON i.id = hr.task_id
 		 LEFT JOIN projects p ON p.id = i.project_id
 		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
-		 WHERE hr.member_id = $1
-		 ORDER BY hr.started_at DESC
+		 WHERE ${whereFor(4)}
+		 -- A run only stamps started_at when it goes running, so every run that
+		 -- ended before that ties on NULL (and sorts first, DESC being NULLS
+		 -- FIRST). Offset paging over an arbitrary order within a tie can repeat
+		 -- or skip rows, so created_at - the only clock such a run has - breaks
+		 -- it, and id closes it.
+		 ORDER BY hr.started_at DESC, hr.created_at DESC, hr.id DESC
 		 LIMIT $2 OFFSET $3`,
-		[agentId, perPage, offset],
+		[agentId, perPage, offset, ...filterParams],
 	);
 
 	return c.json({ data: result.rows, meta: buildMeta(page, perPage, total) });

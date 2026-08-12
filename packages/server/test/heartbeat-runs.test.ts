@@ -742,3 +742,97 @@ describe('created_tasks tracking', () => {
 		expect(row.rows[0].created_by_run_id).toBeNull();
 	});
 });
+
+describe('run-outcome filter on the runs list', () => {
+	let filterAgentId: string;
+	const seeded: Record<string, string> = {};
+
+	beforeAll(async () => {
+		// A fresh agent so meta.total is exactly what this block inserts.
+		const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Filtered Runner' }),
+		});
+		filterAgentId = (await agentRes.json()).data.id as string;
+
+		// One of each interesting shape: a clean finish, both errored statuses, and
+		// a live run that has not started (started_at NULL) so the filter can be
+		// shown never to hide one.
+		const shapes: [string, string, boolean][] = [
+			['ok', 'succeeded', true],
+			['failed', 'failed', true],
+			['timedOut', 'timed_out', true],
+			['live', 'queued', false],
+		];
+		for (const [key, status, started] of shapes) {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (member_id, team_id, status, started_at)
+				 VALUES ($1, $2, $3::heartbeat_run_status, $4)
+				 RETURNING id`,
+				[filterAgentId, teamId, status, started ? new Date().toISOString() : null],
+			);
+			seeded[key] = r.rows[0].id;
+		}
+	});
+
+	async function list(query: string): Promise<{ ids: string[]; total: number }> {
+		const res = await app.request(
+			`/api/projects/${projectSlug}/agents/${filterAgentId}/heartbeat-runs${query}`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		return {
+			ids: body.data.map((r: { id: string }) => r.id),
+			total: body.meta.total,
+		};
+	}
+
+	it('returns every run when no filter is given', async () => {
+		const { ids, total } = await list('');
+		expect(new Set(ids)).toEqual(new Set(Object.values(seeded)));
+		expect(total).toBe(4);
+	});
+
+	it('filter=runs drops both errored statuses, and the count drops with them', async () => {
+		const { ids, total } = await list('?filter=runs');
+		expect(new Set(ids)).toEqual(new Set([seeded.ok, seeded.live]));
+		// The count must carry the same predicate as the page: a total that
+		// promises rows the caller can never reach makes infinite scroll ask for a
+		// page that comes back empty.
+		expect(total).toBe(2);
+	});
+
+	it('filter=runs keeps a live run that has not started', async () => {
+		// The filter is on the outcome, not on whether the run got going - a run
+		// still waiting to start is the most interesting row on the page.
+		const { ids } = await list('?filter=runs');
+		expect(ids).toContain(seeded.live);
+	});
+
+	it('filter=errored returns exactly the failed and timed-out runs', async () => {
+		const { ids, total } = await list('?filter=errored');
+		expect(new Set(ids)).toEqual(new Set([seeded.failed, seeded.timedOut]));
+		expect(total).toBe(2);
+	});
+
+	it('an unrecognised filter falls back to returning everything', async () => {
+		const { ids, total } = await list('?filter=nonsense');
+		expect(new Set(ids)).toEqual(new Set(Object.values(seeded)));
+		expect(total).toBe(4);
+	});
+
+	it('pages a filtered set without repeating or dropping a row', async () => {
+		// Both errored rows can tie on started_at, and a run that never started
+		// ties on NULL - without the created_at/id tiebreak, offset paging over an
+		// arbitrary within-tie order can serve one row twice and never the other.
+		const base = `?filter=errored&per_page=1`;
+		const p1 = await list(`${base}&page=1`);
+		const p2 = await list(`${base}&page=2`);
+		expect(p1.ids).toHaveLength(1);
+		expect(p2.ids).toHaveLength(1);
+		expect(p1.ids[0]).not.toBe(p2.ids[0]);
+		expect(new Set([...p1.ids, ...p2.ids])).toEqual(new Set([seeded.failed, seeded.timedOut]));
+	});
+});

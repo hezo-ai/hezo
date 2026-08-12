@@ -7,6 +7,7 @@ import type { Env } from '../src/lib/types';
 import { ContainerLogStreamer } from '../src/services/container-logs';
 import { JobManager, type JobManagerDeps } from '../src/services/job-manager';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { CAPACITY_PARK_QUEUED_REASON } from '../src/services/run-concurrency';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -168,6 +169,31 @@ describe('container-idle-stop', () => {
 		const { stops } = await runIdlePass();
 		expect(stops).toEqual([]);
 		expect(await containerStatus()).toBe('running');
+	});
+
+	it('a run parked waiting for capacity does NOT hold the container (it waits on this very reclaim)', async () => {
+		// The mirror of the capacity-skipped wakeup case below. A parked run holds
+		// no container and is blocked until one is released, so counting it busy
+		// would stop the pass that frees it and deadlock the run against itself.
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, queued_reason)
+			 VALUES ($1, $2, $3, 'queued'::heartbeat_run_status, $4)`,
+			[agentId, teamId, taskId, CAPACITY_PARK_QUEUED_REASON],
+		);
+		const { stops } = await runIdlePass();
+		expect(stops).toContain(CONTAINER_ID);
+	});
+
+	it('a queued run waiting on anything else still holds the container up', async () => {
+		// Only the capacity park is exempt - a run queued behind, say, the
+		// rotating-credential lock is about to use the container it is holding.
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, queued_reason)
+			 VALUES ($1, $2, $3, 'queued'::heartbeat_run_status, 'waiting for prior run on this credential')`,
+			[agentId, teamId, taskId],
+		);
+		const { stops } = await runIdlePass();
+		expect(stops).toEqual([]);
 	});
 
 	it('a run finished inside the idle window holds the container up; an old one does not', async () => {

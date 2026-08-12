@@ -1,4 +1,4 @@
-import type { HeartbeatRunKind, WakeupSource } from '@hezo/shared';
+import { type HeartbeatRunKind, RunOutcomeFilter, type WakeupSource } from '@hezo/shared';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { api, nextOffsetPageParam } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
@@ -78,18 +78,23 @@ export function getRunWaitingMessage(status: RunStatus, queuedReason?: string | 
 export function useHeartbeatRuns(
 	projectId: string,
 	agentId: string,
-	options?: { perPage?: number },
+	options?: { perPage?: number; filter?: RunOutcomeFilter },
 ) {
 	const perPage = options?.perPage ?? 50;
+	const filter = options?.filter ?? RunOutcomeFilter.All;
 	return useInfiniteQuery({
+		// `filter` has to be in the key: the poll below refetches every loaded
+		// page, so sharing a key across filters would write one filter's rows into
+		// another's cache entry.
 		queryKey: queryKeys.projects.agentHeartbeatRunsInfinite(projectId, agentId, {
 			per_page: String(perPage),
+			filter,
 		}),
 		initialPageParam: 1,
 		queryFn: ({ pageParam }) =>
 			api.getPaginated<HeartbeatRun>(
 				`/api/projects/${projectId}/agents/${agentId}/heartbeat-runs`,
-				{ page: String(pageParam), per_page: String(perPage) },
+				{ page: String(pageParam), per_page: String(perPage), filter },
 			),
 		getNextPageParam: nextOffsetPageParam,
 		// Poll for new runs / status changes; refetches every loaded page.

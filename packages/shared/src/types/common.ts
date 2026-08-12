@@ -1285,6 +1285,52 @@ export function matchesArchiveFilter(
 }
 
 /**
+ * The run statuses that count as an error - a run that ended badly rather than
+ * one still going or one that finished. Read by the run-history filter's SQL and
+ * by the web, so it lives here rather than being spelled out on either side.
+ */
+export const ERRORED_RUN_STATUSES = [
+	HeartbeatRunStatus.Failed,
+	HeartbeatRunStatus.TimedOut,
+] as const;
+
+/** Whether a run ended in an error state. */
+export function isErroredRunStatus(status: HeartbeatRunStatus): boolean {
+	return (ERRORED_RUN_STATUSES as readonly HeartbeatRunStatus[]).includes(status);
+}
+
+/**
+ * List-view filter for an agent's run history.
+ *
+ * An agent accumulates far more errored runs than a reader is usually looking
+ * for, and they crowd out the runs that did work, so the Executions list defaults
+ * to hiding them. Live `queued`/`running` runs are never hidden by any option -
+ * only finished-badly ones.
+ */
+export const RunOutcomeFilter = {
+	/** Default: every run except the errored ones. */
+	Runs: 'runs',
+	/** Only the errored runs. */
+	Errored: 'errored',
+	All: 'all',
+} as const;
+export type RunOutcomeFilter = (typeof RunOutcomeFilter)[keyof typeof RunOutcomeFilter];
+
+export function isRunOutcomeFilter(value: unknown): value is RunOutcomeFilter {
+	return typeof value === 'string' && (Object.values(RunOutcomeFilter) as string[]).includes(value);
+}
+
+/** Whether a run with the given status passes the given run-outcome filter. */
+export function matchesRunOutcomeFilter(
+	status: HeartbeatRunStatus,
+	filter: RunOutcomeFilter,
+): boolean {
+	if (filter === RunOutcomeFilter.All) return true;
+	const errored = isErroredRunStatus(status);
+	return filter === RunOutcomeFilter.Errored ? errored : !errored;
+}
+
+/**
  * Order for the assets grid. Newest is the default (matches the API's historical
  * `created_at DESC`). The web sorts client-side and the REST route / MCP tool
  * sort in SQL; both mirror `compareAssetsForSort`, the single source of truth.

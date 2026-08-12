@@ -20,6 +20,18 @@ import type { ContainerEngine } from './sandbox/types';
  * different return shapes and are intentionally left untouched.
  */
 
+/**
+ * `heartbeat_runs.queued_reason` stamped on a run parked in the pool ladder
+ * because the instance is at its memory budget.
+ *
+ * A marker, not just display text: such a run holds no container and is waiting
+ * for one to be released, so counting its project as busy would stop the idle
+ * pass reclaiming the very capacity it waits on. Written by `agent-runner`'s
+ * capacity park and read by the idle-stop scan's busy set, so the two must not
+ * drift.
+ */
+export const CAPACITY_PARK_QUEUED_REASON = 'waiting for container capacity';
+
 export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 	const active = await db.query(
 		`SELECT 1 FROM heartbeat_runs
