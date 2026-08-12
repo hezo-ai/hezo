@@ -244,19 +244,22 @@ test('effort dropdown marks the agent default and omits it from the submit body'
 });
 
 test('agent mentions render as bold anchor-colored links to agent page', async () => {
-	const seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const seeded = { projectSlug: '', taskId: '', agentSlug: '', agentLabel: '' };
 	const { container, findByText, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Mention Project' });
 			const task = await seedTask(ws, project, { title: 'Mention Task' });
-			const agentSlug = ws.agents[0].slug;
+			const agent = ws.agents[0];
+			const agentSlug = agent.slug;
 			const body = `Hey @${agentSlug} please check this. Also @not-a-real-agent-xyz stays plain.`;
 			await seedComment(ws, task, body);
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
 			seeded.agentSlug = agentSlug;
+			// The chip prints what the agent is called; the href keeps the role slug.
+			seeded.agentLabel = agent.human_name?.trim() || agent.title;
 		},
 	});
 	await router.navigate({
@@ -270,7 +273,7 @@ test('agent mentions render as bold anchor-colored links to agent page', async (
 		'[data-testid="agent-mention-link"]',
 	) as HTMLAnchorElement | null;
 	expect(mentionLink).toBeTruthy();
-	expect(mentionLink!.textContent).toBe(`@${seeded.agentSlug}`);
+	expect(mentionLink!.textContent).toBe(`@${seeded.agentLabel}`);
 	expect(mentionLink!.getAttribute('href')).toBe(
 		`/projects/${seeded.projectSlug}/agents/${seeded.agentSlug}`,
 	);

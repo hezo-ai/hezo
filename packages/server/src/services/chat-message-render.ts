@@ -85,6 +85,10 @@ export async function renderChatMessageForChannel(
 			case 'passive_agent': {
 				// Passive `@@slug` displays as the bare slug (no prefix), matching the
 				// web renderer; active `@slug` keeps its prefix.
+				//
+				// Deliberately the slug, not the display name the web chip shows: this
+				// is plain markdown in a third-party client with no hover card, and the
+				// slug is what a human types back to address the agent.
 				const display = token.kind === 'passive_agent' ? token.raw.slice(2) : token.raw;
 				if (token.slug === ADMIN_MENTION_SLUG) {
 					return `[${display}](${baseUrl}${GLOBAL_INBOX_PATH})`;
