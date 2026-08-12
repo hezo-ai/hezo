@@ -21,6 +21,7 @@ import { loadAgentRoles } from '../../src/db/agent-roles';
 import type { Db } from '../../src/db/database';
 import { seedBuiltins } from '../../src/db/seed';
 import { DomainEventBus } from '../../src/events/bus';
+import { recomputeDownstreamReadiness } from '../../src/lib/dependencies';
 import { getHostMemory } from '../../src/lib/host-memory';
 import type { SandboxBackendInfo } from '../../src/lib/sandbox-backend-info';
 import { toSlug, uniqueSlug } from '../../src/lib/slug';
@@ -588,6 +589,32 @@ export async function seedProjectContainer(
 export async function projectSlugForTeamSlug(db: Db, teamSlug: string): Promise<string> {
 	const t = await db.query<{ id: string }>('SELECT id FROM teams WHERE slug = $1', [teamSlug]);
 	return projectSlugFor(db, t.rows[0].id);
+}
+
+/**
+ * Settle any open team setup / coherence review for `teamId`, so the team's agents
+ * count as established and tasks filed for them are no longer auto-gated on it.
+ *
+ * Adding an agent (or provisioning a roster) stamps that review onto the new agents
+ * as their setup gate, which is exactly what `agent-setup-review-gate.test.ts`
+ * covers. A fixture whose subject is something else — task CRUD, comments, runs —
+ * calls this after building its roster so its tasks start in `backlog`, the state
+ * those tests are actually about.
+ *
+ * Marks the review done through the real cascade, so it is correct whether it runs
+ * before or after the gated tasks exist.
+ */
+export async function settleTeamSetupReview(db: Db, teamId: string): Promise<void> {
+	const open = await db.query<{ id: string }>(
+		`SELECT id FROM tasks
+		  WHERE team_id = $1 AND labels @> '["team-coherence-review"]'::jsonb
+		    AND status NOT IN ('done'::task_status, 'cancelled'::task_status)`,
+		[teamId],
+	);
+	for (const row of open.rows) {
+		await db.query("UPDATE tasks SET status = 'done'::task_status WHERE id = $1", [row.id]);
+		await recomputeDownstreamReadiness(db, teamId, row.id, null, undefined);
+	}
 }
 
 /** The single instance-level Coach member id (lives in HQ). */

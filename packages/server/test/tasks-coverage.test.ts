@@ -11,6 +11,7 @@ import {
 	createTestProject,
 	createTestTeam,
 	mintAgentToken,
+	settleTeamSetupReview,
 } from './helpers/app';
 
 // Branch-coverage tests for packages/server/src/routes/tasks.ts.
@@ -79,6 +80,11 @@ beforeAll(async () => {
 		body: JSON.stringify({ title: 'Other team task', assignee_id: otherAgentId }),
 	});
 	otherTaskId = (await otherTaskRes.json()).data.id;
+
+	// This fixture's subject is task behaviour, not agent onboarding: settle the
+	// setup review the new agents filed so their tasks start unblocked.
+	await settleTeamSetupReview(db, teamId);
+	await settleTeamSetupReview(db, otherTeamId);
 });
 
 afterAll(async () => {

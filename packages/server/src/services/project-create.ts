@@ -17,7 +17,7 @@ import { withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { type ContainerDeps, type ProjectRow, provisionContainer } from './containers';
-import { enqueueTeamCoherenceReviewTask } from './description-tasks';
+import { enqueueSetupReviewForNewAgents } from './description-tasks';
 import { getMarketplaceTeam } from './marketplace';
 import { snapshotTeamAsTemplate } from './team-template-snapshot';
 import { type CreatedTeamRow, createTeam } from './teams';
@@ -560,7 +560,12 @@ export async function createProjectWithTeam(
 	// blocks planning, so it's created before the planning task to take TO-1. On
 	// the CEO's create_project path it is created unassigned and not auto-woken —
 	// the CEO drafts it then kicks it off with `start_team_setup`.
-	const coherenceTaskId = await enqueueTeamCoherenceReviewTask(db, team.id, 'initial', {
+	// The whole roster was provisioned moments ago inside `createTeam`, so every
+	// agent on this team is new: each is stamped with this task as its setup
+	// gate, and any task filed for one waits until the setup pass closes. The
+	// pass itself is owned by the CEO (an HQ member), so no roster agent can end
+	// up gated on its own review.
+	const coherenceTaskId = await enqueueSetupReviewForNewAgents(db, team.id, 'initial', null, {
 		autoStart: !input.suppressCoherenceAutoStart,
 	});
 

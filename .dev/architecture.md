@@ -898,6 +898,22 @@ project.
   role, `reports_to`, hire, or enable/disable change on the established team — are enqueued to that
   team's own **Captain** (`enqueueTeamCoherenceReviewTask` picks the assignee by reason, falling
   back to the CEO for HQ, which has no Captain). Coalescing and the change-summary section are unchanged.
+  **A newly created agent's work is gated on the review that onboarded it.** Every path that
+  *creates* agents — the hire approval handler, both `routes/agents.ts` create/onboard paths,
+  fresh-project provisioning, and both `team-template-apply` paths — goes through
+  `enqueueSetupReviewForNewAgents` (`services/description-tasks.ts`) instead of enqueuing
+  directly: it files (or coalesces onto) the review as before, then stamps its id onto
+  `member_agents.setup_review_task_id` for the agents that just joined (`null` slugs means the
+  whole roster, the fresh-project case). `createTask` reads `pendingSetupReviewBlockerId` for the
+  assignee and, while that review is non-terminal, inserts an ordinary `task_dependencies` edge —
+  so the task lands `blocked`, `shouldDeferWakeupForBlockers` parks its assignment wakeup, and
+  closing the review unblocks and wakes through the existing `recomputeDownstreamReadiness`
+  cascade. Two stamp guards: `setup_review_task_id IS NULL` (stamped once, so a later review never
+  re-gates an established agent) and skipping the review's own assignee (no agent is ever gated on
+  a review it owns). The pointer is never cleared — it stops gating on its own once the review is
+  terminal, and remains the record of which review onboarded the agent. The *reactive* enqueue
+  sites (prompt/Custom Prompt/role/`reports_to`/enable-disable changes) create no agents and stamp
+  nothing.
 - **Coach** — reviews completed tickets across **every** project to improve agent system
   prompts; woken on any task completion.
 

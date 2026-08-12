@@ -10,6 +10,7 @@ import {
 	createTestProject,
 	createTestTeam,
 	mintAgentToken,
+	settleTeamSetupReview,
 } from './helpers/app';
 
 let app: Hono<Env>;
@@ -48,6 +49,10 @@ beforeAll(async () => {
 		body: JSON.stringify({ title: 'Test Agent' }),
 	});
 	agentId = (await agentRes.json()).data.id;
+
+	// This fixture's subject is task behaviour, not agent onboarding: settle the
+	// setup review the new agents filed so their tasks start unblocked.
+	await settleTeamSetupReview(db, teamId);
 });
 
 afterAll(async () => {

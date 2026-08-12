@@ -12,7 +12,7 @@ import type { Db } from '../db/database';
 import { withTransaction } from '../lib/sql';
 import { logger } from '../logger';
 import { resolveAgentBudgets } from './agent-budget';
-import { enqueueTeamCoherenceReviewTask } from './description-tasks';
+import { enqueueSetupReviewForNewAgents } from './description-tasks';
 import { initAgentSystemPrompt, upsertDocument } from './documents';
 import {
 	insertRosterAgents,
@@ -182,7 +182,14 @@ export async function applyTemplateToTeam(
 
 	if (rosterChanged) {
 		try {
-			await enqueueTeamCoherenceReviewTask(db, teamId, 'template_applied');
+			// Only the agents this apply *created* are new; an upgraded builtin has
+			// already been through setup and must not be re-gated.
+			await enqueueSetupReviewForNewAgents(
+				db,
+				teamId,
+				'template_applied',
+				provisionResult.created_slugs,
+			);
 		} catch (e) {
 			log.error('Failed to enqueue team coherence review after template apply:', e);
 		}
@@ -583,7 +590,8 @@ export async function applyMarketplaceTeamToTeam(
 	const rosterChanged = created.length > 0 || updated.length > 0 || captainResult.updated;
 	if (options.enqueueReconcile && rosterChanged) {
 		try {
-			await enqueueTeamCoherenceReviewTask(db, teamId, 'template_applied');
+			// `created` only — an updated existing role is not a new agent.
+			await enqueueSetupReviewForNewAgents(db, teamId, 'template_applied', created);
 		} catch (e) {
 			log.error('Failed to enqueue team coherence review after marketplace apply:', e);
 		}
