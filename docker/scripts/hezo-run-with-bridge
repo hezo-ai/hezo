@@ -62,22 +62,33 @@ case "${HEZO_EXEC_DEADLINE_SECS:-}" in
         ;;
 esac
 
-# Deliver the prompt either on stdin (default) or as a trailing arg when
-# HEZO_PROMPT_MODE=arg (OpenCode `run <message>`).
+# hezo:prompt-delivery:start
+# Deliver the prompt one of three ways, chosen by HEZO_PROMPT_MODE
+# (RUNTIME_PROMPT_DELIVERY in @hezo/shared):
+#   arg   - the prompt's TEXT becomes a trailing argv element (Kimi Code `-p`).
+#           Linux caps one argv element at 128 KiB (MAX_ARG_STRLEN), so the
+#           server refuses an oversize prompt before it ever reaches here.
+#   file  - the CLI opens the file itself (Grok `--prompt-file <path>`). The flag
+#           AND the path are already in argv, so nothing is appended here.
+#   stdin - default: the prompt file IS the CLI's stdin.
 #
-# Arg mode redirects stdin from /dev/null: an exec's stdin is a pipe nothing
-# writes to and nothing closes, and a CLI that reads it in headless mode hangs
-# with no output and no exit. The prompt is already on the command line here, so
-# stdin has nothing to carry. Same reasoning as PROMPT_DELIVERY_SH in
-# agent-runner.ts, which this script mirrors.
+# Both non-stdin branches redirect stdin from /dev/null, and must: an exec's
+# stdin is a pipe nothing writes to and nothing closes, and a CLI that reads it
+# in headless mode hangs with no output and no exit. In both, the prompt has
+# already reached the CLI another way, so stdin has nothing to carry. Same
+# reasoning as PROMPT_DELIVERY_SH in agent-runner.ts, which this block mirrors -
+# packages/server/test/agent-prompt-delivery.test.ts extracts the text between
+# these two markers and runs it under a real `sh` against the same cases, so the
+# two copies cannot drift. Keep the block self-contained.
 if [ -n "${HEZO_PROMPT_FILE:-}" ] && [ -r "$HEZO_PROMPT_FILE" ]; then
-    if [ "${HEZO_PROMPT_MODE:-stdin}" = arg ]; then
-        "$@" "$(cat "$HEZO_PROMPT_FILE")" < /dev/null
-    else
-        "$@" < "$HEZO_PROMPT_FILE"
-    fi
+    case "${HEZO_PROMPT_MODE:-stdin}" in
+        arg) "$@" "$(cat "$HEZO_PROMPT_FILE")" < /dev/null ;;
+        file) "$@" < /dev/null ;;
+        *) "$@" < "$HEZO_PROMPT_FILE" ;;
+    esac
 else
     "$@"
 fi
 EXIT_CODE=$?
 exit "$EXIT_CODE"
+# hezo:prompt-delivery:end

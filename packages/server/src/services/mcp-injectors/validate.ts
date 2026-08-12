@@ -34,8 +34,10 @@ export function validateInjection(adapter: RuntimeMcpAdapter, injection: McpInje
 	}
 
 	if (adapter.capabilities.bearerTokenStorage === 'env-var') {
-		// Tokens passed via env must not also be inlined in any file.
+		// Tokens passed via env must not also be inlined in any file the adapter
+		// rendered. Passthrough files are exempt - see McpInjectionFile.passthrough.
 		for (const file of injection.files) {
+			if (file.passthrough) continue;
 			if (/Bearer [A-Za-z0-9._-]{8,}/.test(file.contents)) {
 				throw new Error(
 					`adapter declared env-var bearer storage but inlined a bearer token in ${file.hostPath}`,

@@ -711,6 +711,39 @@ describe('kimi adapter', () => {
 		expect(() => validateInjection(adapter, injection)).not.toThrow();
 	});
 
+	it('writes the system prompt to AGENTS.md, which the CLI auto-loads', () => {
+		// Kimi Code takes its prompt only as the value of `-p` - one argv element,
+		// which Linux caps at MAX_ARG_STRLEN - so the system half cannot ride the
+		// prompt. It goes to $KIMI_CODE_HOME/AGENTS.md, which the CLI concatenates
+		// into its system prompt with no size cap.
+		const systemPrompt = 'You are the Captain.\nS'.repeat(8000);
+		const injection = adapter.build([HEZO_DESCRIPTOR], { ...HOMES, systemPrompt });
+		const agents = fileNamed(injection, 'AGENTS.md');
+		expect(agents).toBeDefined();
+		expect(agents?.mode).toBe(0o600);
+		expect(agents?.contents).toContain(systemPrompt);
+	});
+
+	it('does not read a bearer header the system prompt merely describes as an inlined token', () => {
+		// The shared instructions tell agents to emit
+		// `Authorization: Bearer __HEZO_SECRET_<NAME>__`, and a project custom prompt
+		// may repeat it. That placeholder is not a secret, and the env-var bearer
+		// check is about config this adapter renders - without the exemption, one
+		// such sentence anywhere in the prompt would fail every run on this runtime.
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			...HOMES,
+			systemPrompt: 'Send `Authorization: Bearer __HEZO_SECRET_STRIPE_KEY__` to the API.',
+		});
+		expect(() => validateInjection(adapter, injection)).not.toThrow();
+	});
+
+	it('writes no AGENTS.md when no system prompt is routed to it', () => {
+		// A run whose system prompt still rides the prompt body must leave the file
+		// alone rather than shadowing a workspace AGENTS.md with an empty one.
+		const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
+		expect(fileNamed(injection, 'AGENTS.md')).toBeUndefined();
+	});
+
 	it('raises the per-server MCP timeouts well above the CLI defaults', () => {
 		// Kimi Code defaults to 30s startup / 60s per tool call; Hezo MCP tools
 		// routinely exceed the latter.

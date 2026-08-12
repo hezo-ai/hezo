@@ -116,7 +116,7 @@ resolved the model id and the token-usage question (see "Cost accounting").
 
 | Hezo need | Grok Build mechanism | Notes |
 |---|---|---|
-| Headless launch | `grok -p "<prompt>"` **or `--prompt-file <path>`** | File input is cleaner than OpenCode's arg mode; can set `HEZO_PROMPT_MODE` accordingly. |
+| Headless launch | **`--prompt-file <path>`** (shipped) | Settled: `RUNTIME_PROMPT_DELIVERY[Grok] = 'file'`. `-p`/`--single` is the same flag under two names and is *not* passed alongside. `--prompt-file` triggers headless mode on its own. This is not a preference - a prompt as one argv element is capped at 128 KiB by `MAX_ARG_STRLEN` and every Hezo prompt clears it. The binary's embedded help documents the flag; xAI's published docs do not mention it at all. Grok's headless mode also states outright that it does not read piped stdin into the prompt. |
 | Structured output for the parser | `--output-format streaming-json` | Typed events, but **not** the Claude Code `stream-json` shape: `{"type":"thought","data":…}` (reasoning), `{"type":"text","data":…}` (assistant text), `{"type":"end","stopReason":…,"sessionId":…,"requestId":…}`. `--output-format json` returns one object `{text, stopReason, sessionId, requestId, thought}`. **Neither carries token usage.** |
 | **Token/cost accounting** | **Only** via `--debug-file <path>` → parse `process_conversation_turn` spans (`input_tokens=` / `output_tokens=` / `cache_read_tokens=`, per turn) | Not in JSON/stream output, not in session files. See "Cost accounting" — this is the biggest implementation wrinkle. Prices from the table as always once the counts are recovered. |
 | System prompt injection | `--system-prompt-override <prompt>` (+ `--rules`) | Hezo injects the agent's home-team system prompt. |
@@ -221,8 +221,8 @@ confirmed against a real key. No open spike items remain.
   `{ auto_update off }` as needed. API-key auth only (no subscription path).
 - `PROVIDER_UPSTREAM_HOSTS['x_ai'] = ['api.x.ai']` for the NO_PROXY bypass;
   `PROVIDERS_BY_RUNTIME` / `PROVIDER_TO_RUNTIME` pick it up automatically.
-- `RUNTIME_PROMPT_DELIVERY[Grok]` (arg or file — prefer `--prompt-file`);
-  effort mapping in `effort.ts` (map to `--reasoning-effort`).
+- `RUNTIME_PROMPT_DELIVERY[Grok] = 'file'` (`--prompt-file`, with the path in the
+  server-built argv); effort mapping in `effort.ts` (map to `--reasoning-effort`).
 
 **2. MCP injector — new `packages/server/src/services/mcp-injectors/grok.ts`**
 - Model on `claude-code.ts`: write Hezo's MCP descriptors as `[mcp_servers.*]`

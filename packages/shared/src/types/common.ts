@@ -2130,23 +2130,71 @@ export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
 };
 
 /**
- * How each CLI receives the task prompt. Most runtimes read it from stdin (the
- * runner redirects `< $HEZO_PROMPT_FILE`); OpenCode (`opencode run <message>`)
- * takes it as a trailing argument instead, so the exec wrapper appends
- * `"$(cat $HEZO_PROMPT_FILE)"` for it. The mode is threaded to the container
- * via `HEZO_PROMPT_MODE`.
+ * Linux caps a SINGLE argv element at MAX_ARG_STRLEN - 32 pages, 128 KiB -
+ * independent of the far larger total ARG_MAX. Exceeding it fails execve with
+ * E2BIG ("Argument list too long") before the CLI's main() ever runs.
+ *
+ * Hezo's prompts clear it routinely: SHARED_INSTRUCTIONS alone is ~111 KB before
+ * the role doc, the repo/team/state blocks and the task body. So `'arg'` delivery
+ * only works for a runtime whose system half travels out of band
+ * (RUNTIME_SYSTEM_PROMPT_FILE), and `assertPromptDeliverable` in the runner
+ * refuses the run rather than letting the exec die with a one-line shell error.
  */
-export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, 'stdin' | 'arg'> = {
+export const MAX_SINGLE_ARG_BYTES = 128 * 1024;
+
+export type PromptDelivery = 'stdin' | 'arg' | 'file';
+
+/**
+ * How each CLI receives the task prompt, threaded to the container as
+ * `HEZO_PROMPT_MODE` and acted on by the exec wrapper (`PROMPT_DELIVERY_SH` and
+ * its twin in `docker/scripts/hezo-run-with-bridge`):
+ *
+ * - `stdin` - the prompt file IS the CLI's stdin (`< $HEZO_PROMPT_FILE`).
+ * - `arg`   - the prompt's TEXT becomes a trailing argv element. Bounded by
+ *             MAX_SINGLE_ARG_BYTES, so only viable when the bulk of the prompt
+ *             travels elsewhere.
+ * - `file`  - the CLI opens the file itself; the flag and its path are already
+ *             in the server-built argv, so the wrapper appends nothing.
+ */
+export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, PromptDelivery> = {
 	[AgentRuntime.ClaudeCode]: 'stdin',
 	[AgentRuntime.Codex]: 'stdin',
 	[AgentRuntime.Gemini]: 'stdin',
-	[AgentRuntime.OpenCode]: 'arg',
-	// `grok -p <PROMPT>` (aka --single) takes the prompt as the value of the
-	// trailing `-p` flag, so the bridge appends `"$(cat $HEZO_PROMPT_FILE)"`.
-	[AgentRuntime.Grok]: 'arg',
-	// `kimi -p <PROMPT>` (--prompt) is the same shape as Grok: the prompt is the
-	// flag's value, not stdin. Kimi Code has no stdin-as-prompt mode at all.
+	// `opencode run` reads stdin to EOF whenever it is not a TTY and uses it as
+	// the message when no positional is given (`resolveRunInput` in the CLI's
+	// `cmd/run.ts`), so it needs no flag at all - and unlike the positional form
+	// it is not bounded by MAX_ARG_STRLEN.
+	[AgentRuntime.OpenCode]: 'stdin',
+	// `grok --prompt-file <PATH>` reads the prompt from disk and triggers headless
+	// mode on its own; `-p`/`--single` is the same flag under two names, so it is
+	// replaced rather than kept alongside. Grok's headless mode deliberately does
+	// not read piped stdin, so `stdin` is not an option here.
+	[AgentRuntime.Grok]: 'file',
+	// `kimi -p <PROMPT>` (--prompt) is a required Commander option-argument: Kimi
+	// Code has no prompt-file flag, no stdin-as-prompt mode and no `-` sentinel.
+	// It stays on `arg` and keeps its system half in $KIMI_CODE_HOME/AGENTS.md
+	// (RUNTIME_SYSTEM_PROMPT_FILE) so the argv element stays small.
 	[AgentRuntime.Kimi]: 'arg',
+};
+
+/**
+ * Basename, inside the runtime's per-run home, of a file the CLI auto-loads as
+ * instructions - the escape hatch for a runtime that can only take the prompt as
+ * an argv element. When non-null the run's resolved system prompt is written
+ * there by that runtime's MCP injector instead of being prepended to the task
+ * prompt, and only the task body travels by RUNTIME_PROMPT_DELIVERY.
+ *
+ * Kimi Code concatenates `$KIMI_CODE_HOME/AGENTS.md` into its system prompt with
+ * no size cap (over 32 KB it warns and carries on). Nothing else needs this: the
+ * other runtimes carry the whole prompt through stdin or a prompt file.
+ */
+export const RUNTIME_SYSTEM_PROMPT_FILE: Record<AgentRuntime, string | null> = {
+	[AgentRuntime.ClaudeCode]: null,
+	[AgentRuntime.Codex]: null,
+	[AgentRuntime.Gemini]: null,
+	[AgentRuntime.OpenCode]: null,
+	[AgentRuntime.Grok]: null,
+	[AgentRuntime.Kimi]: 'AGENTS.md',
 };
 
 /**
@@ -2350,29 +2398,33 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 	[AgentRuntime.Gemini]: [],
 	// `opencode run …` gates non-interactive execution behind the `run` subcommand.
 	[AgentRuntime.OpenCode]: ['run'],
-	// `grok` runs headless directly (the `-p` flag, added as a suffix arg).
+	// `grok` runs headless directly (the `--prompt-file` flag, added as a suffix arg).
 	[AgentRuntime.Grok]: [],
 	// `kimi` likewise runs headless directly via the trailing `-p` flag.
 	[AgentRuntime.Kimi]: [],
 };
 
 /**
- * Trailing args that put each CLI into headless/print mode where the prompt
- * arrives via stdin. Claude needs `-p` (print mode); Codex needs the `-`
- * positional to read stdin as the prompt; Gemini auto-detects non-TTY stdin
- * and needs no flag.
+ * Trailing args that put each CLI into headless/print mode, immediately before
+ * whatever RUNTIME_PROMPT_DELIVERY appends. Claude needs `-p` (print mode);
+ * Codex needs the `-` positional to read stdin as the prompt; Gemini and
+ * OpenCode auto-detect non-TTY stdin and need no flag.
+ *
+ * A `'file'`-delivery runtime's flag lives here and its VALUE is appended by
+ * `buildRuntimeInvocation`, so argv leaves the server complete.
  */
 export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['-p'],
 	[AgentRuntime.Codex]: ['-'],
 	[AgentRuntime.Gemini]: [],
-	// OpenCode takes the prompt as a positional `message` (appended in arg mode).
+	// OpenCode's `run` takes the prompt on stdin when the positional `message` is
+	// omitted, so nothing goes here.
 	[AgentRuntime.OpenCode]: [],
-	// Grok takes the prompt as the value of `-p` (single-turn/print mode); the
-	// bridge appends `"$(cat $HEZO_PROMPT_FILE)"` right after it (arg delivery).
-	[AgentRuntime.Grok]: ['-p'],
-	// Kimi Code is the same shape: `-p`/`--prompt` runs one prompt headlessly and
-	// streams to stdout, with the prompt appended as the flag's value.
+	// Grok reads the prompt from the path following `--prompt-file`, which
+	// triggers headless mode on its own.
+	[AgentRuntime.Grok]: ['--prompt-file'],
+	// Kimi Code runs one prompt headlessly via `-p`/`--prompt` and streams to
+	// stdout, with the prompt text appended as the flag's value.
 	[AgentRuntime.Kimi]: ['-p'],
 };
 

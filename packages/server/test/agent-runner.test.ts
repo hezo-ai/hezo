@@ -9,6 +9,7 @@ import {
 	HeartbeatRunStatus,
 	KIMI_DEFAULT_MODEL,
 	kimiModelContextSize,
+	MAX_SINGLE_ARG_BYTES,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1786,6 +1787,229 @@ describe('runAgent', () => {
 				),
 			).toBe(true);
 			expect(promptOnDisk).toContain(hugeSystemPrompt);
+		});
+
+		/**
+		 * Registers a provider credential through the real route so the runtime
+		 * resolves the same way a real run does.
+		 */
+		async function seedProvider(provider: string, apiKey: string, runtime?: string) {
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = $1`, [provider]);
+			const originalFetchLocal = globalThis.fetch;
+			globalThis.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: async () => ({ data: [] }),
+				text: async () => '',
+			}) as unknown as typeof fetch;
+			const res = await app.request('/api/ai-providers', {
+				method: 'POST',
+				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					provider,
+					api_key: apiKey,
+					label: `${provider}-prompt-delivery`,
+					...(runtime ? { runtime } : {}),
+				}),
+			});
+			globalThis.fetch = originalFetchLocal;
+			// A silently rejected credential leaves the run resolving to some other
+			// provider, and the assertion below would then be about the wrong runtime.
+			if (!res.ok) throw new Error(`seeding ${provider} failed: ${res.status} ${await res.text()}`);
+		}
+
+		it('hands grok the prompt file by path, never by value', async () => {
+			await seedProvider('x_ai', 'xai-test-prompt-file');
+			let capturedCmd: string[] = [];
+			let capturedEnv: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					capturedEnv = opts.Env;
+					return 'exec-grok-prompt';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			// Far past MAX_ARG_STRLEN: as an argv element this is the exact E2BIG the
+			// 'file' mode exists to remove, and every real prompt is this size.
+			const hugeSystemPrompt = 'X'.repeat(256 * 1024);
+			await setAgentPrompt(hugeSystemPrompt);
+			const result = await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeTask(), runtime_type: 'grok' as const },
+				makeProject(),
+			);
+
+			expect(result.success).toBe(true);
+			const promptPath = `/workspace/.hezo/prompts/${result.heartbeatRunId}.txt`;
+			expect(capturedCmd.slice(-2)).toEqual(['--prompt-file', promptPath]);
+			expect(capturedCmd).not.toContain('-p');
+			expect(capturedEnv).toContain('HEZO_PROMPT_MODE=file');
+			for (const element of capturedCmd) {
+				expect(element.length).toBeLessThan(64 * 1024);
+			}
+
+			const row = await db.query<{ invocation_command: string | null }>(
+				'SELECT invocation_command FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			const invocation = row.rows[0].invocation_command!;
+			expect(invocation).toContain('--prompt-file');
+			expect(invocation.endsWith(' < /dev/null')).toBe(true);
+		});
+
+		it('hands opencode the prompt on stdin, with no prompt text in argv', async () => {
+			await seedProvider('openrouter', 'sk-or-test-opencode-stdin');
+			let capturedCmd: string[] = [];
+			let capturedEnv: string[] = [];
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					capturedEnv = opts.Env;
+					return 'exec-opencode-prompt';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			const hugeSystemPrompt = 'X'.repeat(256 * 1024);
+			await setAgentPrompt(hugeSystemPrompt);
+			const result = await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeTask(), runtime_type: 'opencode' as const },
+				makeProject(),
+			);
+
+			expect(result.success).toBe(true);
+			expect(capturedEnv).toContain('HEZO_PROMPT_MODE=stdin');
+			for (const element of capturedCmd) {
+				expect(element.length).toBeLessThan(64 * 1024);
+			}
+		});
+
+		it('keeps kimi under the argv cap by routing the system prompt to AGENTS.md', async () => {
+			await seedProvider('kimi', 'sk-test-kimi-agents-md', 'kimi');
+			const project = makeProject();
+			let capturedCmd: string[] = [];
+			let promptOnDisk: string | null = null;
+			let agentsMd: string | null = null;
+			const docker = createMockDocker({
+				execCreate: async (_id: string, opts: any) => {
+					capturedCmd = opts.Cmd;
+					promptOnDisk = readPromptFromExec(opts, testDataDir, project);
+					const homeEntry = (opts.Env as string[]).find((e) => e.startsWith('KIMI_CODE_HOME='));
+					if (homeEntry) {
+						const containerDir = homeEntry.slice('KIMI_CODE_HOME='.length);
+						const runId = containerDir.split('/').pop()!;
+						agentsMd = readFileSync(
+							`${getHostSubscriptionRoot(
+								AiProvider.Kimi,
+								AgentRuntime.Kimi,
+								testDataDir,
+								teamId,
+								projectId,
+								runId,
+							)}/AGENTS.md`,
+							'utf8',
+						);
+					}
+					return 'exec-kimi-prompt';
+				},
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			// Kimi's `-p` takes one argv element, so a prompt this big only starts at
+			// all because the system half travels in the instructions file instead.
+			const hugeSystemPrompt = 'X'.repeat(256 * 1024);
+			await setAgentPrompt(hugeSystemPrompt);
+			const result = await runAgent(
+				deps,
+				makeAgent(),
+				{ ...makeTask(), runtime_type: 'kimi' as const },
+				project,
+			);
+
+			expect(result.success).toBe(true);
+			expect(agentsMd).toContain(hugeSystemPrompt);
+			expect(promptOnDisk).not.toContain(hugeSystemPrompt);
+			// The task body still reached the prompt, and still starts with content
+			// rather than a stray separator left behind by the omitted system half.
+			expect(promptOnDisk).toContain('## Current Task');
+			expect(promptOnDisk!.startsWith('---')).toBe(false);
+			for (const element of capturedCmd) {
+				expect(element.length).toBeLessThan(64 * 1024);
+			}
+		});
+
+		it('fails the run by name when an arg-mode prompt passes the argv cap', async () => {
+			await seedProvider('kimi', 'sk-test-kimi-oversize', 'kimi');
+			const docker = createMockDocker({
+				execCreate: async () => 'exec-kimi-oversize',
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+			});
+			const deps: RunnerDeps = {
+				db,
+				docker,
+				masterKeyManager,
+				serverPort: 3000,
+				dataDir: testDataDir,
+				logs: new LogStreamBroker(),
+			};
+
+			// The system prompt now travels out of band, so the only way left to bust
+			// the cap is the task body itself.
+			await setAgentPrompt('short');
+			const result = await runAgent(
+				deps,
+				makeAgent(),
+				{
+					...makeTask(),
+					description: 'Y'.repeat(MAX_SINGLE_ARG_BYTES + 1),
+					runtime_type: 'kimi' as const,
+				},
+				makeProject(),
+			);
+
+			expect(result.success).toBe(false);
+			const row = await db.query<{ status: string; error: string | null }>(
+				'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].status).toBe('failed');
+			const error = row.rows[0].error ?? '';
+			expect(error).toContain('MAX_ARG_STRLEN');
+			expect(error).toContain('Kimi Code');
+			expect(error).toContain(String(MAX_SINGLE_ARG_BYTES));
 		});
 
 		it('records the prompt-file redirect suffix in the invocation_command', async () => {
