@@ -70,7 +70,7 @@
 			"slug": "investment",
 			"name": "Investment Portfolio",
 			"description": "Research-grade stock research and tracking - analysts, verifiers, and a monitor that keeps a living document on every stock you care about up to date",
-			"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding - the stocks and categories to watch, the investor's objective, risk appetite, and horizon - and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
+			"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding - the stocks and categories to watch, the investor's objective, risk appetite, and horizon - and suggests goals for the admin to approve. Work flows through three quality gates the Captain enforces: the Market Researcher screens on a standing cadence and hands ranked candidates to the Captain for triage; the Equity Analyst runs structured deep-dives (a 13-section per-stock research document with valuation scenarios and pre-submission checks) that must pass the Risk Verifier's adversarial review before reaching the admin; and the Report Writer's portfolio reviews and per-stock summary reports pass through the Captain. The Catalyst Monitor sweeps filings, news, and the trade press daily as the team's earliest detection point for material events and stale data. Portfolio membership changes only on the admin's explicit instruction - research status never implies a holding.",
 			"keywords": [
 				"stock",
 				"stocks",
@@ -125,9 +125,15 @@
 				"tracking",
 				"monitoring",
 				"report",
-				"review"
+				"review",
+				"deep dive",
+				"dilution",
+				"spac",
+				"short interest",
+				"insider activity",
+				"price target"
 			],
-			"version": 13,
+			"version": 14,
 			"roster_count": 6,
 			"latest_notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
 		},

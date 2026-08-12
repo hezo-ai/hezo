@@ -261,9 +261,11 @@ projectsRoutes.put('/project-display-order', async (c) => {
 // Projects-primary creation: a project owns its own team (1:1). "Create a
 // project" provisions a fresh team (roster from the chosen team-type template),
 // then directly creates the project, its planning task, and an initial CEO
-// coherence/setup task that the planning task is blocked on. The separate
-// CEO-assisted flow (project intake) is used when the operator wants the CEO to
-// help shape the project first. See .dev/architecture.md.
+// coherence/setup task that the planning task is blocked on. That setup task is
+// the project's FIRST task, and the response surfaces it so the caller can land
+// the operator on it. The separate CEO-assisted flow (project intake) is used
+// when the operator wants the CEO to help shape the project first. See
+// .dev/architecture.md.
 // Superuser-gated, like team creation (the Admin owns the instance roster).
 projectsRoutes.post('/projects', async (c) => {
 	const denied = requireAdminEquivalent(c);
@@ -304,7 +306,7 @@ projectsRoutes.post('/projects', async (c) => {
 	);
 	if (!result.ok) return err(c, result.code, result.message, result.status);
 
-	const { project, planningTask, team } = result;
+	const { project, planningTask, team, coherenceTask } = result;
 	return ok(
 		c,
 		{
@@ -312,6 +314,11 @@ projectsRoutes.post('/projects', async (c) => {
 			team_slug: team.slug,
 			planning_task_id: planningTask.id,
 			planning_task_identifier: planningTask.identifier,
+			// The CEO's initial team-setup task: the project's FIRST task, which the
+			// planning task is blocked on. Null when none was created (no CEO/HQ, or
+			// the e2e skip flag). Same names as the `create_project` MCP twin.
+			setup_task_id: coherenceTask?.id ?? null,
+			setup_task_identifier: coherenceTask?.identifier ?? null,
 		},
 		201,
 	);

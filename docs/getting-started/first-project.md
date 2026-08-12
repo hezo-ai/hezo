@@ -22,8 +22,9 @@ When the scope looks right, approve it. Hezo provisions everything in one step:
 
 - a **project** and its **team** (the agent roster),
 - a **Captain** to lead the team, plus the worker roles for the team template you
-  chose, and
-- the first planning task.
+  chose,
+- the CEO's **team setup** task, the project's first task, and
+- the Captain's planning task, which waits on that setup task.
 
 The team is created from a **template** - the default is a minimal Captain-only team,
 or you can pick a fuller one (for example a software-development roster with an
@@ -32,12 +33,17 @@ architect, engineers, QA, and more). See
 
 ## 3. Watch the team work
 
-Open the project from the rail - it lands on the **Dashboard**, where you can see action
-items waiting on you, current spend, work in progress, a progress snippet, and goals at a
-glance.
+Creating a project from the form opens its **task list**, with the CEO's **team setup**
+task at the top. That is the project's first task: the CEO audits the roster, fixes the
+reporting lines, and writes the descriptions the agents read about each other. The
+Captain's planning task sits below it, waiting on it to finish.
 
-The Captain starts on the **planning task**, turning your brief into the work the team
-will do. If the brief leaves something load-bearing open, it will post a question that
+Open the project from the rail later and it lands on the **Dashboard**, where you can see
+action items waiting on you, current spend, work in progress, a progress snippet, and
+goals at a glance.
+
+Once setup is done the Captain starts on the **planning task**, turning your brief into
+the work the team will do. If the brief leaves something load-bearing open, it will post a question that
 `@`-mentions you and wait for your answer rather than guessing - so an early question on
 that task is the Captain working, not stalling. It also suggests goals from the outcomes
 you described, for you to approve or deny.

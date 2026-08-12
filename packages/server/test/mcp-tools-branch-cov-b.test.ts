@@ -329,7 +329,7 @@ describe('create_project / start_team_setup (CEO)', () => {
 		expect(r.error).toBeUndefined();
 		expect(r.slug).toBeDefined();
 		expect(r.planning_task_id).toBeDefined();
-		expect(r.coherence_task_id).toBeDefined();
+		expect(r.setup_task_id).toBeDefined();
 		newProjectSlug = r.slug as string;
 
 		// The intake ticket was completed by provisioning.

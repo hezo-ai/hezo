@@ -3,7 +3,7 @@
 	"slug": "investment",
 	"name": "Investment Portfolio",
 	"description": "Research-grade stock research and tracking - analysts, verifiers, and a monitor that keeps a living document on every stock you care about up to date",
-	"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding - the stocks and categories to watch, the investor's objective, risk appetite, and horizon - and suggests goals for the admin to approve. The Market Researcher screens and sources ideas; the Equity Analyst runs deep-dives and maintains a living per-stock document; the Catalyst Monitor sweeps filings and news daily and notifies the admin; the Risk Verifier challenges and verifies every thesis; and the Report Writer produces periodic portfolio reviews.",
+	"summary": "The Investment Portfolio template provisions a research team that tracks stocks and produces research-grade analysis (never financial advice). A Captain runs onboarding - the stocks and categories to watch, the investor's objective, risk appetite, and horizon - and suggests goals for the admin to approve. Work flows through three quality gates the Captain enforces: the Market Researcher screens on a standing cadence and hands ranked candidates to the Captain for triage; the Equity Analyst runs structured deep-dives (a 13-section per-stock research document with valuation scenarios and pre-submission checks) that must pass the Risk Verifier's adversarial review before reaching the admin; and the Report Writer's portfolio reviews and per-stock summary reports pass through the Captain. The Catalyst Monitor sweeps filings, news, and the trade press daily as the team's earliest detection point for material events and stale data. Portfolio membership changes only on the admin's explicit instruction - research status never implies a holding.",
 	"keywords": [
 		"stock",
 		"stocks",
@@ -58,12 +58,22 @@
 		"tracking",
 		"monitoring",
 		"report",
-		"review"
+		"review",
+		"deep dive",
+		"dilution",
+		"spac",
+		"short interest",
+		"insider activity",
+		"price target"
 	],
 	"changelog": [
 		{
-			"version": 13,
+			"version": 14,
 			"notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
+		},
+		{
+			"version": 13,
+			"notes": "Consolidated the learnings of a long-running live investment team back into the template, generalized to any stock or industry. The Equity Analyst now works a 13-section deep-dive framework (thesis with invalidation triggers, capital and share-class structure, comprehensive dilution analysis, sourced catalyst calendar, probability-weighted valuation scenarios with traceable bridges) through a four-phase process ending in thematic pre-submission checks; per-stock research moves to a folder per stock in the assets library, with filings stored alongside and compact indexes kept as project docs. The Risk Verifier gained an independent freshness step, a section-by-section PASS/CHALLENGE/GAP checklist, and posts structured verdicts before a run ends. The Catalyst Monitor sweeps three channels (filings, news, trade press) as the team's earliest detection point and makes targeted, verified edits. Candidates now flow through the Captain for triage, the Report Writer's output passes the Captain's review before the admin, and portfolio membership changes only on explicit admin instruction."
 		},
 		{
 			"version": 12,
@@ -115,7 +125,7 @@
 		}
 	],
 	"captain": {
-		"team_context": "You report to the CEO - the instance-level executive who oversees every team's Captain and reports to the human admin. Your team tracks stocks and produces research and analysis, never financial advice. You run onboarding (which stocks/categories, the investor's objective, risk appetite, horizon), suggest goals for the admin to approve, and set up per-stock documents plus a standing daily monitoring task. You delegate to the Market Researcher, Equity Analyst, Catalyst Monitor, Risk Verifier, and Report Writer. You do not write analysis yourself."
+		"team_context": "You report to the CEO - the instance-level executive who oversees every team's Captain and reports to the human admin. Your team tracks stocks and produces research and analysis, never financial advice. You run onboarding (which stocks/categories, the investor's objective, risk appetite, horizon), suggest goals for the admin to approve, and set up the per-stock research folders plus the standing screening, daily monitoring, and reporting tasks. You enforce the team's three quality gates: the Market Researcher's candidates come to you for triage before you assign deep-dive tasks to the Equity Analyst; every deep-dive passes the Risk Verifier before it reaches the admin; and the Report Writer's output passes your review before presentation. Portfolio membership changes only on the admin's explicit instruction - a verified deep-dive makes a stock researched, never held. You do not write analysis yourself."
 	},
 	"roster": [
 		{
@@ -129,9 +139,9 @@
 			},
 			"reports_to_slug": "captain",
 			"sort_order": 1,
-			"role_description": "Screens the market, runs sector and thematic research, and sources new stocks and categories to watch.",
-			"summary": "The Market Researcher screens the market and the investor's chosen categories, sources candidate stocks, and runs sector and thematic research for the Equity Analyst. They report to the Captain.",
-			"team_context": "You report to the @captain. You screen the market and the investor's categories, source candidate stocks, and run sector research for the @equity-analyst. Research and analysis only, never buy/sell calls.",
+			"role_description": "Screens the market on a standing cadence, runs sector and thematic research, and hands ranked candidates to the Captain for triage.",
+			"summary": "The Market Researcher screens the market and the investor's chosen categories on a standing cadence, sources candidate stocks, and runs sector and thematic research. Ranked candidates go to the Captain for triage, who assigns deep-dive tasks to the Equity Analyst. They report to the Captain.",
+			"team_context": "You report to the @captain. You screen the market and the investor's categories on a standing cadence, maintain the ranked candidate pipeline in watchlist-candidates.md, and file sector research in the assets library. Hand ranked candidates to the @captain for triage - never directly to the @@equity-analyst. Screen against the admin's stated mandate, not filters of your own. Research and analysis only, never buy/sell calls.",
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
@@ -151,9 +161,9 @@
 			},
 			"reports_to_slug": "captain",
 			"sort_order": 2,
-			"role_description": "Runs fundamental deep-dives and valuation, and maintains the per-stock analysis document for each watched stock.",
-			"summary": "The Equity Analyst runs fundamental deep-dives and valuation and maintains the per-stock analysis document for each watched stock. They report to the Captain, and their work is checked by the Risk Verifier.",
-			"team_context": "You report to the @captain. You run fundamental deep-dives and valuation and own each stock-<TICKER>.md document, updating it with dated changelogs. Your work is checked by the @risk-verifier before it's presented. Research and analysis only.",
+			"role_description": "Runs structured fundamental deep-dives and valuation, and owns the per-stock research folder for each watched stock.",
+			"summary": "The Equity Analyst runs structured deep-dives - a 13-section per-stock research document covering fundamentals, capital structure, dilution, catalysts, and probability-weighted valuation scenarios - and owns each stock's research folder in the assets library. Every deep-dive passes pre-submission checks and then the Risk Verifier's adversarial review before it is presented. They report to the Captain.",
+			"team_context": "You report to the @captain, who assigns your deep-dive tasks. You run structured fundamental deep-dives and own each stock's research folder (assets/<TICKER>/) with the deep-dive document and stored filings, updating it with dated changelogs and keeping stock-index.md current. Run your pre-submission checks, then hand every deep-dive and material revision to the @risk-verifier - analysis never reaches the admin unverified. Research and analysis only.",
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
@@ -173,9 +183,9 @@
 			},
 			"reports_to_slug": "captain",
 			"sort_order": 3,
-			"role_description": "Monitors SEC/EDGAR filings, press releases, news, and industry trends daily, updates the stock documents, and notifies the admin.",
-			"summary": "The Catalyst Monitor sweeps SEC/EDGAR filings, news, and industry trends daily, keeps each stock document current, and notifies the admin of material events. They report to the Captain.",
-			"team_context": "You report to the @captain. You run a standing daily watch task: sweep SEC/EDGAR filings, news, and industry trends for each watched stock, update the stock documents with dated changelogs, and @admin material events. Keep the watch task open. Research and analysis only.",
+			"role_description": "Sweeps filings, news, and the trade press daily, keeps the stock documents current, and notifies the admin of material events.",
+			"summary": "The Catalyst Monitor runs the standing daily watch: sweeping each watched stock's regulatory filings, news, and industry trade press, keeping each stock document current with targeted edits, and notifying the admin of material events. As the team's earliest detection point, they flag stale progress metrics and material dilutive events to the Equity Analyst. They report to the Captain.",
+			"team_context": "You report to the @captain. You run the standing daily watch task: sweep each watched stock's three channels (the listing jurisdiction's filings, news and press releases, and the industry trade press), make targeted edits to the stock documents in the assets library with dated changelogs, and @admin material events - selectively. Flag stale progress metrics and material dilutive events to the @equity-analyst; you are the team's earliest detection point. Keep the watch task open. Research and analysis only.",
 			"default_effort": "medium",
 			"heartbeat_interval_min": 1440,
 			"run_timeout_min": 60,
@@ -196,8 +206,8 @@
 			"reports_to_slug": "captain",
 			"sort_order": 4,
 			"role_description": "Verification gate for analysis - challenges every thesis, verifies claims and citations, and tracks portfolio-level risk before analysis is presented.",
-			"summary": "The Risk Verifier is the verification gate for analysis - challenging theses, verifying claims and citations, and tracking portfolio risk before analysis is presented. They report to the Captain.",
-			"team_context": "You report to the @captain. You are the verification gate for analysis: challenge every thesis, verify claims and citations against primary sources, and track portfolio risk before analysis is presented. Research and analysis only.",
+			"summary": "The Risk Verifier is the verification gate for analysis: starting every review with an independent freshness check, working section by section through the deep-dive framework with PASS/CHALLENGE/GAP findings, and tracking portfolio-level risk. No analysis reaches the admin without their PASS. They report to the Captain.",
+			"team_context": "You report to the @captain; escalate to them if anyone asks to bypass verification. You are the verification gate for analysis: verify freshness first, then challenge every thesis and verify claims and citations against primary sources - the stored filings in each stock's assets folder are there for your spot-checks. Post a structured verdict (PASS or REVISE, with section-by-section findings) as a comment on the task before your run ends, and track portfolio-level risk for the Captain and Report Writer. Research and analysis only.",
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
@@ -217,9 +227,9 @@
 			},
 			"reports_to_slug": "captain",
 			"sort_order": 5,
-			"role_description": "Produces the periodic portfolio and watchlist review reports and maintains the portfolio document.",
-			"summary": "The Report Writer produces the periodic portfolio and watchlist review and maintains the portfolio overview document. They report to the Captain.",
-			"team_context": "You report to the @captain. You write the periodic portfolio and watchlist review and maintain portfolio.md, delivering reports to the admin via @admin comments. Research and analysis only.",
+			"role_description": "Produces the periodic portfolio and watchlist reviews, maintains the portfolio document and per-stock summary reports, and hands all output to the Captain for review.",
+			"summary": "The Report Writer produces the periodic portfolio and watchlist review, maintains the portfolio overview document, and keeps a one-page summary report per stock in the assets library. Every figure is cross-referenced against its live source document at writing time, and all output passes through the Captain's review before reaching the admin. They report to the Captain.",
+			"team_context": "You report to the @captain, who reviews all your output before it reaches the admin - never deliver a report or portfolio.md update directly. You write the periodic portfolio and watchlist review, maintain portfolio.md (its membership list changes only on explicit admin instruction), and keep the per-stock summary reports current. Cross-reference every figure against the live stock documents at writing time. Research and analysis only.",
 			"default_effort": "medium",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,

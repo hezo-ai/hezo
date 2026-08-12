@@ -48,31 +48,33 @@ test('long agent summary collapses to first line and toggles on click; short sum
 
 	const summary = page.getByTestId('agent-summary');
 	await expect(summary).toBeVisible({ timeout: 15000 });
-	const paragraph = summary.locator('p');
-	await expect(paragraph).toContainText('Line 1');
+	// The clamp lives on the wrapper around the rendered markdown, so heights are
+	// measured there rather than on the inner <p>.
+	const content = summary.getByTestId('expandable-content');
+	await expect(content).toContainText('Line 1');
 
 	const expandButton = summary.getByRole('button', { name: 'Expand' });
 	await expect(expandButton).toBeVisible();
 
-	const collapsedHeight = await paragraph.evaluate((el) => el.clientHeight);
-	const fullHeight = await paragraph.evaluate((el) => el.scrollHeight);
+	const collapsedHeight = await content.evaluate((el) => el.clientHeight);
+	const fullHeight = await content.evaluate((el) => el.scrollHeight);
 	expect(fullHeight).toBeGreaterThan(collapsedHeight);
 
 	await expandButton.click();
 	const collapseButton = summary.getByRole('button', { name: 'Collapse' });
 	await expect(collapseButton).toBeVisible();
-	expect(await paragraph.evaluate((el) => el.clientHeight)).toBeGreaterThan(collapsedHeight);
+	expect(await content.evaluate((el) => el.clientHeight)).toBeGreaterThan(collapsedHeight);
 
 	await collapseButton.click();
 	await expect(summary.getByRole('button', { name: 'Expand' })).toBeVisible();
-	expect(await paragraph.evaluate((el) => el.clientHeight)).toBe(collapsedHeight);
+	expect(await content.evaluate((el) => el.clientHeight)).toBe(collapsedHeight);
 
 	if (shortAgent !== longAgent) {
 		await setAgentSummary(page, token, projectSlug, shortAgent.id, 'Short.');
 		await page.goto(`/projects/${projectSlug}/agents/${shortAgent.id}`);
 		const shortSummary = page.getByTestId('agent-summary');
 		await expect(shortSummary).toBeVisible({ timeout: 15000 });
-		await expect(shortSummary.locator('p')).toContainText('Short.');
+		await expect(shortSummary.getByTestId('expandable-content')).toContainText('Short.');
 		await expect(shortSummary.getByRole('button', { name: /Expand|Collapse/ })).toHaveCount(0);
 	}
 });

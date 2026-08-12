@@ -220,14 +220,22 @@ export interface ProjectWithTeamResponse {
 	docker_base_image: string;
 	planning_task_id: string;
 	planning_task_identifier: string;
+	/**
+	 * The CEO's initial team-setup task — the project's first task, which the
+	 * planning task is blocked on. Null when the instance created none (no CEO/HQ,
+	 * or coherence suppressed in the test tiers).
+	 */
+	setup_task_id: string | null;
+	setup_task_identifier: string | null;
 }
 
 /**
  * Projects-primary creation: a project owns its own team (1:1). Calls
  * POST /api/projects, which provisions a fresh team from the chosen team-type
  * template (default Blank) — or, when `source_team_id` is given, from a fresh
- * snapshot of an existing team — and directly creates the project + planning
- * task. See .dev/architecture.md.
+ * snapshot of an existing team — and directly creates the project, the CEO's
+ * team-setup task (the project's first task) and the Captain's planning task,
+ * which is blocked on it. See .dev/architecture.md.
  */
 export function useCreateProjectWithTeam() {
 	return useMutation({

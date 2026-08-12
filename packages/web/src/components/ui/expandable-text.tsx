@@ -1,16 +1,30 @@
 import { ChevronDown } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { MarkdownProse } from '../markdown-prose';
 
 interface ExpandableTextProps {
 	text: string;
 	placeholder?: ReactNode;
 	className?: string;
+	/** Mention scope for the rendered markdown (the route-param project slug). */
+	projectId?: string;
 }
 
-export function ExpandableText({ text, placeholder, className = '' }: ExpandableTextProps) {
+/**
+ * Agent-authored summary prose (team/agent summaries, team context), clamped to
+ * one line until expanded. The generators routinely emit markdown (bold leads,
+ * numbered handoff lists, @mentions), so the text renders through MarkdownProse
+ * rather than as raw characters.
+ */
+export function ExpandableText({
+	text,
+	placeholder,
+	className = '',
+	projectId,
+}: ExpandableTextProps) {
 	const [expanded, setExpanded] = useState(false);
 	const [overflows, setOverflows] = useState(false);
-	const textRef = useRef<HTMLParagraphElement>(null);
+	const textRef = useRef<HTMLDivElement>(null);
 	const contentId = useId();
 
 	const hasText = text?.trim().length > 0;
@@ -49,13 +63,14 @@ export function ExpandableText({ text, placeholder, className = '' }: Expandable
 
 	return (
 		<div className={`flex items-start gap-2 ${className}`}>
-			<p
+			<div
 				ref={textRef}
 				id={contentId}
-				className={`min-w-0 flex-1 whitespace-pre-wrap ${expanded ? '' : 'line-clamp-1'}`}
+				data-testid="expandable-content"
+				className={`min-w-0 flex-1 ${expanded ? '' : 'line-clamp-1'}`}
 			>
-				{text}
-			</p>
+				<MarkdownProse projectId={projectId}>{text}</MarkdownProse>
+			</div>
 			{showToggle && (
 				<button
 					type="button"

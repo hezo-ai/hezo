@@ -1684,9 +1684,9 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 
 	it('does NOT auto-run coherence: the setup task is created unassigned, with no wakeup, and planning stays blocked on it', async () => {
 		const { result } = await createProjectAsCeo('No Auto Coherence');
-		expect(result.coherence_task_id).toBeTruthy();
-		expect(result.coherence_task_identifier).toBeTruthy();
-		const coherenceId = result.coherence_task_id as string;
+		expect(result.setup_task_id).toBeTruthy();
+		expect(result.setup_task_identifier).toBeTruthy();
+		const coherenceId = result.setup_task_id as string;
 
 		// Created unassigned with the draft-then-start banner — the CEO drafts then kicks off.
 		const ticket = await db.query<{ assignee_id: string | null; description: string }>(
@@ -1713,7 +1713,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 
 	it('start_team_setup assigns the coherence task to the CEO and wakes them', async () => {
 		const { ceoToken, ceoId, result } = await createProjectAsCeo('Setup Happy');
-		const coherenceId = result.coherence_task_id as string;
+		const coherenceId = result.setup_task_id as string;
 
 		const started = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
 		expect(started.error).toBeUndefined();
@@ -1737,7 +1737,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 	it('start_team_setup errors when there is no open setup task', async () => {
 		const { ceoToken, result } = await createProjectAsCeo('Setup Done');
 		await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [
-			result.coherence_task_id as string,
+			result.setup_task_id as string,
 		]);
 		const started = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
 		expect(started.error).toContain('No open team-setup task');
@@ -1752,7 +1752,7 @@ describe('MCP create_project (CEO creates a project + team on approval)', () => 
 
 	it('start_team_setup is idempotent — a second call coalesces to a single queued wakeup', async () => {
 		const { ceoToken, ceoId, result } = await createProjectAsCeo('Setup Idem');
-		const coherenceId = result.coherence_task_id as string;
+		const coherenceId = result.setup_task_id as string;
 
 		const first = await callToolAs(ceoToken, 'start_team_setup', { project: result.slug });
 		expect(first.started).toBe(true);

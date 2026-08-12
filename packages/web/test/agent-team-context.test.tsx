@@ -24,7 +24,9 @@ test('renders default team_context for an Engineer', async () => {
 	const section = await findByTestId('agent-team-context', undefined, { timeout: 20_000 });
 	await waitFor(
 		() => {
-			expect(section.textContent ?? '').toContain('@architect');
+			// The blob is authored with the role handle; the rendered chip prints the
+			// agent's display name, which for an unnamed agent is its role title.
+			expect(section.textContent ?? '').toContain('@Architect');
 		},
 		{ timeout: 20_000 },
 	);
