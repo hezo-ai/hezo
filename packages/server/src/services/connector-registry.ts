@@ -154,6 +154,66 @@ export function buildConnectorRecipesSkill(
 		lines.push('');
 	}
 
+	lines.push('## Discovering a server URL and skill file');
+	lines.push('');
+	lines.push(
+		'- Most providers publish their MCP server URL on a docs page (e.g. `https://www.<vendor>.com/docs/mcp-server` or `https://docs.<vendor>.com/mcp`). Given a vendor name without a URL, `WebSearch` for `"<vendor> MCP server"` or fetch their docs page directly.',
+	);
+	lines.push(
+		'- An "agent skill file" is markdown a vendor publishes describing how to use their MCP. Try in order: the vendor\'s docs page (often the skill file content IS the docs page); common GitHub paths like `https://raw.githubusercontent.com/<vendor>/mcp-server/{main,master}/{AGENTS,SKILL,README}.md`; then the server\'s own `tools/list` once the connector is active.',
+	);
+	lines.push(
+		"- `fetch_skill_file` is not mandatory. If you cannot find one, register the connector anyway: the MCP server's `tools/list` is the authoritative source of what tools exist, and once auth completes those tools appear as `mcp__<connector_name>__<tool>`.",
+	);
+	lines.push('');
+
+	lines.push('## Connector status');
+	lines.push('');
+	lines.push(
+		'After `register_connector`, or on any `list_connectors` row, the field that tells you whether the MCP is **usable** is `oauth_status`. Not `install_status`, which tracks local-package install for stdio MCPs and is meaningless for SaaS.',
+	);
+	lines.push('');
+	lines.push('| `oauth_status` | Meaning | What to do |');
+	lines.push('| --- | --- | --- |');
+	lines.push(
+		'| `active` | OAuth done; tools appear as `mcp__<connector_name>__<tool>` | Use them. Active but no tools at all is a bug worth flagging, not a reason to re-ask the human to connect |',
+	);
+	lines.push(
+		'| `pending` | The human has not clicked Connect yet | Do not repost the ask; the connect_required comment is still live |',
+	);
+	lines.push('| `failed` | An attempt errored | Read `auth_error` and surface it to the human |');
+	lines.push(
+		'| `degraded` | It worked and has stopped; the stored token no longer refreshes | Not fixable from inside the run. Escalate, then carry on with what the task can still achieve |',
+	);
+	lines.push('| `revoked` | A human explicitly disconnected | Do not auto-reconnect; ask first |');
+	lines.push('');
+	lines.push(
+		"- **Before reporting that a connector's tools are missing, check `tools_this_run` on its `list_connectors` row.** It measures *your own run* - how many of that connector's tools the runtime handed you - rather than guessing. A non-zero count means they are present, so search your tool list again under the `mcp__<connector_name>__<tool>` naming, which is not always what the vendor's docs call them. `0` means it connected and contributed nothing callable, a real fault worth escalating. `null` means nothing measured it.",
+	);
+	lines.push(
+		'- **Never assert a connector is broken without reading `tools_this_run` or calling `test_connector` first.** An unverified claim, once written into a progress summary, gets repeated by later runs as established fact and the team works around a problem that was never there.',
+	);
+	lines.push(
+		'- If the tools are missing while `oauth_status` is `active`, call `test_connector(connector_id)`. It resolves the stored token server-side and pings the MCP URL directly, bypassing the container, and tells you whether the token is still valid against the provider or the fault is in the container/proxy chain.',
+	);
+	lines.push('');
+
+	lines.push('## Record the service as a skill once the connector works');
+	lines.push('');
+	lines.push(
+		'- **Getting a connector working earns knowledge the whole team needs.** Once you can drive the service - auth pattern, base URL or MCP tools, the endpoints that matter, pagination, rate limits, quirks, queries that returned real data - record it with `create_skill`, and update that same slug and scope whenever a later run teaches you more.',
+	);
+	lines.push(
+		'- **Check for an existing public skill first.** Run the finding-new-skills flow for the service (`npx skills find "<service>"`, plus the vendor skill-file discovery above). If a good public skill exists, persist it into the catalog rather than writing a duplicate.',
+	);
+	lines.push(
+		"- **Match the skill's scope to the connector's reach.** A connector shared with every project gets a `global` skill; a project-scoped connector gets a `project` skill. Connectors you register yourself are project-scoped, so default to `project`.",
+	);
+	lines.push(
+		'- **Layer project specifics; do not fork the general skill.** When a persisted skill already covers the service, capture what is specific to this project as a separate project-scoped skill that references the general one by slug.',
+	);
+	lines.push('');
+
 	lines.push('## OAuth providers');
 	lines.push('');
 	for (const o of registry.oauthProviders) {

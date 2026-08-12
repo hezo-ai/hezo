@@ -91,6 +91,41 @@ describe('connector-recipes virtual skill: get_skill', () => {
 		// current) as a skill.
 		expect(String(got.content)).toContain('persist what you learned as a skill');
 	});
+
+	/**
+	 * These three sections used to sit in SHARED_INSTRUCTIONS, costing ~1,060 words
+	 * on every agent's every run for guidance only an agent actually connecting a
+	 * service needs. They moved here because SHARED_INSTRUCTIONS already orders
+	 * every agent to load this skill BEFORE connecting anything, so the detail
+	 * arrives exactly when it is needed. If a section is dropped from the builder,
+	 * the guidance is gone from the product - it is no longer anywhere else.
+	 */
+	it('carries the connector detail moved out of SHARED_INSTRUCTIONS', async () => {
+		const content = String((await callTool('get_skill', { slug: 'connector-recipes' })).content);
+
+		// Discovering a vendor's MCP URL and its skill file.
+		expect(content).toContain('## Discovering a server URL and skill file');
+		expect(content).toContain('"<vendor> MCP server"');
+		expect(content).toContain('`tools/list` is the authoritative source');
+
+		// Reading connector status: oauth_status is the usable-or-not field, and
+		// every one of its six values is accounted for.
+		expect(content).toContain('## Connector status');
+		expect(content).toContain('Not `install_status`');
+		for (const status of ['active', 'pending', 'failed', 'degraded', 'revoked']) {
+			expect(content, status).toContain(`| \`${status}\` |`);
+		}
+		// The never-assert-broken-without-measuring rule and its two instruments.
+		expect(content).toContain('`tools_this_run`');
+		expect(content).toContain('Never assert a connector is broken');
+		expect(content).toContain('test_connector(connector_id)');
+
+		// Recording the service afterwards, scoped to the connector's reach.
+		expect(content).toContain('## Record the service as a skill once the connector works');
+		expect(content).toContain('Check for an existing public skill first');
+		expect(content).toContain("Match the skill's scope to the connector's reach");
+		expect(content).toContain('references the general one by slug');
+	});
 });
 
 describe('connector-recipes virtual skill: reservation', () => {
