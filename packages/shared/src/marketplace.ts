@@ -46,19 +46,22 @@ export interface MarketplaceRosterAgent {
 	slug: string;
 	title: string;
 	/**
-	 * The fixed human name this role is provisioned with ("Max" for the App
-	 * Team's Engineer), or null for a role that stays name-only.
+	 * A fixed human name to provision this role with, or null to leave it
+	 * addressed by its role.
 	 *
-	 * Authored into the team rather than picked per project, so the same person
-	 * shows up in every project on the team - an admin who learns that Max is the
-	 * Engineer keeps that knowledge across projects. A project can rename its own
-	 * copy; that override lives on the agent and never travels back here.
+	 * Null on every built-in team: an agent is the Engineer, not Max, unless a
+	 * human decides otherwise. A published third-party team may still ship names,
+	 * so the field stays. When set, it is authored into the team rather than
+	 * picked per project, so the same person shows up in every project on that
+	 * team. A project can rename its own copy; that override lives on the agent
+	 * and never travels back here.
 	 */
 	human_name: string | null;
 	/**
 	 * Which feature set this role's avatar draws from. Stored rather than inferred
-	 * from `human_name`, because inference mis-genders exactly the short modern
-	 * names a roster wants ("Nova", "Dev", "Kai").
+	 * from a name, because inference mis-genders exactly the short modern names a
+	 * roster would want ("Nova", "Dev", "Kai") - and because a nameless role has
+	 * nothing to infer from at all.
 	 */
 	gender: AgentGender;
 	/**

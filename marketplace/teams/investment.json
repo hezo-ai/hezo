@@ -60,9 +60,13 @@
 		"report",
 		"review"
 	],
-	"version": 12,
-	"content_hash": "a692587d30c55c220f60354560c6c24015b87027e2f6f8c319701cd7ffbda875",
+	"version": 13,
+	"content_hash": "0b0d37eba5e30fbfacc4cda33301489c3ac9d45f41bd860479617daeca493404",
 	"changelog": [
+		{
+			"version": 13,
+			"notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
+		},
 		{
 			"version": 12,
 			"notes": "Renamed ticket to task throughout the roster copy and every role prompt, matching the term Hezo uses everywhere else, and replaced em dashes with hyphens in the operator-facing team and role descriptions."
@@ -120,10 +124,9 @@
 		{
 			"slug": "market-researcher",
 			"title": "Market Researcher",
-			"human_name": "Ravi",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "investment:ravi",
+				"seed": "investment:market-researcher",
 				"gender": "m",
 				"style": "research"
 			},
@@ -144,10 +147,9 @@
 		{
 			"slug": "equity-analyst",
 			"title": "Equity Analyst",
-			"human_name": "Elena",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "investment:elena",
+				"seed": "investment:equity-analyst",
 				"gender": "f",
 				"style": "research"
 			},
@@ -168,10 +170,9 @@
 		{
 			"slug": "catalyst-monitor",
 			"title": "Catalyst Monitor",
-			"human_name": "Niko",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "investment:niko",
+				"seed": "investment:catalyst-monitor",
 				"gender": "m",
 				"style": "research"
 			},
@@ -192,10 +193,9 @@
 		{
 			"slug": "risk-verifier",
 			"title": "Risk Verifier",
-			"human_name": "Clara",
 			"gender": "f",
 			"avatar_spec": {
-				"seed": "investment:clara",
+				"seed": "investment:risk-verifier",
 				"gender": "f",
 				"style": "research"
 			},
@@ -216,10 +216,9 @@
 		{
 			"slug": "report-writer",
 			"title": "Report Writer",
-			"human_name": "Jonas",
 			"gender": "m",
 			"avatar_spec": {
-				"seed": "investment:jonas",
+				"seed": "investment:report-writer",
 				"gender": "m",
 				"style": "writer"
 			},

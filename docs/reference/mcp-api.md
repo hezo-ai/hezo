@@ -696,7 +696,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `title` | `string` | Yes | Role title (the slug is derived from it) |
-| `human_name` | `string` | No | Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out to name them during the coherence review that follows the hire. |
+| `human_name` | `string` | No | Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out unless the admin asked for a name - an agent is normally addressed by its role. |
 | `role_description` | `string` | No | Short role description |
 | `system_prompt` | `string` | No | Full system prompt for the new agent. If provided, it MUST contain every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the proposal is rejected - these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs. |
 | `reports_to` | `string` | No | The manager this agent reports to - an existing agent's slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team. |

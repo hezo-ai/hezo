@@ -42,14 +42,13 @@ afterAll(async () => {
 });
 
 /**
- * A team's people travel with it. The point of authoring names into a team bundle
- * is that an admin who learns "Max is the Engineer" keeps that knowledge across
- * every project on the App Team - so each provisioning path has to carry the
- * bundled identity through, and a project's own rename has to survive the team
- * being updated underneath it.
+ * A team's faces travel with it; its people do not come pre-named. No built-in
+ * team ships a `human_name`, so a fresh project is addressed entirely by role -
+ * and naming an agent is the admin's call, which is why a name set afterwards has
+ * to survive the team being updated underneath it.
  */
 describe('bundled identity reaches a provisioned team', () => {
-	it('gives every marketplace role its shipped name, gender and avatar', async () => {
+	it('provisions every marketplace role unnamed, with its gender and avatar', async () => {
 		const teamRes = await createTestTeam(db, {
 			name: 'Identity Whole Team Co',
 			marketplace_slug: 'software-development',
@@ -59,27 +58,30 @@ describe('bundled identity reaches a provisioned team', () => {
 		const engineer = await identity(teamId, 'engineer');
 		expect(engineer).toMatchObject({
 			title: 'Engineer',
-			human_name: 'Max',
-			human_name_slug: 'max',
+			human_name: null,
+			human_name_slug: null,
+			// Authored, not inferred: there is no name left to infer it from, and it
+			// still drives the avatar's feature set.
 			gender: 'm',
 		});
-		// The name is what the agent is displayed as, so it is what `display_name`
-		// (the server-side label) mirrors.
-		expect(engineer?.display_name).toBe('Max');
+		// With no name of its own, the server-side label is the role.
+		expect(engineer?.display_name).toBe('Engineer');
+		// The seed is keyed on the role, so no discarded first name survives in the
+		// data and the face is stable across provisionings.
 		expect(engineer?.avatar_spec).toEqual({
-			seed: 'software-development:max',
+			seed: 'software-development:engineer',
 			gender: 'm',
 			style: 'engineering',
 		});
 
-		// The whole roster is named, and each face is distinct.
+		// Nobody on the roster arrives named, and each face is still distinct.
 		const all = await db.query<IdentityRow>(
 			`SELECT ma.slug, ma.human_name, ma.avatar_spec FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
 			 WHERE m.team_id = $1 AND ma.slug <> $2`,
 			[teamId, CAPTAIN_AGENT_SLUG],
 		);
-		expect(all.rows.every((r) => !!r.human_name)).toBe(true);
+		expect(all.rows.every((r) => r.human_name === null)).toBe(true);
 		const seeds = all.rows.map((r) => r.avatar_spec?.seed);
 		expect(new Set(seeds).size).toBe(all.rows.length);
 	});
@@ -116,16 +118,15 @@ describe('bundled identity reaches a provisioned team', () => {
 		await applyMarketplaceRoleToTeam(db, teamId, def, 'ui-designer', {});
 
 		expect(await identity(teamId, 'ui-designer')).toMatchObject({
-			human_name: 'Mia',
-			human_name_slug: 'mia',
+			human_name: null,
+			human_name_slug: null,
 			gender: 'f',
-			display_name: 'Mia',
+			display_name: 'UI Designer',
 		});
 	});
 
-	it('names an agent provisioned from a source that ships no identity', async () => {
-		// The Blank template has no authored people; its agents still need a face,
-		// and the setup pass names them later.
+	it('gives an agent a face when its source ships no identity', async () => {
+		// The Blank template has no authored people; its agents still need a face.
 		const teamRes = await createTestTeam(db, { name: 'Identity Blank Co' });
 		const teamId = (await teamRes.json()).data.id as string;
 		const captain = await identity(teamId, CAPTAIN_AGENT_SLUG);
@@ -133,7 +134,7 @@ describe('bundled identity reaches a provisioned team', () => {
 		expect(captain?.human_name).toBeNull();
 	});
 
-	it('keeps a project rename when the team is updated underneath it', async () => {
+	it('keeps a name the admin set when the team is updated underneath it', async () => {
 		const teamRes = await createTestTeam(db, {
 			name: 'Identity Refresh Co',
 			marketplace_slug: 'software-development',
@@ -142,7 +143,7 @@ describe('bundled identity reaches a provisioned team', () => {
 		const def = await getMarketplaceTeam('software-development');
 		if (!def) throw new Error('missing def');
 
-		// The admin renames their Engineer and picks a different face.
+		// The admin names their Engineer and picks a different face.
 		await db.query(
 			`UPDATE member_agents SET human_name = 'Maxine', human_name_slug = 'maxine',
 			   gender = 'f', avatar_spec = $2::jsonb
@@ -154,7 +155,7 @@ describe('bundled identity reaches a provisioned team', () => {
 		await applyMarketplaceTeamToTeam(db, teamId, def, { refreshExisting: true });
 
 		// A team version bump refreshes prose, never the person the admin has been
-		// working with.
+		// working with - including the version bump that removed the shipped names.
 		expect(await identity(teamId, 'engineer')).toMatchObject({
 			human_name: 'Maxine',
 			gender: 'f',

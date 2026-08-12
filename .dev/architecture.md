@@ -767,8 +767,10 @@ icon upload is a human-only UI action.
 
 ### Agent identity: names and avatars
 
-An agent has a **role** (`member_agents.title`, the permanent thing it does) and, usually,
-a **human name** (`human_name`) that the UI shows in its place. `human_name_slug` makes
+An agent has a **role** (`member_agents.title`, the permanent thing it does) and,
+optionally, a **human name** (`human_name`) that the UI shows in its place. No built-in
+team ships one - naming an agent is an admin action - so by default every surface reads
+the role. `human_name_slug` makes
 that name a second mention handle, so `@max` and `@engineer` both resolve to the same
 agent; the fan-out (`fireCommentWakeups`) matches `slug OR human_name_slug`, preferring the
 same team over HQ and a role slug over someone's name. URLs keep the canonical role slug, so
@@ -793,9 +795,22 @@ budget rows, agent-authored comments, and the admin inbox) applies this resoluti
 Both name and avatar are **team data**: a marketplace roster entry carries
 `human_name`/`gender`/`avatar_spec`, so provisioning a team (or adding one of its roles)
 gives every project the same teammate, and `exportTeamBundle` writes a project's current
-identities back out. They sit inside the team's content hash, so a shipped rename bumps the
-version like any other content change — but `refreshRosterAgent` never overwrites them, so a
-project that renamed an agent keeps its own.
+identities back out. Every built-in team ships `human_name: null` (the field stays for a
+published third-party team that wants names); `gender` is still authored, because it drives
+the avatar's feature set and there is no name left to infer it from. They sit inside the
+team's content hash, so a shipped identity change bumps the version like any other content
+change — but `refreshRosterAgent` never overwrites them, so a project that named an agent
+keeps its own.
+
+One helper spells what an agent is *called* on each side: `agentDisplayName()` on the
+client (`components/agent-identity-tooltip.tsx`) and `agentDisplayNameSql()` on the server
+(`lib/agent-identity.ts`), the latter emitting the whole `COALESCE` so a projection cannot
+invent its own fallback order. Every `*_name` projection reads it; fields named `*_title`
+keep reading the role, as do the agent-facing feeds (`services/project-activity.ts`,
+`resolveActorName` in `services/task-events.ts`, and the run-prompt author labels), because
+`SHARED_INSTRUCTIONS` has an agent match its own role title. In the UI a single component,
+`components/agent-ref.tsx`, renders the label and its hover card, resolving the agent from
+the already-cached roster via `hooks/use-agent-lookup.ts`.
 
 **Governance & misc.** `approvals` (polymorphic board decisions), `audit_log`
 (append-only, project + instance scopes — `project_id` set scopes a row to one project,
