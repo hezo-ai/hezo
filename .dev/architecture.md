@@ -1126,8 +1126,9 @@ override. `marketplace/index.json` is the catalog listing.
   Social-Media-Marketing/Investment-Portfolio Captains run a structured onboarding
   Q&A on their planning task and **suggest goals** (below); the Social Media Marketing team
   gates outbound content on admin approval (prompt-level, toggled via team preferences), and
-  the Investment Portfolio team maintains a living per-stock document (with revision history)
-  monitored ~daily.
+  the Investment Portfolio team maintains a living per-stock research folder in the assets
+  library (a 13-section deep-dive document with revision history, plus stored filings)
+  monitored ~daily, with every analysis passing the risk-verifier before presentation.
 
 **Goal suggestions.** The Captain/CEO can propose goals the admin approves, reusing the
 approvals machinery. `suggest_goal` (MCP, Captain/CEO-only) files a pending `goal_suggestion`

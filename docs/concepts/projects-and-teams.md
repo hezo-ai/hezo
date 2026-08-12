@@ -236,21 +236,26 @@ that off in the team's preferences).
 A research team that tracks stocks and produces research-grade analysis (**not financial
 advice**). Its Captain onboards you first - which stocks and categories to watch, your
 objective and risk appetite, and your time horizon - and suggests goals for you to approve.
-It maintains a living document per stock (with full revision history) and monitors filings
-and news day to day.
+It maintains a structured research folder per stock (a living deep-dive document with full
+revision history, plus the filings behind it), monitors filings and news day to day, and
+runs every analysis through a verification gate before it reaches you.
 
 - [Captain](https://github.com/hezo-ai/hezo/blob/main/agents/investment/captain.md) -
-  runs onboarding, sets the research agenda and watchlist, and tracks goals.
+  runs onboarding, sets the research agenda and watchlist, triages candidates, reviews
+  reports, and tracks goals.
 - [Market Researcher](https://github.com/hezo-ai/hezo/blob/main/agents/investment/market-researcher.md) -
-  screens the market and sources candidate stocks and sectors to watch.
+  screens the market on a standing cadence and hands ranked candidates to the Captain.
 - [Equity Analyst](https://github.com/hezo-ai/hezo/blob/main/agents/investment/equity-analyst.md) -
-  runs fundamental deep-dives and maintains the per-stock analysis document.
+  runs structured fundamental deep-dives and owns each stock's research folder.
 - [Catalyst Monitor](https://github.com/hezo-ai/hezo/blob/main/agents/investment/catalyst-monitor.md) -
-  sweeps SEC/EDGAR filings, news, and industry trends daily and notifies you of anything material.
+  sweeps regulatory filings, news, and the industry trade press daily and notifies you of
+  anything material.
 - [Risk Verifier](https://github.com/hezo-ai/hezo/blob/main/agents/investment/risk-verifier.md) -
-  the verification gate: challenges every thesis and verifies claims and citations.
+  the verification gate: checks freshness first, then challenges every thesis and verifies
+  claims and citations.
 - [Report Writer](https://github.com/hezo-ai/hezo/blob/main/agents/investment/report-writer.md) -
-  produces the periodic portfolio and watchlist reviews.
+  produces the periodic portfolio reviews and per-stock summary reports, reviewed by the
+  Captain before they reach you.
 
 ## The project plan document
 
