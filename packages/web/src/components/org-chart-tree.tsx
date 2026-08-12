@@ -1,51 +1,86 @@
 import { isBudgetPauseStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useLayoutEffect, useRef, useState } from 'react';
 import type { OrgNode } from '../hooks/use-org-chart';
 import { agentAvatarUrl } from '../lib/agent-avatar';
 import { useI18n } from '../lib/i18n';
+import { computeOrgChartFit, type OrgChartFit } from '../lib/org-chart-fit';
 import { AgentIdentityTooltipContent, agentDisplayName } from './agent-identity-tooltip';
 import { agentPageParams } from './agent-link';
 import { Avatar, getInitials } from './ui/avatar';
 import { StatusDot } from './ui/status-dot';
 import { Tooltip } from './ui/tooltip';
 
-export function useOrgChartAutoFit() {
-	const containerRef = useRef<HTMLDivElement | null>(null);
+const INITIAL_FIT: OrgChartFit = { scale: 1, width: 0, height: 0, overflows: false };
+
+/**
+ * Measure the chart against its viewport and keep the two in step.
+ *
+ * The content is `w-max`, so `offsetWidth`/`offsetHeight` report its natural
+ * size — and unlike `getBoundingClientRect()` those are layout values, read
+ * straight through the transform this hook itself wrote last pass. Measuring a
+ * transformed box would feed each scale into the next and converge on zero.
+ *
+ * This replaced a `scrollWidth` measurement, which is where the bug was: with a
+ * content box the width of its container and `items-center`, a wide row
+ * overflows symmetrically, and in LTR `scrollWidth` only ever reports the right
+ * half. The chart was measured about half its overhang too narrow, so the scale
+ * came out too high and it clipped on both sides.
+ */
+function useOrgChartAutoFit() {
+	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const contentRef = useRef<HTMLDivElement | null>(null);
-	const [scale, setScale] = useState(1);
-	const [height, setHeight] = useState<number | undefined>(undefined);
+	const [fit, setFit] = useState<OrgChartFit>(INITIAL_FIT);
 
-	useEffect(() => {
-		const container = containerRef.current;
+	// Layout effect, not effect: the fit lands in the frame the tree mounts, so
+	// there is no flash of an unscaled chart overhanging its column.
+	useLayoutEffect(() => {
+		const viewport = viewportRef.current;
 		const content = contentRef.current;
-		if (!container || !content) return;
+		if (!viewport || !content) return;
 
-		const recompute = () => {
-			const containerWidth = container.clientWidth;
-			const contentWidth = content.scrollWidth;
-			const contentHeight = content.scrollHeight;
-			if (!containerWidth || !contentWidth) return;
-			const next = Math.min(1, containerWidth / contentWidth);
-			setScale(next);
-			// The container is border-box with vertical padding and clips via
-			// overflow-hidden, so the height must cover the scaled content *plus*
-			// that padding — otherwise the padding eats into the box and the last
-			// row's bottom border falls outside the clip. Round the scaled height
-			// up and add 1px to absorb the sub-pixel rounding of the scaled border.
-			const style = getComputedStyle(container);
-			const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-			setHeight(Math.ceil(contentHeight * next) + paddingY + 1);
+		const measure = () => {
+			const next = computeOrgChartFit({
+				viewportWidth: viewport.clientWidth,
+				contentWidth: content.offsetWidth,
+				contentHeight: content.offsetHeight,
+			});
+			// `overflows` has to be compared too: either side of the floor boundary
+			// two different viewport widths can share a `width`, and a comparison
+			// without it would leave the scrollbar off on a chart that needs one.
+			setFit((prev) =>
+				prev.scale === next.scale &&
+				prev.width === next.width &&
+				prev.height === next.height &&
+				prev.overflows === next.overflows
+					? prev
+					: next,
+			);
 		};
 
-		recompute();
-		const ro = new ResizeObserver(recompute);
-		ro.observe(container);
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(viewport);
 		ro.observe(content);
 		return () => ro.disconnect();
 	}, []);
 
-	return { containerRef, contentRef, scale, height };
+	// The chart is centred on its root, so a scrolling one left at scrollLeft 0
+	// opens on the leftmost worker with "You (Admin)" off-screen. Centre it once,
+	// then leave the scroll position to whoever is panning.
+	//
+	// Separate from the measure pass on purpose: `scrollWidth` only becomes the
+	// new sizer's width after React has committed it, so centring inside
+	// `measure` would divide up the *previous* extent.
+	const centred = useRef(false);
+	useLayoutEffect(() => {
+		const viewport = viewportRef.current;
+		if (!viewport || !fit.overflows || centred.current) return;
+		centred.current = true;
+		viewport.scrollLeft = (viewport.scrollWidth - viewport.clientWidth) / 2;
+	}, [fit.overflows]);
+
+	return { viewportRef, contentRef, fit };
 }
 
 type VisibleStatus = 'active' | 'paused' | 'disabled';
@@ -97,7 +132,7 @@ const CONNECTOR_COLUMN =
 	'first:before:hidden last:after:hidden';
 
 export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartTreeProps) {
-	const { containerRef, contentRef, scale, height } = useOrgChartAutoFit();
+	const { viewportRef, contentRef, fit } = useOrgChartAutoFit();
 	const { t } = useI18n();
 
 	const renderNode = (node: OrgNode): ReactNode => {
@@ -190,21 +225,53 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 
 	return (
 		<div data-testid={testId}>
+			{/* The viewport's height is left to the content so a space-taking
+			    horizontal scrollbar gets a gutter below the chart instead of eating
+			    ~15px out of the box and shearing the bottom row's border — the same
+			    border PR #620 was about. Its vertical overflow must be stated
+			    explicitly: a non-`visible` value on one axis computes the other to
+			    `auto`, which would let a vertical scrollbar appear alongside.
+
+			    Scrollability is driven from our own measurement rather than left to
+			    `auto`, so a chart measured a sub-pixel narrow shows an invisible
+			    hairline clip instead of a flickering scrollbar. */}
 			<div
-				ref={containerRef}
+				ref={viewportRef}
 				data-testid={testId ? `${testId}-viewport` : undefined}
-				className="w-full overflow-hidden py-1"
-				style={{ height }}
+				className={`w-full py-1 overflow-y-hidden overscroll-x-contain ${
+					fit.overflows ? 'overflow-x-auto' : 'overflow-x-hidden'
+				}`}
 			>
+				{/* The scaled chart keeps its untransformed layout box, so this sizer
+				    carries the painted size instead — it is what gives the viewport a
+				    correct scroll extent, and clipping to it keeps the untransformed
+				    tree's layout overflow from leaking into that extent.
+
+				    `mx-auto` is the whole centring story: CSS 2.1 §10.3.3 zeroes
+				    over-constrained auto margins, so the sizer centres while the chart
+				    fits and goes flush left the moment it outgrows the viewport —
+				    which is what puts the chart's left edge at scrollLeft 0 instead of
+				    stranding it out of reach. `justify-center` on a scroll container
+				    would strand it, the same way the old measurement did. */}
 				<div
-					ref={contentRef}
-					className="flex flex-col items-center"
-					style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}
+					data-testid={testId ? `${testId}-canvas` : undefined}
+					className="mx-auto overflow-hidden"
+					style={{ width: fit.width || undefined, height: fit.height || undefined }}
 				>
-					<div className="inline-flex items-center gap-2 rounded-md border-2 border-inverse bg-info-soft px-4 py-2 text-[13px] font-medium text-info-soft-fg">
-						You (Admin)
+					{/* `w-max` sizes the tree to its widest row rather than to the column,
+					    so nothing overflows it and `offsetWidth` is the true width. Origin
+					    top-left pins the painted result to the sizer; `top center` would
+					    put half of it at negative x, unreachable all over again. */}
+					<div
+						ref={contentRef}
+						className="w-max flex flex-col items-center"
+						style={{ transform: `scale(${fit.scale})`, transformOrigin: 'top left' }}
+					>
+						<div className="inline-flex items-center gap-2 rounded-md border-2 border-inverse bg-info-soft px-4 py-2 text-[13px] font-medium text-info-soft-fg">
+							You (Admin)
+						</div>
+						{renderBranch(roots)}
 					</div>
-					{renderBranch(roots)}
 				</div>
 			</div>
 			{hint && <p className="text-[11px] text-text-3 mt-3">{hint}</p>}
