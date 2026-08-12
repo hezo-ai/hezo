@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 22,
+			"notes": "Removes a line that appeared twice in the QA Engineer's review workflow, and restores the exact wording of the one-branch-one-PR and QA-handoff rules."
+		},
+		{
 			"version": 21,
 			"notes": "Shared Captain guidance is tightened: the hire workflow now states its four obligations once and then the two paths that use them, rather than repeating them in both, and the progress-update rules lose a bullet that restated the three above it."
 		},
