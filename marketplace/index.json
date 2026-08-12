@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 16,
+			"version": 17,
 			"roster_count": 7,
-			"latest_notes": "Role prompts are rewritten to a shorter, more direct register, and the shared Captain guidance they include is tightened. No workflow, approval gate or rule changed."
+			"latest_notes": "Restores a hire-workflow lead line that the previous rewrite had folded into the sentence after it."
 		},
 		{
 			"slug": "investment",
@@ -133,9 +133,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 17,
+			"version": 18,
 			"roster_count": 6,
-			"latest_notes": "The team's analysis-only rule and its definition of current market data are each stated once and shared by every role, instead of being restated in five and two prompts respectively. Every role prompt is also rewritten to a shorter, more direct register; no analytical requirement or checklist item was removed."
+			"latest_notes": "Restores a hire-workflow lead line that the previous rewrite had folded into the sentence after it."
 		},
 		{
 			"slug": "software-development",
@@ -217,9 +217,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 22,
+			"version": 23,
 			"roster_count": 10,
-			"latest_notes": "Removes a line that appeared twice in the QA Engineer's review workflow, and restores the exact wording of the one-branch-one-PR and QA-handoff rules."
+			"latest_notes": "Restores a hire-workflow lead line that the previous rewrite had folded into the sentence after it."
 		}
 	]
 }

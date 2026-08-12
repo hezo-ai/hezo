@@ -68,6 +68,10 @@
 	],
 	"changelog": [
 		{
+			"version": 18,
+			"notes": "Restores a hire-workflow lead line that the previous rewrite had folded into the sentence after it."
+		},
+		{
 			"version": 17,
 			"notes": "The team's analysis-only rule and its definition of current market data are each stated once and shared by every role, instead of being restated in five and two prompts respectively. Every role prompt is also rewritten to a shorter, more direct register; no analytical requirement or checklist item was removed."
 		},

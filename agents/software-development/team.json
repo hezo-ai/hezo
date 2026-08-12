@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 23,
+			"notes": "Restores a hire-workflow lead line that the previous rewrite had folded into the sentence after it."
+		},
+		{
 			"version": 22,
 			"notes": "Removes a line that appeared twice in the QA Engineer's review workflow, and restores the exact wording of the one-branch-one-PR and QA-handoff rules."
 		},
