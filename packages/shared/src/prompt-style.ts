@@ -175,7 +175,17 @@ export function renderPromptStyleRules(): string {
 function checkableLines(text: string): { line: number; content: string }[] {
 	const out: { line: number; content: string }[] = [];
 	let inFence = false;
-	text.split('\n').forEach((raw, i) => {
+	// A skill's YAML frontmatter is metadata, not prose: its `description` has its
+	// own length rule (<=300 chars, enforced by default-skills.test.ts) and is one
+	// deliberate sentence, so the register's ceilings do not apply to it.
+	const lines = text.split('\n');
+	let start = 0;
+	if (lines[0]?.trim() === '---') {
+		const close = lines.findIndex((l, i) => i > 0 && l.trim() === '---');
+		if (close > 0) start = close + 1;
+	}
+	lines.forEach((raw, i) => {
+		if (i < start) return;
 		const trimmed = raw.trim();
 		if (trimmed.startsWith('```')) {
 			inFence = !inFence;
