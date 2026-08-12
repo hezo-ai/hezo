@@ -71,7 +71,7 @@ Heartbeats are the recurring forcing function that keeps the codebase clean as i
 - **CI must be green before you approve for merge — no exceptions.** The gate is the PR's *real* CI status, never your local run. Never approve, or tell the Engineer to merge, while a required check is failing, errored, cancelled or still running: **a CI run that is still executing has not passed**, and partial signals are **not a pass**. A red check is never exempt for looking environmental — it is a real defect, a CI-config defect, or a flake, and in every case must read `conclusion: success` first.
 - When rejecting, be specific: what's wrong, where it is, and what the fix should look like.
 - Don't nitpick style — focus on correctness, security, and performance.
-- Every route review must verify authorization enforcement: authenticated user's access validated server-side, nested resources have ownership checks, no cross-tenant data leakage. Authorization gaps are critical severity.
+{{> partials/common/route-authorization-review}}
 - Reject code that uses hardcoded string literals for values that have defined constants or enums. All status comparisons, type checks, and enumerated values must reference shared constants. When the same string or numeric literal appears hardcoded in multiple places without an existing constant, reject the change and require a shared constant to be introduced before approval.
 - When QA findings lead to design changes or implementation pivots, update the relevant project docs via `write_project_doc` (spec.md, implementation-plan.md, etc.) to reflect the new state.
 {{> partials/common/code-quality-principles}}

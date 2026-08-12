@@ -127,7 +127,9 @@ Prompts-Checked: deleted the duplicated AGENTS.md bullet from 6 sw-dev docs; the
 Prompts-Checked: role-specific edit, no shared guidance restated and no rule duplicated
 ```
 
-The trailer must be true. **Never bypass the hook with `--no-verify`.** Same exemptions as `Docs-Checked:`. `scripts/check-prompt-style.ts` runs alongside it and fails the commit on the mechanical half (bullet and sentence length, banned vocabulary, a bullet duplicated across files, a Hezo symbol in a marketplace-reaching file); demote a noisy rule to a warning rather than adding an exemption. Classification is tested in `prompts-ack-hook.test.ts`; a new prompt-bearing path goes into `PROMPT_BEARING_PATTERNS` in the same change.
+The trailer must be true. **Never bypass the hook with `--no-verify`.** Same exemptions as `Docs-Checked:`. Classification is tested in `prompts-ack-hook.test.ts`; a new prompt-bearing path goes into `PROMPT_BEARING_PATTERNS` in the same change.
+
+**`scripts/check-prompt-style.ts` runs alongside it, and severity decides what blocks.** The rules live once in `checkPromptStyle` (`@hezo/shared`), shared with the runtime authoring surfaces and the web UI. **Errors fail the commit** — a bullet duplicated across files, a Hezo symbol in a marketplace-reaching file, a backticked project-doc filename — because each is unambiguous. **Warnings print and pass** — sentence and bullet length, hedges, intensifiers — because they are judgement calls, and a heuristic that blocks an unrelated commit is how a rule gets weakened to quiet it. Demote a noisy rule rather than adding an exemption.
 
 ## Project / team model (1:1)
 

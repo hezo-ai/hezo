@@ -1,6 +1,7 @@
 import {
 	HEZO_DOCS_URL,
 	REQUIRED_SYSTEM_PROMPT_VARS,
+	renderPromptStyleRules,
 	repoNameFromIdentifier,
 	SandboxBackend,
 } from '@hezo/shared';
@@ -267,7 +268,17 @@ const SHARED_INSTRUCTIONS = `
  * The placeholder a prompt uses to *name* the required substitution variables
  * rather than writing them out - see where it is resolved, last of all.
  */
+/**
+ * The shared guidance as plain text, for the prompt-style guard's
+ * duplicates-SHARED_INSTRUCTIONS check. Exported rather than re-read so the
+ * check can never drift from what agents actually receive.
+ */
+export const SHARED_INSTRUCTIONS_TEXT = SHARED_INSTRUCTIONS;
+
 export const REQUIRED_PROMPT_VARS_PLACEHOLDER = '{{required_prompt_vars}}';
+
+/** Placeholder expanding to the machine-checked half of the writing register. */
+export const PROMPT_STYLE_RULES_PLACEHOLDER = '{{prompt_style_rules}}';
 
 export async function resolveSystemPrompt(
 	db: Db,
@@ -455,6 +466,13 @@ export async function resolveSystemPrompt(
 			REQUIRED_PROMPT_VARS_PLACEHOLDER,
 			REQUIRED_SYSTEM_PROMPT_VARS.map((v) => `\`${v}\``).join(', '),
 		);
+	}
+
+	// The writing register an authored prompt is held to, rendered from the same
+	// module the validator reads (`@hezo/shared` prompt-style). Hand-copying the
+	// list into a prompt is how it drifts from what the server actually enforces.
+	if (resolved.includes(PROMPT_STYLE_RULES_PLACEHOLDER)) {
+		resolved = resolved.replaceAll(PROMPT_STYLE_RULES_PLACEHOLDER, renderPromptStyleRules());
 	}
 
 	// Inject the docs at the CEO prompt's HEZO_DOCS marker. The live chat embeds

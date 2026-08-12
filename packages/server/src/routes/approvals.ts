@@ -15,6 +15,7 @@ import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
 import { resolveApproval } from '../services/approval-resolve';
 import { buildHirePayloadPatch, type HirePayloadPatchInput } from '../services/hire-proposal';
+import { authoredPromptError } from '../services/prompt-style-guard';
 
 export const approvalsRoutes = new Hono<Env>();
 
@@ -220,6 +221,8 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	if (body.system_prompt?.trim()) {
 		const promptError = requiredSystemPromptVarsError(body.system_prompt);
 		if (promptError) return err(c, 'INVALID_REQUEST', promptError, 400);
+		const styleError = authoredPromptError(body.system_prompt);
+		if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
 	}
 	// A revised manager must resolve to an agent on this team (empty clears it).
 	if (typeof body.reports_to === 'string' && body.reports_to.trim()) {

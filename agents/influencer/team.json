@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 18,
+			"notes": "Drops a Captain responsibility line that restated the onboarding step already described below it."
+		},
+		{
 			"version": 17,
 			"notes": "Restores a hire-workflow lead line that the previous rewrite had folded into the sentence after it."
 		},

@@ -14,6 +14,7 @@ export * from './mcp/method-access.js';
 export * from './mentions/index.js';
 export * from './model-pins.js';
 export * from './pricing.js';
+export * from './prompt-style.js';
 export * from './search/terms.js';
 export * from './system-prompt-vars.js';
 export * from './task-progress.js';

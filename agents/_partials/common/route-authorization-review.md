@@ -1,0 +1,1 @@
+- **Every route review verifies authorization enforcement**: the authenticated user's access validated server-side, ownership checks on nested resources, and no cross-tenant data leakage. An authorization gap is a critical finding.
