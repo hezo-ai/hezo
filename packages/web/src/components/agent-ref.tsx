@@ -30,6 +30,19 @@ interface AgentRefProps {
 	/** Rendered in place of the plain label - lets the avatar and name share one trigger. */
 	children?: ReactNode;
 	/**
+	 * Hang the card off `children` itself rather than a wrapper of our own, so the
+	 * hover target is the caller's element.
+	 *
+	 * Use it when the label sits inside a bigger interactive row - a menu option, a
+	 * list item. Without it the trigger is only the name text, which is a target a
+	 * few characters wide inside a full-width row: the pointer lands on the row's
+	 * padding and nothing opens. `className`, `testId` and `tapToOpen` are the
+	 * caller's business in this mode and are ignored.
+	 */
+	asChild?: boolean;
+	/** Which side the card opens on. Defaults to `top`. */
+	side?: 'top' | 'right' | 'bottom' | 'left';
+	/**
 	 * Whether a touch tap opens the card. Set false when the label sits inside a
 	 * link or button the tap has to reach: suppressing the tap's click is what
 	 * opens the card, and it would swallow the navigation or the selection.
@@ -56,6 +69,8 @@ export function AgentRef({
 	className,
 	testId,
 	children,
+	asChild = false,
+	side,
 	tapToOpen = true,
 }: AgentRefProps) {
 	const [open, setOpen] = useState(false);
@@ -67,6 +82,17 @@ export function AgentRef({
 	const tooltip = agent ? agentIdentityTooltip(agent) : null;
 	const slug = agent?.slug ?? undefined;
 	const linked = link && !!projectId && !!slug;
+
+	// The caller's element is the trigger, so there is nothing of ours to render:
+	// with no card to show, `children` passes straight through untouched.
+	if (asChild) {
+		if (!tooltip) return <>{content}</>;
+		return (
+			<Tooltip content={tooltip} side={side} contentClassName={TOOLTIP_PANEL}>
+				{content}
+			</Tooltip>
+		);
+	}
 
 	if (!tooltip) {
 		return linked && projectId && slug ? (
@@ -86,7 +112,7 @@ export function AgentRef({
 	// itself open, matching `RelativeTime`.
 	if (linked && projectId && slug) {
 		return (
-			<Tooltip content={tooltip} contentClassName={TOOLTIP_PANEL}>
+			<Tooltip content={tooltip} side={side} contentClassName={TOOLTIP_PANEL}>
 				<AgentLink projectId={projectId} agentId={slug} className={className} testId={testId}>
 					{content}
 				</AgentLink>
@@ -96,7 +122,7 @@ export function AgentRef({
 
 	if (!tapToOpen) {
 		return (
-			<Tooltip content={tooltip} contentClassName={TOOLTIP_PANEL}>
+			<Tooltip content={tooltip} side={side} contentClassName={TOOLTIP_PANEL}>
 				<span className={className} data-testid={testId}>
 					{content}
 				</span>
@@ -108,7 +134,13 @@ export function AgentRef({
 	// bare span has no role that supports one. The tap handler is a pointer
 	// affordance only - a screen reader reads the name and role from the text.
 	return (
-		<Tooltip content={tooltip} open={open} onOpenChange={setOpen} contentClassName={TOOLTIP_PANEL}>
+		<Tooltip
+			content={tooltip}
+			side={side}
+			open={open}
+			onOpenChange={setOpen}
+			contentClassName={TOOLTIP_PANEL}
+		>
 			<span
 				className={className}
 				data-testid={testId}

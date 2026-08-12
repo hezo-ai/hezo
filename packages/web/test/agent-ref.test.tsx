@@ -94,3 +94,38 @@ test('renders nothing when there is neither an agent nor a fallback', () => {
 	const { container } = render(withI18n(<AgentRef />));
 	expect(container.textContent).toBe('');
 });
+
+test('asChild makes the caller element the trigger, not a wrapper of ours', () => {
+	// The bug this exists for: with the trigger on the name span, the hover target
+	// in a menu row is a few characters wide and pointing at the row hits padding.
+	const { container } = render(
+		withI18n(
+			<AgentRef agent={{ human_name: 'Riley', title: 'Market Researcher' }} asChild>
+				<button type="button" data-testid="row">
+					Riley
+				</button>
+			</AgentRef>,
+		),
+	);
+	const trigger = container.querySelector(TRIGGER);
+	expect(trigger?.tagName).toBe('BUTTON');
+	expect(trigger?.getAttribute('data-testid')).toBe('row');
+	// Nothing of ours wraps it - the button is the only element rendered.
+	expect(container.firstElementChild).toBe(trigger);
+});
+
+test('asChild passes children straight through when there is no card to show', () => {
+	// An unnamed agent with no role description has nothing to add, so the row
+	// must render exactly as the caller wrote it - no stray trigger attributes.
+	const { container } = render(
+		withI18n(
+			<AgentRef agent={{ title: 'Market Researcher' }} asChild>
+				<button type="button" data-testid="row">
+					Market Researcher
+				</button>
+			</AgentRef>,
+		),
+	);
+	expect(container.querySelector(TRIGGER)).toBeNull();
+	expect(container.querySelector('[data-testid="row"]')).not.toBeNull();
+});

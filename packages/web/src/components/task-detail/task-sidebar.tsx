@@ -265,23 +265,28 @@ export function TaskSidebar({
 									data-placement={assigneeSide}
 								>
 									{assigneeOptions?.map((a) => (
-										<button
-											type="button"
-											key={a.id}
-											onClick={() => {
-												updateTask.mutate({ assignee_id: a.id });
-												setAssigneeOpen(false);
-											}}
-											className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-surface-2 transition-colors ${
-												a.id === task.assignee_id ? 'bg-surface-2 font-medium' : ''
-											}`}
-										>
-											<AgentStatusLabel
-												name={agentDisplayName(a)}
-												agent={a}
-												runtimeStatus={AgentRuntimeStatus.Idle}
-											/>
-										</button>
+										// The whole option is the hover target, not just the name inside
+										// it - a name is a few characters wide in a full-width row, so
+										// pointing at the row would otherwise land on padding and show
+										// nothing. Opens to the side so the card clears the list rather
+										// than covering the option above it.
+										<AgentRef key={a.id} agent={a} asChild side="left">
+											<button
+												type="button"
+												onClick={() => {
+													updateTask.mutate({ assignee_id: a.id });
+													setAssigneeOpen(false);
+												}}
+												className={`flex items-center w-full px-2.5 py-1.5 text-xs text-left hover:bg-surface-2 transition-colors ${
+													a.id === task.assignee_id ? 'bg-surface-2 font-medium' : ''
+												}`}
+											>
+												<AgentStatusLabel
+													name={agentDisplayName(a)}
+													runtimeStatus={AgentRuntimeStatus.Idle}
+												/>
+											</button>
+										</AgentRef>
 									))}
 								</div>
 							)}

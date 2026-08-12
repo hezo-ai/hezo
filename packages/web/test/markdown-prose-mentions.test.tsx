@@ -302,3 +302,53 @@ test('a mention of an open (in-progress) task is not struck through', async () =
 // hover→pill assertion lives in test/browser/task-mention-status.spec.ts. The
 // `data-mention-task-status` assertions above prove the exact value that feeds the
 // pill reaches the DOM.
+
+test('a mention written by role slug renders the name once the agent has one', async () => {
+	// The case the other mention specs miss: they use an unnamed agent, where the
+	// display name and the role title are the same string, so they cannot tell a
+	// chip that reads the *name* from one that merely reads the title. Here the
+	// author writes the role handle and the reader sees "Morgan".
+	const seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const { container, findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Named Mention Project' });
+			const task = await seedTask(ws, project, { title: 'Named Mention Task' });
+			const agent = ws.agents.find((a) => a.slug === 'engineer') ?? ws.agents[0];
+			const res = await ctx.apiBase(`/api/projects/${ws.internalSlug}/agents/${agent.slug}`, {
+				method: 'PATCH',
+				headers: { Authorization: `Bearer ${ws.token}`, 'Content-Type': 'application/json' },
+				body: JSON.stringify({ human_name: 'Morgan' }),
+			});
+			if (!res.ok) throw new Error(`naming ${agent.slug} failed: ${res.status}`);
+
+			await seedComment(ws, task, `Cosmetic note from @@${agent.slug}, non-blocking.`);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+			seeded.agentSlug = agent.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await findByText(/Cosmetic note/, undefined, { timeout: 20_000 });
+	const chip = await waitFor(() => {
+		const el = container.querySelector(
+			'[data-testid="agent-mention-link"][data-mention-passive="true"]',
+		) as HTMLAnchorElement | null;
+		if (!el) throw new Error('passive mention link not yet resolved');
+		return el;
+	});
+
+	// The name, not the slug the author typed and not the role title.
+	expect(chip.textContent).toBe('Morgan');
+	expect(chip.textContent).not.toBe(seeded.agentSlug);
+	// The link still points at the role slug, so it survives a later rename.
+	expect(chip.getAttribute('href')).toBe(
+		`/projects/${seeded.projectSlug}/agents/${seeded.agentSlug}`,
+	);
+});
