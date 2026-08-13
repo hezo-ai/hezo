@@ -4,7 +4,7 @@
 // by the server tier; only the mobile-affordance assertion needs Chromium.
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { createProjectAndClearPlanning, uniqueName } from './helpers';
+import { createProjectAndClearPlanning, expandEventGroups, uniqueName } from './helpers';
 
 interface MockSetup {
 	teamId: string;
@@ -133,6 +133,11 @@ test('terminate button renders on mobile viewport', async ({
 	await mockRunningRun(page, setup);
 
 	await page.goto(`/projects/${setup.projectSlug}/tasks/${setup.taskId}`);
+
+	// This fixture mocks the comments and the run but not the task, so the task
+	// reports no active run and the row folds like any other rather than becoming
+	// the working row. Terminate lives in the log inside it.
+	await expandEventGroups(page);
 
 	const terminateButton = page.getByTestId('terminate-run-button').first();
 	await expect(terminateButton).toBeVisible({ timeout: 20_000 });
