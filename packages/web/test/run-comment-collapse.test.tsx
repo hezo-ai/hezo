@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 // A run entry in the task feed must be collapsed by default and only auto-expand
 // while the run is actively running. The regression this guards: on a virtualized
@@ -124,6 +125,7 @@ test('a completed run stays collapsed while its status is still loading (no flas
 	// The run entry mounts and its header renders before the per-run status query
 	// resolves (the gate is still closed). The log body must NOT be shown during
 	// this loading window — that transient expand-then-collapse was the flash.
+	await expandEventGroups(user);
 	await findByTestId('run-comment-header', undefined, { timeout: 20_000 });
 	expect(queryByTestId('run-comment-log')).toBeNull();
 
@@ -139,12 +141,14 @@ test('a completed run stays collapsed while its status is still loading (no flas
 
 test('an actively running run shows its log expanded without interaction', async () => {
 	const seeded: Seeded = { projectSlug: '', taskId: '' };
-	const { findByTestId, queryByTestId, router } = await setup({ seeded, status: 'running' });
+	const { findByTestId, queryByTestId, router, user } = await setup({ seeded, status: 'running' });
 
 	await router.navigate({
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
+
+	await expandEventGroups(user);
 
 	// Active run: the log body is shown immediately, and there is no collapsed
 	// summary row (that only appears once the run has finished).

@@ -23,11 +23,12 @@ test.describe('settings navigation responsiveness', () => {
 		await page.goto('/settings');
 
 		// The desktop rail is `hidden md:flex` — gone at 375px; the collapsed toggle
-		// shows the current subpage (General is the default /settings page).
+		// shows the current subpage. `/settings` is the Instance page (General is
+		// now the group heading above it, not a destination).
 		await expect(page.getByTestId('settings-nav-desktop')).toBeHidden({ timeout: 15000 });
 		const toggle = page.getByTestId('settings-nav-toggle');
 		await expect(toggle).toBeVisible();
-		await expect(toggle).toContainText('General');
+		await expect(toggle).toContainText('Instance');
 
 		// Tapping opens the dropdown; choosing a subpage navigates and the toggle
 		// label follows the selection.
