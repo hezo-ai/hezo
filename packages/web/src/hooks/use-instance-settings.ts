@@ -1,3 +1,4 @@
+import type { TaskView } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -22,6 +23,8 @@ export interface InstanceSettings {
 	 */
 	host_total_ram_bytes: number | null;
 	host_total_swap_bytes: number | null;
+	/** Which view every task thread opens in on this instance. Admin-owned. */
+	default_task_view: TaskView;
 }
 
 export type InstanceSettingsUpdate = Partial<{
@@ -31,6 +34,7 @@ export type InstanceSettingsUpdate = Partial<{
 	max_container_memory_gb: number | null;
 	default_ram_cap_per_container_gb: number;
 	default_container_disk_gb: number;
+	default_task_view: TaskView;
 }>;
 
 export function useInstanceSettings() {

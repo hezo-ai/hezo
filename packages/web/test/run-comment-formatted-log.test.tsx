@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 const LOG_TEXT = [
 	'[session] model=claude-opus-4 tools=42',
@@ -89,6 +90,10 @@ test('task-page run comment exposes the formatted/raw log switcher and defaults 
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
+
+	// A completed run folds in the default Conversation view; these tests are
+	// about what the run row renders once opened.
+	await expandEventGroups(user);
 
 	// Wait for the run to load as completed (the summary only renders then) so the
 	// header is the collapsed expand button, then click it to reveal the log viewer.

@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 function buildFetchMock(opts: {
 	runId: string;
@@ -37,7 +38,7 @@ test('run comment shows created tasks as links to their pages', async () => {
 		taskId: '',
 	};
 
-	const { findByTestId, router } = await renderApp({
+	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -109,6 +110,10 @@ test('run comment shows created tasks as links to their pages', async () => {
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
+	// A completed run folds in the default Conversation view; these tests are
+	// about what the run row renders once opened.
+	await expandEventGroups(user);
+
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
 
 	const createdSection = await findByTestId('run-comment-created-tasks', undefined, {
@@ -127,7 +132,7 @@ test('run comment shows created tasks as links to their pages', async () => {
 test('run comment omits created tasks section when list is empty', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 
-	const { findByTestId, queryByTestId, router } = await renderApp({
+	const { findByTestId, queryByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -180,6 +185,10 @@ test('run comment omits created tasks section when list is empty', async () => {
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
+	// A completed run folds in the default Conversation view; these tests are
+	// about what the run row renders once opened.
+	await expandEventGroups(user);
+
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
 	// Wait for the heartbeat-run to load before asserting no created-tasks section.
 	await findByTestId('run-comment-summary', undefined, { timeout: 20_000 });
@@ -189,7 +198,7 @@ test('run comment omits created tasks section when list is empty', async () => {
 test('run comment header shows "started by …" chip when actor_name is set', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 
-	const { findByTestId, router } = await renderApp({
+	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -248,6 +257,10 @@ test('run comment header shows "started by …" chip when actor_name is set', as
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
+
+	// A completed run folds in the default Conversation view; these tests are
+	// about what the run row renders once opened.
+	await expandEventGroups(user);
 
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
 
@@ -332,6 +345,10 @@ test('run comment links updated docs, skills, and proposed skills', async () => 
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
+
+	// A completed run folds in the default Conversation view; these tests are
+	// about what the run row renders once opened.
+	await expandEventGroups(user);
 
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
 

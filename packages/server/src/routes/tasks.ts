@@ -313,6 +313,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
             ra.run_count, ra.total_duration_seconds, ca.total_cost_cents,
             (ar.status IS NOT NULL) AS has_active_run,
             CASE WHEN ar.status IS NOT NULL THEN json_build_object(
+              'id', ar.id,
               'status', ar.status,
               'member_id', ar.member_id,
               'queued_reason', ar.queued_reason
@@ -365,7 +366,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        -- The task's current non-terminal run, preferring one that is actually
        -- executing over one still waiting to start, so the UI can label the two
        -- states apart instead of calling both "running".
-       SELECT hr.status, hr.member_id, hr.queued_reason
+       SELECT hr.id, hr.status, hr.member_id, hr.queued_reason
        FROM heartbeat_runs hr
        WHERE hr.task_id = i.id AND hr.status IN ('running', 'queued')
        ORDER BY (hr.status = 'running') DESC, hr.created_at DESC

@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 /**
  * The comments feed loads a lightweight skeleton up front and fetches text bodies
@@ -21,7 +22,7 @@ test('loads the skeleton up front and text bodies via a batched ?ids= request', 
 	}, original);
 
 	try {
-		const { findByText, router } = await renderApp({
+		const { findByText, router, user } = await renderApp({
 			initialPath: '/',
 			seed: async () => {
 				const ws = await seedWorkspace();
@@ -47,7 +48,10 @@ test('loads the skeleton up front and text bodies via a batched ?ids= request', 
 
 		// The text body only appears once its lazy body load resolves.
 		await findByText('Lazy body loads on view');
-		// The meta row renders straight from the skeleton.
+		// The meta row renders straight from the skeleton - once its group is open,
+		// since a system row folds in the default Conversation view. That it needs no
+		// body request of its own is what the assertions below check.
+		await expandEventGroups(user);
 		await findByText('system status note');
 
 		// The feed's list request is the skeleton, never the eager full endpoint.

@@ -51,6 +51,29 @@ task open - an agent cannot mark a task **done** while a question to the admin i
 waiting for a human reply. The task stays in progress (or in review) until you answer
 with a comment on the task itself. You can always close a task yourself, answered or not.
 
+## Reading a busy thread
+
+A long-running task accumulates far more machinery than conversation - every run, status
+change, assignee move and task link writes a row. The thread has two views, chosen with
+the **View** control at the top of a task's right-hand panel.
+
+**Conversation** is the default. It shows what people and agents wrote, plus anything
+waiting on someone: a credential request, an approval, a repo-setup choice, and the latest
+failed run with its Retry button. Everything else folds into grouped chips that sit where
+those events happened, labelled with what is inside them - "8 events - 4 failed runs - 4
+changes". Click one to read the rows it holds. An agent working right now gets its own row
+at the foot of the thread, which opens onto its live output.
+
+**Detailed** shows every row at full weight, in order.
+
+Folding is display only. Nothing is deleted, nothing stops being recorded, and search and
+the activity log are unaffected - Detailed always shows the complete thread. A link
+straight to a folded comment opens the group holding it.
+
+An admin sets which view everyone starts in under **Settings → Appearance**. Anyone can
+switch a single task to the other view from its right-hand panel; that switch lasts until
+they reload the page.
+
 ## Catching up at the start of a run
 
 The thread isn't just a chat log - it's part of the task's memory. When an agent starts a

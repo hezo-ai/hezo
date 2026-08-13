@@ -2,6 +2,7 @@ import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 async function lockTask(
 	headers: { Authorization: string; 'Content-Type': string },
@@ -396,6 +397,9 @@ test('can rename a task from the header, and Escape abandons the edit', async ()
 
 	expect((await findByTestId('task-title')).textContent).toBe('Renamed in place');
 	// And the rename lands in the thread as a meta comment.
+	// The rename entry is a system row, so it folds in the default Conversation
+	// view; this test is about the entry being written at all.
+	await expandEventGroups(user);
 	await findByText(/renamed from/i, undefined, { timeout: 10_000 });
 });
 
@@ -428,6 +432,9 @@ test('can add a description on a task that has none, then edit it', async () => 
 	await user.click(save);
 
 	await findByText('A freshly written body.');
+	// The description-change entry is a system row, so it folds in the default
+	// Conversation view; this test is about the entry being written at all.
+	await expandEventGroups(user);
 	await findByText(/added a description/i, undefined, { timeout: 10_000 });
 
 	await user.click(await findByTestId('task-description-edit'));
@@ -440,6 +447,7 @@ test('can add a description on a task that has none, then edit it', async () => 
 	await user.click(saveAgain);
 
 	await findByText('A replacement body.');
+	await expandEventGroups(user);
 	await findByText(/updated the description/i, undefined, { timeout: 10_000 });
 });
 

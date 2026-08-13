@@ -1,6 +1,7 @@
 import {
 	CONTAINER_DISK_GB_MAX,
 	CONTAINER_DISK_GB_MIN,
+	isTaskView,
 	MAX_CHAT_HISTORY_SIZE_MAX,
 	MAX_CHAT_HISTORY_SIZE_MIN,
 	MAX_CONTAINER_MEMORY_GB_MAX,
@@ -9,6 +10,7 @@ import {
 	projectMemoryFitsBudget,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
+	TASK_VIEWS,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import type { Db } from '../db/database';
@@ -19,6 +21,7 @@ import {
 	deleteSystemMeta,
 	getDefaultContainerDiskGb,
 	getDefaultRamCapPerContainerGb,
+	getDefaultTaskView,
 	getInstanceBaseUrl,
 	getInstanceLocale,
 	getMaxChatHistorySize,
@@ -29,6 +32,7 @@ import {
 	normalizeBaseUrl,
 	setDefaultContainerDiskGb,
 	setDefaultRamCapPerContainerGb,
+	setDefaultTaskView,
 	setInstanceLocale,
 	setMaxChatHistorySize,
 	setMaxContainerMemoryGb,
@@ -71,6 +75,7 @@ async function instanceSettingsPayload(db: Db, engine: ContainerEngine) {
 		default_container_disk_gb: await getDefaultContainerDiskGb(db),
 		host_total_ram_bytes: hostMemory?.totalRamBytes ?? null,
 		host_total_swap_bytes: hostMemory?.totalSwapBytes ?? null,
+		default_task_view: await getDefaultTaskView(db),
 		locale: await getInstanceLocale(db),
 	};
 }
@@ -171,6 +176,7 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		max_container_memory_gb?: unknown;
 		default_ram_cap_per_container_gb?: unknown;
 		default_container_disk_gb?: unknown;
+		default_task_view?: unknown;
 	};
 	const body = await c.req.json<PatchBody>().catch(() => ({}) as PatchBody);
 
@@ -180,6 +186,7 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		'max_container_memory_gb',
 		'default_ram_cap_per_container_gb',
 		'default_container_disk_gb',
+		'default_task_view',
 	] as const;
 	if (!knownFields.some((f) => f in body)) {
 		return err(c, 'INVALID_REQUEST', `one of ${knownFields.join(', ')} is required`, 400);
@@ -257,6 +264,18 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 		// failure it produces at provision time, not a check here that would be
 		// guessing.
 		await setDefaultContainerDiskGb(db, body.default_container_disk_gb as number);
+	}
+
+	if ('default_task_view' in body) {
+		if (!isTaskView(body.default_task_view)) {
+			return err(
+				c,
+				'INVALID_REQUEST',
+				`default_task_view must be one of ${TASK_VIEWS.join(', ')}`,
+				400,
+			);
+		}
+		await setDefaultTaskView(db, body.default_task_view);
 	}
 
 	if ('base_url' in body) {

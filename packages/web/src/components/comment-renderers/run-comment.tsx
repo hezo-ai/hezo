@@ -4,7 +4,7 @@ import { DoorOpen, Loader2, RotateCw } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useAgentLookup } from '../../hooks/use-agent-lookup';
 import { type ContainerHealth, useContainerHealth } from '../../hooks/use-container-health';
-import { formatElapsed } from '../../hooks/use-elapsed-duration';
+import { formatElapsed, useElapsedDuration } from '../../hooks/use-elapsed-duration';
 import {
 	getRunWaitingMessage,
 	isActiveRunStatus,
@@ -13,6 +13,7 @@ import {
 import { useProjectMeta } from '../../hooks/use-projects';
 import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import { useRunLogs } from '../../hooks/use-run-logs';
+import { useI18n } from '../../lib/i18n';
 import { agentDisplayName } from '../agent-identity-tooltip';
 import { agentPageParams } from '../agent-link';
 import { LazyMount } from '../lazy-mount';
@@ -32,9 +33,15 @@ interface Props {
 	/** The run_id eligible for a Retry button — the latest run, only when none is active/queued. */
 	retryableRunId?: string | null;
 	inline?: boolean;
+	/**
+	 * Render an active run as the Conversation view's working row: a collapsed
+	 * "<agent> is working" pill that opens onto the same live log. Ignored once
+	 * the run finishes, which falls back to the ordinary collapsed summary.
+	 */
+	working?: boolean;
 }
 
-export function RunComment({ comment, projectId, taskId, retryableRunId, inline }: Props) {
+export function RunComment({ comment, projectId, taskId, retryableRunId, inline, working }: Props) {
 	const runId = comment.content?.run_id ?? '';
 	const agentId = comment.content?.agent_id ?? '';
 	const agentTitle = comment.content?.agent_title ?? 'Agent';
@@ -60,6 +67,7 @@ export function RunComment({ comment, projectId, taskId, retryableRunId, inline 
 					taskId={taskId}
 					retryableRunId={retryableRunId}
 					inline={inline}
+					working={working}
 				/>
 			</LazyMount>
 		</div>
@@ -138,6 +146,7 @@ export function RunCommentBody({
 	taskId,
 	retryableRunId,
 	inline,
+	working,
 }: {
 	projectId: string;
 	runId: string;
@@ -152,6 +161,7 @@ export function RunCommentBody({
 	taskId?: string;
 	retryableRunId?: string | null;
 	inline?: boolean;
+	working?: boolean;
 }) {
 	// The comment bakes the role title at write time; resolve the agent live so a
 	// later rename shows through, and fall back to the baked label for an agent
@@ -188,6 +198,10 @@ export function RunCommentBody({
 			: null;
 	const [expanded, setExpanded] = useState(false);
 	const logRegionId = `run-comment-log-${runId}`;
+	const { t } = useI18n();
+	// Ticks live while the run is in flight; empty until it actually starts, so a
+	// queued run does not show a stopwatch for work that has not begun.
+	const elapsed = useElapsedDuration(run?.started_at ?? '', run?.finished_at ?? null);
 	// On a surface that hosts the preview panel (task detail), an updated-doc link
 	// opens the doc in the panel; elsewhere it falls back to the documents page.
 	const openPreview = useOpenPreview();
@@ -313,10 +327,55 @@ export function RunCommentBody({
 		</button>
 	);
 
+	// The Conversation view's working row. A run in flight is the current state of
+	// the task, not an event to file away, so it gets a row of its own that says
+	// who is working and for how long, and opens onto the same live log.
+	const workingRow = (
+		<button
+			type="button"
+			onClick={() => setExpanded((v) => !v)}
+			aria-expanded={expanded}
+			aria-controls={logRegionId}
+			data-testid="run-comment-working"
+			className="mb-1.5 flex w-full min-w-0 items-center gap-2 rounded-md border border-live-soft-fg bg-live-soft px-3 py-2 text-left text-live-soft-fg cursor-pointer hover:brightness-[0.99] transition-[filter]"
+		>
+			<span
+				aria-hidden="true"
+				className={`inline-block w-2.5 h-2.5 shrink-0 rounded-full ${
+					status === HeartbeatRunStatus.Queued ? 'bg-text-3' : 'bg-live animate-pulse'
+				}`}
+			/>
+			<span className="min-w-0 flex-1 text-xs">
+				<span className="font-semibold">{agentLabel}</span>{' '}
+				{status === HeartbeatRunStatus.Queued
+					? t('thread.working.queued')
+					: t('thread.working.now')}
+				{status === HeartbeatRunStatus.Queued && run?.queued_reason && (
+					<span className="opacity-80"> - {run.queued_reason}</span>
+				)}
+			</span>
+			{elapsed && (
+				<span className="shrink-0 font-mono text-[11px] opacity-85" data-testid="working-elapsed">
+					{elapsed}
+				</span>
+			)}
+			<svg
+				aria-hidden="true"
+				className={`w-3 h-3 shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+				viewBox="0 0 16 16"
+				fill="currentColor"
+			>
+				<path d="M6 3l5 5-5 5V3z" />
+			</svg>
+		</button>
+	);
+
 	return (
 		<>
 			{inline &&
-				(isActive ? (
+				(isActive && working ? (
+					workingRow
+				) : isActive ? (
 					// Actively running/queued: the log is force-shown, so the header is a
 					// static (non-collapsible) summary with no toggle.
 					<div className="flex items-center min-h-[26px] min-w-0" data-testid="run-comment-header">
@@ -331,7 +390,7 @@ export function RunCommentBody({
 					// Completed or still loading: collapsed by default, expandable on click.
 					expandToggle
 				))}
-			{(isActive || expanded) && (
+			{((isActive && !working) || expanded) && (
 				<div id={logRegionId}>
 					<LogViewer
 						lines={lines}

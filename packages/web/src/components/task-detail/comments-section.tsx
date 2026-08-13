@@ -1,5 +1,21 @@
+import {
+	buildThreadItems,
+	findGroupKeyForRow,
+	HeartbeatRunStatus,
+	isWorkingThreadRow,
+	type TaskView,
+	type ThreadFoldContext,
+} from '@hezo/shared';
 import { useLocation } from '@tanstack/react-router';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+	Fragment,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useAdminMentions, useMarkMentionRead } from '../../hooks/use-admin-mentions';
 import { useAgentLookup } from '../../hooks/use-agent-lookup';
@@ -11,19 +27,25 @@ import {
 	useCommentSkeletons,
 } from '../../hooks/use-comments';
 import type { Task } from '../../hooks/use-tasks';
+import { useI18n } from '../../lib/i18n';
 import { CommentRow } from './comment-row';
+import { EventGroupRow } from './event-group-row';
 
 /** How long the thread must stop scrolling before we load the bodies now on
  *  screen. A fast fling never pauses this long, so it fetches nothing. */
 const DWELL_MS = 170;
 
-type HashScrollTarget = { idx: number; highlightId: string | null };
+type HashScrollTarget = { commentId: string | null; highlightId: string | null };
 
 /**
- * Resolve a '#'-prefixed hash to a row in the loaded comments list.
+ * Resolve a '#'-prefixed hash to a comment in the loaded thread.
  * `#comment-<id>` targets that comment (and highlights it); `#setup-repo`
- * targets the unresolved setup-repo action card. `idx` is -1 when the hash
- * points at nothing here — no jump hash, or the row hasn't loaded yet.
+ * targets the unresolved setup-repo action card. `commentId` is null when the
+ * hash points at nothing here - no jump hash, or the row hasn't loaded yet.
+ *
+ * Deliberately a comment id rather than a row index: in the Conversation view
+ * the rendered rows are the *folded* model, so an index into the raw thread
+ * would address a different row (or none at all).
  */
 function resolveHashTarget(hash: string, comments: CommentSkeleton[]): HashScrollTarget {
 	if (hash.startsWith('#comment-')) {
@@ -32,18 +54,18 @@ function resolveHashTarget(hash: string, comments: CommentSkeleton[]): HashScrol
 		// UUID so legacy/internal jump hashes still resolve. Normalize the
 		// highlight id back to the matched comment's public_id, which is what the
 		// DOM anchor uses.
-		const idx = comments.findIndex((c) => c.public_id === targetId || c.id === targetId);
-		return { idx, highlightId: idx >= 0 ? comments[idx].public_id : null };
+		const match = comments.find((c) => c.public_id === targetId || c.id === targetId);
+		return { commentId: match?.id ?? null, highlightId: match?.public_id ?? null };
 	}
 	if (hash === '#setup-repo') {
-		const idx = comments.findIndex((c) => {
+		const match = comments.find((c) => {
 			if (c.content_type !== 'action') return false;
 			const content = typeof c.content === 'object' ? (c.content as { kind?: string }) : null;
 			return content?.kind === 'setup_repo' && !c.chosen_option;
 		});
-		return { idx, highlightId: null };
+		return { commentId: match?.id ?? null, highlightId: null };
 	}
-	return { idx: -1, highlightId: null };
+	return { commentId: null, highlightId: null };
 }
 
 interface CommentsSectionProps {
@@ -53,6 +75,8 @@ interface CommentsSectionProps {
 	taskProjectSlug: string;
 	scrollParent: HTMLElement | null;
 	onStartReply: (comment: Comment) => void;
+	/** Which rows the reader sees. Detailed renders every row, as it always has. */
+	view: TaskView;
 }
 
 /**
@@ -69,7 +93,9 @@ export function CommentsSection({
 	taskProjectSlug,
 	scrollParent,
 	onStartReply,
+	view,
 }: CommentsSectionProps) {
+	const { plural } = useI18n();
 	const { data: comments } = useCommentSkeletons(projectId, taskId);
 	const skeletonById = useMemo(() => {
 		const m = new Map<string, CommentSkeleton>();
@@ -250,6 +276,40 @@ export function CommentsSection({
 		}
 		return latest;
 	}, [comments, task.has_active_run]);
+	// The rows a reader actually sees. In Conversation, contiguous foldable rows
+	// collapse into groups; in Detailed every row comes back on its own, so the
+	// two views are one feed rather than two.
+	// `retryableRunId` is only the *candidate* - the newest run in the thread. The
+	// Retry button also needs that run to have failed, which the row itself
+	// checks against its own status. The fold rule has no per-run status, so it
+	// asks the task instead: the last finished run's outcome is exactly the
+	// missing half. Without it a *succeeded* latest run would sit unfolded
+	// offering nothing to act on.
+	const lastRunFailed =
+		task.last_run_status === HeartbeatRunStatus.Failed ||
+		task.last_run_status === HeartbeatRunStatus.TimedOut;
+	const foldCtx = useMemo<ThreadFoldContext>(
+		() => ({
+			activeRunId: task.active_run?.id ?? null,
+			retryableRunId: lastRunFailed ? retryableRunId : null,
+		}),
+		[task.active_run?.id, lastRunFailed, retryableRunId],
+	);
+	const items = useMemo(
+		() => buildThreadItems(comments ?? [], view, foldCtx),
+		[comments, view, foldCtx],
+	);
+	// Group keys are derived from their first row's id, so an expanded group keeps
+	// its state across a refetch and as later events join it.
+	const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+	const toggleGroup = useCallback((key: string) => {
+		setExpandedGroups((prev) => {
+			const next = new Set(prev);
+			if (!next.delete(key)) next.add(key);
+			return next;
+		});
+	}, []);
+
 	const virtuosoRef = useRef<VirtuosoHandle>(null);
 	const listContainerRef = useRef<HTMLDivElement>(null);
 	const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null);
@@ -307,16 +367,32 @@ export function CommentsSection({
 		if (!scrollParent) return;
 		if (typeof window === 'undefined') return;
 
-		const { idx, highlightId } = resolveHashTarget(hashTarget, comments);
+		const { commentId, highlightId } = resolveHashTarget(hashTarget, comments);
 		// Nothing to jump to, or we already handled this exact hash. The dedupe
 		// guard stops a WebSocket comments refetch (fresh array reference, same
 		// consumed hash) from re-yanking the viewport while the user reads.
-		if (idx < 0 || lastScrolledHashRef.current === hashTarget) return;
+		if (!commentId || lastScrolledHashRef.current === hashTarget) return;
+
+		// A deep link can land inside a folded group, whose rows are not in the DOM
+		// while it is collapsed. Expand it first and let this effect re-run - the
+		// hash is not marked consumed yet, so the scroll happens on the next pass
+		// with the target mounted.
+		const groupKey = findGroupKeyForRow(items, commentId);
+		if (groupKey && !expandedGroups.has(groupKey)) {
+			toggleGroup(groupKey);
+			return;
+		}
+
+		// Index into the rendered rows: the row itself, or the group holding it.
+		const idx = items.findIndex((item) =>
+			item.kind === 'row' ? item.row.id === commentId : item.key === groupKey,
+		);
+		if (idx < 0) return;
 
 		// A deep link jumps straight to a row the user hasn't dwelled on, so load its
 		// body eagerly — otherwise the placeholder→body height change lands mid-anchor
 		// and shifts the target out from under the viewport.
-		const target = comments[idx];
+		const target = comments.find((c) => c.id === commentId);
 		if (target && skeletonNeedsBody(target)) ensureCommentBodies(projectId, taskId, [target.id]);
 
 		const consumedHash = hashTarget;
@@ -425,7 +501,7 @@ export function CommentsSection({
 			inputAbort.abort();
 			for (const t of timers) clearTimeout(t);
 		};
-	}, [comments, scrollParent, hashTarget, projectId, taskId]);
+	}, [comments, scrollParent, hashTarget, projectId, taskId, items, expandedGroups, toggleGroup]);
 
 	// Fade the deep-link highlight a couple seconds after it lands. Keyed on the
 	// highlighted id (not the scroll timers) so a comments refetch mid-scroll
@@ -436,30 +512,67 @@ export function CommentsSection({
 		return () => clearTimeout(t);
 	}, [highlightedCommentId]);
 
+	const renderComment = (c: CommentSkeleton) => (
+		<CommentRow
+			comment={c}
+			comments={comments ?? []}
+			projectId={projectId}
+			taskProjectSlug={taskProjectSlug}
+			taskId={taskId}
+			retryableRunId={retryableRunId}
+			isHighlighted={highlightedCommentId === c.public_id}
+			agentsByMemberId={agentsByMemberId}
+			observeCommentRow={observeCommentRow}
+			onStartReply={onStartReply}
+			working={isWorkingThreadRow(c, foldCtx)}
+		/>
+	);
+
+	// The badge counts what it says it counts: the rows on screen, with the folded
+	// ones tallied beside it. Counting here rather than in the route is what keeps
+	// the two numbers and the feed reading from one row model.
+	const visibleCount = items.filter((i) => i.kind === 'row').length;
+	const foldedCount = (comments?.length ?? 0) - visibleCount;
+
 	return (
 		<div ref={listContainerRef} className="mb-4" data-testid="comments-list">
+			<div className="flex items-center gap-1.5 mb-4">
+				<h3 className="text-[13px] text-text-1 font-medium">Comments</h3>
+				<span
+					className="bg-surface-2 px-[7px] py-px rounded-full text-[11px] text-text-2"
+					data-testid="thread-comment-count"
+				>
+					{visibleCount}
+				</span>
+				{foldedCount > 0 && (
+					<span className="text-[11px] text-text-3" data-testid="thread-folded-count">
+						{`+ ${plural('thread.group.events', foldedCount)}`}
+					</span>
+				)}
+			</div>
 			{scrollParent && (
 				<Virtuoso
 					ref={virtuosoRef}
 					customScrollParent={scrollParent}
-					data={comments ?? []}
-					computeItemKey={(_, c) => c.id}
+					data={items}
+					computeItemKey={(_, item) => item.key}
 					defaultItemHeight={120}
 					increaseViewportBy={{ top: 600, bottom: 600 }}
-					itemContent={(_, c) => (
-						<CommentRow
-							comment={c}
-							comments={comments ?? []}
-							projectId={projectId}
-							taskProjectSlug={taskProjectSlug}
-							taskId={taskId}
-							retryableRunId={retryableRunId}
-							isHighlighted={highlightedCommentId === c.public_id}
-							agentsByMemberId={agentsByMemberId}
-							observeCommentRow={observeCommentRow}
-							onStartReply={onStartReply}
-						/>
-					)}
+					itemContent={(_, item) =>
+						item.kind === 'row' ? (
+							renderComment(item.row)
+						) : (
+							<EventGroupRow
+								summary={item.summary}
+								expanded={expandedGroups.has(item.key)}
+								onToggle={() => toggleGroup(item.key)}
+							>
+								{item.rows.map((row) => (
+									<Fragment key={row.id}>{renderComment(row)}</Fragment>
+								))}
+							</EventGroupRow>
+						)
+					}
 				/>
 			)}
 		</div>

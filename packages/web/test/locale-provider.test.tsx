@@ -190,9 +190,19 @@ describe('I18nProvider', () => {
 	test('plural() selects by the language own rules', () => {
 		installLanguages(['en-US']);
 		const { result } = renderHook(() => useI18n(), { wrapper });
-		// No plural keys ship yet, so this asserts the fallback path resolves
-		// rather than throwing - the Intl.PluralRules wiring is what matters.
-		expect(() => result.current.plural('common.loading', 2)).not.toThrow();
+		expect(result.current.plural('thread.group.events', 1)).toBe('1 event');
+		expect(result.current.plural('thread.group.events', 2)).toBe('2 events');
+		expect(result.current.plural('thread.group.events', 0)).toBe('0 events');
+	});
+
+	test('plural() falls back to `other` for a category the catalog omits', () => {
+		// Polish selects `few` for 2-4 and `many` for 5+; the catalogs author only
+		// `one` and `other`, so both must resolve rather than render a raw key.
+		installLanguages(['pl-PL']);
+		const { result } = renderHook(() => useI18n(), { wrapper });
+		expect(result.current.plural('thread.group.events', 3)).toContain('3');
+		expect(result.current.plural('thread.group.events', 7)).toContain('7');
+		expect(result.current.plural('thread.group.events', 3)).not.toContain('thread.group');
 	});
 
 	test('formatMoney follows the chosen currency convention', () => {

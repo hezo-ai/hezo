@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
+import { createProjectAndClearPlanning, expandEventGroups, waitForPageLoad } from './helpers';
 
 // The `mobile` Playwright project runs every *.mobile.spec.ts at a 390px
 // viewport (see playwright.config.ts), so these assertions exercise the
@@ -418,6 +418,10 @@ test.describe('Agent-run meta — mobile (390px)', () => {
 
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 
+		// Completed runs fold into an event group in the default Conversation view;
+		// these specs are about what the run row renders once opened.
+		await expandEventGroups(page);
+
 		const runCommentEl = page.getByTestId('run-comment').first();
 		await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 
@@ -445,6 +449,10 @@ test.describe('Agent-run meta — mobile (390px)', () => {
 		// column scrolled horizontally.
 		await page.setViewportSize({ width: 375, height: 800 });
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
+
+		// Completed runs fold into an event group in the default Conversation view;
+		// these specs are about what the run row renders once opened.
+		await expandEventGroups(page);
 
 		const header = page.getByTestId('run-comment-header');
 		await expect(header).toBeVisible({ timeout: 20_000 });
@@ -477,6 +485,10 @@ test.describe('Agent-run meta — mobile (390px)', () => {
 		const { project, task } = await mockRunComment(page, token);
 
 		await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
+
+		// Completed runs fold into an event group in the default Conversation view;
+		// these specs are about what the run row renders once opened.
+		await expandEventGroups(page);
 
 		const runCommentEl = page.getByTestId('run-comment').first();
 		await expect(runCommentEl).toBeVisible({ timeout: 20_000 });

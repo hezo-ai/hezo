@@ -132,7 +132,7 @@ Each app connects in one or both of two modes:
 
 - **Assistant (DM) mode** - you message the bot **privately**, and the conversation is a
   real-time CEO chat thread. It's your personal remote control for the CEO, so only
-  identities you explicitly link under **Settings → Chat channels → Allowed identities**
+  identities you explicitly link under **Settings → Chat → Allowed identities**
   may chat; unknown senders get no reply. These threads are fully interactive from the
   web view too.
 - **Coworker (channel) mode** - the CEO joins a **group channel your team already

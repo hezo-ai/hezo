@@ -20,6 +20,7 @@ interface TaskRow {
 	last_run_id?: string | null;
 	last_run_comment_id?: string | null;
 	has_active_run: boolean;
+	active_run?: { id: string; status: string; member_id: string } | null;
 }
 
 beforeAll(async () => {
@@ -116,6 +117,41 @@ describe('task last-run fields', () => {
 		expect(listRow.last_run_status).toBeNull();
 		expect(detail.last_run_status).toBeNull();
 		expect(detail.has_active_run).toBe(true);
+	});
+
+	it('names the active run, so the thread can tell which row is the live one', async () => {
+		const taskId = await createTask('Active run id');
+		const runId = await insertRun(taskId, 'running', null);
+		const detail = await fetchDetail(taskId);
+		// Without the id the thread can only guess which of its run rows is live -
+		// and it guesses wrong the moment a task has more than one run.
+		expect(detail.active_run?.id).toBe(runId);
+		expect(detail.active_run?.status).toBe('running');
+	});
+
+	it('names the queued run when nothing is executing yet', async () => {
+		const taskId = await createTask('Queued run id');
+		const runId = await insertRun(taskId, 'queued', null);
+		const detail = await fetchDetail(taskId);
+		expect(detail.active_run?.id).toBe(runId);
+		expect(detail.active_run?.status).toBe('queued');
+	});
+
+	it('prefers the executing run over a queued one, and names that one', async () => {
+		const taskId = await createTask('Both states');
+		await insertRun(taskId, 'queued', null);
+		const runningId = await insertRun(taskId, 'running', null);
+		const detail = await fetchDetail(taskId);
+		expect(detail.active_run?.id).toBe(runningId);
+		expect(detail.active_run?.status).toBe('running');
+	});
+
+	it('reports no active run once every run has finished', async () => {
+		const taskId = await createTask('All done');
+		await insertRun(taskId, 'succeeded', new Date());
+		const detail = await fetchDetail(taskId);
+		expect(detail.active_run ?? null).toBeNull();
+		expect(detail.has_active_run).toBe(false);
 	});
 
 	it('exposes the run-start comment id for a failed run', async () => {

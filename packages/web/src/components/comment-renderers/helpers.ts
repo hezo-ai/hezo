@@ -85,6 +85,7 @@ export function inlineEventIcon(comment: CommentData): LucideIcon {
 	return Dot;
 }
 
-export function isInlineEventType(contentType: string): boolean {
-	return contentType === 'system' || contentType === 'run';
-}
+// The canonical definition lives in `@hezo/shared` alongside the fold rule that
+// reads it - both views must agree on which rows are events. Re-exported here so
+// the renderer modules keep importing it from one place.
+export { isInlineEventType } from '@hezo/shared';

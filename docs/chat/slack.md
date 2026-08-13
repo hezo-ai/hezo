@@ -39,7 +39,7 @@ server, so it works even when your instance has no public URL.
      `connections:write` scope - this is the **app-level token** (`xapp-…`).
    - Under **Install App**, install it to your workspace and copy the **bot token**
      (`xoxb-…`).
-3. **Paste both into Hezo.** On **Settings → Chat channels → Slack**, paste both tokens,
+3. **Paste both into Hezo.** On **Settings → Chat → Slack**, paste both tokens,
    tick **Enabled**, and save. Hezo verifies both tokens against Slack and connects.
 4. **Invite the bot.** In Slack, `/invite @hezo` in any channel where you want the CEO
    as a coworker. For DMs, also link your Slack member ID (profile → **⋯** → **Copy

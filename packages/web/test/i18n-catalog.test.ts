@@ -117,8 +117,22 @@ describe('message catalogs', () => {
 		'nav.documents': ['fr'],
 		'nav.home': ['it'],
 		'theme.system': ['de', 'sv'],
-		'settings.general': ['es'],
 		'settings.chatbox': ['de'],
+		// "Chat" is the ordinary loanword in all five, article and all - der Chat,
+		// el chat, la chat, de chat, o chat. French (Discussion), Polish (Czat) and
+		// Swedish (Chatt) all differ, as `settings.chatbox` already records for de.
+		'settings.chat': ['de', 'es', 'it', 'nl', 'pt-BR'],
+		// Both catalogs already write "agent" for the singular throughout
+		// (`agents.hire.action`), so the plural heading is the same word too.
+		'settings.groups.agents': ['fr', 'nl'],
+		// Spanish writes "General" identically - this entry moved here from
+		// settings.general when that page became Instance.
+		'settings.groups.general': ['es'],
+		// French for both is the same word; every other language differs
+		// (Wartung, Manutenzione, Instans, Instancja, ...).
+		'settings.groups.maintenance': ['fr'],
+		'settings.instance': ['fr'],
+		'taskView.conversation': ['fr'],
 		// Dutch really does write "containers" - the loanword, plural and all.
 		// Every other language differs (Container, Conteneurs, Contêineres, ...).
 		'settings.concurrency': ['nl'],
