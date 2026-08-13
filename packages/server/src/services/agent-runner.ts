@@ -2113,6 +2113,13 @@ export async function runAgent(
 										[heartbeatRunId],
 									);
 									producedOutput = true;
+									// The comment just posted IS the final message, so every active
+									// mention in it is now delivered. Record that before (2) runs: a
+									// final message can carry both spellings for the same teammate
+									// (a passive line-opening address plus a mention elsewhere), and
+									// without this (2) would warn that a handoff was "NOT delivered"
+									// one statement after delivering it.
+									for (const slug of activeMentions) delivered.add(slug);
 									emit(
 										'stdout',
 										`\n[runner] auto-delivered stranded handoff (@${undeliveredActive.join(', @')}) from the run's final message as a comment\n`,

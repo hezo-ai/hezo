@@ -153,13 +153,28 @@ describe('detectUnlinkedTeammateAsks', () => {
 		).toEqual([]);
 	});
 
-	it('does not flag a slug that is also actively @-mentioned elsewhere', () => {
+	it('does not flag a BOLD name whose slug is also actively @-mentioned elsewhere', () => {
+		// The active mention notified, and bold marks emphasis and attribution as
+		// readily as an address — so this stays exempt. Warning here would claim a
+		// wakeup was missed when one was created.
 		expect(
 			detectUnlinkedTeammateAsks(
 				'@architect kicked this off. **architect** — can you finish it?',
 				slugs,
 			),
 		).toEqual([]);
+	});
+
+	it('flags a LEADING-LINE bare address when the active mention addresses no one', () => {
+		// The bare-name mirror of the screenshot. Unlike bold, opening a line with a
+		// name and a separator has only one reading, so a passing mention elsewhere
+		// does not excuse leaving the address itself inert.
+		expect(
+			detectUnlinkedTeammateAsks(
+				'@architect kicked this off last week.\n\narchitect — can you finish it?',
+				slugs,
+			),
+		).toEqual(['architect']);
 	});
 
 	it('does not flag a passive @@mention address', () => {

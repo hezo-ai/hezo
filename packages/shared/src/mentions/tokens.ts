@@ -159,6 +159,27 @@ export function extractActiveAgentMentionSlugs(value: string): string[] {
 }
 
 /**
+ * Whether `value` carries an ACTIVE `@admin` — the one mention that reaches a
+ * human rather than an agent, fanning out to an `admin_mentions` inbox row per
+ * project owner. It is the complement of {@link extractActiveAgentMentionSlugs},
+ * which drops admin because admin is not an agent and resolves to no roster row;
+ * the composer's "Wake:" preview needs both halves to match the server, which
+ * reports `woke: ['admin']` for exactly this input. The passive `@@admin`
+ * notifies no one and is excluded, as are code blocks and inline code.
+ */
+export function hasActiveAdminMention(value: string): boolean {
+	const stripped = stripCode(value);
+	const re = buildMentionRegex();
+	let m = re.exec(stripped);
+	while (m !== null) {
+		const token = parseMentionMatch(m);
+		if (token.kind === 'agent' && token.slug === ADMIN_MENTION_SLUG) return true;
+		m = re.exec(stripped);
+	}
+	return false;
+}
+
+/**
  * The inverse of {@link extractMentionCandidates}: pulls resolvable references
  * that are wrapped in *inline code* (and therefore render inert) instead of from
  * the surrounding prose. Fenced and indented code blocks are excluded — those

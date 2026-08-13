@@ -1,4 +1,9 @@
-import { type AgentEffort, extractActiveAgentMentionSlugs } from '@hezo/shared';
+import {
+	ADMIN_MENTION_SLUG,
+	type AgentEffort,
+	extractActiveAgentMentionSlugs,
+	hasActiveAdminMention,
+} from '@hezo/shared';
 import * as Dialog from '@radix-ui/react-dialog';
 import { CornerDownRight, Loader2, Maximize2, Minimize2, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -88,10 +93,12 @@ export function CommentComposer({
 
 	const { data: agents } = useAgents(projectId);
 
-	// The agents this comment will wake when posted: every actively `@`-mentioned
-	// agent resolvable in the project roster (which includes the HQ CEO/Coach),
-	// plus the reply-target agent. Deduped by id, so an agent that is both
-	// mentioned and replied-to shows once. Mirrors the server's wakeup fan-out.
+	// Who this comment will wake when posted: an active `@admin` (which fans out to
+	// an inbox row per project owner, not to an agent, so it resolves against no
+	// roster entry and is listed by its mention token), every actively
+	// `@`-mentioned agent resolvable in the project roster (which includes the HQ
+	// CEO/Coach), plus the reply-target agent. Deduped by id, so an agent that is
+	// both mentioned and replied-to shows once. Mirrors the server's wakeup fan-out.
 	const wakeAgents = useMemo(() => {
 		const roster = agents ?? [];
 		// An agent answers to both handles, so `@riley` must preview the same wake
@@ -103,6 +110,12 @@ export function CommentComposer({
 			if (a.human_name_slug) bySlug.set(a.human_name_slug.toLowerCase(), a);
 		}
 		const picked = new Map<string, { id: string; name: string }>();
+		if (hasActiveAdminMention(commentText)) {
+			picked.set(ADMIN_MENTION_SLUG, {
+				id: ADMIN_MENTION_SLUG,
+				name: `@${ADMIN_MENTION_SLUG}`,
+			});
+		}
 		for (const slug of extractActiveAgentMentionSlugs(commentText)) {
 			const a = bySlug.get(slug);
 			if (a) picked.set(a.id, { id: a.id, name: agentDisplayName(a) });
