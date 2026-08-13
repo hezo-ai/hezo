@@ -851,6 +851,14 @@ export async function openTeamCatalog(page: Page): Promise<void> {
 export async function expandEventGroups(page: Page): Promise<number> {
 	const collapsed = page.locator('[data-testid="event-group-toggle"][aria-expanded="false"]');
 	let opened = 0;
+	// Wait for the thread, then for a chip to mount. Expanding straight after a
+	// navigation would race the feed and silently open nothing.
+	await page.getByTestId('comments-list').waitFor({ state: 'visible', timeout: 20_000 });
+	await collapsed
+		.first()
+		.waitFor({ state: 'visible', timeout: 10_000 })
+		// A thread with nothing foldable is legitimate; the caller checks the count.
+		.catch(() => {});
 	// Expanding one group can mount another - Virtuoso only renders near the
 	// viewport - so keep going until none are left.
 	for (let pass = 0; pass < 10; pass++) {

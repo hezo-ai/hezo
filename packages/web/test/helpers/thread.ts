@@ -20,11 +20,18 @@ export async function expandEventGroups(user: UserEvent): Promise<number> {
 		);
 
 	let opened = 0;
-	// Expanding one group can mount another (Virtuoso only renders what is near
-	// the viewport), so keep going until none are left collapsed.
+	// Wait for the thread, then for a chip to mount. Expanding straight after a
+	// navigation would race the feed and silently open nothing.
 	await waitFor(() => {
 		expect(document.querySelector('[data-testid="comments-list"]')).not.toBeNull();
 	});
+	try {
+		await waitFor(() => {
+			expect(toggles().length).toBeGreaterThan(0);
+		});
+	} catch {
+		// A thread with nothing foldable is legitimate; the caller checks the count.
+	}
 	for (let pass = 0; pass < 10; pass++) {
 		const pending = toggles();
 		if (pending.length === 0) break;
