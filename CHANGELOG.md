@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.45.0 - 2026-08-13
+
+### Features
+
+- **tasks:** fold the task thread into a conversation, and regroup global settings ([#960](https://github.com/hezo-ai/hezo/pull/960))
+- **tasks:** order the task list running, then waiting-on-admin, then the rest ([#951](https://github.com/hezo-ai/hezo/pull/951))
+- **agents:** gate a new agent's tasks on its team setup review ([#953](https://github.com/hezo-ai/hezo/pull/953))
+
+### Bug Fixes
+
+- **runtimes:** stop losing every Grok, OpenCode and Kimi run to E2BIG ([#957](https://github.com/hezo-ai/hezo/pull/957))
+- **mentions:** a non-addressing active @slug no longer excuses a passive address ([#959](https://github.com/hezo-ai/hezo/pull/959))
+- **runs:** park a capacity-blocked run instead of failing it, filter errored runs ([#956](https://github.com/hezo-ai/hezo/pull/956))
+- **tasks:** let an agent hand off the task its own run is executing ([#955](https://github.com/hezo-ai/hezo/pull/955))
+- **web:** make the whole assignee option the identity-card trigger ([#954](https://github.com/hezo-ai/hezo/pull/954))
+- **web:** fit the org chart to its column, scroll below the readable floor ([#952](https://github.com/hezo-ai/hezo/pull/952))
+
+### Refactors
+
+- **prompts:** rewrite agent-facing prose to a Simplified Technical English register ([#958](https://github.com/hezo-ai/hezo/pull/958))
+
+### Other
+
+- Agent identity: role on the team page, name + tooltip everywhere ([#949](https://github.com/hezo-ai/hezo/pull/949))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.44.0...0.45.0
+
 ## 0.44.0 - 2026-08-12
 
 ### Features
