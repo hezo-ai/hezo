@@ -81,6 +81,26 @@
 	],
 	"changelog": [
 		{
+			"version": 24,
+			"notes": "The route-authorization review rule is stated once and shared by the QA and Security roles rather than kept as two copies."
+		},
+		{
+			"version": 23,
+			"notes": "Restores a hire-workflow lead line that the previous rewrite had folded into the sentence after it."
+		},
+		{
+			"version": 22,
+			"notes": "Removes a line that appeared twice in the QA Engineer's review workflow, and restores the exact wording of the one-branch-one-PR and QA-handoff rules."
+		},
+		{
+			"version": 21,
+			"notes": "Shared Captain guidance is tightened: the hire workflow now states its four obligations once and then the two paths that use them, rather than repeating them in both, and the progress-update rules lose a bullet that restated the three above it."
+		},
+		{
+			"version": 19,
+			"notes": "Every role prompt is rewritten to one house register: shorter sentences, one rule per bullet, and each rule stated once instead of restated across roles. Two real defects go with it - QA was told the Engineer merges each phase to the default branch while the Engineer was told never to, and a previous rename had turned words like \"issues\" into \"tasks\" mid-sentence. The prompts also stop naming Hezo's own source paths and helpers, which do not exist in your repository; the code quality principles now describe the shape to look for instead."
+		},
+		{
 			"version": 18,
 			"notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
 		},

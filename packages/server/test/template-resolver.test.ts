@@ -122,23 +122,17 @@ describe('template resolver', () => {
 		expect(result).toContain('config.env');
 	});
 
-	it('tells agents to record and maintain a skill for a connected service, scoped to the connector', async () => {
+	it('tells agents to record and maintain a skill for reusable know-how', async () => {
 		const result = await resolveSystemPrompt(db, 'Base prompt.', { teamId });
-		// After getting a connector working, the integration know-how is persisted
-		// as a skill for teammates.
-		expect(result).toContain('#### Record the service as a skill once the connector works');
-		expect(result).toContain('persist it as a skill before you move on');
 		// Skills are maintained, not write-once: same slug + scope upserts in place.
 		expect(result).toContain('Skills are living documents');
 		expect(result).toContain('same slug and scope');
-		// Public-first: search skills.sh / vendor skill files and persist rather
-		// than authoring a duplicate.
-		expect(result).toContain('Check for an existing public skill before authoring your own');
-		// Scope heuristic: the skill's scope follows the connector's reach.
-		expect(result).toContain("Match the skill's scope to the connector's reach");
-		// Layering: project specifics go in a project skill that references the
-		// general skill, not a fork of it.
-		expect(result).toContain('references the general skill by slug');
+		// The connector-specific half of this guidance (record the service, check for
+		// an existing public skill, match scope to the connector's reach, layer rather
+		// than fork) now lives in the `connector-recipes` skill, which every agent is
+		// told to load BEFORE connecting anything — so it arrives when it is needed
+		// instead of costing every run. Asserted in connector-recipes-skill.test.ts.
+		expect(result).toContain("call `get_skill('connector-recipes')`");
 	});
 
 	it('makes checking the skills manifest for a relevant skill mandatory before any write or edit', async () => {

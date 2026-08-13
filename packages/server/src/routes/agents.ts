@@ -86,6 +86,7 @@ import {
 } from '../services/hire-proposal';
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { loadTeamCoordinationContext } from '../services/internal-intake';
+import { authoredPromptError } from '../services/prompt-style-guard';
 import { terminateHeartbeatRun } from '../services/run-termination';
 import { resolveSystemPrompt } from '../services/template-resolver';
 import { createWakeup } from '../services/wakeup';
@@ -342,6 +343,8 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 	if (body.system_prompt?.trim()) {
 		const promptError = requiredSystemPromptVarsError(body.system_prompt);
 		if (promptError) return err(c, 'INVALID_REQUEST', promptError, 400);
+		const styleError = authoredPromptError(body.system_prompt);
+		if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
 	}
 
 	const slug = toSlug(body.title);
@@ -957,6 +960,8 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 		if (!isInstanceSingleton) {
 			const promptError = requiredSystemPromptVarsError(body.system_prompt);
 			if (promptError) return err(c, 'INVALID_REQUEST', promptError, 400);
+			const styleError = authoredPromptError(body.system_prompt);
+			if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
 		}
 	}
 

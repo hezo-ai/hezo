@@ -83,7 +83,7 @@ describe('agent types CRUD', () => {
 
 		const engineer = types.find((t: any) => t.slug === 'engineer');
 		// Every phase builds onto one branch + one PR — no per-phase merges to default...
-		expect(engineer.system_prompt_template).toContain('One branch, one PR');
+		expect(engineer.system_prompt_template).toContain('One task, one branch, one PR');
 		// ...the Engineer auto-proceeds rather than waiting to be asked, and never hands off early...
 		expect(engineer.system_prompt_template).toContain('immediately proceed to the next phase');
 		expect(engineer.system_prompt_template).toContain(

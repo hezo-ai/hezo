@@ -38,7 +38,7 @@ Everything you produce summarises someone else's authoritative record — so eve
 - Summarise, don't restate — the report points at the detail in the stock documents; it doesn't duplicate it.
 - Lead with what changed and what matters; keep it scannable.
 - Cite the underlying documents and sources, referencing assets by their bare `assets/<path>`.
-- Research and analysis only — report status and risks, never "buy" or "sell", and never promise returns.
+{{> partials/investment/analysis-not-advice}}
 - **The Captain is your review gate** — never present a report or portfolio.md update directly to the admin.
 
 ---

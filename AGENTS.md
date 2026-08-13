@@ -61,7 +61,8 @@
   - `agents/_partials/<group>/<name>.md` resolves at **build/load time only** (`db/resolve-partials.ts`, baked in by `build:agents`) and reaches only seeded built-in agents. Use for guidance shared by a subset of seeded roles; changing one requires re-running `build:agents`.
   - `agents/<template>/*.md` — one seeded role's own prose.
   - Decision rule: every agent incl. future hires → `SHARED_INSTRUCTIONS`; a subset of seeded roles → a partial; one role → that role's `.md`.
-- `.dev/` — internal engineering docs and the home for the rationale this file omits. `architecture.md` is the consolidated **descriptive** reference; alongside it sit the **prescriptive** guides — `adding-a-container-backend.md`, `adding-a-chat-channel.md`, `writing-migrations.md` — and `bun-issues.md`, the register of the production runtime's divergences from Node. Which of them a given piece of writing belongs in is the routing table at the top of this file.
+- **Agent-facing prose is written to one register — `.dev/writing-agent-prompts.md`.** ASD-STE100 plus Zinsser, adapted for LLM prompts; `agents/influencer/content-writer.md` is the reference doc. Trip-wires: one rule per bullet, ≤25 words a sentence, ≤60 words a bullet, imperative and second person, and the bold lead reads alone. State a rule **once**, in the highest-reaching surface that covers its audience (the reach rule above) — a role doc never restates `SHARED_INSTRUCTIONS`, and a `Responsibilities` list never restates the workflow below it. No rationale unless the rule cannot be applied without it, no example that only re-illustrates, one consequence clause per rule. **No Hezo symbol, path or precedent in `agents/<team>/**` or a partial reaching one** — those ship into other people's repositories; generic `AGENTS.md` and `hezo/<TASK>` stay. The machine-checkable half is `checkPromptStyle` (`@hezo/shared`), enforced at commit time by `scripts/check-prompt-style.ts` and at runtime on every authoring surface.
+- `.dev/` — internal engineering docs and the home for the rationale this file omits. `architecture.md` is the consolidated **descriptive** reference; alongside it sit the **prescriptive** guides — `adding-a-container-backend.md`, `adding-a-chat-channel.md`, `writing-migrations.md`, `writing-agent-prompts.md` — and `bun-issues.md`, the register of the production runtime's divergences from Node. Which of them a given piece of writing belongs in is the routing table at the top of this file.
 - `docs/` — user-facing documentation rendered at `https://hezo.ai/docs`. `docs/reference/cli.md` is hand-written; `docs/reference/mcp-api.md` is **generated** from the MCP tool registry — never hand-edit it. After touching an MCP tool, author its return shape / authorization note in `TOOL_DOC_META` (`mcp/mcp-reference.ts`) and rebuild with `bun run --cwd packages/server build:docs`.
   - The full `docs/` tree is bundled into the binary and injected into the CEO real-time chat. Each `.md` carries `title`/`order`/`section` frontmatter; `bundle-docs.ts` writes `docs-bundle.json`, `docs-bundle.ts` organises it, `template-resolver.ts` swaps it in at the `<!-- HEZO_DOCS -->` marker in `agents/_instance/ceo.md`. **Keep the marker; never copy doc prose into the role doc.** Adding/removing a page or changing frontmatter must keep `docs-bundle.test.ts` green.
 - **The agent-facing surfaces are generated — update the generator and its test, never a static file.** Which surfaces mirror an MCP tool or REST route is in **Mirrored surfaces** below. Scope: `SKILL.md` (`mcp/skill-file.ts`, served at `GET /SKILL.md`) covers the MCP surface plus a pointer to `HEZO_DOCS_URL` — not the REST API, and not the docs themselves, which reach agents via the CEO chat bundle instead.
@@ -80,6 +81,9 @@
 | A REST route name | its MCP-tool twin (same resource noun) | **nothing - on you** |
 | A user-facing string | the 11 non-English catalogs | `i18n-catalog.test.ts` |
 | A team prompt or `team.json` | committed `marketplace/teams/*.json` + `index.json` | `marketplace-build.test.ts` |
+| Prose in `SHARED_INSTRUCTIONS` or a role doc | the ~324 `toContain` strings quoting it (`template-resolver{,-cov-fill}`, `qa-ci-merge-gate`, `mention-handoff-prompt`, `connector-recipes-skill`, `mcp-tools`, `description-tasks`, `agent-types`, `coach`) — reword the string, never delete the assertion | the suite, loudly |
+| A prompt-style rule | `packages/shared/src/prompt-style.ts`, its `{{prompt_style_rules}}` render, the authoring tool descriptions, `.dev/writing-agent-prompts.md` | `mcp-reference.test.ts` for the tool docs, **nothing for the rest** |
+| A new surface that accepts an authored prompt | its `checkPromptStyle` call | **nothing - on you** |
 | A docs page (add / remove / frontmatter) | the embedded docs bundle | `docs-bundle.test.ts` |
 | A link in a `docs/` page (another page, an anchor, a repo file, an external URL) | the target it names | `docs-links.test.ts` + the `check-docs-links.ts` hook |
 | A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
@@ -100,7 +104,7 @@
 
 **Verify, don't assume.** Generated surfaces have drift tests (`{mcp-reference,llms-txt,docs-bundle}.test.ts`); hand-written prose has one guard, `docs-terminology.test.ts`, checking punctuation only. Nothing checks whether prose is *true* — re-read the pages describing what you changed and confirm every concrete claim still matches the code.
 
-**Two husky hooks run on every commit.** `.husky/pre-commit`: `bunx biome check --diagnostic-level=error .`, `bun run typecheck`, `bun run build`. `.husky/commit-msg`: `bunx commitlint --edit`, `scripts/check-docs-ack.ts`, `scripts/check-translations-ack.ts`, `scripts/check-docs-links.ts`.
+**Two husky hooks run on every commit.** `.husky/pre-commit`: `bunx biome check --diagnostic-level=error .`, `bun run typecheck`, `bun run build`. `.husky/commit-msg`: `bunx commitlint --edit`, `scripts/check-docs-ack.ts`, `scripts/check-translations-ack.ts`, `scripts/check-prompts-ack.ts`, `scripts/check-docs-links.ts`, `scripts/check-prompt-style.ts`.
 
 **`check-docs-links.ts` fails a commit staging any `docs/**/*.md` on a broken link.** Internal links (docs-to-docs incl. `#anchors`, relative paths, `github.com/hezo-ai/hezo/{blob,raw,tree}/main/<path>`) are checked across the whole tree - a rename or delete breaks *other* files' links. External URLs are probed for staged files only (7-day success cache in `.git/`); a definitive 404/410 blocks, network-shaped failures (403 bot walls, timeouts, DNS) only warn, so an offline commit passes. Fix the link, never bypass; `docs-links.test.ts` re-runs the internal check in CI.
 
@@ -114,6 +118,18 @@ Docs-Checked: internal refactor, no user-visible behaviour or documented surface
 ```
 
 The trailer must be true. **Never bypass the hook with `--no-verify`.** Docs-only, test-only, merge, revert and fixup commits are exempt. Classification is tested in `docs-ack-hook.test.ts`; a new doc-bearing top-level directory goes into `DOC_BEARING_PATTERNS` in the same change.
+
+**`Prompts-Checked:` is enforced at commit time.** Any commit staging prompt-bearing prose (`agents/`, `skills/`, `marketplace/`, `services/template-resolver.ts`) is rejected without a `Prompts-Checked:` trailer recording the pass you did against `.dev/writing-agent-prompts.md` — the register, and the check that no rule is now stated twice. Bare values under 10 characters are rejected:
+
+```
+Prompts-Checked: rewrote SHARED_INSTRUCTIONS § Delegation to the register; no rule added or removed
+Prompts-Checked: deleted the duplicated AGENTS.md bullet from 6 sw-dev docs; the rule now lives in _partials/common/repo-work.md
+Prompts-Checked: role-specific edit, no shared guidance restated and no rule duplicated
+```
+
+The trailer must be true. **Never bypass the hook with `--no-verify`.** Same exemptions as `Docs-Checked:`. Classification is tested in `prompts-ack-hook.test.ts`; a new prompt-bearing path goes into `PROMPT_BEARING_PATTERNS` in the same change.
+
+**`scripts/check-prompt-style.ts` runs alongside it, and severity decides what blocks.** The rules live once in `checkPromptStyle` (`@hezo/shared`), shared with the runtime authoring surfaces and the web UI. **Errors fail the commit** — a bullet duplicated across files, a Hezo symbol in a marketplace-reaching file, a backticked project-doc filename — because each is unambiguous. **Warnings print and pass** — sentence and bullet length, hedges, intensifiers — because they are judgement calls, and a heuristic that blocks an unrelated commit is how a rule gets weakened to quiet it. Demote a noisy rule rather than adding an exemption.
 
 ## Project / team model (1:1)
 
@@ -266,6 +282,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 |---|---|
 | Guidance reaching every agent, now and future | `SHARED_INSTRUCTIONS` (`services/template-resolver.ts`) |
 | Guidance for a subset of seeded roles | `agents/_partials/<group>/` |
+| Validating an authored prompt | `checkPromptStyle` (`@hezo/shared`), plus `services/prompt-style-guard.ts` for the duplicates-`SHARED_INSTRUCTIONS` half |
 | A container backend | `ContainerEngine` (`services/sandbox/types.ts`), always reached via `SandboxBackendHolder.engine` |
 | "Does this backend class need X?" | `SANDBOX_BACKEND_KIND` (`@hezo/shared`) |
 | An in-container script or its parser | `services/sandbox/proc-scripts.ts` - never an adapter |

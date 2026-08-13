@@ -62,6 +62,22 @@
 	],
 	"changelog": [
 		{
+			"version": 18,
+			"notes": "Drops a Captain responsibility line that restated the onboarding step already described below it."
+		},
+		{
+			"version": 17,
+			"notes": "Restores a hire-workflow lead line that the previous rewrite had folded into the sentence after it."
+		},
+		{
+			"version": 16,
+			"notes": "Role prompts are rewritten to a shorter, more direct register, and the shared Captain guidance they include is tightened. No workflow, approval gate or rule changed."
+		},
+		{
+			"version": 14,
+			"notes": "Role prompts no longer each carry their own copy of the team-preferences reminder, which every agent now receives from the shared instructions."
+		},
+		{
 			"version": 13,
 			"notes": "Roles are now addressed by their role rather than a shipped first name, so a new project reads Engineer and Architect rather than Max and Ada. Naming an agent is an opt-in: name any of them from its Settings and the name shows everywhere with the role alongside. A project that already named its agents keeps those names."
 		},

@@ -173,6 +173,7 @@ import {
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
+import { authoredPromptError, authoredPromptWarning } from '../services/prompt-style-guard';
 import {
 	addCommentReaction,
 	loadReactionsForTask,
@@ -4646,6 +4647,10 @@ export function registerTools(
 				const promptError = requiredSystemPromptVarsError(args.new_system_prompt as string);
 				if (promptError) return { error: promptError };
 			}
+			// The house register: mechanical violations reject, judgement calls come
+			// back as an advisory on the successful write (see prompt-style-guard).
+			const styleError = authoredPromptError(args.new_system_prompt as string);
+			if (styleError) return { error: styleError };
 
 			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 
@@ -4668,7 +4673,12 @@ export function registerTools(
 				),
 			);
 
-			return { applied: true, document_id: doc.row.id };
+			const styleWarning = authoredPromptWarning(args.new_system_prompt as string);
+			return {
+				applied: true,
+				document_id: doc.row.id,
+				...(styleWarning ? { warning: styleWarning } : {}),
+			};
 		},
 		db,
 		{ write: true, audience: 'coordinator' },
@@ -4745,6 +4755,11 @@ export function registerTools(
 						results.push({ index: i, agent_id: u.agent_id, ok: false, error: promptError });
 						continue;
 					}
+				}
+				const styleError = authoredPromptError(u.new_system_prompt);
+				if (styleError) {
+					results.push({ index: i, agent_id: u.agent_id, ok: false, error: styleError });
+					continue;
 				}
 				const doc = await upsertDocument(db, undefined, {
 					scope: { type: DocumentType.AgentSystemPrompt, teamId, memberAgentId: agentId },
@@ -4825,6 +4840,11 @@ export function registerTools(
 				};
 			}
 
+			// The Custom Prompt is injected verbatim into every agent's prompt, so it
+			// is held to the same register as one.
+			const styleError = authoredPromptError(args.content as string);
+			if (styleError) return { error: styleError };
+
 			const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
 			const authorMemberId = await resolveActorMemberId(db, auth, teamId);
 			const doc = await upsertDocument(db, wsManager, {
@@ -4849,7 +4869,13 @@ export function registerTools(
 				);
 			}
 
-			return { applied: true, document_id: doc.row.id, length: (args.content as string).length };
+			const styleWarning = authoredPromptWarning(args.content as string);
+			return {
+				applied: true,
+				document_id: doc.row.id,
+				length: (args.content as string).length,
+				...(styleWarning ? { warning: styleWarning } : {}),
+			};
 		},
 		db,
 		{ write: true, audience: 'coordinator' },
@@ -4938,7 +4964,8 @@ export function registerTools(
 				),
 			);
 
-			return { updated: true };
+			const styleWarning = authoredPromptWarning(args.summary as string);
+			return { updated: true, ...(styleWarning ? { warning: styleWarning } : {}) };
 		},
 		db,
 		{ write: true, audience: 'agent_or_admin' },
@@ -5071,7 +5098,8 @@ export function registerTools(
 				teamId,
 			]);
 
-			return { updated: true };
+			const styleWarning = authoredPromptWarning(args.summary as string);
+			return { updated: true, ...(styleWarning ? { warning: styleWarning } : {}) };
 		},
 		db,
 		{ write: true, audience: 'coordinator' },
@@ -5141,7 +5169,8 @@ export function registerTools(
 			);
 			if (r.rows.length === 0) return { error: 'Agent not found in this team' };
 
-			return { updated: true };
+			const styleWarning = authoredPromptWarning(args.content as string);
+			return { updated: true, ...(styleWarning ? { warning: styleWarning } : {}) };
 		},
 		db,
 		{ write: true, audience: 'coordinator' },

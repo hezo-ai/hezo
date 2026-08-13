@@ -12,6 +12,7 @@ import { checkHumanNameAvailable } from '../lib/agent-identity';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
+import { authoredPromptError } from './prompt-style-guard';
 
 const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
 
@@ -88,6 +89,8 @@ export async function prepareHireProposal(
 	// An omitted/empty prompt keeps the existing default behaviour.
 	const promptError = requiredSystemPromptVarsError(input.system_prompt ?? '');
 	if (input.system_prompt?.trim() && promptError) return { error: promptError };
+	const styleError = authoredPromptError(input.system_prompt ?? '');
+	if (input.system_prompt?.trim() && styleError) return { error: styleError };
 
 	const slug = toSlug(title);
 	if (isReservedAgentSlug(slug)) {

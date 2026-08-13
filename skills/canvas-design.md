@@ -42,8 +42,8 @@ Create a single-page, highly visual, design-forward PNG or PDF (unless more page
 - Add sparse, clinical typography and systematic reference markers, as if this were a diagram from an imaginary discipline.
 - Anchor the piece with a simple phrase or detail placed subtly; keep a limited, intentional palette.
 - Text is minimal and visual-first — but let context set the register: a punk venue poster shouts where a ceramics studio whispers. Fonts should generally be thin, deliberate, and part of the art itself, not typeset as an afterthought. Download fonts if needed.
-- **Nothing falls off the page and nothing overlaps.** Every element within the canvas bounds with real margins and breathing room. This is non-negotiable for professional execution.
-- Sophistication is non-negotiable — even for playful subjects, this is art, not clip-art.
+- **Nothing falls off the page and nothing overlaps.** Keep every element within the canvas bounds, with real margins and breathing room.
+- Keep it sophisticated even for playful subjects. This is art, not clip-art.
 
 ## Step 4: The refinement pass
 
