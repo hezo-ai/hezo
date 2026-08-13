@@ -671,7 +671,7 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		expect(started!.triggerSource).toBeNull();
 	});
 
-	it('qualifies the model and delivers the prompt as a trailing arg for the OpenCode runtime', async () => {
+	it('qualifies the model and delivers the prompt on stdin for the OpenCode runtime', async () => {
 		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 		await app.request('/api/ai-providers', {
 			method: 'POST',
@@ -706,13 +706,16 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 			expect(modelIdx).toBeGreaterThan(-1);
 			expect(capturedCmd[modelIdx + 1]).toBe('openrouter/anthropic/claude-sonnet-4.5');
 
-			// OpenCode takes the prompt as a trailing arg, not stdin.
+			// OpenCode's `run` reads the message from stdin when the positional is
+			// omitted, which is what keeps a real prompt off the command line: as an
+			// argv element it would blow MAX_ARG_STRLEN and the exec would die with
+			// "Argument list too long" before the CLI started.
 			const row = await db.query<{ invocation_command: string | null }>(
 				'SELECT invocation_command FROM heartbeat_runs WHERE id = $1',
 				[result.heartbeatRunId],
 			);
-			expect(row.rows[0].invocation_command).toContain('"$(cat ');
-			expect(row.rows[0].invocation_command).not.toContain(' < /workspace');
+			expect(row.rows[0].invocation_command).toContain(' < /workspace');
+			expect(row.rows[0].invocation_command).not.toContain('"$(cat ');
 		} finally {
 			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openrouter'`);
 		}

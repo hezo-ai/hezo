@@ -3107,18 +3107,49 @@ directive. It's also exposed as `HEZO_AGENT_EFFORT`.
 **Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, six
 adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
-servers, and wires the stop-hook. OpenCode, Grok and Kimi Code take the prompt as a CLI
-**argument** (`HEZO_PROMPT_MODE=arg`, `RUNTIME_PROMPT_DELIVERY`); the rest read it on stdin.
-**The arg branch redirects stdin from `/dev/null`, and must.** An exec leaves stdin attached to
-a pipe nothing writes to and nothing closes, so a CLI that reads it in headless mode blocks
-forever — no output, no exit, no error, indistinguishable from a slow model until the run's
-deadline. Measured against a CLI that does read it: a byte-identical invocation produced a full
-transcript in ~2s with stdin closed and nothing at all in 15 minutes without it. In arg mode
-the prompt is already on the command line, so stdin has nothing to legitimately carry. Both
-copies of that logic — `PROMPT_DELIVERY_SH` in `agent-runner.ts` and the bridge path in
-`docker/scripts/hezo-run-with-bridge` — carry it, and `agent-prompt-delivery.test.ts` runs the
-script under a real `sh` against a real open stdin, so the regression is a timeout rather than
-a passing string match.
+servers, and wires the stop-hook.
+
+**Prompt delivery** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE`) has three
+modes. `stdin` redirects the prompt file into the CLI — Claude Code, Codex, Gemini and
+OpenCode, the last of which reads stdin to EOF whenever it is not a TTY and needs no flag for
+it. `file` has the CLI open the file itself: Grok's `--prompt-file <path>`, which triggers
+headless mode on its own (`-p`/`--single` is the same flag under another name, so it is
+replaced rather than added to). `arg` expands the prompt's text into one argv element — Kimi
+Code's `-p`, the only runtime with no file or stdin route.
+
+**`arg` is bounded by the kernel, and the bound is small.** Linux caps a *single* argv element
+at `MAX_ARG_STRLEN` (32 pages, 128 KiB) independent of the far larger total `ARG_MAX`; past it
+`execve` fails with `E2BIG` and the run dies as a one-line `Argument list too long` from `sh`,
+before the CLI's `main()`. A Hezo prompt clears that on its own — `SHARED_INSTRUCTIONS` alone
+is ~111 KB — so `arg` only works for a runtime whose system prompt travels out of band.
+`RUNTIME_SYSTEM_PROMPT_FILE` is that route: it names an instructions file inside the per-run
+home the CLI auto-loads, and when set the resolved system prompt is written there by the
+runtime's own MCP injector while the prompt file carries the task body alone. Kimi Code is the
+only entry (`$KIMI_CODE_HOME/AGENTS.md`, which the CLI concatenates into its system prompt with
+no size cap — it warns past 32 KB and carries on). `assertPromptDeliverable` still guards what
+is left: an `arg`-mode prompt over the cap fails the run with an error naming the runtime, the
+size and the limit, rather than being truncated or rerouted.
+
+**A `file`-mode runtime's flag value is part of the server-built argv**, not appended by the
+wrapper. That is deliberately version-skew-safe: a packaged server pulls
+`ghcr.io/hezo-ai/agent-base:latest` best-effort at startup, so it can transiently run an older
+image whose bridge script knows only `arg`/`stdin` — that script falls through to
+`"$@" < "$HEZO_PROMPT_FILE"` and the run is still correct, because argv is already complete.
+It also means the chat session manager has to swap the path per turn: `execCmd` is built once
+per session, and `turnPrompt` rewrites the conversation-keyed path into both the env and the
+command.
+
+**Both non-stdin branches redirect stdin from `/dev/null`, and must.** An exec leaves stdin
+attached to a pipe nothing writes to and nothing closes, so a CLI that reads it in headless mode
+blocks forever — no output, no exit, no error, indistinguishable from a slow model until the
+run's deadline. Measured against a CLI that does read it: a byte-identical invocation produced a
+full transcript in ~2s with stdin closed and nothing at all in 15 minutes without it. In both
+branches the prompt has already reached the CLI another way, so stdin has nothing to legitimately
+carry. Both copies of that logic — `PROMPT_DELIVERY_SH` in `agent-runner.ts` and the block
+between the `# hezo:prompt-delivery:{start,end}` markers in `docker/scripts/hezo-run-with-bridge`
+— are executed by `agent-prompt-delivery.test.ts` against a real `sh` with a real open stdin, so
+a hang regression is a timeout rather than a passing string match, an E2BIG regression is an
+asserted non-zero exit, and the two copies cannot drift.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
 TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its

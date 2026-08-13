@@ -82,6 +82,17 @@ export interface McpInjectionFile {
 	mode: number;
 	/** File contents to write verbatim. */
 	contents: string;
+	/**
+	 * True when the contents are prose the adapter is passing through (a resolved
+	 * system prompt) rather than config it rendered. The env-var bearer check is
+	 * skipped for these: it exists to catch an adapter inlining the MCP token into
+	 * a config file, and agent-authored text legitimately *describes* bearer
+	 * headers - `Authorization: Bearer __HEZO_SECRET_<NAME>__` is exactly what the
+	 * shared instructions tell agents to emit, and a placeholder is not a secret.
+	 * Without this, a project custom prompt mentioning one would break every run on
+	 * that runtime.
+	 */
+	passthrough?: boolean;
 }
 
 /**
@@ -156,6 +167,17 @@ export interface McpAdapterContext {
 	 * no guard is emitted at all.
 	 */
 	projectDocSlugs?: readonly string[];
+	/**
+	 * The run's resolved system prompt, for a runtime that cannot carry it in the
+	 * prompt itself. Only Kimi Code uses it: its `-p <PROMPT>` is a single argv
+	 * element and Linux caps one of those at MAX_ARG_STRLEN, so the ~111 KB static
+	 * half is written to the instructions file its CLI auto-loads
+	 * (RUNTIME_SYSTEM_PROMPT_FILE) and the prompt carries the task body alone.
+	 *
+	 * Every other adapter ignores it - their runtimes take the whole prompt on
+	 * stdin or from a prompt file, where no such ceiling applies.
+	 */
+	systemPrompt?: string | null;
 }
 
 export interface RuntimeMcpAdapter {

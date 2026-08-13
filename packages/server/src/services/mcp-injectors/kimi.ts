@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { AgentRuntime } from '@hezo/shared';
+import { AgentRuntime, RUNTIME_SYSTEM_PROMPT_FILE } from '@hezo/shared';
 import {
 	buildDocWriteGuardScript,
 	DOC_WRITE_GUARD_FILENAME,
@@ -16,16 +16,23 @@ import type {
 } from './types';
 
 /**
- * Kimi Code MCP + Stop-hook injector.
+ * Kimi Code MCP + Stop-hook + system-prompt injector.
  *
- * Two files, because Kimi Code splits its configuration in two: MCP servers live
- * in `mcp.json` (JSON) and everything else in `config.toml` (TOML). Both are read
- * from the CLI's data root, which `$KIMI_CODE_HOME` relocates to the per-run
+ * Two config files, because Kimi Code splits its configuration in two: MCP servers
+ * live in `mcp.json` (JSON) and everything else in `config.toml` (TOML). Both are
+ * read from the CLI's data root, which `$KIMI_CODE_HOME` relocates to the per-run
  * directory the runner creates.
  *
  * That env var is the ONLY isolation mechanism available here — Kimi Code has no
  * `--mcp-config`-style flag to point at a specific file, which is why `cliArgs`
  * is empty and why `requiresHomeDir` is true.
+ *
+ * It is also why the run's system prompt lands here as a third file. Kimi Code
+ * takes its prompt only as the value of `-p` — one argv element, which Linux caps
+ * at MAX_ARG_STRLEN — and Hezo's system prompt alone is well past that. The CLI
+ * concatenates `$KIMI_CODE_HOME/AGENTS.md` into its system prompt with no size
+ * cap (it warns past 32 KB and carries on), so the static half travels there and
+ * only the task body rides `-p`. See RUNTIME_SYSTEM_PROMPT_FILE.
  */
 
 interface KimiHttpEntry {
@@ -60,6 +67,11 @@ const MCP_STARTUP_TIMEOUT_MS = 120_000;
 const MCP_TOOL_TIMEOUT_MS = 1_800_000;
 
 const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
+
+// Read from the shared table rather than restated, so the runner's decision to
+// keep the system prompt out of the prompt body and this file's name can never
+// disagree. Non-null for this runtime by construction.
+const SYSTEM_PROMPT_BASENAME = RUNTIME_SYSTEM_PROMPT_FILE[AgentRuntime.Kimi] ?? 'AGENTS.md';
 
 // Kimi's `[[hooks]]` entries accept EXACTLY four keys — event, matcher, command,
 // timeout — and the CLI refuses to load a config containing any other key. Do not
@@ -204,6 +216,19 @@ export const kimiAdapter: RuntimeMcpAdapter = {
 				hostPath: join(ctx.hostHomeDir, DOC_WRITE_GUARD_FILENAME),
 				mode: 0o700,
 				contents: buildDocWriteGuardScript(docSlugs),
+			});
+		}
+
+		// The system prompt, which this runtime cannot receive any other way. The
+		// CLI loads this file first, before any AGENTS.md in the workspace, and
+		// concatenates rather than overrides - so the repo's own instructions still
+		// reach the agent, after Hezo's.
+		if (ctx.systemPrompt) {
+			files.push({
+				hostPath: join(ctx.hostHomeDir, SYSTEM_PROMPT_BASENAME),
+				mode: 0o600,
+				contents: ctx.systemPrompt.endsWith('\n') ? ctx.systemPrompt : `${ctx.systemPrompt}\n`,
+				passthrough: true,
 			});
 		}
 

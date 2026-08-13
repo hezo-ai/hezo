@@ -304,6 +304,7 @@ function cliArgv(
 	runtime: AgentRuntime,
 	mcpArgs: readonly string[],
 	containerHomeDir: string | null,
+	promptContainerPath: string,
 ): string[] {
 	// The model id is remapped per runtime, not per provider: Claude Code and
 	// OpenCode each want their own spelling, everything else takes it verbatim.
@@ -326,6 +327,9 @@ function cliArgv(
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtime],
 		...(cliModel && RUNTIME_MODEL_DELIVERY[runtime] === 'flag' ? ['--model', cliModel] : []),
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtime],
+		// A 'file'-delivery runtime's prompt path is part of argv, exactly as
+		// `buildRuntimeInvocation` builds it - the wrapper appends nothing.
+		...(RUNTIME_PROMPT_DELIVERY[runtime] === 'file' ? [promptContainerPath] : []),
 	];
 }
 
@@ -629,20 +633,29 @@ function describeOneAgentCliRun(
 			await files.mkdir('.');
 			await files.write(PROMPT_FILE, probePrompt(runtime));
 
-			const argv = cliArgv(mp, runtime, injection.cliArgs, homeMount?.containerDir ?? null)
+			const promptContainerPath = `${fixture.workRoot}/${PROMPT_FILE}`;
+			const argv = cliArgv(
+				mp,
+				runtime,
+				injection.cliArgs,
+				homeMount?.containerDir ?? null,
+				promptContainerPath,
+			)
 				.map(shellQuote)
 				.join(' ');
-			const promptPath = shellQuote(`${fixture.workRoot}/${PROMPT_FILE}`);
+			const promptPath = shellQuote(promptContainerPath);
 			// Prompt delivery is the runtime's own convention, and getting it wrong is
 			// a hang rather than an error - a CLI waiting on a stdin that never closes
-			// looks exactly like a slow model. The `< /dev/null` on the arg branch is
-			// not a harness nicety: it is what `PROMPT_DELIVERY_SH` does, and a CLI
-			// that reads stdin hangs forever without it. Mirror production or the
-			// suite proves the wrong invocation.
+			// looks exactly like a slow model. The `< /dev/null` on the two non-stdin
+			// branches is not a harness nicety: it is what `PROMPT_DELIVERY_SH` does,
+			// and a CLI that reads stdin hangs forever without it. Mirror production or
+			// the suite proves the wrong invocation.
 			const line =
 				RUNTIME_PROMPT_DELIVERY[runtime] === 'arg'
 					? `${argv} "$(cat ${promptPath})" < /dev/null`
-					: `${argv} < ${promptPath}`;
+					: RUNTIME_PROMPT_DELIVERY[runtime] === 'file'
+						? `${argv} < /dev/null`
+						: `${argv} < ${promptPath}`;
 
 			const execId = await engine.execCreate(containerId, {
 				Cmd: ['sh', '-c', line],

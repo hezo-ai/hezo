@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import {
+	AGENT_RUNTIME_LABELS,
 	AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
@@ -16,9 +17,11 @@ import {
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	kimiModelContextSize,
+	MAX_SINGLE_ARG_BYTES,
 	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type ProgressActivityKind,
+	type PromptDelivery,
 	providerDirectUpstreamHosts,
 	providerRuntimeBinding,
 	RUNTIME_AUTO_APPROVE_ARGS,
@@ -29,6 +32,7 @@ import {
 	RUNTIME_MODEL_DELIVERY,
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
+	RUNTIME_SYSTEM_PROMPT_FILE,
 	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -394,8 +398,10 @@ export interface RunContext {
 	env: string[];
 	taskPrompt: string;
 	promptFilePath: string;
-	/** True when the runtime takes the prompt as a trailing arg, not on stdin. */
-	promptAsArg: boolean;
+	/** The CLI this run launches, after provider/credential/task-pin resolution. */
+	runtimeType: AgentRuntime;
+	/** How the runtime receives {@link taskPrompt} - see RUNTIME_PROMPT_DELIVERY. */
+	promptDelivery: PromptDelivery;
 	effort: string;
 	effortApplication: EffortRuntimeApplication;
 	agentJwt: string;
@@ -432,6 +438,33 @@ export function getHostPromptPath(
  */
 export function getPromptRelPath(heartbeatRunId: string): string {
 	return join('.hezo', 'prompts', `${heartbeatRunId}.txt`);
+}
+
+/**
+ * Refuse a prompt that cannot physically reach its CLI.
+ *
+ * An `'arg'`-delivery runtime receives the prompt as one argv element, and Linux
+ * caps a single element at MAX_ARG_STRLEN. Past it the exec dies with a bare
+ * `Argument list too long` from `sh`, before the CLI starts and with nothing in
+ * the run log naming the cause. Fail here instead, loudly and by name - never by
+ * truncating the prompt or quietly rerouting it (see AGENTS.md § One mechanism,
+ * no silent fallbacks).
+ *
+ * Called by both prompt writers (the task runner and the chat session manager);
+ * `buildRuntimeInvocation` cannot host it, since it knows the prompt's path but
+ * not its text.
+ */
+export function assertPromptDeliverable(runtime: AgentRuntime, prompt: string): void {
+	if (RUNTIME_PROMPT_DELIVERY[runtime] !== 'arg') return;
+	const bytes = Buffer.byteLength(prompt, 'utf8');
+	if (bytes < MAX_SINGLE_ARG_BYTES) return;
+	throw new Error(
+		`prompt is ${bytes} bytes, but ${AGENT_RUNTIME_LABELS[runtime]} takes it as a single ` +
+			`command-line argument, which Linux caps at ${MAX_SINGLE_ARG_BYTES} bytes ` +
+			`(MAX_ARG_STRLEN). The exec would fail with "Argument list too long" before the CLI ` +
+			`started. Shorten the task description and its recent comments, or move this agent ` +
+			`to a runtime that reads the prompt from a file or stdin.`,
+	);
 }
 
 // Basename of the Grok `--debug-file`, written into the per-run home mount so it
@@ -512,21 +545,28 @@ export async function recoverOffStreamRunUsage(
 	return null;
 }
 
-// Deliver the prompt either on stdin (default) or as a trailing arg (OpenCode,
-// Grok, Kimi Code), selected per runtime via the HEZO_PROMPT_MODE
-// env var — see RUNTIME_PROMPT_DELIVERY. The bridge wrapper script honors the
-// same env var.
+// Deliver the prompt one of three ways, selected per runtime via the
+// HEZO_PROMPT_MODE env var — see RUNTIME_PROMPT_DELIVERY. The bridge wrapper
+// script (docker/scripts/hezo-run-with-bridge) mirrors this exactly, and
+// agent-prompt-delivery.test.ts runs both texts through the same cases so they
+// cannot drift.
 //
-// **Arg mode closes stdin, and must.** An exec leaves the container process's
-// stdin attached to a pipe nothing ever writes to and nothing ever closes, so a
-// CLI that reads it in headless mode blocks forever — no output, no exit, no
-// error, indistinguishable from a slow model until the run's deadline. Measured
-// against a CLI that does read it: byte-identical invocations produced a full
-// stream-json transcript in ~2s with `< /dev/null` and nothing at all in 15
-// minutes without it. In arg mode the prompt is already on the command line, so
-// there is by definition nothing stdin can legitimately carry.
+//   arg   — the prompt's TEXT becomes a trailing argv element (Kimi Code `-p`).
+//   file  — the CLI opens the file itself (Grok `--prompt-file <path>`); the flag
+//           AND the path are already in the server-built argv, so nothing is
+//           appended here.
+//   stdin — default: the prompt file IS the CLI's stdin.
+//
+// **Both non-stdin branches close stdin, and must.** An exec leaves the container
+// process's stdin attached to a pipe nothing ever writes to and nothing ever
+// closes, so a CLI that reads it in headless mode blocks forever — no output, no
+// exit, no error, indistinguishable from a slow model until the run's deadline.
+// Measured against a CLI that does read it: byte-identical invocations produced a
+// full stream-json transcript in ~2s with `< /dev/null` and nothing at all in 15
+// minutes without it. In both branches the prompt has already reached the CLI by
+// another route, so there is by definition nothing stdin can legitimately carry.
 export const PROMPT_DELIVERY_SH =
-	'if [ "$HEZO_PROMPT_MODE" = arg ]; then exec "$@" "$(cat "$HEZO_PROMPT_FILE")" < /dev/null; else exec "$@" < "$HEZO_PROMPT_FILE"; fi';
+	'case "${HEZO_PROMPT_MODE:-stdin}" in arg) exec "$@" "$(cat "$HEZO_PROMPT_FILE")" < /dev/null ;; file) exec "$@" < /dev/null ;; *) exec "$@" < "$HEZO_PROMPT_FILE" ;; esac';
 
 function wrapExecCmd(cmd: string[], bridge: BridgeRunnerArgs | null): string[] {
 	if (bridge) {
@@ -569,8 +609,14 @@ export interface RuntimeInvocationInput {
 	/** Detected container run-user; the per-run config dir is chowned to it so the
 	 *  non-root agent CLI can read the host-written settings/credentials. */
 	runUser: ContainerRunUser;
-	/** Container path the prompt is read from on stdin. */
+	/** Container path the prompt file is written to - see RUNTIME_PROMPT_DELIVERY. */
 	promptContainerPath: string;
+	/**
+	 * The run's resolved system prompt, for a runtime whose
+	 * {@link RUNTIME_SYSTEM_PROMPT_FILE} entry routes it to an instructions file
+	 * instead of the prompt body. Callers that inline it in the prompt pass null.
+	 */
+	systemPrompt?: string | null;
 	effort: string;
 	effortApplication: EffortRuntimeApplication;
 	modelOverride: string | null;
@@ -628,6 +674,7 @@ export async function buildRuntimeInvocation(
 		containerId,
 		runUser,
 		promptContainerPath,
+		systemPrompt = null,
 		effort,
 		effortApplication,
 		modelOverride,
@@ -696,6 +743,7 @@ export async function buildRuntimeInvocation(
 		runModel: modelOverride,
 		projectDocSlugs,
 		stopJudge,
+		systemPrompt,
 	});
 	validateInjection(adapter, mcpInjection);
 
@@ -836,6 +884,14 @@ export async function buildRuntimeInvocation(
 			? ['--debug-file', join(homeMount.containerDir, GROK_DEBUG_BASENAME)]
 			: [];
 
+	// A 'file'-delivery CLI opens the prompt itself, so the flag's VALUE belongs in
+	// the server-built argv rather than being appended by the exec wrapper. That is
+	// what makes this version-skew-safe: an older in-image bridge script knowing
+	// only arg/stdin falls through to `"$@" < "$HEZO_PROMPT_FILE"`, and the run is
+	// still correct because argv is already complete.
+	const promptFileArgs =
+		RUNTIME_PROMPT_DELIVERY[runtimeType] === 'file' ? [promptContainerPath] : [];
+
 	const cmd = [
 		cliCommand,
 		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
@@ -847,6 +903,7 @@ export async function buildRuntimeInvocation(
 		...effortApplication.extraArgs,
 		...modelArgs,
 		...RUNTIME_HEADLESS_SUFFIX_ARGS[runtimeType],
+		...promptFileArgs,
 	];
 
 	const execCmd = wrapExecCmd(cmd, bridge);
@@ -942,14 +999,21 @@ async function buildRunContext(
 		typeof wakeupPayload?.comment_id === 'string' ? wakeupPayload.comment_id : undefined;
 	const spawnedFrom = task ? await loadSpawnedFromTask(deps.db, task) : null;
 	const openSubTasks = task ? await loadOpenSubTasks(deps.db, task) : [];
+	// A runtime that can only take the prompt as one argv element gets the system
+	// half through an instructions file its CLI loads instead, leaving the prompt
+	// small enough to survive MAX_ARG_STRLEN. The builders below take an empty
+	// system prompt and skip their separator; the text travels via
+	// buildRuntimeInvocation to that runtime's injector.
+	const systemPromptToFile = RUNTIME_SYSTEM_PROMPT_FILE[runtimeType] ? resolvedPrompt : null;
+	const inlineSystemPrompt = systemPromptToFile ? '' : resolvedPrompt;
 	let basePrompt: string;
 	if (progressUpdate) {
-		basePrompt = buildProgressUpdatePrompt(resolvedPrompt, progressUpdate);
+		basePrompt = buildProgressUpdatePrompt(inlineSystemPrompt, progressUpdate);
 	} else if (isCoachReview) {
 		// task is non-null on every non-progress-update path (enforced by runAgent).
 		basePrompt = await buildCoachReviewPrompt(
 			deps.db,
-			resolvedPrompt,
+			inlineSystemPrompt,
 			task as TaskInfo,
 			runTeamId,
 			deps.masterKeyManager,
@@ -965,7 +1029,7 @@ async function buildRunContext(
 			endpoints.hezoBaseUrl,
 			{ limit: RECENT_COMMENTS_LIMIT },
 		);
-		basePrompt = buildTaskPrompt(resolvedPrompt, task as TaskInfo, wakeupPayload, {
+		basePrompt = buildTaskPrompt(inlineSystemPrompt, task as TaskInfo, wakeupPayload, {
 			mentionContext,
 			replyContext,
 			commentWakeContext,
@@ -996,6 +1060,7 @@ async function buildRunContext(
 		containerId: project.container_id,
 		runUser,
 		promptContainerPath: promptFilePath,
+		systemPrompt: systemPromptToFile,
 		effort,
 		effortApplication,
 		modelOverride,
@@ -1013,7 +1078,8 @@ async function buildRunContext(
 		env,
 		taskPrompt,
 		promptFilePath,
-		promptAsArg: RUNTIME_PROMPT_DELIVERY[runtimeType] === 'arg',
+		runtimeType,
+		promptDelivery: RUNTIME_PROMPT_DELIVERY[runtimeType],
 		effort,
 		effortApplication,
 		agentJwt,
@@ -1835,15 +1901,22 @@ export async function runAgent(
 
 			if (runAbort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
+			// Before the write, so an undeliverable prompt fails the run by name rather
+			// than as a bare `Argument list too long` from the exec's shell.
+			assertPromptDeliverable(context.runtimeType, context.taskPrompt);
+
 			// Through SandboxFiles rather than a host write: the container reads this
 			// file, so on a backend whose container is not on this machine the write
 			// has to go through the provider's file API. Nothing else about it changes.
 			await workspaceFiles.write(promptRelPath, context.taskPrompt);
 
 			const redactedCmd = context.cmd.map((arg) => arg.replace(/Bearer [^"\s]+/g, 'Bearer ***'));
-			const promptSuffix = context.promptAsArg
-				? ` "$(cat ${context.promptFilePath})"`
-				: ` < ${context.promptFilePath}`;
+			const promptSuffix =
+				context.promptDelivery === 'arg'
+					? ` "$(cat ${context.promptFilePath})"`
+					: context.promptDelivery === 'file'
+						? ' < /dev/null'
+						: ` < ${context.promptFilePath}`;
 			const invocationCommand = `$ ${redactedCmd.map(shellQuoteArg).join(' ')}${promptSuffix}`;
 
 			await deps.db.query(
@@ -3405,6 +3478,16 @@ function renderActivityCandidates(candidates?: Partial<ProgressActivityCandidate
 }
 
 /**
+ * The system prompt plus its separator, or nothing at all when the runtime takes
+ * the system prompt through an instructions file instead
+ * (RUNTIME_SYSTEM_PROMPT_FILE). Emitting the separator on its own would open the
+ * prompt with a stray rule and read as a truncated message.
+ */
+function systemPromptParts(systemPrompt: string): string[] {
+	return systemPrompt ? [systemPrompt, '', '---', ''] : [];
+}
+
+/**
  * The user-message body for a Captain progress-update run. No task is attached.
  *
  * The run's primary job is refreshing the project's **Progress page** — the high-level summary and
@@ -3416,7 +3499,7 @@ export function buildProgressUpdatePrompt(
 	systemPrompt: string,
 	ctx: ProgressUpdateContext,
 ): string {
-	const parts = [systemPrompt, '', '---', '', '## Progress Update', ''];
+	const parts = [...systemPromptParts(systemPrompt), '## Progress Update', ''];
 	parts.push(
 		"Refresh this project's Progress page. Call `update_project_progress` **once**, with a " +
 			'`summary` and the three activity columns (`actioned`, `created`, `closed`). The summary and ' +
@@ -3495,7 +3578,7 @@ export function buildTaskPrompt(
 ): string {
 	const { mentionContext, replyContext, commentWakeContext, spawnedFrom, recentComments } = ctx;
 	const openSubTasks = ctx.openSubTasks ?? [];
-	const parts = [systemPrompt, '', '---', ''];
+	const parts = systemPromptParts(systemPrompt);
 
 	if (replyContext && wakeupPayload?.source === WakeupSource.Reply) {
 		parts.push(...renderReplyHandoff(task, replyContext));
@@ -3878,10 +3961,7 @@ export async function buildCoachReviewPrompt(
 		.join('\n');
 
 	const parts = [
-		systemPrompt,
-		'',
-		'---',
-		'',
+		...systemPromptParts(systemPrompt),
 		`## Review Completed Task: ${task.identifier} — ${task.title}`,
 		`**Final Status:** ${task.status}`,
 		`**Priority:** ${task.priority}`,

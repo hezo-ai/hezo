@@ -216,6 +216,76 @@ describe('ChatSessionManager', () => {
 		projectId = await seedProviderAndContainer(ctx);
 	});
 
+	test('points a file-delivery runtime at the turn its prompt was written for', async () => {
+		// Grok reads the prompt file itself, so its path is part of argv - and
+		// `execCmd` is built ONCE per session, against the session-keyed path. Each
+		// turn writes a conversation-keyed file instead, so without the per-turn
+		// swap in `turnPrompt` the CLI would open a path nothing ever writes and
+		// every reply would run on an empty prompt.
+		await ctx.db.query('DELETE FROM ai_provider_configs');
+		const key = ctx.masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		await ctx.db.query(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+			 VALUES ('x_ai', 'api_key', 'grok', $1, true, 'verified', 'grok-4.5')`,
+			[encrypt('xai-test', key)],
+		);
+
+		const cmds: string[][] = [];
+		const grokDocker = createStubDocker({
+			execCreate: async (_id: string, config: { Cmd?: string[] }) => {
+				cmds.push(config.Cmd ?? []);
+				return 'exec-grok';
+			},
+			execStart: async (
+				_execId: string,
+				opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+			) => {
+				const onChunk = opts.onChunk ?? (() => undefined);
+				await onChunk({
+					stream: 'stdout',
+					text: `${JSON.stringify({ type: 'text', data: 'Hi there' })}\n`,
+				});
+				await onChunk({ stream: 'stdout', text: `${JSON.stringify({ type: 'end' })}\n` });
+				return { stdout: '', stderr: '' };
+			},
+		});
+		const { manager } = makeManager(ctx, grokDocker);
+
+		const { assistantMessageId } = await manager.sendTurn({ text: 'Hello CEO' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+
+		const conversationId = (
+			await ctx.db.query<{ conversation_id: string }>(
+				'SELECT conversation_id FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			)
+		).rows[0].conversation_id;
+		const sessionId = (await ctx.db.query<{ id: string }>('SELECT id FROM chat_sessions LIMIT 1'))
+			.rows[0].id;
+
+		// Only the CLI execs carry the flag; the session also runs shell execs (prep,
+		// git) through the same stub.
+		const promptArgs = cmds
+			.filter((c) => c.includes('--prompt-file'))
+			.map((c) => c[c.indexOf('--prompt-file') + 1]);
+		expect(promptArgs.length).toBeGreaterThan(0);
+		for (const arg of promptArgs) {
+			expect(arg).toContain(conversationId);
+			// The session-keyed path is what `execCmd` was built with; no exec may
+			// still be pointing at it.
+			expect(arg).not.toBe(`/workspace/.hezo/prompts/${sessionId}.txt`);
+		}
+
+		await manager.stop();
+	});
+
 	test('broadcasts tool activity as progress, keeping it out of the reply text', async () => {
 		// The runtimes emit whole assistant messages, not token deltas, so a turn
 		// that calls a tool after writing its text is indistinguishable from a

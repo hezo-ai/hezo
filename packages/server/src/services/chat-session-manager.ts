@@ -16,6 +16,7 @@ import {
 	DEFAULT_TEAM_ID,
 	effectiveRuntime,
 	PROVIDER_RUNTIME_ADAPTERS,
+	RUNTIME_SYSTEM_PROMPT_FILE,
 	type WsChatServerMessage,
 	WsMessageType,
 	wsRoom,
@@ -28,6 +29,7 @@ import { getMaxChatHistorySize } from '../lib/system-meta';
 import { logger } from '../logger';
 import { signChatSessionJwt } from '../middleware/auth';
 import {
+	assertPromptDeliverable,
 	buildRuntimeInvocation,
 	type EgressEnvDescriptor,
 	getContainerPromptPath,
@@ -1348,6 +1350,13 @@ export class ChatSessionManager {
 				containerId,
 				runUser,
 				promptContainerPath: getContainerPromptPath(sessionId),
+				// Written to the runtime's instructions file rather than repeated in
+				// every turn's prompt, for the runtimes that need it (see
+				// RUNTIME_SYSTEM_PROMPT_FILE). Null everywhere else, where the turn
+				// prompt carries it as before.
+				systemPrompt: RUNTIME_SYSTEM_PROMPT_FILE[inputs.runtimeType]
+					? await this.resolveCeoSystemPrompt(inputs.ceoMemberId, inputs.projectId)
+					: null,
 				effort: AgentEffort.Max,
 				effortApplication,
 				modelOverride: inputs.modelOverride,
@@ -1394,7 +1403,12 @@ export class ChatSessionManager {
 		session: LiveSession,
 		conversationId: string,
 		slot?: string,
-	): { write: (prompt: string) => Promise<void>; remove: () => Promise<void>; env: string[] } {
+	): {
+		write: (prompt: string) => Promise<void>;
+		remove: () => Promise<void>;
+		env: string[];
+		cmd: string[];
+	} {
 		const key = slot
 			? `${session.sessionId}-${conversationId}-${slot}`
 			: `${session.sessionId}-${conversationId}`;
@@ -1402,6 +1416,12 @@ export class ChatSessionManager {
 		const env = session.env.map((e) =>
 			e.startsWith('HEZO_PROMPT_FILE=') ? `HEZO_PROMPT_FILE=${containerPath}` : e,
 		);
+		// A 'file'-delivery runtime carries the prompt path in ARGV too
+		// (`--prompt-file <path>`), because the CLI opens the file itself. `execCmd`
+		// is built once per session against the session-keyed path, so without this
+		// swap every turn would point the CLI at a file nothing ever writes.
+		const sessionPath = getContainerPromptPath(session.sessionId);
+		const cmd = session.execCmd.map((a) => (a === sessionPath ? containerPath : a));
 		// Written through the seam, not to a host path. The exec reads
 		// `HEZO_PROMPT_FILE` from *inside* the container, and that only lined up
 		// with a host write because the workspace is a bind mount on Docker. On a
@@ -1418,6 +1438,7 @@ export class ChatSessionManager {
 			// the container for the rest of its life.
 			remove: () => files.remove(relPath),
 			env,
+			cmd,
 		};
 	}
 
@@ -1434,6 +1455,7 @@ export class ChatSessionManager {
 			write: writePrompt,
 			remove: removePrompt,
 			env,
+			cmd: execCmd,
 		} = this.turnPrompt(session, conversationId);
 		// Per-exec scope marker: session-level HEZO_HEARTBEAT_RUN_ID is shared by
 		// every exec of this session (turns in other conversations, compaction,
@@ -1471,6 +1493,11 @@ export class ChatSessionManager {
 				kind: ctx.kind,
 				injectedContext,
 			});
+			// Before the write, so a prompt this runtime physically cannot receive
+			// fails the turn by name instead of dying as `Argument list too long` in
+			// the exec's shell. The catch below finalizes the assistant message with
+			// the error, so the operator sees it in the chatbox.
+			assertPromptDeliverable(session.runtimeType, prompt);
 			await writePrompt(prompt);
 
 			const pricing = this.deps.pricing;
@@ -1501,7 +1528,7 @@ export class ChatSessionManager {
 			};
 
 			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
-				cmd: session.execCmd,
+				cmd: execCmd,
 				env,
 				workingDir: CHAT_WORKING_DIR,
 				signal: abort.signal,
@@ -1613,17 +1640,19 @@ export class ChatSessionManager {
 		);
 	}
 
-	private async composePrompt(
-		session: LiveSession,
-		conversationId: string,
-		opts: { kind: ChatConversationKind; injectedContext?: string },
-	): Promise<string> {
-		const isCoworker = opts.kind === ChatConversationKind.Coworker;
-		const stored = await getAgentSystemPrompt(this.deps.db, DEFAULT_TEAM_ID, session.ceoMemberId);
-		const resolved = await resolveSystemPrompt(this.deps.db, stored, {
+	/**
+	 * The CEO's resolved system prompt for a live chat session.
+	 *
+	 * Shared by `composePrompt` and, for a runtime whose system prompt travels in
+	 * an instructions file (RUNTIME_SYSTEM_PROMPT_FILE), the session-start
+	 * invocation that writes that file.
+	 */
+	private async resolveCeoSystemPrompt(ceoMemberId: string, projectId: string): Promise<string> {
+		const stored = await getAgentSystemPrompt(this.deps.db, DEFAULT_TEAM_ID, ceoMemberId);
+		return resolveSystemPrompt(this.deps.db, stored, {
 			teamId: DEFAULT_TEAM_ID,
-			projectId: session.projectId,
-			agentId: session.ceoMemberId,
+			projectId,
+			agentId: ceoMemberId,
 			dataDir: this.deps.dataDir,
 			mode: 'runtime',
 			crossTeam: true,
@@ -1631,6 +1660,24 @@ export class ChatSessionManager {
 			// in live chat; headless CEO runs get only the live-docs pointer.
 			embedDocs: true,
 		});
+	}
+
+	private async composePrompt(
+		session: LiveSession,
+		conversationId: string,
+		opts: { kind: ChatConversationKind; injectedContext?: string },
+	): Promise<string> {
+		const isCoworker = opts.kind === ChatConversationKind.Coworker;
+		// Omitted here when the runtime reads it from an instructions file written at
+		// session start instead - repeating it in the turn would put it right back in
+		// the argv element the file exists to keep small. It is therefore resolved
+		// once per session rather than per turn on those runtimes, so a mid-session
+		// change to project state reaches the CEO on the next resume rather than the
+		// next turn; the alternative is re-uploading ~120 KB into the container on
+		// every reply.
+		const resolved = RUNTIME_SYSTEM_PROMPT_FILE[session.runtimeType]
+			? ''
+			: await this.resolveCeoSystemPrompt(session.ceoMemberId, session.projectId);
 
 		// The operator's long-term chat memory stays out of coworker prompts: it
 		// belongs to the private assistant chat, not to a group channel of third
@@ -1727,10 +1774,16 @@ export class ChatSessionManager {
 		const memory = await getChatMemory(this.deps.db, session.ceoMemberId);
 		const before = memory?.updated_at ?? null;
 		const prompt = buildCompactionPrompt(memory?.content ?? '', flush.windowTranscript);
+		// This prompt is the whole over-cap window, so on an arg-mode runtime it is
+		// the one chat exec that can realistically pass MAX_ARG_STRLEN. Failing here
+		// leaves the window intact, exactly as an aborted compaction does, and says
+		// why in the log instead of dying as `Argument list too long` in the exec.
+		assertPromptDeliverable(session.runtimeType, prompt);
 		const {
 			write: writePrompt,
 			remove: removePrompt,
 			env,
+			cmd: execCmd,
 		} = this.turnPrompt(session, conversationId);
 		const execScopeId = randomUUID();
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
@@ -1739,7 +1792,7 @@ export class ChatSessionManager {
 			// Drain output; the reply text is irrelevant — the memory write is the
 			// real product, landed via the update_chat_memory MCP tool.
 			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
-				cmd: session.execCmd,
+				cmd: execCmd,
 				env,
 				workingDir: CHAT_WORKING_DIR,
 				signal: abort.signal,
@@ -1843,6 +1896,7 @@ export class ChatSessionManager {
 			write: writePrompt,
 			remove: removePrompt,
 			env,
+			cmd: execCmd,
 		} = this.turnPrompt(session, conversationId, 'title');
 		const execScopeId = randomUUID();
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
@@ -1852,7 +1906,7 @@ export class ChatSessionManager {
 		let text = '';
 		try {
 			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
-				cmd: session.execCmd,
+				cmd: execCmd,
 				env,
 				workingDir: CHAT_WORKING_DIR,
 				signal: abort.signal,
