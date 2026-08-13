@@ -1,6 +1,6 @@
 import { Link, useLocation } from '@tanstack/react-router';
 import { ChevronDown, LogOut } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { Fragment, useCallback, useState } from 'react';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
 import { logout } from '../lib/auth';
@@ -11,35 +11,71 @@ interface NavItem {
 	to: string;
 	/** Catalog key; resolved through `t()` so the menu follows the instance language. */
 	labelKey: MessageKey;
+	/** Superuser-only. Its page refuses non-admins too; this keeps the menu honest. */
+	admin?: boolean;
 }
 
-// General (instance settings) and AI providers are visible to everyone; the
-// instance-level resources below are Admin (superuser) only.
-const PUBLIC_ITEMS: NavItem[] = [
-	{ to: '/settings', labelKey: 'settings.general' },
-	{ to: '/settings/ai-providers', labelKey: 'settings.aiProviders' },
-	{ to: '/settings/locale', labelKey: 'locale.settings.title' },
-];
+interface NavGroup {
+	titleKey: MessageKey;
+	items: NavItem[];
+}
 
-const ADMIN_ITEMS: NavItem[] = [
-	{ to: '/settings/admin-password', labelKey: 'settings.adminPassword' },
-	{ to: '/settings/users', labelKey: 'settings.users' },
-	{ to: '/settings/chatbox', labelKey: 'settings.chatbox' },
-	{ to: '/settings/containers', labelKey: 'settings.concurrency' },
-	{ to: '/settings/skills', labelKey: 'settings.skills' },
-	{ to: '/settings/connectors', labelKey: 'settings.connectors' },
-	{ to: '/settings/chat-channels', labelKey: 'settings.chatChannels' },
-	{ to: '/settings/credentials', labelKey: 'settings.credentials' },
-	{ to: '/settings/api-keys', labelKey: 'settings.apiKeys' },
-	{ to: '/settings/storage', labelKey: 'settings.storage' },
-	{ to: '/settings/archived-projects', labelKey: 'settings.archivedProjects' },
-	{ to: '/settings/audit-log', labelKey: 'settings.auditLog' },
+/**
+ * The menu, grouped by what a page is *about*. There is deliberately no
+ * "public" / "admin" split any more: each page already refuses a non-admin on
+ * its own, and a seam that only some readers can see past told them nothing.
+ * Admin-only leaves are simply filtered out for everyone else.
+ */
+const NAV_GROUPS: NavGroup[] = [
+	{
+		titleKey: 'settings.groups.general',
+		items: [
+			{ to: '/settings', labelKey: 'settings.instance' },
+			{ to: '/settings/appearance', labelKey: 'settings.appearance' },
+			{ to: '/settings/locale', labelKey: 'locale.settings.title' },
+		],
+	},
+	{
+		titleKey: 'settings.groups.agents',
+		items: [
+			{ to: '/settings/ai-providers', labelKey: 'settings.aiProviders' },
+			{ to: '/settings/containers', labelKey: 'settings.concurrency', admin: true },
+			{ to: '/settings/skills', labelKey: 'settings.skills', admin: true },
+		],
+	},
+	{
+		titleKey: 'settings.groups.integrations',
+		items: [
+			{ to: '/settings/connectors', labelKey: 'settings.connectors', admin: true },
+			{ to: '/settings/chat-channels', labelKey: 'settings.chat', admin: true },
+			{ to: '/settings/credentials', labelKey: 'settings.credentials', admin: true },
+		],
+	},
+	{
+		titleKey: 'settings.groups.access',
+		items: [
+			{ to: '/settings/users', labelKey: 'settings.usersAccess', admin: true },
+			{ to: '/settings/api-keys', labelKey: 'settings.apiKeys', admin: true },
+		],
+	},
+	{
+		titleKey: 'settings.groups.maintenance',
+		items: [
+			{ to: '/settings/storage', labelKey: 'settings.storage', admin: true },
+			{ to: '/settings/audit-log', labelKey: 'settings.auditLog', admin: true },
+			{ to: '/settings/archived-projects', labelKey: 'settings.archivedProjects', admin: true },
+		],
+	},
 ];
 
 /** Exact-match the route against a nav item (every settings path is a distinct leaf). */
 function isActive(itemTo: string, pathname: string): boolean {
 	return (pathname.replace(/\/$/, '') || '/settings') === itemTo;
 }
+
+/** Group heading: a label, not a target - quieter and smaller than its items. */
+const groupClass =
+	'px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-text-3 first:pt-0';
 
 function itemClass(active: boolean): string {
 	return `text-left text-[13px] px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
@@ -86,7 +122,11 @@ export function SettingsSidebar() {
 	const pathname = useLocation({ select: (l) => l.pathname });
 	const [open, setOpen] = useState(false);
 
-	const items = me?.is_superuser ? [...PUBLIC_ITEMS, ...ADMIN_ITEMS] : PUBLIC_ITEMS;
+	const groups = NAV_GROUPS.map((g) => ({
+		...g,
+		items: g.items.filter((i) => me?.is_superuser || !i.admin),
+	})).filter((g) => g.items.length > 0);
+	const items = groups.flatMap((g) => g.items);
 	const current = items.find((i) => isActive(i.to, pathname)) ?? items[0];
 
 	// Collapse the mobile dropdown on any route change — every item in it is a nav
@@ -135,15 +175,20 @@ export function SettingsSidebar() {
 							className="fixed inset-0 z-20 cursor-default"
 						/>
 						<nav className="absolute left-4 right-4 z-30 mt-1 flex flex-col gap-0.5 rounded-md border border-border bg-surface p-1 shadow-lg">
-							{items.map((item) => (
-								<Link
-									key={item.to}
-									to={item.to}
-									onClick={() => setOpen(false)}
-									className={itemClass(isActive(item.to, pathname))}
-								>
-									{t(item.labelKey)}
-								</Link>
+							{groups.map((group) => (
+								<Fragment key={group.titleKey}>
+									<span className={groupClass}>{t(group.titleKey)}</span>
+									{group.items.map((item) => (
+										<Link
+											key={item.to}
+											to={item.to}
+											onClick={() => setOpen(false)}
+											className={itemClass(isActive(item.to, pathname))}
+										>
+											{t(item.labelKey)}
+										</Link>
+									))}
+								</Fragment>
 							))}
 							<LogoutButton onClick={handleLogout} className="mt-3" />
 						</nav>
@@ -156,10 +201,15 @@ export function SettingsSidebar() {
 				className="hidden md:flex flex-col gap-0.5 sticky top-0 self-start"
 				data-testid="settings-nav-desktop"
 			>
-				{items.map((item) => (
-					<Link key={item.to} to={item.to} className={itemClass(isActive(item.to, pathname))}>
-						{t(item.labelKey)}
-					</Link>
+				{groups.map((group) => (
+					<Fragment key={group.titleKey}>
+						<span className={groupClass}>{t(group.titleKey)}</span>
+						{group.items.map((item) => (
+							<Link key={item.to} to={item.to} className={itemClass(isActive(item.to, pathname))}>
+								{t(item.labelKey)}
+							</Link>
+						))}
+					</Fragment>
 				))}
 				<LogoutButton onClick={handleLogout} className="mt-4" />
 			</nav>

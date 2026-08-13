@@ -3,7 +3,8 @@ import { Check, Monitor, Moon, Sun } from 'lucide-react';
 import { type MessageKey, useI18n } from '../../lib/i18n';
 import { type ThemePreference, useTheme } from '../../lib/theme';
 
-const options: { value: ThemePreference; labelKey: MessageKey; icon: typeof Sun }[] = [
+/** The three theme choices, shared with the Appearance settings page. */
+export const THEME_OPTIONS: { value: ThemePreference; labelKey: MessageKey; icon: typeof Sun }[] = [
 	{ value: 'system', labelKey: 'theme.system', icon: Monitor },
 	{ value: 'light', labelKey: 'theme.light', icon: Sun },
 	{ value: 'dark', labelKey: 'theme.dark', icon: Moon },
@@ -31,7 +32,7 @@ export function ThemeSwitcher() {
 					sideOffset={4}
 					className="z-50 min-w-[140px] rounded-md border bg-surface p-1 shadow-md"
 				>
-					{options.map(({ value, labelKey, icon: Icon }) => (
+					{THEME_OPTIONS.map(({ value, labelKey, icon: Icon }) => (
 						<button
 							key={value}
 							type="button"

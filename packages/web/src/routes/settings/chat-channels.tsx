@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Loader2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { ChatboxSection } from '../../components/chatbox-section';
 import { Button } from '../../components/ui/button';
 import { InfoTooltip } from '../../components/ui/info-tooltip';
 import { Input } from '../../components/ui/input';
@@ -10,14 +11,20 @@ import {
 	useChatIdentities,
 } from '../../hooks/use-chat-channels';
 import { useMe } from '../../hooks/use-me';
+import { useI18n } from '../../lib/i18n';
 
-function ChatChannelsSettingsPage() {
+/**
+ * Settings -> Chat. Everything about how people reach the CEO: the in-app
+ * chatbox, and the external chat platforms it can also be reached on.
+ */
+function ChatSettingsPage() {
+	const { t } = useI18n();
 	const { data: me } = useMe();
 	if (me && !me.is_superuser) {
 		return (
 			<div className="max-w-[900px]">
 				<p className="text-[13px] text-text-2">
-					Chat channels are managed by the Admin. You don't have access to this page.
+					Chat settings are managed by the Admin. You don't have access to this page.
 				</p>
 			</div>
 		);
@@ -25,14 +32,23 @@ function ChatChannelsSettingsPage() {
 	return (
 		<div className="max-w-[900px]">
 			<div className="mb-5">
-				<div className="flex items-center gap-1.5">
-					<h1 className="text-[22px] font-medium">Chat channels</h1>
+				<h1 className="text-[22px] font-medium">{t('settings.chat')}</h1>
+				<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
+					The chatbox in this app, and the external chat apps the CEO can also be reached on.
+				</p>
+			</div>
+
+			<ChatboxSection />
+
+			<section>
+				<div className="flex items-center gap-1.5 mb-1">
+					<h2 className="text-[15px] font-medium">{t('settings.chatChannels')}</h2>
 					<InfoTooltip
 						label="About chat channels"
-						content="Connect external chat apps (Telegram, Slack, Discord) so the CEO is reachable outside the web app — as a personal assistant over DM, or as a coworker in your team's channels."
+						content="Connect external chat apps (Telegram, Slack, Discord) so the CEO is reachable outside the web app - as a personal assistant over DM, or as a coworker in your team's channels."
 					/>
 				</div>
-				<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
+				<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
 					Chat apps connect in two modes. <span className="font-medium">Assistant (DM)</span>: DM
 					the bot and each conversation becomes its own CEO chat thread, listed in the chatbox here
 					— only linked identities may chat, and replies go back where you asked.{' '}
@@ -40,12 +56,12 @@ function ChatChannelsSettingsPage() {
 					anyone there can @-mention it; it reads the recent channel messages for context and
 					replies in-thread. Channel threads show up read-only in the web chatbox.
 				</p>
-			</div>
 
-			<TelegramSection />
-			<SlackSection />
-			<DiscordSection />
-			<IdentitiesSection />
+				<TelegramSection />
+				<SlackSection />
+				<DiscordSection />
+				<IdentitiesSection />
+			</section>
 		</div>
 	);
 }
@@ -493,5 +509,5 @@ function IdentitiesSection() {
 }
 
 export const Route = createFileRoute('/settings/chat-channels')({
-	component: ChatChannelsSettingsPage,
+	component: ChatSettingsPage,
 });

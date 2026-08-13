@@ -24,6 +24,7 @@ import { Route as SettingsChatboxRouteImport } from './routes/settings/chatbox'
 import { Route as SettingsChatChannelsRouteImport } from './routes/settings/chat-channels'
 import { Route as SettingsAuditLogRouteImport } from './routes/settings/audit-log'
 import { Route as SettingsArchivedProjectsRouteImport } from './routes/settings/archived-projects'
+import { Route as SettingsAppearanceRouteImport } from './routes/settings/appearance'
 import { Route as SettingsApiKeysRouteImport } from './routes/settings/api-keys'
 import { Route as SettingsAiProvidersRouteImport } from './routes/settings/ai-providers'
 import { Route as SettingsAdminPasswordRouteImport } from './routes/settings/admin-password'
@@ -142,6 +143,11 @@ const SettingsArchivedProjectsRoute =
     path: '/archived-projects',
     getParentRoute: () => SettingsRouteRoute,
   } as any)
+const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
+  id: '/appearance',
+  path: '/appearance',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const SettingsApiKeysRoute = SettingsApiKeysRouteImport.update({
   id: '/api-keys',
   path: '/api-keys',
@@ -385,6 +391,7 @@ export interface FileRoutesByFullPath {
   '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived-projects': typeof SettingsArchivedProjectsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
@@ -440,6 +447,7 @@ export interface FileRoutesByTo {
   '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived-projects': typeof SettingsArchivedProjectsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
@@ -498,6 +506,7 @@ export interface FileRoutesById {
   '/settings/admin-password': typeof SettingsAdminPasswordRoute
   '/settings/ai-providers': typeof SettingsAiProvidersRoute
   '/settings/api-keys': typeof SettingsApiKeysRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived-projects': typeof SettingsArchivedProjectsRoute
   '/settings/audit-log': typeof SettingsAuditLogRoute
   '/settings/chat-channels': typeof SettingsChatChannelsRoute
@@ -558,6 +567,7 @@ export interface FileRouteTypes {
     | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
+    | '/settings/appearance'
     | '/settings/archived-projects'
     | '/settings/audit-log'
     | '/settings/chat-channels'
@@ -613,6 +623,7 @@ export interface FileRouteTypes {
     | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
+    | '/settings/appearance'
     | '/settings/archived-projects'
     | '/settings/audit-log'
     | '/settings/chat-channels'
@@ -670,6 +681,7 @@ export interface FileRouteTypes {
     | '/settings/admin-password'
     | '/settings/ai-providers'
     | '/settings/api-keys'
+    | '/settings/appearance'
     | '/settings/archived-projects'
     | '/settings/audit-log'
     | '/settings/chat-channels'
@@ -836,6 +848,13 @@ declare module '@tanstack/react-router' {
       path: '/archived-projects'
       fullPath: '/settings/archived-projects'
       preLoaderRoute: typeof SettingsArchivedProjectsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/appearance': {
+      id: '/settings/appearance'
+      path: '/appearance'
+      fullPath: '/settings/appearance'
+      preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/api-keys': {
@@ -1151,6 +1170,7 @@ interface SettingsRouteRouteChildren {
   SettingsAdminPasswordRoute: typeof SettingsAdminPasswordRoute
   SettingsAiProvidersRoute: typeof SettingsAiProvidersRoute
   SettingsApiKeysRoute: typeof SettingsApiKeysRoute
+  SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedProjectsRoute: typeof SettingsArchivedProjectsRoute
   SettingsAuditLogRoute: typeof SettingsAuditLogRoute
   SettingsChatChannelsRoute: typeof SettingsChatChannelsRoute
@@ -1169,6 +1189,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsAdminPasswordRoute: SettingsAdminPasswordRoute,
   SettingsAiProvidersRoute: SettingsAiProvidersRoute,
   SettingsApiKeysRoute: SettingsApiKeysRoute,
+  SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedProjectsRoute: SettingsArchivedProjectsRoute,
   SettingsAuditLogRoute: SettingsAuditLogRoute,
   SettingsChatChannelsRoute: SettingsChatChannelsRoute,
