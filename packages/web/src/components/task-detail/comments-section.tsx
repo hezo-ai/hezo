@@ -1,6 +1,7 @@
 import {
 	buildThreadItems,
 	findGroupKeyForRow,
+	HeartbeatRunStatus,
 	isWorkingThreadRow,
 	type TaskView,
 	type ThreadFoldContext,
@@ -278,9 +279,21 @@ export function CommentsSection({
 	// The rows a reader actually sees. In Conversation, contiguous foldable rows
 	// collapse into groups; in Detailed every row comes back on its own, so the
 	// two views are one feed rather than two.
+	// `retryableRunId` is only the *candidate* - the newest run in the thread. The
+	// Retry button also needs that run to have failed, which the row itself
+	// checks against its own status. The fold rule has no per-run status, so it
+	// asks the task instead: the last finished run's outcome is exactly the
+	// missing half. Without it a *succeeded* latest run would sit unfolded
+	// offering nothing to act on.
+	const lastRunFailed =
+		task.last_run_status === HeartbeatRunStatus.Failed ||
+		task.last_run_status === HeartbeatRunStatus.TimedOut;
 	const foldCtx = useMemo<ThreadFoldContext>(
-		() => ({ activeRunId: task.active_run?.id ?? null, retryableRunId }),
-		[task.active_run?.id, retryableRunId],
+		() => ({
+			activeRunId: task.active_run?.id ?? null,
+			retryableRunId: lastRunFailed ? retryableRunId : null,
+		}),
+		[task.active_run?.id, lastRunFailed, retryableRunId],
 	);
 	const items = useMemo(
 		() => buildThreadItems(comments ?? [], view, foldCtx),

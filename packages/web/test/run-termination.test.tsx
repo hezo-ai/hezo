@@ -2,6 +2,7 @@ import { fireEvent } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 const FAKE_RUN_ID = 'cccc0000-0000-0000-0000-000000000123';
 
@@ -113,7 +114,7 @@ test('inline run comment shows terminate button and confirms before posting', as
 	const seeded = { projectSlug: '', taskId: '' };
 	let terminateCalled = false;
 
-	const { findAllByTestId, findByTestId, router } = await renderApp({
+	const { findAllByTestId, findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -144,6 +145,12 @@ test('inline run comment shows terminate button and confirms before posting', as
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
+	// This fixture mocks the comments and the heartbeat run, but not the task,
+	// so the task reports no active run and the row folds like any other rather
+	// than becoming the working row. (task-thread-views covers the working row
+	// against a real run.)
+	await expandEventGroups(user);
+
 	const buttons = await findAllByTestId('terminate-run-button', undefined, { timeout: 20_000 });
 	fireEvent.click(buttons[0]);
 
@@ -168,7 +175,7 @@ test('inline run comment shows terminate button and confirms before posting', as
 test('terminate button is hidden for finished runs', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 
-	const { findByTestId, queryAllByTestId, router } = await renderApp({
+	const { findByTestId, queryAllByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -195,6 +202,12 @@ test('terminate button is hidden for finished runs', async () => {
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
+
+	// This fixture mocks the comments and the heartbeat run, but not the task,
+	// so the task reports no active run and the row folds like any other rather
+	// than becoming the working row. (task-thread-views covers the working row
+	// against a real run.)
+	await expandEventGroups(user);
 
 	await findByTestId('run-comment', undefined, { timeout: 20_000 });
 	// Wait for the heartbeat-run to load so the inline header reflects completion.

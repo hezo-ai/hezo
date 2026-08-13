@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 const FAILED_RUN_ID = 'bbbb0000-0000-0000-0000-000000000777';
 
@@ -81,7 +82,7 @@ test('run_failed comment shows the failure and agent link, without a Retry butto
 	// run_failed ping itself is display-only — see run-comment-retry.test.tsx.
 	const seeded: Seeded = { teamId: '', projectSlug: '', taskId: '', agentId: '', agentSlug: '' };
 
-	const { findByTestId, queryByTestId, router } = await setup(seeded, ({ task, agent }) => [
+	const { findByTestId, queryByTestId, router, user } = await setup(seeded, ({ task, agent }) => [
 		runFailedComment(task.id, agent.slug, agent.id),
 	]);
 
@@ -89,6 +90,10 @@ test('run_failed comment shows the failure and agent link, without a Retry butto
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
+
+	// A run_failed notice folds in the default Conversation view; this test is
+	// about what the notice renders once opened.
+	await expandEventGroups(user);
 
 	const failureComment = await findByTestId('run-failed-comment', undefined, { timeout: 20_000 });
 	expect(failureComment.textContent ?? '').toContain('timed out');

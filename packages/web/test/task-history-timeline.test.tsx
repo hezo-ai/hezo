@@ -8,6 +8,7 @@ import {
 	seedTask,
 	seedWorkspace,
 } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 async function patchTask(ws: SeededWorkspace, taskId: string, patch: Record<string, unknown>) {
 	const { apiBase } = getTestContext();
@@ -44,7 +45,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	let sourceTaskId = '';
 	let workspace: SeededWorkspace;
 
-	const { findByText, findAllByTestId, router } = await renderApp({
+	const { findByText, findAllByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			workspace = await seedWorkspace();
@@ -78,6 +79,10 @@ test('status changes and cross-task mentions appear as system entries on the tim
 			taskId: targetIdentifier.toLowerCase(),
 		},
 	});
+
+	// System entries fold into an event group in the default Conversation
+	// view; this file is about the entries themselves.
+	await expandEventGroups(user);
 
 	await findByText('Target task', undefined, { timeout: 10_000 });
 
@@ -139,6 +144,10 @@ test('status changes and cross-task mentions appear as system entries on the tim
 		},
 	});
 
+	// System entries fold into an event group in the default Conversation
+	// view; this file is about the entries themselves.
+	await expandEventGroups(user);
+
 	await findByText('Target task', undefined, { timeout: 10_000 });
 	await waitFor(
 		async () => {
@@ -157,7 +166,7 @@ test('title renames appear as system entries on the timeline', async () => {
 	let projectSlug = '';
 	let taskIdentifier = '';
 
-	const { findByText, findAllByTestId, router } = await renderApp({
+	const { findByText, findAllByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -180,6 +189,10 @@ test('title renames appear as system entries on the timeline', async () => {
 			taskId: taskIdentifier.toLowerCase(),
 		},
 	});
+
+	// System entries fold into an event group in the default Conversation
+	// view; this file is about the entries themselves.
+	await expandEventGroups(user);
 
 	await findByText('Renamed task', undefined, { timeout: 10_000 });
 
@@ -223,6 +236,10 @@ test('description edits appear as system entries with an expandable before/after
 		},
 	});
 
+	// System entries fold into an event group in the default Conversation
+	// view; this file is about the entries themselves.
+	await expandEventGroups(user);
+
 	await waitFor(
 		async () => {
 			const items = await findAllByTestId('comment-item');
@@ -247,7 +264,7 @@ test('auto-unblock cascade renders as system attribution, not the patcher', asyn
 	let blockerIdentifier = '';
 	let closerTitle = '';
 
-	const { findByTestId, router } = await renderApp({
+	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -281,6 +298,10 @@ test('auto-unblock cascade renders as system attribution, not the patcher', asyn
 		},
 	});
 
+	// System entries fold into an event group in the default Conversation
+	// view; this file is about the entries themselves.
+	await expandEventGroups(user);
+
 	const cascadeEntry = await findByTestId('status-change-cascade', undefined, {
 		timeout: 10_000,
 	});
@@ -295,7 +316,7 @@ test('reassignments appear as system entries on the timeline', async () => {
 	let projectSlug = '';
 	let taskIdentifier = '';
 
-	const { findAllByTestId, router } = await renderApp({
+	const { findAllByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -320,6 +341,10 @@ test('reassignments appear as system entries on the timeline', async () => {
 			taskId: taskIdentifier.toLowerCase(),
 		},
 	});
+
+	// System entries fold into an event group in the default Conversation
+	// view; this file is about the entries themselves.
+	await expandEventGroups(user);
 
 	await waitFor(
 		async () => {

@@ -180,6 +180,69 @@ test('a live run becomes the working row instead of folding', async () => {
 	expect(groups[0].textContent).toContain('1 event');
 });
 
+test('the working row opens onto the live log, with Stop inside it', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, queryByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Stop Project' });
+			const task = await seedTask(ws, project, { title: 'Stop Task' });
+			await seedRunningAgent(ws, task, ws.agents[0].id);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const working = await findByTestId('run-comment-working', undefined, { timeout: 20_000 });
+	// Collapsed by default: a live terminal at the foot of every busy task is the
+	// noise this view exists to remove.
+	expect(queryByTestId('run-comment-log')).toBeNull();
+
+	await user.click(working);
+	await findByTestId('run-comment-log');
+	// Stop rides in the log header, so it is one click from the working row.
+	await findByTestId('terminate-run-button');
+	expect(working.getAttribute('aria-expanded')).toBe('true');
+});
+
+test('a succeeded latest run folds - there is nothing to act on', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async (ctx) => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Succeeded Project' });
+			const task = await seedTask(ws, project, { title: 'Succeeded Task' });
+			await seedComment(ws, task, 'Please start.');
+			const { runId } = await seedRunningAgent(ws, task, ws.agents[0].id);
+			// Finish it: the newest run in the thread, but it offers no Retry, so the
+			// fold rule must treat it like any other completed run.
+			await ctx.db.query(
+				`UPDATE heartbeat_runs SET status = 'succeeded'::heartbeat_run_status,
+				        finished_at = now() WHERE id = $1`,
+				[runId],
+			);
+			await ctx.db.query(`DELETE FROM execution_locks WHERE task_id = $1`, [task.id]);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await findByTestId('event-group', undefined, { timeout: 20_000 });
+	expect(queryByTestId('run-comment-working')).toBeNull();
+	// The run is inside the group, not beside it.
+	expect(queryByTestId('run-comment-summary')).toBeNull();
+});
+
 test('a deep link into a folded row expands its group', async () => {
 	const seeded = { projectSlug: '', taskId: '', publicId: '' };
 	const { findByTestId, router } = await renderApp({

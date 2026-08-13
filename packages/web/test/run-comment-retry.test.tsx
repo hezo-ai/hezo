@@ -201,6 +201,9 @@ test('failed run-entry comment shows Retry and retries that run on click', async
 		runs: ({ task, agent, teamId }) => ({
 			[FAILED_RUN_ID]: runResponse(FAILED_RUN_ID, agent, teamId, task.id, 'failed'),
 		}),
+		// The task this fixture simulates has a failed last run. That is what keeps
+		// the row out of the fold, so the fixture has to say so.
+		taskOverride: { last_run_status: 'failed', last_run_id: FAILED_RUN_ID },
 	});
 
 	await router.navigate({
@@ -327,6 +330,9 @@ test('failed run-entry comment disables Retry while the container has an error',
 		runs: ({ task, agent, teamId }) => ({
 			[FAILED_RUN_ID]: runResponse(FAILED_RUN_ID, agent, teamId, task.id, 'failed'),
 		}),
+		// The task this fixture simulates has a failed last run. That is what keeps
+		// the row out of the fold, so the fixture has to say so.
+		taskOverride: { last_run_status: 'failed', last_run_id: FAILED_RUN_ID },
 	});
 
 	await router.navigate({
