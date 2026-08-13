@@ -18,4 +18,5 @@ export * from './prompt-style.js';
 export * from './search/terms.js';
 export * from './system-prompt-vars.js';
 export * from './task-progress.js';
+export * from './task-thread.js';
 export * from './types/index.js';
