@@ -7,6 +7,8 @@ import {
 	DEFAULT_MAX_CHAT_HISTORY_SIZE,
 	DEFAULT_MAX_CONTAINER_MEMORY_GB,
 	DEFAULT_RAM_CAP_PER_CONTAINER_GB,
+	DEFAULT_TASK_VIEW,
+	isTaskView,
 	type LocaleSettings,
 	type LocaleSettingsPatch,
 	MAX_CHAT_HISTORY_SIZE_MAX,
@@ -15,6 +17,7 @@ import {
 	MAX_CONTAINER_MEMORY_GB_MIN,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
+	type TaskView,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import type { ContainerEngine } from '../services/sandbox/types';
@@ -38,6 +41,8 @@ export const MAX_CONTAINER_MEMORY_GB_KEY = 'max_container_memory_gb';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
 /** Disk allocated to each project container, in GB. Sibling of the RAM cap. */
 export const CONTAINER_DISK_GB_KEY = 'default_container_disk_gb';
+/** Which view a task thread opens in. See `getDefaultTaskView`. */
+export const DEFAULT_TASK_VIEW_KEY = 'default_task_view';
 
 /**
  * Locale keys. One key per axis rather than a single JSON blob, so a partial
@@ -227,6 +232,26 @@ export async function setDefaultContainerDiskGb(db: Db, value: number): Promise<
 	const clamped = clampContainerDiskGb(value);
 	await setSystemMeta(db, CONTAINER_DISK_GB_KEY, String(clamped));
 	return clamped;
+}
+
+/**
+ * Which view a task thread opens in, for everyone on this instance.
+ *
+ * Deliberately instance-wide with no per-user layer: a reader can switch a
+ * single task from its right-hand rail, but that switch is scoped to the page
+ * visit and writes nothing. One value, one home, nothing stale to find later.
+ *
+ * Falls back to the shipped default when unset or when the stored value is not
+ * a view we recognise (a downgrade past a view this row was written for).
+ */
+export async function getDefaultTaskView(db: Db): Promise<TaskView> {
+	const raw = await getSystemMeta(db, DEFAULT_TASK_VIEW_KEY);
+	return isTaskView(raw) ? raw : DEFAULT_TASK_VIEW;
+}
+
+export async function setDefaultTaskView(db: Db, value: TaskView): Promise<TaskView> {
+	await setSystemMeta(db, DEFAULT_TASK_VIEW_KEY, value);
+	return value;
 }
 
 /**
