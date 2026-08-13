@@ -42,13 +42,26 @@ import { CATALOGS } from './catalogs';
  */
 export type MessageKey = keyof typeof en;
 
+/** The CLDR plural categories `plural()` composes a key from. */
+type PluralCategory = 'zero' | 'one' | 'two' | 'few' | 'many' | 'other';
+
+/**
+ * Keys that exist only as plural forms - `thread.group.events` is not itself a
+ * catalog entry, but `thread.group.events.one` and `.other` are. Derived rather
+ * than hand-listed, so authoring a new plural in the catalog is all it takes for
+ * `plural('...')` to accept its stem, and a typo is still a compile error.
+ */
+export type PluralKey = {
+	[K in MessageKey]: K extends `${infer Stem}.${PluralCategory}` ? Stem : never;
+}[MessageKey];
+
 const STORAGE_KEY = 'locale';
 
 interface I18nContextValue extends LocaleSettings {
 	/** Look up a message, interpolating `{name}` placeholders. */
 	t: (key: MessageKey, vars?: Record<string, string | number>) => string;
 	/** Pick a plural form by the language's own rules (`key.one`, `key.other`, ...). */
-	plural: (key: MessageKey, count: number, vars?: Record<string, string | number>) => string;
+	plural: (key: PluralKey, count: number, vars?: Record<string, string | number>) => string;
 	formatDate: (value: Date | string | null | undefined) => string;
 	formatDateTime: (value: Date | string | null | undefined) => string;
 	formatMoney: (cents: number) => string;

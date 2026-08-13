@@ -9,6 +9,7 @@ import {
 	authenticate,
 	createProjectAndClearPlanning,
 	createProjectReadyForAgents,
+	expandEventGroups,
 	getToken,
 } from './helpers';
 
@@ -221,6 +222,10 @@ test('task page renders completed run as a collapsed inline comment with summary
 
 	await page.goto(`/projects/${project.slug}/tasks/${task.id}`);
 
+	// Completed runs fold into an event group in the default Conversation view;
+	// these specs are about what the run row renders once opened.
+	await expandEventGroups(page);
+
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 
@@ -333,6 +338,10 @@ test('clicking the summary on a completed run expands the inline log', async ({ 
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 
+	// Completed runs fold into an event group in the default Conversation view;
+	// these specs are about what the run row renders once opened.
+	await expandEventGroups(page);
+
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 
@@ -369,6 +378,10 @@ test('completed run expansion works on mobile viewport', async ({ page }) => {
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 
+	// Completed runs fold into an event group in the default Conversation view;
+	// these specs are about what the run row renders once opened.
+	await expandEventGroups(page);
+
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 
@@ -398,6 +411,10 @@ test('completed run header wraps within the viewport when the log expands (mobil
 	const { task, projectSlug } = await mockCompletedRun(page, token);
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
+
+	// Completed runs fold into an event group in the default Conversation view;
+	// these specs are about what the run row renders once opened.
+	await expandEventGroups(page);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
@@ -460,6 +477,10 @@ test('the expand chevron sits beside the timestamp on a retryable run header', a
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 
+	// Completed runs fold into an event group in the default Conversation view;
+	// these specs are about what the run row renders once opened.
+	await expandEventGroups(page);
+
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 
@@ -520,6 +541,10 @@ test('completed run inline icon is vertically centred on the summary label', asy
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
 
+	// Completed runs fold into an event group in the default Conversation view;
+	// these specs are about what the run row renders once opened.
+	await expandEventGroups(page);
+
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
 	await expect(runCommentEl.getByTestId('run-comment-summary')).toBeVisible({ timeout: 20_000 });
@@ -558,6 +583,10 @@ test('task-page run log offers the formatted/raw switcher on a dark surface in l
 	const { task, projectSlug } = await mockCompletedRun(page, token);
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
+
+	// Completed runs fold into an event group in the default Conversation view;
+	// these specs are about what the run row renders once opened.
+	await expandEventGroups(page);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });
@@ -608,6 +637,10 @@ test('formatted view collapses a long thinking block behind a Show more/less tog
 	const { task, projectSlug } = await mockCompletedRun(page, token, { logText });
 
 	await page.goto(`/projects/${projectSlug}/tasks/${task.id}`);
+
+	// Completed runs fold into an event group in the default Conversation view;
+	// these specs are about what the run row renders once opened.
+	await expandEventGroups(page);
 
 	const runCommentEl = page.getByTestId('run-comment').first();
 	await expect(runCommentEl).toBeVisible({ timeout: 20_000 });

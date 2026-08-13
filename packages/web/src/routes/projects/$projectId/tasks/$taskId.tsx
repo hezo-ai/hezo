@@ -1,4 +1,4 @@
-import type { AgentEffort } from '@hezo/shared';
+import { type AgentEffort, DEFAULT_TASK_VIEW, type TaskView } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -25,6 +25,7 @@ import {
 	useCreateComment,
 } from '../../../../hooks/use-comments';
 import { useExecutionLock } from '../../../../hooks/use-execution-locks';
+import { useInstanceSettings } from '../../../../hooks/use-instance-settings';
 import { useScrollToBottom } from '../../../../hooks/use-scroll-to-bottom';
 import { useTask, useUpdateTask } from '../../../../hooks/use-tasks';
 
@@ -69,6 +70,14 @@ function TaskDetailPage() {
 	// leave effort unset on submit and let the server resolve the agent default.
 	const [commentEffort, setCommentEffort] = useState<AgentEffort | null>(null);
 	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
+	// Which view this page visit shows. The instance default is the value; the
+	// rail control overrides it for this visit only and writes nothing, so a
+	// reload - or opening another task - is back on the default. That is the whole
+	// of the per-visit rule: plain state on the route, nothing to go stale.
+	const { data: instanceSettings } = useInstanceSettings();
+	const defaultView = instanceSettings?.default_task_view ?? DEFAULT_TASK_VIEW;
+	const [viewOverride, setViewOverride] = useState<TaskView | null>(null);
+	const view = viewOverride ?? defaultView;
 	// A doc clicked in a comment opens in the preview panel: an in-grid column at
 	// lg+ that defaults to widening on the roomier xl/2xl breakpoints (up to 2× its
 	// base width) and is user-resizable by dragging the divider between it and the
@@ -181,6 +190,9 @@ function TaskDetailPage() {
 							commentEffort={commentEffort}
 							setCommentEffort={setCommentEffort}
 							scrollToBottom={scrollToBottom}
+							view={view}
+							setView={setViewOverride}
+							defaultView={defaultView}
 						/>
 					</div>
 				</>
@@ -214,13 +226,6 @@ function TaskDetailPage() {
 					<DependenciesSection projectId={projectId} taskId={taskId} />
 
 					<div className="border-t border-border pt-4">
-						<div className="flex items-center gap-1.5 mb-4">
-							<h3 className="text-[13px] text-text-1 font-medium">Comments</h3>
-							<span className="bg-surface-2 px-[7px] py-px rounded-full text-[11px] text-text-2">
-								{comments?.length ?? 0}
-							</span>
-						</div>
-
 						<CommentsSection
 							task={task}
 							projectId={projectId}
@@ -228,6 +233,7 @@ function TaskDetailPage() {
 							taskProjectSlug={taskProjectSlug}
 							scrollParent={scrollParent}
 							onStartReply={startReply}
+							view={view}
 						/>
 
 						<CommentComposer

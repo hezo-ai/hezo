@@ -837,3 +837,31 @@ export async function openTeamCatalog(page: Page): Promise<void> {
 	await page.getByTestId('view-all-teams').click();
 	await expect(page.getByTestId('team-search')).toBeVisible({ timeout: 15_000 });
 }
+
+/**
+ * Open every collapsed event group in a task thread.
+ *
+ * The Conversation view is the default, so runs and system rows sit inside a
+ * group chip. Specs about what those rows *render* call this after landing on
+ * the task page; specs about the folding itself assert on the chips directly.
+ *
+ * Returns the number of groups opened, so a caller can tell "nothing folded"
+ * apart from "the thread had nothing in it".
+ */
+export async function expandEventGroups(page: Page): Promise<number> {
+	const collapsed = page.locator('[data-testid="event-group-toggle"][aria-expanded="false"]');
+	let opened = 0;
+	// Expanding one group can mount another - Virtuoso only renders near the
+	// viewport - so keep going until none are left.
+	for (let pass = 0; pass < 10; pass++) {
+		const count = await collapsed.count();
+		if (count === 0) break;
+		for (let i = 0; i < count; i++) {
+			const toggle = collapsed.first();
+			if ((await toggle.count()) === 0) break;
+			await toggle.click();
+			opened++;
+		}
+	}
+	return opened;
+}

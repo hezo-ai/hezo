@@ -16,11 +16,11 @@ The Telegram integration connects the Hezo **CEO** to Telegram in both modes (se
 
 ## Setup
 
-Set it up from **Settings → Chat channels**:
+Set it up from **Settings → Chat**:
 
 1. **Create a bot.** In Telegram, message [@BotFather](https://t.me/BotFather), create a
    bot, and copy its token.
-2. **Paste the token.** On the Chat channels page, paste the token into the Telegram
+2. **Paste the token.** On the Chat page, paste the token into the Telegram
    section, tick **Enabled**, and save. Hezo registers the inbound connection for you.
 3. **Link your account.** Only accounts you explicitly allow may DM. Find your Telegram
    numeric user id (message [@userinfobot](https://t.me/userinfobot)), then add it under

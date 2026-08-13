@@ -7,10 +7,11 @@ import {
 	HQ_PROJECT_SLUG,
 	TaskPriority,
 	TaskStatus,
+	type TaskView,
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Agent } from '../../hooks/use-agents';
 import type { CommentSkeleton } from '../../hooks/use-comments';
@@ -18,7 +19,9 @@ import type { ExecutionLockState } from '../../hooks/use-execution-locks';
 import { usePanelPlacement } from '../../hooks/use-panel-placement';
 import { useQueuedWakeups } from '../../hooks/use-queued-wakeups';
 import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
+import { useI18n } from '../../lib/i18n';
 import { TASK_RUN_STATUS_META } from '../../lib/status-meta';
+import { useTaskViewOptions } from '../../lib/task-view-options';
 import { agentDisplayName } from '../agent-identity-tooltip';
 import { AgentRef } from '../agent-ref';
 import { AgentStatusLabel } from '../agent-status-label';
@@ -27,6 +30,7 @@ import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
 import { InfoTooltip } from '../ui/info-tooltip';
 import { RelativeTime } from '../ui/relative-time';
+import { SegmentedControl } from '../ui/segmented-control';
 import { AgentQueueSection } from './agent-queue-section';
 import { ChangeParentDialog } from './change-parent-dialog';
 
@@ -53,6 +57,10 @@ interface TaskSidebarProps {
 	commentEffort: AgentEffort | null;
 	setCommentEffort: (v: AgentEffort | null) => void;
 	scrollToBottom: () => void;
+	/** The view this visit is showing, and the instance default it started from. */
+	view: TaskView;
+	setView: (v: TaskView) => void;
+	defaultView: TaskView;
 }
 
 export function TaskSidebar({
@@ -66,7 +74,12 @@ export function TaskSidebar({
 	commentEffort,
 	setCommentEffort,
 	scrollToBottom,
+	view,
+	setView,
+	defaultView,
 }: TaskSidebarProps) {
+	const { t } = useI18n();
+	const viewOptions = useTaskViewOptions();
 	const [assigneeOpen, setAssigneeOpen] = useState(false);
 	const [closeOpen, setCloseOpen] = useState(false);
 	const [reopenOpen, setReopenOpen] = useState(false);
@@ -165,6 +178,29 @@ export function TaskSidebar({
 					wakeups={queued?.wakeups ?? []}
 					dispatch={queued?.dispatch}
 				/>
+
+				<div data-testid="task-view-control">
+					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
+						{t('taskView.label')}
+					</span>
+					<SegmentedControl
+						options={viewOptions}
+						value={view}
+						onChange={setView}
+						label={t('taskView.label')}
+						collapseToIcons
+						testId="task-view-segmented"
+					/>
+					{view !== defaultView && (
+						<span
+							className="mt-1.5 flex items-start gap-1 text-[10.5px] leading-snug text-text-3"
+							data-testid="task-view-temporary"
+						>
+							<RotateCcw className="w-3 h-3 shrink-0 mt-px" aria-hidden="true" />
+							{t('taskView.resetsOnReload')}
+						</span>
+					)}
+				</div>
 
 				<div>
 					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">

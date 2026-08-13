@@ -17,6 +17,8 @@ export interface QueuedWakeup {
 }
 
 export interface ActiveRun {
+	/** The run's id, so the thread can tell which of its run rows is the live one. */
+	id: string;
 	status: typeof HeartbeatRunStatus.Running | typeof HeartbeatRunStatus.Queued;
 	/** The agent the run belongs to — not necessarily the task's assignee. */
 	member_id: string;

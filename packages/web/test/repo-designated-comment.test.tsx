@@ -1,11 +1,12 @@
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 test('task page renders repo_designated system comment with a GitHub link', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 
-	const { findByTestId, router } = await renderApp({
+	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -51,6 +52,10 @@ test('task page renders repo_designated system comment with a GitHub link', asyn
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
+
+	// A system row folds in the default Conversation view; this test is about what
+	// the row renders, not about the folding.
+	expect(await expandEventGroups(user)).toBeGreaterThan(0);
 
 	const comment = await findByTestId('repo-designated-comment', undefined, { timeout: 20_000 });
 	expect(comment.textContent ?? '').toContain('set as the designated repo');

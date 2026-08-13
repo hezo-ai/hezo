@@ -22,6 +22,8 @@ interface RenderProps {
 	taskId?: string;
 	retryableRunId?: string | null;
 	inline?: boolean;
+	/** Run rows only: this run is the task's live one, so render the working row. */
+	working?: boolean;
 }
 
 /**
@@ -37,6 +39,7 @@ type RendererComponent<K extends CommentContentType> = ComponentType<{
 	taskId?: string;
 	retryableRunId?: string | null;
 	inline?: boolean;
+	working?: boolean;
 }>;
 
 type RendererRegistry = { [K in CommentContentType]: RendererComponent<K> };
@@ -49,13 +52,14 @@ const renderers: RendererRegistry = {
 	[CommentContentType.System]: ({ comment, projectId }) => (
 		<SystemComment comment={comment} projectId={projectId} />
 	),
-	[CommentContentType.Run]: ({ comment, projectId, taskId, retryableRunId, inline }) => (
+	[CommentContentType.Run]: ({ comment, projectId, taskId, retryableRunId, inline, working }) => (
 		<RunComment
 			comment={comment}
 			projectId={projectId}
 			taskId={taskId}
 			retryableRunId={retryableRunId}
 			inline={inline}
+			working={working}
 		/>
 	),
 	[CommentContentType.Action]: ({ comment, projectId, taskId }) => (

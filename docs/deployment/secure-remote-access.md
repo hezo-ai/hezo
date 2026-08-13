@@ -93,7 +93,7 @@ browser gate after each restart. **Don't store the master key on the server** to
 unlock; keeping it in memory only is what protects the vault if the host is compromised.
 
 - **Set a strong admin password** and, if you upgraded an existing instance, change the
-  default (`password`) in **Settings → Admin password** before exposing it. See
+  default (`password`) in **Settings → Users & access** before exposing it. See
   [Master key & encryption](/docs/security/master-key).
 - For defense in depth you can still add a second authentication layer in front (your
   proxy's auth, an identity-aware proxy, or an SSO gateway) - recommended for

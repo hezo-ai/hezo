@@ -4261,6 +4261,27 @@ cache, `useCommentBody`). A `?view=skeleton` list is index-ordered by
 lands on stable height. Reactions stay on the skeleton row (one source of truth), so their
 optimistic mutation and WS invalidation are unchanged.
 
+**Thread views.** The feed renders a *row model*, not the raw comment list. The rule that
+builds it lives in `@hezo/shared` (`task-thread.ts`): a row stays visible if it is
+something a person said (`text`) or something a person can act on (`action`,
+`credential_request`, `connect_required`, `asset_deletion_request`, `preview`), plus the
+two run rows the same test exempts - the task's **active** run, which renders as the
+working row, and the **retryable** one, which carries a Retry button. Everything else
+(completed runs, every `system` kind) folds. `buildThreadItems` collapses *contiguous*
+foldable rows into groups keyed on their first row's id, so a group keeps its expanded
+state across a refetch and as later events join it; `TaskView.Detailed` returns every row
+as its own item, which is what makes both views one feed rather than two. Virtuoso is
+keyed on the item key rather than a comment id, and a `#comment-<id>` deep link resolves
+to a **comment id** (not a list index, which the fold would move) and expands the group
+holding it before the scroll executor runs.
+
+Which view a thread opens in is `default_task_view` in `system_meta` - instance-wide,
+superuser-writable through `PATCH /api/instance-settings`, surfaced at Settings ›
+Appearance. There is deliberately no per-user layer: the rail control on a task overrides
+the view for that page visit only (plain route state, writes nothing), so there is one
+value and nothing that can go stale. `tasks.active_run` carries the run's `id` for this -
+without it the thread could only guess which of its run rows is the live one.
+
 **Mutations** (three strategies, by shape — see `AGENTS.md` › Web frontend mutations):
 **optimistic + rollback** (default for field edits/toggles/reactions, via
 `useOptimisticMutation`), **response-driven** (creates and server-validated fields like

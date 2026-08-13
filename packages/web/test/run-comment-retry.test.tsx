@@ -2,6 +2,7 @@ import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 // The Retry button on a failed run-entry comment. It must appear only for the
 // latest run and only when nothing is already running or queued for the task —
@@ -225,7 +226,7 @@ test('failed run-entry comment hides Retry once a later run supersedes it', asyn
 	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
 	const retryCalls: string[] = [];
 
-	const { findByTestId, queryByTestId, router } = await setup({
+	const { findByTestId, queryByTestId, router, user } = await setup({
 		seeded,
 		retryCalls,
 		comments: ({ task, agent }) => [
@@ -244,6 +245,10 @@ test('failed run-entry comment hides Retry once a later run supersedes it', asyn
 	});
 
 	// Wait for the failed run entry to finish loading its status before asserting.
+	// A run with no Retry to offer folds in the default Conversation view - the
+	// same rule this asserts from the other side. Open the group and check the
+	// summary really carries no Retry.
+	await expandEventGroups(user);
 	await findByTestId('run-comment-summary', undefined, { timeout: 20_000 });
 	expect(queryByTestId('retry-failed-run')).toBeNull();
 });
@@ -252,7 +257,7 @@ test('failed run-entry comment hides Retry while a run is active or queued', asy
 	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
 	const retryCalls: string[] = [];
 
-	const { findByTestId, queryByTestId, router } = await setup({
+	const { findByTestId, queryByTestId, router, user } = await setup({
 		seeded,
 		retryCalls,
 		comments: ({ task, agent }) => [
@@ -270,6 +275,10 @@ test('failed run-entry comment hides Retry while a run is active or queued', asy
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
+	// A run with no Retry to offer folds in the default Conversation view - the
+	// same rule this asserts from the other side. Open the group and check the
+	// summary really carries no Retry.
+	await expandEventGroups(user);
 	await findByTestId('run-comment-summary', undefined, { timeout: 20_000 });
 	expect(queryByTestId('retry-failed-run')).toBeNull();
 });
@@ -278,7 +287,7 @@ test('succeeded run-entry comment shows no Retry button', async () => {
 	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
 	const retryCalls: string[] = [];
 
-	const { findByTestId, queryByTestId, router } = await setup({
+	const { findByTestId, queryByTestId, router, user } = await setup({
 		seeded,
 		retryCalls,
 		comments: ({ task, agent }) => [
@@ -294,6 +303,10 @@ test('succeeded run-entry comment shows no Retry button', async () => {
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
 
+	// A run with no Retry to offer folds in the default Conversation view - the
+	// same rule this asserts from the other side. Open the group and check the
+	// summary really carries no Retry.
+	await expandEventGroups(user);
 	await findByTestId('run-comment-summary', undefined, { timeout: 20_000 });
 	expect(queryByTestId('retry-failed-run')).toBeNull();
 });

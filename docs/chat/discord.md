@@ -36,7 +36,7 @@ so it works even when your instance has no public URL.
 4. **Invite the bot to your server.** Under **OAuth2 → URL Generator**, select the
    `bot` scope with the **View Channels**, **Send Messages**, and **Read Message
    History** permissions, open the generated URL, and pick your server.
-5. **Paste the token into Hezo.** On **Settings → Chat channels → Discord**, paste the
+5. **Paste the token into Hezo.** On **Settings → Chat → Discord**, paste the
    bot token, tick **Enabled**, and save. Hezo verifies the token and connects.
 6. **For DMs**, link your Discord user ID under **Allowed identities**: in Discord,
    enable **Developer Mode** (Settings → Advanced), then right-click your name →

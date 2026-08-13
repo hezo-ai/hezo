@@ -79,6 +79,8 @@ interface CommentRowProps {
 	agentsByMemberId: Map<string, Agent>;
 	observeCommentRow: (el: HTMLDivElement | null) => void;
 	onStartReply: (comment: Comment) => void;
+	/** This row's run is the task's live one - render it as the working row. */
+	working?: boolean;
 }
 
 /**
@@ -99,6 +101,7 @@ export function CommentRow({
 	agentsByMemberId,
 	observeCommentRow,
 	onStartReply,
+	working,
 }: CommentRowProps) {
 	const needsBody = skeletonNeedsBody(c);
 	const { data: body } = useCommentBody(projectId, taskId, c.id);
@@ -150,6 +153,7 @@ export function CommentRow({
 						taskId={taskId}
 						retryableRunId={retryableRunId}
 						inline
+						working={working}
 					/>
 				</div>
 			</div>

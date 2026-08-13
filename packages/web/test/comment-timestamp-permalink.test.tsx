@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedComment, seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { expandEventGroups } from './helpers/thread';
 
 test("a text comment's timestamp is a permalink to that comment", async () => {
 	const seeded = { projectSlug: '', taskId: '', publicId: '' };
@@ -33,7 +34,7 @@ test("a text comment's timestamp is a permalink to that comment", async () => {
 
 test("an inline event row's timestamp is a permalink to that event", async () => {
 	const seeded = { projectSlug: '', taskId: '', publicId: '' };
-	const { findAllByTestId, router } = await renderApp({
+	const { findAllByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async (ctx) => {
 			const ws = await seedWorkspace();
@@ -62,6 +63,10 @@ test("an inline event row's timestamp is a permalink to that event", async () =>
 		to: '/projects/$projectId/tasks/$taskId',
 		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
 	});
+
+	// The status-change row folds in the default Conversation view; the permalink
+	// on it is what this test is about.
+	expect(await expandEventGroups(user)).toBeGreaterThan(0);
 
 	const links = (await findAllByTestId('comment-timestamp-link', undefined, {
 		timeout: 10_000,
