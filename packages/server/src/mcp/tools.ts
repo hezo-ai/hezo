@@ -332,16 +332,30 @@ async function buildPassiveMentionWarning(
 	if (offenders.length === 0) return null;
 	const named = offenders.map((s) => `@@${s}`).join(', ');
 	const fixes = offenders.map((s) => `@${s}`).join(', ');
+	// An offender can still have been notified — by an active mention somewhere
+	// else in this same comment that is NOT the address (a back-reference, a
+	// name-drop). Saying "no wakeup was created" there would be false, and the
+	// mismatch IS the finding: the ask wears the mark that notifies no one while
+	// something that asks for nothing wears the live one.
+	const activeElsewhere = new Set(extractMentionSlugs(content));
+	const misplaced = offenders.filter((s) => activeElsewhere.has(s));
+	const misplacedNote =
+		misplaced.length > 0
+			? ` Note that ${misplaced.map((s) => `@${s}`).join(', ')} did notify from elsewhere in ` +
+				`this comment - but that mention is not the address, so the notification points at a ` +
+				`line that asks for nothing while the ask itself wears the silent mark. Move the ` +
+				`active mention onto the address.`
+			: '';
 	return (
 		`You addressed ${named} with the passive form (@@) - that renders as a link and ` +
-		`notifies no one, so no wakeup or admin-inbox alert was created. If you need them to ` +
+		`notifies no one at that address. If you need them to ` +
 		`act on this task, edit this comment or post a follow-up with an active mention ` +
 		`(${fixes}). If you only meant to refer to them, keep the passive form but move the ` +
 		`reference out of the handoff position: a line that opens with a teammate reference and ` +
 		`a dash is an address, and a name bound to a sign-off gate ("ready for <name> review", ` +
 		`"awaiting <name> sign-off", "<name> to approve") hands them the next action - both ` +
 		`shapes are reserved for active mentions, so a plain reference belongs inside a ` +
-		`sentence that asks for nothing.`
+		`sentence that asks for nothing.${misplacedNote}`
 	);
 }
 

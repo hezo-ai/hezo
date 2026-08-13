@@ -3192,7 +3192,15 @@ all; a bold name written for mere emphasis is never touched) — **or** the same
 the **passive** `@@slug` form, via `detectPassiveTeammateAsks`, which is the likelier spelling of
 a closing verdict line (`APPROVED. Ready for @@marketing-lead review.`) and wakes exactly as many
 people as the bare name does. Either is the wakes-no-one
-trap — but the net does **not** rewrite the
+trap. Both detectors skip a slug that is also actively `@`-mentioned (it already notifies) —
+**except on the leading-line branch**, which asks whether the address is *marked* correctly
+rather than whether anyone was notified, so only an active mention that is itself an address
+(`hasActiveAddressingMention`, the same four shapes applied to the active spelling) excuses it.
+Without that carve-out a throwaway back-reference silenced the branch on the line carrying the
+ask — `@@admin — <directive>` plus `… the earlier @admin ZIP request …` two sentences later put
+the muted mark on the handoff and the live one on a mention that asks for nothing, and because
+the stray mention lands a real inbox row the wake receipt and the no-wake exit check both read
+clean. The net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips
 that check, so the runner surfaces the **same warning in the run log** and leaves the handoff

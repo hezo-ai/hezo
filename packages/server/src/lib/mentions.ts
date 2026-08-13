@@ -215,6 +215,39 @@ function hasNameBoundSignoffGate(stripped: string, namePattern: string): boolean
 	return gateNameObject.test(stripped) || namePendingAction.test(stripped);
 }
 
+/**
+ * Whether the ACTIVE `@slug` in `stripped` is itself ADDRESSING the teammate —
+ * the same four shapes the two ask detectors below recognise, applied to the
+ * active spelling instead of `@@slug`/the bare name.
+ *
+ * This is what exempts a slug from those detectors, and the scope is the point.
+ * The exemption used to be comment-wide ("a slug reached by an active @mention
+ * already notifies"), which is true about NOTIFICATION and false about the
+ * ADDRESS FORM — the thing the detectors actually check. A name dropped
+ * mid-sentence as a back-reference does notify, but it does not make a passive
+ * line-opening address elsewhere correct, and under the wide rule it silenced
+ * the warning on it. That made a slug's treatment depend on unrelated text: two
+ * teammates written in the identical stranded form warned differently because
+ * one happened to be name-dropped in passing.
+ *
+ * The miss this was written for: `@@admin — optionally disable <setting>.` +
+ * `… since the earlier @admin ZIP request wasn't replied to.` The leading-line
+ * branch flags the first line on sight, and never ran — the second line's
+ * throwaway mention put `admin` in the exempt set. It also lands a real admin
+ * inbox row, so the wake receipt read `woke: ['admin']` and every other net
+ * (the runner's handoff warning, the no-wake exit check) stood down too.
+ */
+function hasActiveAddressingMention(stripped: string, slug: string): boolean {
+	const s = escapeRegExp(slug);
+	const namePattern = String.raw`(?<![\w@])@${s}(?![\w-])`;
+	if (hasActionAssignmentLine(stripped, namePattern)) return true;
+	if (leadingAddressRegex(`@${s}`).test(stripped)) return true;
+	if (hasNameBoundSignoffGate(stripped, namePattern)) return true;
+	return sentencesContaining(stripped, namePattern).some(
+		(sentence) => readsAsAsk(sentence) && !isPurelyReferential(sentence, namePattern),
+	);
+}
+
 export function extractMentionSlugs(content: unknown): string[] {
 	const text = flattenTextFields(content);
 	if (!text) return [];
@@ -409,30 +442,27 @@ export function detectUnlinkedTeammateReferences(content: unknown, knownSlugs: s
  *   whole paragraph, so a `you` in an unrelated sentence could pull an
  *   attribution into an ask.
  *
- * A slug that is also actively `@`-mentioned anywhere is never flagged — it
- * already notifies. Mirrors detectUnlinkedTeammateReferences for the passive form.
+ * A slug also reached by an active `@`-mention is skipped — it already notifies —
+ * EXCEPT on the leading-line branch, which asks a different question (see below).
+ * Mirrors detectUnlinkedTeammateReferences for the passive form.
  */
 export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]): string[] {
 	const text = flattenTextFields(content);
 	if (!text) return [];
 	const stripped = text.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
 
-	// A slug reached by an active @mention already notifies, so it never warns.
+	// A slug reached by an active @mention already notifies, so it never warns —
+	// on the branches whose question IS "was anyone notified".
 	const active = new Set(extractMentionSlugs(stripped));
 
 	const flagged = new Set<string>();
 	for (const rawSlug of knownSlugs) {
 		const slug = rawSlug.toLowerCase();
-		if (active.has(slug)) continue;
+		// An active @mention that is ITSELF an address exempts every branch: the
+		// handoff is both delivered and correctly marked, so the passive spelling
+		// elsewhere is the reference it looks like.
+		if (hasActiveAddressingMention(stripped, slug)) continue;
 		const s = escapeRegExp(slug);
-		// Action-assignment line: `## Required actions for @@slug` — the phrase on
-		// the line is itself the ask signal, no paragraph gate needed. The trailing
-		// guard keeps a slug from matching inside a longer hyphenated slug
-		// (`@@qa` in `@@qa-engineer`).
-		if (hasActionAssignmentLine(stripped, String.raw`(?<![\w@])@@${s}(?![\w-])`)) {
-			flagged.add(slug);
-			continue;
-		}
 		// Leading-line address (`@@slug — …`, optionally after a routing label): the
 		// line-opening name-then-separator shape IS the address form, and the only
 		// reason to write it is to hand the named teammate the next action — so the
@@ -441,7 +471,24 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
 		// sentence (`as @@slug noted, …`), not opening a line. This is the shape that
 		// strands the most work, because the status vocabulary it attracts
 		// (`@@admin — release is done.`) is exactly what the ask gate cannot see.
+		//
+		// Checked ABOVE the `active` exemption, and it is the only branch that is:
+		// this branch does not ask "was anyone notified", it asks "is the address
+		// marked correctly", and a mention that notifies from somewhere else in the
+		// comment does not answer that. `@@admin — <directive>` plus a throwaway
+		// `… the earlier @admin ZIP request …` two sentences later is the miss —
+		// the ask wears the muted mark and a back-reference wears the live one, so
+		// every net stood down while the reader's eye landed on the wrong chip.
 		if (leadingAddressRegex(`@@${s}`).test(stripped)) {
+			flagged.add(slug);
+			continue;
+		}
+		if (active.has(slug)) continue;
+		// Action-assignment line: `## Required actions for @@slug` — the phrase on
+		// the line is itself the ask signal, no paragraph gate needed. The trailing
+		// guard keeps a slug from matching inside a longer hyphenated slug
+		// (`@@qa` in `@@qa-engineer`).
+		if (hasActionAssignmentLine(stripped, String.raw`(?<![\w@])@@${s}(?![\w-])`)) {
 			flagged.add(slug);
 			continue;
 		}
@@ -500,7 +547,9 @@ export function detectPassiveTeammateAsks(content: unknown, knownSlugs: string[]
  * uses (see readsAsAsk) so a name written for mere emphasis or attribution is
  * never flagged; the action-assignment line and the name-bound sign-off gate are
  * self-gating (the binding IS the ask). A slug also reached by an active
- * `@`-mention anywhere is skipped — it already notifies. The runner's
+ * `@`-mention anywhere is skipped — it already notifies — except on the
+ * leading-line branch, which asks whether the address is marked correctly rather
+ * than whether anyone was notified (see detectPassiveTeammateAsks). The runner's
  * handoff-delivery net uses these to warn (in the run log) that a run ended with a
  * stranded bare-name handoff, mirroring create_comment's interactive warning.
  */
@@ -509,38 +558,46 @@ export function detectUnlinkedTeammateAsks(content: unknown, knownSlugs: string[
 	if (!text) return [];
 	const stripped = text.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
 
-	// A slug reached by an active @mention already notifies, so it never warns.
+	// A slug reached by an active @mention already notifies, so it never warns —
+	// on the branches whose question IS "was anyone notified".
 	const active = new Set(extractMentionSlugs(stripped));
 
 	const flagged = new Set<string>();
 	for (const rawSlug of knownSlugs) {
 		const slug = rawSlug.toLowerCase();
-		if (active.has(slug)) continue;
+		// An active @mention that is ITSELF an address exempts every branch.
+		if (hasActiveAddressingMention(stripped, slug)) continue;
 		const s = escapeRegExp(slug);
-		// Action-assignment line with the bare name: `## Required actions for slug`
-		// — the phrase on the line is itself the ask signal, no paragraph gate
-		// needed. The lookbehind keeps `@slug`/`@@slug` out (handled elsewhere) and,
-		// with the trailing guard, keeps a slug from matching inside a longer
-		// hyphenated slug (`engineer` in `qa-engineer` / `engineer-lead`).
-		if (hasActionAssignmentLine(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
-			flagged.add(slug);
-			continue;
-		}
-		// Name-bound sign-off gate: a mid-sentence handoff the address-position
-		// forms miss because the name sits inside the sentence rather than opening a
-		// line — `awaiting slug sign-off`, `needs slug's approval`, `slug to sign
-		// off`. The binding of the name to the sign-off gate is itself the ask
-		// signal, so like the action-assignment line it needs no readsAsAsk pass.
-		if (hasNameBoundSignoffGate(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
-			flagged.add(slug);
-			continue;
+		const activeElsewhere = active.has(slug);
+		if (!activeElsewhere) {
+			// Action-assignment line with the bare name: `## Required actions for slug`
+			// — the phrase on the line is itself the ask signal, no paragraph gate
+			// needed. The lookbehind keeps `@slug`/`@@slug` out (handled elsewhere) and,
+			// with the trailing guard, keeps a slug from matching inside a longer
+			// hyphenated slug (`engineer` in `qa-engineer` / `engineer-lead`).
+			if (hasActionAssignmentLine(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
+				flagged.add(slug);
+				continue;
+			}
+			// Name-bound sign-off gate: a mid-sentence handoff the address-position
+			// forms miss because the name sits inside the sentence rather than opening a
+			// line — `awaiting slug sign-off`, `needs slug's approval`, `slug to sign
+			// off`. The binding of the name to the sign-off gate is itself the ask
+			// signal, so like the action-assignment line it needs no readsAsAsk pass.
+			if (hasNameBoundSignoffGate(stripped, String.raw`(?<![\w@-])${s}(?![\w-])`)) {
+				flagged.add(slug);
+				continue;
+			}
 		}
 		// Emphasised name (**slug**/__slug__, not already @-prefixed) or a
 		// leading-line address (`slug —`/`slug:`, optionally after a routing label)
 		// — mirrors the addressing forms detectUnlinkedTeammateReferences recognises.
+		// The leading-line form survives an active mention elsewhere (it asks whether
+		// the address is marked, not whether anyone was notified); the bold form does
+		// not, since bold marks emphasis and attribution as readily as an address.
 		const bold = new RegExp(String.raw`(?<!@)(\*\*|__)${s}\1`, 'i');
 		const lead = leadingAddressRegex(s);
-		if (!bold.test(stripped) && !lead.test(stripped)) continue;
+		if (!lead.test(stripped) && (activeElsewhere || !bold.test(stripped))) continue;
 		// Only warn when the paragraph(s) carrying this address read as an ask —
 		// scoped to those paragraphs so a `you` elsewhere never leaks in.
 		const block = unlinkedMentionParagraphs(stripped, s);

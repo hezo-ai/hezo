@@ -7,6 +7,7 @@ import {
 	extractDocCandidates,
 	extractMentionCandidates,
 	extractTaskCandidates,
+	hasActiveAdminMention,
 	type MentionToken,
 	parseMentionMatch,
 	stripCode,
@@ -200,6 +201,26 @@ describe('extractActiveAgentMentionSlugs', () => {
 	it('returns [] when there is no active mention', () => {
 		expect(extractActiveAgentMentionSlugs('just @@passive and @admin here')).toEqual([]);
 		expect(extractActiveAgentMentionSlugs('')).toEqual([]);
+	});
+});
+
+describe('hasActiveAdminMention', () => {
+	it('is the complement of extractActiveAgentMentionSlugs for the admin token', () => {
+		// The pair has to cover the whole wake set: the server reports
+		// `woke: ['admin']` for an active @admin, so a preview built from the agent
+		// extractor alone reads "(no one)" on a comment that notifies every owner.
+		expect(hasActiveAdminMention('@admin please take a look')).toBe(true);
+		expect(hasActiveAdminMention('cc @admin')).toBe(true);
+		expect(extractActiveAgentMentionSlugs('@admin please take a look')).toEqual([]);
+	});
+
+	it('ignores the passive form, code, and non-admin slugs', () => {
+		expect(hasActiveAdminMention('@@admin is the passive form')).toBe(false);
+		expect(hasActiveAdminMention('inline `@admin` stays literal')).toBe(false);
+		expect(hasActiveAdminMention('```\n@admin in a fenced block\n```')).toBe(false);
+		expect(hasActiveAdminMention('@administrator is a different slug')).toBe(false);
+		expect(hasActiveAdminMention('@alice only')).toBe(false);
+		expect(hasActiveAdminMention('')).toBe(false);
 	});
 });
 

@@ -436,6 +436,63 @@ test('actively @-mentioning an agent shows it as a wake pill', async () => {
 	expect((await findByTestId('wake-preview')).textContent).not.toContain('(no one)');
 });
 
+test('actively @-mentioning the admin shows a wake pill', async () => {
+	// @admin fans out to an inbox row per project owner, so the server reports
+	// `woke: ['admin']` - but admin resolves to no roster agent, so the preview
+	// used to read "(no one)" on a comment that notifies every owner.
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByPlaceholderText, findByTestId, findAllByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Admin Wake Project' });
+			const task = await seedTask(ws, project, { title: 'Admin Wake Task' });
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
+	expect((await findByTestId('wake-preview')).textContent).toContain('(no one)');
+
+	const userMod = await import('@testing-library/user-event');
+	const user = userMod.default.setup({ delay: null });
+	await user.type(composer, '@admin please disable that setting');
+
+	const pills = await findAllByTestId('wake-pill');
+	expect(pills.some((p) => p.textContent === '@admin')).toBe(true);
+	expect((await findByTestId('wake-preview')).textContent).not.toContain('(no one)');
+});
+
+test('passively @@-mentioning the admin shows no wake pill', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByPlaceholderText, findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Passive Admin Project' });
+			const task = await seedTask(ws, project, { title: 'Passive Admin Task' });
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const composer = (await findByPlaceholderText('Add a comment...')) as HTMLTextAreaElement;
+	const userMod = await import('@testing-library/user-event');
+	const user = userMod.default.setup({ delay: null });
+	await user.type(composer, '@@admin noted this earlier');
+
+	expect((await findByTestId('wake-preview')).textContent).toContain('(no one)');
+});
+
 test('replying to a human wakes no one (no pill, no wake_assignee)', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const { findByPlaceholderText, findByTestId, findByText, getByRole, router } = await renderApp({

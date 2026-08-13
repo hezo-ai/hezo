@@ -381,8 +381,39 @@ describe('detectPassiveTeammateAsks', () => {
 		expect(detectPassiveTeammateAsks('as @@admin noted, ship it when you can.', slugs)).toEqual([]);
 	});
 
-	it('does not flag a slug that is also actively mentioned', () => {
+	it('does not flag a slug whose active mention is itself the address', () => {
+		// The active `@admin —` carries the address, so the passive echo later is the
+		// reference it looks like: both delivered and correctly marked.
 		expect(detectPassiveTeammateAsks('@admin — done. cc @@admin, your call.', slugs)).toEqual([]);
+	});
+
+	it('flags a line-leading passive address when the only active mention is a back-reference', () => {
+		// The screenshot: the ask wears the silent mark and a throwaway back-reference
+		// two sentences later wears the live one. The active `@admin` addresses no one
+		// (not line-leading, no ask in its sentence, no sign-off gate), so it must not
+		// excuse the passive address — under the old comment-wide exemption it did,
+		// and every net went quiet: this warning, the runner's, and the no-wake exit
+		// check (the stray mention lands a real inbox row, so the run "woke someone").
+		expect(
+			detectPassiveTeammateAsks(
+				'@@admin — optionally disable Email Address Obfuscation in the Cloudflare ' +
+					'dashboard to permanently eliminate those false-positive crawl errors. ' +
+					"HM-329 is in review since the earlier @admin ZIP request there wasn't " +
+					'replied to directly on that ticket.',
+				slugs,
+			),
+		).toEqual(['admin']);
+	});
+
+	it('flags a line-leading passive address even when a sibling paragraph mentions the slug in passing', () => {
+		// Generalised: any non-addressing active mention. The line-opening form asks
+		// whether the address is MARKED, not whether anyone was notified.
+		expect(
+			detectPassiveTeammateAsks(
+				'@architect kicked this off last week.\n\n@@architect — merged and shipped.',
+				slugs,
+			),
+		).toEqual(['architect']);
 	});
 
 	it('does not flag an active-only mention', () => {
@@ -633,6 +664,34 @@ describe('MCP create_comment / update_comment warn on passive-mention asks', () 
 		expect(result.warning).toContain('active mention');
 		// The passive form genuinely notified no one.
 		expect(await adminMentionCount(result.id!)).toBe(0);
+	});
+
+	it('warns on a passive @@admin address whose only active mention is a back-reference (screenshot case)', async () => {
+		const taskId = await insertTask(architectId, 'Passive admin address, stray active mention');
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			productLeadId,
+			teamId,
+			taskId,
+			{ projectId },
+		);
+		const result = await callTool(agentToken, 'create_comment', {
+			project: projectId,
+			task_id: taskId,
+			content:
+				'@@admin — optionally disable Email Address Obfuscation in the Cloudflare dashboard ' +
+				'to permanently eliminate those false-positive crawl errors. HM-329 is in review ' +
+				"since the earlier @admin ZIP request there wasn't replied to directly on that ticket.",
+		});
+		expect(result.warning).toBeDefined();
+		expect(result.warning).toContain('@@admin');
+		expect(result.warning).toContain('active mention');
+		// Both facts hold at once, and that mismatch IS the finding: the stray active
+		// mention really did fan out to the inbox, so the warning must not claim the
+		// comment notified nobody - it says the notification points at the wrong line.
+		expect(await adminMentionCount(result.id!)).toBeGreaterThan(0);
+		expect(result.warning).toContain('did notify from elsewhere');
 	});
 
 	it('warns on the routing-label handoff `**Next step:** @@captain — …your…` (screenshot case)', async () => {
