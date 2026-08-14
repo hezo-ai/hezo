@@ -413,18 +413,35 @@ export function buildSubscriptionLoginScript(opts: {
 		})
 		.join(' ');
 
+	// Absolute paths throughout, and never a `cd`: `&` binds looser than `&&`, so
+	// a `cd` at the head of the chain backgrounds with the first subshell and the
+	// second one launches in whatever directory the exec happened to start in -
+	// where it reads a FIFO and writes a log that are not this flow's.
+	const fifo = shellQuote(`${dir}/${LOGIN_STDIN_FIFO}`);
+	const log = shellQuote(`${dir}/${LOGIN_LOG_FILE}`);
+	const exit = shellQuote(`${dir}/${LOGIN_EXIT_FILE}`);
+
 	return (
-		`mkdir -p ${d} && cd ${d} && ` +
-		`rm -f ${LOGIN_STDIN_FIFO} ${LOGIN_LOG_FILE} ${LOGIN_EXIT_FILE} && ` +
-		`mkfifo -m 600 ${LOGIN_STDIN_FIFO} && : > ${LOGIN_LOG_FILE} && ` +
+		`mkdir -p ${d} && rm -f ${fifo} ${log} ${exit} && ` +
+		`mkfifo -m 600 ${fifo} && : > ${log} && ` +
+		// Braces keep the `&&` chain in front of the whole launch rather than only
+		// the first background job.
+		'{ ' +
 		// Holds the write end open so the CLI never sees EOF while it waits.
-		`( sleep ${holdSecs} > ${LOGIN_STDIN_FIFO} ) & ` +
+		//
+		// Both background subshells detach their own stdio (`>/dev/null 2>&1`)
+		// **as well as** redirecting the commands inside them. Without the outer
+		// redirect they inherit the launching exec's stdout and stderr, and an
+		// exec does not complete while a child still holds its pipes open - so
+		// the call that starts the flow never returns and the flow never begins.
+		// The inner redirections still win for the commands they name.
+		`( sleep ${holdSecs} > ${fifo} ) >/dev/null 2>&1 & ` +
 		`( COLUMNS=${LOGIN_PTY_COLUMNS} ${envPrefix} ` +
 		`script -qec ${shellQuote(inner)} /dev/null ` +
-		`< ${LOGIN_STDIN_FIFO} > ${LOGIN_LOG_FILE} 2>&1; ` +
+		`< ${fifo} > ${log} 2>&1; ` +
 		// Written last and read as the flow's "process is gone" signal.
-		`echo $? > ${LOGIN_EXIT_FILE} ) & ` +
-		'echo started'
+		`echo $? > ${exit} ) >/dev/null 2>&1 & ` +
+		'echo started; }'
 	);
 }
 
