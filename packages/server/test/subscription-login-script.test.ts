@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -31,8 +31,21 @@ function tempDir(): string {
 	return d;
 }
 
+/**
+ * Best-effort, because the script deliberately outlives the command that
+ * launched it - a `sleep` holds the FIFO open for the whole flow, which is the
+ * mechanism under test. Every test below waits for its own exit file first, so
+ * a leftover here is a stray temp directory the OS will reap, never a signal
+ * worth failing a suite over.
+ */
 afterAll(() => {
-	for (const d of dirs) rmSync(d, { recursive: true, force: true });
+	for (const d of dirs) {
+		try {
+			rmSync(d, { recursive: true, force: true });
+		} catch {
+			// see above
+		}
+	}
 });
 
 describe('shellQuote', () => {
@@ -154,6 +167,17 @@ describe('the generated script, under real sh', () => {
 		throw new Error('timed out');
 	}
 
+	/**
+	 * Wait until the flow has fully finished, not merely produced its output.
+	 *
+	 * The exit file is written *after* the CLI is reaped, so it is the only
+	 * signal that nothing under the flow directory will be created again. Racing
+	 * teardown against it is how this suite first failed on CI: cleanup deleted
+	 * the log, the CLI then exited, and `echo $? > exit` recreated an entry in a
+	 * directory that had just been walked - ENOTEMPTY.
+	 */
+	const exited = (dir: string) => () => existsSync(join(dir, LOGIN_EXIT_FILE));
+
 	it('carries a challenge out and the operator code back in', async () => {
 		const home = tempDir();
 		const dir = join(tempDir(), 'flow');
@@ -178,6 +202,7 @@ describe('the generated script, under real sh', () => {
 
 		await run('sh', ['-c', buildSubscriptionLoginCodeScript(dir, 'CODE-1234')]);
 		await waitFor(() => log().includes('got:CODE-1234'));
+		await waitFor(exited(dir));
 	});
 
 	it('writes the exit file once the CLI is gone', async () => {
@@ -186,14 +211,7 @@ describe('the generated script, under real sh', () => {
 		const cli = fakeCli(home, 'echo done; exit 0');
 
 		await run('sh', ['-c', buildSubscriptionLoginScript({ dir, argv: [cli], holdSecs: 30 })]);
-		await waitFor(() => {
-			try {
-				readFileSync(join(dir, LOGIN_EXIT_FILE), 'utf8');
-				return true;
-			} catch {
-				return false;
-			}
-		});
+		await waitFor(exited(dir));
 	});
 
 	it('delivers a code containing shell metacharacters verbatim', async () => {
@@ -211,5 +229,6 @@ describe('the generated script, under real sh', () => {
 
 		expect(log()).toContain(`got:${hostile}`);
 		expect(() => readFileSync(join(home, 'pwned'))).toThrow();
+		await waitFor(exited(dir));
 	});
 });
