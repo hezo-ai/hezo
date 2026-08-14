@@ -18,6 +18,7 @@ import {
 	buildListHezoProcessesScript,
 	parseDfKilobytes,
 	parseHezoProcessList,
+	shellQuote,
 } from './sandbox/proc-scripts';
 import { tarSingleFile, untarFirstFile } from './sandbox/tar';
 import { DockerBinaryFrameDecoder } from './sandbox/tunnel/docker-frames-binary';
@@ -236,11 +237,6 @@ function withCgroupHeadroom(config: ContainerConfig): ContainerConfig {
 function cgroupLimitAsCeiling(limitBytes: number | undefined): number | null {
 	if (!limitBytes || limitBytes <= MEMORY_HARD_CAP_HEADROOM_BYTES) return null;
 	return limitBytes - MEMORY_HARD_CAP_HEADROOM_BYTES;
-}
-
-/** Single-quote for `sh -c`, closing and reopening around any embedded quote. */
-function shellQuote(arg: string): string {
-	return `'${arg.replaceAll("'", `'\\''`)}'`;
 }
 
 export class DockerClient implements ContainerEngine {

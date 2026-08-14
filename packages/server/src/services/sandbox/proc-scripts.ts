@@ -346,3 +346,136 @@ export function parseHezoProcessList(stdout: string): ContainerProcessInfo[] {
 	}
 	return procs;
 }
+
+/** Single-quote for `sh -c`, closing and reopening around any embedded quote. */
+export function shellQuote(arg: string): string {
+	return `'${arg.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Terminal columns the login PTY is opened at.
+ *
+ * A vendor CLI wraps its sign-in URL to the terminal width, and a wrapped URL
+ * arrives interleaved with the spinner frames redrawn around it - Claude Code's
+ * visible URL text comes back in four overlapping fragments at 80 columns. Wide
+ * enough that nothing these CLIs print wraps at all, which is what lets the
+ * parsers below read a line rather than reassemble one.
+ */
+const LOGIN_PTY_COLUMNS = 1000;
+
+/** Per-flow file names under a login flow's own directory. */
+export const LOGIN_STDIN_FIFO = 'in';
+export const LOGIN_LOG_FILE = 'out';
+export const LOGIN_EXIT_FILE = 'exit';
+
+/**
+ * Run a vendor CLI's own login command, with a PTY Hezo allocates itself.
+ *
+ * **The PTY is ours, never the transport's.** Two of the three CLIs are
+ * full-screen TUIs that print nothing at all and hang forever on a pipe
+ * (`claude setup-token` emits zero bytes and never exits without one), so a PTY
+ * is required either way - and the two backends disagree about whether their
+ * exec channel has one. Docker's is a raw pipe; Daytona's is a PTY that
+ * redirects stderr to a file drained only when the channel closes, which would
+ * deadlock a flow whose challenge went to stderr. Allocating it here makes the
+ * flow behave identically on both, using only the exec triad and
+ * {@link SandboxFiles} - the two seams that are the same on every backend by
+ * rule.
+ *
+ * Streams are merged and teed to {@link LOGIN_LOG_FILE}, which the host polls
+ * rather than streams, for the same reason: a file read is identical on both
+ * backends where a byte channel is not.
+ *
+ * Stdin is a FIFO held open by a `sleep` for the flow's lifetime. Without a
+ * writer the CLI reads EOF the instant it opens the pipe and abandons its
+ * prompt; with one, {@link buildSubscriptionLoginCodeScript} can deliver the
+ * operator's code minutes later.
+ */
+export function buildSubscriptionLoginScript(opts: {
+	dir: string;
+	argv: readonly string[];
+	env?: Readonly<Record<string, string>>;
+	holdSecs: number;
+}): string {
+	const { dir, argv, env = {}, holdSecs } = opts;
+	if (!/^\/[A-Za-z0-9._/-]*$/.test(dir)) throw new Error(`unsafe dir: ${JSON.stringify(dir)}`);
+	if (argv.length === 0) throw new Error('login argv is empty');
+	if (!Number.isInteger(holdSecs) || holdSecs <= 0) throw new Error(`bad holdSecs: ${holdSecs}`);
+
+	const d = shellQuote(dir);
+	// `script` needs the command as one string; each argv element is quoted
+	// individually so nothing in it can reach the outer shell.
+	const inner = argv.map(shellQuote).join(' ');
+	const envPrefix = Object.entries(env)
+		.map(([k, v]) => {
+			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`unsafe env name: ${k}`);
+			return `${k}=${shellQuote(v)}`;
+		})
+		.join(' ');
+
+	return (
+		`mkdir -p ${d} && cd ${d} && ` +
+		`rm -f ${LOGIN_STDIN_FIFO} ${LOGIN_LOG_FILE} ${LOGIN_EXIT_FILE} && ` +
+		`mkfifo -m 600 ${LOGIN_STDIN_FIFO} && : > ${LOGIN_LOG_FILE} && ` +
+		// Holds the write end open so the CLI never sees EOF while it waits.
+		`( sleep ${holdSecs} > ${LOGIN_STDIN_FIFO} ) & ` +
+		`( COLUMNS=${LOGIN_PTY_COLUMNS} ${envPrefix} ` +
+		`script -qec ${shellQuote(inner)} /dev/null ` +
+		`< ${LOGIN_STDIN_FIFO} > ${LOGIN_LOG_FILE} 2>&1; ` +
+		// Written last and read as the flow's "process is gone" signal.
+		`echo $? > ${LOGIN_EXIT_FILE} ) & ` +
+		'echo started'
+	);
+}
+
+/** Deliver the operator's pasted code to a waiting login process. */
+export function buildSubscriptionLoginCodeScript(dir: string, code: string): string {
+	if (!/^\/[A-Za-z0-9._/-]*$/.test(dir)) throw new Error(`unsafe dir: ${JSON.stringify(dir)}`);
+	return `printf '%s\\n' ${shellQuote(code)} > ${shellQuote(`${dir}/${LOGIN_STDIN_FIFO}`)}`;
+}
+
+/**
+ * Terminal control bytes, as **regex source** rather than literals.
+ *
+ * Written escaped and fed to `new RegExp` so the source file carries no literal
+ * control character - which a linter rightly refuses, and which is invisible in
+ * a diff. The regex engine resolves them identically.
+ */
+const ESC = '\\x1b';
+const BEL = '\\x07';
+/** OSC string terminator: either `ESC \` or a bare BEL. */
+const ST = `${ESC}\\\\|${BEL}`;
+
+/**
+ * OSC 8 hyperlink targets, in the order they appear.
+ *
+ * The sequence is `ESC ] 8 ; <params> ; <uri> ST`, where ST is either `ESC \` or
+ * BEL. Read in preference to the visible link text because a TUI redraw
+ * rewrites that text and leaves the escape intact - Claude Code's authorize URL
+ * survives here whole while its on-screen copy comes back in fragments.
+ */
+export function parseOsc8Links(raw: string): string[] {
+	const links: string[] = [];
+	for (const m of raw.matchAll(new RegExp(`${ESC}]8;[^;]*;([^${ESC}${BEL}]*)(?:${ST})`, 'g'))) {
+		const uri = m[1];
+		if (uri.length > 0) links.push(uri);
+	}
+	return links;
+}
+
+/**
+ * Drop the escape sequences a PTY interleaves with a CLI's own output.
+ *
+ * Covers CSI (colour, cursor moves, erases), OSC (window title, and the
+ * hyperlinks {@link parseOsc8Links} reads first), and the bare two-byte escapes
+ * a full-screen redraw emits. Carriage returns become newlines so a redrawn line
+ * is its own line to a line-oriented matcher rather than joining the one before.
+ */
+export function stripTerminalNoise(raw: string): string {
+	return raw
+		.replace(new RegExp(`${ESC}][^${ESC}${BEL}]*(?:${ST})`, 'g'), '')
+		.replace(new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, 'g'), '')
+		.replace(new RegExp(`${ESC}[()][A-Za-z0-9]`, 'g'), '')
+		.replace(new RegExp(`${ESC}[=><]`, 'g'), '')
+		.replace(/\r/g, '\n');
+}
