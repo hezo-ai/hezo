@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 25,
+			"notes": "The Captain's progress-update duty now writes one project summary rather than a summary plus three columns of per-task lines."
+		},
+		{
 			"version": 24,
 			"notes": "The route-authorization review rule is stated once and shared by the QA and Security roles rather than kept as two copies."
 		},
