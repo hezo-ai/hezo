@@ -172,7 +172,17 @@ tasks and a frontier model for the hard ones, or simply having a fallback.
 When a key is stored it's checked against the provider and shown as **verified** (the
 Verify action re-checks it any time). Mark one provider as the **default** with the star:
 that's the single global default every agent uses unless it has its own model override.
-Change the default and agents on the default pick up the new provider on their next run.
+
+Adding a connection does **not** make it the default - use the star for that. Once you do,
+every agent on the default runs on the new provider from its next run, including a live
+CEO chat, which restarts itself onto it.
+
+The default is a choice, not a preference. If the credential you designated stops being
+usable - the key gets revoked and shows as **invalid**, say - runs on the default fail and
+say so, naming the connection. Hezo will not quietly move them onto one of your other
+connections: a run billing a provider you didn't pick, while the star still sits on the one
+you did, is the kind of thing that goes unnoticed for weeks. Re-verify the connection, or
+move the star, and runs resume.
 
 ## Change a stored key
 

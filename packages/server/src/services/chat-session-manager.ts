@@ -44,6 +44,7 @@ import {
 import {
 	type AiProviderCredentialAndModel,
 	getProviderCredentialAndModel,
+	selectProviderConfig,
 } from './ai-provider-keys';
 import {
 	buildConversationTaskDescription,
@@ -254,6 +255,41 @@ interface HostSideInputs {
 	credential: AiProviderCredentialAndModel;
 	runtimeType: AgentRuntime;
 	modelOverride: string | null;
+}
+
+/**
+ * Which provider, on which CLI, from which credential row, at which model - the
+ * whole choice a session's turns are built from, minus the secret. Resolved
+ * without the master key so it can also be re-answered on a locked instance.
+ */
+interface InvocationSelection {
+	provider: AiProvider;
+	runtimeType: AgentRuntime;
+	configId: string;
+	modelOverride: string | null;
+	/**
+	 * The CLI the credential read must match, or null on the agent-override path
+	 * where the credential's own runtime decides. Carried so the caller hands
+	 * `getProviderCredentialAndModel` exactly what this selection was made with.
+	 */
+	requiredRuntime: AgentRuntime | null;
+}
+
+/**
+ * The identity of what a session's turns run on. Session start bakes all four
+ * into the container env, the exec command and the runtime config files, so a
+ * change to any of them reaches the chat only by starting a new session.
+ *
+ * Non-secret by construction: the credential is named by its row id, never by
+ * any part of its value.
+ */
+function invocationFingerprint(
+	provider: AiProvider,
+	runtimeType: AgentRuntime,
+	configId: string,
+	modelOverride: string | null,
+): string {
+	return `${provider}|${runtimeType}|${configId}|${modelOverride ?? ''}`;
 }
 
 /**
@@ -1022,6 +1058,17 @@ export class ChatSessionManager {
 	}
 
 	private async ensureSession(): Promise<LiveSession> {
+		// Re-check the provider choice before reusing a session, suspended or not:
+		// the operator can move the instance default (or put a model override on the
+		// CEO) at any point between two turns, and a session cannot pick that up in
+		// place - its env and exec command were built from the old one. A start
+		// already in flight resolves fresh on its own, so skip the probe then.
+		const existing = this.live;
+		if (existing && !this.ensuring && (await this.invocationMovedOn(existing))) {
+			// In-flight turns go with it: they are executing against the credential the
+			// operator just replaced.
+			await this.restart();
+		}
 		if (this.live && !this.suspended) return this.live;
 		if (this.ensuring) return this.ensuring;
 		// A parked session resumes into its own container and keeps its row; only a
@@ -1046,6 +1093,91 @@ export class ChatSessionManager {
 			egressProxy: this.deps.egressProxy ?? null,
 			egressCAPath: this.deps.egressCAPath ?? null,
 		};
+	}
+
+	/**
+	 * Resolve what this chat should run on right now: the agent's own model
+	 * override if it has one, else the instance-wide default credential.
+	 *
+	 * Same precedence as the agent runner, and the only copy of it on this side -
+	 * session start and the staleness check below both read it here, so the
+	 * selection a live session is compared against can never be resolved by a
+	 * different rule from the one that started it.
+	 */
+	private async resolveInvocationSelection(ceoMemberId: string): Promise<InvocationSelection> {
+		const { db } = this.deps;
+		const override = await db.query<{ provider: AiProvider | null; model: string | null }>(
+			`SELECT model_override_provider AS provider, model_override_model AS model
+			 FROM member_agents WHERE id = $1`,
+			[ceoMemberId],
+		);
+		let provider = override.rows[0]?.provider ?? null;
+		let runtimeType: AgentRuntime;
+		// An override names only a provider, so its CLI comes from the credential
+		// below; the resolved path already picked a credential and constrains the
+		// lookup to one that matches.
+		let requiredRuntime: AgentRuntime | null = null;
+		if (provider) {
+			runtimeType = PROVIDER_RUNTIME_ADAPTERS[provider].runtime;
+		} else {
+			const resolved = await resolveRuntimeForTask(db, null);
+			if (!resolved.ok) throw new Error(resolved.reason);
+			provider = resolved.provider;
+			runtimeType = resolved.runtime;
+			requiredRuntime = resolved.runtime;
+		}
+
+		const config = await selectProviderConfig(db, provider, requiredRuntime);
+		if (!config) throw new Error(`No ${provider} credential configured`);
+		if (!requiredRuntime) {
+			runtimeType = effectiveRuntime(provider, config.runtime) ?? runtimeType;
+		}
+		return {
+			provider,
+			runtimeType,
+			configId: config.configId,
+			modelOverride: override.rows[0]?.model ?? config.defaultModel ?? null,
+			requiredRuntime,
+		};
+	}
+
+	/**
+	 * Has the instance moved on from what this live session was started with?
+	 *
+	 * A chat session outlives many turns, and everything about its provider - the
+	 * CLI binary in its exec command, the credential in its env, the model flag -
+	 * was fixed when the session started. An agent following the instance default
+	 * would otherwise keep running on whichever credential happened to be the
+	 * default that day, for as long as the session lived.
+	 */
+	private async invocationMovedOn(live: LiveSession): Promise<boolean> {
+		let selection: InvocationSelection;
+		try {
+			selection = await this.resolveInvocationSelection(live.ceoMemberId);
+		} catch (e) {
+			// The question could not be answered - no verified credential right now, or
+			// the database refused. A working session is not torn down over an
+			// unanswered question: this turn runs on what it has and the next asks
+			// again.
+			log.warn(`could not re-check the CEO chat's AI provider: ${String(e)}`);
+			return false;
+		}
+		const inputs = live.invocationInputs;
+		const before = invocationFingerprint(
+			inputs.provider,
+			inputs.runtimeType,
+			inputs.credential.configId,
+			inputs.modelOverride,
+		);
+		const now = invocationFingerprint(
+			selection.provider,
+			selection.runtimeType,
+			selection.configId,
+			selection.modelOverride,
+		);
+		if (before === now) return false;
+		log.info(`CEO chat AI provider changed (${before} -> ${now}); starting a fresh session`);
+		return true;
 	}
 
 	private async startSession(): Promise<LiveSession> {
@@ -1084,27 +1216,8 @@ export class ChatSessionManager {
 		// turn's exec, the ssh socket owner, and the per-turn config-dir chown.
 		const runUser = await resolveContainerRunUser(this.deps.docker, containerId);
 
-		const override = await db.query<{ provider: AiProvider | null; model: string | null }>(
-			`SELECT model_override_provider AS provider, model_override_model AS model
-			 FROM member_agents WHERE id = $1`,
-			[ceoMemberId],
-		);
-		let provider = override.rows[0]?.provider ?? null;
-		let runtimeType: AgentRuntime;
-		// Same split as the agent runner: an override names only a provider, so its
-		// CLI comes from the credential below; the resolved path already picked a
-		// credential and constrains the lookup to one that matches.
-		let requiredRuntime: AgentRuntime | null = null;
-		if (provider) {
-			runtimeType = PROVIDER_RUNTIME_ADAPTERS[provider].runtime;
-		} else {
-			const resolved = await resolveRuntimeForTask(db, null);
-			if (!resolved) throw new Error('No AI provider credentials configured');
-			provider = resolved.provider;
-			runtimeType = resolved.runtime;
-			requiredRuntime = resolved.runtime;
-		}
-
+		const { provider, runtimeType, modelOverride, requiredRuntime } =
+			await this.resolveInvocationSelection(ceoMemberId);
 		const credential = await getProviderCredentialAndModel(
 			db,
 			this.deps.masterKeyManager,
@@ -1112,10 +1225,6 @@ export class ChatSessionManager {
 			requiredRuntime,
 		);
 		if (!credential) throw new Error(`No ${provider} credential configured`);
-		if (!requiredRuntime) {
-			runtimeType = effectiveRuntime(provider, credential.runtime) ?? runtimeType;
-		}
-		const modelOverride = override.rows[0]?.model ?? credential.defaultModel ?? null;
 
 		// Reclaim any DB rows left live by a crash without an in-memory session, so
 		// the singleton insert below doesn't collide. `suspended` counts as live -
@@ -2061,6 +2170,9 @@ export class ChatSessionManager {
 		}
 
 		try {
+			// Replaying the stored inputs is correct only because `ensureSession` has
+			// already confirmed the instance still resolves to them; a moved default
+			// tears the session down there and never reaches this path.
 			const allocation = await this.allocateHostSide(
 				live.sessionId,
 				containerId,

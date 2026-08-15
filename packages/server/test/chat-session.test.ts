@@ -609,6 +609,77 @@ describe('ChatSessionManager', () => {
 		await manager.stop();
 	});
 
+	test('a moved instance default reaches a session that is already live', async () => {
+		// A session resolves its provider, CLI and model once and bakes them into the
+		// container env and exec command, so an agent following the instance default
+		// would otherwise keep running on the credential that was default the day its
+		// session started - for as long as the session lived.
+		const envs: string[][] = [];
+		const chatDocker = createStubDocker({
+			execCreate: async (_id: string, config: { Env?: string[] }) => {
+				const env = config.Env ?? [];
+				if (env.some((e) => e.startsWith('HEZO_PROMPT_FILE='))) envs.push(env);
+				return 'exec-1';
+			},
+			execStart: async (
+				_execId: string,
+				opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+			) => {
+				const onChunk = opts.onChunk ?? (() => undefined);
+				await onChunk({ stream: 'stdout', text: assistantText('Hi there') });
+				await onChunk({ stream: 'stdout', text: resultEvent(10, 5, 0.02) });
+				return { stdout: '', stderr: '' };
+			},
+		});
+		const { manager } = makeManager(ctx, chatDocker);
+		const settle = async (assistantMessageId: string) =>
+			poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					'SELECT status FROM chat_messages WHERE id = $1',
+					[assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+
+		const first = await manager.sendTurn({ text: 'before' });
+		await settle(first.assistantMessageId);
+		const deepseekBaseUrl = 'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic';
+		expect(envs.length).toBeGreaterThan(0);
+		expect(envs.every((env) => !env.includes(deepseekBaseUrl))).toBe(true);
+
+		// The operator moves the instance default onto a different credential. DeepSeek
+		// shares the Claude Code runtime with the seeded Anthropic config, so the CLI
+		// is unchanged and only the credential behind it moves - the case a session
+		// reusing its own snapshot cannot notice at all.
+		const key = ctx.masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		await ctx.db.query(`UPDATE ai_provider_configs SET is_default = false`);
+		await ctx.db.query(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+			 VALUES ('deepseek', 'api_key', 'deepseek', $1, true, 'verified', 'deepseek-v4-pro')`,
+			[encrypt('sk-deepseek', key)],
+		);
+
+		const before = envs.length;
+		const second = await manager.sendTurn({ text: 'after' });
+		await settle(second.assistantMessageId);
+
+		const afterMove = envs.slice(before);
+		expect(afterMove.length).toBeGreaterThan(0);
+		expect(afterMove.every((env) => env.includes(deepseekBaseUrl))).toBe(true);
+
+		// The old session was retired rather than mutated, so exactly one is live.
+		const sessions = await ctx.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
+		);
+		expect(sessions.rows[0].n).toBe(1);
+		const all = await ctx.db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM chat_sessions`);
+		expect(all.rows[0].n).toBe(2);
+
+		await manager.stop();
+	});
+
 	test('reconcileOnStartup marks orphaned sessions crashed', async () => {
 		const ceo = await ctx.db.query<{ id: string }>(
 			`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id WHERE ma.slug = 'ceo' AND m.team_id = $1`,

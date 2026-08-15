@@ -119,11 +119,13 @@ describe('ChatSessionManager — startSession failure branches', () => {
 	});
 
 	test('fails the turn (assistant message → failed) when no AI provider is configured', async () => {
-		// No provider rows and no model override → resolveRuntimeForTask returns null
-		// → startSession throws "No AI provider credentials configured". The turn
-		// surfaces it on the assistant message rather than crashing the process.
+		// No provider rows and no model override → resolveRuntimeForTask reports that
+		// nothing is configured → startSession throws its reason. The turn surfaces it
+		// on the assistant message rather than crashing the process.
 		const { manager } = makeManager(ctx, replyDocker());
-		await expect(manager.sendTurn({ text: 'hello' })).rejects.toThrow(/AI provider credentials/);
+		await expect(manager.sendTurn({ text: 'hello' })).rejects.toThrow(
+			/No verified AI provider credential/,
+		);
 	});
 
 	test('runTurn marks the assistant message failed when the exec throws (non-abort)', async () => {

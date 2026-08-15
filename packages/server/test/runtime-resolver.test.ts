@@ -1,4 +1,4 @@
-import { AgentRuntime, AiAuthMethod, AiProvider } from '@hezo/shared';
+import { AgentRuntime, AiAuthMethod, AiProvider, AiProviderStatus } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
@@ -25,9 +25,14 @@ beforeEach(async () => {
 });
 
 describe('resolveRuntimeForTask', () => {
-	it('returns null when no providers are configured', async () => {
-		expect(await resolveRuntimeForTask(db, null)).toBeNull();
-		expect(await resolveRuntimeForTask(db, AgentRuntime.Codex)).toBeNull();
+	it('reports why nothing could be resolved when no providers are configured', async () => {
+		const none = await resolveRuntimeForTask(db, null);
+		expect(none.ok).toBe(false);
+		expect(none.ok === false && none.reason).toContain('No verified AI provider credential');
+
+		const pinned = await resolveRuntimeForTask(db, AgentRuntime.Codex);
+		expect(pinned.ok).toBe(false);
+		expect(pinned.ok === false && pinned.reason).toContain('pinned to the "codex" runtime');
 	});
 
 	it('returns runtime + provider when an explicit task runtime matches a configured provider', async () => {
@@ -41,10 +46,11 @@ describe('resolveRuntimeForTask', () => {
 		);
 
 		expect(await resolveRuntimeForTask(db, AgentRuntime.Codex)).toEqual({
+			ok: true,
 			runtime: AgentRuntime.Codex,
 			provider: AiProvider.OpenAI,
 		});
-		expect(await resolveRuntimeForTask(db, AgentRuntime.ClaudeCode)).toBeNull();
+		expect((await resolveRuntimeForTask(db, AgentRuntime.ClaudeCode)).ok).toBe(false);
 	});
 
 	it('picks the runtime whose provider is marked default when multiple configs coexist', async () => {
@@ -65,10 +71,12 @@ describe('resolveRuntimeForTask', () => {
 			'openai-subscription',
 		);
 
-		expect((await resolveRuntimeForTask(db, null))?.runtime).toBe(AgentRuntime.Codex);
+		const first = await resolveRuntimeForTask(db, null);
+		expect(first.ok === true && first.runtime).toBe(AgentRuntime.Codex);
 
 		await setDefaultAiProvider(db, subscriptionId);
-		expect((await resolveRuntimeForTask(db, null))?.runtime).toBe(AgentRuntime.Codex);
+		const second = await resolveRuntimeForTask(db, null);
+		expect(second.ok === true && second.runtime).toBe(AgentRuntime.Codex);
 	});
 
 	it('falls back to the oldest active provider when none is marked default', async () => {
@@ -92,6 +100,7 @@ describe('resolveRuntimeForTask', () => {
 		await db.query(`UPDATE ai_provider_configs SET is_default = false`);
 
 		expect(await resolveRuntimeForTask(db, null)).toEqual({
+			ok: true,
 			runtime: AgentRuntime.Codex,
 			provider: AiProvider.OpenAI,
 		});
@@ -118,6 +127,7 @@ describe('resolveRuntimeForTask', () => {
 		// Anthropic was added first, so it holds the single instance-wide default and
 		// wins the shared ClaudeCode runtime on is_default DESC.
 		expect(await resolveRuntimeForTask(db, AgentRuntime.ClaudeCode)).toEqual({
+			ok: true,
 			runtime: AgentRuntime.ClaudeCode,
 			provider: AiProvider.Anthropic,
 		});
@@ -126,6 +136,7 @@ describe('resolveRuntimeForTask', () => {
 		await setDefaultAiProvider(db, deepseekId);
 
 		expect(await resolveRuntimeForTask(db, AgentRuntime.ClaudeCode)).toEqual({
+			ok: true,
 			runtime: AgentRuntime.ClaudeCode,
 			provider: AiProvider.DeepSeek,
 		});
@@ -142,9 +153,106 @@ describe('resolveRuntimeForTask', () => {
 		);
 
 		expect(await resolveRuntimeForTask(db, AgentRuntime.ClaudeCode)).toEqual({
+			ok: true,
 			runtime: AgentRuntime.ClaudeCode,
 			provider: AiProvider.ZAi,
 		});
-		expect(await resolveRuntimeForTask(db, AgentRuntime.Codex)).toBeNull();
+		expect((await resolveRuntimeForTask(db, AgentRuntime.Codex)).ok).toBe(false);
+	});
+
+	it('moves every unpinned run onto the new default the moment it changes', async () => {
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.DeepSeek,
+			'sk-deepseek',
+			AiAuthMethod.ApiKey,
+			'deepseek',
+		);
+		const openaiId = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.OpenAI,
+			'sk-openai',
+			AiAuthMethod.ApiKey,
+			'openai',
+		);
+
+		// Adding a credential does not make it the default — only the first config on
+		// a fresh instance auto-takes the flag.
+		expect(await resolveRuntimeForTask(db, null)).toEqual({
+			ok: true,
+			runtime: AgentRuntime.ClaudeCode,
+			provider: AiProvider.DeepSeek,
+		});
+
+		await setDefaultAiProvider(db, openaiId);
+
+		expect(await resolveRuntimeForTask(db, null)).toEqual({
+			ok: true,
+			runtime: AgentRuntime.Codex,
+			provider: AiProvider.OpenAI,
+		});
+	});
+
+	it('fails rather than silently running an unusable default on another credential', async () => {
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.DeepSeek,
+			'sk-deepseek',
+			AiAuthMethod.ApiKey,
+			'deepseek',
+		);
+		const openaiId = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.OpenAI,
+			'sk-openai',
+			AiAuthMethod.ApiKey,
+			'openai',
+		);
+		await setDefaultAiProvider(db, openaiId);
+		// The operator's designated default stops being usable (a revoked key that a
+		// later Verify marked invalid). The settings page still shows it as Default.
+		await db.query(`UPDATE ai_provider_configs SET status = $1 WHERE id = $2`, [
+			AiProviderStatus.Invalid,
+			openaiId,
+		]);
+
+		const resolved = await resolveRuntimeForTask(db, null);
+		// Not DeepSeek: handing the run to the previous default is the silent
+		// substitution this guards against.
+		expect(resolved.ok).toBe(false);
+		expect(resolved.ok === false && resolved.reason).toContain('openai');
+		expect(resolved.ok === false && resolved.reason).toContain('invalid');
+	});
+
+	it('still runs on the oldest verified credential when no default is designated', async () => {
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.DeepSeek,
+			'sk-deepseek',
+			AiAuthMethod.ApiKey,
+			'deepseek',
+		);
+		await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.OpenAI,
+			'sk-openai',
+			AiAuthMethod.ApiKey,
+			'openai',
+		);
+		// No row carries the flag — nothing was designated, so nothing is being
+		// substituted for and the oldest verified credential is the honest answer.
+		await db.query(`UPDATE ai_provider_configs SET is_default = false`);
+
+		expect(await resolveRuntimeForTask(db, null)).toEqual({
+			ok: true,
+			runtime: AgentRuntime.ClaudeCode,
+			provider: AiProvider.DeepSeek,
+		});
 	});
 });
