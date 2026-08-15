@@ -789,7 +789,7 @@ describe('runAgent lifecycle — full success bookkeeping', () => {
 		try {
 			const result = await runAgent(baseDeps(makeDocker()), makeAgent(), makeTask(), makeProject());
 			expect(result.success).toBe(false);
-			expect(result.stderr).toContain('No AI provider credentials configured');
+			expect(result.stderr).toContain('No verified AI provider credential is configured');
 		} finally {
 			await db.query(`INSERT INTO ai_provider_configs SELECT * FROM cfg_backup`);
 			await db.query('DROP TABLE cfg_backup');

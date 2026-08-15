@@ -443,6 +443,23 @@ container pool the chat's container is pinned (`reserved_for_chat`), which suspe
 and teardown releases: chat is exempt from the container cap, and the pin is the other
 half of that, since a task run taking the container out from under a live session is the
 same interruption by a different route.
+**A session's provider is re-checked before every turn.** `startSession` resolves the
+provider, CLI, credential row and model once, and bakes all four into the container env,
+the exec command and the runtime config files — so a session that outlives an operator
+moving the instance default would keep running on the credential that was default the day
+it started, for as long as it lived. `ensureSession` therefore calls `invocationMovedOn`
+first: `resolveInvocationSelection` re-answers the same precedence (the agent's
+`model_override_*`, else the instance default) **without the master key** — via
+`selectProviderConfig`, the non-secret half of the one credential-selection query — and the
+result is compared as a fingerprint of `provider | runtime | config id | model`. A change
+means `restart()`, so the next turn comes up on the new choice; in-flight turns go with it,
+since they are executing against the credential just replaced. `resolveInvocationSelection`
+is the only copy of that precedence on this side, so a session can never be compared against
+a selection made by a different rule from the one that started it, and `resumeSession` may
+replay its stored inputs only because the check has already cleared them. A probe that
+cannot be answered (nothing verified right now, the database refusing) leaves the working
+session alone rather than tearing it down over an unanswered question.
+
 Long-term memory (`chat_memories`) stays **per-agent** (shared across a member's
 assistant threads); compaction serialises at the member level so concurrent threads never
 clobber the shared memory row. External channels (Telegram, Slack, Discord) are built on
@@ -3091,11 +3108,23 @@ its own for the local runners. `updateAiProviderCredential` remains the narrower
 by the Codex refresh-token write-back, which must not touch `status` or `metadata`. Exactly **one** config instance-wide carries the
 `is_default` flag — a single global default enforced by a partial-unique index
 (`ai_provider_configs_single_default`); the first config added to the instance auto-takes
-it, and `setDefaultAiProvider` moves it atomically. `resolveRuntimeForTask` filters by
-`status = 'verified'` and `PROVIDERS_BY_RUNTIME[runtime]`, then orders
-`is_default DESC, created_at ASC`, so the global default wins whenever it's a candidate
-for the chosen runtime, else the oldest verified config; an agent's `model_override_*`
-(or the config's `default_model`) selects the run's model. **How that reaches the CLI is per
+it, and `setDefaultAiProvider` moves it atomically.
+
+`resolveRuntimeForTask` returns a `RuntimeResolution` — the runtime + provider, or a
+**reason** — and has three branches. A task's `runtime_type` pin filters by
+`PROVIDERS_BY_RUNTIME[runtime]` and `status = 'verified'`, orders `is_default DESC,
+created_at ASC`, and takes the first row whose `effectiveRuntime` matches the pin. With no
+pin, **the designated default decides**: the `is_default` row is read on its own, and one
+that is not `verified` (or names a provider this binary dropped) fails the run with a reason
+naming it, rather than passing the run to the next credential in line. Only when *no* row
+carries the flag does the oldest verified config stand in. The failing branch is the point:
+ordering `is_default DESC` across all rows made an unusable default fall through silently, so
+an operator who moved the star watched every agent keep billing the previous provider with
+nothing anywhere saying why — the substitution appeared in no log, no run error and no
+settings badge. `agent-runner` and the chat session both surface `reason` verbatim.
+
+An agent's `model_override_*` (or the config's `default_model`) selects the run's model.
+**How that reaches the CLI is per
 runtime** (`RUNTIME_MODEL_DELIVERY`): nearly all take `--model <id>`, but Kimi Code resolves
 `--model` against a `[models."<id>"]` table in its own `config.toml` — which Hezo never writes,
 because the model is registered through the shell-read `KIMI_MODEL_*` family instead — so

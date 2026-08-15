@@ -126,6 +126,86 @@ export interface AiProviderCredentialAndModel extends AiProviderCredential {
 }
 
 /**
+ * Which credential row a run would use, without the credential itself.
+ *
+ * Everything here is non-secret, so it can be read on a locked instance and held
+ * in memory to answer "is the config this session was started on still the one
+ * the instance would pick?" - the question a long-lived chat session has to ask
+ * after an operator moves the global default.
+ */
+export interface SelectedProviderConfig {
+	configId: string;
+	authMethod: AiAuthMethod;
+	defaultModel: string | null;
+	baseUrl: string | null;
+	/** The operator's stored CLI choice; null follows the provider default. */
+	runtime: AgentRuntime | null;
+	/** {@link runtime} resolved against the provider default - the CLI this row runs on. */
+	resolvedRuntime: AgentRuntime | null;
+}
+
+interface ProviderConfigRow {
+	id: string;
+	auth_method: AiAuthMethod;
+	encrypted_credential: string;
+	default_model: string | null;
+	metadata: Record<string, unknown> | null;
+	runtime: string | null;
+}
+
+/**
+ * The one selection rule: highest-priority verified credential for a provider
+ * (global default first, then oldest), optionally constrained to the CLI it
+ * resolves to. Both the decrypting read below and the non-secret
+ * {@link selectProviderConfig} go through here, so the row a session compares
+ * against can never be a different row from the one it runs on.
+ */
+async function selectProviderConfigRow(
+	db: Db,
+	provider: AiProvider,
+	runtime?: AgentRuntime | null,
+): Promise<(ProviderConfigRow & { resolvedRuntime: AgentRuntime | null }) | null> {
+	// When filtering by runtime the matching credential may not be the
+	// highest-priority one for the provider, so `LIMIT 1` would pre-select a row
+	// that fails the test and report "no credential". Widen the window instead and
+	// let the ordering pick the winner among the matches.
+	const result = await db.query<ProviderConfigRow>(
+		`SELECT id, auth_method, encrypted_credential, default_model, metadata, runtime
+		 FROM ai_provider_configs
+		 WHERE provider = $1::ai_provider AND status = $2
+		 ORDER BY is_default DESC, created_at ASC
+		 LIMIT ${runtime ? RUNTIME_CANDIDATE_SCAN_LIMIT : 1}`,
+		[provider, AiProviderStatus.Verified],
+	);
+
+	const rows = result.rows.map((row) => ({
+		...row,
+		resolvedRuntime: effectiveRuntime(provider, isAgentRuntime(row.runtime) ? row.runtime : null),
+	}));
+	return (runtime ? rows.find((r) => r.resolvedRuntime === runtime) : rows[0]) ?? null;
+}
+
+/**
+ * The credential row a run would select, minus the secret. Needs no master key.
+ */
+export async function selectProviderConfig(
+	db: Db,
+	provider: AiProvider,
+	runtime?: AgentRuntime | null,
+): Promise<SelectedProviderConfig | null> {
+	const row = await selectProviderConfigRow(db, provider, runtime);
+	if (!row) return null;
+	return {
+		configId: row.id,
+		authMethod: row.auth_method,
+		defaultModel: row.default_model,
+		baseUrl: readConfigBaseUrl(row.metadata),
+		runtime: isAgentRuntime(row.runtime) ? row.runtime : null,
+		resolvedRuntime: row.resolvedRuntime,
+	};
+}
+
+/**
  * Replace the encrypted credential value on an existing config row.
  * Used to persist refresh-token rotations after a Codex run mutates the
  * mounted `auth.json` blob.
@@ -166,31 +246,7 @@ export async function getProviderCredentialAndModel(
 	const encryptionKey = masterKeyManager.getKey();
 	if (!encryptionKey) throw new Error('Master key not available');
 
-	// When filtering by runtime the matching credential may not be the
-	// highest-priority one for the provider, so `LIMIT 1` would pre-select a row
-	// that fails the test and report "no credential". Widen the window instead and
-	// let the ordering pick the winner among the matches.
-	const result = await db.query<{
-		id: string;
-		auth_method: AiAuthMethod;
-		encrypted_credential: string;
-		default_model: string | null;
-		metadata: Record<string, unknown> | null;
-		runtime: string | null;
-	}>(
-		`SELECT id, auth_method, encrypted_credential, default_model, metadata, runtime
-		 FROM ai_provider_configs
-		 WHERE provider = $1::ai_provider AND status = $2
-		 ORDER BY is_default DESC, created_at ASC
-		 LIMIT ${runtime ? RUNTIME_CANDIDATE_SCAN_LIMIT : 1}`,
-		[provider, AiProviderStatus.Verified],
-	);
-
-	const rows = result.rows.map((row) => ({
-		...row,
-		resolvedRuntime: effectiveRuntime(provider, isAgentRuntime(row.runtime) ? row.runtime : null),
-	}));
-	const row = runtime ? rows.find((r) => r.resolvedRuntime === runtime) : rows[0];
+	const row = await selectProviderConfigRow(db, provider, runtime);
 	if (!row) return null;
 
 	return {

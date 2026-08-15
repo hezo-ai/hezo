@@ -9,7 +9,7 @@ import {
 } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { decrypt } from '../src/crypto/encryption';
+import { decrypt, encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { DomainEventBus } from '../src/events/bus';
@@ -381,6 +381,83 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 	});
 });
 
+describe('runAgent — the instance default decides', () => {
+	// An agent with no model override follows the instance default. Moving that
+	// default must move the agent's very next run, and an unusable default must
+	// fail the run rather than hand it to whichever credential is next in line -
+	// a substitution nothing surfaces, so the settings page shows one provider as
+	// Default while every agent keeps billing another.
+	async function withDefaultMovedToDeepSeek(fn: (configId: string) => Promise<void>) {
+		const key = masterKeyManager.getKey();
+		if (!key) throw new Error('master key unavailable');
+		const prior = await db.query<{ id: string }>(
+			`SELECT id FROM ai_provider_configs WHERE is_default = true`,
+		);
+		await db.query(`UPDATE ai_provider_configs SET is_default = false`);
+		const inserted = await db.query<{ id: string }>(
+			`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+			 VALUES ('deepseek', 'api_key', 'deepseek-moved', $1, true, 'verified', 'deepseek-v4-pro')
+			 RETURNING id`,
+			[encrypt('sk-deepseek-moved', key)],
+		);
+		try {
+			await fn(inserted.rows[0].id);
+		} finally {
+			await db.query(`DELETE FROM ai_provider_configs WHERE id = $1`, [inserted.rows[0].id]);
+			if (prior.rows[0]) {
+				await db.query(`UPDATE ai_provider_configs SET is_default = true WHERE id = $1`, [
+					prior.rows[0].id,
+				]);
+			}
+		}
+	}
+
+	it('moves an agent that follows the default onto the new one on its next run', async () => {
+		await withDefaultMovedToDeepSeek(async (configId) => {
+			const result = await runAgent(
+				baseDeps(createMockDocker(taskId)),
+				makeAgent(),
+				makeTask(),
+				makeProject(),
+			);
+			expect(result.success).toBe(true);
+
+			const run = await db.query<{ provider: string; ai_provider_config_id: string }>(
+				'SELECT provider, ai_provider_config_id FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(run.rows[0].provider).toBe(AiProvider.DeepSeek);
+			expect(run.rows[0].ai_provider_config_id).toBe(configId);
+		});
+	});
+
+	it('fails the run when the designated default is unusable, naming it', async () => {
+		await withDefaultMovedToDeepSeek(async (configId) => {
+			// The key behind the default is revoked upstream and a Verify marked it
+			// invalid. The Anthropic credential alongside it is still perfectly good -
+			// and must NOT be what the run quietly falls onto.
+			await db.query(`UPDATE ai_provider_configs SET status = 'invalid' WHERE id = $1`, [configId]);
+
+			const result = await runAgent(
+				baseDeps(
+					createMockDocker(taskId, {
+						execCreate: async () => {
+							throw new Error('should not exec when the default is unusable');
+						},
+					}),
+				),
+				makeAgent(),
+				makeTask(),
+				makeProject(),
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.stderr).toContain('deepseek-moved');
+			expect(result.stderr).toContain('invalid');
+		});
+	});
+});
+
 describe('runAgent — provider/credential resolution failures', () => {
 	it('fails with a clear message when no AI provider credentials exist at all', async () => {
 		// Stand up an isolated team/project with NO provider configured so resolution
@@ -458,7 +535,7 @@ describe('runAgent — provider/credential resolution failures', () => {
 				[result.heartbeatRunId],
 			);
 			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
-			expect(run.rows[0].error).toContain('No AI provider credentials configured');
+			expect(run.rows[0].error).toContain('No verified AI provider credential is configured');
 
 			// And it never took a container to fail in. The claim happens only after
 			// the credential resolves, so a misconfigured instance provisions nothing

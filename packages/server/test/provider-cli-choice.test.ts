@@ -192,7 +192,7 @@ describe('credential lookup and runtime resolution', () => {
 		expect(credential?.runtime).toBe(AgentRuntime.Kimi);
 
 		const resolved = await resolveRuntimeForTask(db, null);
-		expect(resolved).toEqual({ runtime: AgentRuntime.Kimi, provider: AiProvider.Kimi });
+		expect(resolved).toEqual({ ok: true, runtime: AgentRuntime.Kimi, provider: AiProvider.Kimi });
 	});
 
 	it('defaults to the provider runtime when the credential stores none', async () => {
@@ -207,6 +207,7 @@ describe('credential lookup and runtime resolution', () => {
 		const credential = await getProviderCredentialAndModel(db, masterKeyManager, AiProvider.Kimi);
 		expect(credential?.runtime).toBeNull();
 		expect(await resolveRuntimeForTask(db, null)).toEqual({
+			ok: true,
 			runtime: AgentRuntime.ClaudeCode,
 			provider: AiProvider.Kimi,
 		});
@@ -236,6 +237,7 @@ describe('credential lookup and runtime resolution', () => {
 		);
 
 		expect(await resolveRuntimeForTask(db, AgentRuntime.Kimi)).toEqual({
+			ok: true,
 			runtime: AgentRuntime.Kimi,
 			provider: AiProvider.Kimi,
 		});

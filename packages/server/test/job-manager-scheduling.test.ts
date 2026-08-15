@@ -305,7 +305,7 @@ describe('JobManager scheduling & dispatch', () => {
 				[taskId],
 			);
 			expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
-			expect(run.rows[0].error).toContain('No AI provider');
+			expect(run.rows[0].error).toContain('No verified AI provider credential');
 
 			// Wakeup resolved to failed (run failed), lock released, agent idle again.
 			const w = await wakeupRow(wakeupId);
@@ -328,7 +328,7 @@ describe('JobManager scheduling & dispatch', () => {
 				[taskId],
 			);
 			expect(ping.rows.length).toBe(1);
-			expect(ping.rows[0].content.error).toContain('No AI provider');
+			expect(ping.rows[0].content.error).toContain('No verified AI provider credential');
 
 			// In-memory dispatch guards are released.
 			expect(internals(manager).activeTaskRuns.has(taskId)).toBe(false);

@@ -1383,11 +1383,10 @@ export async function runAgent(
 		runtimeType = adapter.runtime;
 	} else {
 		const resolved = await resolveRuntimeForTask(deps.db, task?.runtime_type ?? null);
-		if (!resolved) {
-			return finalizeFailure(
-				'No AI provider credentials configured at the instance level. Add one in Settings > AI Providers.',
-			);
-		}
+		// The reason comes from the resolver, which is the only place that knows
+		// whether nothing is configured, the designated default is unusable, or the
+		// task's runtime pin has no credential behind it.
+		if (!resolved.ok) return finalizeFailure(resolved.reason);
 		runtimeType = resolved.runtime;
 		provider = resolved.provider;
 		requiredRuntime = resolved.runtime;
