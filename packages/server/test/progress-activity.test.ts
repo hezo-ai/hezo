@@ -1,16 +1,12 @@
 import { CommentContentType, HeartbeatRunKind, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
-import {
-	buildProgressActivityCandidates,
-	buildProgressActivitySnapshot,
-	readProgressActivity,
-} from '../src/services/project-activity';
+import { buildProgressActivityCandidates } from '../src/services/project-activity';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
 
-// The deterministic half of the Progress page: which tasks become candidates for each column.
-// The Captain picks from these and writes the prose; these tests cover the picking rules.
+// The deterministic half of a progress-update run: which tasks are handed to the Captain as raw
+// material for the summary it writes. These tests cover the picking rules.
 let db: Db;
 let teamId: string;
 let projectId: string;
@@ -145,7 +141,7 @@ describe('buildProgressActivityCandidates', () => {
 		expect(c.actioned[0].identifier).toBe(stale.identifier);
 	});
 
-	// The Progress page must not report on its own runs. A progress-update run carries no
+	// The summary must not report on its own runs. A progress-update run carries no
 	// task_id, so it can never enter the ranking — this is structural, not a filter.
 	it('never lets a progress-update run lift a task into actioned', async () => {
 		const untouched = await seedTask('Only seen by a progress run', {
@@ -256,123 +252,5 @@ describe('buildProgressActivityCandidates', () => {
 		});
 		const c = await buildProgressActivityCandidates(db, projectId, teamId);
 		expect(c.actioned[0].excerpt?.length).toBe(200);
-	});
-});
-
-describe('buildProgressActivitySnapshot', () => {
-	it('captures the identifier and title, and caps each column at five', async () => {
-		const tasks = [];
-		for (let i = 0; i < 7; i++) tasks.push(await seedTask(`Snapshot task ${i}`));
-
-		const { activity, unknown } = await buildProgressActivitySnapshot(db, projectId, {
-			actioned: tasks.map((t) => ({ task: t.identifier, summary: `Line for ${t.identifier}` })),
-		});
-		expect(unknown).toEqual([]);
-		expect(activity.actioned.length).toBe(5);
-		expect(activity.actioned[0].identifier).toBe(tasks[0].identifier);
-		expect(activity.actioned[0].title).toBe('Snapshot task 0');
-		expect(activity.created).toEqual([]);
-	});
-
-	it('reports an identifier that does not resolve instead of dropping it silently', async () => {
-		const t = await seedTask('Real task');
-		const { activity, unknown } = await buildProgressActivitySnapshot(db, projectId, {
-			closed: [
-				{ task: t.identifier, summary: 'Done properly.' },
-				{ task: 'PA-9999', summary: 'This task does not exist.' },
-			],
-		});
-		expect(activity.closed.length).toBe(1);
-		expect(unknown).toEqual(['PA-9999']);
-	});
-
-	it('accepts a lowercase identifier, as agents often write them', async () => {
-		const t = await seedTask('Case check');
-		const { activity, unknown } = await buildProgressActivitySnapshot(db, projectId, {
-			actioned: [{ task: t.identifier.toLowerCase(), summary: 'Still fine.' }],
-		});
-		expect(unknown).toEqual([]);
-		expect(activity.actioned[0].identifier).toBe(t.identifier);
-	});
-
-	// The page renders the stored line in full, so an over-long line has to be cut back to a
-	// finished thought here rather than clipped behind an ellipsis there.
-	it('trims an over-long Captain line back to its last complete sentence', async () => {
-		const t = await seedTask('Long line');
-		const first = 'Live cards work end to end.';
-		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
-			actioned: [
-				{
-					task: t.identifier,
-					summary: `${first} ${'Refunds are the last remaining gap. '.repeat(10)}`,
-				},
-			],
-		});
-		const stored = activity.actioned[0].summary;
-		expect(stored.length).toBeLessThanOrEqual(200);
-		expect(stored.startsWith(first)).toBe(true);
-		expect(stored.endsWith('.')).toBe(true);
-		// Whole sentences only: never a dangling fragment of the one that did not fit.
-		expect(stored.split('. ').at(-1)).toBe('Refunds are the last remaining gap.');
-	});
-
-	it('falls back to a whole word when nothing finishes inside the budget', async () => {
-		const t = await seedTask('Run on');
-		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
-			actioned: [{ task: t.identifier, summary: `${'refactoring '.repeat(40)}done` }],
-		});
-		const stored = activity.actioned[0].summary;
-		expect(stored.length).toBeLessThanOrEqual(200);
-		expect(stored.endsWith('refactoring')).toBe(true);
-	});
-
-	it('hard-slices a line carrying no boundary of any kind', async () => {
-		const t = await seedTask('No spaces');
-		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
-			actioned: [{ task: t.identifier, summary: 'y'.repeat(1000) }],
-		});
-		expect(activity.actioned[0].summary.length).toBe(200);
-	});
-
-	it('leaves a line that already fits exactly as written', async () => {
-		const t = await seedTask('Short line');
-		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
-			actioned: [{ task: t.identifier, summary: 'Payments can now take live cards end to end.' }],
-		});
-		expect(activity.actioned[0].summary).toBe('Payments can now take live cards end to end.');
-	});
-
-	it('skips an entry with no summary rather than storing a blank row', async () => {
-		const t = await seedTask('No line');
-		const { activity } = await buildProgressActivitySnapshot(db, projectId, {
-			actioned: [{ task: t.identifier, summary: '   ' }],
-		});
-		expect(activity.actioned).toEqual([]);
-	});
-});
-
-describe('readProgressActivity', () => {
-	// Every project starts with `{}` (migration 049), so reads must tolerate an absent or
-	// half-written document rather than assuming the three keys exist.
-	it('returns empty columns for the default and for malformed values', () => {
-		expect(readProgressActivity({})).toEqual({ actioned: [], created: [], closed: [] });
-		expect(readProgressActivity(null)).toEqual({ actioned: [], created: [], closed: [] });
-		expect(readProgressActivity({ actioned: 'nope' })).toEqual({
-			actioned: [],
-			created: [],
-			closed: [],
-		});
-	});
-
-	it('drops entries missing an identifier or summary and falls back to the identifier for a title', () => {
-		const out = readProgressActivity({
-			actioned: [
-				{ identifier: 'PA-1', summary: 'Fine.' },
-				{ identifier: 'PA-2' },
-				{ summary: 'No identifier.' },
-			],
-		});
-		expect(out.actioned.length).toBe(1);
-		expect(out.actioned[0].title).toBe('PA-1');
 	});
 });

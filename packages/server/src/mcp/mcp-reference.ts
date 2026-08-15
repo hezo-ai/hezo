@@ -126,7 +126,7 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_project_progress: {
 		category: 'Projects',
 		returns:
-			'`{ summary, activity, updated_at }` after replacing the Progress page - the summary and the three activity columns (`activity.actioned` / `.created` / `.closed`, each up to 5 entries of `{ identifier, title, summary }`). Adds `unknown_tasks` listing any identifier that does not resolve in the project, so a mistyped task is reported rather than silently dropped. Omitting all three lists leaves the stored columns untouched. Returns `{ error }` if the project is HQ/internal (no Progress page) or the call is not from within an agent run.',
+			'`{ summary, updated_at }` after replacing the project progress summary shown at the top of the project dashboard. Returns `{ error }` if the project is HQ/internal (which has no progress summary) or the call is not from within an agent run.',
 		auth: 'Captain only, and only from within a progress-update agent run.',
 	},
 
@@ -304,11 +304,6 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 		returns:
 			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.',
 		auth: "The CEO, the Coach, or the team's Captain.",
-	},
-	update_dashboard_widget_order: {
-		category: 'Projects',
-		returns:
-			'`{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.',
 	},
 	set_agent_name: {
 		category: 'Agent prompts & context',

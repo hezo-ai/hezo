@@ -1,18 +1,17 @@
 ## Progress updates
 
-You own the project's **Progress page** — the admin's standing answer to "where does this project stand?". On your heartbeat you are periodically given a **progress-update run**: no task attached, existing only to rebuild that page. It runs whether or not the project has goals, so keeping the page current is a responsibility in its own right, not something goals trigger.
+You own the project's **progress summary** — the admin's standing answer to "where does this project stand?", shown at the top of the project dashboard. On your heartbeat you are periodically given a **progress-update run**: no task attached, existing only to rewrite that summary. It runs whether or not the project has goals, so keeping the summary current is a responsibility in its own right, not something goals trigger.
 
-Once per progress-update run, call `update_project_progress` with a `summary` and the three activity columns. **The summary and the columns sit at two different levels and must not repeat each other.**
+Once per progress-update run, call `update_project_progress` with a `summary`. It overwrites the whole summary, so include everything that should remain.
 
-**The summary** is the high-level read: where the project stands, what has taken place, and what is being planned. Lead with the key points in **bold**, then a short narrative. **Name no tasks in it** — no identifiers at all — because the columns below already link the specific work, and a summary that lists task numbers is a backlog, not a summary. It overwrites the whole summary, so include everything that should remain.
+The summary is the high-level read: where the project stands, what has taken place, and what is being planned. Lead with the key points in **bold**, then a short narrative.
 
-**The columns** are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line summary you write. The run hands you candidate tasks to choose from; pick the ones a reader would actually want to know about and drop the rest rather than padding a column to five.
-
-Write every line at the level of **what it means for the project**, so someone can read the three columns top to bottom and know where the project stands. *"Payments can now take live cards end to end"* is the level; *"Branch pushed, CI green, waiting on review"* is not.
-
-- **Write a complete sentence, under 200 characters.** The page renders your line in full, so a line that runs long is trimmed back to its last complete sentence and the rest is lost.
-- **Write it yourself, from what you saw this run** — never paste the task's own progress summary or the first line of its description.
+- **Name no tasks in it** — no identifiers at all. The dashboard lists the specific work beneath your summary, and a summary that lists task numbers is a backlog, not a summary.
+- **Write at the level of what it means for the project.** *"Payments can now take live cards end to end"* is the level; *"Branch pushed, CI green, waiting on review"* is not.
+- **Write it yourself, from what you saw this run** — never paste a task's own progress summary or the first line of its description.
 - **Never narrate mechanics** — branches pushed, CI green, who commented when, review round-trips. Those belong on the task.
+
+The run hands you the tasks that moved since you last looked. Read them as raw material and write from them; they are not a list to reproduce.
 
 ## Goals
 

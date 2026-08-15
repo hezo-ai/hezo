@@ -125,19 +125,16 @@ Create a new team (superuser only)
 
 _Write tool._
 
-Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tasks in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.
+Replace the project progress summary shown at the top of the project dashboard. Only the Captain does this, and only from within a progress-update run. The summary is the high-level read: where the project stands, what has taken place, and what is being planned. Pitch it at what the work means for the project, not a log of what happened inside individual tasks, and leave out mechanics like branches, CI and review round-trips. Do NOT name individual tasks or identifiers - the dashboard lists the specific work beneath this, and a reader who wants a task clicks through to it. This overwrites the whole summary, so include everything that should remain.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `summary` | `string` | Yes | Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference task identifiers - the activity columns carry the specific tasks. |
-| `actioned` | `object[]` | No | Up to 5 tasks being worked on right now, most significant first. Omit all three lists to leave the columns as they are. |
-| `created` | `object[]` | No | Up to 5 tasks newly filed, most significant first. Omit all three lists to leave the columns as they are. |
-| `closed` | `object[]` | No | Up to 5 tasks recently finished, most significant first. Omit all three lists to leave the columns as they are. |
+| `summary` | `string` | Yes | Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference task identifiers. |
 
-**Returns:** `{ summary, activity, updated_at }` after replacing the Progress page - the summary and the three activity columns (`activity.actioned` / `.created` / `.closed`, each up to 5 entries of `{ identifier, title, summary }`). Adds `unknown_tasks` listing any identifier that does not resolve in the project, so a mistyped task is reported rather than silently dropped. Omitting all three lists leaves the stored columns untouched. Returns `{ error }` if the project is HQ/internal (no Progress page) or the call is not from within an agent run.
+**Returns:** `{ summary, updated_at }` after replacing the project progress summary shown at the top of the project dashboard. Returns `{ error }` if the project is HQ/internal (which has no progress summary) or the call is not from within an agent run.
 
 **Authorization:** Captain only, and only from within a progress-update agent run.
 
@@ -281,21 +278,6 @@ List projects, by name. With CEO cross-team access (or as superuser) returns eve
 **Returns:** Project rows (`id`, `team_id`, `name`, `slug`, `task_prefix`, `is_internal`, `created_at`, `updated_at`) ordered by name. Paged: returns `{ items, next_cursor, has_more }` - follow `next_cursor` until `has_more` is false. `description` comes back as an excerpt (default 500 chars) with `description_truncated`/`description_length` companions; raise or lower it with `excerpt_chars`.
 
 **Authorization:** An API key, CEO cross-team access, or a superuser returns every project; a board user gets the projects on their teams; an agent run gets its own project.
-
-### `update_dashboard_widget_order`
-
-_Write tool._
-
-Save the user's preferred widget order for the project dashboard. Pass the full ordered list of widget ids; unknown or duplicate ids are rejected. The order persists across sessions and is returned in subsequent get_project_dashboard calls.
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-| --- | --- | --- | --- |
-| `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `order` | `string[]` | Yes | Ordered list of widget ids. Valid values: goals, team_snapshot, in_progress, spend. |
-
-**Returns:** `{ order: DashboardWidgetId[] }` - the sanitised order after the update, with any missing widget ids appended at the end.
 
 ## Tasks
 

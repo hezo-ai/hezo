@@ -107,7 +107,7 @@ const MAX_CONSECUTIVE_FAILURE_PINGS = 3;
 // how many consecutive timeouts we re-queue through before parking the task, so a task that
 // never fits its run window can't loop forever; a non-timeout run in between resets the streak.
 const MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS = 5;
-// How stale the Progress page may get before the Captain rebuilds it, independently of goals.
+// How stale the progress summary may get before the Captain rebuilds it, independently of goals.
 // Matches the default daily goal cadence, and is deliberately conservative: paired with the
 // "has anything changed since?" guard in `isProgressSnapshotDue`, it means an active project
 // gets at most one progress run a day from this path and a dormant one gets none.
@@ -2660,7 +2660,7 @@ export class JobManager {
 
 	/**
 	 * If the Captain has goals due for a check, launch one progress-update run (no task) covering
-	 * all of them, and refreshes the project's Progress page either way. Returns
+	 * all of them, and refreshes the project's progress summary either way. Returns
 	 * `{ dispatched: true }` so the scheduled caller yields this activation; returns
 	 * `{ dispatched: false, reason }` when nothing is due or the run can't start right now (the
 	 * scheduled caller then falls through to normal task selection and the work stays due for the
@@ -2668,7 +2668,7 @@ export class JobManager {
 	 * ("Run now") path, which passes `manual` to bypass the due-check.
 	 */
 	/**
-	 * Is the project's Progress page stale enough to rebuild, independently of goals?
+	 * Is the project's progress summary stale enough to rebuild, independently of goals?
 	 *
 	 * Two conditions, both required. **Stale**: the anchor is older than
 	 * `PROGRESS_REFRESH_INTERVAL_HOURS`. **Active**: a task has moved since that anchor. The
@@ -2685,7 +2685,7 @@ export class JobManager {
 	 *   costing a Captain run every few seconds.
 	 * - `projects.created_at` is the fallback when neither exists, so a brand-new project isn't
 	 *   immediately "overdue": on day one the anchor is "now", the Captain gets on with its
-	 *   planning task, and the Progress page arrives once there is something to report. It is a
+	 *   planning task, and the progress summary arrives once there is something to report. It is a
 	 *   fallback rather than a third `GREATEST` argument on purpose — a recently-created project
 	 *   whose page is genuinely stale must still be due.
 	 *
@@ -2761,10 +2761,10 @@ export class JobManager {
 		if (!projectRow) return { dispatched: false, reason: 'no_project' };
 
 		// Goals are not a dependency of progress. A run is due when a goal is due (the goals get
-		// assessed) OR when the Progress page itself has gone stale with work having happened
-		// since — so a project that has never set a goal still gets a maintained summary and
-		// activity columns. `manual` ("Run now") skips the check entirely: a human pressing the
-		// button is explicit intent, not a cadence.
+		// assessed) OR when the progress summary itself has gone stale with work having happened
+		// since — so a project that has never set a goal still gets a maintained summary.
+		// `manual` ("Run now") skips the check entirely: a human pressing the button is explicit
+		// intent, not a cadence.
 		const dueGoals = await getDueGoals(db, projectRow.id);
 		if (!manual && dueGoals.length === 0 && !(await this.isProgressSnapshotDue(projectRow.id))) {
 			return { dispatched: false, reason: 'not_due' };
@@ -2786,7 +2786,7 @@ export class JobManager {
 		}
 
 		const progressUpdate: ProgressUpdateContext = {
-			// The deterministic half of the Progress page: recency, the progress-run exclusion and
+			// The deterministic half of the progress summary: recency, the progress-run exclusion and
 			// the close-time inference all resolved in SQL, handed over as candidates the Captain
 			// picks from and writes prose for.
 			activityCandidates: await buildProgressActivityCandidates(db, projectRow.id, teamId),
@@ -2968,7 +2968,7 @@ export class JobManager {
 	}
 
 	/**
-	 * Manually trigger the Captain's progress-update run for a project on demand (the Progress page
+	 * Manually trigger the Captain's progress-update run for a project on demand (the progress summary
 	 * "Run now" button). Reuses the scheduled logic (`tryDispatchProgressUpdate` → goal selection,
 	 * gating and launch) so a manual run is identical to a heartbeat-scheduled one, except that it
 	 * passes `manual` to skip the due-check: pressing the button always runs, whether or not the

@@ -91,13 +91,11 @@ test('the project dashboard lists exactly the unread rows its inbox shows', asyn
 		params: { projectId: ref.slug },
 	});
 
-	const section = await findByTestId('project-dashboard-needs-you', undefined, {
+	const section = await findByTestId('dashboard-action-items', undefined, {
 		timeout: 20_000,
 	});
 	await waitFor(() => expect(section.textContent).toContain('Action items · 3'));
-	expect(section.querySelectorAll('[data-testid="project-dashboard-needs-you-row"]')).toHaveLength(
-		3,
-	);
+	expect(section.querySelectorAll('[data-testid="dashboard-action-item"]')).toHaveLength(3);
 	expect(section.textContent).toContain('drafted a plan to review');
 	expect(section.textContent).toContain('please confirm the rollout window');
 	// The credential request reads as what it asks for.
@@ -131,15 +129,13 @@ test('each dashboard action item is a whole-row link to the item it names', asyn
 		params: { projectId: ref.slug },
 	});
 
-	const section = await findByTestId('project-dashboard-needs-you', undefined, {
+	const section = await findByTestId('dashboard-action-items', undefined, {
 		timeout: 20_000,
 	});
 	await waitFor(() => expect(section.textContent).toContain('Action items · 3'));
 
 	const rows = [
-		...section.querySelectorAll<HTMLAnchorElement>(
-			'[data-testid="project-dashboard-needs-you-row"]',
-		),
+		...section.querySelectorAll<HTMLAnchorElement>('[data-testid="dashboard-action-item"]'),
 	];
 	expect(rows).toHaveLength(3);
 	// The row *is* the control - clicking anywhere on it navigates - so it must
@@ -171,7 +167,7 @@ test('reading a credential request in the inbox drops it from the dashboard', as
 		to: '/projects/$projectId/dashboard',
 		params: { projectId: ref.slug },
 	});
-	const warm = await findByTestId('project-dashboard-needs-you', undefined, { timeout: 20_000 });
+	const warm = await findByTestId('dashboard-action-items', undefined, { timeout: 20_000 });
 	await waitFor(() => expect(warm.textContent).toContain('Action items · 3'));
 
 	await router.navigate({
@@ -194,7 +190,7 @@ test('reading a credential request in the inbox drops it from the dashboard', as
 		params: { projectId: ref.slug },
 	});
 
-	const section = await findByTestId('project-dashboard-needs-you', undefined, {
+	const section = await findByTestId('dashboard-action-items', undefined, {
 		timeout: 20_000,
 	});
 	// Read, so off the action items — the approval and the mention remain.

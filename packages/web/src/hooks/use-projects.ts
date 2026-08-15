@@ -78,8 +78,6 @@ export interface Project {
 	/** Captain-maintained progress summary (markdown). Present on the project detail payload. */
 	progress_summary?: string;
 	progress_summary_updated_at?: string | null;
-	/** User's preferred dashboard widget order. Null/absent = default order. */
-	dashboard_widget_order?: string[] | null;
 }
 
 export interface Repo {
@@ -202,7 +200,7 @@ export function useProject(projectId: string, options?: { enabled?: boolean }) {
 	});
 }
 
-/** The Captain-maintained progress summary shown at the top of the Progress page. */
+/** The Captain-maintained progress summary shown at the top of the project dashboard. */
 export function useProjectProgress(projectId: string, options?: { enabled?: boolean }) {
 	return useQuery({
 		queryKey: queryKeys.projects.progress(projectId),

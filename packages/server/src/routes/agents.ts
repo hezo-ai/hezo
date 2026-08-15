@@ -250,13 +250,14 @@ agentsRoutes.get('/projects/:projectId/agents', async (c) => {
 				'task_id', hr.task_id,
 				'task_identifier', hr.task_identifier,
 				'task_project_id', hr.task_project_id,
-				'run_status', hr.run_status
+				'run_status', hr.run_status,
+				'started_at', hr.started_at
 			) ELSE NULL END AS active_run
 		FROM members m
 		JOIN member_agents ma ON ma.id = m.id
 		LEFT JOIN LATERAL (
 			SELECT hr2.task_id, i.identifier AS task_identifier, i.project_id AS task_project_id,
-			       hr2.status AS run_status
+			       hr2.status AS run_status, hr2.started_at
 			FROM heartbeat_runs hr2
 			LEFT JOIN tasks i ON i.id = hr2.task_id
 			WHERE hr2.member_id = m.id AND hr2.status IN ('running', 'queued')

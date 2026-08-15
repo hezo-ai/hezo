@@ -1,5 +1,5 @@
 import { GOAL_CHECK_FREQUENCY_LABELS, type GoalWithProject } from '@hezo/shared';
-import { Link, useNavigate } from '@tanstack/react-router';
+import { Link } from '@tanstack/react-router';
 import { Pencil, Plus, Target } from 'lucide-react';
 import { useState } from 'react';
 import {
@@ -14,7 +14,6 @@ import { CreateGoalDialog } from './create-goal-dialog';
 import { GoalArchiveButton } from './goal-archive-button';
 import { GoalHealthPill } from './goal-health-pill';
 import { GoalSmartGuidance } from './goal-smart-guidance';
-import { Breadcrumb } from './ui/breadcrumb';
 import { Button } from './ui/button';
 import { EmptyState } from './ui/empty-state';
 import { HelpDialog } from './ui/help-dialog';
@@ -56,7 +55,7 @@ function GoalPanel({
 		>
 			<div className="flex items-start justify-between gap-2">
 				<Link
-					to="/projects/$projectId/progress/goals/$goalId"
+					to="/projects/$projectId/goals/$goalId"
 					params={{ projectId, goalId: goal.id }}
 					data-testid="goal-open"
 					aria-label={`Open goal ${goal.title}`}
@@ -107,26 +106,6 @@ function GoalPanel({
 				{isArchived && <span className="text-text-2">Archived</span>}
 			</div>
 		</div>
-	);
-}
-
-/** `Progress › Goals`, matching the sidebar nesting and the URL. */
-function GoalsBreadcrumb({ projectId }: { projectId: string }) {
-	const { t } = useI18n();
-	const navigate = useNavigate();
-	return (
-		<Breadcrumb
-			data-testid="goals-breadcrumb"
-			segments={[
-				{
-					key: 'progress',
-					label: t('nav.progress'),
-					onNavigate: () =>
-						navigate({ to: '/projects/$projectId/progress', params: { projectId } }),
-				},
-				{ key: 'goals', label: t('nav.goals') },
-			]}
-		/>
 	);
 }
 
@@ -255,7 +234,6 @@ export function GoalsList({ projectId }: GoalsListProps) {
 	if (view === 'active' && goals.length === 0 && suggestions.length === 0) {
 		return (
 			<div>
-				<GoalsBreadcrumb projectId={projectId} />
 				<EmptyState
 					variant="hero"
 					icon={<Target className="w-8 h-8" />}
@@ -275,7 +253,6 @@ export function GoalsList({ projectId }: GoalsListProps) {
 
 	return (
 		<div>
-			<GoalsBreadcrumb projectId={projectId} />
 			<div className="mb-4 flex flex-wrap items-center justify-between gap-2">
 				<div className="flex items-center gap-1.5">
 					<h1 className="text-lg font-semibold text-text-1">{t('nav.goals')}</h1>

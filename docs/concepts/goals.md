@@ -7,9 +7,9 @@ section: Concepts
 # Goals
 
 **Goals are optional - and recommended.** Every project already has a
-[**Progress** page](/docs/concepts/progress) the Captain keeps current whether or not you set any.
-Goals add a layer on top of it: the high-level **outcomes** the project is working toward, tracked
-over time with a percentage, a health, and a chart.
+[**progress summary**](/docs/concepts/progress) the Captain keeps current whether or not you set
+any. Goals add a layer on top of it: the high-level **outcomes** the project is working toward,
+tracked over time with a percentage, a health, and a chart.
 
 Where tasks are the individual pieces of work on the board, goals are the outcomes those tasks add
 up to - and they give you, the admin, a way to see how far along a project is and where things
@@ -49,14 +49,15 @@ dismissed. You stay in control of which goals the team actually tracks.
 
 ## The Goals page
 
-Goals live under **Progress** in the project menu, at **Progress > Goals**. The page shows each
-goal as a panel with its progress, health, and latest status; click a panel to open the goal's own
-page, where its full progress chart and history live. An **Active** / **Archived** filter switches
-between live goals and retired ones.
+**Goals** sits in the project menu, directly under **Inbox**. The page shows each goal as a panel
+with its progress, health, and latest status; click a panel to open the goal's own page, where its
+full progress chart and history live. An **Active** / **Archived** filter switches between live
+goals and retired ones.
 
-Back on the [**Progress** page](/docs/concepts/progress), your goals are summarised by the **goal
-indicator** in the header: one bar per goal, filled to its own progress and coloured by its health,
-with the overall percentage beside it. Click it to come here.
+The project [**Dashboard**](/docs/concepts/progress) carries a goals card beside the work: the four
+goals most worth a decision, worst health first, each with its progress bar, health and deadline,
+and a link to the rest. Its metric strip also shows overall goal progress and how many goals are
+off track.
 
 ## Setting a goal
 
@@ -82,14 +83,14 @@ goal has:
 
 The create and edit forms keep the **SMART** framework (Specific, Measurable, Achievable,
 Relevant, Time-bound) in front of you as a reminder. A project can have any number of goals;
-until you've set one, a gentle dot pulses next to **Progress** in the menu as a nudge to create
+until you've set one, a gentle dot pulses next to **Goals** in the menu as a nudge to create
 your first. Editing a goal (from the goal's own page or the panel's edit control) reopens the
 same form.
 
 ## How the Captain tracks goals
 
 Goal assessment rides along with the [**progress update**](/docs/concepts/progress#progress-update-runs) -
-the standalone Captain run that rebuilds the Progress page. That run happens whether or not the
+the standalone Captain run that rewrites the progress summary. That run happens whether or not the
 project has goals; when it does, the same run also picks up whichever goals are **due** and assesses
 them all at once.
 
@@ -97,8 +98,8 @@ A goal is due when its **check frequency** has come round (last checked longer a
 or never checked) **or** once its **deadline** has passed - a goal past its deadline is always
 checked and never skipped while it stays active. Goals that aren't due on either count are skipped;
 the progress update still runs, it simply has no goal work to do. A due goal also makes a progress
-update due, so setting goals means the Progress page refreshes at least as often as your shortest
-check frequency.
+update due, so setting goals means the progress summary refreshes at least as often as your
+shortest check frequency.
 
 For each due goal the Captain assesses real progress toward the outcome - reading the relevant
 tasks, comments, and project state rather than just counting finished tasks - and records three
@@ -115,15 +116,15 @@ Because each check is recorded, every goal shows a **progress chart** of how its
 has moved over time, so you can see momentum (or a stall) at a glance.
 
 These progress updates are **not** done inside a task - they're standalone Captain runs. The recent
-progress update runs for the whole project appear at the bottom of the
-[**Progress** page](/docs/concepts/progress#progress-update-runs), along with the **Run now** button
+progress update runs for the whole project appear at the bottom of the project
+[**Dashboard**](/docs/concepts/progress#progress-update-runs), along with the **Run now** button
 that triggers one on demand. Each goal's own page also has a **Progress update runs** section showing
 just the runs that did something for *that* goal - the progress it set and any tasks it created or
 commented on toward the goal show inline, and each run expands to reveal the status summary it
 recorded.
 
-During the same run the Captain also rewrites the project progress summary and the recent-activity
-columns, so the whole Progress page stays in step with the goal estimates.
+During the same run the Captain also rewrites the project progress summary, so the dashboard stays
+in step with the goal estimates.
 
 ## Goals aren't finished at 100%
 

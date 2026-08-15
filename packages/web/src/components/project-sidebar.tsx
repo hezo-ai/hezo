@@ -131,24 +131,17 @@ export function ProjectSidebar({
 		testId: 'project-sidebar-custom-prompt',
 	};
 
-	// Progress (the Captain-maintained summary + recent task activity) leads under Inbox; it's a
-	// normal-project concept, so HQ (internal) has none. Goals disclose beneath it — they are the
-	// optional layer on top of progress, not the other way round.
+	// Goals sit top-level under Inbox: a normal-project concept, so HQ (internal) has none. The
+	// project's progress narrative lives on the dashboard rather than a page of its own, so there
+	// is no longer a Progress row for goals to nest under - which is also what lets the "no goals
+	// yet" nudge ride the Goals row itself. Nested under Progress it could not, because a sub-item
+	// only renders once its parent's route is active.
 	const goalsPage = {
-		to: '/projects/$projectId/progress/goals',
-		params: projectParams,
-		label: t('nav.goals'),
-		testId: 'project-sidebar-goals',
-	};
-	// The "no goals yet" nudge stays on the Progress row even though goals are what it is about:
-	// sub-items only render once their parent's route is active, so on the Goals row the nudge
-	// would only be visible to someone who had already navigated to it.
-	const progressPage = {
-		to: '/projects/$projectId/progress',
+		to: '/projects/$projectId/goals',
 		params: projectParams,
 		label: (
 			<span className="inline-flex items-center gap-1.5">
-				<span>{t('nav.progress')}</span>
+				<span>{t('nav.goals')}</span>
 				{hasNoGoals && (
 					<Tooltip content="No goals yet — create one to focus the team" side="right">
 						<span
@@ -161,8 +154,7 @@ export function ProjectSidebar({
 				)}
 			</span>
 		),
-		testId: 'project-sidebar-progress',
-		subItems: [goalsPage],
+		testId: 'project-sidebar-goals',
 	};
 
 	const projectPages = [
@@ -226,8 +218,8 @@ export function ProjectSidebar({
 					count: inboxCount?.unread,
 					testId: 'sidebar-link-inbox',
 				},
-				// Progress sits under Inbox; HQ (internal) has no goals.
-				...(isInternal ? [] : [progressPage]),
+				// Goals sit under Inbox; HQ (internal) has none.
+				...(isInternal ? [] : [goalsPage]),
 			],
 		},
 		{ items: projectPages },
