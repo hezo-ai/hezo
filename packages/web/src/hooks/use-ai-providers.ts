@@ -167,3 +167,53 @@ export function useUpdateAiProviderConfig(configId: string) {
 		},
 	});
 }
+
+/**
+ * Guided sign-in - Hezo drives the vendor CLI's own login in a container and the
+ * operator finishes it on whatever device they are holding.
+ *
+ * Plain async functions rather than hooks, because the flow is a poll loop owned
+ * by the dialog's effect (the same shape `connector-device-flow-dialog` uses).
+ * A React Query mutation per tick would cache states that are meaningless once
+ * the flow has moved on.
+ *
+ * **The credential never arrives here.** On success the server stores it
+ * straight from the container and returns only the config id - which is the
+ * whole point, since this replaces pasting `auth.json` into a form.
+ */
+export type SubscriptionLoginState =
+	| { status: 'starting' }
+	| {
+			status: 'awaiting_user';
+			completion: 'none' | 'code';
+			url: string;
+			user_code: string | null;
+			expires_at: string;
+	  }
+	| { status: 'succeeded'; config_id: string }
+	| { status: 'failed'; error: string; code: string };
+
+export async function startSubscriptionLogin(input: {
+	provider: string;
+	label?: string;
+	runtime?: AgentRuntime | null;
+}): Promise<{ flow_id: string }> {
+	return api.post<{ flow_id: string }>('/api/ai-providers/subscription-login/start', input);
+}
+
+export async function pollSubscriptionLogin(flowId: string): Promise<SubscriptionLoginState> {
+	return api.get<SubscriptionLoginState>(`/api/ai-providers/subscription-login/${flowId}`);
+}
+
+export async function submitSubscriptionLoginCode(flowId: string, code: string): Promise<void> {
+	await api.post(`/api/ai-providers/subscription-login/${flowId}/code`, { code });
+}
+
+export async function cancelSubscriptionLogin(flowId: string): Promise<void> {
+	await api.delete(`/api/ai-providers/subscription-login/${flowId}`).catch(() => undefined);
+}
+
+/** Refresh the provider lists after a sign-in has stored a new config. */
+export function invalidateAiProviders(): void {
+	invalidateAll();
+}

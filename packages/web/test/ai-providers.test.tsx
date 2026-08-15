@@ -250,6 +250,9 @@ test('offers Claude Code subscription (setup-token) paste flow for Anthropic', a
 
 	await user.click(getByRole('button', { name: 'Anthropic' }));
 	await user.click(getByRole('button', { name: /Claude Code subscription/i }));
+	// Guided sign-in is the primary action now, so the paste form lives behind a
+	// disclosure. Opening it is what this test is about.
+	await user.click(getByRole('button', { name: /Paste credential manually/i }));
 	const setupHits = await findAllByText(/setup-token/i);
 	expect(setupHits.length).toBeGreaterThan(0);
 	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
@@ -292,6 +295,8 @@ test('offers Codex subscription paste flow for OpenAI', async () => {
 
 	await user.click(getByRole('button', { name: 'OpenAI' }));
 	await user.click(getByRole('button', { name: /Codex subscription/i }));
+	// Guided sign-in leads; the paste form is behind a disclosure.
+	await user.click(getByRole('button', { name: /Paste credential manually/i }));
 	const codexHits = await findAllByText(/codex login/i);
 	expect(codexHits.length).toBeGreaterThan(0);
 	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
@@ -629,6 +634,8 @@ test('adds a subscription credential via the Add modal', async () => {
 	const dialog = await findByRole('dialog');
 	await user.click(within(dialog).getByRole('button', { name: /OpenAI/ }));
 	await user.click(within(dialog).getByRole('button', { name: /Codex subscription/i }));
+	// Guided sign-in leads; the paste form is behind a disclosure.
+	await user.click(within(dialog).getByRole('button', { name: /Paste credential manually/i }));
 
 	// "codex login" appears in both a step and the footer, so match all.
 	await within(dialog).findAllByText(/codex login/i);
@@ -765,4 +772,46 @@ test('re-raises the gate after deleting the last provider', async () => {
 	await singletonQueryClient.invalidateQueries({ queryKey: ['ai-providers', 'status'] });
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
+});
+
+test('OpenAI subscription leads with guided sign-in, keeping paste behind a disclosure', async () => {
+	const { container, findByRole, getByRole, queryByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+		},
+	});
+
+	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
+	await user.click(getByRole('button', { name: 'OpenAI' }));
+	await user.click(getByRole('button', { name: /Codex subscription/i }));
+
+	// The sign-in button is the primary action, and the textarea is not rendered
+	// until the operator asks for it.
+	await findByRole('button', { name: /Sign in with Codex/i });
+	expect(container.querySelector('textarea')).toBeNull();
+
+	await user.click(getByRole('button', { name: /Paste credential manually/i }));
+	expect(container.querySelector('textarea')).not.toBeNull();
+	// Both paths stay reachable - the disclosure does not replace the button.
+	expect(queryByRole('button', { name: /Sign in with Codex/i })).not.toBeNull();
+});
+
+test('Google subscription offers no sign-in button, because its CLI cannot be driven', async () => {
+	const { container, findByRole, getByRole, queryByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+		},
+	});
+
+	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
+	await user.click(getByRole('button', { name: 'Google' }));
+	await user.click(getByRole('button', { name: /Gemini subscription/i }));
+
+	// No button that would start something and hang, and no disclosure to open:
+	// the paste form is the whole branch.
+	expect(queryByRole('button', { name: /Sign in with/i })).toBeNull();
+	expect(queryByRole('button', { name: /Paste credential manually/i })).toBeNull();
+	expect(container.querySelector('textarea')).not.toBeNull();
 });

@@ -1,4 +1,4 @@
-import { AgentRuntime } from '@hezo/shared';
+import { AgentRuntime, RUNTIMES_WITH_GUIDED_SIGN_IN } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { parseOsc8Links, stripTerminalNoise } from '../src/services/sandbox/proc-scripts';
 import { SUBSCRIPTION_LOGIN_DRIVERS } from '../src/services/subscription-login-drivers';
@@ -155,6 +155,20 @@ describe('driver coverage', () => {
 
 	it('leaves Gemini on manual paste deliberately, having no scriptable sign-in', () => {
 		expect(SUBSCRIPTION_LOGIN_DRIVERS[AgentRuntime.Gemini]).toBeNull();
+	});
+
+	/**
+	 * The web decides whether to offer a **Sign in** button from the shared list,
+	 * and the server decides whether it can run one from the drivers. Two copies
+	 * of "which runtimes" drift into a button that starts what the server then
+	 * declines, so they are asserted equal here rather than trusted to stay so.
+	 */
+	it('agrees with the shared list the web reads', () => {
+		const withDriver = Object.entries(SUBSCRIPTION_LOGIN_DRIVERS)
+			.filter(([, driver]) => driver !== null)
+			.map(([runtime]) => runtime)
+			.sort();
+		expect(withDriver).toEqual([...RUNTIMES_WITH_GUIDED_SIGN_IN].sort());
 	});
 
 	it('gives every driver a challenge timeout below its completion timeout', () => {

@@ -5,6 +5,7 @@ import {
 	type AiProvider,
 	AiProviderStatus,
 	ALL_AI_PROVIDERS,
+	AuthType,
 	isAgentRuntime,
 	parseProviderModels,
 	providerRuntimes,
@@ -13,7 +14,7 @@ import {
 import { Hono } from 'hono';
 import { err, ok } from '../lib/response';
 import { isUniqueViolation } from '../lib/sql';
-import type { Env } from '../lib/types';
+import type { AuthInfo, Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
 import {
@@ -29,6 +30,13 @@ import {
 import { getPinnedModel, refreshModelPins } from '../services/model-pins';
 import { fetchProviderCatalog, probeProviderCatalog } from '../services/provider-catalog';
 import { validateSubscriptionBlob } from '../services/subscription-auth';
+import {
+	LOGIN_FLOW_TTL_MS,
+	loginRuntimeFor,
+	SubscriptionLoginUnsupportedError,
+	subscriptionLoginService,
+} from '../services/subscription-login';
+import { acquireLoginContainer } from '../services/subscription-login-container';
 
 const log = logger.child('routes');
 
@@ -571,4 +579,201 @@ aiProvidersRoutes.get('/ai-providers/:configId/models', async (c) => {
 
 	const models = parseProviderModels(provider, catalog.json);
 	return ok(c, models);
+});
+
+/**
+ * Guided sign-in: Hezo drives the vendor CLI's own login inside a container and
+ * the operator completes it on whatever device they are holding.
+ *
+ * **No MCP twin, deliberately** - the same call `routes/connectors.ts` documents.
+ * Minting an operator's personal subscription credential requires a human at a
+ * browser they are already signed into; an agent cannot complete one, and a tool
+ * that starts a flow no caller can finish would only strand containers.
+ *
+ * The credential never reaches the browser. On success the server stores it
+ * straight from the container into the vault and the poll returns the created
+ * config - which is the whole point of the feature, since pasting `auth.json`
+ * into a form is exactly what it replaces.
+ */
+
+/** Who a flow belongs to. Admin sessions and API keys are distinct principals. */
+function ownerKeyOf(auth: AuthInfo): string {
+	if (auth.type === AuthType.Admin) return `user:${auth.userId}`;
+	if (auth.type === AuthType.ApiKey) return `key:${auth.apiKeyId}`;
+	// `requireAdminEquivalent` has already turned every other principal away.
+	throw new Error(`unexpected principal on a sign-in route: ${auth.type}`);
+}
+
+/**
+ * The store that a succeeded flow triggers, memoized per flow.
+ *
+ * Polls overlap - the client asks again before the previous answer lands - and
+ * both would see `succeeded` and both would insert a config. Coalescing on the
+ * flow id makes the insert happen once and every later poll await the same
+ * promise, the same shape `loadAllSecrets` uses for the vault.
+ */
+const persistedFlows = new Map<string, Promise<string>>();
+
+/** Label the operator typed, held until the flow succeeds and needs it. */
+const flowLabels = new Map<string, string | undefined>();
+
+function forgetFlow(flowId: string): void {
+	persistedFlows.delete(flowId);
+	flowLabels.delete(flowId);
+}
+
+aiProvidersRoutes.post('/ai-providers/subscription-login/start', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+
+	const masterKeyManager = c.get('masterKeyManager');
+	if (!masterKeyManager.getKey()) {
+		return err(c, 'LOCKED', 'Master key is locked', 401);
+	}
+
+	const body = await c.req.json().catch(() => ({}));
+	const provider = String(body.provider ?? '') as AiProvider;
+	if (!VALID_PROVIDERS.has(provider)) {
+		return err(c, 'INVALID_PROVIDER', 'Unknown AI provider', 400);
+	}
+	if (!AI_PROVIDER_INFO[provider].supportsSubscription) {
+		return err(c, 'NO_SUBSCRIPTION', `${provider} has no subscription auth`, 400);
+	}
+
+	const runtimeChoice = parseRuntimeChoice(provider, body.runtime);
+	if (!runtimeChoice.ok) return err(c, 'INVALID_RUNTIME', runtimeChoice.error, 400);
+
+	// Answered before a container is created: a provider with no driver must cost
+	// nothing to ask about, because the UI asks on every dialog open.
+	if (!loginRuntimeFor(provider, runtimeChoice.value)) {
+		return err(c, 'LOGIN_UNSUPPORTED', `${provider} has no guided sign-in`, 400);
+	}
+
+	const docker = c.get('docker');
+	const db = c.get('db');
+	const dataDir = c.get('dataDir');
+
+	let container: Awaited<ReturnType<typeof acquireLoginContainer>>;
+	try {
+		container = await acquireLoginContainer(docker, db, dataDir);
+	} catch (e) {
+		log.error(`could not start a sign-in container: ${String(e)}`);
+		return err(c, 'CONTAINER_FAILED', 'Could not start a sign-in session', 503);
+	}
+
+	try {
+		const flow = await subscriptionLoginService.start({
+			provider,
+			storedRuntime: runtimeChoice.value,
+			ownerId: ownerKeyOf(c.get('auth')),
+			engine: docker,
+			containerId: container.containerId,
+			teardown: container.teardown,
+		});
+		const label = typeof body.label === 'string' ? body.label.trim() || undefined : undefined;
+		flowLabels.set(flow.id, label);
+		return ok(c, { flow_id: flow.id, provider, status: flow.state.status }, 201);
+	} catch (e) {
+		// A CLI that no longer offers its flow lands here. The client turns this
+		// into the manual paste form with no message: the operator cannot act on a
+		// vendor's flag disappearing, so telling them about it is noise. It is
+		// still named and logged, so a CLI regression stays diagnosable.
+		const reason = e instanceof SubscriptionLoginUnsupportedError ? e.code : 'internal';
+		log.warn(`guided sign-in unavailable for ${provider} (${reason}): ${String(e)}`);
+		return err(c, 'LOGIN_UNSUPPORTED', e instanceof Error ? e.message : String(e), 400);
+	}
+});
+
+aiProvidersRoutes.get('/ai-providers/subscription-login/:flowId', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+
+	const flowId = c.req.param('flowId');
+	const owner = ownerKeyOf(c.get('auth'));
+	const flow =
+		subscriptionLoginService.get(flowId, owner) ??
+		subscriptionLoginService.getSettled(flowId, owner);
+	if (!flow) return err(c, 'NOT_FOUND', 'Sign-in session not found', 404);
+
+	const state = flow.state;
+	if (state.status === 'awaiting_user') {
+		return ok(c, {
+			status: state.status,
+			completion: state.completion,
+			url: state.challenge.url,
+			user_code: state.challenge.userCode ?? null,
+			expires_at: new Date(flow.createdAt + LOGIN_FLOW_TTL_MS).toISOString(),
+		});
+	}
+	if (state.status === 'failed') {
+		return ok(c, { status: state.status, error: state.error, code: state.code });
+	}
+	if (state.status !== 'succeeded') return ok(c, { status: state.status });
+
+	// Succeeded: store the harvested credential, exactly once across every poll.
+	let pending = persistedFlows.get(flowId);
+	if (!pending) {
+		const masterKeyManager = c.get('masterKeyManager');
+		if (!masterKeyManager.getKey()) return err(c, 'LOCKED', 'Master key is locked', 401);
+		const db = c.get('db');
+		// Re-validated even though the CLI wrote it: the same tombstone guard the
+		// rotation write-back uses, so a blank file from a failed refresh is never
+		// stored as a credential.
+		const validation = validateSubscriptionBlob(flow.provider, state.credential);
+		if (!validation.ok) {
+			forgetFlow(flowId);
+			return err(c, 'INVALID_CREDENTIAL', validation.error ?? 'Invalid credential', 400);
+		}
+		pending = storeAiProviderKey(
+			db,
+			masterKeyManager,
+			flow.provider,
+			state.credential,
+			AiAuthMethod.Subscription,
+			flowLabels.get(flowId),
+			{},
+			flow.runtime,
+		);
+		persistedFlows.set(flowId, pending);
+	}
+
+	try {
+		const configId = await pending;
+		return ok(c, { status: 'succeeded', config_id: configId });
+	} catch (e) {
+		forgetFlow(flowId);
+		if (isUniqueViolation(e)) {
+			return err(c, 'DUPLICATE_LABEL', 'A provider with that name already exists', 409);
+		}
+		log.error(`could not store a signed-in credential: ${String(e)}`);
+		return err(c, 'STORE_FAILED', 'Could not save the credential', 500);
+	}
+});
+
+aiProvidersRoutes.post('/ai-providers/subscription-login/:flowId/code', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+
+	const body = await c.req.json().catch(() => ({}));
+	const code = typeof body.code === 'string' ? body.code.trim() : '';
+	if (!code) return err(c, 'INVALID_CODE', 'Enter the code the provider gave you', 400);
+
+	const accepted = await subscriptionLoginService.submitCode(
+		c.req.param('flowId'),
+		ownerKeyOf(c.get('auth')),
+		code,
+	);
+	if (!accepted) return err(c, 'NOT_FOUND', 'Sign-in session is not waiting for a code', 404);
+	return ok(c, { submitted: true });
+});
+
+aiProvidersRoutes.delete('/ai-providers/subscription-login/:flowId', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+
+	const flowId = c.req.param('flowId');
+	const cancelled = await subscriptionLoginService.cancel(flowId, ownerKeyOf(c.get('auth')));
+	forgetFlow(flowId);
+	if (!cancelled) return err(c, 'NOT_FOUND', 'Sign-in session not found', 404);
+	return ok(c, { cancelled: true });
 });

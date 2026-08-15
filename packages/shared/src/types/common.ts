@@ -2054,6 +2054,43 @@ export function effectiveRuntime(
  * Returns null for a pairing the provider doesn't support, so a stale stored
  * runtime surfaces as an explicit failure rather than a half-built env bag.
  */
+/**
+ * Runtimes whose CLI Hezo can drive through an interactive sign-in.
+ *
+ * Lives here rather than beside the drivers themselves because both sides need
+ * it: the server to refuse a flow it cannot run, and the web to decide whether
+ * to offer a **Sign in** button at all. Two copies would drift into a button
+ * that starts something the server declines.
+ *
+ * The drivers hold the *how* - argv, output parsers, what the operator returns.
+ * This is only the *which*, and `subscription-login-drivers.test.ts` asserts the
+ * two agree, so adding a driver without listing it here fails the suite.
+ *
+ * Gemini is absent deliberately: its CLI exposes no auth flag and picks its
+ * sign-in from a full-screen menu only arrow keys reach, so there is nothing to
+ * drive. Google subscriptions stay on manual paste.
+ */
+export const RUNTIMES_WITH_GUIDED_SIGN_IN: readonly AgentRuntime[] = [
+	AgentRuntime.Codex,
+	AgentRuntime.ClaudeCode,
+];
+
+/**
+ * Whether a provider's sign-in can be driven, for the runtime this credential
+ * would actually run on.
+ *
+ * Resolved through {@link effectiveRuntime}, so a config pinned to an alternate
+ * CLI is judged on that CLI rather than the provider's default - a Moonshot key
+ * on Claude Code and one on Kimi Code do not have the same answer.
+ */
+export function providerHasGuidedSignIn(
+	provider: AiProvider,
+	storedRuntime: AgentRuntime | null | undefined,
+): boolean {
+	const runtime = effectiveRuntime(provider, storedRuntime);
+	return runtime !== null && RUNTIMES_WITH_GUIDED_SIGN_IN.includes(runtime);
+}
+
 export function providerRuntimeBinding(
 	provider: AiProvider,
 	runtime: AgentRuntime,
