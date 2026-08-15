@@ -76,10 +76,9 @@ agent can't hurt you. A few guarantees sit underneath everything:
 - **Put a hard ceiling on spend.** Per-agent and per-project budgets with live cost
   tracking *pause* runs when a limit is hit and *auto-resume* when the window rolls over -
   control without babysitting. See [Budgets & cost control](/docs/concepts/budgets-and-costs).
-- **See where a project stands at a glance.** Every project has a **Progress** page the Captain
-  keeps current: a high-level summary plus the tasks recently worked, filed and finished, each
-  with a line explaining what it means for the project. See
-  [Progress & project status](/docs/concepts/progress).
+- **See where a project stands at a glance.** Every project's **Dashboard** opens on a high-level
+  summary the Captain keeps current, over the work in flight, what needs you, the goals and the
+  spend. See [Progress & project status](/docs/concepts/progress).
 - **Steer by outcome, not just tasks.** Optionally set high-level **goals** and let the Captain
   re-check each one on a schedule (it writes a fresh progress estimate, health, and status). See
   [Goals](/docs/concepts/goals).

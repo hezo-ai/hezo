@@ -107,7 +107,7 @@ const PROGRESS_UPDATE_MESSAGES: Record<ProgressUpdateDispatchReason, string> = {
 	launch_conflict: 'A progress-update run is already starting.',
 };
 
-// Manually run the Captain's progress-update ("Run now" on the Progress page). Reuses the
+// Manually run the Captain's progress-update ("Run now" on the project dashboard). Reuses the
 // scheduled logic, minus its due-check: pressing the button is explicit intent, so this always
 // dispatches, whether or not the project has goals and whether or not any are due. Only the
 // busy / capacity / budget guards still apply, and those queue or 409 rather than no-op.

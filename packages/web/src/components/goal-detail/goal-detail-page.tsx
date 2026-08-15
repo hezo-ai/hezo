@@ -228,16 +228,10 @@ export function GoalDetailPage({ projectId, goalId }: GoalDetailPageProps) {
 					data-testid="goal-breadcrumb"
 					segments={[
 						{
-							key: 'progress',
-							label: t('nav.progress'),
-							onNavigate: () =>
-								navigate({ to: '/projects/$projectId/progress', params: { projectId } }),
-						},
-						{
 							key: 'goals',
 							label: t('nav.goals'),
 							onNavigate: () =>
-								navigate({ to: '/projects/$projectId/progress/goals', params: { projectId } }),
+								navigate({ to: '/projects/$projectId/goals', params: { projectId } }),
 						},
 						{ key: 'goal', label: goal.title, title: goal.title },
 					]}

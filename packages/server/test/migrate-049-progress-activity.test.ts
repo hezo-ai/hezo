@@ -121,7 +121,7 @@ describe('049_progress_activity migration', () => {
 
 	// The status predicates are the whole point of the two partial task indexes:
 	// "actioned" is open work only, "closed" is `done` only — `cancelled` is
-	// excluded from the Progress page entirely.
+	// excluded from the candidate set entirely.
 	it('keeps the task indexes partial to the exact status sets the columns use', async () => {
 		const r = await h.db.query<{ indexname: string; indexdef: string }>(
 			`SELECT indexname, indexdef FROM pg_indexes
@@ -136,7 +136,7 @@ describe('049_progress_activity migration', () => {
 
 	// Excluding NULL task_id is not just selectivity: it is exactly what keeps a
 	// progress-update run (which carries no task) out of the "actioned" ranking,
-	// so the Progress page can never report on its own runs.
+	// so the summary can never report on its own runs.
 	it('excludes taskless runs from the run index, which is how progress runs stay out of actioned', async () => {
 		const r = await h.db.query<{ indexdef: string }>(
 			`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_runs_team_started_task'`,

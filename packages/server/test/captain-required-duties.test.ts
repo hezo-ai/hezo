@@ -16,7 +16,7 @@ const REQUIRED_CAPTAIN_PARTIALS: { partial: string; why: string }[] = [
 	},
 	{
 		partial: 'partials/captain/progress-updates',
-		why: 'the Progress page is rebuilt only by the Captain during progress-update runs, so without this the page stays empty for the life of the project',
+		why: 'the progress summary is rebuilt only by the Captain during progress-update runs, so without this the page stays empty for the life of the project',
 	},
 	{
 		partial: 'partials/captain/hire-workflow',

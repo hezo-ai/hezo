@@ -25,7 +25,7 @@ test('renders the goals empty state when a project has no goals', async () => {
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -34,11 +34,11 @@ test('renders the goals empty state when a project has no goals', async () => {
 	});
 });
 
-// Goals no longer render on the Progress page — they have their own page under it. What the
-// summary header carries instead is the goal-progress indicator, which links there.
-test('Progress page renders the Captain summary with a goal indicator, not the goals themselves', async () => {
+// The Captain's summary and the goals now share the dashboard: the summary is the page's prose
+// band, the goals card is a capped list in the rail beside the work.
+test('the dashboard renders the Captain summary alongside the goals card', async () => {
 	let projectSlug = '';
-	const { findByText, findByTestId, queryByText, router } = await renderApp({
+	const { findByText, findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -53,17 +53,18 @@ test('Progress page renders the Captain summary with a goal indicator, not the g
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress',
+		to: '/projects/$projectId/dashboard',
 		params: { projectId: projectSlug },
 	});
 
 	await findByTestId('project-progress-summary', undefined, { timeout: 10_000 });
 	// The bold lead key point renders from markdown.
 	await findByText('Auth shipped.');
-	// The indicator stands in for the goals, which live on their own page now.
-	const indicator = await findByTestId('goal-progress-indicator');
-	expect(indicator.getAttribute('href')).toContain(`/projects/${projectSlug}/progress/goals`);
-	expect(queryByText('Reach 100 customers')).toBeNull();
+	// Under the slot cap every goal renders in full, so the title is on the page and its slot
+	// links to the goal's own page.
+	await findByText('Reach 100 customers');
+	const slot = await findByTestId('dashboard-goal-slot');
+	expect(slot.getAttribute('href')).toContain(`/projects/${projectSlug}/goals/`);
 });
 
 test('the goal detail run feed renders the health as a coloured pill and links to the run', async () => {
@@ -90,7 +91,7 @@ test('the goal detail run feed renders the health as a coloured pill and links t
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals/$goalId',
+		to: '/projects/$projectId/goals/$goalId',
 		params: { projectId: projectSlug, goalId },
 	});
 
@@ -103,7 +104,7 @@ test('the goal detail run feed renders the health as a coloured pill and links t
 	expect(getByTestId('goal-run').textContent).not.toContain('on_track');
 });
 
-test('the Progress page progress-update footer renders runs as collapsible run cards', async () => {
+test('the dashboard progress-update footer renders runs as collapsible run cards', async () => {
 	let projectSlug = '';
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -117,7 +118,7 @@ test('the Progress page progress-update footer renders runs as collapsible run c
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress',
+		to: '/projects/$projectId/dashboard',
 		params: { projectId: projectSlug },
 	});
 
@@ -140,7 +141,7 @@ test('the Goals header help button opens the SMART guidance modal', async () => 
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -170,7 +171,7 @@ test('the goal create form renders an info tooltip for every field', async () =>
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -205,7 +206,7 @@ test('clicking a goal opens its page with breadcrumbs, run feed, and edit modal'
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -241,7 +242,7 @@ test('the edit dialog pre-fills the Deadline field from a goal saved with a targ
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -282,7 +283,7 @@ test('the goal detail blurb linkifies task identifiers and markdown PR links', a
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals/$goalId',
+		to: '/projects/$projectId/goals/$goalId',
 		params: { projectId: projectSlug, goalId },
 	});
 
@@ -316,7 +317,7 @@ test('Project progress shows only the bold lead line until expanded', async () =
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress',
+		to: '/projects/$projectId/dashboard',
 		params: { projectId: projectSlug },
 	});
 
@@ -345,7 +346,7 @@ test('Project progress header opens a help dialog explaining how it updates', as
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress',
+		to: '/projects/$projectId/dashboard',
 		params: { projectId: projectSlug },
 	});
 
@@ -385,7 +386,7 @@ test('the goal run feed hides the status summary until expanded, keeping task ch
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals/$goalId',
+		to: '/projects/$projectId/goals/$goalId',
 		params: { projectId: projectSlug, goalId },
 	});
 
@@ -414,7 +415,7 @@ test('the New goal button sits on the Goals header line and opens the create dia
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -425,7 +426,7 @@ test('the New goal button sits on the Goals header line and opens the create dia
 	await findByText('Create Goal');
 });
 
-test('the Progress page shows a Run now button beside the progress update runs label', async () => {
+test('the dashboard shows a Run now button beside the progress update runs label', async () => {
 	let projectSlug = '';
 	const { findByTestId, findByText, user, router } = await renderApp({
 		initialPath: '/',
@@ -438,7 +439,7 @@ test('the Progress page shows a Run now button beside the progress update runs l
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress',
+		to: '/projects/$projectId/dashboard',
 		params: { projectId: projectSlug },
 	});
 
@@ -481,7 +482,7 @@ test('archiving a goal from the Goals list is confirmed first, and cancelling le
 		});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: projectSlug },
 	});
 
@@ -524,7 +525,7 @@ test('the goal detail page confirms archiving, and unarchiving is a single click
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals/$goalId',
+		to: '/projects/$projectId/goals/$goalId',
 		params: { projectId: projectSlug, goalId },
 	});
 
@@ -573,7 +574,7 @@ test('Run now queues when the Captain is busy, and the queued run can be cancell
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress',
+		to: '/projects/$projectId/dashboard',
 		params: { projectId: projectSlug },
 	});
 

@@ -513,9 +513,10 @@ describe('prompt builders (direct)', () => {
 		expect(prompt).toContain('- Suggested actions: Push');
 	});
 
-	// The run is progress-first: the Progress page rebuild and its candidates lead, and the goal
-	// section only exists when goals are actually due. A project with none still gets a full prompt.
-	it('buildProgressUpdatePrompt leads with the Progress page and omits the goal section entirely', () => {
+	// The run is progress-first: the summary rewrite and the tasks it is written from lead, and the
+	// goal section only exists when goals are actually due. A project with none still gets a full
+	// prompt.
+	it('buildProgressUpdatePrompt leads with the summary and omits the goal section entirely', () => {
 		const prompt = buildProgressUpdatePrompt('SYS', {
 			goals: [],
 			activityCandidates: {
@@ -534,11 +535,13 @@ describe('prompt builders (direct)', () => {
 			},
 		});
 		expect(prompt).toContain('Refresh this project');
-		expect(prompt).toContain('## Candidate tasks');
+		expect(prompt).toContain('## What moved');
 		expect(prompt).toContain('`PA-1` Card payments');
 		expect(prompt).toContain('Cards clear in staging.');
-		// Empty columns say so rather than being dropped silently.
-		expect(prompt).toContain('(nothing yet - omit this column)');
+		// The candidates are raw material, never a list to reproduce.
+		expect(prompt).toContain('not a list to reproduce');
+		// An empty group says so rather than being dropped silently.
+		expect(prompt).toContain('(nothing yet)');
 		// No goals due: the whole goal section is absent, not an empty heading.
 		expect(prompt).not.toContain('## Goals due for a check');
 		expect(prompt).not.toContain('update_goal_progress');
@@ -547,8 +550,8 @@ describe('prompt builders (direct)', () => {
 	// A partial or absent candidates object must render, not throw — it is a pure formatter.
 	it('buildProgressUpdatePrompt tolerates a context with no candidates', () => {
 		const prompt = buildProgressUpdatePrompt('SYS', { goals: [] });
-		expect(prompt).toContain('## Candidate tasks');
-		expect(prompt).toContain('(nothing yet - omit this column)');
+		expect(prompt).toContain('## What moved');
+		expect(prompt).toContain('(nothing yet)');
 	});
 
 	it('buildTaskPrompt renders the retry block with exit code and output tails', () => {

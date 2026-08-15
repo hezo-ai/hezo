@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { ProjectDashboardView } from '../../../components/project-dashboard';
+import { ProjectDashboardView } from '../../../components/dashboard/project-dashboard';
 
 function ProjectDashboardPage() {
 	const { projectId } = Route.useParams();

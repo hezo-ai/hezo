@@ -101,8 +101,8 @@ heartbeat) paired with a model - and you can give any agent its own model. See
   oversee everything from **HQ**.
 - Work flows as **tasks** on a board, each with a description, optional rules, and a
   living progress summary.
-- Every project has a **Progress** page the Captain rewrites on its own cadence - a high-level
-  summary plus the tasks recently worked, filed and finished. See
+- Every project has a **progress summary** the Captain rewrites on its own cadence, shown at the
+  top of the project dashboard. See
   [Progress & project status](/docs/concepts/progress). A project can also set **goals** (the
   outcomes those tasks add up to), which the Captain re-checks on a schedule, recording progress
   and health. See [Goals](/docs/concepts/goals).

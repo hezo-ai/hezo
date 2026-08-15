@@ -27,7 +27,6 @@ import {
 	CredentialKind,
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
-	DASHBOARD_WIDGET_IDS,
 	DEFAULT_TEAM_ID,
 	DocumentType,
 	extensionOf,
@@ -44,13 +43,10 @@ import {
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
-	PROGRESS_ACTIVITY_PER_COLUMN,
-	PROGRESS_ACTIVITY_SUMMARY_MAX,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
 	requiredSystemPromptVarsError,
 	SEARCH_SCOPES,
-	sanitizeWidgetOrder,
 	summarizeMethodAccess,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -166,10 +162,6 @@ import {
 import { insertHireProposalComment } from '../services/hire-proposal-comment';
 import { getMarketplaceCatalog, getMarketplaceTeam } from '../services/marketplace';
 import { setConnectorAuthError } from '../services/oauth/token-resolver';
-import {
-	buildProgressActivitySnapshot,
-	type ProgressActivityInput,
-} from '../services/project-activity';
 import { createProjectWithTeam } from '../services/project-create';
 import { completeProjectIntakeAfterProvisioning } from '../services/project-intake';
 import { ProjectProgressError, updateProjectProgress } from '../services/projects';
@@ -1167,28 +1159,6 @@ const projectArg = () =>
 		);
 
 /**
- * One activity column on `update_project_progress`. The three columns differ only in which tasks
- * belong in them and what their line should answer, so the shape is declared once here.
- */
-const progressActivityArg = (which: string, answers: string) =>
-	z
-		.array(
-			z.object({
-				task: z.string().describe('Task identifier, e.g. BE-2. Must exist in this project.'),
-				summary: z
-					.string()
-					.describe(
-						`One line, in your own words, answering: ${answers}. Pitch it at what this means for the project, not a log of what happened inside the task. Do not paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Write a complete sentence and keep it under ${PROGRESS_ACTIVITY_SUMMARY_MAX} characters - the Progress page renders the line in full, and anything longer is trimmed back to its last complete sentence.`,
-					),
-			}),
-		)
-		.max(PROGRESS_ACTIVITY_PER_COLUMN)
-		.optional()
-		.describe(
-			`Up to ${PROGRESS_ACTIVITY_PER_COLUMN} tasks ${which}, most significant first. Omit all three lists to leave the columns as they are.`,
-		);
-
-/**
  * Standard `filter` entry for doc/asset tools that can see archived items.
  * Defaults to 'active' so archived (soft-deleted) items stay invisible unless
  * a call explicitly asks for 'archived' or 'all'.
@@ -1715,17 +1685,14 @@ export function registerTools(
 	tool(
 		server,
 		'update_project_progress',
-		"Replace the whole Progress page for the project: the summary at the top and the three recent-activity columns beneath it. Only the Captain does this, and only from within a progress-update run. The summary and the columns work at two different levels and must not repeat each other. The SUMMARY is the high-level read: where the project stands, what has taken place, and what is being planned. Do NOT name individual tasks in it - no identifiers at all - because the columns below already link the specific work. The COLUMNS are that specific work: up to 5 tasks each in `actioned` (being worked now), `created` (newly filed) and `closed` (finished), each with a one-line `summary` you write yourself. Pitch every line at what it means for the project - what was accomplished, what is being accomplished, or what is outstanding - not a log of what happened inside the task; never paste the task's own progress summary or description, and leave out mechanics like branches, CI and review round-trips. Each column line must be a complete sentence under 200 characters: the page renders it in full rather than clipping it, so a longer line is trimmed back to its last complete sentence and the rest is lost. A reader should be able to read the three columns top to bottom and know where the project stands. This overwrites the summary and all three columns, so include everything that should remain.",
+		'Replace the project progress summary shown at the top of the project dashboard. Only the Captain does this, and only from within a progress-update run. The summary is the high-level read: where the project stands, what has taken place, and what is being planned. Pitch it at what the work means for the project, not a log of what happened inside individual tasks, and leave out mechanics like branches, CI and review round-trips. Do NOT name individual tasks or identifiers - the dashboard lists the specific work beneath this, and a reader who wants a task clicks through to it. This overwrites the whole summary, so include everything that should remain.',
 		{
 			project: projectArg(),
 			summary: z
 				.string()
 				.describe(
-					'Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference task identifiers - the activity columns carry the specific tasks.',
+					'Markdown summary of where the project stands: what has taken place and what is being planned. Lead with the key points in **bold**, then a short narrative. Do not reference task identifiers.',
 				),
-			actioned: progressActivityArg('being worked on right now', 'what is being accomplished'),
-			created: progressActivityArg('newly filed', 'what it sets out to accomplish, and why'),
-			closed: progressActivityArg('recently finished', 'what was accomplished'),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -1734,28 +1701,13 @@ export function registerTools(
 				return { error: 'update_project_progress can only be called from within an agent run' };
 			}
 			try {
-				// Omitting all three lists leaves the stored snapshot alone, so a caller refreshing
-				// only the summary never blanks the columns.
-				const lists = {
-					actioned: args.actioned as ProgressActivityInput[] | undefined,
-					created: args.created as ProgressActivityInput[] | undefined,
-					closed: args.closed as ProgressActivityInput[] | undefined,
-				};
-				const hasLists = Object.values(lists).some((l) => l !== undefined);
-				const snapshot = hasLists
-					? await buildProgressActivitySnapshot(db, scope.projectId, lists)
-					: null;
-				const result = await updateProjectProgress(
+				return await updateProjectProgress(
 					db,
 					scope.teamId,
 					scope.projectId,
 					args.summary as string,
 					wsManager,
-					snapshot?.activity,
 				);
-				// Report unresolvable identifiers rather than dropping the rows silently, so the
-				// Captain learns it named a task that does not exist in this project.
-				return snapshot?.unknown.length ? { ...result, unknown_tasks: snapshot.unknown } : result;
 			} catch (e) {
 				if (e instanceof ProjectProgressError) return { error: e.message };
 				throw e;
@@ -4893,39 +4845,6 @@ export function registerTools(
 		},
 		db,
 		{ write: true, audience: 'coordinator' },
-	);
-
-	tool(
-		server,
-		'update_dashboard_widget_order',
-		"Save the user's preferred widget order for the project dashboard. Pass the full ordered list of widget ids; unknown or duplicate ids are rejected. The order persists across sessions and is returned in subsequent get_project_dashboard calls.",
-		{
-			project: projectArg(),
-			order: z
-				.array(z.enum(DASHBOARD_WIDGET_IDS as unknown as [string, ...string[]]))
-				.describe(`Ordered list of widget ids. Valid values: ${DASHBOARD_WIDGET_IDS.join(', ')}.`),
-		},
-		async (args, db, auth) => {
-			const scope = await resolveScope(db, auth, args);
-			if ('error' in scope) return scope;
-			const { projectId } = scope;
-
-			const raw = args.order as string[];
-			const seen = new Set<string>();
-			for (const id of raw) {
-				if (seen.has(id)) return { error: `Duplicate widget id: ${id}` };
-				seen.add(id);
-			}
-
-			await db.query(`UPDATE projects SET dashboard_widget_order = $1 WHERE id = $2`, [
-				JSON.stringify(raw),
-				projectId,
-			]);
-
-			return { order: sanitizeWidgetOrder(raw) };
-		},
-		db,
-		{ write: true },
 	);
 
 	// Description maintenance — used by the Captain (and self) to write back

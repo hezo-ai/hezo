@@ -1,45 +1,18 @@
 import type { CommentContentType, GoalHealth, ProjectProgress } from './common.js';
 
-export const DASHBOARD_WIDGET_IDS = ['goals', 'team_snapshot', 'in_progress', 'spend'] as const;
-
-export type DashboardWidgetId = (typeof DASHBOARD_WIDGET_IDS)[number];
-export type DashboardWidgetOrder = DashboardWidgetId[];
-
 /**
- * Default widget render order, in descending order of how often an operator
- * acts on it. Status and the action items sit above the grid, so this list
- * continues from there: the work in flight, then who is on it, then the
- * longer-horizon readouts.
+ * Rows the dashboard's capped lists render before deferring to their full page.
  *
- * A project that has never been reordered renders in this order; a saved order
- * is a deliberate choice and is returned untouched.
+ * The two numbers are chosen together, not independently: the in-progress list is the left
+ * column's floor and the goals card is the right column's, so they are what makes the two
+ * columns bottom out level. Changing one without the other unbalances the grid.
  */
-export const DEFAULT_WIDGET_ORDER: DashboardWidgetOrder = [
-	'in_progress',
-	'team_snapshot',
-	'goals',
-	'spend',
-];
-
-/** Sanitise a stored order: drop unknown ids, append any missing ones at the end. */
-export function sanitizeWidgetOrder(raw: unknown): DashboardWidgetOrder {
-	const known = new Set(DASHBOARD_WIDGET_IDS as readonly string[]);
-	const valid: DashboardWidgetId[] = [];
-	const seen = new Set<string>();
-	if (Array.isArray(raw)) {
-		for (const item of raw) {
-			if (typeof item === 'string' && known.has(item) && !seen.has(item)) {
-				valid.push(item as DashboardWidgetId);
-				seen.add(item);
-			}
-		}
-	}
-	// Append any widget ids that are missing from the stored order.
-	for (const id of DEFAULT_WIDGET_ORDER) {
-		if (!seen.has(id)) valid.push(id);
-	}
-	return valid;
-}
+export const DASHBOARD_IN_PROGRESS_LIMIT = 7;
+/**
+ * Slots in the goals card. With more goals than this the last slot becomes a "+N more" link,
+ * so the card's height is the same whether a project has four goals or forty.
+ */
+export const DASHBOARD_GOAL_SLOTS = 4;
 
 /** All-time spend for a project (windowed spend lives on `budget.*.spentCents`). */
 export interface ProjectDashboardSpend {
@@ -144,5 +117,4 @@ export interface ProjectDashboard {
 	in_progress_tasks: ProjectDashboardTask[];
 	needs_you: ProjectDashboardNeedsYouItem[];
 	action_count: number;
-	widget_order: DashboardWidgetOrder;
 }

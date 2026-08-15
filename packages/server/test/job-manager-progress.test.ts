@@ -206,10 +206,10 @@ describe('JobManager progress-update flows', () => {
 			manager.shutdown();
 		});
 
-		// On the scheduled path a run is due when a goal is due OR the Progress page has gone
+		// On the scheduled path a run is due when a goal is due OR the progress summary has gone
 		// stale with work having happened since. A fresh project with no goals and no tasks is
 		// neither, so nothing dispatches.
-		it('returns not_due when neither a goal nor the Progress page needs a refresh', async () => {
+		it('returns not_due when neither a goal nor the progress summary needs a refresh', async () => {
 			const manager = createJobManager();
 			const result = await internals(manager).tryDispatchProgressUpdate(
 				captainId,
@@ -223,7 +223,7 @@ describe('JobManager progress-update flows', () => {
 		});
 
 		// Goals are not a dependency of progress: a project that has never set one still gets its
-		// Progress page rebuilt once the snapshot is stale and a task has moved since.
+		// progress summary rebuilt once the snapshot is stale and a task has moved since.
 		it('is due with no goals at all once the snapshot is stale and a task has moved', async () => {
 			const manager = createJobManager();
 			// Snapshot written two days ago; a task has moved since.

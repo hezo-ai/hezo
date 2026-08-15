@@ -251,7 +251,7 @@ test("the project menu persists across the project's team pages and disappears o
 	);
 });
 
-test('the Progress nav item shows the "no goals yet" dot only until the project has a goal', async () => {
+test('the Goals nav item shows the "no goals yet" dot only until the project has a goal', async () => {
 	// Two projects need two workspaces — a team backs exactly one project (1:1).
 	let emptySlug = '';
 	let withGoalSlug = '';
@@ -307,10 +307,10 @@ test('creating a goal clears the sidebar "no goals yet" dot', async () => {
 	// The dot is present while the project has no goals.
 	await findByTestId('project-sidebar-goals-empty-dot', undefined, { timeout: 15_000 });
 
-	// Create a goal from the Progress page's "New goal" button. The sidebar persists across
+	// Create a goal from the Goals page's "New goal" button. The sidebar persists across
 	// project routes, so its dot reflects the new goal once the project index invalidates.
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: projectSlug },
 	});
 	await user.click(await findByTestId('goals-empty-create', undefined, { timeout: 15_000 }));

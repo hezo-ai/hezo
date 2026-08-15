@@ -4,7 +4,6 @@ import {
 	CONTAINER_DISK_GB_MAX,
 	CONTAINER_DISK_GB_MIN,
 	ContainerStatus,
-	DASHBOARD_WIDGET_IDS,
 	isAllowedProjectIconStoredMime,
 	isArchiveFilter,
 	type MarketplaceRosterAgent,
@@ -12,7 +11,6 @@ import {
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
 	projectMemoryFitsBudget,
-	sanitizeWidgetOrder,
 	wsRoom,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
@@ -179,7 +177,7 @@ projectsRoutes.get('/projects', async (c) => {
 	}
 
 	const result = await db.query(query, params);
-	// Drop the Progress page payload from the index. `p.*` picks up the Captain's
+	// Drop the progress summary from the index. `p.*` picks up the Captain's
 	// `progress_summary` (unbounded markdown) and `progress_activity` (up to 15 authored lines),
 	// and this route lists *every* project for the rail, so leaving them in multiplies two
 	// unbounded columns by the project count on a request that fires constantly. Both are served
@@ -552,55 +550,14 @@ projectsRoutes.get('/projects/:projectId', async (c) => {
 	return ok(c, { ...row, repos: repos.rows });
 });
 
-// The Captain-maintained Progress page payload: the high-level summary plus the three
-// recent-activity columns, both written in the same progress-update run. Kept off the project
-// index (which lists every project) so the potentially-long summary is fetched per page.
+// The Captain-maintained progress summary shown at the top of the project dashboard. Kept off
+// the project index (which lists every project) so the potentially-long summary is fetched per
+// page.
 projectsRoutes.get('/projects/:projectId/progress', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const progress = await getProjectProgress(c.get('db'), projectId);
 	if (!progress) return err(c, 'NOT_FOUND', 'Project not found', 404);
 	return ok(c, progress);
-});
-
-// Store a user's preferred widget order for the dashboard.
-projectsRoutes.patch('/projects/:projectId/dashboard-widget-order', async (c) => {
-	const projectId = c.get('projectId') as string;
-	const db = c.get('db');
-
-	let body: unknown;
-	try {
-		body = await c.req.json();
-	} catch {
-		return err(c, 'BAD_REQUEST', 'Invalid JSON body', 400);
-	}
-
-	if (
-		typeof body !== 'object' ||
-		body === null ||
-		!Array.isArray((body as Record<string, unknown>).order)
-	) {
-		return err(c, 'BAD_REQUEST', 'Body must be { order: DashboardWidgetId[] }', 400);
-	}
-
-	const raw: unknown[] = (body as { order: unknown[] }).order;
-	const known = new Set(DASHBOARD_WIDGET_IDS as readonly string[]);
-	const seen = new Set<string>();
-	for (const item of raw) {
-		if (typeof item !== 'string' || !known.has(item)) {
-			return err(c, 'BAD_REQUEST', `Unknown widget id: ${String(item)}`, 400);
-		}
-		if (seen.has(item)) {
-			return err(c, 'BAD_REQUEST', `Duplicate widget id: ${item}`, 400);
-		}
-		seen.add(item);
-	}
-
-	await db.query(`UPDATE projects SET dashboard_widget_order = $1 WHERE id = $2`, [
-		JSON.stringify(raw),
-		projectId,
-	]);
-
-	return ok(c, { order: sanitizeWidgetOrder(raw) });
 });
 
 projectsRoutes.patch('/projects/:projectId', async (c) => {

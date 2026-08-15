@@ -1,11 +1,10 @@
 import { ChevronDown } from 'lucide-react';
-import type { ReactNode } from 'react';
 import { useEffect, useId, useState } from 'react';
-import { useProjectProgress } from '../hooks/use-projects';
-import { useI18n } from '../lib/i18n';
-import { MarkdownProse } from './markdown-prose';
-import { HelpDialog } from './ui/help-dialog';
-import { RelativeTime } from './ui/relative-time';
+import { useProjectProgress } from '../../hooks/use-projects';
+import { useI18n } from '../../lib/i18n';
+import { MarkdownProse } from '../markdown-prose';
+import { HelpDialog } from '../ui/help-dialog';
+import { RelativeTime } from '../ui/relative-time';
 
 /**
  * Split the summary into its bold lead line (the key points the Captain leads with) and the rest
@@ -21,7 +20,7 @@ function splitLead(summary: string): { lead: string; body: string } {
 	};
 }
 
-/** The explanation behind the question-mark help affordance on the Project progress header. */
+/** The explanation behind the question-mark help affordance on the progress header. */
 function ProjectProgressHelp() {
 	const { t } = useI18n();
 	return (
@@ -40,22 +39,16 @@ function ProjectProgressHelp() {
 }
 
 /**
- * The Captain-maintained project progress summary at the top of the Progress page. Collapsed by
- * default to just the bold lead line, expandable to the full narrative — mirroring how agent
- * descriptions are shown.
+ * The Captain-maintained progress narrative, full width under the metric strip. It is the only
+ * prose on the dashboard, which is why it gets the width rather than a rail: everything below it
+ * is a list.
  *
- * The summary deliberately stays at project altitude and names no tasks; the specific work is the
- * three columns below it, which is also why the goal indicator rides in this header rather than
- * competing with them for space.
+ * Collapsed by default to the bold lead line and expandable to the full narrative, mirroring how
+ * agent descriptions are shown. Collapsed is the default deliberately - a long summary would
+ * otherwise push the action items below the fold, which is the one thing on the page that is
+ * genuinely waiting on the reader.
  */
-export function ProjectProgressSummary({
-	projectId,
-	indicator,
-}: {
-	projectId: string;
-	/** Rendered in the header, opposite the heading (the goal-progress indicator). */
-	indicator?: ReactNode;
-}) {
+export function ProjectProgressSummary({ projectId }: { projectId: string }) {
 	const { t } = useI18n();
 	const { data } = useProjectProgress(projectId);
 	const [expanded, setExpanded] = useState(false);
@@ -74,26 +67,23 @@ export function ProjectProgressSummary({
 	return (
 		<section
 			data-testid="project-progress-summary"
-			className="mb-6 rounded-md border border-border bg-surface p-4"
+			className="rounded-lg border border-border bg-surface p-4"
 		>
 			<div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
 				<div className="flex items-center gap-1.5">
-					<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3">
+					<h2 className="font-mono text-[10px] font-medium uppercase tracking-wider text-text-3">
 						{t('progress.summary.heading')}
 					</h2>
 					<ProjectProgressHelp />
 				</div>
-				<div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-					{indicator}
-					{data?.updated_at && (
-						<span className="text-[11px] text-text-3">
-							{t('progress.summary.updated')} <RelativeTime iso={data.updated_at} />
-						</span>
-					)}
-				</div>
+				{data?.updated_at && (
+					<span className="text-[11px] text-text-3">
+						{t('progress.summary.updated')} <RelativeTime iso={data.updated_at} />
+					</span>
+				)}
 			</div>
 			{hasSummary ? (
-				<div id={contentId}>
+				<div id={contentId} className="max-w-[80ch]">
 					<MarkdownProse projectId={projectId} projectSlug={projectId}>
 						{expanded ? summary : lead}
 					</MarkdownProse>

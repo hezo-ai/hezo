@@ -7,7 +7,6 @@
 // names that project (a team can never hold a second one).
 
 import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
-import { emptyProgressActivity, type ProgressActivity } from '@hezo/shared';
 import { getTestContext } from './render';
 
 type Auth = {
@@ -150,24 +149,14 @@ export async function seedGoal(
 }
 
 /** Set a project's Captain-maintained progress summary directly (no agent run needed). */
-export async function seedProjectProgress(
-	project: SeededProject,
-	summary: string,
-	/** The Captain's activity snapshot, written by the same progress-update run as the summary. */
-	activity?: Partial<ProgressActivity>,
-): Promise<void> {
+export async function seedProjectProgress(project: SeededProject, summary: string): Promise<void> {
 	const { db } = getTestContext();
 	await db.query(
 		`UPDATE projects
 		 SET progress_summary = $1,
-		     progress_activity = COALESCE($3::jsonb, progress_activity),
 		     progress_summary_updated_at = now()
 		 WHERE id = $2`,
-		[
-			summary,
-			project.id,
-			activity ? JSON.stringify({ ...emptyProgressActivity(), ...activity }) : null,
-		],
+		[summary, project.id],
 	);
 }
 
@@ -389,7 +378,7 @@ export async function seedRunningAgent(
 /**
  * Seed a completed Captain progress-update run (the heartbeat run with no task, kind
  * 'progress_update') and, when a goal is given, the progress snapshot it recorded. Mirrors
- * what `tryDispatchProgressUpdate` + `recordGoalProgress` produce, so the Progress page and
+ * what `tryDispatchProgressUpdate` + `recordGoalProgress` produce, so the dashboard and
  * goal detail run feed render against real rows.
  */
 export async function seedProgressUpdateRun(

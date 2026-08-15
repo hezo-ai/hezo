@@ -843,7 +843,7 @@ describe('run-now dispatch and queued-run lifecycle', () => {
 	});
 
 	// "Run now" bypasses the due-check entirely, so freshly-checked goals are no longer a reason
-	// to no-op: the run still rebuilds the Progress page.
+	// to no-op: the run still rebuilds the progress summary.
 	it('runs even when every goal was just checked', async () => {
 		await ctx.db.query(
 			`UPDATE goals SET last_checked_at = now(), target_date = NULL WHERE project_id = $1`,

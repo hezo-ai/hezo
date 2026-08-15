@@ -15,9 +15,9 @@ import { ConfirmDialog } from '../ui/confirm-dialog';
 import { Tooltip } from '../ui/tooltip';
 
 /**
- * The project's progress-update run history, at the bottom of the Progress page. Moved here from
- * the goals list: a progress-update run rebuilds the Progress page whether or not the project has
- * goals, so its history belongs with the page it produces rather than with goals.
+ * The project's progress-update run history, at the bottom of the project dashboard. It sits with
+ * the summary rather than with goals: a progress-update run rewrites the summary whether or not
+ * the project has any goals, so this is the history of the band at the top of this same page.
  */
 function QueuedProgressRunRow({ projectId, wakeupId }: { projectId: string; wakeupId: string }) {
 	const { t } = useI18n();

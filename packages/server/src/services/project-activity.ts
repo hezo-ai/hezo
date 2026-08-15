@@ -1,24 +1,21 @@
-import {
-	emptyProgressActivity,
-	PROGRESS_ACTIVITY_KINDS,
-	PROGRESS_ACTIVITY_PER_COLUMN,
-	PROGRESS_ACTIVITY_SUMMARY_MAX,
-	type ProgressActivity,
-	type ProgressActivityKind,
-} from '@hezo/shared';
 import type { Db } from '../db/database';
 
 /**
- * The Progress page's three recent-activity columns are split in two halves:
+ * The three angles the candidate scan covers. Server-internal prompt scaffolding, not a wire
+ * type: nothing outside a progress-update run's prompt ever sees these.
+ */
+export const PROGRESS_ACTIVITY_KINDS = ['actioned', 'created', 'closed'] as const;
+export type ProgressActivityKind = (typeof PROGRESS_ACTIVITY_KINDS)[number];
+
+/**
+ * Deterministic raw material for the Captain's progress summary: which tasks moved, which were
+ * filed, and which closed since it last looked. Selection is in SQL, where the rules are exact;
+ * judgement is the Captain's, which reads these candidates and writes one narrative from them.
  *
- * - **Selection** is deterministic and lives here, in SQL, where the rules are exact — which
- *   tasks are recent, what counts as activity, when something was closed.
- * - **Judgement** is the Captain's: it is handed these candidates in its progress-update prompt,
- *   picks from them, and writes every summary line itself.
- *
- * Everything below is the first half. Each arm is a bounded, index-served candidate window (see
- * migration 049 for the indexes and why each is shaped the way it is), and every unbounded text
- * column is truncated, so neither the row count nor the row width grows with the project.
+ * Nothing here is stored or rendered - the candidates exist only inside a progress-update run's
+ * prompt. Each arm is a bounded, index-served window (see migration 049 for the indexes and why
+ * each is shaped the way it is), and every unbounded text column is truncated, so neither the row
+ * count nor the row width grows with the project.
  */
 
 /** Candidates offered per column. Deliberately above the 5 the page shows, so the Captain chooses. */
@@ -56,7 +53,7 @@ export interface ProgressActivityCandidate {
 export type ProgressActivityCandidates = Record<ProgressActivityKind, ProgressActivityCandidate[]>;
 
 /**
- * Candidate tasks for each column, in one round trip.
+ * Candidate tasks for each group, in one round trip.
  *
  * "Actioned" ranks open tasks by `GREATEST(tasks.updated_at, latest run on the task)`. **This is
  * how progress-update runs are kept out of the column, structurally rather than by a filter**: a
@@ -72,7 +69,7 @@ export type ProgressActivityCandidates = Record<ProgressActivityKind, ProgressAc
  * `idx_comments_task_created`. A **re-opened** task takes its latest close; a **cascade** close
  * has a null comment author and names the real actor in `content.triggered_by_actor_id`; a task
  * with no close comment at all keeps its row and falls back to `updated_at`. `cancelled` is
- * excluded entirely — abandoned work is not an outcome the Progress page reports.
+ * excluded entirely — abandoned work is not an outcome the summary reports.
  */
 export async function buildProgressActivityCandidates(
 	db: Db,
@@ -181,119 +178,4 @@ export async function buildProgressActivityCandidates(
 		});
 	}
 	return out;
-}
-
-export interface ProgressActivityInput {
-	task: string;
-	summary: string;
-}
-
-/**
- * Trim a Captain-written activity line to `max` characters **at a sentence boundary**, so what is
- * stored is always a finished thought. The page renders the stored line in full - there is no
- * clamp or ellipsis to hide a mid-clause cut behind - so a blind slice would surface as a sentence
- * that simply stops.
- *
- * A boundary is terminal punctuation followed by the start of another sentence (whitespace, then a
- * capital or an opening quote) or by the end of the budget, which keeps an abbreviation like "e.g."
- * from reading as an ending. When nothing finishes inside the budget - a run-on far longer than the
- * one line the prompt asks for - the cut falls back to the last whole word, and then to a hard
- * slice for text carrying no spaces at all.
- */
-export function clampToWholeSentence(text: string, max: number): string {
-	const trimmed = text.trim();
-	if (trimmed.length <= max) return trimmed;
-	const window = trimmed.slice(0, max);
-	let cut = 0;
-	for (const m of window.matchAll(/[.!?]["'’”)\]]*(?=$|\s+["'“([]?[A-Z0-9])/g)) {
-		cut = (m.index ?? 0) + m[0].length;
-	}
-	if (cut > 0) return window.slice(0, cut);
-	const lastSpace = window.lastIndexOf(' ');
-	return (lastSpace > 0 ? window.slice(0, lastSpace) : window).trimEnd();
-}
-
-export interface ProgressActivitySnapshot {
-	activity: ProgressActivity;
-	/** Identifiers the Captain named that do not resolve in this project, reported back to it. */
-	unknown: string[];
-}
-
-/**
- * Validate the Captain's three lists into the document stored on the project.
- *
- * Resolution happens once, here on write, so reads need no task lookup at all: the identifier and
- * title are captured into the snapshot. Unknown identifiers are collected rather than silently
- * dropped, so the tool can tell the Captain it named a task that does not exist instead of the
- * row quietly vanishing from the page.
- */
-export async function buildProgressActivitySnapshot(
-	db: Db,
-	projectId: string,
-	lists: Partial<Record<ProgressActivityKind, ProgressActivityInput[]>>,
-): Promise<ProgressActivitySnapshot> {
-	const activity = emptyProgressActivity();
-	const unknown: string[] = [];
-
-	// One lookup for every identifier named across all three lists.
-	const named = new Set<string>();
-	for (const kind of PROGRESS_ACTIVITY_KINDS) {
-		for (const entry of lists[kind] ?? []) {
-			if (entry?.task) named.add(entry.task.trim().toUpperCase());
-		}
-	}
-	if (named.size === 0) return { activity, unknown };
-
-	const found = await db.query<{ identifier: string; title: string }>(
-		`SELECT identifier, title FROM tasks
-		  WHERE project_id = $1 AND UPPER(identifier) = ANY($2::text[])`,
-		[projectId, [...named]],
-	);
-	const byIdentifier = new Map(found.rows.map((row) => [row.identifier.toUpperCase(), row]));
-
-	for (const kind of PROGRESS_ACTIVITY_KINDS) {
-		for (const entry of lists[kind] ?? []) {
-			if (activity[kind].length >= PROGRESS_ACTIVITY_PER_COLUMN) break;
-			const key = entry?.task?.trim().toUpperCase();
-			const summary = entry?.summary?.trim();
-			if (!key || !summary) continue;
-			const task = byIdentifier.get(key);
-			if (!task) {
-				if (!unknown.includes(key)) unknown.push(key);
-				continue;
-			}
-			activity[kind].push({
-				identifier: task.identifier,
-				title: task.title,
-				summary: clampToWholeSentence(summary, PROGRESS_ACTIVITY_SUMMARY_MAX),
-			});
-		}
-	}
-	return { activity, unknown };
-}
-
-/**
- * Coerce a stored `progress_activity` value into the shape the API returns. The column defaults
- * to `{}` (migration 049), and a project that has never had a progress-update run keeps it, so
- * every read has to tolerate a partial or absent document.
- */
-export function readProgressActivity(value: unknown): ProgressActivity {
-	const activity = emptyProgressActivity();
-	if (!value || typeof value !== 'object') return activity;
-	const raw = value as Record<string, unknown>;
-	for (const kind of PROGRESS_ACTIVITY_KINDS) {
-		const list = raw[kind];
-		if (!Array.isArray(list)) continue;
-		for (const item of list.slice(0, PROGRESS_ACTIVITY_PER_COLUMN)) {
-			if (!item || typeof item !== 'object') continue;
-			const { identifier, title, summary } = item as Record<string, unknown>;
-			if (typeof identifier !== 'string' || typeof summary !== 'string') continue;
-			activity[kind].push({
-				identifier,
-				title: typeof title === 'string' ? title : identifier,
-				summary,
-			});
-		}
-	}
-	return activity;
 }

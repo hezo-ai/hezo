@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 18,
+			"version": 19,
 			"roster_count": 7,
-			"latest_notes": "Drops a Captain responsibility line that restated the onboarding step already described below it."
+			"latest_notes": "The Captain's progress-update duty now writes one project summary rather than a summary plus three columns of per-task lines."
 		},
 		{
 			"slug": "investment",
@@ -133,9 +133,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 19,
+			"version": 20,
 			"roster_count": 6,
-			"latest_notes": "Drops a Captain responsibility line that restated the onboarding step already described below it."
+			"latest_notes": "The Captain's progress-update duty now writes one project summary rather than a summary plus three columns of per-task lines."
 		},
 		{
 			"slug": "software-development",
@@ -217,9 +217,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 24,
+			"version": 25,
 			"roster_count": 10,
-			"latest_notes": "The route-authorization review rule is stated once and shared by the QA and Security roles rather than kept as two copies."
+			"latest_notes": "The Captain's progress-update duty now writes one project summary rather than a summary plus three columns of per-task lines."
 		}
 	]
 }

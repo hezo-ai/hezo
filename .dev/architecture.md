@@ -250,7 +250,7 @@ below 100 and goals can be never-ending (measured continuously), so an active go
 its cadence forever — only archiving stops checks. `goal_run_updates`
 is the per-run progress history (one row per goal touched by a run, snapshotting
 percent/health/blurb) — the source of each goal's progress chart and the project-wide progress-update
-list on the Progress page. `tasks.goal_id` optionally links a ticket to the goal it advances
+list on the project dashboard. `tasks.goal_id` optionally links a ticket to the goal it advances
 (traceability only; it does **not** gate or alter how the task runs), and `tasks.created_by_run_id`
 / `task_comments.created_by_run_id` attribute a ticket or comment to the run that produced it.
 Together these back the goal detail page's per-goal **run activity** feed (`listGoalRunActivity`):
@@ -259,27 +259,34 @@ linked tickets. During a progress-update run the Captain may comment on an in-fl
 filing a new one, and it can never re-open a terminal ticket (blocked in both the REST and MCP
 update paths — only the admin can).
 
-**Progress page (independent of goals).** The Captain maintains the Progress page on
-`projects`: `progress_summary` (markdown blurb, deliberately naming no ticket identifiers) +
-`progress_activity` (jsonb) + a shared `progress_summary_updated_at`, all written by one
-`update_project_progress` MCP call in a single `UPDATE`, so summary and columns can never be
-observed half-updated. `progress_activity` is a **frozen snapshot** of the page's three
-recent-activity columns — `{actioned|created|closed: [{identifier, title, summary}]}`, ≤5 each —
-where each `summary` is prose the Captain wrote for that ticket at project altitude (what was
-accomplished / is being accomplished / is outstanding), not a copy of the ticket's own fields.
-Identifier and title are captured at write time, so rendering needs no join and a ticket deleted
-between runs simply renders its captured row. `buildProgressActivitySnapshot`
-(`services/project-activity.ts`) validates on write and returns unresolvable identifiers to the
-caller; `readProgressActivity` tolerates the `{}` default. Each `summary` is bounded to
-`PROGRESS_ACTIVITY_SUMMARY_MAX` (200) **at a sentence boundary** by `clampToWholeSentence`, so the
-stored line is always a finished thought — the page renders it in full, with no `line-clamp` or
-ellipsis to hide a mid-clause cut behind, and the bound therefore has to hold in the data rather
-than in the CSS.
-In the web app the page is `/projects/$projectId/progress`, with **Goals nested beneath it**
-(`/progress/goals`, `/progress/goals/$goalId`) so the URL matches the sidebar disclosure and the
-breadcrumb; the pre-nesting `/goals` paths survive as redirect-only routes. The sidebar's Progress
-row carries `subItems: [goals]` and, because a nested sub-item fuzzy-matches its parent, the parent
-row highlights on an *exact* match so only one row reads as active (`sidebar-nav.tsx`).
+**Progress summary (independent of goals).** The Captain maintains one narrative on `projects`:
+`progress_summary` (markdown blurb, deliberately naming no ticket identifiers) plus
+`progress_summary_updated_at`, written by one `update_project_progress` MCP call. It renders as the
+second band of the project dashboard, not a page of its own.
+
+`buildProgressActivityCandidates` (`services/project-activity.ts`) supplies the run's raw material:
+a deterministic, index-served scan of what was actioned, created and closed since the Captain last
+looked, rendered into the prompt. It is prompt scaffolding only — nothing is stored or rendered from
+it, and the Captain writes one summary from it rather than reproducing it. The
+`projects.progress_activity` column (migration 049) is the vestige of an earlier design that stored
+the Captain's per-ticket lines and rendered them as three columns; it is no longer read or written,
+and is left in place rather than dropped because migrations here are data-preserving. What replaced it
+was the dashboard's own lists, which link live tickets rather than a snapshot.
+
+In the web app the dashboard is `/projects/$projectId/dashboard` (the project index redirects to it)
+and **Goals is a top-level sibling** at `/projects/$projectId/goals` and `/goals/$goalId`, sitting
+directly under Inbox in the project menu. There is no Progress route and no redirect for one. Goals
+being top-level is also what lets the sidebar's "no goals yet" dot ride the Goals row itself: nested
+under a parent it could not, because a sub-item only renders once its parent's route is active.
+
+The dashboard reads as four bands - the metric strip, the summary, the active-agents strip, then two
+columns over the heartbeat history (`components/dashboard/`). Its two capped lists are sized against
+each other by `DASHBOARD_IN_PROGRESS_LIMIT` (7) and `DASHBOARD_GOAL_SLOTS` (4) in `@hezo/shared`, so
+the columns bottom out level; the goals card ranks by `sortGoalsByTriage` (worst health first) since
+a capped list should spend its slots on what needs a decision. The active-agents strip keeps its
+height when idle, because agents run in bursts and a collapsing band would shift the page every time
+a run started. There is no widget reordering: `projects.dashboard_widget_order` is retained but
+unread, and `@dnd-kit` is no longer a dependency.
 The *selection* half is deterministic and stays in SQL — `buildProgressActivityCandidates` builds
 the candidate lists handed to the run prompt: actioned ranks open tickets by
 `GREATEST(tasks.updated_at, latest run on the ticket)` (a progress-update run carries
@@ -314,7 +321,7 @@ success-gate flags `produced_output`/`reported_no_work`). A `kind` enum distingu
 normal `task` run from a `progress_update` run (the Captain's task-less goal assessment —
 `task_id IS NULL`); progress-update runs reuse the full run lifecycle but skip the task comment,
 status flip, and code worktree. **They do not depend on goals**: a run is due on the Captain's
-heartbeat when a goal is due (`getDueGoals`) *or* when the Progress page has gone stale and a task
+heartbeat when a goal is due (`getDueGoals`) *or* when the summary has gone stale and a task
 has moved since (`JobManager.isProgressSnapshotDue`, over `PROGRESS_REFRESH_INTERVAL_HOURS`). Its
 anchor is `COALESCE(GREATEST(progress_summary_updated_at, last progress-update run), created_at)`:
 the **run** term is what stops a run that ended without calling `update_project_progress` from
@@ -323,8 +330,8 @@ third `GREATEST` argument) so a new project runs its planning task first while a
 project with a genuinely stale page still qualifies. The activity term keeps dormant projects from
 being woken to rewrite an identical summary. Neither being true yields
 `reason: 'not_due'`. The run prompt (`buildProgressUpdatePrompt`) is correspondingly
-progress-first: the Progress page rebuild plus candidate tickets always, and a due-goal section
-only when `ctx.goals` is non-empty. A run can also be triggered on demand from the Progress page's
+progress-first: the summary rewrite plus the tickets it is written from always, and a due-goal
+section only when `ctx.goals` is non-empty. A run can also be triggered on demand from the dashboard's
 **Run now** button (`POST /projects/:projectId/progress/run-now` →
 `JobManager.dispatchProgressUpdateNow`), which passes `manual` to skip the due-check entirely —
 pressing the button always runs. If **Run now** hits a *transient* conflict — the Captain is already running, the
@@ -4413,18 +4420,20 @@ Every UI change must work at all three, and its browser test must verify mobile
 (`AGENTS.md` › UX).
 
 **Project Dashboard.** Opening a project (`/projects/:slug` or a rail click) redirects to
-`/projects/:slug/dashboard`, which is also the first item in the project sidebar. Each
-widget loads from the endpoint that already serves it - budget status + costs,
-in-progress/review tasks, progress summary, goals, agents (for the running-agents
-snapshot) - so the page adds no aggregate route of its own. Two sections are fixed at the
-top, the progress summary then action items; below them sits a drag-reorderable grid of
-the other four. Widget order is stored per project and saved with
-`PATCH /api/projects/:projectId/dashboard-widget-order`, sanitized through
-`sanitizeWidgetOrder` in `@hezo/shared` - which both the route and the web app call, so a
-stored order can never be validated two different ways. A project that has never been
-reordered renders `DEFAULT_WIDGET_ORDER` (tasks, team snapshot, goals, spend). HQ
-(`is_internal`) omits spend, progress, and goals. Query keys use the route-param slug;
-WebSocket invalidation covers the tables that feed each widget.
+`/projects/:slug/dashboard`, which is also the project sidebar's title link. It is the
+project's only status surface - the Progress page it absorbed no longer exists. Each band
+loads from the endpoint that already serves it - budget status + daily costs,
+in-progress/review tasks, progress summary, goals, agents (for the active-agents strip and
+the roster count) - so the page adds no aggregate route of its own, and the metric strip is
+a second projection of those same queries rather than a sixth request. The order is fixed:
+metrics, summary, active agents, then the two columns (action items over in-progress work;
+goals over spend), then the heartbeat history. HQ (`is_internal`) omits the summary, goals,
+spend and heartbeat history. Query keys use the route-param slug; WebSocket invalidation
+covers the tables that feed each band.
+
+Spend reads `group_by=day` rather than the ungrouped form: it yields the sparkline series
+*and* `total_cents` in one request, where the ungrouped form returns every `cost_entries`
+row on the project to render one number.
 
 The dashboard shows **no per-project container state**. A project does not own a container
 any more (see § Container pool), so `projects.container_status` names only whichever

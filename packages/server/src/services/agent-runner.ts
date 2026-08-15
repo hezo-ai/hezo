@@ -20,7 +20,6 @@ import {
 	MAX_SINGLE_ARG_BYTES,
 	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
-	type ProgressActivityKind,
 	type PromptDelivery,
 	providerDirectUpstreamHosts,
 	providerRuntimeBinding,
@@ -123,7 +122,7 @@ import {
 } from './mcp-injectors';
 import { retryOrEscalateLostRun } from './orphan-detector';
 import type { PricingService } from './pricing';
-import type { ProgressActivityCandidates } from './project-activity';
+import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
@@ -3421,13 +3420,14 @@ export interface ProgressUpdateContext {
 	/** Due goals. May be empty — a progress-update run does not require goals. */
 	goals: ProgressUpdateGoal[];
 	/**
-	 * Deterministically-selected candidate tasks for the Progress page's three columns. Optional
-	 * so a caller that only wants the goal half (tests, previews) need not build them.
+	 * Deterministically-selected tasks that moved since the last look, as raw material for the
+	 * summary. Optional so a caller that only wants the goal half (tests, previews) need not
+	 * build them.
 	 */
 	activityCandidates?: ProgressActivityCandidates;
 }
 
-/** One candidate column rendered into the prompt, with the question its lines must answer. */
+/** One candidate group rendered into the prompt, with what its tasks tell the Captain. */
 const ACTIVITY_COLUMN_PROMPTS: {
 	kind: ProgressActivityKind;
 	heading: string;
@@ -3451,18 +3451,18 @@ const ACTIVITY_COLUMN_PROMPTS: {
 ];
 
 /**
- * Render the candidate tasks for one column as compact prompt lines. Tolerates a missing or
- * partial candidates object — this is a pure formatter, and a column with nothing in it should
- * render as "nothing yet" rather than throw.
+ * Render the candidate tasks as compact prompt lines. Tolerates a missing or partial candidates
+ * object — this is a pure formatter, and a group with nothing in it should render as "nothing
+ * yet" rather than throw.
  */
 function renderActivityCandidates(candidates?: Partial<ProgressActivityCandidates>): string[] {
 	const parts: string[] = [];
 	for (const col of ACTIVITY_COLUMN_PROMPTS) {
 		const rows = candidates?.[col.kind] ?? [];
 		parts.push(`### ${col.heading}`);
-		parts.push(`Each line answers: *${col.answers}.*`);
+		parts.push(`These tell you: *${col.answers}.*`);
 		if (rows.length === 0) {
-			parts.push('- (nothing yet - omit this column)');
+			parts.push('- (nothing yet)');
 		} else {
 			for (const r of rows) {
 				const meta = [r.status, r.actor].filter(Boolean).join(' · ');
@@ -3490,10 +3490,10 @@ function systemPromptParts(systemPrompt: string): string[] {
 /**
  * The user-message body for a Captain progress-update run. No task is attached.
  *
- * The run's primary job is refreshing the project's **Progress page** — the high-level summary and
- * the three activity columns — which happens on every progress-update run whether or not the
+ * The run's primary job is refreshing the project's **progress summary** — the narrative at the
+ * top of the project dashboard — which happens on every progress-update run whether or not the
  * project has goals. Goal assessment is the *second* section and is emitted only when goals are
- * actually due, so a project that has never set one still gets a maintained Progress page.
+ * actually due, so a project that has never set one still gets a maintained summary.
  */
 export function buildProgressUpdatePrompt(
 	systemPrompt: string,
@@ -3501,31 +3501,26 @@ export function buildProgressUpdatePrompt(
 ): string {
 	const parts = [...systemPromptParts(systemPrompt), '## Progress Update', ''];
 	parts.push(
-		"Refresh this project's Progress page. Call `update_project_progress` **once**, with a " +
-			'`summary` and the three activity columns (`actioned`, `created`, `closed`). The summary and ' +
-			'the columns sit at two different levels and must not repeat each other.',
+		"Refresh this project's progress summary. Call `update_project_progress` **once**, with a " +
+			'`summary`. It overwrites the whole summary, so include everything that should remain.',
 	);
 	parts.push('');
 	parts.push(
-		'**The summary** is the high-level read: where the project stands, what has taken place, and ' +
-			'what is being planned. Lead with the key points in **bold**, then a short narrative. Do ' +
-			'**not** name individual tasks in it — no identifiers at all — because the columns below ' +
-			'already link the specific work. It overwrites the whole summary, so include everything that ' +
-			'should remain.',
+		'The summary is the high-level read: where the project stands, what has taken place, and what ' +
+			'is being planned. Lead with the key points in **bold**, then a short narrative. Pitch it at ' +
+			'what the work means for the project — what was accomplished, what is being accomplished, ' +
+			'what is outstanding. Do **not** name individual tasks — no identifiers at all — because the ' +
+			'dashboard lists the specific work beneath your summary. Do not narrate mechanics (branches, ' +
+			"CI, who commented when, review round-trips), and do not paste a task's own progress " +
+			'summary or description.',
 	);
 	parts.push('');
 	parts.push(
-		'**The columns** are that specific work: up to 5 tasks each, chosen from the candidates below, ' +
-			'each with a one-line summary you write yourself. Pitch every line at what it means for the ' +
-			'project — what was accomplished, what is being accomplished, or what is outstanding. Do ' +
-			"**not** paste the task's own progress summary or the first line of its description, and do " +
-			'not narrate mechanics (branches, CI, who commented when, review round-trips). A reader ' +
-			'should be able to read the three columns top to bottom and come away knowing where the ' +
-			"project stands. Drop any candidate that is not worth a reader's attention rather than " +
-			'padding a column to five, and omit a column entirely if it has nothing in it.',
+		'The tasks below are what moved since you last looked. Read them as raw material and write ' +
+			'from them; they are not a list to reproduce.',
 	);
 	parts.push('');
-	parts.push('## Candidate tasks');
+	parts.push('## What moved');
 	parts.push('');
 	parts.push(...renderActivityCandidates(ctx.activityCandidates));
 

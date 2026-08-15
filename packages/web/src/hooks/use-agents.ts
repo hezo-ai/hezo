@@ -43,6 +43,8 @@ export interface Agent {
 		task_identifier: string | null;
 		task_project_id: string | null;
 		run_status: 'running' | 'queued';
+		/** When the run actually started. Null while it is still queued. */
+		started_at: string | null;
 	} | null;
 	/** True for HQ agents (CEO/Coach) surfaced as virtual members of this project. */
 	is_instance?: boolean;

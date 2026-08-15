@@ -35,7 +35,7 @@ test('the Goals page shows a pending suggestion and approving it creates the goa
 	});
 
 	await router.navigate({
-		to: '/projects/$projectId/progress/goals',
+		to: '/projects/$projectId/goals',
 		params: { projectId: project.slug },
 	});
 

@@ -148,7 +148,7 @@ bun run dev
 3. **The team gets to work.** Agents pick up [tasks](./docs/concepts/tasks.md) and work
    autonomously, asking for your [approval](./docs/getting-started/first-project.md#4-stay-in-control)
    when needed - and you can change direction at any time. The
-   [Progress](./docs/concepts/progress.md) page tells you where things stand without your
+   project [dashboard](./docs/concepts/progress.md) tells you where things stand without your
    having to read the board.
 
 See [the meta-harness](./docs/concepts/meta-harness.md) for the idea underneath it all, and
@@ -160,7 +160,7 @@ the [Introduction](./docs/introduction.md) for the full tour of the moving parts
 - **Structure the team to the work** - compose the roster, the [reporting lines, and what each role is](./docs/concepts/team-structure.md), change it while a project runs, and carry a structure you've tuned forward to the next one.
 - **Teams & projects** - [one team per project](./docs/concepts/projects-and-teams.md), launch a ready-made team from the [marketplace](./docs/concepts/marketplace.md) or start from a [template](./docs/concepts/projects-and-teams.md#team-templates), [hire and customize agents](./docs/concepts/hiring-and-agents.md), [snapshot a team](./docs/concepts/projects-and-teams.md#reusing-a-team-setup) to reuse, [export one](./docs/concepts/marketplace.md#exporting-your-team) to share.
 - **Autonomous task execution** - a [task board](./docs/concepts/tasks.md) with sub-tasks nested up to three levels, [heartbeat](./docs/getting-started/first-project.md#3-watch-the-team-work) wake-ups, [approvals](./docs/getting-started/first-project.md#4-stay-in-control), auto-resumed long runs.
-- **Know where a project stands** - a [Progress page](./docs/concepts/progress.md) the Captain keeps current on its own, with optional high-level [goals](./docs/concepts/goals.md) and scheduled re-checks layered on top.
+- **Know where a project stands** - a [project dashboard](./docs/concepts/progress.md) leading with a summary the Captain keeps current on its own, with optional high-level [goals](./docs/concepts/goals.md) and scheduled re-checks layered on top.
 - **One platform layer over every model** - the [meta-harness](./docs/concepts/meta-harness.md) runs each model in its own first-party CLI, then levels the differences: the same tools, skills, memory and sandbox whichever you pick, plus an independent completeness check that won't let a run end on failing tests, an "out of scope" dodge, or a handoff nobody received.
 - **Your models, your spend** - [bring your own providers](./docs/ai-models.md), [per-agent models](./docs/ai-models.md#give-an-agent-its-own-model), [budget caps and cost tracking](./docs/concepts/budgets-and-costs.md).
 - **Choose where containers run** - on [your own machine](./docs/containers/local-docker.md) or a [managed sandbox service](./docs/containers/remote/overview.md), [switchable either way](./docs/containers/overview.md#switching-at-any-time) at any time, with containers started on demand and a memory budget shared across every project.
