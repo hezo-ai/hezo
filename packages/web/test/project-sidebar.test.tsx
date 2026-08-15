@@ -41,12 +41,19 @@ test('the project menu leads with Dashboard, lists the project pages, and has a 
 	// reachable without first opening Settings.
 	expect(within(nav).getByRole('link', { name: 'Connectors' })).toBeTruthy();
 	expect(within(nav).getByRole('link', { name: 'Skills' })).toBeTruthy();
-	// Git, Custom Prompt, Containers and Activity do nest under Settings — hidden
-	// until it (or one of them) is the active route.
+	// Activity is top-level too, and sits last — after Settings.
+	const activity = within(nav).getByRole('link', { name: 'Activity' });
+	expect(activity.getAttribute('href')).toMatch(/\/activity$/);
+	const hrefs = [...nav.querySelectorAll('a')].map((a) => a.getAttribute('href') ?? '');
+	const settingsIndex = hrefs.findIndex((href) => href.endsWith('/settings'));
+	const activityIndex = hrefs.findIndex((href) => href.endsWith('/activity'));
+	expect(settingsIndex).toBeGreaterThan(-1);
+	expect(activityIndex).toBeGreaterThan(settingsIndex);
+	// Git, Custom Prompt and Containers do nest under Settings — hidden until it
+	// (or one of them) is the active route.
 	expect(within(nav).queryByRole('link', { name: 'Git' })).toBeNull();
 	expect(within(nav).queryByRole('link', { name: 'Custom Prompt' })).toBeNull();
 	expect(within(nav).queryByRole('link', { name: 'Containers' })).toBeNull();
-	expect(within(nav).queryByRole('link', { name: 'Activity' })).toBeNull();
 
 	// A Team section lists the team's agents (presented as the project's own).
 	expect(within(nav).getByRole('link', { name: 'Team' })).toBeTruthy();
@@ -59,7 +66,7 @@ test('the project menu leads with Dashboard, lists the project pages, and has a 
 	expect(queryByTestId('project-sidebar-back')).toBeNull();
 });
 
-test('Git, Custom Prompt, Container and Activity nest under Settings, disclosed when Settings is the active route', async () => {
+test('Git, Custom Prompt and Container nest under Settings, disclosed when Settings is the active route', async () => {
 	let ws!: SeededWorkspace;
 	let projectSlug = '';
 	const { container, findByTestId, router } = await renderApp({
@@ -80,13 +87,13 @@ test('Git, Custom Prompt, Container and Activity nest under Settings, disclosed 
 	expect(within(getNav(container)).queryByRole('link', { name: 'Git' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Custom Prompt' })).toBeNull();
 	expect(within(getNav(container)).queryByRole('link', { name: 'Containers' })).toBeNull();
-	expect(within(getNav(container)).queryByRole('link', { name: 'Activity' })).toBeNull();
-	// Connectors and Skills are not part of that disclosure — they render on a
-	// non-settings page because they sit at the top level.
+	// Connectors, Skills and Activity are not part of that disclosure — they
+	// render on a non-settings page because they sit at the top level.
 	expect(within(getNav(container)).getByRole('link', { name: 'Connectors' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Skills' })).toBeTruthy();
+	expect(within(getNav(container)).getByRole('link', { name: 'Activity' })).toBeTruthy();
 
-	// Selecting Settings discloses Git, Custom Prompt, Container and Activity beneath it.
+	// Selecting Settings discloses Git, Custom Prompt and Container beneath it.
 	await router.navigate({
 		to: '/projects/$projectId/settings',
 		params: { projectId: projectSlug },
@@ -96,7 +103,6 @@ test('Git, Custom Prompt, Container and Activity nest under Settings, disclosed 
 	);
 	expect(within(getNav(container)).getByRole('link', { name: 'Custom Prompt' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Containers' })).toBeTruthy();
-	expect(within(getNav(container)).getByRole('link', { name: 'Activity' })).toBeTruthy();
 	expect(within(getNav(container)).getByRole('link', { name: 'Settings' })).toBeTruthy();
 
 	// Clicking into Containers keeps the disclosure open — its route doesn't
@@ -106,7 +112,7 @@ test('Git, Custom Prompt, Container and Activity nest under Settings, disclosed 
 		params: { projectId: projectSlug },
 	});
 	await waitFor(() =>
-		expect(within(getNav(container)).getByRole('link', { name: 'Activity' })).toBeTruthy(),
+		expect(within(getNav(container)).getByRole('link', { name: 'Custom Prompt' })).toBeTruthy(),
 	);
 	expect(within(getNav(container)).getByRole('link', { name: 'Containers' })).toBeTruthy();
 });

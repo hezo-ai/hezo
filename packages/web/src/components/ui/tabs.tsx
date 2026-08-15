@@ -8,6 +8,12 @@ export interface TabItem {
 	/** Route-mode target. Used when the component is not in controlled mode. */
 	to?: string;
 	params?: Record<string, string>;
+	/**
+	 * Match `to` exactly rather than fuzzily. Set it on a tab whose route is an
+	 * ancestor of a sibling tab's - an index tab beside a nested one - where the
+	 * default fuzzy match would light up both at once.
+	 */
+	exact?: boolean;
 	/** Optional leading icon. */
 	icon?: ReactNode;
 	/** Optional trailing count, rendered as "(n)". */
@@ -98,7 +104,7 @@ function RouteTabs({
 		<nav aria-label={ariaLabel} className={tabStripClass(className)}>
 			{items.map((item) => {
 				if (!item.to) return null;
-				const isActive = !!matchRoute({ to: item.to, params: item.params, fuzzy: true });
+				const isActive = !!matchRoute({ to: item.to, params: item.params, fuzzy: !item.exact });
 				return (
 					<Link
 						key={item.key ?? item.to}

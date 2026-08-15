@@ -298,6 +298,8 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
 | An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
 | Date formatting | `packages/web/src/lib/format-date.ts` |
+| Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |
+| A per-bucket stacked chart, and its axis/tooltip formatting | `StackedSeriesChart` + `chart-format.ts` (`packages/web/src/components/charts/`) |
 | A dropdown panel's vertical side + height clamp | `usePanelPlacement` (`hooks/use-panel-placement.ts`), pure math in `lib/panel-placement.ts` |
 | An optimistic mutation | `useOptimisticMutation` (`hooks/use-optimistic-mutation.ts`) |
 | A server test context | `createTestContext()` (`test/helpers/context.ts`) |

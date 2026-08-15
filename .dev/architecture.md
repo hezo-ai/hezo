@@ -4992,7 +4992,8 @@ shapes.
   `comments`, `mentions`, `assets`, `inbox`, `search` (full-text over tasks, comments,
   project docs, assets and skills).
 - **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
-  `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below).
+  `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below),
+  `agent-hours` (the Activity page's Hours tab — see below).
 - **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`
   (connectors: ensure / auth-start — project-scoped and instance-admin
   (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
@@ -5028,6 +5029,34 @@ variant) — the pre-existing indexes stopped at the leading column and left `id
 step, which a range scan cannot use. Both web views drive it through `useInfiniteQuery`
 with a "Load older activity" control; the global view previously fetched a fixed newest-100
 slice with no way to reach anything older.
+
+**Agent hours** (`routes/agent-hours.ts`, `GET /projects/:projectId/agent-hours?bucket=`).
+The other half of the project's Activity page: wall-clock time per agent, summed as
+`finished_at - started_at` over finished `heartbeat_runs`, bucketed by `date_trunc` to
+day/week/month. It is a **bounded aggregate, not a list** — its row count is
+`HOURS_BUCKET_SPAN[bucket]` (30/12/12) times the roster — so it neither pages nor needs to;
+the window bound is what keeps it bounded. `bucket` is interpolated into `date_trunc`
+rather than bound (the field is a literal, not a bind slot), so `isHoursBucket`
+(`@hezo/shared`) is the allowlist that makes that safe and a 400 is the only other outcome.
+Scope is the project's **team**: runs carry `team_id`, not `project_id`, and the 1:1 model
+makes them equivalent — so an HQ singleton acting inside a project is counted there and not
+against HQ (§ Cross-team execution). One request serves the chart, the summary tiles and
+the per-agent table; the three windows reuse the same UTC boundaries `budget-status` does,
+so an hours figure and a spend figure for "this week" always cover the same week. Unfinished
+runs are excluded rather than counted as zero, and concurrent runs by one agent are summed
+rather than merged into a wall-clock union — `assertNoBlockingRun` / `isTaskBusyInDb` make
+the overlap rare, and the merge would cost an interval sweep per agent per read. Migration
+`060` adds `heartbeat_runs (team_id, started_at)`: the nearest existing index
+(`idx_runs_team_started_task`, from `049`) is partial on `task_id IS NOT NULL` and so
+cannot serve a query that counts task-less runs.
+
+**The Activity page itself** is three web routes — `activity/route.tsx` (heading + tab
+strip + `Outlet`), `activity/index.tsx` (the Log tab, the audit feed) and
+`activity/hours.tsx`. Tabs are route-mode, so each carries its own URL; the Log tab sets
+`exact` on its `TabItem` because it is the index route and a fuzzy match would claim
+`/activity/hours` too, lighting both tabs at once. It is a **top-level** project page,
+placed after Settings — nested under Settings it only rendered once Settings was the active
+route, so it was unreachable from every other page.
 
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
 HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the

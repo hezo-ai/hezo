@@ -34,6 +34,7 @@ import { ONBOARDING_TOOLS } from './mcp/onboarding';
 import { getToolDefs, handleMcpAssetUpload, handleMcpRequest, initMcpServer } from './mcp/server';
 import { generateSkillFile } from './mcp/skill-file';
 import { authMiddleware, requireProjectAccessMiddleware } from './middleware/auth';
+import { agentHoursRoutes } from './routes/agent-hours';
 import { agentTypesRoutes } from './routes/agent-types';
 import { agentsRoutes } from './routes/agents';
 import { aiProvidersRoutes } from './routes/ai-providers';
@@ -832,6 +833,7 @@ export function buildApp(
 	app.route('/api', executionLocksRoutes);
 	app.route('/api', queuedWakeupsRoutes);
 	app.route('/api', auditLogRoutes);
+	app.route('/api', agentHoursRoutes);
 	app.route('/api', connectorsRoutes);
 	app.route('/api', oauthRoutes);
 	app.route('/api', previewRoutes);

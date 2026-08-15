@@ -79,15 +79,32 @@ test.describe('Responsive — mobile (390px)', () => {
 		}
 	});
 
-	test('audit log table scrolls horizontally without page overflow', async ({
+	test('activity log table scrolls horizontally without page overflow', async ({
 		page,
 		lightWorkspace,
 	}) => {
 		const { projectSlug } = lightWorkspace;
-		await page.goto(`/projects/${projectSlug}/audit-log`);
+		await page.goto(`/projects/${projectSlug}/activity`);
 		await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible({
 			timeout: 20000,
 		});
+		await expectNoHorizontalOverflow(page);
+	});
+
+	// The Hours tab is the widest thing on the Activity page - a chart sized from
+	// its container plus a table with a 420px floor - and both only have a real
+	// width under a layout engine. The assertion is deliberately data-independent:
+	// the fixture guarantees no finished runs, so anything keyed on a populated
+	// table would pass or fail on timing rather than on layout.
+	test('activity hours tab fits the viewport at 390px', async ({ page, lightWorkspace }) => {
+		const { projectSlug } = lightWorkspace;
+		await page.goto(`/projects/${projectSlug}/activity/hours`);
+		await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible({
+			timeout: 20000,
+		});
+		// Both tabs stay reachable: the strip scrolls rather than compressing.
+		await expect(page.getByTestId('activity-tab-log')).toBeVisible();
+		await expect(page.getByTestId('activity-tab-hours')).toBeVisible();
 		await expectNoHorizontalOverflow(page);
 	});
 

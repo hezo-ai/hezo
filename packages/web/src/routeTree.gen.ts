@@ -44,20 +44,22 @@ import { Route as ProjectsProjectIdCustomPromptRouteImport } from './routes/proj
 import { Route as ProjectsProjectIdContainerRouteImport } from './routes/projects/$projectId/container'
 import { Route as ProjectsProjectIdConnectorsRouteImport } from './routes/projects/$projectId/connectors'
 import { Route as ProjectsProjectIdBudgetRouteImport } from './routes/projects/$projectId/budget'
-import { Route as ProjectsProjectIdAuditLogRouteImport } from './routes/projects/$projectId/audit-log'
 import { Route as ProjectsProjectIdAssetsRouteImport } from './routes/projects/$projectId/assets'
 import { Route as PreviewProjectIdFilenameRouteImport } from './routes/preview/$projectId/$filename'
+import { Route as ProjectsProjectIdActivityRouteRouteImport } from './routes/projects/$projectId/activity/route'
 import { Route as ProjectsProjectIdTasksIndexRouteImport } from './routes/projects/$projectId/tasks/index'
 import { Route as ProjectsProjectIdSettingsIndexRouteImport } from './routes/projects/$projectId/settings/index'
 import { Route as ProjectsProjectIdProgressIndexRouteImport } from './routes/projects/$projectId/progress/index'
 import { Route as ProjectsProjectIdInboxIndexRouteImport } from './routes/projects/$projectId/inbox/index'
 import { Route as ProjectsProjectIdGoalsIndexRouteImport } from './routes/projects/$projectId/goals/index'
 import { Route as ProjectsProjectIdAgentsIndexRouteImport } from './routes/projects/$projectId/agents/index'
+import { Route as ProjectsProjectIdActivityIndexRouteImport } from './routes/projects/$projectId/activity/index'
 import { Route as ProjectsProjectIdTeamSettingsGeneralRouteImport } from './routes/projects/$projectId/team-settings/general'
 import { Route as ProjectsProjectIdTasksTaskIdRouteImport } from './routes/projects/$projectId/tasks/$taskId'
 import { Route as ProjectsProjectIdGoalsGoalIdRouteImport } from './routes/projects/$projectId/goals/$goalId'
 import { Route as ProjectsProjectIdAssetsViewRouteImport } from './routes/projects/$projectId/assets_.view'
 import { Route as ProjectsProjectIdAgentsHireRouteImport } from './routes/projects/$projectId/agents/hire'
+import { Route as ProjectsProjectIdActivityHoursRouteImport } from './routes/projects/$projectId/activity/hours'
 import { Route as ProjectsProjectIdAgentsAgentIdRouteRouteImport } from './routes/projects/$projectId/agents/$agentId/route'
 import { Route as ProjectsProjectIdProgressGoalsIndexRouteImport } from './routes/projects/$projectId/progress/goals/index'
 import { Route as ProjectsProjectIdAgentsAgentIdIndexRouteImport } from './routes/projects/$projectId/agents/$agentId/index'
@@ -250,12 +252,6 @@ const ProjectsProjectIdBudgetRoute = ProjectsProjectIdBudgetRouteImport.update({
   path: '/budget',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
-const ProjectsProjectIdAuditLogRoute =
-  ProjectsProjectIdAuditLogRouteImport.update({
-    id: '/audit-log',
-    path: '/audit-log',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
 const ProjectsProjectIdAssetsRoute = ProjectsProjectIdAssetsRouteImport.update({
   id: '/assets',
   path: '/assets',
@@ -266,6 +262,12 @@ const PreviewProjectIdFilenameRoute =
     id: '/preview/$projectId/$filename',
     path: '/preview/$projectId/$filename',
     getParentRoute: () => rootRouteImport,
+  } as any)
+const ProjectsProjectIdActivityRouteRoute =
+  ProjectsProjectIdActivityRouteRouteImport.update({
+    id: '/activity',
+    path: '/activity',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdTasksIndexRoute =
   ProjectsProjectIdTasksIndexRouteImport.update({
@@ -303,6 +305,12 @@ const ProjectsProjectIdAgentsIndexRoute =
     path: '/agents/',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdActivityIndexRoute =
+  ProjectsProjectIdActivityIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => ProjectsProjectIdActivityRouteRoute,
+  } as any)
 const ProjectsProjectIdTeamSettingsGeneralRoute =
   ProjectsProjectIdTeamSettingsGeneralRouteImport.update({
     id: '/team-settings/general',
@@ -332,6 +340,12 @@ const ProjectsProjectIdAgentsHireRoute =
     id: '/agents/hire',
     path: '/agents/hire',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdActivityHoursRoute =
+  ProjectsProjectIdActivityHoursRouteImport.update({
+    id: '/hours',
+    path: '/hours',
+    getParentRoute: () => ProjectsProjectIdActivityRouteRoute,
   } as any)
 const ProjectsProjectIdAgentsAgentIdRouteRoute =
   ProjectsProjectIdAgentsAgentIdRouteRouteImport.update({
@@ -405,9 +419,9 @@ export interface FileRoutesByFullPath {
   '/home/': typeof HomeIndexRoute
   '/marketplace/': typeof MarketplaceIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/projects/$projectId/activity': typeof ProjectsProjectIdActivityRouteRouteWithChildren
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
-  '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
@@ -422,11 +436,13 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/containers/': typeof SettingsContainersIndexRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
+  '/projects/$projectId/activity/hours': typeof ProjectsProjectIdActivityHoursRoute
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/assets/view': typeof ProjectsProjectIdAssetsViewRoute
   '/projects/$projectId/goals/$goalId': typeof ProjectsProjectIdGoalsGoalIdRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
+  '/projects/$projectId/activity/': typeof ProjectsProjectIdActivityIndexRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/goals/': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
@@ -463,7 +479,6 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsIndexRoute
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
-  '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
@@ -477,11 +492,13 @@ export interface FileRoutesByTo {
   '/home/inbox': typeof HomeInboxIndexRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/settings/containers': typeof SettingsContainersIndexRoute
+  '/projects/$projectId/activity/hours': typeof ProjectsProjectIdActivityHoursRoute
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/assets/view': typeof ProjectsProjectIdAssetsViewRoute
   '/projects/$projectId/goals/$goalId': typeof ProjectsProjectIdGoalsGoalIdRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
+  '/projects/$projectId/activity': typeof ProjectsProjectIdActivityIndexRoute
   '/projects/$projectId/agents': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/goals': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox': typeof ProjectsProjectIdInboxIndexRoute
@@ -520,9 +537,9 @@ export interface FileRoutesById {
   '/home/': typeof HomeIndexRoute
   '/marketplace/': typeof MarketplaceIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/projects/$projectId/activity': typeof ProjectsProjectIdActivityRouteRouteWithChildren
   '/preview/$projectId/$filename': typeof PreviewProjectIdFilenameRoute
   '/projects/$projectId/assets': typeof ProjectsProjectIdAssetsRoute
-  '/projects/$projectId/audit-log': typeof ProjectsProjectIdAuditLogRoute
   '/projects/$projectId/budget': typeof ProjectsProjectIdBudgetRoute
   '/projects/$projectId/connectors': typeof ProjectsProjectIdConnectorsRoute
   '/projects/$projectId/container': typeof ProjectsProjectIdContainerRoute
@@ -537,11 +554,13 @@ export interface FileRoutesById {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/settings/containers/': typeof SettingsContainersIndexRoute
   '/projects/$projectId/agents/$agentId': typeof ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren
+  '/projects/$projectId/activity/hours': typeof ProjectsProjectIdActivityHoursRoute
   '/projects/$projectId/agents/hire': typeof ProjectsProjectIdAgentsHireRoute
   '/projects/$projectId/assets_/view': typeof ProjectsProjectIdAssetsViewRoute
   '/projects/$projectId/goals/$goalId': typeof ProjectsProjectIdGoalsGoalIdRoute
   '/projects/$projectId/tasks/$taskId': typeof ProjectsProjectIdTasksTaskIdRoute
   '/projects/$projectId/team-settings/general': typeof ProjectsProjectIdTeamSettingsGeneralRoute
+  '/projects/$projectId/activity/': typeof ProjectsProjectIdActivityIndexRoute
   '/projects/$projectId/agents/': typeof ProjectsProjectIdAgentsIndexRoute
   '/projects/$projectId/goals/': typeof ProjectsProjectIdGoalsIndexRoute
   '/projects/$projectId/inbox/': typeof ProjectsProjectIdInboxIndexRoute
@@ -581,9 +600,9 @@ export interface FileRouteTypes {
     | '/home/'
     | '/marketplace/'
     | '/settings/'
+    | '/projects/$projectId/activity'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
-    | '/projects/$projectId/audit-log'
     | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
@@ -598,11 +617,13 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/settings/containers/'
     | '/projects/$projectId/agents/$agentId'
+    | '/projects/$projectId/activity/hours'
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/assets/view'
     | '/projects/$projectId/goals/$goalId'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
+    | '/projects/$projectId/activity/'
     | '/projects/$projectId/agents/'
     | '/projects/$projectId/goals/'
     | '/projects/$projectId/inbox/'
@@ -639,7 +660,6 @@ export interface FileRouteTypes {
     | '/settings'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
-    | '/projects/$projectId/audit-log'
     | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
@@ -653,11 +673,13 @@ export interface FileRouteTypes {
     | '/home/inbox'
     | '/projects/$projectId'
     | '/settings/containers'
+    | '/projects/$projectId/activity/hours'
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/assets/view'
     | '/projects/$projectId/goals/$goalId'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
+    | '/projects/$projectId/activity'
     | '/projects/$projectId/agents'
     | '/projects/$projectId/goals'
     | '/projects/$projectId/inbox'
@@ -695,9 +717,9 @@ export interface FileRouteTypes {
     | '/home/'
     | '/marketplace/'
     | '/settings/'
+    | '/projects/$projectId/activity'
     | '/preview/$projectId/$filename'
     | '/projects/$projectId/assets'
-    | '/projects/$projectId/audit-log'
     | '/projects/$projectId/budget'
     | '/projects/$projectId/connectors'
     | '/projects/$projectId/container'
@@ -712,11 +734,13 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/settings/containers/'
     | '/projects/$projectId/agents/$agentId'
+    | '/projects/$projectId/activity/hours'
     | '/projects/$projectId/agents/hire'
     | '/projects/$projectId/assets_/view'
     | '/projects/$projectId/goals/$goalId'
     | '/projects/$projectId/tasks/$taskId'
     | '/projects/$projectId/team-settings/general'
+    | '/projects/$projectId/activity/'
     | '/projects/$projectId/agents/'
     | '/projects/$projectId/goals/'
     | '/projects/$projectId/inbox/'
@@ -990,13 +1014,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdBudgetRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/audit-log': {
-      id: '/projects/$projectId/audit-log'
-      path: '/audit-log'
-      fullPath: '/projects/$projectId/audit-log'
-      preLoaderRoute: typeof ProjectsProjectIdAuditLogRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
     '/projects/$projectId/assets': {
       id: '/projects/$projectId/assets'
       path: '/assets'
@@ -1010,6 +1027,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/preview/$projectId/$filename'
       preLoaderRoute: typeof PreviewProjectIdFilenameRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/projects/$projectId/activity': {
+      id: '/projects/$projectId/activity'
+      path: '/activity'
+      fullPath: '/projects/$projectId/activity'
+      preLoaderRoute: typeof ProjectsProjectIdActivityRouteRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/tasks/': {
       id: '/projects/$projectId/tasks/'
@@ -1053,6 +1077,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdAgentsIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/activity/': {
+      id: '/projects/$projectId/activity/'
+      path: '/'
+      fullPath: '/projects/$projectId/activity/'
+      preLoaderRoute: typeof ProjectsProjectIdActivityIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdActivityRouteRoute
+    }
     '/projects/$projectId/team-settings/general': {
       id: '/projects/$projectId/team-settings/general'
       path: '/team-settings/general'
@@ -1087,6 +1118,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectId/agents/hire'
       preLoaderRoute: typeof ProjectsProjectIdAgentsHireRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/activity/hours': {
+      id: '/projects/$projectId/activity/hours'
+      path: '/hours'
+      fullPath: '/projects/$projectId/activity/hours'
+      preLoaderRoute: typeof ProjectsProjectIdActivityHoursRouteImport
+      parentRoute: typeof ProjectsProjectIdActivityRouteRoute
     }
     '/projects/$projectId/agents/$agentId': {
       id: '/projects/$projectId/agents/$agentId'
@@ -1207,6 +1245,22 @@ const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
   SettingsRouteRouteChildren,
 )
 
+interface ProjectsProjectIdActivityRouteRouteChildren {
+  ProjectsProjectIdActivityHoursRoute: typeof ProjectsProjectIdActivityHoursRoute
+  ProjectsProjectIdActivityIndexRoute: typeof ProjectsProjectIdActivityIndexRoute
+}
+
+const ProjectsProjectIdActivityRouteRouteChildren: ProjectsProjectIdActivityRouteRouteChildren =
+  {
+    ProjectsProjectIdActivityHoursRoute: ProjectsProjectIdActivityHoursRoute,
+    ProjectsProjectIdActivityIndexRoute: ProjectsProjectIdActivityIndexRoute,
+  }
+
+const ProjectsProjectIdActivityRouteRouteWithChildren =
+  ProjectsProjectIdActivityRouteRoute._addFileChildren(
+    ProjectsProjectIdActivityRouteRouteChildren,
+  )
+
 interface ProjectsProjectIdAgentsAgentIdRouteRouteChildren {
   ProjectsProjectIdAgentsAgentIdChatHistoryRoute: typeof ProjectsProjectIdAgentsAgentIdChatHistoryRoute
   ProjectsProjectIdAgentsAgentIdSettingsRoute: typeof ProjectsProjectIdAgentsAgentIdSettingsRoute
@@ -1235,8 +1289,8 @@ const ProjectsProjectIdAgentsAgentIdRouteRouteWithChildren =
   )
 
 interface ProjectsProjectIdRouteRouteChildren {
+  ProjectsProjectIdActivityRouteRoute: typeof ProjectsProjectIdActivityRouteRouteWithChildren
   ProjectsProjectIdAssetsRoute: typeof ProjectsProjectIdAssetsRoute
-  ProjectsProjectIdAuditLogRoute: typeof ProjectsProjectIdAuditLogRoute
   ProjectsProjectIdBudgetRoute: typeof ProjectsProjectIdBudgetRoute
   ProjectsProjectIdConnectorsRoute: typeof ProjectsProjectIdConnectorsRoute
   ProjectsProjectIdContainerRoute: typeof ProjectsProjectIdContainerRoute
@@ -1264,8 +1318,9 @@ interface ProjectsProjectIdRouteRouteChildren {
 
 const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
   {
+    ProjectsProjectIdActivityRouteRoute:
+      ProjectsProjectIdActivityRouteRouteWithChildren,
     ProjectsProjectIdAssetsRoute: ProjectsProjectIdAssetsRoute,
-    ProjectsProjectIdAuditLogRoute: ProjectsProjectIdAuditLogRoute,
     ProjectsProjectIdBudgetRoute: ProjectsProjectIdBudgetRoute,
     ProjectsProjectIdConnectorsRoute: ProjectsProjectIdConnectorsRoute,
     ProjectsProjectIdContainerRoute: ProjectsProjectIdContainerRoute,
