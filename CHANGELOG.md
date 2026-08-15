@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.46.0 - 2026-08-14
+
+### Features
+
+- **ai-providers:** guided subscription sign-in driven from inside a container ([#962](https://github.com/hezo-ai/hezo/pull/962))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.45.0...0.46.0
+
 ## 0.45.0 - 2026-08-13
 
 ### Features
