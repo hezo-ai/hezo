@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.47.0 - 2026-08-15
+
+### Features
+
+- **activity:** promote Activity to a top-level page with Log and Hours tabs ([#967](https://github.com/hezo-ai/hezo/pull/967))
+- **ai-providers:** expose guided subscription sign-in in the UI ([#966](https://github.com/hezo-ai/hezo/pull/966))
+- **web:** make dashboard action-item rows whole-row links ([#965](https://github.com/hezo-ai/hezo/pull/965))
+
+### Other
+
+- Fold Progress into the project dashboard, promote Goals to top-level ([#968](https://github.com/hezo-ai/hezo/pull/968))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.46.0...0.47.0
+
 ## 0.46.0 - 2026-08-14
 
 ### Features
