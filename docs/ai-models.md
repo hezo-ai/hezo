@@ -117,6 +117,29 @@ sign-in** (for example Claude Pro/Max, ChatGPT, or Gemini) - so you can put an
 existing plan to work instead of paying per token. You choose the method when you
 connect the provider.
 
+### Signing in to a subscription
+
+For **OpenAI** and **Anthropic**, Hezo runs the sign-in for you. Choose the subscription
+option, select **Sign in**, and Hezo shows you a link and a short one-time code. Open the
+link on any device - your phone is fine - sign in to that account, and enter the code.
+
+- **OpenAI (Codex)** finishes on its own once you complete the sign-in. Nothing to bring
+  back.
+- **Anthropic (Claude Code)** shows you a code at the end of its sign-in page. Paste that
+  code into Hezo to finish.
+
+Your credential is created inside the sandbox and stored encrypted without passing
+through your browser, so you never copy an auth file around.
+
+For **Google (Gemini)**, and for any instance where the sandbox cannot reach the
+provider's sign-in page, use **Paste credential manually** instead and follow the steps
+the form shows. The Gemini CLI offers no sign-in Hezo can drive, so that is the only
+option there.
+
+Codex rotates its credential each time Hezo runs it. Once Hezo holds a Codex
+subscription, avoid using the same login on your own machine - pick one or the other, or
+the two will fall out of step.
+
 ## Where to get an API key
 
 Each provider issues API keys from its own console. When you connect a provider, the

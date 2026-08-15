@@ -3044,6 +3044,31 @@ the add flow live-verifies the key, the Verify action persists the result, and r
 credential re-verifies it — each restoring `verified` on a key that had gone `invalid`),
 `invalid` (a verify was rejected), or `revoked` (a retired provider).
 
+**Guided sign-in.** A subscription credential can be minted by driving the vendor CLI's own
+login inside a throwaway container instead of pasting an auth file. `POST
+/api/ai-providers/subscription-login/start` acquires a container
+(`services/subscription-login-container.ts`), runs the CLI under a PTY the in-container
+script allocates itself (`buildSubscriptionLoginScript` in `sandbox/proc-scripts.ts`), and
+registers a flow in `subscriptionLoginService`. The host polls the merged log through
+`SandboxFiles` — never a byte channel, because Docker's exec has no TTY and Daytona's
+redirects stderr to a file drained only on close, so a challenge printed there would strand
+the flow. `GET …/:flowId` returns the challenge (URL, and a one-time code where the flow has
+one), `POST …/:flowId/code` writes the operator's code to the CLI's stdin FIFO, and `DELETE
+…/:flowId` cancels. Which runtimes can be driven is `RUNTIMES_WITH_GUIDED_SIGN_IN`
+(`@hezo/shared`, read by the web to decide whether to offer the button) paired with
+`SUBSCRIPTION_LOGIN_DRIVERS` (the server's argv, output parsers and harvest shape); a test
+asserts the two agree. Codex uses its device flow and needs nothing back; Claude Code needs
+one pasted code; Gemini has no driver and stays on manual paste. **The credential never
+reaches the browser** — on success the poll route stores it via `storeAiProviderKey` and
+returns only the config id, coalescing concurrent polls so overlapping requests insert once.
+Every exit path releases the container through `finish`, and `sweepLoginContainers` collects
+anything a mid-flow crash stranded, scoped by an instance-id label value. The login container
+deliberately gets **no egress proxy**: a sign-in emits no `__HEZO_SECRET_*__` placeholders to
+substitute, and the host it reaches is the model provider's own auth endpoint, already exempt
+from MITM. There is **no MCP twin** for these routes, the same deliberate call
+`routes/connectors.ts` documents — an agent cannot complete a sign-in that requires a human at
+a browser.
+
 **Editing a config.** `PATCH /api/ai-providers/:configId` is the single write behind the
 settings Edit dialog and carries everything about a config except its default model: `label`,
 `runtime`, a replacement credential (`api_key`, with `auth_method` / `base_url` alongside),

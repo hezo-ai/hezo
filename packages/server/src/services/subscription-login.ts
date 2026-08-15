@@ -421,3 +421,13 @@ export class SubscriptionLoginService {
 
 /** How long a settled flow's outcome remains readable to its poller. */
 const SETTLED_RETENTION_MS = 60_000;
+
+/**
+ * The instance the routes drive.
+ *
+ * Module-level for the same reason `routes/oauth.ts` keeps its device-flow map
+ * there: a flow is bound to a container and a challenge that both die with this
+ * process, so there is nothing a second instance could usefully hold and nothing
+ * worth persisting. Exported so shutdown can drain it.
+ */
+export const subscriptionLoginService = new SubscriptionLoginService();

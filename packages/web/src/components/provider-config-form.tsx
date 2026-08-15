@@ -1,4 +1,10 @@
-import { type AgentRuntime, AI_PROVIDER_INFO, AiAuthMethod, AiProvider } from '@hezo/shared';
+import {
+	type AgentRuntime,
+	AI_PROVIDER_INFO,
+	AiAuthMethod,
+	AiProvider,
+	providerHasGuidedSignIn,
+} from '@hezo/shared';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
@@ -10,6 +16,7 @@ import {
 import { useI18n } from '../lib/i18n';
 import { AgentCliPicker, providerHasCliChoice } from './agent-cli-picker';
 import { ApiKeyInstructions } from './api-key-instructions';
+import { SubscriptionLoginPanel } from './subscription-login-panel';
 import { SUBSCRIPTION_INSTRUCTIONS, SubscriptionInstructions } from './subscription-paste-form';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -134,6 +141,15 @@ export function ProviderConfigForm({
 	// Only sent when the operator actually opened Advanced and picked something.
 	const [runtime, setRuntime] = useState<AgentRuntime | null>(editing?.runtime ?? null);
 	const [advancedOpen, setAdvancedOpen] = useState(false);
+	// The guided sign-in panel is mounted only after an explicit click, because
+	// starting a flow creates a container.
+	const [signingIn, setSigningIn] = useState(false);
+	const [manualOpen, setManualOpen] = useState(false);
+	// Set when a sign-in could not start - no driver for this CLI, or the
+	// installed version dropped the flag. The paste form takes over with no
+	// message: a vendor's beta flag disappearing is not something the operator
+	// can act on. The server still names and logs it.
+	const [pasteFallback, setPasteFallback] = useState(false);
 
 	// Keep the name pinned to the generated default until the user edits it
 	// (also re-syncs once the async configs query resolves). Never when editing —
@@ -152,6 +168,12 @@ export function ProviderConfigForm({
 	// Nothing to disclose means no trigger, rather than one opening on an empty box.
 	const hasCliChoice = providerHasCliChoice(provider);
 	const hasAdvanced = hasCliChoice || isLocal;
+	// Whether this provider's CLI can be driven at all, resolved from the same
+	// table the server uses so the button never appears for a runtime with no
+	// driver. Editing an existing config keeps the paste form: rotating a
+	// credential in place is a different act from minting a new one.
+	const canGuidedSignIn =
+		!editing && Boolean(info.supportsSubscription) && providerHasGuidedSignIn(provider, runtime);
 	// Editing already has a stored credential, so name or CLI alone is a valid save —
 	// except when the auth method is being switched, where the stored credential is
 	// the wrong shape for the new one and a replacement is the whole point.
@@ -216,6 +238,25 @@ export function ProviderConfigForm({
 		}
 	}
 
+	// A running sign-in replaces the form entirely: the fields behind it are not
+	// editable mid-flow (the label is already committed to the flow), and leaving
+	// them on screen would invite an edit that silently does nothing.
+	if (signingIn) {
+		return (
+			<SubscriptionLoginPanel
+				provider={provider}
+				label={showName ? name.trim() || undefined : undefined}
+				runtime={runtime}
+				onDone={onDone}
+				onUnavailable={() => {
+					setSigningIn(false);
+					setPasteFallback(true);
+				}}
+				onCancel={() => setSigningIn(false)}
+			/>
+		);
+	}
+
 	return (
 		<form onSubmit={handleSubmit} className="flex flex-col gap-4">
 			{info.supportsSubscription && (
@@ -261,18 +302,51 @@ export function ProviderConfigForm({
 			)}
 
 			{authMethod === AiAuthMethod.Subscription ? (
-				<div className="flex flex-col gap-2">
-					<SubscriptionInstructions provider={provider} />
-					<textarea
-						required={!editing}
-						aria-label="Subscription credential"
-						value={authJson}
-						onChange={(e) => setAuthJson(e.target.value)}
-						placeholder={SUBSCRIPTION_INSTRUCTIONS[provider]?.placeholder}
-						rows={6}
-						spellCheck={false}
-						className="w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs font-mono text-text-1 outline-none focus:border-border-strong"
-					/>
+				<div className="flex flex-col gap-3">
+					{/* Guided sign-in is offered only where a driver exists. Where it does
+					    not (Gemini today), the paste form is simply the whole branch -
+					    there is no button that would start something and hang. */}
+					{canGuidedSignIn && !pasteFallback ? (
+						<>
+							<div className="rounded-md border border-border bg-surface-2 px-3 py-2.5">
+								<p className="text-sm font-medium text-text-1 mb-1">
+									{t('settings.provider.signIn.heading', { provider: info.name })}
+								</p>
+								<p className="text-[13px] text-text-2">{t('settings.provider.signIn.blurb')}</p>
+							</div>
+							<Button type="button" onClick={() => setSigningIn(true)}>
+								{t('settings.provider.signIn.action', { cli: info.runtimeLabel })}
+							</Button>
+							<button
+								type="button"
+								aria-expanded={manualOpen}
+								onClick={() => setManualOpen((open) => !open)}
+								className="flex items-center gap-1.5 self-start border-t border-border pt-3 w-full text-eyebrow text-text-2 hover:text-text-1"
+							>
+								{manualOpen ? (
+									<ChevronDown className="w-3.5 h-3.5" />
+								) : (
+									<ChevronRight className="w-3.5 h-3.5" />
+								)}
+								{t('settings.provider.signIn.manual')}
+							</button>
+						</>
+					) : null}
+					{(!canGuidedSignIn || pasteFallback || manualOpen) && (
+						<div className="flex flex-col gap-2">
+							<SubscriptionInstructions provider={provider} />
+							<textarea
+								required={!editing && !canGuidedSignIn}
+								aria-label="Subscription credential"
+								value={authJson}
+								onChange={(e) => setAuthJson(e.target.value)}
+								placeholder={SUBSCRIPTION_INSTRUCTIONS[provider]?.placeholder}
+								rows={6}
+								spellCheck={false}
+								className="w-full rounded-md border border-border bg-surface-2 px-2 py-1.5 text-xs font-mono text-text-1 outline-none focus:border-border-strong"
+							/>
+						</div>
+					)}
 				</div>
 			) : (
 				<div className="flex flex-col gap-2">

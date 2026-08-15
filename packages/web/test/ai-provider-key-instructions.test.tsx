@@ -69,6 +69,8 @@ test('every pickable provider shows how-to-get-a-key instructions linking its ke
 });
 
 test('switching Anthropic to subscription swaps the API-key instructions for the setup-token ones', async () => {
+	// Guided sign-in leads on a subscription, so the setup-token steps live behind
+	// the manual-paste disclosure; the swap this asserts is unchanged underneath.
 	const { findByRole, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -81,6 +83,7 @@ test('switching Anthropic to subscription swaps the API-key instructions for the
 	await within(dialog).findByText(/How to get your Anthropic API key/i);
 
 	await user.click(within(dialog).getByRole('button', { name: /Claude Code subscription/i }));
+	await user.click(within(dialog).getByRole('button', { name: /Paste credential manually/i }));
 	await within(dialog).findByText(/How to get your Claude subscription token/i);
 	expect(within(dialog).queryByText(/How to get your Anthropic API key/i)).toBeNull();
 
