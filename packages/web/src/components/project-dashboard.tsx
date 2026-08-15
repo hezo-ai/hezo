@@ -114,16 +114,6 @@ function approvalText(approval: { type: string; requested_by_name: string | null
 	}
 }
 
-function approvalActionLabel(type: string): string {
-	if (type === ApprovalType.DesignatedRepoRequest) return 'Set up';
-	if (type === ApprovalType.PlanReview) return 'Open plan';
-	if (type === ApprovalType.SkillProposal) return 'Review';
-	return 'Open';
-}
-
-const ACTION_LINK_CLASS =
-	'shrink-0 rounded-md border border-border px-2 py-1 text-[12px] text-text-1 hover:bg-surface-2';
-
 // ---------------------------------------------------------------------------
 // Drag handle
 // ---------------------------------------------------------------------------
@@ -173,84 +163,69 @@ function WidgetHeader({
 // Needs You (Action items) — full width, no drag
 // ---------------------------------------------------------------------------
 
-function NeedsYouRowShell({
+const NEEDS_YOU_ROW_CLASS = 'flex items-center gap-3 px-3 py-2.5 hover:bg-surface-2';
+
+/** The row itself is the control, so its inner layout is all this renders. */
+function NeedsYouRowContent({
 	tag,
 	tagColor,
 	children,
 	createdAt,
-	actionLink,
 }: {
 	tag: string;
 	tagColor: 'accent' | 'info' | 'warning';
 	children: ReactNode;
 	createdAt: string;
-	actionLink: ReactNode;
 }) {
 	return (
-		<div
-			className="flex items-center gap-3 px-3 py-2.5"
-			data-testid="project-dashboard-needs-you-row"
-		>
+		<>
 			<Badge color={tagColor} mono className="shrink-0">
 				{tag}
 			</Badge>
 			<span className="min-w-0 flex-1 truncate text-[13px] text-text-1">{children}</span>
 			<span className="shrink-0 font-mono text-[11px] text-text-3">{relativeTime(createdAt)}</span>
-			{actionLink}
-		</div>
+		</>
 	);
 }
 
 function NeedsYouRow({ projectId, row }: { projectId: string; row: ProjectDashboardNeedsYouItem }) {
 	if (row.kind === 'approval') {
 		return (
-			<NeedsYouRowShell
-				tag="action"
-				tagColor="accent"
-				createdAt={row.created_at}
-				actionLink={
-					<Link
-						to="/projects/$projectId/inbox"
-						params={{ projectId }}
-						className={ACTION_LINK_CLASS}
-					>
-						{approvalActionLabel(row.approval.type)}
-					</Link>
-				}
+			<Link
+				to="/projects/$projectId/inbox"
+				params={{ projectId }}
+				className={NEEDS_YOU_ROW_CLASS}
+				data-testid="project-dashboard-needs-you-row"
 			>
-				{approvalText(row.approval)}
-			</NeedsYouRowShell>
+				<NeedsYouRowContent tag="action" tagColor="accent" createdAt={row.created_at}>
+					{approvalText(row.approval)}
+				</NeedsYouRowContent>
+			</Link>
 		);
 	}
 	const m = row.mention;
 	const kind = inboxRowKind(m.content_type);
 	const lead = inboxRowLead(m);
 	return (
-		<NeedsYouRowShell
-			tag={kind.tag}
-			tagColor={kind.tagColor}
-			createdAt={row.created_at}
-			actionLink={
-				<Link
-					to="/projects/$projectId/tasks/$taskId"
-					params={{ projectId, taskId: m.task_identifier.toLowerCase() }}
-					hash={`comment-${m.comment_public_id}`}
-					className={ACTION_LINK_CLASS}
-				>
-					{kind.actionLabel}
-				</Link>
-			}
+		<Link
+			to="/projects/$projectId/tasks/$taskId"
+			params={{ projectId, taskId: m.task_identifier.toLowerCase() }}
+			hash={`comment-${m.comment_public_id}`}
+			className={NEEDS_YOU_ROW_CLASS}
+			data-testid="project-dashboard-needs-you-row"
 		>
-			{lead ? (
-				<>
-					{m.task_identifier}: {lead}
-				</>
-			) : (
-				<>
-					{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
-				</>
-			)}
-		</NeedsYouRowShell>
+			<NeedsYouRowContent tag={kind.tag} tagColor={kind.tagColor} createdAt={row.created_at}>
+				{lead ? (
+					<>
+						{m.task_identifier}: {lead}
+					</>
+				) : (
+					<>
+						{m.author_display_name} on {m.task_identifier}: {m.snippet || m.task_title}
+					</>
+				)}
+			</NeedsYouRowContent>
+		</Link>
 	);
 }
 

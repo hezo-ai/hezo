@@ -100,9 +100,8 @@ test('the project dashboard lists exactly the unread rows its inbox shows', asyn
 	);
 	expect(section.textContent).toContain('drafted a plan to review');
 	expect(section.textContent).toContain('please confirm the rollout window');
-	// The credential request reads as what it asks for, with its own control.
+	// The credential request reads as what it asks for.
 	expect(section.textContent).toContain(`provide ${CREDENTIAL_NAME}`);
-	expect(section.textContent).toContain('Provide');
 
 	await router.navigate({
 		to: '/projects/$projectId/inbox',
@@ -116,6 +115,45 @@ test('the project dashboard lists exactly the unread rows its inbox shows', asyn
 	});
 	expect(document.body.textContent).toContain(`provide ${CREDENTIAL_NAME}`);
 	expect(document.body.textContent).toContain('credential');
+});
+
+test('each dashboard action item is a whole-row link to the item it names', async () => {
+	const ref = { slug: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ref.slug = (await seedAllThree()).slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/dashboard',
+		params: { projectId: ref.slug },
+	});
+
+	const section = await findByTestId('project-dashboard-needs-you', undefined, {
+		timeout: 20_000,
+	});
+	await waitFor(() => expect(section.textContent).toContain('Action items · 3'));
+
+	const rows = [
+		...section.querySelectorAll<HTMLAnchorElement>(
+			'[data-testid="project-dashboard-needs-you-row"]',
+		),
+	];
+	expect(rows).toHaveLength(3);
+	// The row *is* the control - clicking anywhere on it navigates - so it must
+	// be the anchor itself and must carry no nested one to swallow the click.
+	for (const row of rows) {
+		expect(row.tagName).toBe('A');
+		expect(row.querySelector('a')).toBeNull();
+	}
+
+	// The approval opens the inbox where it is resolved; the mention and the
+	// credential request each land on their own comment.
+	const hrefs = rows.map((row) => row.getAttribute('href') ?? '');
+	expect(hrefs.filter((h) => h.endsWith(`/projects/${ref.slug}/inbox`))).toHaveLength(1);
+	expect(hrefs.filter((h) => /\/tasks\/[a-z0-9]+-\d+#comment-/i.test(h))).toHaveLength(2);
 });
 
 test('reading a credential request in the inbox drops it from the dashboard', async () => {
