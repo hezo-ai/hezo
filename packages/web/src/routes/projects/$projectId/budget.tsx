@@ -1,4 +1,4 @@
-import { centsToDollars, HQ_PROJECT_SLUG } from '@hezo/shared';
+import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { BarChart3, Pencil, Users } from 'lucide-react';
 import { agentDisplayName } from '../../../components/agent-identity-tooltip';
@@ -6,7 +6,11 @@ import { agentPageParams } from '../../../components/agent-link';
 import { AgentRef } from '../../../components/agent-ref';
 import { BudgetCharts } from '../../../components/budget/budget-charts';
 import { ProjectBudgetPanel } from '../../../components/budget/project-budget-panel';
-import { type SpendCell, StackedSpendChart } from '../../../components/budget/stacked-spend-chart';
+import { dollars, formatDay } from '../../../components/charts/chart-format';
+import {
+	type SeriesCell,
+	StackedSeriesChart,
+} from '../../../components/charts/stacked-series-chart';
 import { Avatar, getInitials } from '../../../components/ui/avatar';
 import { Badge } from '../../../components/ui/badge';
 import { BudgetBar } from '../../../components/ui/budget-bar';
@@ -21,10 +25,6 @@ import {
 	type WindowStatus,
 } from '../../../hooks/use-costs';
 import { defaultAvatarForSlug } from '../../../lib/default-avatars';
-
-function dollars(cents: number): string {
-	return `$${centsToDollars(cents)}`;
-}
 
 /** A single window's spend vs. cap with a fill bar. 0 cap renders "no cap". */
 function WindowRow({ label, status }: { label: string; status: WindowStatus }) {
@@ -60,23 +60,28 @@ function WindowGrid({ status }: { status: EntityBudgetStatus }) {
 /** A NULL adapter config (manual entries, historical rows) groups under one label. */
 const UNATTRIBUTED_KEY = 'unattributed';
 
-function toAgentCells(points: AgentDailyCostPoint[] | undefined): SpendCell[] {
+function toAgentCells(points: AgentDailyCostPoint[] | undefined): SeriesCell[] {
 	return (points ?? []).map((p) => ({
-		day: p.day,
+		bucket: p.day,
 		seriesKey: p.agent_id,
 		seriesLabel: agentDisplayName({ human_name: p.agent_name, title: p.agent_title }),
-		total_cents: p.total_cents,
+		value: p.total_cents,
 	}));
 }
 
-function toAdapterCells(points: AdapterDailyCostPoint[] | undefined): SpendCell[] {
+function toAdapterCells(points: AdapterDailyCostPoint[] | undefined): SeriesCell[] {
 	return (points ?? []).map((p) => ({
-		day: p.day,
+		bucket: p.day,
 		seriesKey: p.ai_provider_config_id ?? UNATTRIBUTED_KEY,
 		seriesLabel: p.adapter_label ?? p.provider ?? 'Unattributed',
-		total_cents: p.total_cents,
+		value: p.total_cents,
 	}));
 }
+
+/** Cents are the chart's base unit; dollars are what it plots, and `dollarsSpent`
+ *  inverts that exactly for the tooltip. */
+const centsToPlottedDollars = (cents: number) => cents / 100;
+const dollarsSpent = (plotted: number) => dollars(Math.round(plotted * 100));
 
 function BudgetPage() {
 	const { projectId } = Route.useParams();
@@ -108,15 +113,25 @@ function BudgetPage() {
 				<div className="flex flex-col gap-4">
 					<BudgetCharts projectId={projectId} title="Project spend per day" />
 					<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-						<StackedSpendChart
+						<StackedSeriesChart
 							title="Spend per day by agent"
 							cells={toAgentCells(agentSeries?.summary)}
 							isLoading={agentLoading}
+							toDisplay={centsToPlottedDollars}
+							formatValue={dollarsSpent}
+							formatBucket={formatDay}
+							emptyText="No spend recorded."
+							testId="stacked-spend-chart"
 						/>
-						<StackedSpendChart
+						<StackedSeriesChart
 							title="Spend per day by AI adapter"
 							cells={toAdapterCells(adapterSeries?.summary)}
 							isLoading={adapterLoading}
+							toDisplay={centsToPlottedDollars}
+							formatValue={dollarsSpent}
+							formatBucket={formatDay}
+							emptyText="No spend recorded."
+							testId="stacked-spend-chart"
 						/>
 					</div>
 				</div>

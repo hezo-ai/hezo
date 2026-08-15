@@ -161,6 +161,20 @@ describe('message catalogs', () => {
 		// Dutch writes the same loanword, capital and all (German/Polish/Swedish
 		// spell it Projekt, so only nl coincides).
 		'chat.convert.projectLabel': ['nl'],
+		// Dutch "week" is spelt exactly like the English; Dag and Maand beside it
+		// differ, as does every other language (Woche, Semaine, Settimana, ...).
+		'activity.hours.bucket.week': ['nl'],
+		// The singular noun is the same word in these five, as
+		// `containers.column.container` and `settings.groups.agents` already record
+		// for the same loanword. The Romance languages all add a vowel (Agente).
+		'activity.hours.table.agent': ['de', 'fr', 'nl', 'pl', 'sv'],
+		// Dutch takes "run" as a loanword and pluralises it English-style, which is
+		// what `activity.hours.empty` writes too. Every other language translates it
+		// (Läufe, Exécutions, Körningar, ...).
+		'activity.hours.table.runs': ['nl'],
+		// "Total" is the ordinary word in these three; German (Gesamt), Italian
+		// (Totale), Dutch (Totaal), Polish (Razem) and Swedish (Totalt) all differ.
+		'activity.hours.table.total': ['es', 'fr', 'pt-BR'],
 	};
 
 	test('no message was left identical to the English source', () => {

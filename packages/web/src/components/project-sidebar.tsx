@@ -66,8 +66,8 @@ export function ProjectSidebar({
 	const ownAgents = enabledAgents.filter((a) => !a.is_instance).sort(byCreatedAt);
 	const instanceAgents = enabledAgents.filter((a) => a.is_instance).sort(byCreatedAt);
 
-	// Container and Activity: top-level on HQ (which has no Settings page to nest
-	// under), but sub-items of Settings on a normal project — see below.
+	// Container: top-level on HQ (which has no Settings page to nest under), but a
+	// sub-item of Settings on a normal project — see below.
 	const containerPage = {
 		to: '/projects/$projectId/container',
 		params: projectParams,
@@ -90,14 +90,19 @@ export function ProjectSidebar({
 			</span>
 		),
 	};
+	// Activity (what happened on the project, and the hours the team spent) is a
+	// top-level page on every project type, last in the list. Nested under
+	// Settings it only appeared once Settings was the active route, so it was
+	// invisible from every other page — and it is a surface the team reads, not
+	// configuration set once.
 	const activityPage = {
-		to: '/projects/$projectId/audit-log',
+		to: '/projects/$projectId/activity',
 		params: projectParams,
-		label: 'Activity',
+		label: t('nav.activity'),
 		testId: 'project-sidebar-activity',
 	};
 	// Git (GitHub today; GitLab/others later) discloses under Settings on a
-	// normal project, like Container and Activity. HQ has no Git page.
+	// normal project, like Container. HQ has no Git page.
 	const gitPage = {
 		to: '/projects/$projectId/git',
 		params: projectParams,
@@ -192,8 +197,8 @@ export function ProjectSidebar({
 			label: t('nav.assets'),
 		},
 		...(isInternal
-			? // HQ has no Budget or Settings — Container and Activity stay at the top level,
-				// after Connectors and Skills.
+			? // HQ has no Budget or Settings — Container stays at the top level, after
+				// Connectors and Skills, with Activity last as everywhere else.
 				[connectorsPage, skillsPage, containerPage, activityPage]
 			: [
 					{
@@ -209,10 +214,11 @@ export function ProjectSidebar({
 						params: projectParams,
 						label: t('nav.settings'),
 						testId: 'project-sidebar-settings',
-						// Git, Custom Prompt, Container and Activity disclose under Settings
-						// when it (or one of them) is the active route.
-						subItems: [gitPage, customPromptPage, containerPage, activityPage],
+						// Git, Custom Prompt and Container disclose under Settings when it
+						// (or one of them) is the active route.
+						subItems: [gitPage, customPromptPage, containerPage],
 					},
+					activityPage,
 				]),
 	];
 

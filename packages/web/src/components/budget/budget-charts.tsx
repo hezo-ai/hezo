@@ -11,7 +11,7 @@ import {
 	YAxis,
 } from 'recharts';
 import { type DailyCostPoint, useDailyCostSeries } from '../../hooks/use-costs';
-import { dollars, formatDay } from './chart-format';
+import { dollars, formatDay } from '../charts/chart-format';
 
 type ChartKind = 'bar' | 'line';
 

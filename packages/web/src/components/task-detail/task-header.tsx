@@ -3,6 +3,7 @@ import { Check, ChevronRight, Loader2, Pencil, X } from 'lucide-react';
 import { useState } from 'react';
 import { useAgentLookup } from '../../hooks/use-agent-lookup';
 import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
+import { formatDuration } from '../../lib/format-duration';
 import { useI18n } from '../../lib/i18n';
 import { AgentRef } from '../agent-ref';
 import { MarkdownProse } from '../markdown-prose';
@@ -13,17 +14,6 @@ import { Tooltip } from '../ui/tooltip';
 import { MarkdownFieldEditor } from './markdown-field-editor';
 
 type UpdateTaskMutation = ReturnType<typeof useUpdateTask>;
-
-/** Compact wall-clock duration ("35s", "7m 41s", "1h 4m") from a seconds total. */
-function formatDuration(totalSeconds: number): string {
-	if (totalSeconds < 60) return `${totalSeconds}s`;
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
-	if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-	const hours = Math.floor(minutes / 60);
-	const mins = minutes % 60;
-	return mins ? `${hours}h ${mins}m` : `${hours}h`;
-}
 
 interface TaskHeaderProps {
 	task: Task;

@@ -917,6 +917,33 @@ export const BudgetPeriod = {
 } as const;
 export type BudgetPeriod = (typeof BudgetPeriod)[keyof typeof BudgetPeriod];
 
+/**
+ * Bucket size for the Activity page's per-agent hours series. The value is
+ * passed straight to Postgres `date_trunc`, so the strings must stay valid
+ * field names there.
+ */
+export const HoursBucket = {
+	Day: 'day',
+	Week: 'week',
+	Month: 'month',
+} as const;
+export type HoursBucket = (typeof HoursBucket)[keyof typeof HoursBucket];
+
+/**
+ * How many buckets of each size the hours series returns. The response is an
+ * aggregate rather than a list - its row count is buckets x roster size, both
+ * bounded - so these caps are what keep it bounded rather than a cursor.
+ */
+export const HOURS_BUCKET_SPAN: Record<HoursBucket, number> = {
+	day: 30,
+	week: 12,
+	month: 12,
+};
+
+export function isHoursBucket(value: string): value is HoursBucket {
+	return value === HoursBucket.Day || value === HoursBucket.Week || value === HoursBucket.Month;
+}
+
 export const HeartbeatRunStatus = {
 	Queued: 'queued',
 	Running: 'running',

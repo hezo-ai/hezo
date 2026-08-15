@@ -11,6 +11,9 @@ everything that happened, newest first. You never switch it on, and nothing can 
 edit or delete it after the fact. When you need to know *who did what, and when* - a person
 or an agent - this is where you look.
 
+Open a project and choose **Activity** in the sidebar. The page has two tabs: **Log**, the
+record described below, and **Hours**, which reports how long each agent spent working.
+
 ## What gets recorded
 
 The log captures every state-changing action on the project:
@@ -32,8 +35,7 @@ and run it came from.
 
 ## Reading the log
 
-Open a project and choose **Activity** in the sidebar. Entries are listed newest-first with
-three columns:
+On the **Log** tab, entries are listed newest-first with three columns:
 
 - **Time** - when it happened.
 - **Actor** - who did it. A badge flags human admins and external MCP clients (API keys); the actor's name is always shown.
@@ -45,12 +47,28 @@ The log loads the most recent entries first, in pages. **Load older activity** a
 bottom of the list fetches the next page and appends it, so you can walk back through the
 whole history as far as you need without waiting for it all up front.
 
+## Hours per agent
+
+The **Hours** tab answers the other question the log raises: not just what the team did,
+but how long it took. It reports **wall-clock run time** - the time from a run starting to
+it finishing - summed per agent, and it counts every finished run, whether or not the run
+was working on a task. Runs still in flight are not counted; they have no duration yet.
+
+Choose **Day**, **Week** or **Month** to change the bucket the chart groups by. The most
+recent bucket is always still filling, so it reads low until the period closes. Below the
+chart, each agent gets a row with its time today, this week and this month, its run count,
+its average run length, and its share of the month.
+
+Hours are about time, not money. For what those runs cost, see
+[Budgets & cost control](/docs/concepts/budgets-and-costs) - the two are computed from the
+same runs, so a busy agent that is cheap to run shows up as exactly that.
+
 ## Project and instance views
 
 There are two scopes:
 
 - **Project Activity** - everything for a single project, on its **Activity** page. This is
-  what your project team uses day to day.
+  what your project team uses day to day, and the only scope that carries the Hours tab.
 - **Instance Activity** - an Admin-only view under instance settings that combines the
   activity of **all projects** plus instance-level admin actions that aren't tied to any one
   project (managing credentials, connectors, and skills). It's the single place to
