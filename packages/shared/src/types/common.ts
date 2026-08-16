@@ -905,6 +905,13 @@ export const WakeupSkipReason = {
 	InstanceAtCapacity: 'instance_at_capacity',
 	AgentRunning: 'agent_running',
 	OverBudget: 'over_budget',
+	/**
+	 * The agent's last run on this task ended in `report_no_work` and nothing has
+	 * landed on the task since, so re-dispatching would bill an identical no-op.
+	 * Lifts on its own once the agent's heartbeat interval elapses, or immediately
+	 * on new input. See `services/no-work-backoff.ts`.
+	 */
+	NoWorkCooldown: 'no_work_cooldown',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
 

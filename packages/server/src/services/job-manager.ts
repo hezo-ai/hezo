@@ -76,6 +76,7 @@ import { getDueGoals } from './goals';
 import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { refreshModelPins } from './model-pins';
+import { noWorkCooldownActive } from './no-work-backoff';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
@@ -2188,6 +2189,41 @@ export class JobManager {
 				return;
 			}
 			task = tasks.rows[0];
+		}
+
+		// No-work backoff. Placed here, after task resolution, because it is the one
+		// point every wakeup source passes through holding a concrete task - both the
+		// payload-targeted wakeups and the ones that select a task above. A gate per
+		// source would have to be re-added to each new source; this cannot be missed.
+		//
+		// Skipped rather than re-queued: the last run answered this exact question and
+		// nothing has changed since, so there is nothing to retry. New input lifts it
+		// immediately (see noWorkCooldownActive), and it expires on its own at the
+		// agent's configured cadence.
+		if (await noWorkCooldownActive(db, memberId, task.id, wakeupSource)) {
+			log.debug(
+				`Agent ${ref(agent.rows[0].slug, memberId)} reported no work on ${ref(task.identifier, task.id)} within its heartbeat interval and nothing has changed since — skipping wakeup`,
+			);
+			await this.markWakeupSkipped(
+				wakeupId,
+				WakeupSkipReason.NoWorkCooldown,
+				task.id,
+				teamId,
+				null,
+			);
+			// Completed, not left claimed: the wakeup was considered and answered -
+			// there is nothing to do - which is the same outcome as the "no actionable
+			// tasks" branch above, and it must not sit in `claimed` forever. Not
+			// re-queued either: retrying would re-ask a question already answered, and
+			// the next container start or scheduled heartbeat raises a fresh wakeup
+			// once the window has passed.
+			if (wakeupId) {
+				await db.query(
+					`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
+					[WakeupStatus.Completed, wakeupId],
+				);
+			}
+			return;
 		}
 
 		// Per-task serialisation plus the per-project concurrency ceiling: only one

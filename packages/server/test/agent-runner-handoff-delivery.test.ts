@@ -101,11 +101,13 @@ function createMockDocker(overrides: Record<string, unknown> = {}): ContainerEng
 	const {
 		execStart: execStartOverride,
 		producesOutput = false,
+		reportsNoWork = false,
 		execInspect,
 		...rest
 	} = overrides as Record<string, unknown> & {
 		execStart?: (...a: unknown[]) => unknown;
 		producesOutput?: boolean;
+		reportsNoWork?: boolean;
 		execInspect?: () => Promise<unknown>;
 	};
 	const innerExecStart =
@@ -138,6 +140,13 @@ function createMockDocker(overrides: Record<string, unknown> = {}): ContainerEng
 				await db.query(
 					`UPDATE heartbeat_runs SET produced_output = true WHERE task_id = $1 AND status = 'running'`,
 					[taskId],
+				);
+			}
+			// What the `report_no_work` MCP tool sets mid-run.
+			if (reportsNoWork) {
+				await db.query(
+					`UPDATE heartbeat_runs SET reported_no_work = true, no_work_reason = $2 WHERE task_id = $1 AND status = 'running'`,
+					[taskId, 'nothing due today'],
 				);
 			}
 			return innerExecStart(...args);
@@ -297,6 +306,58 @@ describe('runAgent handoff-delivery guardrail', () => {
 			[taskId, comments.rows[0].id],
 		);
 		expect(mentions.rows.length).toBeGreaterThan(0);
+	});
+
+	it('delivers nothing when the run called report_no_work, however its final message reads', async () => {
+		// Every form this net handles is a HANDOFF the run failed to deliver. A run
+		// that declared it had nothing to do handed nothing over - its final message
+		// is a status note, and the @admin in it is the agent narrating, not asking.
+		//
+		// Delivering it anyway is what turned an idle daily agent into an inbox
+		// flood: each no-op wake posted a comment the agent had explicitly decided
+		// not to write, fanned it to the admin inbox, and set produced_output, which
+		// graded the no-op a productive run and hid it from the no-work backoff.
+		const deps = makeDeps(
+			createMockDocker({
+				producesOutput: false,
+				reportsNoWork: true,
+				execStart: streamResult(
+					'HM-345 heartbeat — intentional no-op. Nothing new since yesterday; parking with report_no_work only. @admin no action needed.',
+				),
+			}),
+		);
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		const runId = runIdOf(result);
+
+		// Still a success - report_no_work is a legitimate idle wake.
+		const run = await db.query<{
+			status: string;
+			produced_output: boolean;
+			reported_no_work: boolean;
+			log_text: string;
+		}>(
+			`SELECT status, produced_output, reported_no_work, ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[runId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
+		expect(run.rows[0].reported_no_work).toBe(true);
+		// ...but a silent one. No comment, no delivery log line, and the no-op is
+		// still recorded as a no-op.
+		expect(run.rows[0].produced_output).toBe(false);
+		expect(run.rows[0].log_text).not.toContain('auto-delivered');
+
+		const comments = await textComments(runId);
+		expect(comments.rows.length).toBe(0);
+
+		// Nothing reached the admin inbox for this run.
+		const mentions = await db.query(
+			`SELECT 1 FROM admin_mentions m
+			 JOIN task_comments c ON c.id = m.comment_id
+			 WHERE c.created_by_run_id = $1`,
+			[runId],
+		);
+		expect(mentions.rows.length).toBe(0);
 	});
 
 	it('does not double-post when the handoff was already posted via create_comment this run', async () => {

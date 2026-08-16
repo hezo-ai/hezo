@@ -2121,7 +2121,15 @@ export async function runAgent(
 			//       delivery non-looping (see the branch itself).
 			// Best-effort: a failure here must never throw out of the run-completion path.
 			// Runs on every runtime, including OpenCode, which has no stop-hook judge.
-			if (exitedClean && task) {
+			//
+			// A run that called `report_no_work` is excluded outright. Every form above
+			// is a HANDOFF the agent failed to deliver, and an agent that declared it
+			// had nothing to do handed nothing over - its final message is a status
+			// note. Delivering it posts a comment the agent decided not to write, fans
+			// it out to the @admin inbox on every idle wake, and flips
+			// `produced_output`, grading the no-op as productive work and hiding it
+			// from the no-work backoff that damps the next dispatch.
+			if (exitedClean && task && !reportedNoWork) {
 				try {
 					const finalMessage = parser.getFinalAssistantMessage();
 					if (finalMessage?.trim()) {

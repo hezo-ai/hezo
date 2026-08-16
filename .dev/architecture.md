@@ -2194,6 +2194,51 @@ countdown matches the enforced cadence. Alongside it the API derives `has_action
 (mirrors the scheduler's task selection: a non-terminal, unblocked assigned task); when
 false the next heartbeat would no-op, so the UI shows a dash rather than a countdown.
 
+**The no-work backoff, and why the cadence needs one.** The configured interval is honoured
+by exactly two code paths - `processScheduledHeartbeats` and `chainNextTaskWakeup`. Every
+other source dispatches on arrival, which is correct for a mention and wrong for a system
+event: a daily agent could be re-run every few minutes by `automation` wakeups while the UI
+counted down 23 hours to its next heartbeat. `report_no_work` made that visible - the
+verdict was recorded on the run row and never read again, so each system wakeup bought a
+container, a model call and a bill to re-derive "nothing to do".
+
+`noWorkCooldownActive` (`services/no-work-backoff.ts`) applies that verdict at dispatch. It
+sits in `activateAgent` **after task resolution** - the one point every source passes through
+holding a concrete task, so a new source cannot forget it. It suppresses when all three hold:
+the agent's most recent *finished* run on this task ended `reported_no_work`; that run
+finished within `max(heartbeat_interval_min, floor)` (so the backoff expires exactly when a
+scheduled heartbeat would have come round anyway); and no `task_comments` row has landed
+since, excluding ones that run authored. Comments are the signal rather than `tasks.updated_at`
+because every mutation that could give the agent work - status, assignee, title, unblock -
+writes one through `task-events.ts`, whereas `updated_at` is bumped by the run's own
+in-progress flip and would report "changed" on the quietest run. Conversational sources
+(`mention`, `comment`, `reply`, `on_demand`, `credential_provided`, `asset_deletion_resolved`)
+are exempt: each is somebody asking for something the last pass could not have served. A
+suppressed wakeup is marked `completed` with `last_skipped_reason = no_work_cooldown` -
+answered, not re-queued to ask again, and not left dangling in `claimed`.
+
+**The container-start fan-out, and the loop it used to close.** `provisionContainer` ends by
+nudging the project's agents (`wakeAgentsWithPendingWork`) so work queued while the container
+was still coming up starts without waiting for a heartbeat. That is right for a provision
+nobody is waiting on - startup self-heal, project creation - and wrong for one the run path
+asked for: `acquireRunContainer`'s pool ladder provisions on its `create` rung, so a run is
+already starting and will do the work. Waking then billed a second run for it, which on a cold
+pool provisioned again and woke again, sustaining itself at container-start cadence no matter
+what the agent's heartbeat said. The policy is therefore the caller's to state
+(`ProvisionWakePolicy`), since only the caller knows whether a run is in flight.
+
+Two things keep the fan-out honest wherever it does fire. It **names the task** on each wakeup:
+a task-less payload slips past every dedup guard in the dispatch path - `shouldDeferWakeupForBlockers`
+returns early without one, `processWakeups`' busy/capacity pre-checks are all inside
+`if (wakeupTaskId)`, and `chainNextTaskWakeup` reads `payload->>'task_id'` - so it queued a run per
+container start regardless of what was already in flight. And it **skips agents already covered**
+by a queued or claimed wakeup for that task, rather than leaning on `createWakeup`'s coalescing,
+which merges payloads and would overwrite a more specific sibling's `reason` (the container-recovery
+wakeup queued moments earlier in the same provision is exactly that case). The payload carries
+`reason`, not `trigger`: `trigger` marks a wakeup with its own dispatch path, and `createWakeup`
+refuses to coalesce onto one, so the marker both blocked coalescing and left the run list showing a
+bare "Automation" for a wakeup that can now name itself.
+
 **Dispatch.** `JobManager` runs a ~1 Hz cron that also does container sync, container
 health, and orphan recovery. Container sync separates its two costs: liveness
 (`inspectContainer`) runs every pass, while the working-set **memory sample**
@@ -3243,6 +3288,16 @@ summing cumulative session totals). `recoverOffStreamRunUsage` dispatches both a
 file afterwards — Grok's holds the `XAI_API_KEY`, and a wire log plausibly captures the
 Moonshot bearer.
 
+**Grok's text buffer flushes at every turn boundary, not just at `end`.** Its stream carries
+assistant text as `text` deltas with no `result` event, so the parser accumulates them and the
+flush is the only place `finalMessage` can be captured. Consecutive `text` events are deltas of
+one message, but a run has many: the next turn opens with `thought`, and tool activity arrives as
+event types this parser renders nothing for. Flushing only on `end` therefore ran the whole run's
+narration into one buffer and made `finalMessage` the concatenation of every turn - sentences
+abutting with no separator, since deltas are appended raw. The handoff net posts that value
+verbatim, so an entire run's thinking went out as one comment. Anything that is not another
+`text` delta now ends the message.
+
 **Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
 legitimately long agent/background work; every runtime is relaxed at its own config surface
 (no exact cross-runtime env analog exists for Claude Code's `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`).
@@ -3361,7 +3416,17 @@ and the handoff-delivery net are:
 blocks at most once per run (the `stop_hook_active` ceiling) — so a stranded handoff is *also*
 caught **deterministically** at run completion, independent of any judge. In `agent-runner.ts`,
 when a run exits cleanly, the runner reads the run's final assistant message from the stream
-parser (`getFinalAssistantMessage()`). Three stranded forms are handled, differently:
+parser (`getFinalAssistantMessage()`).
+
+**A run that called `report_no_work` is excluded outright.** Every form below is a *handoff* the
+run failed to deliver, and an agent that declared it had nothing to do handed nothing over - its
+final message is a status note, and an `@admin` inside it is narration, not an ask. Delivering it
+anyway posted a comment the agent had explicitly decided not to write, fanned it to the admin
+inbox on every idle wake, and set `produced_output`, which graded the no-op a productive run and
+hid it from the no-work backoff above. On Grok that fired on every idle tick, because Grok has no
+judge and the net is its only guardrail.
+
+Three stranded forms are handled, differently:
 (1) an **active `@`-mention** (`extractMentionSlugs`) the run never posted as a comment is
 delivered verbatim via `postAgentComment` — the same insert + broadcast + `fireCommentWakeups`
 path `create_comment` uses — so it fans out to the admin inbox / agent wakeup instead of

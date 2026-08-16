@@ -7,10 +7,12 @@ import {
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
 	ContainerStatus,
 	HeartbeatRunStatus,
+	TaskPriority,
 	TEST_CONTAINER_LABEL_KEY,
 	TEST_CONTAINER_LABEL_VALUE,
 	TEST_CONTAINERS_ENV,
 	WakeupSource,
+	WakeupStatus,
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
@@ -390,10 +392,28 @@ export async function captureContainerLogs(
 	}
 }
 
+/**
+ * Whether a finished provision should nudge the project's agents.
+ *
+ * `wakeAgentsWithPendingWork` exists for the provisions nobody is waiting on -
+ * startup self-heal, project creation - where pending work would otherwise sit
+ * until the next scheduled heartbeat. A provision the run path itself asked for
+ * is the opposite case: a run is already starting on this project and will do
+ * the work, so waking every agent that holds a task here bills a second run for
+ * work the first one is mid-way through. That second run provisions again on a
+ * cold pool, wakes again, and the loop sustains itself at container-start
+ * cadence rather than at the agent's configured heartbeat.
+ *
+ * Stated by the caller rather than inferred here, because the caller is the only
+ * one that knows whether a run is already in flight.
+ */
+export type ProvisionWakePolicy = 'wake-pending-agents' | 'caller-runs-the-work';
+
 export async function provisionContainer(
 	deps: ContainerDeps,
 	project: ProjectRow,
 	teamSlug: string,
+	wakePolicy: ProvisionWakePolicy = 'wake-pending-agents',
 ): Promise<string> {
 	const { db, docker, dataDir, wsManager, masterKeyManager, logs } = deps;
 	const teamId = project.team_id;
@@ -759,10 +779,13 @@ export async function provisionContainer(
 		// run (container_status !== running). Now that it's up, nudge every agent
 		// holding pending work so freshly-created tasks (e.g. the CEO's coherence
 		// pass) start without waiting for the next scheduled heartbeat. Mirrors the
-		// container start/rebuild routes.
-		await wakeAgentsWithPendingWork(db, project.id, teamId).catch((e) =>
-			log.error('Failed to wake agents with pending work after provision:', e),
-		);
+		// container start/rebuild routes. Skipped when the caller is itself a run
+		// that provisioned this container to execute on - see ProvisionWakePolicy.
+		if (wakePolicy === 'wake-pending-agents') {
+			await wakeAgentsWithPendingWork(db, project.id, teamId).catch((e) =>
+				log.error('Failed to wake agents with pending work after provision:', e),
+			);
+		}
 
 		return Id;
 	} catch (error) {
@@ -1226,7 +1249,10 @@ export async function acquireRunContainer(
 
 			if (decision.kind === 'create') {
 				const proj = await loadProjectRow(db, projectId);
-				const id = await provisionContainer(deps, proj, proj.team_slug);
+				// The caller is acquiring this container to run on it right now, so
+				// the post-provision fan-out would wake agents for work this run is
+				// about to do - including the agent whose run is provisioning.
+				const id = await provisionContainer(deps, proj, proj.team_slug, 'caller-runs-the-work');
 				if (await takeMember(deps, projectId, id, taskId, workload)) {
 					return { kind: 'acquired' as const, containerId: id };
 				}
@@ -2409,6 +2435,15 @@ export async function requeueContainerKilledRuns(
  * in this project. Used after a container transitions to running (initial
  * provision, start, rebuild) so pending work is picked up promptly instead of
  * waiting for the next scheduled heartbeat.
+ *
+ * **Each wakeup names the task it is for.** A task-less wakeup slips past every
+ * dedup guard in the dispatch path - `shouldDeferWakeupForBlockers` returns
+ * early without a task, `processWakeups`' busy/capacity pre-checks are all
+ * inside `if (wakeupTaskId)`, and `chainNextTaskWakeup`'s already-covered clause
+ * reads `payload->>'task_id'` - so a fan-out that omitted it queued a run per
+ * container start no matter what was already in flight. The task chosen is the
+ * one `activateAgent` would select anyway (priority, then oldest, blockers
+ * clear), so naming it changes which guards fire, not which work runs.
  */
 export async function wakeAgentsWithPendingWork(
 	db: Db,
@@ -2416,20 +2451,61 @@ export async function wakeAgentsWithPendingWork(
 	teamId: string,
 ): Promise<void> {
 	const { placeholders, values } = terminalStatusParams(3);
-	const pending = await db.query<{ agent_id: string }>(
-		`SELECT DISTINCT i.assignee_id AS agent_id
+	const pr = 3 + values.length;
+	const wu = pr + 4;
+	const pending = await db.query<{ agent_id: string; task_id: string }>(
+		`SELECT DISTINCT ON (i.assignee_id) i.assignee_id AS agent_id, i.id AS task_id
 		 FROM tasks i
 		 JOIN member_agents ma ON ma.id = i.assignee_id
 		 WHERE i.project_id = $1 AND i.team_id = $2
 		   AND i.status NOT IN (${placeholders})
-		   AND ma.admin_status = 'enabled'`,
-		[projectId, teamId, ...values],
+		   AND ma.admin_status = 'enabled'
+		   AND NOT EXISTS (
+		     SELECT 1 FROM task_dependencies d
+		     JOIN tasks b ON b.id = d.blocked_by_task_id
+		     WHERE d.task_id = i.id
+		       AND b.status NOT IN (${placeholders})
+		   )
+		   -- Already covered: a pending wakeup for this agent and task will run the
+		   -- work, so a nudge adds nothing. Skipping beats relying on createWakeup's
+		   -- coalescing, which merges payloads and would overwrite a more specific
+		   -- sibling's reason - the container-recovery wakeup queued moments earlier
+		   -- in this same provision is exactly that case.
+		   AND NOT EXISTS (
+		     SELECT 1 FROM agent_wakeup_requests w
+		     WHERE w.member_id = i.assignee_id
+		       AND w.status IN ($${wu}::wakeup_status, $${wu + 1}::wakeup_status)
+		       AND w.payload->>'task_id' = i.id::text
+		   )
+		 ORDER BY i.assignee_id,
+		   CASE i.priority WHEN $${pr} THEN 0 WHEN $${pr + 1} THEN 1 WHEN $${pr + 2} THEN 2 WHEN $${pr + 3} THEN 3 END,
+		   i.created_at ASC`,
+		[
+			projectId,
+			teamId,
+			...values,
+			TaskPriority.Urgent,
+			TaskPriority.High,
+			TaskPriority.Medium,
+			TaskPriority.Low,
+			WakeupStatus.Queued,
+			WakeupStatus.Claimed,
+		],
 	);
 	for (const row of pending.rows) {
 		trackBackground(
 			createWakeup(db, row.agent_id, teamId, WakeupSource.Automation, {
-				trigger: 'container_start',
+				// `reason`, not `trigger`. `trigger` marks a wakeup with its own
+				// dispatch path (the Captain's `progress_update_now`), and `createWakeup`
+				// deliberately refuses to coalesce onto one so the marker cannot be
+				// absorbed - which meant every container start stacked another row for
+				// the same agent and task. This wakeup has no special dispatch, so it
+				// wants ordinary coalescing. `reason` is also the key the run list reads
+				// (`formatTriggerReason`), so runs now name themselves "Automation:
+				// container_start" instead of a bare "Automation".
+				reason: 'container_start',
 				project_id: projectId,
+				task_id: row.task_id,
 			}).catch((e) => log.error('Failed to create wakeup on container start:', e)),
 		);
 	}

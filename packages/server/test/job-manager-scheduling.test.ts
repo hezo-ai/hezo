@@ -464,6 +464,110 @@ describe('JobManager scheduling & dispatch', () => {
 		});
 	});
 
+	describe('no-work backoff', () => {
+		/**
+		 * A finished no-work run for the shared agent+task, `minutesAgo` back.
+		 *
+		 * Clears the task's comments first. The backoff lifts on any comment newer
+		 * than the run, and earlier tests in this file leave text comments on the
+		 * shared task at real `now()` - which is newer than a backdated run, so they
+		 * would lift it before the assertion ran. (afterEach only sweeps `system`.)
+		 */
+		async function seedNoWorkRun(minutesAgo: number): Promise<void> {
+			await ctx.db.query('DELETE FROM task_comments WHERE task_id = $1', [taskId]);
+			await ctx.db.query(
+				`INSERT INTO heartbeat_runs
+				   (team_id, member_id, task_id, status, started_at, finished_at, reported_no_work)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status,
+				         now() - ($5 || ' minutes')::interval - interval '1 minute',
+				         now() - ($5 || ' minutes')::interval, true)`,
+				[teamId, agentId, taskId, HeartbeatRunStatus.Succeeded, String(minutesAgo)],
+			);
+		}
+
+		it('skips a container_start dispatch minutes after the agent reported no work', async () => {
+			// The incident, end to end. A daily agent finishes a run having called
+			// report_no_work; the container_start automation fires minutes later and
+			// used to dispatch a full billed run to reach the same conclusion, over
+			// and over, while the UI showed the next heartbeat a day away.
+			await ctx.db.query('UPDATE member_agents SET heartbeat_interval_min = 1440 WHERE id = $1', [
+				agentId,
+			]);
+			await seedNoWorkRun(5);
+			const wakeupId = await insertQueuedWakeup(agentId, 'automation', {
+				task_id: taskId,
+				reason: 'container_start',
+			});
+
+			const manager = createJobManager();
+			await internals(manager).processWakeups();
+			await waitForBackground();
+
+			const row = await wakeupRow(wakeupId);
+			// Completed, with the reason recorded: answered, not left dangling and not
+			// re-queued to ask again.
+			expect(row.status).toBe(WakeupStatus.Completed);
+			expect(row.last_skipped_reason).toBe(WakeupSkipReason.NoWorkCooldown);
+			// The point of the whole change: no second run, so no second bill.
+			const runs = await ctx.db.query<{ id: string }>(
+				`SELECT id FROM heartbeat_runs
+				 WHERE member_id = $1 AND task_id = $2 AND reported_no_work = false`,
+				[agentId, taskId],
+			);
+			expect(runs.rows.length).toBe(0);
+			manager.shutdown();
+		});
+
+		it('dispatches anyway once new input lands on the task', async () => {
+			await ctx.db.query('UPDATE member_agents SET heartbeat_interval_min = 1440 WHERE id = $1', [
+				agentId,
+			]);
+			await seedNoWorkRun(5);
+			// A human comment after the run - the backoff must not sit on this.
+			await ctx.db.query(
+				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+				 VALUES ($1, NULL, 'text'::comment_content_type, $2::jsonb)`,
+				[taskId, JSON.stringify({ text: 'actually, there is something' })],
+			);
+			const wakeupId = await insertQueuedWakeup(agentId, 'automation', {
+				task_id: taskId,
+				reason: 'container_start',
+			});
+
+			const manager = createJobManager();
+			await internals(manager).processWakeups();
+			await waitForBackground();
+
+			const row = await wakeupRow(wakeupId);
+			expect(row.last_skipped_reason).not.toBe(WakeupSkipReason.NoWorkCooldown);
+			// It really ran (and failed on the absent AI provider, as everything in
+			// this file does) rather than merely avoiding the skip.
+			const runs = await ctx.db.query<{ id: string }>(
+				`SELECT id FROM heartbeat_runs
+				 WHERE member_id = $1 AND task_id = $2 AND reported_no_work = false`,
+				[agentId, taskId],
+			);
+			expect(runs.rows.length).toBe(1);
+			manager.shutdown();
+		});
+
+		it('never sits on a mention, however recent the no-work verdict', async () => {
+			await ctx.db.query('UPDATE member_agents SET heartbeat_interval_min = 1440 WHERE id = $1', [
+				agentId,
+			]);
+			await seedNoWorkRun(1);
+			const wakeupId = await insertQueuedWakeup(agentId, 'mention', { task_id: taskId });
+
+			const manager = createJobManager();
+			await internals(manager).processWakeups();
+			await waitForBackground();
+
+			const row = await wakeupRow(wakeupId);
+			expect(row.last_skipped_reason).not.toBe(WakeupSkipReason.NoWorkCooldown);
+			manager.shutdown();
+		});
+	});
+
 	describe('processBudgetResumes', () => {
 		it('lifts a reactive budget pause once the agent is back within budget', async () => {
 			const manager = createJobManager();

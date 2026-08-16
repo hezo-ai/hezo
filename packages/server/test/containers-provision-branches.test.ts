@@ -250,7 +250,7 @@ describe('provisionContainer', () => {
 		expect(stored.rows[0].container_status).toBe('running');
 	});
 
-	it('requeues container-killed runs and wakes agents with pending work after provisioning', async () => {
+	it('requeues container-killed runs, and does not double-queue the fan-out behind them', async () => {
 		await resetContainerRow();
 		await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
 		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
@@ -270,20 +270,46 @@ describe('provisionContainer', () => {
 			 WHERE member_id = $1 AND status = $2::wakeup_status ORDER BY created_at ASC`,
 			[agentId, WakeupStatus.Queued],
 		);
-		const reasons = wakeups.rows.map(
-			(w) =>
-				(w.payload as Record<string, unknown>).reason ??
-				(w.payload as Record<string, unknown>).trigger,
-		);
-		expect(reasons).toContain('container_recovery');
-		expect(reasons).toContain('container_start');
-		const recovery = wakeups.rows.find(
-			(w) => (w.payload as Record<string, unknown>).reason === 'container_recovery',
-		);
-		expect((recovery?.payload as Record<string, unknown>).previous_run_id).toBe(killed.rows[0].id);
-		expect((recovery?.payload as Record<string, unknown>).task_id).toBe(planningTaskId);
+		// One wakeup, not two. The recovery wakeup already names this agent and this
+		// task, so the pending-work fan-out that follows it in the same provision
+		// has nothing to add and stands down. It must not queue a second row: both
+		// now carry a task_id, so createWakeup would coalesce them and mergePayloads
+		// would overwrite `container_recovery` - losing the specific reason, and the
+		// recovery label with it - to say `container_start` instead.
+		expect(wakeups.rows.length).toBe(1);
+		const recovery = wakeups.rows[0];
+		expect((recovery.payload as Record<string, unknown>).reason).toBe('container_recovery');
+		expect((recovery.payload as Record<string, unknown>).previous_run_id).toBe(killed.rows[0].id);
+		expect((recovery.payload as Record<string, unknown>).task_id).toBe(planningTaskId);
 
 		await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+	});
+
+	it('wakes nobody when the caller provisioned this container to run on it', async () => {
+		await resetContainerRow();
+		await db.query('DELETE FROM heartbeat_runs WHERE team_id = $1', [teamId]);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE team_id = $1', [teamId]);
+
+		const { docker } = recordingDocker();
+		await provisionContainer(
+			baseDeps(docker),
+			await projectRow(),
+			teamSlug,
+			'caller-runs-the-work',
+		);
+		await waitForBackground();
+
+		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+			`SELECT payload FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND status = $2::wakeup_status`,
+			[agentId, WakeupStatus.Queued],
+		);
+		// The pool ladder reaches provisionContainer from acquireRunContainer, so a
+		// run is already starting on this project. Fanning out here woke that same
+		// agent for the work its own run was about to do; the extra run provisioned
+		// again on a cold pool, woke again, and the loop sustained itself at
+		// container-start cadence regardless of the agent's heartbeat interval.
+		expect(wakeups.rows.some((w) => w.payload.reason === 'container_start')).toBe(false);
 	});
 
 	it('streams provisioning lines and serves a replace-snapshot through the log broker', async () => {
