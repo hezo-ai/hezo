@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.48.0 - 2026-08-16
+
+### Features
+
+- **hiring:** ask for the heartbeat cadence instead of assuming a default ([#973](https://github.com/hezo-ai/hezo/pull/973))
+- **web:** stack the agent run list into readable bands on mobile ([#972](https://github.com/hezo-ai/hezo/pull/972))
+- **web:** make the dashboard metric tiles link to their pages ([#971](https://github.com/hezo-ai/hezo/pull/971))
+
+### Bug Fixes
+
+- **runs:** stop idle agents re-running themselves every container start ([#974](https://github.com/hezo-ai/hezo/pull/974))
+- **ai-providers:** make the instance default decide, and reach live sessions ([#970](https://github.com/hezo-ai/hezo/pull/970))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.47.0...0.48.0
+
 ## 0.47.0 - 2026-08-15
 
 ### Features
