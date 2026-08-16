@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 26,
+			"notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
+		},
+		{
 			"version": 25,
 			"notes": "The Captain's progress-update duty now writes one project summary rather than a summary plus three columns of per-task lines."
 		},

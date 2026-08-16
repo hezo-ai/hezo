@@ -895,7 +895,18 @@ project.
   `services/hire-proposal.ts`. A hire captures **`reports_to`** (the manager's slug,
   validated against the team) so the materialized agent gets its structural reporting
   line — without it an agent has no manager and the assignment-hierarchy guard
-  (`assertSubordinateAssignee`) blocks delegation to/from it. Approval materialises the
+  (`assertSubordinateAssignee`) blocks delegation to/from it. A hire also captures
+  **`heartbeat_interval_min`**, and no hire may inherit a cadence nobody chose:
+  `create_hire_proposal` declares it **required** (an agent cannot omit it), and the web
+  hire form ships no prefill with submit gated until the admin picks one. The prompt half
+  is the "ask the admin for the heartbeat cadence" obligation in
+  `_partials/captain/hire-workflow.md`, mirrored as a clause in `_instance/ceo.md`.
+  `prepareHireProposal` keeps the `DEFAULT_HEARTBEAT_INTERVAL_MIN` fallback deliberately:
+  it is shared with `POST /agents/onboard` and the bootstrap branch, where a caller that
+  omits the field is legitimate, so enforcement sits at the MCP boundary instead. Every
+  write path (both hire tools, `prepareHireProposal`, `PATCH /approvals/:id`) rejects a
+  value below `HEARTBEAT_INTERVAL_FLOOR_MIN`, since `NEXT_HEARTBEAT_AT_SQL` would clamp it
+  and store a cadence the agent never ticks at. Approval materialises the
   agent via the hire approval handler (resolving the manager slug → member id). An
   existing agent's manager is set/changed with the **`set_agent_reports_to`** MCP tool
   (Captain or HQ coordinator; rejects self-reports and cycles) — the structural analogue

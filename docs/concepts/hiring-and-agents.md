@@ -46,8 +46,13 @@ When you hire an agent you set:
   be accepted - the editor marks them and flags any that are missing.
 - **Model** - which provider/model it runs on (defaults to the team's model; override
   per agent if you want).
-- **Heartbeat** - how often it wakes to look for work. The agent's page shows a live
-  countdown to its next heartbeat (hidden while the agent is disabled or paused).
+- **Heartbeat** - how often it wakes to look for work. There is no default: the cadence
+  drives both how fast the agent picks up work and how much it spends, so you pick it
+  yourself and the hire form will not submit until you have. The shortest cadence the
+  scheduler runs is 60 minutes. When the CEO or a Captain files the hire instead, it asks
+  you for the cadence before filing rather than choosing one for you. The agent's page
+  shows a live countdown to its next heartbeat (hidden while the agent is disabled or
+  paused).
 - **Budget** - optional spending limits (see
   [Budgets & cost control](/docs/concepts/budgets-and-costs)).
 - **Code access** - whether the agent works in the project's code workspace.

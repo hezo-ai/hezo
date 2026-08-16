@@ -658,7 +658,7 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | `system_prompt` | `string` | No | Updated system prompt. If provided, it must keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the revision is rejected. |
 | `reports_to` | `string` | No | Updated manager - an existing agent's slug. Pass an empty string to clear the reporting line. |
 | `default_effort` | `string` | No | Updated default effort: minimal, low, medium, high, max |
-| `heartbeat_interval_min` | `number` | No | Updated heartbeat interval (min) |
+| `heartbeat_interval_min` | `integer` | No | Updated heartbeat interval. How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
 | `monthly_budget_cents` | `number` | No | Updated monthly budget in cents |
 | `touches_code` | `boolean` | No | Whether this agent reads/writes repo code |
 
@@ -683,7 +683,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `system_prompt` | `string` | No | Full system prompt for the new agent. If provided, it MUST contain every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the proposal is rejected - these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs. |
 | `reports_to` | `string` | No | The manager this agent reports to - an existing agent's slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team. |
 | `default_effort` | `string` | No | Default reasoning effort: minimal, low, medium, high, max |
-| `heartbeat_interval_min` | `number` | No | Heartbeat interval (min) |
+| `heartbeat_interval_min` | `integer` | Yes | How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
 | `daily_budget_cents` | `number` | No | Daily budget in cents |
 | `weekly_budget_cents` | `number` | No | Weekly budget in cents |
 | `monthly_budget_cents` | `number` | No | Monthly budget in cents |

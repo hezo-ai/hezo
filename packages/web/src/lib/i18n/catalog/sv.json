@@ -42,6 +42,8 @@
 	"agents.hire.ceoTitle": "Fråga CEO",
 	"agents.hire.chooserSubtitle": "Tre sätt att ta in någon i {project}.",
 	"agents.hire.chooserTitle": "Anställ en agent",
+	"agents.hire.heartbeatHelp": "Hur ofta den här agenten vaknar för att leta efter arbete. Minst {min} minuter.",
+	"agents.hire.heartbeatPlaceholder": "Välj ett intervall",
 	"agents.hire.hiringForPickTeam": "Rekryterar till {project}. Välj ett team och sedan de roller du vill ha.",
 	"agents.hire.hiringForTeam": "Rekryterar till {project}.",
 	"agents.hire.manualDesc": "Fyll i titel, systemprompt, rapporteringslinje och budget.",

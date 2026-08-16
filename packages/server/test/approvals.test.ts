@@ -137,6 +137,42 @@ describe('approvals CRUD', () => {
 		expect(patched.payload.title).toBe('Analyst');
 	});
 
+	it('rejects a revised heartbeat below the scheduler floor', async () => {
+		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				type: 'hire',
+				requested_by_member_id: agentId,
+				payload: {
+					title: 'Auditor',
+					slug: 'auditor',
+					system_prompt: 'Draft.',
+					heartbeat_interval_min: 720,
+				},
+			}),
+		});
+		const approval = (await createRes.json()).data;
+
+		// A sub-floor cadence would be clamped by the scheduler, so the edit is
+		// refused rather than stored as a number the agent never ticks at.
+		const patchRes = await app.request(`/api/approvals/${approval.id}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ heartbeat_interval_min: 15 }),
+		});
+		expect(patchRes.status).toBe(400);
+
+		// The stored cadence is untouched.
+		const list = await app.request(`/api/projects/${projectSlug}/approvals`, {
+			headers: authHeader(token),
+		});
+		const row = (
+			(await list.json()).data as Array<{ id: string; payload: Record<string, number> }>
+		).find((a) => a.id === approval.id);
+		expect(row?.payload.heartbeat_interval_min).toBe(720);
+	});
+
 	it('rejects modifying a non-hire approval', async () => {
 		const createRes = await app.request(`/api/projects/${projectSlug}/approvals`, {
 			method: 'POST',

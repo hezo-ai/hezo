@@ -1,4 +1,9 @@
-import { AgentAdminStatus, BUDGET_PAUSE_STATUSES, TERMINAL_TASK_STATUSES } from '@hezo/shared';
+import {
+	AgentAdminStatus,
+	BUDGET_PAUSE_STATUSES,
+	HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT,
+	TERMINAL_TASK_STATUSES,
+} from '@hezo/shared';
 
 /**
  * Lower bound on how often a heartbeat can fire, regardless of an agent's
@@ -10,8 +15,12 @@ import { AgentAdminStatus, BUDGET_PAUSE_STATUSES, TERMINAL_TASK_STATUSES } from 
  * displayed countdown matches the cadence the scheduler actually enforces.
  * Coerced NaN-safe because it is interpolated into SQL below.
  */
-const rawFloorMin = Number(process.env.HEZO_HEARTBEAT_FLOOR_MIN ?? 60);
-export const HEARTBEAT_INTERVAL_FLOOR_MIN = Number.isFinite(rawFloorMin) ? rawFloorMin : 60;
+const rawFloorMin = Number(
+	process.env.HEZO_HEARTBEAT_FLOOR_MIN ?? HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT,
+);
+export const HEARTBEAT_INTERVAL_FLOOR_MIN = Number.isFinite(rawFloorMin)
+	? rawFloorMin
+	: HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT;
 
 // Fixed enum values from `@hezo/shared` — safe to interpolate as a Postgres
 // array literal.

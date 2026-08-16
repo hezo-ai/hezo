@@ -42,6 +42,8 @@
 	"agents.hire.ceoTitle": "Ask the CEO",
 	"agents.hire.chooserSubtitle": "Three ways to bring someone onto {project}.",
 	"agents.hire.chooserTitle": "Hire an agent",
+	"agents.hire.heartbeatHelp": "How often this agent wakes to look for work. Minimum {min} minutes.",
+	"agents.hire.heartbeatPlaceholder": "Pick a cadence",
 	"agents.hire.hiringForPickTeam": "Hiring for {project}. Pick a team, then choose the roles you want.",
 	"agents.hire.hiringForTeam": "Hiring for {project}.",
 	"agents.hire.manualDesc": "Fill in the title, system prompt, reporting line and budget.",

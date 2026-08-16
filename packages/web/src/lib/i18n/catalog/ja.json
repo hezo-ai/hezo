@@ -42,6 +42,8 @@
 	"agents.hire.ceoTitle": "CEO に相談する",
 	"agents.hire.chooserSubtitle": "{project} に人を迎える方法は3つあります。",
 	"agents.hire.chooserTitle": "エージェントを採用する",
+	"agents.hire.heartbeatHelp": "このエージェントがタスクを探すために起動する間隔です。最短 {min} 分です。",
+	"agents.hire.heartbeatPlaceholder": "間隔を選択",
 	"agents.hire.hiringForPickTeam": "{project} の採用です。チームを選んでから、必要な役割を選んでください。",
 	"agents.hire.hiringForTeam": "{project} の採用です。",
 	"agents.hire.manualDesc": "役職名、システムプロンプト、報告先、予算を入力します。",

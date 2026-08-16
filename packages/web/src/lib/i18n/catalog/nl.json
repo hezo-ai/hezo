@@ -42,6 +42,8 @@
 	"agents.hire.ceoTitle": "Vraag het de CEO",
 	"agents.hire.chooserSubtitle": "Drie manieren om iemand aan {project} toe te voegen.",
 	"agents.hire.chooserTitle": "Een agent aannemen",
+	"agents.hire.heartbeatHelp": "Hoe vaak deze agent wakker wordt om werk te zoeken. Minimaal {min} minuten.",
+	"agents.hire.heartbeatPlaceholder": "Kies een frequentie",
 	"agents.hire.hiringForPickTeam": "Aanname voor {project}. Kies een team en daarna de rollen die je wilt.",
 	"agents.hire.hiringForTeam": "Aanname voor {project}.",
 	"agents.hire.manualDesc": "Vul de titel, systeemprompt, rapportagelijn en het budget in.",
