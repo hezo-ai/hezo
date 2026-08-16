@@ -14,6 +14,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
 import { resolveApproval } from '../services/approval-resolve';
+import { HEARTBEAT_INTERVAL_FLOOR_MIN } from '../services/heartbeat-schedule';
 import { buildHirePayloadPatch, type HirePayloadPatchInput } from '../services/hire-proposal';
 import { authoredPromptError } from '../services/prompt-style-guard';
 
@@ -235,6 +236,19 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 				400,
 			);
 		}
+	}
+	// A revised cadence below the scheduler's floor would be silently clamped, so
+	// reject it here as prepareHireProposal does on the create paths.
+	if (
+		body.heartbeat_interval_min !== undefined &&
+		body.heartbeat_interval_min < HEARTBEAT_INTERVAL_FLOOR_MIN
+	) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			`heartbeat_interval_min must be at least ${HEARTBEAT_INTERVAL_FLOOR_MIN} minutes`,
+			400,
+		);
 	}
 	const patch = buildHirePayloadPatch(body);
 	if (Object.keys(patch).length === 0) {

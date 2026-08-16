@@ -3,7 +3,6 @@ import {
 	ApprovalStatus,
 	type BudgetWindowsCents,
 	CAPTAIN_AGENT_SLUG,
-	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, Check, Loader2, X } from 'lucide-react';
@@ -62,7 +61,9 @@ const emptyValues: HireFormValues = {
 		weekly_budget_cents: 0,
 		monthly_budget_cents: 2000,
 	} satisfies BudgetWindowsCents,
-	heartbeat: String(DEFAULT_HEARTBEAT_INTERVAL_MIN),
+	// Deliberately unset: the admin picks the cadence rather than inheriting a
+	// prefilled one. The select is `required`, so submit is blocked until they do.
+	heartbeat: '',
 	touchesCode: false,
 };
 
@@ -78,9 +79,21 @@ function valuesFromPayload(p: Record<string, unknown>): HireFormValues {
 			weekly_budget_cents: (p.weekly_budget_cents as number) ?? 0,
 			monthly_budget_cents: (p.monthly_budget_cents as number) ?? 0,
 		},
-		heartbeat: String((p.heartbeat_interval_min as number) ?? DEFAULT_HEARTBEAT_INTERVAL_MIN),
+		// Kept verbatim, including a value outside the dropdown's presets - the form
+		// renders it as its own option rather than rewriting the proposer's choice.
+		heartbeat: p.heartbeat_interval_min == null ? '' : String(p.heartbeat_interval_min),
 		touchesCode: (p.touches_code as boolean) ?? false,
 	};
+}
+
+/**
+ * The chosen cadence in minutes, or undefined while the select is still on its
+ * placeholder. `required` on the select is what actually blocks submit; this
+ * keeps an unset value from reaching the API as NaN if it ever gets that far.
+ */
+function heartbeatMinutes(v: HireFormValues): number | undefined {
+	const parsed = Number.parseInt(v.heartbeat, 10);
+	return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function editsFromValues(v: HireFormValues): HireProposalEdits {
@@ -90,7 +103,7 @@ function editsFromValues(v: HireFormValues): HireProposalEdits {
 		role_description: v.roleDesc,
 		system_prompt: v.systemPrompt,
 		reports_to: v.reportsTo,
-		heartbeat_interval_min: Number.parseInt(v.heartbeat, 10),
+		heartbeat_interval_min: heartbeatMinutes(v),
 		daily_budget_cents: v.budget.daily_budget_cents,
 		weekly_budget_cents: v.budget.weekly_budget_cents,
 		monthly_budget_cents: v.budget.monthly_budget_cents,
@@ -128,7 +141,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 			daily_budget_cents: values.budget.daily_budget_cents,
 			weekly_budget_cents: values.budget.weekly_budget_cents,
 			monthly_budget_cents: values.budget.monthly_budget_cents,
-			heartbeat_interval_min: Number.parseInt(values.heartbeat, 10),
+			heartbeat_interval_min: heartbeatMinutes(values),
 			touches_code: values.touchesCode,
 		});
 		if (result.task) {
@@ -175,6 +188,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 					type="submit"
 					disabled={
 						!values.title.trim() ||
+						heartbeatMinutes(values) === undefined ||
 						missingRequiredVars(values.systemPrompt).length > 0 ||
 						onboardAgent.isPending
 					}

@@ -1503,6 +1503,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 	it('Captain creates a hire proposal, then revises it', async () => {
 		const captain = await captainToken();
 		const created = (await callToolAs(captain, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: projectId,
 			title: 'Data Scientist',
 			role_description: 'Owns analytics.',
@@ -1522,6 +1523,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 
 	it('create_hire_proposal rejects an invalid default_effort', async () => {
 		const result = (await callToolAs(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: projectId,
 			title: 'Bad Effort Hire',
 			default_effort: 'turbo',
@@ -1531,6 +1533,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 
 	it('create_hire_proposal rejects a non-existent task_id link', async () => {
 		const result = (await callToolAs(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: projectId,
 			title: 'Linked Hire',
 			task_id: '00000000-0000-0000-0000-000000000000',
@@ -1541,6 +1544,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 	it('create_hire_proposal rejects a non-Captain/CEO agent', async () => {
 		const { token: workerToken } = await mintAgentToken(db, masterKeyManager, agentId, teamId);
 		const result = (await callToolAs(workerToken, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: projectId,
 			title: 'Worker Hire',
 		})) as ToolResult;
@@ -1549,6 +1553,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 
 	it('create_hire_proposal rejects an admin (agents only)', async () => {
 		const result = (await callTool('create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: projectId,
 			title: 'Admin Hire',
 		})) as ToolResult;
@@ -1596,6 +1601,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 	it('update_hire_proposal errors when no fields are provided', async () => {
 		const captain = await captainToken();
 		const created = (await callToolAs(captain, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: projectId,
 			title: 'No-op Revise Hire',
 		})) as { approval_id: string };

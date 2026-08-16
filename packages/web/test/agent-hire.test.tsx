@@ -43,9 +43,15 @@ test('can hire an agent with minimal fields', async () => {
 		params: { projectId: ws.internalSlug },
 	});
 
+	// The minimum a hire needs is a title and a deliberately chosen heartbeat -
+	// the cadence has no prefill, so submit stays gated until it is picked.
 	const role = uniqueName('Data Scientist');
 	const titleInput = (await findByLabelText('Role title')) as HTMLInputElement;
 	await user.type(titleInput, role);
+	fireEvent.change(await findByLabelText('Heartbeat'), { target: { value: '720' } });
+
+	const hireBtn = (await findByRole('button', { name: /hire agent/i })) as HTMLButtonElement;
+	await waitFor(() => expect(hireBtn.disabled).toBe(false));
 	const form = titleInput.closest('form') as HTMLFormElement;
 	fireEvent.submit(form);
 
@@ -130,6 +136,60 @@ test('admin modifies a pending hire proposal then approves it', async () => {
 		});
 		const agents = ((await res.json()) as { data: Array<{ slug: string }> }).data;
 		expect(agents.some((a) => a.slug === 'analyst')).toBe(true);
+	});
+}, 60_000);
+
+test('an agent-filed cadence outside the presets survives a round trip through the form', async () => {
+	let ws!: SeededWorkspace;
+	let approvalId!: string;
+	const { findByLabelText, findByRole, container, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+			// 90 is not one of the dropdown's presets. The Captain chose it after
+			// asking the admin, so the form must show it rather than rendering blank
+			// and silently rewriting it on the next save.
+			approvalId = await seedHireApproval(ws, {
+				title: 'Auditor',
+				slug: 'auditor',
+				role_description: 'Audits',
+				system_prompt:
+					'You are the Auditor. {{team_name}} {{reports_to}} {{skills_context}} {{project_docs_context}} {{team_preferences_context}}',
+				heartbeat_interval_min: 90,
+				daily_budget_cents: 0,
+				weekly_budget_cents: 0,
+				monthly_budget_cents: 2000,
+				touches_code: false,
+			});
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
+		search: { approvalId },
+	});
+
+	const heartbeat = (await findByLabelText('Heartbeat')) as HTMLSelectElement;
+	await waitFor(() => expect(heartbeat.value).toBe('90'));
+	expect([...heartbeat.options].map((o) => o.value)).toContain('90');
+
+	// Save an unrelated edit; the untouched cadence must come back as 90.
+	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
+	await user.type(textarea, ' Report quarterly.');
+	await user.click(await findByRole('button', { name: /save changes/i }));
+
+	const { apiBase, token } = getTestContext();
+	await waitFor(async () => {
+		const res = await apiBase(`/api/projects/${ws.internalSlug}/approvals`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		const list = (
+			(await res.json()) as {
+				data: Array<{ id: string; payload: { heartbeat_interval_min: number } }>;
+			}
+		).data;
+		expect(list.find((a) => a.id === approvalId)?.payload.heartbeat_interval_min).toBe(90);
 	});
 }, 60_000);
 
@@ -220,9 +280,14 @@ test('hire form blocks submit until all required vars are present', async () => 
 	const titleInput = (await findByLabelText('Role title')) as HTMLInputElement;
 	await user.type(titleInput, 'Gap Role');
 
-	// The starter prompt is compliant, so the button starts enabled.
+	// The heartbeat starts unpicked, so the button is gated on it even though the
+	// starter prompt is compliant. Choosing a cadence is what releases it.
 	const hireBtn = (await findByRole('button', { name: /hire agent/i })) as HTMLButtonElement;
-	expect(hireBtn.disabled).toBe(false);
+	expect(hireBtn.disabled).toBe(true);
+	const heartbeat = (await findByLabelText('Heartbeat')) as HTMLSelectElement;
+	expect(heartbeat.value).toBe('');
+	fireEvent.change(heartbeat, { target: { value: '720' } });
+	await waitFor(() => expect(hireBtn.disabled).toBe(false));
 
 	// Clear the prompt → all required vars missing → guidance flags them and the
 	// button disables.
@@ -264,7 +329,7 @@ test('can hire agent with full fields', async () => {
 		'Audits code for security vulnerabilities',
 	);
 
-	const heartbeatSelect = container.querySelector('select') as HTMLSelectElement;
+	const heartbeatSelect = (await findByLabelText('Heartbeat')) as HTMLSelectElement;
 	fireEvent.change(heartbeatSelect, { target: { value: '120' } });
 
 	const budgetInput = (await findByLabelText('Monthly budget')) as HTMLInputElement;

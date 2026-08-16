@@ -1,9 +1,12 @@
 import {
 	type BudgetWindowsCents,
 	findMissingRequiredSystemPromptVars,
+	HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT,
 	REQUIRED_SYSTEM_PROMPT_VARS,
 	SYSTEM_PROMPT_TEMPLATE_VARS,
 } from '@hezo/shared';
+import { formatDuration } from '../lib/format-duration';
+import { useI18n } from '../lib/i18n';
 import { BudgetWindowsEditor } from './budget/budget-windows-editor';
 import { type EditorChip, MarkdownEditor } from './markdown-editor';
 import { Input } from './ui/input';
@@ -39,6 +42,25 @@ export function missingRequiredVars(systemPrompt: string): string[] {
 	return findMissingRequiredSystemPromptVars(systemPrompt);
 }
 
+/**
+ * Cadences offered in the heartbeat dropdown, in minutes. Starts at the
+ * scheduler's floor: a shorter option would promise a tick that gets clamped.
+ */
+const HEARTBEAT_PRESETS_MIN = [HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT, 120, 240, 720, 1440];
+
+/**
+ * The preset cadences, plus `current` when an agent-filed proposal carries a
+ * value that is not one of them. Without this the select would render blank for
+ * e.g. 90 and silently rewrite the Captain's choice on the admin's next save.
+ */
+export function heartbeatOptions(current: string): number[] {
+	const parsed = Number.parseInt(current, 10);
+	if (!Number.isFinite(parsed) || HEARTBEAT_PRESETS_MIN.includes(parsed)) {
+		return HEARTBEAT_PRESETS_MIN;
+	}
+	return [...HEARTBEAT_PRESETS_MIN, parsed].sort((a, b) => a - b);
+}
+
 interface HireAgentFormProps {
 	values: HireFormValues;
 	onChange: (values: HireFormValues) => void;
@@ -49,6 +71,8 @@ interface HireAgentFormProps {
 }
 
 export function HireAgentForm({ values, onChange, slug, managerOptions = [] }: HireAgentFormProps) {
+	const { t } = useI18n();
+
 	function set<K extends keyof HireFormValues>(key: K, value: HireFormValues[K]) {
 		onChange({ ...values, [key]: value });
 	}
@@ -114,17 +138,27 @@ export function HireAgentForm({ values, onChange, slug, managerOptions = [] }: H
 						Heartbeat
 					</span>
 					<select
+						aria-label="Heartbeat"
+						required
 						value={values.heartbeat}
 						onChange={(e) => set('heartbeat', e.target.value)}
 						className="rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-1 outline-none focus:border-border-strong"
 					>
-						<option value="30">30m</option>
-						<option value="60">60m</option>
-						<option value="120">2h</option>
-						<option value="240">4h</option>
-						<option value="720">12h</option>
-						<option value="1440">24h</option>
+						{/* Empty and disabled so a new hire starts unselected: the cadence
+						    is a deliberate choice, never a value the admin inherited by
+						    not looking at the field. `required` blocks submit until picked. */}
+						<option value="" disabled>
+							{t('agents.hire.heartbeatPlaceholder')}
+						</option>
+						{heartbeatOptions(values.heartbeat).map((min) => (
+							<option key={min} value={String(min)}>
+								{formatDuration(min * 60)}
+							</option>
+						))}
 					</select>
+					<span className="text-xs text-text-3">
+						{t('agents.hire.heartbeatHelp', { min: String(HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT) })}
+					</span>
 				</div>
 			</div>
 

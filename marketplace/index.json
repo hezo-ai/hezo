@@ -62,9 +62,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 19,
+			"version": 20,
 			"roster_count": 7,
-			"latest_notes": "The Captain's progress-update duty now writes one project summary rather than a summary plus three columns of per-task lines."
+			"latest_notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
 		},
 		{
 			"slug": "investment",
@@ -133,9 +133,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 20,
+			"version": 21,
 			"roster_count": 6,
-			"latest_notes": "The Captain's progress-update duty now writes one project summary rather than a summary plus three columns of per-task lines."
+			"latest_notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
 		},
 		{
 			"slug": "software-development",
@@ -217,9 +217,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 25,
+			"version": 26,
 			"roster_count": 10,
-			"latest_notes": "The Captain's progress-update duty now writes one project summary rather than a summary plus three columns of per-task lines."
+			"latest_notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
 		}
 	]
 }

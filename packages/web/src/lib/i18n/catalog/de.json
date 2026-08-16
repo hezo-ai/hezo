@@ -42,6 +42,8 @@
 	"agents.hire.ceoTitle": "Den CEO fragen",
 	"agents.hire.chooserSubtitle": "Drei Wege, jemanden zu {project} zu holen.",
 	"agents.hire.chooserTitle": "Einen Agenten einstellen",
+	"agents.hire.heartbeatHelp": "Wie oft dieser Agent aufwacht, um nach Arbeit zu sehen. Mindestens {min} Minuten.",
+	"agents.hire.heartbeatPlaceholder": "Rhythmus wählen",
 	"agents.hire.hiringForPickTeam": "Einstellung für {project}. Wählen Sie ein Team und dann die gewünschten Rollen.",
 	"agents.hire.hiringForTeam": "Einstellung für {project}.",
 	"agents.hire.manualDesc": "Titel, System-Prompt, Berichtslinie und Budget ausfüllen.",

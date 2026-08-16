@@ -1,4 +1,4 @@
-import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
+import { CAPTAIN_AGENT_SLUG, DEFAULT_HEARTBEAT_INTERVAL_MIN } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -102,6 +102,7 @@ afterAll(async () => {
 describe('hire flow captures reports_to', () => {
 	it('a hire with reports_to materializes a structurally-managed agent', async () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Data Scientist',
 			system_prompt: compliantPrompt('You are the Data Scientist.'),
 			reports_to: 'architect',
@@ -123,6 +124,7 @@ describe('hire flow captures reports_to', () => {
 
 	it('rejects a hire whose reports_to is not an agent on the team', async () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Lost Soul',
 			system_prompt: compliantPrompt('You are the Lost Soul.'),
 			reports_to: 'no-such-agent',
@@ -143,6 +145,10 @@ describe('hire flow captures reports_to', () => {
 		expect(res.status).toBe(201);
 		const { approval } = (await res.json()).data;
 		expect(approval.payload.reports_to).toBe('captain');
+		// This route keeps the default for a caller that omits the cadence: only
+		// the MCP tool makes the field mandatory, and the admin form always sends
+		// one because its submit is gated on picking a cadence.
+		expect(approval.payload.heartbeat_interval_min).toBe(DEFAULT_HEARTBEAT_INTERVAL_MIN);
 
 		const newId = await approveLatestHire('support-lead');
 		const row = await db.query<{ reports_to: string }>(

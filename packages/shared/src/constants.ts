@@ -422,6 +422,20 @@ export const LOG_COMPACTION_PRESERVED_TAIL_BYTES = 12 * 1024;
  */
 export const DEFAULT_HEARTBEAT_INTERVAL_MIN = 720;
 
+/**
+ * Lowest heartbeat cadence the scheduler honours, in minutes. Anything lower is
+ * clamped up to this when the next heartbeat is computed, so offering a shorter
+ * cadence anywhere would promise a tick that never fires.
+ *
+ * The server's effective floor is this value unless `HEZO_HEARTBEAT_FLOOR_MIN`
+ * raises it (see `HEARTBEAT_INTERVAL_FLOOR_MIN` in
+ * `services/heartbeat-schedule.ts`, the authority for validation). The web has
+ * no access to that env var, so it builds its cadence options from this
+ * constant: an operator who raises the floor gets a UI that under-reports it,
+ * which is better than the browser guessing.
+ */
+export const HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT = 60;
+
 export const PROJECT_INTAKE_LABEL = 'project-intake';
 
 /**

@@ -12,6 +12,7 @@ import { checkHumanNameAvailable } from '../lib/agent-identity';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
+import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
 import { authoredPromptError } from './prompt-style-guard';
 
 const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
@@ -75,6 +76,20 @@ export async function prepareHireProposal(
 
 	if (input.default_effort !== undefined && !isAgentEffort(input.default_effort)) {
 		return { error: `Invalid default_effort: ${input.default_effort}` };
+	}
+
+	// A sub-floor cadence would be silently clamped up by the scheduler
+	// (NEXT_HEARTBEAT_AT_SQL), so reject it here rather than storing a number the
+	// agent will never actually tick at. An omitted value still takes the default
+	// below: the admin hire form legitimately posts without one, and the MCP tool
+	// makes the field required at its own boundary.
+	if (
+		input.heartbeat_interval_min !== undefined &&
+		input.heartbeat_interval_min < HEARTBEAT_INTERVAL_FLOOR_MIN
+	) {
+		return {
+			error: `heartbeat_interval_min must be at least ${HEARTBEAT_INTERVAL_FLOOR_MIN} minutes`,
+		};
 	}
 
 	const budgetError = budgetWindowsError({

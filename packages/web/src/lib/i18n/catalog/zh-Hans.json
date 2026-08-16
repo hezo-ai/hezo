@@ -42,6 +42,8 @@
 	"agents.hire.ceoTitle": "问问 CEO",
 	"agents.hire.chooserSubtitle": "有三种方式把人带进 {project}。",
 	"agents.hire.chooserTitle": "招聘一名代理",
+	"agents.hire.heartbeatHelp": "该智能体唤醒查找工作的频率。最少 {min} 分钟。",
+	"agents.hire.heartbeatPlaceholder": "选择周期",
 	"agents.hire.hiringForPickTeam": "正在为 {project} 招聘。先选一个团队，再挑选您想要的角色。",
 	"agents.hire.hiringForTeam": "正在为 {project} 招聘。",
 	"agents.hire.manualDesc": "填写职位名称、系统提示词、汇报关系和预算。",

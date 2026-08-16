@@ -46,6 +46,29 @@ async function callTool(
 	return JSON.parse(body.result.content[0].text);
 }
 
+/**
+ * The tool's raw reply text. A schema rejection never reaches the handler, so it
+ * comes back as an MCP protocol error rather than the JSON `{ error }` envelope
+ * `callTool` parses.
+ */
+async function callToolRaw(
+	agentToken: string,
+	name: string,
+	args: Record<string, unknown>,
+): Promise<string> {
+	const res = await app.request('/mcp', {
+		method: 'POST',
+		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			jsonrpc: '2.0',
+			method: 'tools/call',
+			params: { name, arguments: args },
+			id: 1,
+		}),
+	});
+	return JSON.stringify(await res.json());
+}
+
 async function captainToken(): Promise<string> {
 	const { token: t } = await mintAgentToken(db, masterKeyManager, captainId, teamId, null, {
 		projectId: internalProjectId,
@@ -96,6 +119,7 @@ afterAll(async () => {
 describe('MCP tool create_hire_proposal', () => {
 	it('lets the Captain file a pending hire proposal', async () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Data Scientist',
 			role_description: 'Owns the analytics models',
 			system_prompt: compliantPrompt('You are the Data Scientist. Build and maintain the models.'),
@@ -125,6 +149,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const taskId = taskRow.rows[0].id;
 
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Support Engineer',
 			system_prompt: compliantPrompt('You handle support escalations.'),
 			task_id: taskId,
@@ -157,6 +182,7 @@ describe('MCP tool create_hire_proposal', () => {
 		expect(identifier).not.toBe(taskId);
 
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Field Engineer',
 			system_prompt: compliantPrompt('You handle on-site work.'),
 			task_id: identifier,
@@ -168,6 +194,7 @@ describe('MCP tool create_hire_proposal', () => {
 
 	it('rejects a task_id that is not on the team', async () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Stray Role',
 			task_id: '00000000-0000-0000-0000-000000000000',
 		});
@@ -184,6 +211,7 @@ describe('MCP tool create_hire_proposal', () => {
 			{ projectId: internalProjectId },
 		);
 		const result = await callTool(engToken, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Rogue Role',
 			system_prompt: 'unauthorized',
 		});
@@ -192,6 +220,7 @@ describe('MCP tool create_hire_proposal', () => {
 
 	it('lets the CEO file a proposal for any team via project', async () => {
 		const result = await callTool(await ceoToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: projectSlug,
 			title: 'Growth Lead',
 			system_prompt: compliantPrompt('You drive growth experiments.'),
@@ -209,6 +238,7 @@ describe('MCP tool create_hire_proposal', () => {
 			[DEFAULT_TEAM_ID],
 		);
 		const result = await callTool(await ceoToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: hq.rows[0].slug,
 			title: 'HQ Ops Analyst',
 			system_prompt: compliantPrompt('You support instance-wide operations.'),
@@ -220,8 +250,45 @@ describe('MCP tool create_hire_proposal', () => {
 		expect(row.rows[0].team_id).toBe(DEFAULT_TEAM_ID);
 	});
 
+	it('refuses to file a hire that names no heartbeat cadence', async () => {
+		// The cadence is the admin's call, so a proposal can never inherit one by
+		// omission. Rejected at the schema, before the handler runs.
+		const raw = await callToolRaw(await captainToken(), 'create_hire_proposal', {
+			title: 'Unpaced Role',
+			system_prompt: compliantPrompt('You are the Unpaced Role.'),
+		});
+		expect(raw).toContain('heartbeat_interval_min');
+
+		// Nothing was filed: the rejection happens before the handler runs.
+		const filed = await db.query('SELECT id FROM approvals WHERE payload->>$1 = $2', [
+			'slug',
+			'unpaced-role',
+		]);
+		expect(filed.rows).toHaveLength(0);
+	});
+
+	it('rejects a cadence below the scheduler floor', async () => {
+		const raw = await callToolRaw(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 30,
+			title: 'Twitchy Role',
+			system_prompt: compliantPrompt('You are the Twitchy Role.'),
+		});
+		expect(raw).toContain('heartbeat_interval_min');
+	});
+
+	it('stores the chosen cadence verbatim, including one outside the UI presets', async () => {
+		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 90,
+			title: 'Paced Role',
+			system_prompt: compliantPrompt('You are the Paced Role.'),
+		});
+		expect(result.error).toBeUndefined();
+		expect((result.payload as Record<string, unknown>).heartbeat_interval_min).toBe(90);
+	});
+
 	it('rejects a duplicate of an existing agent slug', async () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Captain',
 		});
 		expect(result.error).toContain('already exists');
@@ -229,6 +296,7 @@ describe('MCP tool create_hire_proposal', () => {
 
 	it('materializes the agent when the admin approves the proposal', async () => {
 		const proposal = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Release Manager',
 			role_description: 'Owns releases',
 			system_prompt: compliantPrompt('You are the Release Manager.'),
@@ -265,6 +333,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const taskId = taskRow.rows[0].id;
 
 		const proposal = await callTool(await captainToken(), 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Incident Commander',
 			system_prompt: compliantPrompt('You coordinate incident response.'),
 			task_id: taskId,

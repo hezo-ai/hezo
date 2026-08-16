@@ -42,6 +42,8 @@
 	"agents.hire.ceoTitle": "CEO에게 물어보기",
 	"agents.hire.chooserSubtitle": "{project}에 사람을 들이는 방법은 세 가지예요.",
 	"agents.hire.chooserTitle": "에이전트 채용하기",
+	"agents.hire.heartbeatHelp": "이 에이전트가 작업을 찾기 위해 깨어나는 주기예요. 최소 {min}분이에요.",
+	"agents.hire.heartbeatPlaceholder": "주기를 선택하세요",
 	"agents.hire.hiringForPickTeam": "{project} 채용이에요. 팀을 고른 다음 원하는 역할을 선택해 주세요.",
 	"agents.hire.hiringForTeam": "{project} 채용이에요.",
 	"agents.hire.manualDesc": "직함, 시스템 프롬프트, 보고 라인, 예산을 채워 주세요.",

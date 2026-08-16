@@ -99,7 +99,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 				role_description: 'Owns payments integration',
 				system_prompt: compliantPrompt('Draft prompt'),
 				monthly_budget_cents: 7500,
-				heartbeat_interval_min: 45,
+				heartbeat_interval_min: 90,
 			}),
 		});
 		const { approval, task } = (await onboardRes.json()).data;
@@ -120,7 +120,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 		expect(created).toBeDefined();
 		expect(created.admin_status).toBe('enabled');
 		expect(created.monthly_budget_cents).toBe(7500);
-		expect(created.heartbeat_interval_min).toBe(45);
+		expect(created.heartbeat_interval_min).toBe(90);
 		// Hire flow does not surface run_timeout_min; it falls back to the DB default.
 		expect(created.run_timeout_min).toBe(60);
 
