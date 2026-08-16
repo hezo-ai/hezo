@@ -1,8 +1,7 @@
 import { summarizeMethodAccess } from '@hezo/shared';
-import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown, Plus, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ConnectorMethodsDialog } from '../../components/connector-methods-dialog';
 import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
 import { RelatedItemsList } from '../../components/related-items-list';
@@ -31,6 +30,7 @@ import {
 	useUpdateInstanceConnectorScope,
 } from '../../hooks/use-instance-connectors';
 import { useMe } from '../../hooks/use-me';
+import { useOAuthSuccessRefetch } from '../../hooks/use-oauth-success';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
 import { useI18n } from '../../lib/i18n';
 
@@ -59,7 +59,6 @@ function InstanceConnectorsPage() {
 	const { projects } = useAllVisibleProjects();
 	const createConnector = useCreateInstanceConnector();
 	const authStart = useInstanceAuthStart();
-	const queryClient = useQueryClient();
 
 	// Ref callback fires when the focused row mounts (which can happen after the
 	// initial render once the connectors query resolves). Scrolls into view then.
@@ -93,21 +92,10 @@ function InstanceConnectorsPage() {
 		setError(null);
 	}
 
-	// Refetch the list when the OAuth popup signals success. The popup posts
-	// {type: 'hezo-oauth-success'} via window.opener.postMessage from the
-	// callback page (routes/oauth.ts:buildCallbackPage), which lives on the
-	// server origin while we're on the web origin — so we can't require
-	// e.origin === window.location.origin and gate on message type instead.
-	// The payload is just a type tag, not credentials.
-	useEffect(() => {
-		const onMessage = (e: MessageEvent) => {
-			if (!e.data || typeof e.data !== 'object') return;
-			if ((e.data as { type?: string }).type !== 'hezo-oauth-success') return;
-			queryClient.invalidateQueries({ queryKey: INSTANCE_CONNECTORS_KEY });
-		};
-		window.addEventListener('message', onMessage);
-		return () => window.removeEventListener('message', onMessage);
-	}, [queryClient]);
+	// Refetch the list when the OAuth popup signals success. The admin connect
+	// flow carries no team, so it emits no row-change broadcast — this is the
+	// only update channel here.
+	useOAuthSuccessRefetch(INSTANCE_CONNECTORS_KEY);
 
 	async function handleCreate(e: React.FormEvent) {
 		e.preventDefault();

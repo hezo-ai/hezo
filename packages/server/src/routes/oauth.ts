@@ -7,7 +7,7 @@ import {
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
-import { broadcastChange } from '../lib/broadcast';
+import { broadcastChange, broadcastConnectorChange } from '../lib/broadcast';
 import { requestOrigin } from '../lib/request-origin';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
@@ -185,10 +185,12 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 		// This flow only starts from the project-scoped auth-code route, so a
 		// team is always present; the guard narrows the now-nullable state type.
 		if (payload.teamId) {
-			broadcastChange(c, wsRoom.team(payload.teamId), 'mcp_connections', 'UPDATE', {
-				id: payload.mcpConnectionId,
-				oauth_connection_id: conn.id,
-			});
+			broadcastConnectorChange(
+				c,
+				{ teamId: payload.teamId, projectId: payload.projectId },
+				'UPDATE',
+				{ id: payload.mcpConnectionId, oauth_connection_id: conn.id },
+			);
 		}
 	}
 
@@ -355,7 +357,7 @@ async function startConnectorAuthCode(
 	if (connector.revoked_at) {
 		connector = (await restoreRevokedConnector(db, connector.id)) ?? connector;
 		if (opts.teamId) {
-			broadcastChange(c, wsRoom.team(opts.teamId), 'mcp_connections', 'UPDATE', {
+			broadcastConnectorChange(c, { teamId: opts.teamId, projectId: opts.projectId }, 'UPDATE', {
 				id: connector.id,
 				status: 'pending',
 			});
@@ -1021,7 +1023,7 @@ oauthRoutes.post('/projects/:projectId/connectors/:connectorId/oauth-device/poll
 		[conn.id, connector.id],
 	);
 
-	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+	broadcastConnectorChange(c, { teamId, projectId: entry.projectId }, 'UPDATE', {
 		id: connector.id,
 		oauth_connection_id: conn.id,
 		status: 'active',
@@ -1282,7 +1284,7 @@ async function finalizeConnectorConnection(
 	// The instance-admin flow has no team room to target; the settings page
 	// refetches off the popup's hezo-oauth-success postMessage instead.
 	if (teamId) {
-		broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+		broadcastConnectorChange(c, { teamId, projectId: opts.projectId }, 'UPDATE', {
 			id: connector.id,
 			oauth_connection_id: conn.id,
 			status: 'active',

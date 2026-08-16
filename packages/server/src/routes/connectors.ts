@@ -3,12 +3,11 @@ import {
 	getConnectorCapability,
 	type McpMethodInfo,
 	summarizeMethodAccess,
-	wsRoom,
 } from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { trackBackground } from '../lib/background';
-import { broadcastChange } from '../lib/broadcast';
+import { broadcastConnectorChange } from '../lib/broadcast';
 import { validateSecretName } from '../lib/credential-placeholder';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import { resolveActor } from '../lib/resolve';
@@ -529,7 +528,7 @@ connectorsRoutes.patch('/projects/:projectId/connectors/:id/methods', async (c) 
 		[parsed.enabled === null ? null : JSON.stringify(parsed.enabled), id],
 	);
 
-	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', { id, status: 'updated' });
+	broadcastConnectorChange(c, { teamId, projectId }, 'UPDATE', { id, status: 'updated' });
 	const actor = await resolveActor(db, c.get('auth'), teamId);
 	c.get('events').emit({
 		type: 'mcp_connection.updated',
@@ -691,7 +690,7 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/revoke', async (c) =>
 				log.warn('failed to delete oauth_connection on revoke', { error: (e as Error).message }),
 			);
 	}
-	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+	broadcastConnectorChange(c, { teamId, projectId }, 'UPDATE', {
 		id,
 		status: 'revoked',
 	});
@@ -858,7 +857,7 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/api-key', async (c) =
 	invalidateSecretsVault();
 	if (!updated) return err(c, 'NOT_FOUND', 'connector not found', 404);
 
-	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+	broadcastConnectorChange(c, { teamId, projectId }, 'UPDATE', {
 		id: conn.id,
 		status: 'active',
 	});
@@ -982,7 +981,7 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 	);
 
 	const inserted = result.rows[0] as Record<string, unknown>;
-	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'INSERT', inserted);
+	broadcastConnectorChange(c, { teamId, projectId }, 'INSERT', inserted);
 
 	const createActor = await resolveActor(db, c.get('auth'), teamId);
 	c.get('events').emit({
@@ -1029,7 +1028,7 @@ async function kickoffLocalInstall(
 				rowId,
 			);
 			if (result) {
-				broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'UPDATE', {
+				broadcastConnectorChange(c, { teamId, projectId: project.id }, 'UPDATE', {
 					id: rowId,
 					install_status: result.status,
 					install_error: result.error ?? null,
@@ -1074,7 +1073,7 @@ connectorsRoutes.post('/projects/:projectId/connectors/ensure', async (c) => {
 		projectId,
 	});
 	if (!alreadyExisted) {
-		broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'INSERT', { id: row.id });
+		broadcastConnectorChange(c, { teamId, projectId }, 'INSERT', { id: row.id });
 		const ensureActor = await resolveActor(db, c.get('auth'), teamId);
 		c.get('events').emit({
 			type: 'mcp_connection.created',
@@ -1103,7 +1102,7 @@ connectorsRoutes.delete('/projects/:projectId/connectors/:id', async (c) => {
 	if (result.rows.length === 0) {
 		return err(c, 'NOT_FOUND', 'MCP connection not found', 404);
 	}
-	broadcastChange(c, wsRoom.team(teamId), 'mcp_connections', 'DELETE', { id });
+	broadcastConnectorChange(c, { teamId, projectId }, 'DELETE', { id });
 	const deleteActor = await resolveActor(db, c.get('auth'), teamId);
 	c.get('events').emit({
 		type: 'mcp_connection.deleted',

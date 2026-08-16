@@ -1,9 +1,10 @@
 import { getConnectorCapability } from '@hezo/shared';
 import { useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Plug } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { Connector } from '../hooks/use-connectors';
 import { useAuthStart } from '../hooks/use-oauth-connections';
+import { useOAuthSuccessRefetch } from '../hooks/use-oauth-success';
 import { queryKeys } from '../lib/query-keys';
 import { apiKeyGuideFor, ConnectorApiKeyForm } from './connector-api-key-form';
 import { ConnectorDeviceFlowDialog } from './connector-device-flow-dialog';
@@ -73,18 +74,9 @@ export function ConnectorCompletion({
 		onDone?.();
 	};
 
-	// Refetch immediately when the OAuth popup signals success via postMessage from
-	// the callback success page, without waiting for the WebSocket round-trip. The
-	// payload is just a type tag (not credentials), so we can't require same-origin.
-	useEffect(() => {
-		const onMessage = (e: MessageEvent) => {
-			if (!e.data || typeof e.data !== 'object') return;
-			if ((e.data as { type?: string }).type !== 'hezo-oauth-success') return;
-			queryClient.invalidateQueries({ queryKey: queryKeys.projects.connectors(projectId) });
-		};
-		window.addEventListener('message', onMessage);
-		return () => window.removeEventListener('message', onMessage);
-	}, [projectId, queryClient]);
+	// Refetch immediately when the OAuth popup signals success, without waiting
+	// for the WebSocket round-trip.
+	useOAuthSuccessRefetch(queryKeys.projects.connectors(projectId));
 
 	const openConnect = () => {
 		setError(null);
