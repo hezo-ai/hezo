@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "Inga körningar matchar det här filtret.",
 	"executions.filter.all": "Alla",
 	"executions.filter.errored": "Misslyckade",
-	"executions.filter.runs": "Körningar",
+	"executions.filter.succeeded": "Lyckade",
 	"executions.loading": "Laddar körningar...",
 	"goals.archive.action": "Arkivera mål",
 	"goals.archive.confirmAction": "Arkivera",

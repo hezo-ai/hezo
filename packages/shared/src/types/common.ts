@@ -1324,17 +1324,20 @@ export function isErroredRunStatus(status: HeartbeatRunStatus): boolean {
 /**
  * List-view filter for an agent's run history.
  *
- * An agent accumulates far more errored runs than a reader is usually looking
- * for, and they crowd out the runs that did work, so the Executions list defaults
- * to hiding them. Live `queued`/`running` runs are never hidden by any option -
- * only finished-badly ones.
+ * `All` is the default: a reader looking for what went wrong should not have to
+ * discover a control first, and the back link from a run detail page has to land
+ * somewhere that can show the run it came from whatever its outcome. The other
+ * two narrow to a single outcome each, so every option is exactly what its label
+ * says - `Succeeded` is the `succeeded` status alone, not "everything that did
+ * not error", which would put a cancelled run under a tab called Succeeded.
  */
 export const RunOutcomeFilter = {
-	/** Default: every run except the errored ones. */
-	Runs: 'runs',
+	/** Default: every run, whatever its status. */
+	All: 'all',
+	/** Only runs that finished cleanly. */
+	Succeeded: 'succeeded',
 	/** Only the errored runs. */
 	Errored: 'errored',
-	All: 'all',
 } as const;
 export type RunOutcomeFilter = (typeof RunOutcomeFilter)[keyof typeof RunOutcomeFilter];
 
@@ -1347,9 +1350,9 @@ export function matchesRunOutcomeFilter(
 	status: HeartbeatRunStatus,
 	filter: RunOutcomeFilter,
 ): boolean {
-	if (filter === RunOutcomeFilter.All) return true;
-	const errored = isErroredRunStatus(status);
-	return filter === RunOutcomeFilter.Errored ? errored : !errored;
+	if (filter === RunOutcomeFilter.Errored) return isErroredRunStatus(status);
+	if (filter === RunOutcomeFilter.Succeeded) return status === HeartbeatRunStatus.Succeeded;
+	return true;
 }
 
 /**

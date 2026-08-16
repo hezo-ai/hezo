@@ -89,15 +89,17 @@ manager.)
 ## Reviewing an agent's runs
 
 Every agent has an **Executions** tab listing its runs - what triggered each one, how long
-it took, what it cost, and the full log. The list opens on the runs that did work: runs
-that ended in an error are filtered out by default, because a busy agent accumulates more
-of them than you are usually looking for. The filter above the list switches between
-**Runs**, **Errored** and **All**, and the choice is part of the page address, so a
-filtered view can be bookmarked or shared. Runs that are still queued or running are never
-hidden, whichever filter is selected.
+it took, what it cost, and the full log. The list opens on every run, newest first. The
+filter above it narrows to a single outcome: **All**, **Succeeded** (runs that finished
+cleanly) or **Errored** (runs that failed or timed out). A run that is still queued or
+running, or one that was cancelled, belongs to neither narrow view and appears under All.
+The choice is part of the page address, so a filtered view can be bookmarked or shared,
+and opening a run and coming back returns you to the view you were in.
 
 A run waiting for a container to free up shows as queued, not as an error - it keeps its
-place and starts as soon as memory is available. See
+place and starts as soon as memory is available. If the wait outlasts its patience the run
+is recorded as cancelled and the work goes back on the queue to be picked up again; that
+is not a failure, and it is why cancelled runs are their own thing rather than errors. See
 [how much can run at once](/docs/containers/overview#how-much-can-run-at-once).
 
 ## Per-agent model override

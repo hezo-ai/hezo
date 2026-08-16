@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "Nenhuma execução corresponde a este filtro.",
 	"executions.filter.all": "Todas",
 	"executions.filter.errored": "Com erros",
-	"executions.filter.runs": "Execuções",
+	"executions.filter.succeeded": "Bem-sucedidas",
 	"executions.loading": "Carregando execuções...",
 	"goals.archive.action": "Arquivar meta",
 	"goals.archive.confirmAction": "Arquivar",

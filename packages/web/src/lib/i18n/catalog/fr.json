@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "Aucune exécution ne correspond à ce filtre.",
 	"executions.filter.all": "Toutes",
 	"executions.filter.errored": "En erreur",
-	"executions.filter.runs": "Exécutions",
+	"executions.filter.succeeded": "Réussies",
 	"executions.loading": "Chargement des exécutions...",
 	"goals.archive.action": "Archiver l'objectif",
 	"goals.archive.confirmAction": "Archiver",

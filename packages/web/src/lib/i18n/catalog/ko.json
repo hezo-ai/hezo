@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "이 필터와 일치하는 실행이 없습니다.",
 	"executions.filter.all": "전체",
 	"executions.filter.errored": "오류",
-	"executions.filter.runs": "실행",
+	"executions.filter.succeeded": "성공",
 	"executions.loading": "실행을 불러오는 중...",
 	"goals.archive.action": "목표 보관",
 	"goals.archive.confirmAction": "보관",

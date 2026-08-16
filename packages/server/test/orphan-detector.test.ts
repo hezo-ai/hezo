@@ -8,8 +8,14 @@ import {
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
+import { appendRunLogChunks } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
-import { detectOrphans, healStaleRunState } from '../src/services/orphan-detector';
+import { CAPACITY_PARK_MAX_MS } from '../src/services/agent-runner';
+import {
+	detectOrphans,
+	healStaleRunState,
+	STALE_STATE_GRACE_SECONDS,
+} from '../src/services/orphan-detector';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -253,7 +259,7 @@ describe('detectOrphans for runs stranded before they started', () => {
 		);
 	}
 
-	it('fails a queued run whose driver never started it, and frees the state it pinned', async () => {
+	it('cancels a queued run whose driver never started it, and frees the state it pinned', async () => {
 		await clearRuns();
 		const taskId = await createTask(teamId);
 		const lockId = await insertLock(agentId, taskId);
@@ -263,13 +269,23 @@ describe('detectOrphans for runs stranded before they started', () => {
 		const count = await detectOrphans(db, new Set());
 		expect(count).toBe(1);
 
-		const run = await db.query<{ status: string; error: string; finished_at: string | null }>(
-			'SELECT status, error, finished_at FROM heartbeat_runs WHERE id = $1',
+		const run = await db.query<{
+			status: string;
+			error: string;
+			finished_at: string | null;
+			process_loss_retry_count: number;
+		}>(
+			'SELECT status, error, finished_at, process_loss_retry_count FROM heartbeat_runs WHERE id = $1',
 			[runId],
 		);
-		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
-		expect(run.rows[0].error).toBe('Orphaned: run never started');
+		// Cancelled, not failed: the run never started, so nothing ran and nothing
+		// was lost. Failing it filled the Errored view with unactionable rows.
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
+		expect(run.rows[0].error).toContain('Never started');
 		expect(run.rows[0].finished_at).not.toBeNull();
+		// And it spends none of the three strikes that raise "manual intervention
+		// required" - those are for a run that got a fair attempt and lost it.
+		expect(run.rows[0].process_loss_retry_count).toBe(0);
 
 		// The point of the reap: the task stops reading as having an active run,
 		// which is what blocks reassignment and shows the agent as busy.
@@ -293,6 +309,103 @@ describe('detectOrphans for runs stranded before they started', () => {
 			[agentId],
 		);
 		expect(agent.rows[0].runtime_status).toBe(AgentRuntimeStatus.Idle);
+	});
+
+	it('hands the original wakeup back to the queue instead of minting a retry', async () => {
+		await clearRuns();
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		const wakeup = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, claimed_at)
+			 VALUES ($1, $2, $3::wakeup_source, $4::wakeup_status, now())
+			 RETURNING id`,
+			[agentId, teamId, WakeupSource.Timer, WakeupStatus.Claimed],
+		);
+		const wakeupId = wakeup.rows[0].id;
+		await db.query(
+			`INSERT INTO heartbeat_runs (team_id, member_id, wakeup_id, status, created_at)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '10 minutes')`,
+			[teamId, agentId, wakeupId, HeartbeatRunStatus.Queued],
+		);
+
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		// The work is put back on the row that already carries it - the dispatcher
+		// picks it up on the next tick.
+		const settled = await db.query<{ status: string; claimed_at: string | null }>(
+			'SELECT status, claimed_at FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		expect(settled.rows[0].status).toBe(WakeupStatus.Queued);
+		expect(settled.rows[0].claimed_at).toBeNull();
+
+		// And no second wakeup was created for the same work.
+		const all = await db.query<{ count: string }>(
+			'SELECT count(*)::text AS count FROM agent_wakeup_requests WHERE member_id = $1',
+			[agentId],
+		);
+		expect(all.rows[0].count).toBe('1');
+	});
+
+	it('carries the real cause into the error so the run page does not just say it never started', async () => {
+		await clearRuns();
+		const runId = await insertQueuedRun('10 minutes');
+		await appendRunLogChunks(
+			db,
+			runId,
+			'[runner] no container available for project abc: its next container does not fit ' +
+				'the instance memory budget - returning this run to the queue.\n',
+		);
+
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		const run = await db.query<{ error: string }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].error).toContain('Never started');
+		expect(run.rows[0].error).toContain('no container available');
+	});
+
+	it('broadcasts a project even for a task-less run, so an open page can map the change', async () => {
+		// The client resolves a heartbeat_runs change by project_id alone and skips
+		// a row without one (PROJECT_STRICT_TABLES). A progress-update run carries
+		// no task, so deriving the project from the task left these reaps reaching
+		// no open page - the reader watched a queued run that had already ended.
+		await clearRuns();
+		const runId = await insertQueuedRun('10 minutes');
+		const sent: Record<string, unknown>[] = [];
+		const wsManager = {
+			broadcast: (_room: string, msg: { row: Record<string, unknown> }) => {
+				sent.push(msg.row);
+			},
+		} as unknown as Parameters<typeof detectOrphans>[2];
+
+		expect(await detectOrphans(db, new Set(), wsManager)).toBe(1);
+
+		const row = sent.find((r) => r.id === runId);
+		expect(row).toBeDefined();
+		expect(row?.project_id).toBeTruthy();
+		expect(row?.status).toBe(HeartbeatRunStatus.Cancelled);
+	});
+
+	it('capacity-park-grace: a park outliving the grace window is survivable, not a failure', async () => {
+		// The park deliberately runs past the age at which this pass would consider
+		// its row, and is kept safe only by the live-run registry. That registry is
+		// in-memory, so a restart mid-park hands every parked row straight to this
+		// pass. The pairing is only tolerable while the verdict for a run that
+		// never started is non-terminal for the *work* - cancel the row, hand the
+		// wakeup back. If someone shortens the grace or lengthens the park, this is
+		// the assumption they are leaning on.
+		expect(CAPACITY_PARK_MAX_MS).toBeGreaterThan(STALE_STATE_GRACE_SECONDS * 1000);
+
+		await clearRuns();
+		const runId = await insertQueuedRun('10 minutes');
+		expect(await detectOrphans(db, new Set())).toBe(1);
+		const run = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
 	});
 
 	it('leaves a queued run alone while its driver still holds it (waiting on a credential lock)', async () => {
@@ -325,20 +438,24 @@ describe('detectOrphans for runs stranded before they started', () => {
 		await clearRuns();
 	});
 
-	it('reports the two stranded kinds with distinct errors in one pass', async () => {
+	it('reports the two stranded kinds with distinct verdicts in one pass', async () => {
 		await clearRuns();
 		const queuedId = await insertQueuedRun('10 minutes');
 		const runningId = await insertOrphanRun(agentId, teamId);
 
 		expect(await detectOrphans(db, new Set())).toBe(2);
 
-		const runs = await db.query<{ id: string; error: string }>(
-			'SELECT id, error FROM heartbeat_runs WHERE id = ANY($1::uuid[])',
+		const runs = await db.query<{ id: string; error: string; status: string }>(
+			'SELECT id, error, status FROM heartbeat_runs WHERE id = ANY($1::uuid[])',
 			[[queuedId, runningId]],
 		);
-		const errorById = new Map(runs.rows.map((r) => [r.id, r.error]));
-		expect(errorById.get(queuedId)).toBe('Orphaned: run never started');
-		expect(errorById.get(runningId)).toBe('Orphaned: process no longer running');
+		const byId = new Map(runs.rows.map((r) => [r.id, r]));
+		// Never started is not a failure: nothing ran, so nothing failed.
+		expect(byId.get(queuedId)?.status).toBe(HeartbeatRunStatus.Cancelled);
+		expect(byId.get(queuedId)?.error).toContain('Never started');
+		// A process that vanished mid-run is.
+		expect(byId.get(runningId)?.status).toBe(HeartbeatRunStatus.Failed);
+		expect(byId.get(runningId)?.error).toContain('Orphaned: process no longer running');
 	});
 });
 

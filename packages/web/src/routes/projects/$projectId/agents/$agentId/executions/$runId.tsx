@@ -1,4 +1,4 @@
-import { INSTANCE_AGENT_SLUGS } from '@hezo/shared';
+import { INSTANCE_AGENT_SLUGS, isRunOutcomeFilter, RunOutcomeFilter } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { format } from 'date-fns';
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
@@ -52,6 +52,7 @@ function statusColor(status: string): string {
 
 function ExecutionDetailPage() {
 	const { projectId, agentId, runId } = Route.useParams();
+	const { filter } = Route.useSearch();
 	const { data: run, isLoading } = useHeartbeatRun(projectId, agentId, runId);
 	const { data: agent } = useAgent(projectId, agentId);
 
@@ -115,9 +116,16 @@ function ExecutionDetailPage() {
 
 	return (
 		<div>
+			{/* Carries the filter the reader arrived with, so going back returns them
+			    to the view they left rather than to the default one - which need not
+			    contain the run they were just looking at. Absent (a deep link, or a
+			    run reached from a goal or a comment) falls through to All, which
+			    always contains it. */}
 			<Link
 				to="/projects/$projectId/agents/$agentId/executions"
 				params={{ projectId, agentId }}
+				search={filter ? { filter } : {}}
+				data-testid="run-back-link"
 				className="inline-flex items-center gap-1 text-xs text-text-2 hover:text-text-1 mb-4"
 			>
 				<ArrowLeft className="w-3 h-3" /> Executions
@@ -277,6 +285,23 @@ function ExecutionDetailPage() {
 	);
 }
 
+interface ExecutionDetailSearch {
+	/**
+	 * The list filter the reader came from, carried only so the back link can
+	 * restore it. Absent means they arrived from somewhere with no view to return
+	 * to, and back goes to the default All.
+	 */
+	filter?: RunOutcomeFilter;
+}
+
 export const Route = createFileRoute('/projects/$projectId/agents/$agentId/executions/$runId')({
+	// Mirrors the list route: the default is dropped rather than written, so one
+	// view cannot be addressed two ways.
+	validateSearch: (search: Record<string, unknown>): ExecutionDetailSearch => ({
+		filter:
+			isRunOutcomeFilter(search.filter) && search.filter !== RunOutcomeFilter.All
+				? search.filter
+				: undefined,
+	}),
 	component: ExecutionDetailPage,
 });

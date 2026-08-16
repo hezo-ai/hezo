@@ -8,7 +8,11 @@ import { RelativeTime } from '../../../../../../components/ui/relative-time';
 import { Tooltip } from '../../../../../../components/ui/tooltip';
 import { useAgent } from '../../../../../../hooks/use-agents';
 import { useElapsedDuration } from '../../../../../../hooks/use-elapsed-duration';
-import { type HeartbeatRun, useHeartbeatRuns } from '../../../../../../hooks/use-heartbeat-runs';
+import {
+	type HeartbeatRun,
+	isActiveRunStatus,
+	useHeartbeatRuns,
+} from '../../../../../../hooks/use-heartbeat-runs';
 import { useI18n } from '../../../../../../lib/i18n';
 import { formatTriggerReason } from '../../../../../../lib/run-trigger';
 
@@ -34,11 +38,13 @@ function ExecutionRow({
 	projectId,
 	agentId,
 	isInstanceAgent,
+	filter,
 }: {
 	run: HeartbeatRun;
 	projectId: string;
 	agentId: string;
 	isInstanceAgent: boolean;
+	filter: RunOutcomeFilter;
 }) {
 	const elapsed = useElapsedDuration(run.started_at ?? '', run.finished_at);
 	const trigger = formatTriggerReason(run, projectId);
@@ -61,6 +67,10 @@ function ExecutionRow({
 		<Link
 			to="/projects/$projectId/agents/$agentId/executions/$runId"
 			params={{ projectId, agentId, runId: run.id }}
+			// Carried so the detail page's back link can put the reader back in the
+			// view they left. Without it, returning from an errored run landed on a
+			// view that may not contain it.
+			search={filter === RunOutcomeFilter.All ? {} : { filter }}
 			data-testid="execution-row"
 			className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border-subtle bg-surface px-3 py-2.5 text-xs hover:bg-surface-2 transition-colors sm:flex-nowrap sm:gap-2"
 		>
@@ -100,13 +110,18 @@ function ExecutionRow({
 				</span>
 			</Tooltip>
 
-			{run.started_at ? (
+			{/* A run only stamps started_at when it goes running, so this slot keyed
+			    on it alone read "queued" for every run that ended before it started -
+			    an orphaned or capacity-cancelled row said `failed … queued`. The word
+			    belongs to a genuinely live run; everything else is placed by the
+			    clock it does have, created_at. */}
+			{isActiveRunStatus(run.status) && !run.started_at ? (
+				<span className="order-3 text-text-2 ml-auto whitespace-nowrap sm:order-none">queued</span>
+			) : (
 				<RelativeTime
-					iso={run.started_at}
+					iso={run.started_at ?? run.created_at}
 					className="order-3 text-text-2 ml-auto whitespace-nowrap sm:order-none"
 				/>
-			) : (
-				<span className="order-3 text-text-2 ml-auto whitespace-nowrap sm:order-none">queued</span>
 			)}
 
 			<span className="order-6 text-text-3 whitespace-nowrap sm:order-none">{elapsed}</span>
@@ -128,7 +143,7 @@ function ExecutionRow({
 
 function ExecutionListPage() {
 	const { projectId, agentId } = Route.useParams();
-	const { filter = RunOutcomeFilter.Runs } = Route.useSearch();
+	const { filter = RunOutcomeFilter.All } = Route.useSearch();
 	const navigate = Route.useNavigate();
 	const { t } = useI18n();
 	const {
@@ -162,7 +177,7 @@ function ExecutionListPage() {
 		navigate({
 			search: (prev) => ({
 				...(prev as ExecutionsSearch),
-				filter: next === RunOutcomeFilter.Runs ? undefined : next,
+				filter: next === RunOutcomeFilter.All ? undefined : next,
 			}),
 			replace: true,
 		});
@@ -175,9 +190,9 @@ function ExecutionListPage() {
 			<FilterPills
 				className="mb-3"
 				options={[
-					{ value: RunOutcomeFilter.Runs, label: t('executions.filter.runs') },
-					{ value: RunOutcomeFilter.Errored, label: t('executions.filter.errored') },
 					{ value: RunOutcomeFilter.All, label: t('executions.filter.all') },
+					{ value: RunOutcomeFilter.Succeeded, label: t('executions.filter.succeeded') },
+					{ value: RunOutcomeFilter.Errored, label: t('executions.filter.errored') },
 				]}
 				value={filter}
 				onChange={setFilter}
@@ -200,6 +215,7 @@ function ExecutionListPage() {
 							projectId={projectId}
 							agentId={agentId}
 							isInstanceAgent={isInstanceAgent}
+							filter={filter}
 						/>
 					))}
 					<InfiniteScrollSentinel
@@ -215,16 +231,16 @@ function ExecutionListPage() {
 }
 
 interface ExecutionsSearch {
-	/** Run-outcome filter - absent means the default Runs view. */
+	/** Run-outcome filter - absent means the default All view. */
 	filter?: RunOutcomeFilter;
 }
 
 export const Route = createFileRoute('/projects/$projectId/agents/$agentId/executions/')({
-	// The default is dropped rather than written, so `?filter=runs` and no param
+	// The default is dropped rather than written, so `?filter=all` and no param
 	// cannot become two cache entries holding the same rows.
 	validateSearch: (search: Record<string, unknown>): ExecutionsSearch => ({
 		filter:
-			isRunOutcomeFilter(search.filter) && search.filter !== RunOutcomeFilter.Runs
+			isRunOutcomeFilter(search.filter) && search.filter !== RunOutcomeFilter.All
 				? search.filter
 				: undefined,
 	}),
