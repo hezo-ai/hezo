@@ -605,19 +605,28 @@ describe('hire-proposal tools authorization', () => {
 	});
 
 	it('create_hire_proposal only callable by agents', async () => {
-		const r = await admin('create_hire_proposal', { project: projectSlug, title: 'Role' });
+		const r = await admin('create_hire_proposal', {
+			heartbeat_interval_min: 720,
+			project: projectSlug,
+			title: 'Role',
+		});
 		expect(r.error).toContain('only callable by agents');
 	});
 
 	it('create_hire_proposal rejects a non-Captain/CEO agent', async () => {
 		const t = await agentToken(engineerId, teamId);
-		const r = await call(t, 'create_hire_proposal', { project: projectSlug, title: 'Role' });
+		const r = await call(t, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
+			project: projectSlug,
+			title: 'Role',
+		});
 		expect(r.error).toContain('Only the Captain or CEO');
 	});
 
 	it('create_hire_proposal: task_id not on team errors', async () => {
 		const t = await agentToken(captainId, teamId);
 		const r = await call(t, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			project: projectSlug,
 			title: 'Role',
 			task_id: 'NOPE-1',

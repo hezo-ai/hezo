@@ -150,6 +150,7 @@ describe('create_hire_proposal / update_hire_proposal', () => {
 	it('captain files a proposal linked to a task', async () => {
 		const at = await agentToken(captainId, teamId, taskId);
 		const r = await call(at, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Support Lead',
 			role_description: 'Runs support',
 			system_prompt: compliantPrompt('You are the Support Lead.'),
@@ -172,6 +173,7 @@ describe('create_hire_proposal / update_hire_proposal', () => {
 	it('rejects an unknown task_id', async () => {
 		const at = await agentToken(captainId, teamId, taskId);
 		const r = await call(at, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Ghost Role',
 			task_id: crypto.randomUUID(),
 		});
@@ -282,6 +284,7 @@ describe('resolve_approval', () => {
 	it('approving a hire proposal creates the agent (side-effect broadcast rows)', async () => {
 		const at = await agentToken(captainId, teamId, taskId);
 		const proposal = await call(at, 'create_hire_proposal', {
+			heartbeat_interval_min: 720,
 			title: 'Docs Writer',
 			role_description: 'Writes docs',
 			system_prompt: compliantPrompt('You are the Docs Writer.'),
