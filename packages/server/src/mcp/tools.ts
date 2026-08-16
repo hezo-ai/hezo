@@ -75,6 +75,7 @@ import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
+import { attachRunStatuses } from '../lib/comment-run-status';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import {
 	coerceTargetStatusForBlockers,
@@ -3075,6 +3076,7 @@ export function registerTools(
 				reactions: reactionsByComment.get(commentId) ?? [],
 				attachments: attachmentsByComment.get(commentId) ?? [],
 			};
+			await attachRunStatuses(db, row.task_id as string, [base]);
 			const content = row.content as { text?: string } | null;
 			const text = content?.text;
 			if (row.content_type !== CommentContentType.Text || typeof text !== 'string') {
@@ -3108,7 +3110,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		`List comments for a task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment.`,
+		`List comments for a task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A \`run\` row also carries \`run_status\` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -3171,6 +3173,7 @@ export function registerTools(
 				reactions: reactionsByComment.get(row.id as string) ?? [],
 				attachments: attachmentsByComment.get(row.id as string) ?? [],
 			}));
+			await attachRunStatuses(db, taskId, enriched);
 			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_COMMENT_EXCERPT_CHARS;
 			const rows = enriched.map((row) => {
 				if (row.content_type !== CommentContentType.Text) return row;

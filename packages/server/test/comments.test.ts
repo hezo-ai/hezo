@@ -137,6 +137,30 @@ describe('comments CRUD', () => {
 		expect(agentComment.author_name).toBe('Comment Bot');
 		expect(adminComment.author_name).toBe('Admin');
 	});
+
+	// Full mode carries the same computed outcome skeleton mode does, so a caller
+	// reading the whole thread in one shot summarizes it identically.
+	it('annotates run comments with their run outcome', async () => {
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+			 VALUES ($1, $2, $3, 'timed_out'::heartbeat_run_status) RETURNING id`,
+			[teamId, agentId, taskId],
+		);
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'run'::comment_content_type, $3::jsonb) RETURNING id`,
+			[taskId, agentId, JSON.stringify({ run_id: run.rows[0].id, agent_slug: agentSlug })],
+		);
+
+		const res = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}/comments`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		const rows = (await res.json()).data as Array<Record<string, unknown>>;
+		expect(rows.find((r) => r.id === comment.rows[0].id)!.run_status).toBe('timed_out');
+		// A text comment is untouched.
+		expect(rows.find((r) => r.content_type === 'text')!.run_status).toBeUndefined();
+	});
 });
 
 describe('comment @mention wakeups', () => {

@@ -2118,6 +2118,33 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		expect(Array.isArray(comments)).toBe(true);
 	});
 
+	// A run comment records who is about to run, not how the run ended, and the
+	// `run_failed` notices beside it are suppressed after a streak of failures.
+	// Both tools resolve the outcome so an agent auditing a thread can see it;
+	// get_comment matches because its docs promise `list_comments`' own shape.
+	it('list_comments and get_comment both resolve the outcome of a run comment', async () => {
+		const run = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+			 VALUES ($1, $2, $3, 'failed'::heartbeat_run_status) RETURNING id`,
+			[teamId, agentId, taskId],
+		);
+		const comment = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'run'::comment_content_type, $3::jsonb) RETURNING id`,
+			[taskId, agentId, JSON.stringify({ run_id: run.rows[0].id, agent_slug: 'mcp-bot' })],
+		);
+		const commentId = comment.rows[0].id;
+
+		const rows = await callListViaMcp('list_comments', { project: projectId, task_id: taskId });
+		expect(rows.find((r) => r.id === commentId)!.run_status).toBe('failed');
+
+		const single = (await callToolViaMcp('get_comment', {
+			project: projectId,
+			comment_id: commentId,
+		})) as Record<string, unknown>;
+		expect(single.run_status).toBe('failed');
+	});
+
 	it('get_task returns blockers and dependents symmetrically', async () => {
 		const upstream = (await callToolViaMcp('create_task', {
 			project: projectId,

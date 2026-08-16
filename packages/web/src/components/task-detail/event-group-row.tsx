@@ -15,8 +15,8 @@ interface EventGroupRowProps {
  *
  * The chip says what is inside rather than only how much: a run of failures is
  * still legible as a shape without taking a screen to say so. Failures are
- * counted from the thread's own `run_failed` rows, so the number never claims
- * more than the thread can support.
+ * counted from each run's own status, so the number matches the rows the chip
+ * hides however many of them there are.
  */
 export function EventGroupRow({ summary, expanded, onToggle, children }: EventGroupRowProps) {
 	const { t, plural } = useI18n();

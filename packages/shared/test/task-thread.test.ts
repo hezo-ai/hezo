@@ -14,6 +14,7 @@ import {
 	type ThreadRow,
 	threadRowRunId,
 } from '../src/task-thread.js';
+import { HeartbeatRunStatus } from '../src/types/common.js';
 
 function text(id: string): ThreadRow {
 	return { id, content_type: 'text', content: null };
@@ -23,6 +24,10 @@ function run(id: string, runId: string): ThreadRow {
 }
 function sys(id: string, kind: string, extra: Record<string, unknown> = {}): ThreadRow {
 	return { id, content_type: 'system', content: { kind, ...extra } };
+}
+/** A run row carrying the outcome the comments route attaches. */
+function ranAs(id: string, runId: string, status: HeartbeatRunStatus): ThreadRow {
+	return { ...run(id, runId), run_status: status };
 }
 
 describe('TaskView', () => {
@@ -190,6 +195,69 @@ describe('buildThreadItems', () => {
 		const group = items[0];
 		if (group.kind !== 'group') throw new Error('expected a group');
 		expect(group.summary).toEqual({ total: 1, failedRuns: 0, runs: 1, changes: 0 });
+	});
+
+	// The regression this file exists to prevent. `postFailurePing` stops writing
+	// `run_failed` notices after three consecutive failures and never writes one
+	// for a cancelled run, so a thread that failed hundreds of times carries two
+	// or three notices in total. Counting those alone reported the rest as
+	// healthy runs; the run's own status is the authority.
+	it('counts a failure the thread never announced', () => {
+		const rows = [
+			ranAs('a', 'r1', HeartbeatRunStatus.Failed),
+			ranAs('b', 'r2', HeartbeatRunStatus.Failed),
+			ranAs('c', 'r3', HeartbeatRunStatus.Failed),
+		];
+		const items = buildThreadItems(rows, TaskView.Conversation);
+		const group = items[0];
+		if (group.kind !== 'group') throw new Error('expected a group');
+		expect(group.summary).toEqual({ total: 3, failedRuns: 3, runs: 0, changes: 0 });
+	});
+
+	it('counts a timed-out run as failed and a cancelled or succeeded one as a plain run', () => {
+		const rows = [
+			ranAs('a', 'r1', HeartbeatRunStatus.TimedOut),
+			ranAs('b', 'r2', HeartbeatRunStatus.Cancelled),
+			ranAs('c', 'r3', HeartbeatRunStatus.Succeeded),
+		];
+		const items = buildThreadItems(rows, TaskView.Conversation);
+		const group = items[0];
+		if (group.kind !== 'group') throw new Error('expected a group');
+		expect(group.summary).toEqual({ total: 3, failedRuns: 1, runs: 2, changes: 0 });
+	});
+
+	it('counts a failure with a notice beside it once, not twice', () => {
+		const rows = [
+			ranAs('a', 'r1', HeartbeatRunStatus.Failed),
+			sys('b', 'run_failed', { run_id: 'r1' }),
+		];
+		const items = buildThreadItems(rows, TaskView.Conversation);
+		const group = items[0];
+		if (group.kind !== 'group') throw new Error('expected a group');
+		expect(group.summary).toEqual({ total: 2, failedRuns: 1, runs: 0, changes: 0 });
+	});
+
+	it('falls back to the notices when a row carries no status', () => {
+		const rows: ThreadRow[] = [
+			{ ...run('a', 'r1'), run_status: null },
+			sys('b', 'run_failed', { run_id: 'r1' }),
+			{ ...run('c', 'r2'), run_status: null },
+		];
+		const items = buildThreadItems(rows, TaskView.Conversation);
+		const group = items[0];
+		if (group.kind !== 'group') throw new Error('expected a group');
+		expect(group.summary).toEqual({ total: 3, failedRuns: 1, runs: 1, changes: 0 });
+	});
+
+	it('treats a live run as a plain run rather than a failure', () => {
+		const rows = [
+			ranAs('a', 'r1', HeartbeatRunStatus.Queued),
+			ranAs('b', 'r2', HeartbeatRunStatus.Running),
+		];
+		const items = buildThreadItems(rows, TaskView.Conversation);
+		const group = items[0];
+		if (group.kind !== 'group') throw new Error('expected a group');
+		expect(group.summary).toEqual({ total: 2, failedRuns: 0, runs: 2, changes: 0 });
 	});
 
 	it('keeps a group key stable when later rows join it', () => {

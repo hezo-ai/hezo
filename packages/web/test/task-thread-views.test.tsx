@@ -26,6 +26,33 @@ async function insertSystemEvent(
 }
 
 /**
+ * Insert a finished run and the `run` comment anchoring it, as the server does.
+ * `minutesAgo` orders the runs so the caller controls which one finished last.
+ */
+async function insertFinishedRun(
+	teamId: string,
+	taskId: string,
+	agentId: string,
+	status: string,
+	minutesAgo: number,
+) {
+	const { db } = getTestContext();
+	const run = await db.query<{ id: string }>(
+		`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
+		 VALUES ($1, $2, $3, $4::heartbeat_run_status,
+		         now() - ($5 || ' minutes')::interval, now() - ($5 || ' minutes')::interval)
+		 RETURNING id`,
+		[agentId, teamId, taskId, status, String(minutesAgo)],
+	);
+	await db.query(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+		 VALUES ($1, $2, 'run'::comment_content_type, $3::jsonb)`,
+		[taskId, agentId, JSON.stringify({ run_id: run.rows[0].id, agent_id: agentId })],
+	);
+	return run.rows[0].id;
+}
+
+/**
  * A thread shaped like the one this redesign is for: a person's comment, a wall
  * of machinery, then another comment.
  */
@@ -274,4 +301,89 @@ test('a deep link into a folded row expands its group', async () => {
 	// anchor lands on nothing.
 	const rows = await findByTestId('event-group-rows', undefined, { timeout: 20_000 });
 	expect(rows.querySelector(`#comment-${seeded.publicId}`)).not.toBeNull();
+});
+
+/**
+ * The regression: a task whose agent has been failing in a loop.
+ *
+ * `postFailurePing` stops writing `run_failed` notices after three consecutive
+ * failures, so counting failures from those notices reported a thread of
+ * failures as a handful of trouble and a crowd of healthy runs. The chip has to
+ * agree with the rows it is hiding.
+ */
+test('the chip counts every failed run, not just the ones the thread announced', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const rendered = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Failing Project' });
+			const task = await seedTask(ws, project, { title: 'Failing Task' });
+			const agentId = ws.agents[0].id;
+			await seedComment(ws, task, 'Please get the build green.');
+
+			// Four failures, one timeout - and only the first two ever wrote a
+			// notice, which is exactly what the three-ping cap leaves behind.
+			// Counting the notices alone reports "2 failed runs · 5 runs" here,
+			// the shape the bug report showed.
+			const first = await insertFinishedRun(ws.team.id, task.id, agentId, 'failed', 60);
+			await insertSystemEvent(task.id, 'run_failed', { run_id: first });
+			const second = await insertFinishedRun(ws.team.id, task.id, agentId, 'failed', 50);
+			await insertSystemEvent(task.id, 'run_failed', { run_id: second });
+			await insertFinishedRun(ws.team.id, task.id, agentId, 'failed', 40);
+			await insertFinishedRun(ws.team.id, task.id, agentId, 'failed', 30);
+			await insertFinishedRun(ws.team.id, task.id, agentId, 'timed_out', 20);
+			// A cancelled run is not an error, and a succeeded one keeps
+			// `last_run_status` clean so nothing unfolds as retryable.
+			await insertFinishedRun(ws.team.id, task.id, agentId, 'cancelled', 15);
+			await insertFinishedRun(ws.team.id, task.id, agentId, 'succeeded', 10);
+
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await rendered.router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await rendered.findByTestId('comments-list');
+	const detail = await rendered.findByTestId('event-group-detail', undefined, { timeout: 20_000 });
+
+	// Five errored runs (four failed + one timed out), not the two the notices
+	// vouch for. The cancelled and succeeded runs are plain runs.
+	await waitFor(() => {
+		expect(detail.textContent).toContain('5 failed runs');
+	});
+	expect(detail.textContent).toContain('2 runs');
+	// The warning dot rides the same number, so it has to be showing.
+	expect(rendered.queryAllByTestId('event-group-failed-dot').length).toBe(1);
+});
+
+test('a thread with no failures shows neither the count nor the warning dot', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const rendered = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Healthy Project' });
+			const task = await seedTask(ws, project, { title: 'Healthy Task' });
+			const agentId = ws.agents[0].id;
+			await seedComment(ws, task, 'All good?');
+			await insertFinishedRun(ws.team.id, task.id, agentId, 'succeeded', 30);
+			await insertFinishedRun(ws.team.id, task.id, agentId, 'succeeded', 20);
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+	await rendered.router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	await rendered.findByTestId('comments-list');
+	const detail = await rendered.findByTestId('event-group-detail', undefined, { timeout: 20_000 });
+	expect(detail.textContent).toContain('2 runs');
+	expect(detail.textContent).not.toContain('failed');
+	expect(rendered.queryAllByTestId('event-group-failed-dot').length).toBe(0);
 });

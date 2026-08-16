@@ -13,6 +13,11 @@ let taskId: string;
 let textCommentId: string;
 let systemCommentId: string;
 let otherTaskCommentId: string;
+let teamId: string;
+let agentMemberId: string;
+let failedRunCommentId: string;
+let goneRunCommentId: string;
+let malformedRunCommentId: string;
 
 const json = (extra: Record<string, string> = {}) => ({
 	...authHeader(token),
@@ -27,6 +32,7 @@ beforeAll(async () => {
 	token = ctx.token;
 
 	const teamData = (await (await createTestTeam(db, { name: 'Lazy Co' })).json()).data;
+	teamId = teamData.id;
 	const projectData = (
 		await (await createTestProject(db, teamData.id, { name: 'Lazy', description: 'x' })).json()
 	).data;
@@ -38,6 +44,7 @@ beforeAll(async () => {
 		body: JSON.stringify({ title: 'Lazy Bot' }),
 	});
 	const agentId = (await agentRes.json()).data.id;
+	agentMemberId = agentId;
 
 	const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 		method: 'POST',
@@ -65,6 +72,28 @@ beforeAll(async () => {
 		[taskId, JSON.stringify({ text: 'moved to In progress', kind: 'status_change' })],
 	);
 	systemCommentId = sys.rows[0].id;
+
+	// Three run comments covering what the route has to resolve: a run that
+	// failed, a run whose heartbeat_runs row is gone, and a row whose stored
+	// run_id is not a UUID at all. None of them writes a `run_failed` notice —
+	// that is the situation the failure-ping cap leaves behind.
+	const insertRunComment = async (runId: string): Promise<string> => {
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+			 VALUES ($1, $2, 'run'::comment_content_type, $3::jsonb) RETURNING id`,
+			[taskId, agentId, JSON.stringify({ run_id: runId, agent_slug: 'lazy-bot' })],
+		);
+		return r.rows[0].id;
+	};
+
+	const failedRun = await db.query<{ id: string }>(
+		`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status)
+		 VALUES ($1, $2, $3, 'failed'::heartbeat_run_status) RETURNING id`,
+		[teamId, agentId, taskId],
+	);
+	failedRunCommentId = await insertRunComment(failedRun.rows[0].id);
+	goneRunCommentId = await insertRunComment('00000000-0000-4000-8000-000000000000');
+	malformedRunCommentId = await insertRunComment('not-a-uuid');
 
 	// A comment on a DIFFERENT task, for the cross-task rejection test.
 	const otherTaskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
@@ -107,6 +136,41 @@ describe('comments skeleton mode (?view=skeleton)', () => {
 		// Non-text comments keep their small structural content on the skeleton.
 		expect((system.content as { kind?: string }).kind).toBe('status_change');
 		expect(system.text_length).toBeNull();
+	});
+
+	// A folded run row never mounts, so it never fetches its own run. Without the
+	// outcome on the skeleton the collapsed-group chip has nothing but the
+	// `run_failed` notices to count, and those stop being written after a streak.
+	it('carries the real outcome of each run comment as run_status', async () => {
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments?view=skeleton`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const rows = (await res.json()).data as Array<Record<string, unknown>>;
+
+		expect(rows.find((r) => r.id === failedRunCommentId)!.run_status).toBe('failed');
+		// The run is gone; we looked and found nothing, which is not the same as
+		// never having looked - the reader falls back to the notices.
+		expect(rows.find((r) => r.id === goneRunCommentId)!.run_status).toBeNull();
+		// Rows that are not runs are left alone entirely.
+		expect(rows.find((r) => r.id === textCommentId)!.run_status).toBeUndefined();
+		expect(rows.find((r) => r.id === systemCommentId)!.run_status).toBeUndefined();
+	});
+
+	// Regression guard: resolving the status by joining through
+	// `content->>'run_id'` casts unconstrained JSONB to uuid, and one bad row
+	// would abort the statement and 500 the whole thread with no way to recover.
+	it('serves the thread when a run comment holds a malformed run_id', async () => {
+		const res = await app.request(
+			`/api/projects/${projectSlug}/tasks/${taskId}/comments?view=skeleton`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		const rows = (await res.json()).data as Array<Record<string, unknown>>;
+		expect(rows.find((r) => r.id === malformedRunCommentId)!.run_status).toBeNull();
+		// The rest of the thread is intact.
+		expect(rows.find((r) => r.id === failedRunCommentId)!.run_status).toBe('failed');
 	});
 });
 

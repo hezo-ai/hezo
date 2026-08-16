@@ -180,7 +180,8 @@ an agent-maintained `progress_summary`. Numbering is atomic via `project_task_co
 `task_dependencies` is the many-to-many blocking graph (`UNIQUE`, no self-blocks).
 `task_comments` is **polymorphic** over a `content_type` enum + `content` JSONB — `text`,
 `system` (timeline entries like `status_change`/`title_change`/`description_change`/`task_link`),
-`run` (auto-written on run completion), `preview`, `action`,
+`run` (auto-written when the run is created, inside `createHeartbeatRun`'s transaction, so its
+`content` records who is about to run and never how the run ended), `preview`, `action`,
 `connect_required`, `credential_request`. Each comment carries a `public_id` slug for
 `#comment-<id>` deep-links. A `task_link` entry records **where** in the source task the
 mention was written: `source_kind` (`description` | `comment`) plus, for a comment,
@@ -192,7 +193,11 @@ dedupe stays keyed on `source_task_id` alone, so a target records one entry per 
 convention but records **which** human in `author_user_id` (nullable FK to `users`), so the
 author's uploaded avatar (`user_icons`) resolves alongside their comments; the comments feed
 returns a signed `author_icon_url` per row for a human author (else null → initials), and an
-`author_avatar_spec` for an agent one, whose sprite is drawn client-side. `comment_reactions` holds
+`author_avatar_spec` for an agent one, whose sprite is drawn client-side. The feed computes one
+more field it does not store: `attachRunStatuses` annotates each `run` row with the run's real
+`heartbeat_runs.status` as `run_status`, which is how the collapsed-group chip counts failures.
+Inferring them from the sibling `run_failed` notices instead undercounts, because `postFailurePing`
+stops writing those after three consecutive failures and never writes one for a cancelled run. `comment_reactions` holds
 emoji reactions, keyed by a non-null `member_id` (unlike a comment's nullable
 `author_member_id`, which lets an admin author as a null-member "Admin"). Because a reaction needs a real member, a human acting in
 a team they can access but aren't a member of resolves to their **HQ (default-team)**

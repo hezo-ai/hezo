@@ -5,6 +5,7 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
+import { attachRunStatuses } from '../lib/comment-run-status';
 import { normalizeAllowedHosts } from '../lib/credential-placeholder';
 import { validateCredentialValue } from '../lib/credential-validator';
 import { signAuthorIconUrl } from '../lib/entity-icon-urls';
@@ -138,6 +139,7 @@ async function getCommentsFull(
 		comment.attachments = attachmentsByComment.get(comment.id as string) ?? [];
 	}
 
+	await attachRunStatuses(db, taskId, result.rows as Record<string, unknown>[]);
 	await attachAuthorIcons(c.get('masterKeyManager'), result.rows as Record<string, unknown>[]);
 	return ok(c, result.rows);
 }
@@ -145,7 +147,10 @@ async function getCommentsFull(
 /**
  * `?view=skeleton` mode: metadata + reactions for every comment, with text
  * bodies and attachments omitted (replaced by `text_length` / `attachment_count`
- * hints). Non-text comments keep their small `content` + `chosen_option`.
+ * hints). Non-text comments keep their small `content` + `chosen_option`, and a
+ * run comment carries its run's outcome as `run_status` - the thread summarizes
+ * itself from these rows, and a folded run row is never rendered, so it would
+ * otherwise have no way to know the run failed.
  */
 async function getCommentSkeletons(
 	c: import('hono').Context<Env>,
@@ -196,6 +201,7 @@ async function getCommentSkeletons(
 		comment.reactions = reactionsByComment.get(comment.id as string) ?? [];
 	}
 
+	await attachRunStatuses(db, taskId, result.rows as Record<string, unknown>[]);
 	await attachAuthorIcons(c.get('masterKeyManager'), result.rows as Record<string, unknown>[]);
 	return ok(c, result.rows);
 }
