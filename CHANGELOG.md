@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.48.1 - 2026-08-16
+
+### Bug Fixes
+
+- **connectors:** update the row live once a reconnect completes ([#978](https://github.com/hezo-ai/hezo/pull/978))
+- **runs:** show every run by default, and stop calling a never-started run a failure ([#980](https://github.com/hezo-ai/hezo/pull/980))
+- **threads:** count every failed run in a collapsed group chip ([#979](https://github.com/hezo-ai/hezo/pull/979))
+- **web:** drop the subscription hint under the agent model override ([#977](https://github.com/hezo-ai/hezo/pull/977))
+
+### Documentation
+
+- **dev:** compare container backend costs against Daytona ([#976](https://github.com/hezo-ai/hezo/pull/976))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.48.0...0.48.1
+
 ## 0.48.0 - 2026-08-16
 
 ### Features
