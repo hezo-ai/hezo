@@ -451,6 +451,63 @@ test('HQ drops the summary, goals and spend, and shows the empty HQ state', asyn
 	expect(queryByTestId('dashboard-active-agents')).not.toBeNull();
 });
 
+test('each metric tile links to the page that owns its number', async () => {
+	const ref = { slug: '' };
+	const { findByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Tile Links' });
+			ref.slug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/dashboard',
+		params: { projectId: ref.slug },
+	});
+
+	await findByTestId('dashboard-metrics', undefined, { timeout: 15_000 });
+
+	for (const [testId, path] of [
+		['dashboard-metric-needs-you', 'inbox'],
+		['dashboard-metric-active-agents', 'agents'],
+		['dashboard-metric-open-tasks', 'tasks'],
+		['dashboard-metric-goals', 'goals'],
+		['dashboard-metric-spend', 'budget'],
+	] as const) {
+		const tile = await findByTestId(testId);
+		expect(tile.getAttribute('href')).toBe(`/projects/${ref.slug}/${path}`);
+	}
+
+	// The whole tile is the target, so a click anywhere on it navigates - including on the number.
+	await user.click(await findByTestId('dashboard-metric-open-tasks-value'));
+	await waitFor(() => expect(router.state.location.pathname).toBe(`/projects/${ref.slug}/tasks`));
+});
+
+test('HQ metric tiles link only to the pages HQ has', async () => {
+	const { findByTestId, queryByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			await seedWorkspace();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/dashboard',
+		params: { projectId: HQ_PROJECT_SLUG },
+	});
+
+	await findByTestId('dashboard-metrics', undefined, { timeout: 15_000 });
+
+	// HQ's sidebar hides Goals and Budget, so the strip must not offer a route to either.
+	expect(queryByTestId('dashboard-metric-goals')).toBeNull();
+	expect(queryByTestId('dashboard-metric-spend')).toBeNull();
+	expect((await findByTestId('dashboard-metric-needs-you')).getAttribute('href')).toBe(
+		`/projects/${HQ_PROJECT_SLUG}/inbox`,
+	);
+});
+
 test('project index redirects to dashboard', async () => {
 	const ref = { slug: '' };
 	const { router } = await renderApp({
