@@ -44,14 +44,27 @@ function ExecutionRow({
 	const trigger = formatTriggerReason(run, projectId);
 	const projectLabel = run.project_name ?? run.project_slug;
 
+	// The title band carries the task title and, for an instance agent, which
+	// project the task lives in - both only ever shown for a run that has a task.
+	const showTitle =
+		!!run.task_identifier && (!!run.task_title || (isInstanceAgent && !!projectLabel));
+
+	// Mobile-first: the row wraps into three bands - status + task id + when,
+	// then the task title on its own line, then the meta strip. The `w-full` on
+	// the title is what forces the band breaks (a full-width item can share a
+	// flex line with nothing), and `order-*` lifts the timestamp up beside the
+	// id, since its DOM position is the desktop one - after the trigger. Every
+	// override drops at `sm`, where the row is the single line it has always
+	// been. DOM order stays the desktop order so the accessible name reads
+	// status, task, trigger, timing in that sequence at both sizes.
 	return (
 		<Link
 			to="/projects/$projectId/agents/$agentId/executions/$runId"
 			params={{ projectId, agentId, runId: run.id }}
 			data-testid="execution-row"
-			className="flex items-center gap-2 rounded-md border border-border-subtle bg-surface px-3 py-2.5 text-xs hover:bg-surface-2 transition-colors"
+			className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border-subtle bg-surface px-3 py-2.5 text-xs hover:bg-surface-2 transition-colors sm:flex-nowrap sm:gap-2"
 		>
-			<Badge color={statusColor(run.status) as 'green'}>
+			<Badge color={statusColor(run.status) as 'green'} className="order-1 sm:order-none">
 				{(run.status === 'running' || run.status === 'queued') && (
 					<span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1" />
 				)}
@@ -59,35 +72,55 @@ function ExecutionRow({
 			</Badge>
 
 			{run.task_identifier && (
-				<span className="text-text-2 font-mono">
+				<span className="order-2 text-text-2 font-mono whitespace-nowrap sm:order-none">
 					{run.task_identifier}
-					{run.task_title && <span className="font-sans ml-1.5 text-text-1">{run.task_title}</span>}
+				</span>
+			)}
+
+			{showTitle && (
+				<span
+					data-testid="execution-row-title"
+					className="order-4 w-full line-clamp-2 text-text-1 sm:order-none sm:w-auto sm:line-clamp-none"
+				>
+					{run.task_title}
 					{isInstanceAgent && projectLabel && (
-						<span data-testid="run-row-project" className="font-sans ml-1.5 text-text-3">
+						<span data-testid="run-row-project" className="ml-1.5 text-text-3">
 							· {projectLabel}
 						</span>
 					)}
 				</span>
 			)}
 
+			{/* Capped rather than free-shrinking on mobile: a flex line only shrinks
+			    its items once they overflow it, so an untruncated long trigger would
+			    take the whole meta band and push the timing figures onto a fourth. */}
 			<Tooltip content={trigger.text}>
-				<span className="text-text-3 truncate">{trigger.text}</span>
+				<span className="order-5 max-w-[55%] truncate text-text-3 sm:order-none sm:max-w-none">
+					{trigger.text}
+				</span>
 			</Tooltip>
 
 			{run.started_at ? (
-				<RelativeTime iso={run.started_at} className="text-text-2 ml-auto whitespace-nowrap" />
+				<RelativeTime
+					iso={run.started_at}
+					className="order-3 text-text-2 ml-auto whitespace-nowrap sm:order-none"
+				/>
 			) : (
-				<span className="text-text-2 ml-auto whitespace-nowrap">queued</span>
+				<span className="order-3 text-text-2 ml-auto whitespace-nowrap sm:order-none">queued</span>
 			)}
 
-			<span className="text-text-3 whitespace-nowrap">{elapsed}</span>
+			<span className="order-6 text-text-3 whitespace-nowrap sm:order-none">{elapsed}</span>
 
 			{run.cost_cents != null && run.cost_cents > 0 && (
-				<span className="text-text-3 whitespace-nowrap">${(run.cost_cents / 100).toFixed(2)}</span>
+				<span className="order-7 text-text-3 whitespace-nowrap sm:order-none">
+					${(run.cost_cents / 100).toFixed(2)}
+				</span>
 			)}
 
 			{run.exit_code !== null && run.exit_code !== 0 && (
-				<span className="text-danger whitespace-nowrap">exit: {run.exit_code}</span>
+				<span className="order-8 text-danger whitespace-nowrap sm:order-none">
+					exit: {run.exit_code}
+				</span>
 			)}
 		</Link>
 	);
