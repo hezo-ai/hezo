@@ -776,6 +776,45 @@ describe('getFinalAssistantMessage', () => {
 		parser.onStdout(`${JSON.stringify({ type: 'end', stopReason: 'stop' })}\n`);
 		expect(parser.getFinalAssistantMessage()).toBe('done — over to you @admin');
 	});
+
+	it('keeps the Grok final message to the LAST turn across a multi-turn run', () => {
+		// Consecutive `text` events are deltas of one message, but a run has many
+		// messages: each turn opens with `thought` and the tool activity between
+		// them arrives as event types this parser drops. Flushing only on `end`
+		// therefore ran the whole run's narration together into one buffer, and
+		// `finalMessage` became that concatenation - sentences abutting with no
+		// separator, since deltas are appended raw. The runner's delivery net posts
+		// this value verbatim, so on Grok (no completeness judge, net is the only
+		// guardrail) an entire run's thinking was posted as one comment.
+		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		parser.onStdout(`${JSON.stringify({ type: 'thought', data: 'checking status' })}\n`);
+		parser.onStdout(`${JSON.stringify({ type: 'text', data: 'Checking the task.' })}\n`);
+		// A tool call: an event type this parser renders nothing for, but which
+		// still ends the assistant message before it.
+		parser.onStdout(`${JSON.stringify({ type: 'tool_use', data: 'get_task' })}\n`);
+		parser.onStdout(`${JSON.stringify({ type: 'thought', data: 'nothing due' })}\n`);
+		parser.onStdout(`${JSON.stringify({ type: 'text', data: 'Nothing to do ' })}\n`);
+		parser.onStdout(`${JSON.stringify({ type: 'text', data: 'today.' })}\n`);
+		parser.onStdout(`${JSON.stringify({ type: 'end', stopReason: 'stop' })}\n`);
+
+		expect(parser.getFinalAssistantMessage()).toBe('Nothing to do today.');
+		// The specific regression: the earlier turn must not be glued to the front.
+		expect(parser.getFinalAssistantMessage()).not.toContain('Checking the task.');
+	});
+
+	it('renders each Grok turn as its own log line rather than one blob at the end', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Grok);
+		let out = '';
+		out += parser.onStdout(`${JSON.stringify({ type: 'text', data: 'First message.' })}\n`);
+		out += parser.onStdout(`${JSON.stringify({ type: 'thought', data: 'now the second' })}\n`);
+		out += parser.onStdout(`${JSON.stringify({ type: 'text', data: 'Second message.' })}\n`);
+		out += parser.onStdout(`${JSON.stringify({ type: 'end', stopReason: 'stop' })}\n`);
+
+		expect(out).toContain('First message.');
+		expect(out).toContain('Second message.');
+		// Run together, this would read `First message.Second message.`
+		expect(out).not.toContain('First message.Second message.');
+	});
 });
 
 describe('grok stream parser', () => {

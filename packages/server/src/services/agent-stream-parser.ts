@@ -1328,6 +1328,13 @@ function createGrokParser(): AgentStreamParser {
 			// — and it matters more on Grok than anywhere else, because Grok is
 			// also one of the two runtimes whose hooks cannot host the
 			// completeness judge, so the net is its only guardrail.
+			//
+			// Which makes flushing at every turn boundary load-bearing, not
+			// cosmetic: `finalMessage` is overwritten per flush, so a buffer that
+			// only emptied at `end` made it the concatenation of every turn in the
+			// run rather than the last message. The net then posted a whole run's
+			// narration as one comment - sentences run together with no separator,
+			// since the deltas were simply appended.
 			finalMessage = t;
 		}
 		textBuf = '';
@@ -1337,16 +1344,16 @@ function createGrokParser(): AgentStreamParser {
 		const event = raw as GrokEvent;
 		const type = event.type ?? '';
 
-		if (type === 'thought') {
-			thoughtBuf += event.data ?? '';
-			return [];
-		}
+		// Consecutive `text` events are deltas of ONE message, so they accumulate.
+		// Anything else ends that message: the next turn opens with `thought`, a
+		// tool call arrives as a type this parser drops, or the run reaches `end`.
 		if (type === 'text') {
 			const out: string[] = [];
 			flushThought(out);
 			textBuf += event.data ?? '';
 			return out;
 		}
+
 		if (type === 'end') {
 			const out: string[] = [];
 			flushThought(out);
@@ -1356,12 +1363,21 @@ function createGrokParser(): AgentStreamParser {
 			out.push(`[done] ${status}`);
 			return out;
 		}
+
+		const out: string[] = [];
+		flushText(out);
+
+		if (type === 'thought') {
+			thoughtBuf += event.data ?? '';
+			return out;
+		}
 		if (type === 'error') {
 			const msg = extractErrorMessage(undefined, event.message);
 			if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
-			return msg ? [`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`] : [];
+			if (msg) out.push(`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`);
+			return out;
 		}
-		return [];
+		return out;
 	};
 
 	return createJsonlParser(

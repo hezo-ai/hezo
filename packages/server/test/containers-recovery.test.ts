@@ -259,7 +259,83 @@ describe('wakeAgentsWithPendingWork', () => {
 		);
 		expect(wakeups.rows.length).toBe(1);
 		expect(wakeups.rows[0].source).toBe('automation');
-		expect((wakeups.rows[0].payload as Record<string, unknown>).trigger).toBe('container_start');
+		expect((wakeups.rows[0].payload as Record<string, unknown>).reason).toBe('container_start');
+	});
+
+	it('names the task on the wakeup so the dispatch-path dedup guards can see it', async () => {
+		await clearState();
+		await db.query(`UPDATE member_agents SET admin_status = 'enabled' WHERE id = $1`, [agentId]);
+
+		await wakeAgentsWithPendingWork(db, projectId, teamId);
+		await waitForBackground();
+
+		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+			`SELECT payload FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND status = $2::wakeup_status
+			 ORDER BY created_at DESC LIMIT 1`,
+			[agentId, WakeupStatus.Queued],
+		);
+		expect(wakeups.rows.length).toBe(1);
+		// Without this the wakeup slips past every guard keyed on `payload->>'task_id'`
+		// - the blocker deferral, processWakeups' busy/capacity pre-checks, and
+		// chainNextTaskWakeup's already-covered clause - so each container start
+		// queued a run regardless of what was already in flight.
+		expect(wakeups.rows[0].payload.task_id).toBe(taskId);
+	});
+
+	it('coalesces onto an already-queued wakeup for the same task instead of stacking runs', async () => {
+		await clearState();
+		await db.query(`UPDATE member_agents SET admin_status = 'enabled' WHERE id = $1`, [agentId]);
+
+		await wakeAgentsWithPendingWork(db, projectId, teamId);
+		await waitForBackground();
+		await wakeAgentsWithPendingWork(db, projectId, teamId);
+		await waitForBackground();
+
+		const wakeups = await db.query<{ id: string }>(
+			`SELECT id FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND status = $2::wakeup_status`,
+			[agentId, WakeupStatus.Queued],
+		);
+		// Two container starts, one pending run. `createWakeup` coalesces on
+		// (member, task_id), which a task-less payload could only ever do against
+		// other task-less rows.
+		expect(wakeups.rows.length).toBe(1);
+	});
+
+	it('names an actionable task, never one parked behind an open blocker', async () => {
+		await db.query(`UPDATE member_agents SET admin_status = 'enabled' WHERE id = $1`, [agentId]);
+
+		const blocker = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ project_id: projectId, title: 'Blocker', assignee_id: agentId }),
+		});
+		const blockerId = (await blocker.json()).data.id;
+		await db.query(`INSERT INTO task_dependencies (task_id, blocked_by_task_id) VALUES ($1, $2)`, [
+			taskId,
+			blockerId,
+		]);
+		// After the dependency exists, so the assignment wakeups both tasks queued on
+		// creation don't count towards the assertion below.
+		await clearState();
+
+		await wakeAgentsWithPendingWork(db, projectId, teamId);
+		await waitForBackground();
+
+		const wakeups = await db.query<{ payload: Record<string, unknown> }>(
+			`SELECT payload FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND status = $2::wakeup_status`,
+			[agentId, WakeupStatus.Queued],
+		);
+		// Both tasks are this agent's, but only the blocker is actionable. Naming the
+		// blocked one would queue a run `activateAgent` cannot act on - the mismatch
+		// a task-less payload made unfalsifiable.
+		expect(wakeups.rows.length).toBe(1);
+		expect(wakeups.rows[0].payload.task_id).toBe(blockerId);
+
+		await db.query('DELETE FROM task_dependencies WHERE task_id = $1', [taskId]);
+		await db.query('DELETE FROM tasks WHERE id = $1', [blockerId]);
 	});
 
 	it('does not wake an agent whose only task is in a terminal status', async () => {

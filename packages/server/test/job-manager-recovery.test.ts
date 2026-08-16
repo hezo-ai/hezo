@@ -303,7 +303,7 @@ describe('JobManager recovery & maintenance', () => {
 				'SELECT payload FROM agent_wakeup_requests WHERE member_id = $1',
 				[agentId],
 			);
-			expect(wakeups.rows.some((w) => w.payload.trigger === 'container_start')).toBe(true);
+			expect(wakeups.rows.some((w) => w.payload.reason === 'container_start')).toBe(true);
 			manager.shutdown();
 		});
 
