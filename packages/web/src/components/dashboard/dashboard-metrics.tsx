@@ -5,6 +5,7 @@ import {
 	type GoalWithProject,
 	TaskStatus,
 } from '@hezo/shared';
+import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useAgents } from '../../hooks/use-agents';
 import { useBudgetStatus } from '../../hooks/use-costs';
@@ -18,7 +19,22 @@ import { useI18n } from '../../lib/i18n';
  *
  * Every tile reads from a query the page below it already needs, so the strip costs no extra
  * request - it is a second projection of the same data, not a second fetch.
+ *
+ * Each tile is a link to the page that owns its number, so the strip doubles as the route into
+ * whatever it just reported. The two tiles HQ drops (goals, spend) are also the two pages HQ's
+ * sidebar hides, so no tile ever points at a page the project does not have.
  */
+/**
+ * Where a tile sends you: the page that owns the number it reports. Every one of them is scoped by
+ * `projectId` alone, so the tile needs no per-target params.
+ */
+type MetricTarget =
+	| '/projects/$projectId/inbox'
+	| '/projects/$projectId/agents'
+	| '/projects/$projectId/tasks'
+	| '/projects/$projectId/goals'
+	| '/projects/$projectId/budget';
+
 function Metric({
 	label,
 	value,
@@ -26,6 +42,8 @@ function Metric({
 	valueClass,
 	children,
 	testId,
+	projectId,
+	to,
 }: {
 	label: string;
 	value: string;
@@ -36,9 +54,17 @@ function Metric({
 	/** Rendered under the value - the month-spend tile's cap bar. */
 	children?: ReactNode;
 	testId: string;
+	projectId: string;
+	/** The page this tile's number is reported on. */
+	to: MetricTarget;
 }) {
 	return (
-		<div className="bg-surface px-3 py-2.5 sm:px-4" data-testid={testId}>
+		<Link
+			to={to}
+			params={{ projectId }}
+			className="block bg-surface px-3 py-2.5 outline-none transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring sm:px-4"
+			data-testid={testId}
+		>
 			<p className="font-mono text-[10px] uppercase tracking-wider text-text-3">{label}</p>
 			<p className="mt-0.5 flex items-baseline gap-1.5">
 				<span
@@ -50,7 +76,7 @@ function Metric({
 				{detail && <span className="text-[11px] text-text-3">{detail}</span>}
 			</p>
 			{children}
-		</div>
+		</Link>
 	);
 }
 
@@ -100,6 +126,8 @@ export function DashboardMetrics({
 		<Metric
 			key="needs-you"
 			testId="dashboard-metric-needs-you"
+			projectId={projectId}
+			to="/projects/$projectId/inbox"
 			label={t('dashboard.metric.needsYou')}
 			value={String(actionCount)}
 			valueClass={actionCount > 0 ? 'text-accent' : 'text-text-1'}
@@ -107,6 +135,8 @@ export function DashboardMetrics({
 		<Metric
 			key="active-agents"
 			testId="dashboard-metric-active-agents"
+			projectId={projectId}
+			to="/projects/$projectId/agents"
 			label={t('dashboard.metric.activeAgents')}
 			value={String(running)}
 			detail={t('dashboard.metric.ofRoster', { count: roster.length })}
@@ -115,6 +145,8 @@ export function DashboardMetrics({
 		<Metric
 			key="open-tasks"
 			testId="dashboard-metric-open-tasks"
+			projectId={projectId}
+			to="/projects/$projectId/tasks"
 			label={t('dashboard.metric.openTasks')}
 			value={String(project?.open_task_count ?? 0)}
 			detail={inReview > 0 ? t('dashboard.metric.inReview', { count: inReview }) : undefined}
@@ -126,6 +158,8 @@ export function DashboardMetrics({
 			<Metric
 				key="goals"
 				testId="dashboard-metric-goals"
+				projectId={projectId}
+				to="/projects/$projectId/goals"
 				label={t('dashboard.metric.goalProgress')}
 				value={rollup ? `${rollup.percent}%` : '-'}
 				detail={
@@ -137,6 +171,8 @@ export function DashboardMetrics({
 			<Metric
 				key="spend"
 				testId="dashboard-metric-spend"
+				projectId={projectId}
+				to="/projects/$projectId/budget"
 				label={t('dashboard.metric.monthSpend')}
 				value={monthly ? formatMoney(monthly.spentCents) : '-'}
 				detail={

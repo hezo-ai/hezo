@@ -280,7 +280,9 @@ being top-level is also what lets the sidebar's "no goals yet" dot ride the Goal
 under a parent it could not, because a sub-item only renders once its parent's route is active.
 
 The dashboard reads as four bands - the metric strip, the summary, the active-agents strip, then two
-columns over the heartbeat history (`components/dashboard/`). Its two capped lists are sized against
+columns over the heartbeat history (`components/dashboard/`). Every metric tile is a `Link` to the
+page that owns its number (inbox, agents, tasks, goals, budget); HQ drops the goals and spend tiles,
+which are also the two pages HQ's sidebar hides, so no tile points at a page a project lacks. Its two capped lists are sized against
 each other by `DASHBOARD_IN_PROGRESS_LIMIT` (7) and `DASHBOARD_GOAL_SLOTS` (4) in `@hezo/shared`, so
 the columns bottom out level; the goals card ranks by `sortGoalsByTriage` (worst health first) since
 a capped list should spend its slots on what needs a decision. The active-agents strip keeps its
