@@ -442,16 +442,10 @@ function ModelOverride({ provider, model, onProviderChange, onModelChange }: Mod
 							</option>
 						))}
 					</select>
-					{isSubscription ? (
-						<span className="text-xs text-text-2">
-							Subscription sign-in — the provider's default model is used.
+					{models.error && (
+						<span className="text-xs text-danger">
+							{(models.error as { message?: string }).message || 'Failed to load models'}
 						</span>
-					) : (
-						models.error && (
-							<span className="text-xs text-danger">
-								{(models.error as { message?: string }).message || 'Failed to load models'}
-							</span>
-						)
 					)}
 				</label>
 			</div>
