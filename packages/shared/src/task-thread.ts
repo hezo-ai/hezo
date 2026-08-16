@@ -1,4 +1,4 @@
-import { CommentContentType } from './types/common.js';
+import { CommentContentType, type HeartbeatRunStatus, isErroredRunStatus } from './types/common.js';
 
 /**
  * How a task thread renders.
@@ -38,6 +38,13 @@ export interface ThreadRow {
 	content_type: string;
 	/** Structural payload. Run and system rows carry `run_id`; system rows carry `kind`. */
 	content?: unknown;
+	/**
+	 * The run's outcome on a `run` row, as the comments route computes it - the
+	 * row's own `content` is written when the run starts and never updated, so it
+	 * cannot say how the run ended. Absent on every other row, and on a run whose
+	 * `heartbeat_runs` row is gone.
+	 */
+	run_status?: HeartbeatRunStatus | null;
 }
 
 /**
@@ -98,14 +105,15 @@ export function isFoldableThreadRow(row: ThreadRow, ctx: ThreadFoldContext = {})
 }
 
 /**
- * What a collapsed group says about itself. `failedRuns` counts run rows a
- * sibling `run_failed` row in the same thread vouches for - a failure that
- * never wrote one is counted as a plain run rather than guessed at, so the
- * number is only ever an undercount, never a claim the thread cannot support.
+ * What a collapsed group says about itself. `failedRuns` counts run rows whose
+ * `run_status` ended in an error, so the chip and the rows it hides read the
+ * same fact. A row carrying no status falls back to the sibling `run_failed`
+ * notices, which keeps the number an undercount rather than a guess.
  */
 export interface ThreadGroupSummary {
 	/** Rows inside the group. */
 	total: number;
+	/** Run rows that ended in an error - `failed` or `timed_out`. */
 	failedRuns: number;
 	/** Run rows not known to have failed. */
 	runs: number;
@@ -117,7 +125,10 @@ export type ThreadItem<T extends ThreadRow> =
 	| { kind: 'row'; key: string; row: T }
 	| { kind: 'group'; key: string; rows: T[]; summary: ThreadGroupSummary };
 
-/** Run ids the thread positively knows failed, from its own `run_failed` rows. */
+/**
+ * Run ids the thread positively knows failed, from its own `run_failed` rows.
+ * The fallback for a run row carrying no `run_status`; see `rowRunErrored`.
+ */
 export function failedRunIds(rows: readonly ThreadRow[]): Set<string> {
 	const ids = new Set<string>();
 	for (const row of rows) {
@@ -128,14 +139,29 @@ export function failedRunIds(rows: readonly ThreadRow[]): Set<string> {
 	return ids;
 }
 
+/**
+ * Whether a run row's run ended badly. The run's own status is the authority:
+ * the `run_failed` notices beside it are suppressed after a streak of failures
+ * and never written for a cancelled run, so counting those alone reports a
+ * thread that has failed hundreds of times as two failures and a crowd of
+ * healthy runs.
+ *
+ * Only a row with no status at all falls back to the notices, which is what
+ * keeps the count honest for a run the route could not resolve.
+ */
+function rowRunErrored(row: ThreadRow, failed: ReadonlySet<string>): boolean {
+	if (row.run_status != null) return isErroredRunStatus(row.run_status);
+	const runId = threadRowRunId(row);
+	return runId !== null && failed.has(runId);
+}
+
 function summarize(rows: readonly ThreadRow[], failed: ReadonlySet<string>): ThreadGroupSummary {
 	let failedRuns = 0;
 	let runs = 0;
 	let changes = 0;
 	for (const row of rows) {
 		if (row.content_type === CommentContentType.Run) {
-			const runId = threadRowRunId(row);
-			if (runId && failed.has(runId)) failedRuns++;
+			if (rowRunErrored(row, failed)) failedRuns++;
 			else runs++;
 		} else if (isRunFailedRow(row)) {
 			// Already represented by the run row it names; counting it again would

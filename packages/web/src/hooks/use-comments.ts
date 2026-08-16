@@ -1,3 +1,4 @@
+import type { HeartbeatRunStatus } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -45,6 +46,10 @@ export interface Comment {
 	author_icon_url?: string | null;
 	author_avatar_spec?: unknown;
 	parent_comment_id: string | null;
+	/** How the run ended, on a `run` comment. Computed by the route - the stored
+	 *  `content` is written at run start and never updated. Null on every other
+	 *  comment, and on a run whose row is gone. */
+	run_status?: HeartbeatRunStatus | null;
 	reactions?: ReactionGroup[];
 	attachments?: CommentAttachment[];
 }
@@ -83,6 +88,10 @@ export interface CommentSkeleton {
 	author_icon_url?: string | null;
 	author_avatar_spec?: unknown;
 	parent_comment_id: string | null;
+	/** How the run ended, on a `run` comment. The thread summarizes its collapsed
+	 *  groups from these rows, and a folded run row never mounts to fetch its own
+	 *  run, so the outcome has to arrive with the skeleton. */
+	run_status?: HeartbeatRunStatus | null;
 	/** Character length of a text comment's body — sizes its placeholder. Null for non-text. */
 	text_length: number | null;
 	attachment_count: number;
