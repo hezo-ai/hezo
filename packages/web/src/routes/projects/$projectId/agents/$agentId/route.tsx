@@ -38,7 +38,11 @@ function AgentLayout() {
 		: [executionsTab, settingsTab];
 
 	return (
-		<div className="max-w-3xl">
+		// The chat launcher is fixed at `bottom-4 right-4` over every page, so the
+		// last row of any tab - a run, the infinite-scroll sentinel, a Save button -
+		// needs clearance under it at mobile widths, where the content column runs
+		// the full width and passes beneath the button.
+		<div className="max-w-3xl pb-20 sm:pb-8">
 			<Link
 				to="/projects/$projectId/agents"
 				params={{ projectId }}
@@ -54,8 +58,12 @@ function AgentLayout() {
 					size="md"
 					running={agent.runtime_status === 'active'}
 				/>
+				{/* `min-w-0 truncate` keeps the status badge on the name's own line at
+				    mobile widths: without it a long name is unshrinkable and orphans
+				    the badge onto a line of its own. */}
 				<h1
-					className={`text-lg font-semibold${agent.admin_status === AgentAdminStatus.Disabled ? ' text-text-2' : ''}`}
+					title={agentDisplayName(agent)}
+					className={`min-w-0 truncate text-lg font-semibold${agent.admin_status === AgentAdminStatus.Disabled ? ' text-text-2' : ''}`}
 				>
 					{agentDisplayName(agent)}
 					{agent.admin_status === AgentAdminStatus.Disabled ? ' (disabled)' : ''}
