@@ -653,6 +653,70 @@ test('an active connector still surfaces a recorded auth error', async () => {
 	await findByText(/token refresh: generic refresh needs token_url/);
 });
 
+test('a degraded connector flips to Connected when the OAuth popup reports success', async () => {
+	// Reconnect opens the authorize popup, so the write that clears `auth_error`
+	// happens outside this tab entirely - no mutation here ever settles. Without
+	// the postMessage listener the row kept its amber "Needs reconnect" badge
+	// until a page reload, which is exactly the moment the operator is watching.
+	let slug = '';
+	let connectorId = '';
+	const { findByText, getByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			const connector = await seedSaasConnector(ws, {
+				name: 'linear',
+				url: 'https://mcp.linear.example/mcp',
+			});
+			connectorId = connector.id;
+			const oauth = await seedGithubOAuth(['repo']);
+			await markConnectorActive(connector.id, oauth.id);
+			// Activated + auth_error = the `degraded` rung: it worked, its grant died.
+			const { db } = getTestContext();
+			await db.query(`UPDATE mcp_connections SET auth_error = $2 WHERE id = $1`, [
+				connector.id,
+				'token refresh: token endpoint error: invalid_grant',
+			]);
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	await findByText('linear');
+	const degradedRow = within(getByTestId('connectors-list'))
+		.getAllByTestId('connector-row')
+		.find((li) => li.getAttribute('data-connector-id') === connectorId);
+	if (!degradedRow) throw new Error('degraded connector row not found');
+	expect(degradedRow.getAttribute('data-status')).toBe('degraded');
+	within(degradedRow).getByTestId('connector-reconnect');
+	within(degradedRow).getByText(/token refresh: token endpoint error/);
+
+	// The popup completed the re-authorization server-side (simulated directly in
+	// the DB, as the callback's markActive does) …
+	const { db } = getTestContext();
+	await db.query(
+		`UPDATE mcp_connections SET auth_error = NULL, activated_at = now() WHERE id = $1`,
+		[connectorId],
+	);
+
+	// … then posts hezo-oauth-success to its opener, which refetches the list.
+	window.dispatchEvent(new MessageEvent('message', { data: { type: 'hezo-oauth-success' } }));
+
+	await waitFor(() => {
+		const row = within(getByTestId('connectors-list'))
+			.getAllByTestId('connector-row')
+			.find((li) => li.getAttribute('data-connector-id') === connectorId);
+		expect(row?.getAttribute('data-status')).toBe('active');
+	});
+	const reconnected = within(getByTestId('connectors-list'))
+		.getAllByTestId('connector-row')
+		.find((li) => li.getAttribute('data-connector-id') === connectorId);
+	if (!reconnected) throw new Error('reconnected connector row not found');
+	within(reconnected).getByText('Connected');
+	expect(within(reconnected).queryByTestId('connector-reconnect')).toBeNull();
+	expect(within(reconnected).queryByText(/token refresh: token endpoint error/)).toBeNull();
+});
+
 test('a pending connector offers Remove, which deletes it from the project', async () => {
 	let slug = '';
 	const { findByText, getByTestId, router } = await renderApp({

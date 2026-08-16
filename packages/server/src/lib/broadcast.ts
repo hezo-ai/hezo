@@ -53,6 +53,35 @@ export function broadcastCommentFamilyChange(
 	});
 }
 
+/**
+ * Broadcast an `mcp_connections` row change enriched with `team_id` +
+ * `project_id`.
+ *
+ * The web client resolves the project slug whose caches a row_change
+ * invalidates from `row.project_id` (falling back to `row.team_id`), and every
+ * connector broadcast used to carry a partial row — `{ id, status }` — with
+ * neither. So none of them resolved, all of them were dropped client-side, and
+ * a connector's card only picked up its new state on a page reload. That is
+ * most visible on the reconnect path, where the write happens in the OAuth
+ * popup and this broadcast is the tab's only signal.
+ *
+ * `projectId` is the project the change was made from, or null for the global
+ * admin surface (whose page refetches off the popup's postMessage instead).
+ * `teamId` still selects the WS room.
+ */
+export function broadcastConnectorChange(
+	c: Context<Env>,
+	ids: { teamId: string; projectId: string | null },
+	action: ChangeAction,
+	row: Record<string, unknown>,
+): void {
+	broadcastChange(c, wsRoom.team(ids.teamId), 'mcp_connections', action, {
+		...row,
+		team_id: ids.teamId,
+		project_id: ids.projectId ?? (typeof row.project_id === 'string' ? row.project_id : null),
+	});
+}
+
 export function broadcastEvent(
 	wsManager: WebSocketManager,
 	room: string,

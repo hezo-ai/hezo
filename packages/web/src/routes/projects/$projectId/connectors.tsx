@@ -29,6 +29,7 @@ import {
 	useEnsureConnector,
 	useOAuthConnections,
 } from '../../../hooks/use-oauth-connections';
+import { useOAuthSuccessRefetch } from '../../../hooks/use-oauth-success';
 import { useProject } from '../../../hooks/use-projects';
 import { useI18n } from '../../../lib/i18n';
 import { queryKeys } from '../../../lib/query-keys';
@@ -58,6 +59,12 @@ function ConnectorsPage() {
 		[connectorPages],
 	);
 	const { data: oauthConnections = [] } = useOAuthConnections(projectId);
+
+	// A (re)connection completes inside the OAuth popup, so this tab learns about
+	// it either from the popup's postMessage or from the connector's row-change
+	// broadcast. Listen for the first: it lands as soon as the popup closes,
+	// without waiting on the WebSocket round trip.
+	useOAuthSuccessRefetch(queryKeys.projects.connectors(projectId));
 
 	// Ref callback fires when the focused <li> mounts (which can happen after
 	// the initial render once the connectors query resolves). Scrolls into view

@@ -4360,6 +4360,18 @@ the event (an unresolved row invalidates nothing):
   project's high-frequency activity to another and storm its caches.
 - **Everything else** resolves `project_id` first, then falls back to `team_id`.
 
+**A partial row must still carry the ids the resolver reads.** Most broadcasts send the
+full DB row, so `project_id`/`team_id` come for free; a hand-built payload (`{ id, status }`)
+resolves to nothing and the event is silently dropped. Two helpers exist so those payloads
+cannot drift: `broadcastCommentFamilyChange` stamps `project_id` on comment-family rows
+(whose tables have no such column), and `broadcastConnectorChange` stamps `team_id` +
+`project_id` on every `mcp_connections` row. The connector case is the one where the drop
+was visible: an OAuth (re)connection is written from the popup's callback, so this
+broadcast and the popup's own `hezo-oauth-success` postMessage
+(`useOAuthSuccessRefetch`) are the open Connectors page's only two update channels, and
+with the broadcast unresolvable a reconnected connector kept its amber "Needs reconnect"
+badge until a reload.
+
 **Container-state convergence.** The container status banner
 (`components/container-status-banner.tsx`), the CEO chat's HQ gate, and the create-project
 gate all derive from one `useContainerHealth(project)` reading `container_status` off the

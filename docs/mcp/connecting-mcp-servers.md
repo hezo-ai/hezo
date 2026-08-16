@@ -279,7 +279,9 @@ Hezo surfaces it three ways instead:
 
 Press **Reconnect** and complete the provider's authorization exactly as you did the first
 time. The connector is repaired in place - you keep its method allowlist, its credential
-record, and its history, and every agent picks it up again on its next run.
+record, and its history, and every agent picks it up again on its next run. The row updates
+itself as soon as the authorization window closes: the amber badge becomes **Connected** and
+the provider's error message clears, with no page reload.
 
 Until you do, the connector's tools may still appear in agent tool lists, but calls through
 them fail. That is deliberate: withdrawing the tools mid-task would look to an agent like
