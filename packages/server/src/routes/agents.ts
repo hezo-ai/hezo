@@ -127,7 +127,9 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
  * is a cheap aggregate over lengths.
  */
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id, hr.kind,
-	hr.status, hr.queued_reason, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
+	-- created_at, not just started_at: a run that ended before it ever started has
+	-- no started_at, and created_at is the only clock it has to be placed by.
+	hr.status, hr.queued_reason, hr.created_at, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents, hr.usage_partial,
 	hr.invocation_command, hr.working_dir,
 	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
@@ -1352,17 +1354,24 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs', async (c
 	// One predicate, both queries: a count that disagrees with the page makes
 	// `meta.total` promise rows the caller can never reach, so infinite scroll
 	// keeps asking for a page that comes back empty. The two carry the status
-	// array at different positions, so the predicate takes its param index.
-	// `= ANY` to include, `<> ALL` to exclude — `<> ANY` would read "differs from
-	// at least one of them", which is true of every status once the array holds
-	// more than one.
-	const whereFor = (statusIdx: number) =>
+	// parameter at different positions, so the predicate takes its param index.
+	//
+	// Each narrow option is an include, never an exclude: `Succeeded` is the one
+	// status (a scalar), `Errored` is the {failed, timed_out} set (`= ANY`).
+	// Neither covers a live or cancelled run - only `All` does, which is why it is
+	// the default rather than a way to see extra rows.
+	const whereFor = (statusIdx: number) => {
+		if (filter === RunOutcomeFilter.All) return 'hr.member_id = $1';
+		if (filter === RunOutcomeFilter.Succeeded)
+			return `hr.member_id = $1 AND hr.status = $${statusIdx}::heartbeat_run_status`;
+		return `hr.member_id = $1 AND hr.status = ANY($${statusIdx}::heartbeat_run_status[])`;
+	};
+	const filterParams: unknown[] =
 		filter === RunOutcomeFilter.All
-			? 'hr.member_id = $1'
-			: `hr.member_id = $1 AND hr.status ${
-					filter === RunOutcomeFilter.Errored ? '= ANY' : '<> ALL'
-				}($${statusIdx}::heartbeat_run_status[])`;
-	const filterParams = filter === RunOutcomeFilter.All ? [] : [[...ERRORED_RUN_STATUSES]];
+			? []
+			: filter === RunOutcomeFilter.Succeeded
+				? [HeartbeatRunStatus.Succeeded]
+				: [[...ERRORED_RUN_STATUSES]];
 
 	const countResult = await db.query<{ total: number }>(
 		`SELECT count(*)::int AS total FROM heartbeat_runs hr WHERE ${whereFor(2)}`,

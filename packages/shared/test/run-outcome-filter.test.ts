@@ -48,11 +48,39 @@ describe('matchesRunOutcomeFilter', () => {
 			expect(matchesRunOutcomeFilter(s, RunOutcomeFilter.All)).toBe(true);
 	});
 
-	it('Runs and Errored partition the statuses exactly', () => {
-		for (const s of ALL_STATUSES) {
-			const inRuns = matchesRunOutcomeFilter(s, RunOutcomeFilter.Runs);
-			const inErrored = matchesRunOutcomeFilter(s, RunOutcomeFilter.Errored);
-			expect(inRuns).toBe(!inErrored);
-		}
+	it('Succeeded admits the succeeded status and nothing else', () => {
+		// Strict, not "everything that did not error": a cancelled or still-queued
+		// run under a tab called Succeeded is a lie about what happened.
+		for (const s of ALL_STATUSES)
+			expect(matchesRunOutcomeFilter(s, RunOutcomeFilter.Succeeded)).toBe(
+				s === HeartbeatRunStatus.Succeeded,
+			);
+	});
+
+	it('Errored admits exactly the errored statuses', () => {
+		for (const s of ALL_STATUSES)
+			expect(matchesRunOutcomeFilter(s, RunOutcomeFilter.Errored)).toBe(isErroredRunStatus(s));
+	});
+
+	it('Succeeded and Errored are disjoint, and All is the only option covering the rest', () => {
+		// The three narrow options no longer partition the statuses - a live or
+		// cancelled run belongs to neither, which is why All is the default.
+		const uncovered = ALL_STATUSES.filter(
+			(s) =>
+				!matchesRunOutcomeFilter(s, RunOutcomeFilter.Succeeded) &&
+				!matchesRunOutcomeFilter(s, RunOutcomeFilter.Errored),
+		);
+		expect(new Set(uncovered)).toEqual(
+			new Set([
+				HeartbeatRunStatus.Queued,
+				HeartbeatRunStatus.Running,
+				HeartbeatRunStatus.Cancelled,
+			]),
+		);
+		for (const s of ALL_STATUSES)
+			expect(
+				matchesRunOutcomeFilter(s, RunOutcomeFilter.Succeeded) &&
+					matchesRunOutcomeFilter(s, RunOutcomeFilter.Errored),
+			).toBe(false);
 	});
 });

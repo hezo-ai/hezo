@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "Ninguna ejecución coincide con este filtro.",
 	"executions.filter.all": "Todas",
 	"executions.filter.errored": "Con errores",
-	"executions.filter.runs": "Ejecuciones",
+	"executions.filter.succeeded": "Exitosas",
 	"executions.loading": "Cargando ejecuciones...",
 	"goals.archive.action": "Archivar objetivo",
 	"goals.archive.confirmAction": "Archivar",

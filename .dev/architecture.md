@@ -2296,6 +2296,21 @@ consequences elsewhere: the idle-stop scan's busy set excludes a parked run
 scan feeds; and the run reads honestly while parked, the run comment and run detail page
 both rendering "Queued - waiting for container capacity" from `queued_reason`.
 
+The registry is in-memory, so it protects a park only for as long as the process lives.
+`CAPACITY_PARK_MAX_MS` (180 s) deliberately exceeds `STALE_STATE_GRACE_SECONDS` (120 s), so
+a restart mid-park hands every parked row straight to the orphan pass with no driver to
+vouch for it - and a restart is exactly when the pool is cold and capacity tightest, so the
+two coincide rather than being independent. That pairing is only tolerable because the
+orphan pass's verdict for a run that never started is itself non-destructive: it finalizes
+the row `Cancelled`, hands the *original* wakeup back to the queue (`claimed` → `queued`,
+mirroring `settleWakeupForRun`) and spends no strike of the lost-run escalation, so the
+work is redispatched rather than lost or reported as a failure the operator must act on.
+The `running` arm is unchanged and still `Failed` - a process that vanished mid-flight did
+lose work. `capacity-park-grace` in `orphan-detector.test.ts` pins the constant
+relationship so neither can be moved without meeting the assumption. The run's `error`
+carries the tail of its own log, so the detail page says *why* it never started rather than
+only that it did not.
+
 **Run.** `agent-runner.ts` builds the run context (provider/runtime resolution, MCP
 descriptors, egress proxy, ssh-agent socket, container env), starts a `heartbeat_runs`
 row, and drives a streaming `docker exec` of the runtime CLI. The long-lived Docker streams

@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "没有符合此筛选条件的运行记录。",
 	"executions.filter.all": "全部",
 	"executions.filter.errored": "出错",
-	"executions.filter.runs": "运行",
+	"executions.filter.succeeded": "成功",
 	"executions.loading": "正在加载运行记录...",
 	"goals.archive.action": "归档目标",
 	"goals.archive.confirmAction": "归档",

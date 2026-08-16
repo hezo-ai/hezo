@@ -756,14 +756,16 @@ describe('run-outcome filter on the runs list', () => {
 		});
 		filterAgentId = (await agentRes.json()).data.id as string;
 
-		// One of each interesting shape: a clean finish, both errored statuses, and
-		// a live run that has not started (started_at NULL) so the filter can be
-		// shown never to hide one.
+		// One of each interesting shape: a clean finish, both errored statuses, a
+		// live run that has not started (started_at NULL), and a cancelled one.
+		// The last two are what prove the narrow options are strict - each belongs
+		// to neither Succeeded nor Errored, so only All returns them.
 		const shapes: [string, string, boolean][] = [
 			['ok', 'succeeded', true],
 			['failed', 'failed', true],
 			['timedOut', 'timed_out', true],
 			['live', 'queued', false],
+			['cancelled', 'cancelled', false],
 		];
 		for (const [key, status, started] of shapes) {
 			const r = await db.query<{ id: string }>(
@@ -790,25 +792,30 @@ describe('run-outcome filter on the runs list', () => {
 	}
 
 	it('returns every run when no filter is given', async () => {
+		// The default view, and the one the Executions page opens on: nothing is
+		// hidden, so a reader looking for a failure does not have to find a control
+		// first.
 		const { ids, total } = await list('');
 		expect(new Set(ids)).toEqual(new Set(Object.values(seeded)));
-		expect(total).toBe(4);
+		expect(total).toBe(5);
 	});
 
-	it('filter=runs drops both errored statuses, and the count drops with them', async () => {
-		const { ids, total } = await list('?filter=runs');
-		expect(new Set(ids)).toEqual(new Set([seeded.ok, seeded.live]));
+	it('filter=succeeded returns only the succeeded run, and the count drops with it', async () => {
+		const { ids, total } = await list('?filter=succeeded');
+		expect(new Set(ids)).toEqual(new Set([seeded.ok]));
 		// The count must carry the same predicate as the page: a total that
 		// promises rows the caller can never reach makes infinite scroll ask for a
 		// page that comes back empty.
-		expect(total).toBe(2);
+		expect(total).toBe(1);
 	});
 
-	it('filter=runs keeps a live run that has not started', async () => {
-		// The filter is on the outcome, not on whether the run got going - a run
-		// still waiting to start is the most interesting row on the page.
-		const { ids } = await list('?filter=runs');
-		expect(ids).toContain(seeded.live);
+	it('filter=succeeded is strict - it excludes a live run and a cancelled one', async () => {
+		// Not "everything that did not error". A run still queued has not
+		// succeeded, and a run handed back to the queue for capacity was cancelled;
+		// neither belongs under a tab called Succeeded. All is where they live.
+		const { ids } = await list('?filter=succeeded');
+		expect(ids).not.toContain(seeded.live);
+		expect(ids).not.toContain(seeded.cancelled);
 	});
 
 	it('filter=errored returns exactly the failed and timed-out runs', async () => {
@@ -817,10 +824,27 @@ describe('run-outcome filter on the runs list', () => {
 		expect(total).toBe(2);
 	});
 
+	it('filter=errored does not claim a cancelled run', async () => {
+		// A run the instance handed back for capacity is not the agent failing.
+		const { ids } = await list('?filter=errored');
+		expect(ids).not.toContain(seeded.cancelled);
+	});
+
 	it('an unrecognised filter falls back to returning everything', async () => {
 		const { ids, total } = await list('?filter=nonsense');
 		expect(new Set(ids)).toEqual(new Set(Object.values(seeded)));
-		expect(total).toBe(4);
+		expect(total).toBe(5);
+	});
+
+	it('sends created_at, the only clock a run that never started has', async () => {
+		const res = await app.request(
+			`/api/projects/${projectSlug}/agents/${filterAgentId}/heartbeat-runs?filter=all`,
+			{ headers: authHeader(token) },
+		);
+		const body = await res.json();
+		const live = body.data.find((r: { id: string }) => r.id === seeded.live);
+		expect(live.started_at).toBeNull();
+		expect(live.created_at).toBeTruthy();
 	});
 
 	it('pages a filtered set without repeating or dropping a row', async () => {

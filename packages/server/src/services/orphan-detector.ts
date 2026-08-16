@@ -2,6 +2,7 @@ import {
 	AgentRuntimeStatus,
 	ApprovalType,
 	HeartbeatRunStatus,
+	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
 	wsRoom,
@@ -44,6 +45,50 @@ export interface DetectOrphansOpts {
 	killProcesses?: (containerId: string, runId: string) => Promise<void>;
 }
 
+/**
+ * How much of the log tail rides along in the run's `error`.
+ *
+ * Shorter than the excerpt handed to a retry wakeup: this one is rendered in a
+ * fixed-height block on the run detail page, and the point is to say *why*
+ * without the reader having to go and read the log themselves.
+ */
+const ORPHAN_ERROR_TAIL_CHARS = 400;
+
+/**
+ * The run's `error`, carrying the actual cause where the log has one.
+ *
+ * The bare verdict on its own ("run never started") named the symptom and left
+ * the reason - almost always the instance being at its container-memory budget -
+ * sitting in a log the reader had to open separately.
+ */
+function orphanErrorMessage(neverStarted: boolean, logTail: string): string {
+	const verdict = neverStarted
+		? 'Never started: no host process was driving this run, so it was returned to the queue.'
+		: 'Orphaned: process no longer running';
+	const excerpt = logTail.trim().slice(-ORPHAN_ERROR_TAIL_CHARS).trim();
+	return excerpt ? `${verdict}\n\nLast log output:\n${excerpt}` : verdict;
+}
+
+/**
+ * Hand a claimed wakeup back to the queue. Returns whether it was still claimed.
+ *
+ * The status guard is load-bearing: another path may have settled this wakeup
+ * already, and returning a completed one to the queue dispatches its work a
+ * second time. The boolean is how the caller knows whether the work was handed
+ * back or still needs a retry raised for it.
+ */
+async function requeueWakeup(db: Db, wakeupId: string): Promise<boolean> {
+	const res = await db.query(
+		`UPDATE agent_wakeup_requests
+		 SET status = $1::wakeup_status, claimed_at = NULL,
+		     last_skipped_at = now(), last_skipped_reason = $2
+		 WHERE id = $3 AND status = $4::wakeup_status
+		 RETURNING id`,
+		[WakeupStatus.Queued, WakeupSkipReason.InstanceAtCapacity, wakeupId, WakeupStatus.Claimed],
+	);
+	return res.rows.length > 0;
+}
+
 export async function detectOrphans(
 	db: Db,
 	liveRunIds: Set<string>,
@@ -65,13 +110,24 @@ export async function detectOrphans(
 		member_id: string;
 		team_id: string;
 		task_id: string | null;
+		wakeup_id: string | null;
 		project_id: string | null;
 		container_id: string | null;
 		process_loss_retry_count: number;
 		status: HeartbeatRunStatus;
 	}>(
-		`SELECT hr.id, hr.member_id, hr.team_id, hr.task_id, hr.process_loss_retry_count, hr.status,
-		        (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id,
+		`SELECT hr.id, hr.member_id, hr.team_id, hr.task_id, hr.wakeup_id,
+		        hr.process_loss_retry_count, hr.status,
+		        -- The team fallback is load-bearing for the broadcast, not a nicety.
+		        -- A progress-update run carries no task, so the task lookup alone
+		        -- left project_id NULL - and the client skips a heartbeat_runs
+		        -- change it cannot map to a project (PROJECT_STRICT_TABLES), so
+		        -- those reaps reached no open page at all. A team owns exactly one
+		        -- project (UNIQUE(projects.team_id)), so this is unambiguous.
+		        COALESCE(
+		          (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id),
+		          (SELECT p.id FROM projects p WHERE p.team_id = hr.team_id)
+		        ) AS project_id,
 		        (SELECT p.container_id FROM projects p JOIN tasks t ON t.project_id = p.id
 		         WHERE t.id = hr.task_id) AS container_id
 		 FROM heartbeat_runs hr
@@ -101,19 +157,38 @@ export async function detectOrphans(
 
 		orphanCount++;
 
-		const error =
-			run.status === HeartbeatRunStatus.Queued
-				? 'Orphaned: run never started'
-				: 'Orphaned: process no longer running';
+		// The two arms are not the same event, and giving them one verdict was the
+		// bug. A `running` run had a process doing work that vanished mid-flight:
+		// output may be half-written, the container may hold a wedged tree, and the
+		// agent's turn was spent - a failure. A `queued` one never started, so
+		// nothing was produced and nothing was lost; the honest record is the one
+		// the capacity park already writes when it gives up, `Cancelled` with the
+		// work handed back. Failing it instead filled the Errored view with rows
+		// nobody could act on, and minted a fresh retry wakeup on every pass rather
+		// than returning the one already sitting there claimed.
+		const neverStarted = run.status === HeartbeatRunStatus.Queued;
+
+		// Read once and use twice - the message below and, on the failure arm, the
+		// retry wakeup's excerpt. This runs on a 30s cron, so a second read per
+		// orphan is a cost with nothing to show for it.
+		const tail = await readRunLogTail(db, run.id, ORPHAN_LOG_TAIL_CHARS);
+		const error = orphanErrorMessage(neverStarted, tail.text);
 
 		await db.query(
 			`UPDATE heartbeat_runs
 			 SET status = $2::heartbeat_run_status,
 			     finished_at = now(),
 			     error = $3,
-			     process_loss_retry_count = process_loss_retry_count + 1
+			     -- Only a real process loss counts toward the escalation. A run that
+			     -- never started is being handed back, not retried after a failure.
+			     process_loss_retry_count = process_loss_retry_count + $4::int
 			 WHERE id = $1`,
-			[run.id, HeartbeatRunStatus.Failed, error],
+			[
+				run.id,
+				neverStarted ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
+				error,
+				neverStarted ? 0 : 1,
+			],
 		);
 
 		// Task-less runs can't resolve a container here; the startup sweep is
@@ -136,16 +211,30 @@ export async function detectOrphans(
 			member_id: run.member_id,
 			task_id: run.task_id,
 			project_id: run.project_id,
-			status: HeartbeatRunStatus.Failed,
+			status: neverStarted ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
 			error,
 		});
 
-		await retryOrEscalateLostRun(db, {
-			runId: run.id,
-			memberId: run.member_id,
-			teamId: run.team_id,
-			priorRetries: run.process_loss_retry_count,
-		});
+		// A run that never started is put back rather than retried: the original
+		// wakeup returns to the queue for the dispatcher to pick up, exactly as
+		// `JobManager.settleWakeupForRun` does for the capacity park's own give-up
+		// path. Guarded on `claimed` so a wakeup already settled by another path is
+		// not resurrected. With no wakeup to return (a run started by something
+		// else) there is nothing to hand back, so fall through to the retry path
+		// rather than dropping the work.
+		const requeued = neverStarted && run.wakeup_id ? await requeueWakeup(db, run.wakeup_id) : false;
+		if (requeued) continue;
+
+		await retryOrEscalateLostRun(
+			db,
+			{
+				runId: run.id,
+				memberId: run.member_id,
+				teamId: run.team_id,
+				priorRetries: run.process_loss_retry_count,
+			},
+			tail.text,
+		);
 	}
 
 	return orphanCount;
@@ -170,6 +259,8 @@ export async function detectOrphans(
 export async function retryOrEscalateLostRun(
 	db: Db,
 	run: { runId: string; memberId: string; teamId: string; priorRetries: number },
+	/** Log excerpt the caller has already read, to save reading it twice. */
+	knownLogTail?: string,
 ): Promise<void> {
 	if (run.priorRetries + 1 < MAX_RETRIES) {
 		const failedRun = await db.query<{ exit_code: number | null }>(
@@ -178,7 +269,8 @@ export async function retryOrEscalateLostRun(
 		);
 		// Read the excerpt from storage; this used to aggregate the run's whole
 		// log (up to 10 MB) to keep its last 1000 characters, on a 30s cron.
-		const tail = await readRunLogTail(db, run.runId, ORPHAN_LOG_TAIL_CHARS);
+		const tailText =
+			knownLogTail ?? (await readRunLogTail(db, run.runId, ORPHAN_LOG_TAIL_CHARS)).text;
 
 		await createWakeup(db, run.memberId, run.teamId, WakeupSource.Timer, {
 			reason: 'orphan_retry',
@@ -187,7 +279,7 @@ export async function retryOrEscalateLostRun(
 			previous_failure: {
 				run_id: run.runId,
 				exit_code: failedRun.rows[0]?.exit_code ?? null,
-				log_tail: tail.text.length > 0 ? tail.text : null,
+				log_tail: tailText.length > 0 ? tailText : null,
 			},
 		});
 	} else {

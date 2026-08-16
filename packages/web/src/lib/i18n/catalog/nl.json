@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "Geen uitvoeringen komen overeen met dit filter.",
 	"executions.filter.all": "Alle",
 	"executions.filter.errored": "Mislukt",
-	"executions.filter.runs": "Uitvoeringen",
+	"executions.filter.succeeded": "Geslaagd",
 	"executions.loading": "Uitvoeringen laden...",
 	"goals.archive.action": "Doel archiveren",
 	"goals.archive.confirmAction": "Archiveren",

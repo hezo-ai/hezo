@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "このフィルターに一致する実行はありません。",
 	"executions.filter.all": "すべて",
 	"executions.filter.errored": "エラー",
-	"executions.filter.runs": "実行",
+	"executions.filter.succeeded": "成功",
 	"executions.loading": "実行を読み込んでいます...",
 	"goals.archive.action": "ゴールをアーカイブ",
 	"goals.archive.confirmAction": "アーカイブ",

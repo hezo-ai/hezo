@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "Keine Läufe entsprechen diesem Filter.",
 	"executions.filter.all": "Alle",
 	"executions.filter.errored": "Fehlgeschlagen",
-	"executions.filter.runs": "Läufe",
+	"executions.filter.succeeded": "Erfolgreich",
 	"executions.loading": "Läufe werden geladen...",
 	"goals.archive.action": "Ziel archivieren",
 	"goals.archive.confirmAction": "Archivieren",

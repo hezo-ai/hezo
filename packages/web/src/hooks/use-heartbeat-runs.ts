@@ -17,6 +17,8 @@ export interface HeartbeatRun {
 	project_name: string | null;
 	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
 	queued_reason: string | null;
+	created_at: string;
+	/** Null until the run goes running - a run that ended before that never gets one. */
 	started_at: string | null;
 	finished_at: string | null;
 	exit_code: number | null;
@@ -81,6 +83,7 @@ export function useHeartbeatRuns(
 	options?: { perPage?: number; filter?: RunOutcomeFilter },
 ) {
 	const perPage = options?.perPage ?? 50;
+	// Same default as the route and the server: nothing hidden unless asked.
 	const filter = options?.filter ?? RunOutcomeFilter.All;
 	return useInfiniteQuery({
 		// `filter` has to be in the key: the poll below refetches every loaded

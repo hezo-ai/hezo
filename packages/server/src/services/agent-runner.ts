@@ -120,7 +120,7 @@ import {
 	type McpDescriptor,
 	validateInjection,
 } from './mcp-injectors';
-import { retryOrEscalateLostRun } from './orphan-detector';
+import { retryOrEscalateLostRun, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
@@ -1142,8 +1142,16 @@ const CAPACITY_PARK_POLL_MS = 5_000;
  * trading one errored row for another. The dispatcher's pre-flight gate already
  * refuses to dispatch while at capacity, so a run that reaches the ladder and
  * finds nothing lost a race, and a race resolves in seconds or was never one.
+ *
+ * This exceeds {@link STALE_STATE_GRACE_SECONDS}, so a parked run outlives the
+ * age at which the orphan pass would consider its row. That is safe only because
+ * the pass skips any run id in the live-run registry, and this park stays inside
+ * `runAgent` precisely to keep it there. The registry is in-memory, so a restart
+ * mid-park drops the row to the pass anyway — which is why the never-started
+ * verdict has to be survivable rather than a failure. `capacity-park-grace`
+ * in `orphan-detector.test.ts` pins the relationship.
  */
-const CAPACITY_PARK_MAX_MS = 3 * 60_000;
+export const CAPACITY_PARK_MAX_MS = 3 * 60_000;
 
 /**
  * Sleep that returns early when the run is aborted, so a cancel or a shutdown

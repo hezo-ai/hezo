@@ -257,7 +257,7 @@
 	"executions.emptyFiltered": "Żadne uruchomienie nie pasuje do tego filtra.",
 	"executions.filter.all": "Wszystkie",
 	"executions.filter.errored": "Błędy",
-	"executions.filter.runs": "Uruchomienia",
+	"executions.filter.succeeded": "Udane",
 	"executions.loading": "Ładowanie uruchomień...",
 	"goals.archive.action": "Zarchiwizuj cel",
 	"goals.archive.confirmAction": "Zarchiwizuj",
