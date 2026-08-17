@@ -9,7 +9,7 @@ import {
 	generatePasswordSalt,
 	signAuthMessage,
 } from '@hezo/shared';
-import { expect, type Locator, type Page, type Response } from '@playwright/test';
+import { expect, type Locator, type Page, type Response, type Route } from '@playwright/test';
 import { TEST_MNEMONIC, TEST_PASSWORD } from './constants';
 
 // The phrase never goes over the wire: the Node test process derives the same
@@ -724,6 +724,29 @@ export async function clickAndWaitForResponse(
 	return response;
 }
 
+/** Playwright's wording when the page, context or browser closed mid-callback. */
+const ROUTE_TEARDOWN_RE = /Target (?:page, context or browser has been closed|closed)/i;
+
+/**
+ * Run a route callback that rewrites a real upstream response, absorbing the
+ * teardown race but nothing else.
+ *
+ * A request still in flight when the page tears down rejects inside the callback
+ * with `route.fetch: Target page, context or browser has been closed`, failing an
+ * otherwise-passing test. Letting that one through keeps the race out of the
+ * failure report. Every other error - a helper's own "not in the live index"
+ * assertion among them - still propagates, so a genuinely mis-set-up mock is not
+ * silently downgraded into an unmocked request.
+ */
+async function rewriteRoute(route: Route, rewrite: () => Promise<void>): Promise<void> {
+	try {
+		await rewrite();
+	} catch (err) {
+		if (!ROUTE_TEARDOWN_RE.test(err instanceof Error ? err.message : String(err))) throw err;
+		await route.continue().catch(() => {});
+	}
+}
+
 /**
  * Serve a deterministic `/api/projects` index for project-rail layout specs.
  *
@@ -739,25 +762,27 @@ export async function mockRailProjects(
 	page: Page,
 	options: { keepSlug: string; clones: number },
 ): Promise<void> {
-	await page.route('**/api/projects', async (route) => {
-		const res = await route.fetch();
-		const json = (await res.json()) as { data: Array<Record<string, unknown>> };
-		const kept = json.data.filter((p) => p.is_internal === true || p.slug === options.keepSlug);
-		const base = kept.find((p) => p.slug === options.keepSlug);
-		if (!base) {
-			throw new Error(`mockRailProjects: project "${options.keepSlug}" not in the live index`);
-		}
-		const clones = Array.from({ length: options.clones }, (_, i) => ({
-			...base,
-			id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
-			slug: `rail-fill-${i + 1}`,
-			name: `Rail Fill ${i + 1}`,
-		}));
-		await route.fulfill({
-			response: res,
-			body: JSON.stringify({ ...json, data: [...kept, ...clones] }),
-		});
-	});
+	await page.route('**/api/projects', (route) =>
+		rewriteRoute(route, async () => {
+			const res = await route.fetch();
+			const json = (await res.json()) as { data: Array<Record<string, unknown>> };
+			const kept = json.data.filter((p) => p.is_internal === true || p.slug === options.keepSlug);
+			const base = kept.find((p) => p.slug === options.keepSlug);
+			if (!base) {
+				throw new Error(`mockRailProjects: project "${options.keepSlug}" not in the live index`);
+			}
+			const clones = Array.from({ length: options.clones }, (_, i) => ({
+				...base,
+				id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+				slug: `rail-fill-${i + 1}`,
+				name: `Rail Fill ${i + 1}`,
+			}));
+			await route.fulfill({
+				response: res,
+				body: JSON.stringify({ ...json, data: [...kept, ...clones] }),
+			});
+		}),
+	);
 	await page.route('**/api/projects/rail-fill-*/inbox/count', (route) =>
 		route.fulfill({
 			status: 200,
@@ -782,18 +807,14 @@ export async function mockRailProjects(
  */
 export async function scopeRailToProjects(page: Page, slugs: string[]): Promise<void> {
 	const keep = new Set(slugs);
-	await page.route('**/api/projects', async (route) => {
-		// A request still in flight when the page tears down rejects here; letting
-		// it through keeps that teardown race out of the test's failure report.
-		try {
+	await page.route('**/api/projects', (route) =>
+		rewriteRoute(route, async () => {
 			const res = await route.fetch();
 			const json = (await res.json()) as { data: Array<Record<string, unknown>> };
 			const data = json.data.filter((p) => p.is_internal === true || keep.has(p.slug as string));
 			await route.fulfill({ response: res, body: JSON.stringify({ ...json, data }) });
-		} catch {
-			await route.continue().catch(() => {});
-		}
-	});
+		}),
+	);
 }
 
 /**
@@ -803,28 +824,32 @@ export async function scopeRailToProjects(page: Page, slugs: string[]): Promise<
  * present and the per-team detail fetch still resolves for the original slugs.
  */
 export async function mockMarketplaceCatalog(page: Page, count: number): Promise<void> {
-	await page.route('**/api/marketplace/teams', async (route) => {
-		const res = await route.fetch();
-		const json = (await res.json()) as { data: Array<Record<string, unknown>> };
-		const base = json.data[0];
-		if (!base) throw new Error('mockMarketplaceCatalog: the live catalog is empty');
-		const filler = Array.from({ length: Math.max(0, count - json.data.length) }, (_, i) => ({
-			...base,
-			slug: `catalog-fill-${i + 1}`,
-			name: `Catalog Fill ${i + 1}`,
-		}));
-		await route.fulfill({
-			response: res,
-			body: JSON.stringify({ ...json, data: [...json.data, ...filler] }),
-		});
-	});
+	await page.route('**/api/marketplace/teams', (route) =>
+		rewriteRoute(route, async () => {
+			const res = await route.fetch();
+			const json = (await res.json()) as { data: Array<Record<string, unknown>> };
+			const base = json.data[0];
+			if (!base) throw new Error('mockMarketplaceCatalog: the live catalog is empty');
+			const filler = Array.from({ length: Math.max(0, count - json.data.length) }, (_, i) => ({
+				...base,
+				slug: `catalog-fill-${i + 1}`,
+				name: `Catalog Fill ${i + 1}`,
+			}));
+			await route.fulfill({
+				response: res,
+				body: JSON.stringify({ ...json, data: [...json.data, ...filler] }),
+			});
+		}),
+	);
 	// The clones have no def behind them; serve the real one so opening their detail
 	// renders a roster instead of the fetch-failed state.
-	await page.route('**/api/marketplace/teams/catalog-fill-*', async (route) => {
-		const url = new URL(route.request().url());
-		const real = `${url.origin}/api/marketplace/teams/software-development`;
-		await route.fulfill({ response: await route.fetch({ url: real }) });
-	});
+	await page.route('**/api/marketplace/teams/catalog-fill-*', (route) =>
+		rewriteRoute(route, async () => {
+			const url = new URL(route.request().url());
+			const real = `${url.origin}/api/marketplace/teams/software-development`;
+			await route.fulfill({ response: await route.fetch({ url: real }) });
+		}),
+	);
 }
 
 /**
