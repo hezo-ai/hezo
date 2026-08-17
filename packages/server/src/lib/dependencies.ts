@@ -116,6 +116,7 @@ export async function recomputeDownstreamReadiness(
 	blockerTaskId: string,
 	actorMemberId: string | null,
 	wsManager: WebSocketManager | undefined,
+	createdByRunId: string | null = null,
 ): Promise<void> {
 	const downstream = await db.query<{ task_id: string }>(
 		'SELECT DISTINCT task_id FROM task_dependencies WHERE blocked_by_task_id = $1',
@@ -153,7 +154,7 @@ export async function recomputeDownstreamReadiness(
 			cascade,
 		);
 		if (newStatus === TaskStatus.Backlog || newStatus === null) {
-			await wakeIfReady(db, row.task_id);
+			await wakeIfReady(db, row.task_id, createdByRunId);
 		}
 	}
 }
@@ -229,7 +230,11 @@ export async function reconcileBlockedStatus(
  * open blockers. Splits out so callers that already know the task ID (e.g.
  * REST `DELETE /dependencies/:depId`) don't pay for the downstream lookup.
  */
-export async function wakeIfReady(db: Db, taskId: string): Promise<void> {
+export async function wakeIfReady(
+	db: Db,
+	taskId: string,
+	createdByRunId: string | null = null,
+): Promise<void> {
 	if (await hasOpenBlockers(db, taskId)) return;
 
 	const task = await db.query<{ assignee_id: string | null; team_id: string }>(
@@ -242,15 +247,19 @@ export async function wakeIfReady(db: Db, taskId: string): Promise<void> {
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [row.assignee_id]);
 	if (isAgent.rows.length === 0) return;
 
+	// Releasing a parked wakeup notifies the assignee without writing a row, so
+	// the run that cleared the blocker is credited here too - otherwise the one
+	// routing that creates nothing is the one the exit check cannot see.
 	const flipped = await db.query<{ id: string }>(
 		`UPDATE agent_wakeup_requests
-		 SET status = $1::wakeup_status, claimed_at = NULL
+		 SET status = $1::wakeup_status, claimed_at = NULL,
+		     created_by_run_id = COALESCE($5::uuid, created_by_run_id)
 		 WHERE member_id = $2
 		   AND status = $3::wakeup_status
 		   AND payload->>'task_id' = $4
 		   AND payload->>'reason' = 'blocked'
 		 RETURNING id`,
-		[WakeupStatus.Queued, row.assignee_id, WakeupStatus.Deferred, taskId],
+		[WakeupStatus.Queued, row.assignee_id, WakeupStatus.Deferred, taskId, createdByRunId],
 	);
 
 	if (flipped.rows.length > 0) return;
@@ -275,6 +284,7 @@ export async function wakeIfReady(db: Db, taskId: string): Promise<void> {
 			WakeupSource.Assignment,
 			{ task_id: taskId, reason: 'unblocked' },
 			`unblock:${taskId}`,
+			createdByRunId,
 		);
 	} catch (e) {
 		log.error('Failed to create unblock wakeup:', e);

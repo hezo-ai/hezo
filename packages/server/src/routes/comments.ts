@@ -1,10 +1,18 @@
-import { AuthType, CommentContentType, WakeupSource, wsRoom } from '@hezo/shared';
+import {
+	AuthType,
+	CommentContentType,
+	parseThreadRowCategories,
+	type ThreadRowCategory,
+	WakeupSource,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import type { MasterKeyManager } from '../crypto/master-key';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
+import { commentCategoryPredicate, commentSincePredicate } from '../lib/comment-filters';
 import { attachRunStatuses } from '../lib/comment-run-status';
 import { normalizeAllowedHosts } from '../lib/credential-placeholder';
 import { validateCredentialValue } from '../lib/credential-validator';
@@ -78,6 +86,15 @@ async function attachAuthorIcons(
  *  - **body mode** (`?ids=a,b,c`): the deferred heavy payload — `content` and
  *    `attachments` for just the requested comments. Reactions stay on the skeleton
  *    row, so a row merges body content over its skeleton entry.
+ *
+ * Full and skeleton mode accept `?categories=` and `?since=` — the same filter
+ * the MCP `list_comments` tool takes, so both surfaces narrow a thread the same
+ * way. **They default to every row here and to the conversation on MCP**, and the
+ * difference is deliberate: this endpoint feeds a browser that folds the
+ * machinery itself and counts run and system rows to label the folded groups,
+ * while an agent's scarce resource is the context window it reads them into.
+ * Body mode ignores both — it is keyed by explicit ids, so returning fewer rows
+ * than were named would be a different answer to the question asked.
  */
 commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -87,9 +104,43 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 
 	const idsParam = c.req.query('ids');
 	if (idsParam !== undefined) return getCommentBodies(c, db, taskId, idsParam);
-	if (c.req.query('view') === 'skeleton') return getCommentSkeletons(c, db, teamId, taskId);
-	return getCommentsFull(c, db, teamId, taskId);
+
+	const categoriesParam = c.req.query('categories');
+	const categories =
+		categoriesParam === undefined ? null : parseThreadRowCategories(categoriesParam);
+	if (categoriesParam !== undefined && !categories) {
+		return err(c, 'BAD_REQUEST', 'Unknown categories value', 400);
+	}
+	const since = c.req.query('since');
+	if (since !== undefined && Number.isNaN(Date.parse(since))) {
+		return err(c, 'BAD_REQUEST', 'since must be an ISO-8601 timestamp', 400);
+	}
+	const filter: CommentReadFilter = { categories, since };
+
+	if (c.req.query('view') === 'skeleton') {
+		return getCommentSkeletons(c, db, teamId, taskId, filter);
+	}
+	return getCommentsFull(c, db, teamId, taskId, filter);
 });
+
+/** Which rows a thread read wants. A null `categories` means every row. */
+interface CommentReadFilter {
+	categories: ThreadRowCategory[] | null;
+	since?: string;
+}
+
+/**
+ * The filter's `AND` clauses for a query already keyed on `ic.task_id`, pushing
+ * their bind params onto `params`. Empty string when nothing was asked for, so
+ * the unfiltered read is byte-identical to what it was.
+ */
+function commentFilterClauses(filter: CommentReadFilter, params: unknown[]): string {
+	const parts = [
+		filter.categories ? commentCategoryPredicate('ic', filter.categories, params) : null,
+		commentSincePredicate('ic', filter.since, params),
+	].filter((p): p is string => p !== null);
+	return parts.length > 0 ? ` AND ${parts.join(' AND ')}` : '';
+}
 
 /** Full mode (default): every comment with content, reactions and attachments. */
 async function getCommentsFull(
@@ -97,7 +148,10 @@ async function getCommentsFull(
 	db: import('../db/database').Db,
 	teamId: string,
 	taskId: string,
+	filter: CommentReadFilter,
 ) {
+	const params: unknown[] = [taskId];
+	const filterSql = commentFilterClauses(filter, params);
 	const result = await db.query(
 		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type, ic.content, ic.chosen_option, ic.created_at,
             CASE WHEN ic.author_api_key_id IS NOT NULL THEN 'api_key' ELSE m.member_type::text END AS author_type,
@@ -113,14 +167,14 @@ async function getCommentsFull(
      LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
      LEFT JOIN api_keys ca ON ca.id = ic.author_api_key_id
      LEFT JOIN user_icons ui ON ui.user_id = ic.author_user_id
-     WHERE ic.task_id = $1
+     WHERE ic.task_id = $1${filterSql}
      -- id breaks ties deterministically: comments created in the same instant
      -- (a seeded thread, a burst of system comments) otherwise come back in
      -- whatever order the plan happens to produce, so the thread can reorder
      -- between two identical requests and a deep link lands on the wrong row.
      -- The (task_id, created_at) index still serves the sort.
      ORDER BY ic.created_at ASC, ic.id ASC`,
-		[taskId],
+		params,
 	);
 
 	const viewerMemberId = await resolveReactorMemberId(db, c.get('auth'), teamId);
@@ -157,7 +211,10 @@ async function getCommentSkeletons(
 	db: import('../db/database').Db,
 	teamId: string,
 	taskId: string,
+	filter: CommentReadFilter,
 ) {
+	const params: unknown[] = [taskId];
+	const filterSql = commentFilterClauses(filter, params);
 	const result = await db.query(
 		`SELECT ic.id, ic.public_id, ic.task_id, ic.content_type,
             CASE WHEN ic.content_type = 'text' THEN NULL ELSE ic.content END AS content,
@@ -185,14 +242,14 @@ async function getCommentSkeletons(
        WHERE tc.task_id = $1
        GROUP BY cat.comment_id
      ) att ON att.comment_id = ic.id
-     WHERE ic.task_id = $1
+     WHERE ic.task_id = $1${filterSql}
      -- id breaks ties deterministically: comments created in the same instant
      -- (a seeded thread, a burst of system comments) otherwise come back in
      -- whatever order the plan happens to produce, so the thread can reorder
      -- between two identical requests and a deep link lands on the wrong row.
      -- The (task_id, created_at) index still serves the sort.
      ORDER BY ic.created_at ASC, ic.id ASC`,
-		[taskId],
+		params,
 	);
 
 	const viewerMemberId = await resolveReactorMemberId(db, c.get('auth'), teamId);

@@ -12,6 +12,7 @@ import {
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
 	credentialSerializesRuns,
+	DEFAULT_THREAD_ROW_CATEGORIES,
 	effectiveRuntime,
 	formatContainerMetaLogLine,
 	GEMINI_RUNTIME_ENV,
@@ -36,6 +37,7 @@ import {
 	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
+	type ThreadRowCategory,
 	WakeupSource,
 	WsMessageType,
 	wsRoom,
@@ -46,6 +48,7 @@ import { appendRunLogChunks, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
+import { commentCategoryPredicate } from '../lib/comment-filters';
 import { describeSignalExit, signalFromExitCode } from '../lib/exit-code';
 import { withProjectGitLock } from '../lib/git-lock';
 import {
@@ -1037,14 +1040,21 @@ async function buildRunContext(
 			endpoints.hezoBaseUrl,
 		);
 	} else {
-		// Every task run gets the latest few comments inline as a head-start; the shared
-		// instructions still direct the agent to fetch the full thread before acting.
+		// Every task run gets the latest few comments inline as a head-start, plus
+		// where to start reading from, so catching up has an end rather than being
+		// a walk back through everything the task has ever accumulated.
 		const recentComments = await loadCommentHistory(
 			deps.db,
 			(task as TaskInfo).id,
 			deps.masterKeyManager,
 			endpoints.hezoBaseUrl,
-			{ limit: RECENT_COMMENTS_LIMIT },
+			{ limit: RECENT_COMMENTS_LIMIT, categories: DEFAULT_THREAD_ROW_CATEGORIES },
+		);
+		const catchUp = await loadCatchUpSinceLastRun(
+			deps.db,
+			agent.id,
+			(task as TaskInfo).id,
+			heartbeatRunId,
 		);
 		basePrompt = buildTaskPrompt(inlineSystemPrompt, task as TaskInfo, wakeupPayload, {
 			mentionContext,
@@ -1054,6 +1064,7 @@ async function buildRunContext(
 			openSubTasks,
 			recentComments,
 			wakingCommentId,
+			catchUp,
 		});
 	}
 	const taskPrompt = effortApplication.promptDirective
@@ -2572,6 +2583,7 @@ export async function runAgent(
 						selfMemberId: agent.id,
 						comments: posted.rows,
 						extraOutward: new Map([[task.id, [parser.getFinalAssistantMessage() ?? '']]]),
+						runId: heartbeatRunId,
 					});
 					for (const finding of findings) {
 						emit('stdout', `\n[runner] WARNING: ${formatNoWakeExitWarning(finding, 'this run')}\n`);
@@ -3596,9 +3608,15 @@ export async function loadCommentHistory(
 	taskId: string,
 	masterKeyManager: MasterKeyManager,
 	assetOrigin: string,
-	opts: { limit?: number } = {},
+	opts: { limit?: number; categories?: readonly ThreadRowCategory[] } = {},
 ): Promise<RenderableComment[]> {
-	const { limit } = opts;
+	const { limit, categories } = opts;
+	const params: unknown[] = [taskId];
+	// Without a category filter the newest few rows on a busy task are routinely
+	// three run markers, which reads as an empty thread and sends the agent off to
+	// walk the whole history looking for the part that was actually said.
+	const category = categories ? commentCategoryPredicate('ic', categories, params) : null;
+	const limitSql = limit != null ? ` LIMIT $${params.push(limit)}` : '';
 	const rows = await db.query<{
 		id: string;
 		content_type: string;
@@ -3612,9 +3630,9 @@ export async function loadCommentHistory(
 		 FROM task_comments ic
 		 LEFT JOIN members m ON m.id = ic.author_member_id
 		 LEFT JOIN member_agents ma ON ma.id = ic.author_member_id
-		 WHERE ic.task_id = $1
-		 ORDER BY ic.created_at ${limit != null ? 'DESC' : 'ASC'}${limit != null ? ' LIMIT $2' : ''}`,
-		limit != null ? [taskId, limit] : [taskId],
+		 WHERE ic.task_id = $1${category ? ` AND ${category}` : ''}
+		 ORDER BY ic.created_at ${limit != null ? 'DESC' : 'ASC'}${limitSql}`,
+		params,
 	);
 	// The limited query pulls the newest N (DESC); flip back to chronological for rendering.
 	const ordered = limit != null ? [...rows.rows].reverse() : rows.rows;
@@ -3632,6 +3650,59 @@ export async function loadCommentHistory(
 		reactions: reactionsByComment.get(c.id),
 		attachments: attachmentsByComment.get(c.id) ?? [],
 	}));
+}
+
+/** Where an agent's catch-up read should start, and how much is waiting there. */
+export interface CatchUpContext {
+	/** When this agent's previous run on this task finished. */
+	since: string;
+	/** Conversation and event rows added since, excluding this run's own writes. */
+	newRows: number;
+	/** How many of those were something someone wrote. */
+	newComments: number;
+}
+
+/**
+ * What has happened on a task since this agent last finished a run on it.
+ *
+ * Returns null on an agent's first run on a task, where there is no "since" to
+ * name and the whole thread genuinely is the context. Served as one index seek
+ * by `idx_runs_member_task_finished`.
+ */
+export async function loadCatchUpSinceLastRun(
+	db: Db,
+	memberId: string,
+	taskId: string,
+	currentRunId: string,
+): Promise<CatchUpContext | null> {
+	const r = await db.query<{ since: string; new_rows: string; new_comments: string }>(
+		`WITH last_run AS (
+		   SELECT hr.finished_at FROM heartbeat_runs hr
+		   WHERE hr.member_id = $1 AND hr.task_id = $2 AND hr.id <> $3
+		     AND hr.finished_at IS NOT NULL
+		   ORDER BY hr.finished_at DESC LIMIT 1
+		 )
+		 SELECT lr.finished_at::text AS since,
+		        count(c.id) FILTER (
+		          WHERE c.content_type <> 'run'::comment_content_type
+		        )::text AS new_rows,
+		        count(c.id) FILTER (
+		          WHERE c.content_type = 'text'::comment_content_type
+		        )::text AS new_comments
+		 FROM last_run lr
+		 LEFT JOIN task_comments c
+		   ON c.task_id = $2 AND c.created_at > lr.finished_at
+		  AND (c.created_by_run_id IS DISTINCT FROM $3)
+		 GROUP BY lr.finished_at`,
+		[memberId, taskId, currentRunId],
+	);
+	const row = r.rows[0];
+	if (!row) return null;
+	return {
+		since: row.since,
+		newRows: Number(row.new_rows),
+		newComments: Number(row.new_comments),
+	};
 }
 
 /**
@@ -3706,6 +3777,7 @@ export interface BuildTaskPromptContext {
 	openSubTasks?: OpenSubTask[];
 	recentComments?: RenderableComment[];
 	wakingCommentId?: string;
+	catchUp?: CatchUpContext | null;
 }
 
 /** How many of a task's most recent comments to inline in every run prompt as a head-start. */
@@ -3929,7 +4001,20 @@ export function buildTaskPrompt(
 		parts.push(renderCommentHistory(recentComments, { wakingCommentId: ctx.wakingCommentId }));
 		parts.push('');
 		parts.push(
-			'These are only the most recent comments, and they are shown here in full. Before you start, call `list_comments` to read the full thread — earlier comments may carry instructions that change this task. Note `list_comments` excerpts long comments: a row with `text_truncated: true` is showing only the first `excerpt_chars` of its body in `content.text`, so read that comment with `get_comment` before acting on it rather than assuming the excerpt is the whole thing.',
+			ctx.catchUp
+				? `These are only the most recent comments, and they are shown here in full. Before you start, catch up on the rest with \`list_comments(task_id: "${task.identifier}", since: "${ctx.catchUp.since}")\` — see "Since your last run" below. Note \`list_comments\` excerpts long comments: a row with \`text_truncated: true\` is showing only the first \`excerpt_chars\` of its body in \`content.text\`, so read that comment with \`get_comment\` before acting on it rather than assuming the excerpt is the whole thing.`
+				: 'These are only the most recent comments, and they are shown here in full. Before you start, call `list_comments` to read the thread — earlier comments may carry instructions that change this task. Note `list_comments` excerpts long comments: a row with `text_truncated: true` is showing only the first `excerpt_chars` of its body in `content.text`, so read that comment with `get_comment` before acting on it rather than assuming the excerpt is the whole thing.',
+		);
+	}
+
+	if (ctx.catchUp) {
+		parts.push('');
+		parts.push('### Since your last run');
+		parts.push(
+			`Your previous run on this task finished at ${ctx.catchUp.since}. Since then this task has ${ctx.catchUp.newRows} new thread ${ctx.catchUp.newRows === 1 ? 'row' : 'rows'}, ${ctx.catchUp.newComments} of them written by someone.`,
+		);
+		parts.push(
+			`Read them with \`list_comments(task_id: "${task.identifier}", since: "${ctx.catchUp.since}")\` and page that to the end. That is your catch-up: you have already seen everything before it, so re-reading the whole thread costs a great deal and tells you nothing new. Read further back only when you need older context for a specific question.`,
 		);
 	}
 
@@ -4240,7 +4325,12 @@ export async function buildCoachReviewPrompt(
 	masterKeyManager: MasterKeyManager,
 	assetOrigin: string,
 ): Promise<string> {
-	const comments = await loadCommentHistory(db, task.id, masterKeyManager, assetOrigin);
+	// The whole thread goes into this prompt server-side, so it never meets the
+	// tool-result cap. Run markers are dropped because `loadRunSummaries` below
+	// reports the same executions with their outcome attached.
+	const comments = await loadCommentHistory(db, task.id, masterKeyManager, assetOrigin, {
+		categories: DEFAULT_THREAD_ROW_CATEGORIES,
+	});
 	const runLog = await loadRunSummaries(db, task.id, teamId);
 
 	const involvedAgents = await db.query<{

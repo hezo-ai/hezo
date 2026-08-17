@@ -28,6 +28,7 @@ import {
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
+	DEFAULT_THREAD_ROW_CATEGORIES,
 	DocumentType,
 	extensionOf,
 	extractBacktickedLooseAssetPaths,
@@ -50,6 +51,8 @@ import {
 	summarizeMethodAccess,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
+	THREAD_ROW_CATEGORIES,
+	type ThreadRowCategory,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -75,6 +78,7 @@ import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
+import { commentCategoryPredicate, commentSincePredicate } from '../lib/comment-filters';
 import { attachRunStatuses } from '../lib/comment-run-status';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import {
@@ -685,9 +689,16 @@ export function oversizeRemedies(
 	if ('excerpt_chars' in schema) {
 		remedies.push('Pass `excerpt_chars: 300` to truncate long fields.');
 	}
-	const filters = ['status', 'assignee_slug', 'assignee_id', 'filter', 'type', 'project'].filter(
-		(f) => f in schema && args[f] === undefined,
-	);
+	const filters = [
+		'status',
+		'assignee_slug',
+		'assignee_id',
+		'filter',
+		'type',
+		'project',
+		'categories',
+		'since',
+	].filter((f) => f in schema && args[f] === undefined);
 	if (filters.length > 0) {
 		remedies.push(`Narrow the query with ${filters.map((f) => `\`${f}\``).join(' / ')}.`);
 	}
@@ -751,6 +762,37 @@ const DEFAULT_TASK_EXCERPT_CHARS = 500;
  * surfaces promised a single-item read that did not.
  */
 const DEFAULT_COMMENT_EXCERPT_CHARS = 2_000;
+
+/** Ceiling a caller may ask for. A listing triages; `get_comment` serves a whole body. */
+const MAX_COMMENT_EXCERPT_CHARS = 4_000;
+
+/**
+ * Floor for the width derived from the page size, so a full-width page still
+ * leaves each row worth reading. It never raises a caller that asked for less.
+ */
+const MIN_COMMENT_EXCERPT_CHARS = 200;
+
+/**
+ * Page bytes the excerpt budget may not spend: row ids, authors, timestamps,
+ * reactions, attachment URLs, structured bodies returned whole, and the
+ * escaping inflation of pretty-printed JSON.
+ */
+const COMMENT_LIST_ENVELOPE_RESERVE = 12_000;
+
+/**
+ * The excerpt width a page can actually afford.
+ *
+ * The default width times the default page size is well over the result cap, so
+ * a full page of long comments was rejected whole and the caller told to retry
+ * smaller - which costs a round trip per guess and re-reads what it already
+ * paged. Deriving the width from the page size returns a shorter excerpt instead
+ * of nothing at all.
+ */
+function effectiveCommentExcerptChars(requested: number | undefined, limit: number): number {
+	const affordable = Math.floor((MCP_RESULT_BYTE_LIMIT - COMMENT_LIST_ENVELOPE_RESERVE) / limit);
+	const asked = requested ?? DEFAULT_COMMENT_EXCERPT_CHARS;
+	return Math.min(asked, Math.max(MIN_COMMENT_EXCERPT_CHARS, affordable));
+}
 
 /**
  * Warn when a caller supplied a `changelog` that had nowhere to land.
@@ -2010,6 +2052,9 @@ export function registerTools(
 
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const actorApiKeyId = apiKeyIdFromAuth(auth);
+			// Every wakeup this write causes carries the run behind it, so that run's
+			// own no-wake exit check can see whom it notified.
+			const callerRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
 
 			// Renames and description edits are recorded on this surface too, so an
 			// agent's edit leaves the same thread entry a human's does. Awaited for the
@@ -2085,7 +2130,7 @@ export function registerTools(
 				// only add an open child, never clear a gate.
 				if (oldParentTaskId) {
 					trackBackground(
-						wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId).catch((e) =>
+						wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId, callerRunId).catch((e) =>
 							log.error('Failed to wake former parent after re-parent:', e),
 						),
 					);
@@ -2126,7 +2171,18 @@ export function registerTools(
 				} catch (e) {
 					log.error('Failed to record assignee change:', e);
 				}
-				wakeAgentIfAssigned(db, args.assignee_id as string, teamId, taskId);
+				// Awaited: this run's own no-wake exit check reads the wakeup back at
+				// the end of the run, so a handover made as the last action would
+				// otherwise be reported as notifying nobody.
+				await wakeAgentIfAssigned(
+					db,
+					args.assignee_id as string,
+					teamId,
+					taskId,
+					undefined,
+					undefined,
+					callerRunId,
+				);
 			}
 
 			if (args.status && currentStatus) {
@@ -2141,6 +2197,7 @@ export function registerTools(
 						actorApiKeyId,
 						wsManager,
 						dataDir,
+						callerRunId,
 					);
 				} catch (e) {
 					log.error('Failed to trigger status automations:', e);
@@ -2219,7 +2276,7 @@ export function registerTools(
 			if (r.rows.length === 0) return { error: 'Dependency not found' };
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			await reconcileBlockedStatus(db, teamId, taskId, actorMemberId, wsManager);
-			await wakeIfReady(db, taskId);
+			await wakeIfReady(db, taskId, auth.type === AuthType.Agent ? (auth.runId ?? null) : null);
 			return { removed: true };
 		},
 		db,
@@ -3110,7 +3167,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		`List comments for a task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A \`run\` row also carries \`run_status\` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.`,
+		`List comments for a task, newest first. Returns the conversation and the task's own changes by default and leaves out the one-row-per-execution agent run markers - pass \`categories\` to change that, and prefer \`list_task_runs\`, which reports each run's status, exit code and log length rather than a bare marker. To catch up rather than re-read, pass \`since\` with the timestamp your last read ended at; a run prompt gives you the time of your previous run on the task. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}, narrowed to whatever a page of \`limit\` rows can carry and reported as \`excerpt_chars_applied\`); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A \`run\` row also carries \`run_status\` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -3124,9 +3181,23 @@ export function registerTools(
 				.number()
 				.int()
 				.positive()
+				.max(MAX_COMMENT_EXCERPT_CHARS)
 				.optional()
 				.describe(
-					`Cap for content.text on text-typed comments, with text_truncated/text_length companions (default ${DEFAULT_COMMENT_EXCERPT_CHARS}).`,
+					`Cap for content.text on text-typed comments, with text_truncated/text_length companions (default ${DEFAULT_COMMENT_EXCERPT_CHARS}, ceiling ${MAX_COMMENT_EXCERPT_CHARS}). Narrowed further when a page of \`limit\` rows could not otherwise fit; the value used comes back as \`excerpt_chars_applied\`.`,
+				),
+			categories: z
+				.array(z.enum(THREAD_ROW_CATEGORIES))
+				.nonempty()
+				.optional()
+				.describe(
+					`Which kinds of row to return. \`conversation\` is what people and agents wrote plus anything awaiting a person (credential requests, approvals); \`events\` is the task's own machinery - status, assignee, title and parent changes, task links and run-failure notices; \`runs\` is one marker per agent execution. Defaults to ["conversation","events"], because run markers are the bulk of a long thread and say nothing the thread does not.`,
+				),
+			since: z
+				.string()
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Return only comments created strictly after it, newest first. Use this to read what is new instead of walking a thread you have already read.',
 				),
 			...listPagingArgs(),
 		},
@@ -3135,6 +3206,8 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
 			const limit = parseListLimit(args.limit);
+			const categories =
+				(args.categories as ThreadRowCategory[] | undefined) ?? DEFAULT_THREAD_ROW_CATEGORIES;
 			const conditions = ['ic.task_id = $1'];
 			const params: unknown[] = [taskId];
 			if (args.before) {
@@ -3143,6 +3216,10 @@ export function registerTools(
 					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE (id::text = $${params.length} OR public_id = $${params.length}) AND task_id = $1 LIMIT 1)`,
 				);
 			}
+			const category = commentCategoryPredicate('ic', categories, params);
+			if (category) conditions.push(category);
+			const since = commentSincePredicate('ic', args.since as string | undefined, params);
+			if (since) conditions.push(since);
 			const keyset = keysetPredicate('ic', decodeCursor(args.cursor as string | undefined), params);
 			if (keyset) conditions.push(keyset);
 			const r = await db.query<Record<string, unknown>>(
@@ -3174,27 +3251,47 @@ export function registerTools(
 				attachments: attachmentsByComment.get(row.id as string) ?? [],
 			}));
 			await attachRunStatuses(db, taskId, enriched);
-			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_COMMENT_EXCERPT_CHARS;
-			const rows = enriched.map((row) => {
-				if (row.content_type !== CommentContentType.Text) return row;
-				const content = row.content as { text?: string } | null;
-				const text = content?.text;
-				if (typeof text !== 'string' || text.length <= max) return row;
-				const ex = excerpt(text, max);
-				// The excerpt is written back into `content.text`, the same key that
-				// carries a full body, so nothing about the string itself says it is
-				// partial. Name the recovery call on the row - a sibling boolean is
-				// easy to miss, and a reader who misses it treats the excerpt as the
-				// whole comment.
+			const requested = args.excerpt_chars as number | undefined;
+			const buildPage = (max: number) => {
+				const rows = enriched.map((row) => {
+					if (row.content_type !== CommentContentType.Text) return row;
+					const content = row.content as { text?: string } | null;
+					const text = content?.text;
+					if (typeof text !== 'string' || text.length <= max) return row;
+					const ex = excerpt(text, max);
+					// The excerpt is written back into `content.text`, the same key that
+					// carries a full body, so nothing about the string itself says it is
+					// partial. Name the recovery call on the row - a sibling boolean is
+					// easy to miss, and a reader who misses it treats the excerpt as the
+					// whole comment.
+					return {
+						...row,
+						content: { ...content, text: ex.excerpt },
+						text_truncated: ex.truncated,
+						text_length: ex.length,
+						text_paging_hint: `Showing the first ${ex.excerpt?.length ?? 0} of ${ex.length} characters. Call get_comment(comment_id: "${row.id}") for the full body.`,
+					};
+				});
 				return {
-					...row,
-					content: { ...content, text: ex.excerpt },
-					text_truncated: ex.truncated,
-					text_length: ex.length,
-					text_paging_hint: `Showing the first ${ex.excerpt?.length ?? 0} of ${ex.length} characters. Call get_comment(comment_id: "${row.id}") for the full body.`,
+					...pagedList(rows as ListRow[], limit, 'list_comments'),
+					categories_applied: categories,
+					excerpt_chars_applied: max,
 				};
-			});
-			return pagedList(rows as ListRow[], limit, 'list_comments');
+			};
+			// Structured bodies and attachment URLs are returned whole, so sizing the
+			// excerpt off the page size cannot promise a fit on its own. Narrow until
+			// the page fits rather than letting it be rejected and walked again.
+			let max = effectiveCommentExcerptChars(requested, limit);
+			const floor = Math.min(MIN_COMMENT_EXCERPT_CHARS, max);
+			let page = buildPage(max);
+			while (
+				max > floor &&
+				Buffer.byteLength(JSON.stringify(page, null, 2), 'utf8') > MCP_RESULT_BYTE_LIMIT
+			) {
+				max = Math.max(floor, Math.floor(max / 2));
+				page = buildPage(max);
+			}
+			return page;
 		},
 		db,
 	);

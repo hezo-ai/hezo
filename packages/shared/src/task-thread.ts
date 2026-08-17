@@ -24,12 +24,102 @@ export function isTaskView(value: unknown): value is TaskView {
 }
 
 /**
+ * What a thread row *is*, for a reader choosing how much of the thread it wants.
+ *
+ * The same three kinds the Conversation view already distinguishes, named so a
+ * caller can ask for them: what was said, what the task did, and what the agents
+ * did. A reader that wants everything asks for all three.
+ */
+export const ThreadRowCategory = {
+	/** Something a person or agent wrote, or something awaiting a person. */
+	Conversation: 'conversation',
+	/** Task machinery: status, assignee, title and parent changes, links, run-failure notices. */
+	Events: 'events',
+	/** One row per agent execution. */
+	Runs: 'runs',
+} as const;
+export type ThreadRowCategory = (typeof ThreadRowCategory)[keyof typeof ThreadRowCategory];
+
+/** Every category, in the order a reader would name them. */
+export const THREAD_ROW_CATEGORIES = [
+	ThreadRowCategory.Conversation,
+	ThreadRowCategory.Events,
+	ThreadRowCategory.Runs,
+] as const;
+
+/**
+ * What an agent reading a thread gets unless it asks for more.
+ *
+ * Run rows are the bulk of a long thread and say nothing the thread itself does
+ * not - a run's status, exit code and log live on `list_task_runs`/`get_run_log`,
+ * which return them in a form worth reading.
+ */
+export const DEFAULT_THREAD_ROW_CATEGORIES: readonly ThreadRowCategory[] = [
+	ThreadRowCategory.Conversation,
+	ThreadRowCategory.Events,
+];
+
+/**
+ * Every content type's category. A `Record` rather than a `switch`, so a content
+ * type added later is a compile error here until someone decides where it belongs.
+ */
+export const THREAD_ROW_CATEGORY: Record<CommentContentType, ThreadRowCategory> = {
+	[CommentContentType.Text]: ThreadRowCategory.Conversation,
+	[CommentContentType.Preview]: ThreadRowCategory.Conversation,
+	[CommentContentType.Action]: ThreadRowCategory.Conversation,
+	[CommentContentType.CredentialRequest]: ThreadRowCategory.Conversation,
+	[CommentContentType.ConnectRequired]: ThreadRowCategory.Conversation,
+	[CommentContentType.AssetDeletionRequest]: ThreadRowCategory.Conversation,
+	[CommentContentType.System]: ThreadRowCategory.Events,
+	[CommentContentType.Run]: ThreadRowCategory.Runs,
+};
+
+/**
+ * A row's category. An unrecognised content type reads as conversation, so a row
+ * this table has not learned about yet is shown rather than silently withheld.
+ */
+export function threadRowCategory(contentType: string): ThreadRowCategory {
+	return THREAD_ROW_CATEGORY[contentType as CommentContentType] ?? ThreadRowCategory.Conversation;
+}
+
+export function isThreadRowCategory(value: unknown): value is ThreadRowCategory {
+	return typeof value === 'string' && (THREAD_ROW_CATEGORIES as readonly string[]).includes(value);
+}
+
+/** The content types a set of categories covers, for a SQL predicate to match on. */
+export function contentTypesForCategories(
+	categories: readonly ThreadRowCategory[],
+): CommentContentType[] {
+	const wanted = new Set<ThreadRowCategory>(categories);
+	return (Object.keys(THREAD_ROW_CATEGORY) as CommentContentType[]).filter((type) =>
+		wanted.has(THREAD_ROW_CATEGORY[type]),
+	);
+}
+
+/**
+ * Parse a caller-supplied category selection, from an array or a comma-separated
+ * string. Returns null when any entry is unrecognised, so the caller can reject
+ * the request rather than quietly returning a narrower thread than was asked for.
+ */
+export function parseThreadRowCategories(value: unknown): ThreadRowCategory[] | null {
+	const raw = typeof value === 'string' ? value.split(',') : value;
+	if (!Array.isArray(raw) || raw.length === 0) return null;
+	const out: ThreadRowCategory[] = [];
+	for (const entry of raw) {
+		const trimmed = typeof entry === 'string' ? entry.trim() : entry;
+		if (!isThreadRowCategory(trimmed)) return null;
+		if (!out.includes(trimmed)) out.push(trimmed);
+	}
+	return out;
+}
+
+/**
  * Content types that render as a one-line event rather than an authored comment.
  * These are the only rows the fold rule can ever hide - everything else is
  * either something a person wrote or something a person must act on.
  */
 export function isInlineEventType(contentType: string): boolean {
-	return contentType === CommentContentType.System || contentType === CommentContentType.Run;
+	return threadRowCategory(contentType) !== ThreadRowCategory.Conversation;
 }
 
 /** The minimum a row must expose for the fold rule to judge it. */

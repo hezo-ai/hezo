@@ -1,20 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildThreadItems,
+	contentTypesForCategories,
 	DEFAULT_TASK_VIEW,
+	DEFAULT_THREAD_ROW_CATEGORIES,
 	failedRunIds,
 	findGroupKeyForRow,
 	isFoldableThreadRow,
 	isInlineEventType,
 	isRunFailedRow,
 	isTaskView,
+	isThreadRowCategory,
 	isWorkingThreadRow,
+	parseThreadRowCategories,
 	TASK_VIEWS,
 	TaskView,
+	THREAD_ROW_CATEGORIES,
+	THREAD_ROW_CATEGORY,
 	type ThreadRow,
+	ThreadRowCategory,
+	threadRowCategory,
 	threadRowRunId,
 } from '../src/task-thread.js';
-import { HeartbeatRunStatus } from '../src/types/common.js';
+import { CommentContentType, HeartbeatRunStatus } from '../src/types/common.js';
 
 function text(id: string): ThreadRow {
 	return { id, content_type: 'text', content: null };
@@ -286,5 +294,69 @@ describe('buildThreadItems', () => {
 		expect(findGroupKeyForRow(items, 'c')).toBe('group:b');
 		expect(findGroupKeyForRow(items, 'a')).toBeNull();
 		expect(findGroupKeyForRow(items, 'nope')).toBeNull();
+	});
+});
+
+describe('thread row categories', () => {
+	it('categorises every content type', () => {
+		for (const type of Object.values(CommentContentType)) {
+			expect(THREAD_ROW_CATEGORY[type], type).toBeDefined();
+		}
+		expect(THREAD_ROW_CATEGORY[CommentContentType.Text]).toBe(ThreadRowCategory.Conversation);
+		expect(THREAD_ROW_CATEGORY[CommentContentType.CredentialRequest]).toBe(
+			ThreadRowCategory.Conversation,
+		);
+		expect(THREAD_ROW_CATEGORY[CommentContentType.System]).toBe(ThreadRowCategory.Events);
+		expect(THREAD_ROW_CATEGORY[CommentContentType.Run]).toBe(ThreadRowCategory.Runs);
+	});
+
+	it('shows an unrecognised content type rather than hiding it', () => {
+		expect(threadRowCategory('something_new')).toBe(ThreadRowCategory.Conversation);
+		expect(isInlineEventType('something_new')).toBe(false);
+	});
+
+	it('leaves only run rows out of the default selection', () => {
+		expect([...DEFAULT_THREAD_ROW_CATEGORIES].sort()).toEqual(
+			[ThreadRowCategory.Conversation, ThreadRowCategory.Events].sort(),
+		);
+		const types = contentTypesForCategories(DEFAULT_THREAD_ROW_CATEGORIES);
+		expect(types).not.toContain(CommentContentType.Run);
+		expect(types).toContain(CommentContentType.Text);
+		expect(types).toContain(CommentContentType.System);
+	});
+
+	it('maps categories back to their content types', () => {
+		expect(contentTypesForCategories([ThreadRowCategory.Runs])).toEqual([CommentContentType.Run]);
+		expect(contentTypesForCategories([ThreadRowCategory.Events])).toEqual([
+			CommentContentType.System,
+		]);
+		expect(contentTypesForCategories(THREAD_ROW_CATEGORIES)).toHaveLength(
+			Object.keys(THREAD_ROW_CATEGORY).length,
+		);
+	});
+
+	it('recognises its own category values and nothing else', () => {
+		expect(isThreadRowCategory('runs')).toBe(true);
+		expect(isThreadRowCategory('logs')).toBe(false);
+		expect(isThreadRowCategory(3)).toBe(false);
+	});
+
+	it('parses a selection from an array or a comma-separated string', () => {
+		expect(parseThreadRowCategories(['runs', 'events'])).toEqual([
+			ThreadRowCategory.Runs,
+			ThreadRowCategory.Events,
+		]);
+		expect(parseThreadRowCategories('conversation, runs')).toEqual([
+			ThreadRowCategory.Conversation,
+			ThreadRowCategory.Runs,
+		]);
+		expect(parseThreadRowCategories(['runs', 'runs'])).toEqual([ThreadRowCategory.Runs]);
+	});
+
+	it('rejects a selection it cannot honour rather than narrowing silently', () => {
+		expect(parseThreadRowCategories(['runs', 'logs'])).toBeNull();
+		expect(parseThreadRowCategories('')).toBeNull();
+		expect(parseThreadRowCategories([])).toBeNull();
+		expect(parseThreadRowCategories(undefined)).toBeNull();
 	});
 });

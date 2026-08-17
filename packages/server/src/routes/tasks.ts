@@ -681,8 +681,22 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		params,
 	);
 
+	// Every wakeup this write causes carries the run behind it, so that run's own
+	// no-wake exit check can see whom it notified. An agent run reaches this route
+	// with a run-scoped JWT, so this is not a human-only path.
+	const callerRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
+
 	if (body.assignee_id && body.assignee_id !== existing.rows[0].assignee_id) {
-		wakeAgentIfAssigned(db, body.assignee_id, teamId, taskId);
+		// Awaited: the run's exit check reads this back at the end of the run.
+		await wakeAgentIfAssigned(
+			db,
+			body.assignee_id,
+			teamId,
+			taskId,
+			undefined,
+			undefined,
+			callerRunId,
+		);
 	}
 
 	const wasTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(
@@ -692,9 +706,15 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		body.status !== undefined &&
 		(TERMINAL_TASK_STATUSES as readonly string[]).includes(body.status);
 	if (body.status !== undefined && wasTerminal && !nowTerminal) {
-		wakeAgentIfAssigned(db, existing.rows[0].assignee_id, teamId, taskId, WakeupSource.Automation, {
-			trigger: 'task_reopened',
-		});
+		await wakeAgentIfAssigned(
+			db,
+			existing.rows[0].assignee_id,
+			teamId,
+			taskId,
+			WakeupSource.Automation,
+			{ trigger: 'task_reopened' },
+			callerRunId,
+		);
 	}
 
 	const actorMemberId = await resolveActorMemberId(c, teamId);
@@ -817,7 +837,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		// clear a gate.
 		if (oldParentTaskId) {
 			trackBackground(
-				wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId).catch((e) =>
+				wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId, callerRunId).catch((e) =>
 					log.error('Failed to wake former parent after re-parent:', e),
 				),
 			);
@@ -867,6 +887,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				actorApiKeyId,
 				c.get('wsManager'),
 				c.get('dataDir'),
+				callerRunId,
 			);
 		} catch (e) {
 			log.error('Failed to trigger status automations:', e);
@@ -1118,6 +1139,7 @@ tasksRoutes.delete('/projects/:projectId/tasks/:taskId/dependencies/:depId', asy
 	await db.query('DELETE FROM task_dependencies WHERE id = $1', [depId]);
 	const actorMemberId = await resolveActorMemberId(c, teamId);
 	await reconcileBlockedStatus(db, teamId, taskId, actorMemberId, c.get('wsManager'));
-	await wakeIfReady(db, taskId);
+	const depAuth = c.get('auth');
+	await wakeIfReady(db, taskId, depAuth.type === AuthType.Agent ? (depAuth.runId ?? null) : null);
 	return c.json({ data: null }, 200);
 });

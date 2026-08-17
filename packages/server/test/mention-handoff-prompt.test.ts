@@ -693,7 +693,48 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 		expect(prompt).toContain(`### Recent Comments (latest ${RECENT_COMMENTS_LIMIT})`);
 		expect(prompt).toContain(`comment number ${total}`); // newest is present
 		expect(prompt).not.toContain('comment number 1'); // oldest is dropped
-		expect(prompt).toContain('call `list_comments` to read the full thread');
+		// With no previous run to catch up from, the whole thread is the context.
+		expect(prompt).toContain('call `list_comments` to read the thread');
+		expect(prompt).not.toContain('### Since your last run');
+	});
+
+	it('points a returning agent at what is new rather than the whole thread', async () => {
+		const task = await createTaskWithNComments(RECENT_COMMENTS_LIMIT + 3);
+		const recent = await loadCommentHistory(
+			db,
+			task.id,
+			masterKeyManager,
+			'http://127.0.0.1:47081',
+			{ limit: RECENT_COMMENTS_LIMIT },
+		);
+
+		const prompt = buildTaskPrompt(
+			'System prompt',
+			{
+				id: task.id,
+				identifier: task.identifier,
+				title: 'Catch-up task',
+				description: 'x',
+				status: 'in_progress',
+				priority: 'medium',
+				project_id: projectId,
+				rules: null,
+				progress_summary: null,
+			},
+			undefined,
+			{
+				recentComments: recent,
+				catchUp: { since: '2026-08-17T04:00:00.000Z', newRows: 4, newComments: 2 },
+			},
+		);
+
+		expect(prompt).toContain('### Since your last run');
+		expect(prompt).toContain('4 new thread rows, 2 of them written by someone');
+		expect(prompt).toContain(
+			`list_comments(task_id: "${task.identifier}", since: "2026-08-17T04:00:00.000Z")`,
+		);
+		// The whole-thread instruction is exactly what this replaces.
+		expect(prompt).not.toContain('call `list_comments` to read the thread');
 	});
 
 	it('references the waking comment for a WakeupSource.Comment (assignee) wake and tags it in the thread', async () => {
