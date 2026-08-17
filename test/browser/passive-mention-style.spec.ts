@@ -62,6 +62,18 @@ test.describe('Passive mention styling', () => {
 		// than the handle the author typed - its name when it has one, else its role.
 		await expect(passive).toHaveText(agents[0].human_name?.trim() || agents[0].title);
 
+		// The other two links have to be waited for in their own right. The task
+		// reference resolves through a separate async lookup (`useTaskMentions` ->
+		// POST /tasks/resolve) that can land well after the agent chip, so waiting
+		// on the passive mention alone is not waiting for this one - and reading
+		// computed styles before it mounts raced that query instead of testing the
+		// cascade, which is what this spec exists for. It shows up only when the
+		// server is loaded enough for the resolve to lose the race, which is CI.
+		const taskRef = page.getByTestId('task-mention-link');
+		await expect(taskRef).toBeVisible({ timeout: 20_000 });
+		const plainLink = page.locator('a[href="https://example.com/notes"]');
+		await expect(plainLink).toBeVisible({ timeout: 20_000 });
+
 		const styles = await page.evaluate(() => {
 			const pick = (sel: string) => {
 				const el = document.querySelector(sel);
