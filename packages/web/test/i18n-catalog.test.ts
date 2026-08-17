@@ -143,6 +143,9 @@ describe('message catalogs', () => {
 		'containers.column.project': ['nl'],
 		// Same word in Dutch, as `containers.column.project` above already records.
 		'marketplace.projectLabel': ['nl'],
+		// "Error" is the Spanish word, spelled identically. Every other language
+		// differs (Fehler, Erreur, Errore, Fout, Blad, Erro, Fel, ...).
+		'comment.runError': ['es'],
 		// Spanish pluralises "rol" to "roles", spelt exactly like the English.
 		// The singular differs ("1 rol"), and every other language does too
 		// (Rollen, rôles, ruoli, papéis, ...).

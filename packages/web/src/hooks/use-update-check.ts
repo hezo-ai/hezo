@@ -23,6 +23,11 @@ export interface UpdateStatusInfo extends UpdateInfo {
 	autoUnlock: boolean;
 	/** The server can actually apply-and-restart (supervised compiled binary). */
 	canApply: boolean;
+	/**
+	 * Agent runs in flight right now; the restart drains them. Optional because a
+	 * server older than this field simply omits it, and the banner defaults to 0.
+	 */
+	runsInFlight?: number;
 }
 
 /**

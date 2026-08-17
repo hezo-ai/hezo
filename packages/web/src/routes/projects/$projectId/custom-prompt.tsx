@@ -43,7 +43,7 @@ function CustomPromptPage() {
 					Custom Prompt
 				</h1>
 				<p className="text-sm text-text-3 mt-1">
-					Shared instructions added to every agent's system prompt in this project — house
+					Shared instructions added to every agent's system prompt in this project - house
 					conventions, standards, and standing do's and don'ts. Injected in full on every run, so
 					keep it concise. Every edit is versioned and restorable below.
 				</p>

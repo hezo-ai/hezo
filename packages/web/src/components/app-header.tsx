@@ -42,7 +42,7 @@ export function AppHeader({
 			data-testid="app-header"
 		>
 			<div className="flex items-center gap-0.5">
-				{/* Below lg the menu is a side drawer — the logo opens it. */}
+				{/* Below lg the menu is a side drawer - the logo opens it. */}
 				<button
 					type="button"
 					onClick={onOpenDrawer}
@@ -53,7 +53,7 @@ export function AppHeader({
 				>
 					<Logo size="sm" />
 				</button>
-				{/* At lg+ the rail/sidebar are persistent — the logo links home. */}
+				{/* At lg+ the rail/sidebar are persistent - the logo links home. */}
 				<Link
 					to="/home"
 					aria-label={t('nav.home')}
@@ -66,8 +66,8 @@ export function AppHeader({
 			</div>
 
 			<div className="flex items-center gap-0.5">
-				{/* Leftmost of the action group. Styled as a quiet outlined button —
-				    transparent fill, primary-red border and "+" — so it sits with the
+				{/* Leftmost of the action group. Styled as a quiet outlined button -
+				    transparent fill, primary-red border and "+" - so it sits with the
 				    other nav icons while the accent still marks it as the create action.
 				    The 32px tap target matches its neighbours; the bordered box inside is
 				    a compact 22px with an edge-to-edge plus. */}

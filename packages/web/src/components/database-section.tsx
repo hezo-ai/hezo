@@ -103,7 +103,7 @@ export function DatabaseSection() {
 								</strong>{' '}
 								using{' '}
 								<strong className="font-medium text-text-1">{formatBytes(superseded.bytes)}</strong>{' '}
-								of disk. This can’t be undone — your current database is untouched, but you won’t be
+								of disk. This can’t be undone - your current database is untouched, but you won’t be
 								able to roll back to an earlier version.
 							</>
 						}
@@ -318,15 +318,15 @@ function CompactionControl({
 					<>
 						This trims the full logs of agent runs older than{' '}
 						<strong className="font-medium text-text-1">{retentionDays} days</strong> down to their
-						final portion — the agent’s end-of-run summary and outcome. The full command that
+						final portion - the agent’s end-of-run summary and outcome. The full command that
 						launched each run is kept, every trimmed log is clearly marked as compacted, and status,
 						timing, tokens and cost are unchanged. Runs newer than the window are untouched. The
 						detailed step-by-step output is permanently discarded and can’t be recovered.
 						{usage.backend === 'embedded' && (
 							<>
 								{' '}
-								It then rewrites the run-logs table to return the freed space — and accumulated
-								storage bloat — to disk, which briefly locks that table.
+								It then rewrites the run-logs table to return the freed space - and accumulated
+								storage bloat - to disk, which briefly locks that table.
 							</>
 						)}
 					</>

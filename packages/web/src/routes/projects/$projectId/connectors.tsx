@@ -103,7 +103,7 @@ function ConnectorsPage() {
 						Connectors
 					</h1>
 					<p className="text-sm text-text-3 mt-1">
-						Third-party services agents use — GitHub for git operations, MCP servers + skill files
+						Third-party services agents use - GitHub for git operations, MCP servers + skill files
 						for everything else. Tokens are stored in the Hezo vault and substituted at egress;
 						agents never see them.
 					</p>
@@ -359,7 +359,7 @@ function AddConnectorForm({ projectId, onClose }: AddConnectorFormProps) {
 						data-testid="connector-add-docs-url"
 					/>
 					<p className="text-xs text-text-3">
-						A direct REST API the agent calls itself — no MCP server. After creating, attach the API
+						A direct REST API the agent calls itself - no MCP server. After creating, attach the API
 						key from its row; agents get the placeholder + base URL via <code>list_connectors</code>{' '}
 						and the egress proxy substitutes the key, scoped to the allowed hosts.
 					</p>
@@ -584,7 +584,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				// A null auth_url means the server advertises no OAuth (public /
 				// header-authenticated) — not an error: point the user at the API key.
 				if (!auth_url) {
-					setInfo("This MCP server doesn't advertise OAuth — connect it with the API key option.");
+					setInfo("This MCP server doesn't advertise OAuth - connect it with the API key option.");
 					return;
 				}
 				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');
@@ -709,7 +709,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						<>
 							{/* A degraded connector's credential is dead and only a human can
 							    replace it, so the reconnect affordance has to live here in the
-							    connected branch — it used to exist only in the not-connected
+							    connected branch - it used to exist only in the not-connected
 							    branch below, which a stale-token row never reached, leaving
 							    Disconnect as the only button on a connector the operator
 							    wanted to fix. `auth-start` re-runs cleanly on an active row
@@ -790,7 +790,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 				</div>
 			</div>
 
-			{/* Inline OAuth device-flow completion for an OAuth-backed `api` connector —
+			{/* Inline OAuth device-flow completion for an OAuth-backed `api` connector -
 			    the same broker form the task comment shows, with the agent-preset
 			    provider locked (or a manual picker when none). A static-key api
 			    connector (query-placement) never shows this; it leads with the API key. */}

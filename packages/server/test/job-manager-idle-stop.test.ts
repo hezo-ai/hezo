@@ -538,9 +538,45 @@ describe('surplus idle containers in a working project', () => {
 		expect(await remaining()).toEqual(['busy-1', 'chat']);
 	});
 
-	it('leaves a fully idle project to the whole-project pass, which keeps one warm', async () => {
-		// No busy member, so this is not a working project: the pass above owns it
-		// and suspends one member for a warm restart rather than picking them off.
+	it('keeps exactly one member warm for a fully idle project', async () => {
+		// Both passes answer this the same way now that the warm-start floor lives
+		// in the planner rather than in which pass happened to run.
+		await seedMember('a', 'idle');
+		await seedMember('b', 'idle');
+
+		const { stops, removes } = await sweep();
+		expect(stops).toEqual(['a']);
+		expect(removes).toEqual(['b']);
+	});
+
+	it('frees the surplus of a project that is working but holds no busy member', async () => {
+		// The production dead zone, end to end. A run that finished seconds ago
+		// keeps the project inside BUSY_PROJECTS_SQL, so the whole-project pass
+		// declines; no member is `busy` at this instant, so the surplus pass used to
+		// decline as well. Three idle members then pinned 12 of a 16 GB budget
+		// indefinitely and every acquire in another project reclaimed instead.
+		await db.query(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
+			 VALUES ($1, $2, $3, 'failed'::heartbeat_run_status, now() - interval '1 minute', now())`,
+			[agentId, teamId, taskId],
+		);
+		await seedMember('a', 'idle');
+		await seedMember('b', 'idle');
+		await seedMember('c', 'idle');
+
+		const { stops, removes } = await sweep();
+		expect(stops).toEqual(['a']);
+		expect(removes.sort()).toEqual(['b', 'c']);
+		expect(await remaining()).toEqual(['a']);
+	});
+
+	it('frees the surplus when a queued wakeup is what keeps the project busy', async () => {
+		// The other arm of BUSY_PROJECTS_SQL, and the one a retry storm produces.
+		await db.query(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, status)
+			 VALUES ($1, $2, 'timer'::wakeup_source, $3::jsonb, 'queued'::wakeup_status)`,
+			[agentId, teamId, JSON.stringify({ task_id: taskId })],
+		);
 		await seedMember('a', 'idle');
 		await seedMember('b', 'idle');
 

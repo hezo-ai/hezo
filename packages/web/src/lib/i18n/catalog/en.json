@@ -437,5 +437,17 @@
 	"toast.dismiss": "Dismiss",
 	"toast.error": "Something went wrong",
 	"toast.info": "Heads up",
-	"toast.success": "Done"
+	"toast.success": "Done",
+	"comment.runError": "Error",
+	"comment.runErrorExpand": "Show the full error",
+	"tasks.lastRun.failed": "Last run failed",
+	"tasks.lastRun.timedOut": "Last run timed out",
+	"tasks.lastRun.failedReason": "Last run failed: {reason}",
+	"tasks.lastRun.timedOutReason": "Last run timed out: {reason}",
+	"tasks.lastRun.jump": "Jump to run",
+	"updates.confirm.restart": "Hezo will shut down and restart on {version}.",
+	"updates.confirm.drain": "Hezo waits a few seconds for agent runs in flight to finish, then stops. Anything still running is re-queued and starts over.",
+	"updates.confirm.runsInFlight.one": "{count} agent run is in flight right now.",
+	"updates.confirm.runsInFlight.other": "{count} agent runs are in flight right now.",
+	"updates.confirm.reunlock": "You'll need your 12-word master key to unlock Hezo again once it restarts."
 }

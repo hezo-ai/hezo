@@ -269,7 +269,7 @@ function WelcomeCard({ onCreate }: { onCreate: () => void }) {
 					<div>
 						<h1 className="text-base font-semibold text-text-1">Get started with Hezo</h1>
 						<p className="text-[13px] text-text-2 mt-1 max-w-md">
-							Create your first project. Each one gets its own team — spin it up from a template, or
+							Create your first project. Each one gets its own team - spin it up from a template, or
 							let the CEO scope it with you first.
 						</p>
 					</div>

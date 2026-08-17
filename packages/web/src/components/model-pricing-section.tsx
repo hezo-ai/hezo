@@ -23,7 +23,7 @@ const PER_MILLION = 1_000_000;
 
 /** Per-token rate → "$X.XX" per million tokens, the friendlier unit to read/enter. */
 function fmtPerMillion(perToken: number | null): string {
-	if (perToken == null) return '—';
+	if (perToken == null) return '-';
 	return `$${(perToken * PER_MILLION).toFixed(2)}`;
 }
 
@@ -193,7 +193,7 @@ export function ModelPricingSection() {
 								</span>{' '}
 								Hezo multiplies the token counts each runtime reports by these per-model rates.
 								Dollar figures a runtime emits itself (e.g.{' '}
-								<span className="font-mono">total_cost_usd</span>) are ignored — they are
+								<span className="font-mono">total_cost_usd</span>) are ignored - they are
 								client-side estimates from the CLI's own rate card, which is wrong for third-party
 								endpoints.
 							</p>
@@ -207,11 +207,11 @@ export function ModelPricingSection() {
 								</span>{' '}
 								The catalog carries no cache pricing, so cached reads and writes are billed at the
 								full input rate. Providers charge cache reads at a steep discount, so real bills are
-								usually lower than the recorded figures — never higher.
+								usually lower than the recorded figures - never higher.
 							</p>
 							<p>
 								A manual override wins over the catalog for its model and <em>can</em> set cache
-								rates — add one for exact billing, to correct a rate, or to price a model the
+								rates - add one for exact billing, to correct a rate, or to price a model the
 								catalog lacks.
 							</p>
 						</div>

@@ -913,6 +913,67 @@ describe('JobManager workflow methods', () => {
 				return r.rows;
 			}
 
+			it('settles a run its driver abandoned, so the thread still hears about it', async () => {
+				// The production regression. `runAgent` threw past its own finalizer,
+				// so the row stayed `running` - and `postFailurePing` returns early on
+				// a non-terminal status, so nothing at all reached the task thread.
+				await clearRunsAndComments();
+				const runId = await seedRun(HeartbeatRunStatus.Running);
+
+				const manager = createJobManager();
+				await (manager as any).finalizeThrownRun(runId, new Error('sandbox refused the write'));
+
+				const row = await db.query<{ status: string; error: string; exit_code: number }>(
+					'SELECT status, error, exit_code FROM heartbeat_runs WHERE id = $1',
+					[runId],
+				);
+				expect(row.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+				expect(row.rows[0].error).toBe('sandbox refused the write');
+				expect(row.rows[0].exit_code).toBe(-1);
+
+				await (manager as any).onAgentComplete(
+					agentId,
+					'researcher',
+					taskId,
+					taskIdentifier,
+					teamId,
+					undefined,
+					undefined,
+					{
+						success: false,
+						exitCode: -1,
+						stderr: 'sandbox refused the write',
+						heartbeatRunId: runId,
+					},
+				);
+
+				const pings = (await readSystemComments()).filter((c) => c.content.kind === 'run_failed');
+				expect(pings.length).toBe(1);
+				expect(pings[0].content.error).toBe('sandbox refused the write');
+
+				manager.shutdown();
+				await clearRunsAndComments();
+			});
+
+			it('leaves a run somebody else already settled alone', async () => {
+				// The guard. A row the runner finalized keeps its own richer verdict.
+				await clearRunsAndComments();
+				const runId = await seedRun(HeartbeatRunStatus.Succeeded);
+
+				const manager = createJobManager();
+				await (manager as any).finalizeThrownRun(runId, new Error('a later, vaguer error'));
+
+				const row = await db.query<{ status: string; error: string | null }>(
+					'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+					[runId],
+				);
+				expect(row.rows[0].status).toBe(HeartbeatRunStatus.Succeeded);
+				expect(row.rows[0].error).toBeNull();
+
+				manager.shutdown();
+				await clearRunsAndComments();
+			});
+
 			it('posts a system comment on failed status without queuing a retry wakeup', async () => {
 				await clearRunsAndComments();
 				const runId = await seedRun(HeartbeatRunStatus.Failed, 'The operation timed out.');

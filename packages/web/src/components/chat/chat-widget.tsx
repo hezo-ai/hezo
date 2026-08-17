@@ -431,7 +431,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 			    the page content below the nav bar (the header stays clear and usable,
 			    matching the panel's own top-12 boundary), so the panel reads clearly
 			    against the page. It always shows on mobile (where the panel floats over
-			    the page with margins around it) and, on desktop, only in expanded mode —
+			    the page with margins around it) and, on desktop, only in expanded mode -
 			    the anchored corner panel doesn't need one. Clicking it dismisses the chat. */}
 			<button
 				type="button"
@@ -455,7 +455,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 						</span>
 						{/* Mirror the in-thread typing dots up here so the "CEO is working"
 						    signal stays visible even when the latest reply is scrolled out of
-						    view. Decorative only — the in-thread indicator carries the aria
+						    view. Decorative only - the in-thread indicator carries the aria
 						    live-region announcement, so this stays aria-hidden to avoid a
 						    duplicate read. */}
 						{streaming && (
@@ -476,7 +476,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 					</div>
 					<div className="flex items-center gap-1">
 						{/* Convert this conversation into a task (assistant web threads only).
-						    Disabled while a reply streams — converting aborts the in-flight
+						    Disabled while a reply streams - converting aborts the in-flight
 						    turn, so the honest affordance is to wait it out. */}
 						{canConvert && (
 							<Tooltip content={t('chat.convert.action')} side="bottom">
@@ -649,7 +649,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 					    messages + composer. */}
 					<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 						{/* Thread switcher: every thread from every surface, grouped like the
-						    rail — your own chats first, then team channels (read-only). */}
+						    rail - your own chats first, then team channels (read-only). */}
 						<div
 							className={`flex items-center gap-1 border-b border-border px-3 py-1.5 ${
 								expanded ? 'md:hidden' : ''
@@ -780,7 +780,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 											<span>
 												This conversation lives in <b>{threadLabel(activeThread)}</b> on{' '}
 												{channelDisplayName(activeThread.channel)}. Hezo replies there when
-												mentioned — continue it by mentioning Hezo in the channel.
+												mentioned - continue it by mentioning Hezo in the channel.
 											</span>
 										</div>
 									)}
@@ -851,7 +851,7 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 															identifier: convertedTask?.identifier ?? '',
 														})
 													: activeReadOnly
-														? `Read-only — reply from ${channelDisplayName(activeThread?.channel ?? '')}`
+														? `Read-only - reply from ${channelDisplayName(activeThread?.channel ?? '')}`
 														: busy
 															? 'Queue your next message…'
 															: 'Ask the CEO anything, across every project…'

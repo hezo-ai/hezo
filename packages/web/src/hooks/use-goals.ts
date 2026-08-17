@@ -21,7 +21,7 @@ export type { GoalRunActivity, GoalWithProject, ProgressUpdateRunSummary };
  * lockstep.
  */
 export const GOAL_EXPLAINER_TOOLTIP =
-	"A goal is a high-level objective your team works toward. Approve it to create the goal — it then appears on this project's Goals page, where the Captain tracks progress and re-checks it on the schedule shown.";
+	"A goal is a high-level objective your team works toward. Approve it to create the goal - it then appears on this project's Goals page, where the Captain tracks progress and re-checks it on the schedule shown.";
 
 /** A pending goal suggestion (a Captain/CEO proposal awaiting admin approval). */
 export interface GoalSuggestion {
@@ -236,7 +236,7 @@ export function useRunProgressUpdateNow(projectId: string) {
 			// The Captain was busy, so the run was queued instead of erroring — it fires
 			// automatically once the Captain frees up. Surface the queued row live.
 			if (data.queued) {
-				toast.info('Progress update queued — it will run when the Captain is free.');
+				toast.info('Progress update queued - it will run when the Captain is free.');
 				queryClient.invalidateQueries({ queryKey: queryKeys.projects.goalQueuedRun(projectId) });
 				return;
 			}

@@ -21,7 +21,7 @@ export function ActorBadge({
 }) {
 	if (actorType === 'api_key') {
 		return (
-			<Tooltip content={name ? `${name} — API key (external MCP client)` : 'API key'}>
+			<Tooltip content={name ? `${name} - API key (external MCP client)` : 'API key'}>
 				<span
 					role="img"
 					className={`inline-flex items-center align-middle text-text-3 ${className ?? ''}`}
@@ -35,7 +35,7 @@ export function ActorBadge({
 	}
 	if (actorType === 'admin' || actorType === 'user') {
 		return (
-			<Tooltip content={name ? `${name} — human admin (via web)` : 'Human admin (via web)'}>
+			<Tooltip content={name ? `${name} - human admin (via web)` : 'Human admin (via web)'}>
 				<span
 					role="img"
 					className={`inline-flex items-center align-middle text-text-3 ${className ?? ''}`}

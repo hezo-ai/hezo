@@ -429,7 +429,7 @@ export function TaskList({ projectId }: TaskListProps) {
 							</Tooltip>
 						)}
 						{row.has_unread_admin_mention && (
-							<Tooltip content="Unread mention — needs your review">
+							<Tooltip content="Unread mention - needs your review">
 								<AtSign
 									role="img"
 									aria-label="Unread mention"
@@ -467,7 +467,7 @@ export function TaskList({ projectId }: TaskListProps) {
 							row.project_name ? (
 								<Badge color="info">{row.project_name}</Badge>
 							) : (
-								<span className="text-text-3">—</span>
+								<span className="text-text-3">-</span>
 							),
 					},
 				]),
@@ -498,7 +498,7 @@ export function TaskList({ projectId }: TaskListProps) {
 					/>
 				) : (
 					<span className="block max-w-[140px] truncate text-text-2">
-						{row.assignee_name || '—'}
+						{row.assignee_name || '-'}
 					</span>
 				),
 		},

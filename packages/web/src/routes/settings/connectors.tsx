@@ -167,7 +167,7 @@ function InstanceConnectorsPage() {
 						title={
 							createScope === ALL_PROJECTS
 								? 'Add connector (All projects)'
-								: `Add connector — ${createScopeName}`
+								: `Add connector - ${createScopeName}`
 						}
 						onClose={closeForm}
 						onSubmit={handleCreate}
@@ -311,7 +311,7 @@ function InstanceConnectorRow({
 			onSuccess: ({ auth_url }) => {
 				if (!auth_url) {
 					setRowInfo(
-						"This MCP server doesn't advertise OAuth — authenticate with a header placeholder if needed.",
+						"This MCP server doesn't advertise OAuth - authenticate with a header placeholder if needed.",
 					);
 					return;
 				}

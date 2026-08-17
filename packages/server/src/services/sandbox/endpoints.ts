@@ -111,3 +111,19 @@ export function tunnelRunEndpoints(ports: TunnelPorts): RunEndpoints {
 		sshPort: ports.ssh,
 	};
 }
+
+/**
+ * One representative triple, for host-side work that must be proven before a
+ * container exists.
+ *
+ * The real ports are chosen by an in-container probe, so they cannot be known
+ * until the container is up - but every real triple has this shape and differs
+ * only in the port digits, and nothing in an MCP adapter or in
+ * `validateInjection` reads a port. That is a claim rather than an assumption,
+ * so `mcp-injection-endpoint-independence.test.ts` pins it across every runtime.
+ */
+export const PREFLIGHT_TUNNEL_ENDPOINTS: RunEndpoints = tunnelRunEndpoints({
+	proxy: TUNNEL_PORT_BASE,
+	mcp: TUNNEL_PORT_BASE + 1,
+	ssh: TUNNEL_PORT_BASE + 2,
+});

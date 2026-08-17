@@ -233,7 +233,7 @@ function TeamDetail({
 					</>
 				)}
 			</div>
-			{/* Confirming is the only action here — the create actions live on the entry
+			{/* Confirming is the only action here - the create actions live on the entry
 			    step. Full-width on mobile, right-aligned from sm: up, matching that
 			    step's footer. */}
 			<div className="shrink-0 flex flex-col sm:flex-row sm:justify-end">
@@ -562,7 +562,7 @@ export function CreateProjectWithTeamDialog({
 										{(error as { message?: string }).message || 'Failed to create project'}
 									</p>
 								)}
-								{/* The submit actions belong to the entry step alone — the browse and
+								{/* The submit actions belong to the entry step alone - the browse and
 								    detail screens are for picking, and confirm via "Select team". Gating
 								    the row here also unmounts the mod+Enter binding on those screens. */}
 								{selection && (

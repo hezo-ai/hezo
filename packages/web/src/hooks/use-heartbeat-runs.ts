@@ -72,7 +72,7 @@ export function isActiveRunStatus(status: RunStatus): boolean {
 }
 
 export function getRunWaitingMessage(status: RunStatus, queuedReason?: string | null): string {
-	if (status === 'queued') return `Queued — ${queuedReason ?? 'waiting to start'}…`;
+	if (status === 'queued') return `Queued - ${queuedReason ?? 'waiting to start'}…`;
 	if (status === 'running') return 'Waiting for log output…';
 	return 'No output.';
 }

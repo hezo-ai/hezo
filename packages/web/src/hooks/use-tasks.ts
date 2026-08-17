@@ -66,6 +66,8 @@ export interface Task {
 	 */
 	admin_action_pending: boolean;
 	last_run_status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | null;
+	/** Capped server-side; the run detail read serves the whole value. */
+	last_run_error: string | null;
 	/** Id of the last completed run — the target of a manual retry. */
 	last_run_id: string | null;
 	last_run_comment_id: string | null;

@@ -136,7 +136,7 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 						<FieldLabel
 							htmlFor="goal-name"
 							tooltipLabel="About goal name"
-							tooltip="A short, outcome-focused name for the goal — what success looks like, not the work to get there."
+							tooltip="A short, outcome-focused name for the goal - what success looks like, not the work to get there."
 						>
 							Goal name
 						</FieldLabel>
@@ -152,14 +152,14 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 					<label className="flex flex-col gap-1.5">
 						<FieldLabel
 							tooltipLabel="About measurement"
-							tooltip="How will you know this goal is achieved? Be precise — this is the bar the Captain measures progress against."
+							tooltip="How will you know this goal is achieved? Be precise - this is the bar the Captain measures progress against."
 						>
 							Measurement
 						</FieldLabel>
 						<textarea
 							value={measurement}
 							onChange={(e) => setMeasurement(e.target.value)}
-							placeholder="How will you know this goal is achieved? Be precise — this is the bar the Captain measures against."
+							placeholder="How will you know this goal is achieved? Be precise - this is the bar the Captain measures against."
 							rows={3}
 							className={textareaClass}
 						/>
@@ -168,14 +168,14 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 					<label className="flex flex-col gap-1.5">
 						<FieldLabel
 							tooltipLabel="About suggested actions"
-							tooltip="Optional — specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
+							tooltip="Optional - specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
 						>
 							Suggested actions <span className="text-text-3">(optional)</span>
 						</FieldLabel>
 						<textarea
 							value={actions}
 							onChange={(e) => setActions(e.target.value)}
-							placeholder="Optional — specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
+							placeholder="Optional - specific actions or checks the Captain should take toward this goal (e.g. run a weekly cron-style check of the signup funnel)."
 							rows={3}
 							className={textareaClass}
 						/>
@@ -205,7 +205,7 @@ export function CreateGoalDialog({ projectId, open, onOpenChange, goal }: Create
 						<label className="flex flex-col gap-1.5">
 							<FieldLabel
 								tooltipLabel="About deadline"
-								tooltip="Optional — a target date for reaching this goal. Leave blank for an open-ended goal."
+								tooltip="Optional - a target date for reaching this goal. Leave blank for an open-ended goal."
 							>
 								Deadline <span className="text-text-3">(optional)</span>
 							</FieldLabel>

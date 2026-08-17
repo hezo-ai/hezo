@@ -54,8 +54,8 @@ export function AssetDeletionRequestComment({ comment, projectId, taskId }: Prop
 				<div className="flex-1">
 					<p className="text-sm font-medium text-text-1">
 						{approved
-							? `Deletion approved — ${deletedCount} asset${deletedCount === 1 ? '' : 's'} deleted`
-							: 'Deletion denied — assets kept'}
+							? `Deletion approved - ${deletedCount} asset${deletedCount === 1 ? '' : 's'} deleted`
+							: 'Deletion denied - assets kept'}
 					</p>
 					<p className="text-xs text-text-2 mt-0.5">
 						{assets.map((a) => `assets/${a.path}`).join(', ')}

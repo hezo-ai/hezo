@@ -90,7 +90,7 @@ export function ConnectorCompletion({
 		authStart.mutate(connector.id, {
 			onSuccess: ({ auth_url }) => {
 				if (!auth_url) {
-					setInfo("This MCP server doesn't advertise OAuth — use the API key option below.");
+					setInfo("This MCP server doesn't advertise OAuth - use the API key option below.");
 					return;
 				}
 				const popup = window.open(auth_url, 'hezo-connect', 'width=600,height=720');

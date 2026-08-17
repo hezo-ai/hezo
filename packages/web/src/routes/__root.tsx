@@ -448,11 +448,11 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 						</div>
 					)}
 					{/* Collapsed: a slim expand tab docked to the project rail's right
-					    edge, flush under the app header. Desktop-only — below lg the
+					    edge, flush under the app header. Desktop-only - below lg the
 					    project menu is a drawer, so there is nothing to collapse.
 					    z-50 is load-bearing, not decorative: collapsed, <main> starts at
 					    the rail's right edge, so this tab shares its top-left corner with
-					    whatever <main> stickies there — today ContainerStatusBanner (z-40)
+					    whatever <main> stickies there - today ContainerStatusBanner (z-40)
 					    and BudgetBanner (z-30), which sit in this same stacking context.
 					    Anything at or below their z-index gets painted over and the tab
 					    silently vanishes, stranding the user with no way to re-expand.
@@ -474,7 +474,7 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 					{/* The relative wrapper hosts the scroll-to-bottom pill as a sibling
 					    of the scroller, so the pill stays pinned over the content area
 					    (never scrolling with it) on ANY page whose long-form content
-					    overflows <main> — task threads, documents, settings, etc. It is
+					    overflows <main> - task threads, documents, settings, etc. It is
 					    also the pills' positioning anchor: `--pill-center-x` (set above
 					    from a route's registered content column) is measured relative to
 					    it. */}

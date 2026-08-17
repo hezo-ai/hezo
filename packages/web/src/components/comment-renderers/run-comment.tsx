@@ -1,6 +1,6 @@
 import { HeartbeatRunStatus } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
-import { DoorOpen, Loader2, RotateCw } from 'lucide-react';
+import { AlertTriangle, DoorOpen, Loader2, RotateCw } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useAgentLookup } from '../../hooks/use-agent-lookup';
 import { type ContainerHealth, useContainerHealth } from '../../hooks/use-container-health';
@@ -24,7 +24,7 @@ import { RelativeTime } from '../ui/relative-time';
 import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
 import { CommentTimestampLink } from './comment-timestamp-link';
-import { runStatusDotClass, runStatusLabel } from './helpers';
+import { runErrorSummary, runStatusDotClass, runStatusLabel } from './helpers';
 
 interface Props {
 	comment: CommentDataOf<'run'>;
@@ -87,13 +87,13 @@ function skillSourceLabel(url: string): string {
 function containerNotReadyReason(health: ContainerHealth | null): string {
 	switch (health?.kind) {
 		case 'rebuilding':
-			return 'Container is rebuilding — retry will be available once it finishes';
+			return 'Container is rebuilding - retry will be available once it finishes';
 		case 'provisioning':
-			return 'Container is starting up — retry will be available once it is running';
+			return 'Container is starting up - retry will be available once it is running';
 		default:
 			// error, or the project index has not loaded yet (stopped never blocks —
 			// the retry lazy-starts the container).
-			return 'Container hit an error — fix it from the Container page to retry';
+			return 'Container hit an error - fix it from the Container page to retry';
 	}
 }
 
@@ -198,6 +198,12 @@ export function RunCommentBody({
 			: null;
 	const [expanded, setExpanded] = useState(false);
 	const logRegionId = `run-comment-log-${runId}`;
+	// Gated on the error rather than on the status: a cancelled run carries a
+	// reason too ("the container it was on stopped", "server shut down while this
+	// run was in flight"), and that is exactly the sentence a reader is looking
+	// for. The colour follows the status; the presence does not.
+	const errorSummary = runErrorSummary(run?.error);
+	const errored = status === HeartbeatRunStatus.Failed || status === HeartbeatRunStatus.TimedOut;
 	const { t } = useI18n();
 	// Ticks live while the run is in flight; empty until it actually starts, so a
 	// queued run does not show a stopwatch for work that has not begun.
@@ -390,8 +396,41 @@ export function RunCommentBody({
 					// Completed or still loading: collapsed by default, expandable on click.
 					expandToggle
 				))}
+			{inline && !isActive && errorSummary && (
+				// Its own row rather than a segment of `summaryRow`, which is a wrapping
+				// flex line tuned for narrow viewports that a reason of any length would
+				// fight. Until this existed the reason was rendered in exactly one place
+				// in the whole app - the run detail page - so a failed run in a thread
+				// said only that it had failed.
+				<button
+					type="button"
+					onClick={() => setExpanded((v) => !v)}
+					aria-expanded={expanded}
+					aria-controls={logRegionId}
+					aria-label={t('comment.runErrorExpand')}
+					data-testid="run-comment-error"
+					className={`flex w-full min-w-0 items-start gap-1.5 rounded-md px-2 py-1 text-left text-[11.5px] ${
+						errored ? 'bg-danger-soft text-danger-soft-fg' : 'bg-surface-3 text-text-2'
+					}`}
+				>
+					<AlertTriangle className="mt-[3px] h-3 w-3 shrink-0" aria-hidden="true" />
+					<span className="min-w-0 truncate">{errorSummary}</span>
+				</button>
+			)}
 			{((isActive && !working) || expanded) && (
 				<div id={logRegionId}>
+					{run?.error && (
+						// Mirrors the run detail page's block, so the two surfaces read the
+						// same rather than the reason living in one of them.
+						<div className="mb-2" data-testid="run-comment-error-full">
+							<div className="mb-1 text-[11px] uppercase tracking-wider text-text-3">
+								{t('comment.runError')}
+							</div>
+							<pre className="max-h-[140px] overflow-auto whitespace-pre-wrap rounded-lg bg-danger-soft p-3 font-mono text-xs text-danger-soft-fg">
+								{run.error}
+							</pre>
+						</div>
+					)}
 					<LogViewer
 						lines={lines}
 						compact

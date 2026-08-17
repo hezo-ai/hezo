@@ -32,6 +32,7 @@ import {
 } from '../src/services/agent-runner';
 import { ensureProjectContainerRunning } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { detectOrphans } from '../src/services/orphan-detector';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
 import { CONTAINER_SUBSCRIPTION_BASE } from '../src/services/runtime-home';
 import type { ContainerEngine } from '../src/services/sandbox/types';
@@ -1333,11 +1334,22 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 			} as any,
 		});
 
-		// Setup failures propagate out of `runAgent` (the job manager catches them);
-		// the point here is that the resources are released on the way past.
-		await expect(runAgent(deps, makeAgent(), makeTask(), makeProject())).rejects.toThrow(
-			'refused the write',
+		// A setup failure is recorded, not propagated: `runAgent` resolves with a
+		// failed result and the row carries the real cause. It used to throw past
+		// every writer, leaving the row `running` with no error - which silenced the
+		// failure ping (it returns early on a non-terminal status) and left the
+		// orphan pass to invent "process no longer running" 30s later.
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(false);
+		expect(result.stderr).toContain('refused the write');
+
+		const row = await db.query<{ status: string; error: string | null; finished_at: string }>(
+			'SELECT status, error, finished_at FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
 		);
+		expect(row.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(row.rows[0].error).toContain('refused the write');
+		expect(row.rows[0].finished_at).not.toBeNull();
 
 		// The tunnel really did start - otherwise the assertion below is vacuous.
 		expect(rootsSeen).toContain(CONTAINER_WORKSPACE_ROOT);
@@ -1348,6 +1360,238 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		expect(sshCalls.released.sort()).toEqual(sshCalls.allocated.sort());
 		expect(egressCalls.released.sort()).toEqual(egressCalls.allocated.sort());
 		expect(sshCalls.allocated.some((id) => !id.startsWith('provision-'))).toBe(true);
+	});
+
+	/** The same injection the release test uses: fails inside `buildRunContext`. */
+	const dockerRefusingTheRuntimeHome = (): ContainerEngine => {
+		const base = makeDocker({
+			openExecChannel: async () => ({
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: () => {},
+				close: () => {},
+			}),
+		});
+		const stubFiles = base.files.bind(base);
+		return {
+			...base,
+			files: (containerId: string, containerRoot: string) => {
+				if (containerRoot.startsWith(CONTAINER_SUBSCRIPTION_BASE)) {
+					throw new Error('sandbox file API refused the write');
+				}
+				return stubFiles(containerId, containerRoot);
+			},
+		} as unknown as ContainerEngine;
+	};
+
+	const orphanRetriesFor = async (memberId: string): Promise<number> => {
+		const res = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'reason' = 'orphan_retry'`,
+			[memberId],
+		);
+		return res.rows[0].c;
+	};
+
+	it('does not mint a recovery retry for a setup failure that will reproduce', async () => {
+		// A configuration fault fails identically on every attempt, so a retry costs
+		// a container and buys nothing. This is the loop that turned one bad MCP
+		// injection into hundreds of failed runs on a single task.
+		const before = await orphanRetriesFor(agentId);
+
+		const result = await runAgent(
+			baseDeps(dockerRefusingTheRuntimeHome()),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+		);
+
+		expect(result.success).toBe(false);
+		expect(await orphanRetriesFor(agentId)).toBe(before);
+		const row = await db.query<{ process_loss_retry_count: number }>(
+			'SELECT process_loss_retry_count FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(row.rows[0].process_loss_retry_count).toBe(0);
+	});
+
+	it('mints one bounded retry when the setup failure is a lost transport', async () => {
+		const before = await orphanRetriesFor(agentId);
+
+		const base = makeDocker({
+			openExecChannel: async () => ({
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: () => {},
+				close: () => {},
+			}),
+		});
+		const stubFiles = base.files.bind(base);
+		const docker = {
+			...base,
+			files: (containerId: string, containerRoot: string) => {
+				if (containerRoot.startsWith(CONTAINER_SUBSCRIPTION_BASE)) {
+					// Classified by name, so constructing it here needs no import from
+					// the sandbox package - which is the property being relied on.
+					throw Object.assign(new Error('output stream closed'), {
+						name: 'ExecStreamLostError',
+					});
+				}
+				return stubFiles(containerId, containerRoot);
+			},
+		} as unknown as ContainerEngine;
+
+		const result = await runAgent(baseDeps(docker), makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(false);
+		expect(await orphanRetriesFor(agentId)).toBe(before + 1);
+		const row = await db.query<{ process_loss_retry_count: number }>(
+			'SELECT process_loss_retry_count FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(row.rows[0].process_loss_retry_count).toBe(1);
+	});
+
+	it('records a cancelled run, not a failed one, when the abort lands mid-setup', async () => {
+		// A shutdown reaching `buildRunContext` is a cancellation, and recording it
+		// as a failure would put an unactionable row in the Errored view on every
+		// restart. The shape is the real one: aborting the signal makes the awaited
+		// operation reject with an AbortError.
+		const controller = new AbortController();
+		const base = makeDocker({
+			openExecChannel: async () => ({
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: () => {},
+				close: () => {},
+			}),
+		});
+		const stubFiles = base.files.bind(base);
+		const docker = {
+			...base,
+			files: (containerId: string, containerRoot: string) => {
+				if (containerRoot.startsWith(CONTAINER_SUBSCRIPTION_BASE)) {
+					controller.abort();
+					throw new DOMException('Aborted', 'AbortError');
+				}
+				return stubFiles(containerId, containerRoot);
+			},
+		} as unknown as ContainerEngine;
+
+		const result = await runAgent(
+			baseDeps(docker),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			controller.signal,
+		);
+
+		const row = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(row.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
+	});
+
+	it('refuses a run whose MCP config cannot build, without starting a container', async () => {
+		// The production failure, and the assertion that matters is the call count.
+		// `validateInjection` needs no container, so firing it after one had been
+		// provisioned made every lap pay a cold provision - and, on a full budget,
+		// retire another project's container to make room for it first.
+		//
+		// The poison is a realistic misconfiguration: a SaaS connector whose header
+		// carries a raw token instead of a `__HEZO_SECRET_*__` placeholder. Codex
+		// stores bearers in env, so inlining one into its config.toml is exactly the
+		// contract violation the adapter check exists for.
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, activated_at)
+			 VALUES ($1, 'saas', $2::jsonb, 'installed', now())`,
+			[
+				'preflight-poison',
+				JSON.stringify({
+					url: 'https://example.test/mcp',
+					headers: { Authorization: 'Bearer sk-live-not-a-placeholder' },
+				}),
+			],
+		);
+		await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
+		await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: JSON.stringify({
+					tokens: {
+						id_token: 'header.payload.sig',
+						access_token: 'header.payload.sig',
+						refresh_token: 'rt-preflight',
+						account_id: 'acct-preflight',
+					},
+				}),
+				auth_method: AiAuthMethod.Subscription,
+				label: 'openai-preflight',
+			}),
+		});
+		try {
+			let created = 0;
+			const base = makeDocker();
+			const docker = {
+				...base,
+				createContainer: async (...args: unknown[]) => {
+					created++;
+					return (base.createContainer as (...a: unknown[]) => unknown)(...args) as never;
+				},
+			} as unknown as ContainerEngine;
+
+			// Pinned to Codex because it stores bearers in env; on an `inline` runtime
+			// the adapter contract permits a header in a file and there is nothing to
+			// refuse.
+			const result = await runAgent(
+				baseDeps(docker),
+				makeAgent(),
+				{ ...makeTask(), runtime_type: 'codex' as const },
+				makeProject(),
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.stderr).toContain('cannot be prepared');
+			expect(result.stderr).toContain('No container was started');
+			expect(created).toBe(0);
+
+			const row = await db.query<{ status: string; error: string }>(
+				'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+			expect(row.rows[0].error).toContain('inlined a bearer token');
+		} finally {
+			await db.query('DELETE FROM mcp_connections WHERE name = $1', ['preflight-poison']);
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
+		}
+	});
+
+	it('leaves nothing for the orphan pass to reap after a setup failure', async () => {
+		// The end-to-end property. The row is terminal the moment the run fails, so
+		// the 30s pass never selects it and never overwrites the real cause with
+		// "Orphaned: process no longer running".
+		const result = await runAgent(
+			baseDeps(dockerRefusingTheRuntimeHome()),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+		);
+
+		expect(await detectOrphans(db, new Set())).toBe(0);
+		const row = await db.query<{ error: string | null }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(row.rows[0].error).toContain('refused the write');
+		expect(row.rows[0].error).not.toContain('Orphaned');
 	});
 });
 

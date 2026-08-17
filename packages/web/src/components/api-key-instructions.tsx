@@ -27,7 +27,7 @@ const KIMI_KEY_INSTRUCTIONS: ProviderInstructionContent = {
 			Copy the key (starts with <code>sk-</code>) and paste it below.
 		</>,
 	],
-	footer: <>The Kimi API is prepaid — top up a small balance on the platform before agents run.</>,
+	footer: <>The Kimi API is prepaid - top up a small balance on the platform before agents run.</>,
 };
 
 /**
@@ -52,12 +52,12 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 				and click <strong>Create key</strong>.
 			</>,
 			<>
-				Copy the key (starts with <code>sk-ant-</code>) and paste it below — it's only shown once.
+				Copy the key (starts with <code>sk-ant-</code>) and paste it below - it's only shown once.
 			</>,
 		],
 		footer: (
 			<>
-				API usage is billed per token from prepaid credits — add credits under the Console's Billing
+				API usage is billed per token from prepaid credits - add credits under the Console's Billing
 				settings. Have a Claude Pro or Max plan? Use the <strong>Claude Code subscription</strong>{' '}
 				option above instead.
 			</>
@@ -77,12 +77,12 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 				page and click <strong>Create new secret key</strong>.
 			</>,
 			<>
-				Copy the key (starts with <code>sk-</code>) and paste it below — it's only shown once.
+				Copy the key (starts with <code>sk-</code>) and paste it below - it's only shown once.
 			</>,
 		],
 		footer: (
 			<>
-				API usage is billed separately from ChatGPT — add a payment method under the platform's
+				API usage is billed separately from ChatGPT - add a payment method under the platform's
 				Billing settings. Have a ChatGPT Plus or Pro plan? Use the{' '}
 				<strong>Codex subscription</strong> option above instead.
 			</>
@@ -108,7 +108,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 		],
 		footer: (
 			<>
-				AI Studio keys start on a free tier with strict rate limits — enable billing on the key's
+				AI Studio keys start on a free tier with strict rate limits - enable billing on the key's
 				Google Cloud project for sustained agent use. Have a Google AI Pro/Ultra plan? Use the{' '}
 				<strong>Gemini subscription</strong> option above instead.
 			</>
@@ -127,10 +127,10 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 				<InstructionsLink href="https://platform.deepseek.com/api_keys">API keys</InstructionsLink>{' '}
 				and click <strong>Create new API key</strong>.
 			</>,
-			<>Copy the key and paste it below — it's only shown once.</>,
+			<>Copy the key and paste it below - it's only shown once.</>,
 		],
 		footer: (
-			<>The DeepSeek API is prepaid — top up your balance on the platform before agents run.</>
+			<>The DeepSeek API is prepaid - top up your balance on the platform before agents run.</>
 		),
 	},
 	[AiProvider.ZAi]: {
@@ -149,7 +149,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 		],
 		footer: (
 			<>
-				Usage is billed from your prepaid balance — top up on the{' '}
+				Usage is billed from your prepaid balance - top up on the{' '}
 				<InstructionsLink href="https://z.ai/manage-apikey/billing">Billing</InstructionsLink> page
 				if needed.
 			</>
@@ -170,12 +170,12 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 				and click <strong>Create key</strong>.
 			</>,
 			<>
-				Copy the key (starts with <code>sk-or-</code>) and paste it below — it's only shown once.
+				Copy the key (starts with <code>sk-or-</code>) and paste it below - it's only shown once.
 			</>,
 		],
 		footer: (
 			<>
-				One OpenRouter key routes to models from many labs. Usage is prepaid — buy credits in your
+				One OpenRouter key routes to models from many labs. Usage is prepaid - buy credits in your
 				OpenRouter account before agents run.
 			</>
 		),
@@ -196,13 +196,13 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 				and click <strong>Create API key</strong>.
 			</>,
 			<>
-				Copy the key (starts with <code>xai-</code>) and paste it below — it's only shown once.
+				Copy the key (starts with <code>xai-</code>) and paste it below - it's only shown once.
 			</>,
 		],
 		footer: (
 			<>
 				Runs use xAI's <strong>Grok Build</strong> CLI on the <code>grok-4.5</code> model. API usage
-				is billed per token — add credits under the console's Billing settings before agents run.
+				is billed per token - add credits under the console's Billing settings before agents run.
 			</>
 		),
 	},
@@ -221,7 +221,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 				<code>http://localhost:11434</code> by default.
 			</>,
 			<>
-				Set <strong>Server URL</strong> to an address the agent container can reach —{' '}
+				Set <strong>Server URL</strong> to an address the agent container can reach -{' '}
 				<code>http://host.docker.internal:11434</code> for a server on this machine.
 			</>,
 		],
@@ -245,7 +245,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 				<code>http://localhost:1234</code> by default.
 			</>,
 			<>
-				Set <strong>Server URL</strong> to an address the agent container can reach —{' '}
+				Set <strong>Server URL</strong> to an address the agent container can reach -{' '}
 				<code>http://host.docker.internal:1234</code> for a server on this machine. If you enabled{' '}
 				<strong>Require Authentication</strong>, put the key under <strong>Advanced</strong>.
 			</>,

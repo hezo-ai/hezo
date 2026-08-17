@@ -129,7 +129,7 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 				label="Progress Summary"
 				infoLabel="About Progress Summary"
 				infoTestId="progress-summary-info"
-				infoContent="A running checkpoint of what's been done and what's left on this task. Automatically included in every agent run's prompt — alongside the description and rules — so work stays continuous across runs. Agents update it at natural milestones via the update_task tool."
+				infoContent="A running checkpoint of what's been done and what's left on this task. Automatically included in every agent run's prompt - alongside the description and rules - so work stays continuous across runs. Agents update it at natural milestones via the update_task tool."
 				editorAriaLabel="Progress Summary"
 				value={task.progress_summary}
 				emptyText="No progress summary yet."
@@ -145,7 +145,7 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 				label="Rules"
 				infoLabel="About Rules"
 				infoTestId="rules-info"
-				infoContent="Approach constraints and required workflows for this task — e.g. 'run the full suite before pushing' or 'consult the architect before touching auth'. Automatically prepended to every agent run's task prompt. Agents can update via the update_task tool as they discover new rules."
+				infoContent="Approach constraints and required workflows for this task - e.g. 'run the full suite before pushing' or 'consult the architect before touching auth'. Automatically prepended to every agent run's task prompt. Agents can update via the update_task tool as they discover new rules."
 				editorAriaLabel="Rules"
 				editorPlaceholder="e.g., Consult the architect before making changes..."
 				value={task.rules}

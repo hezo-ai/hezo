@@ -265,8 +265,8 @@ export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirement
 }
 
 /**
- * Which of a **working** project's idle containers to retire, judged on each
- * member's own idle clock rather than on the project falling quiet.
+ * Which of a project's idle containers to retire, judged on each member's own
+ * idle clock rather than on the project falling quiet.
  *
  * {@link planIdleShutdown} answers "this whole project has gone idle, retire its
  * pool". That is the only question the sweeper used to ask, and it left a gap
@@ -276,11 +276,22 @@ export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirement
  * kept working. Every other project saw a budget it could not reach and queued
  * indefinitely.
  *
- * So a project that is *working* has its idle members judged individually. There
- * is no keep-one-warm rule here, unlike the whole-project plan: the busy members
- * are about to become idle themselves, so warmth for the next run is already
- * accounted for, and holding a second container against that is what the caller
- * is trying to stop.
+ * This pass used to require the project to hold a `busy` member, so that its
+ * warm-start guarantee could be left to the whole-project pass. Between them the
+ * two preconditions did not partition the space: a project whose runs each last
+ * a few seconds is never quiet (queued wakeups and recent finishes keep it out
+ * of the whole-project pass) and rarely busy at the instant a once-a-minute cron
+ * samples it. Its idle members matched neither pass and pinned the budget
+ * indefinitely - which is exactly what `docs/containers/overview.md` promises
+ * cannot happen.
+ *
+ * So the precondition is gone and the warm-start floor lives here instead, as a
+ * property of the plan rather than of which pass happened to run: hold one
+ * member back only when the project has no other way to serve its next run
+ * without a cold provision, and **suspend** that one rather than leave it
+ * running, since a suspended member costs the instance budget nothing and
+ * resumes in about a second. That converges on {@link planIdleShutdown}'s own
+ * rule - two planners, one invariant.
  *
  * `staleMemberIds` are the members the caller has established sat idle past the
  * window - the clock lives in SQL, where it can be indexed, so this stays pure.
@@ -291,17 +302,32 @@ export function planSurplusIdleRetirement(
 	members: readonly PoolMember[],
 	staleMemberIds: ReadonlySet<string>,
 ): IdleRetirementPlan {
-	// Not a working project - either fully idle, in which case the whole-project
-	// pass owns it and its warm-start guarantees, or holding nothing at all.
-	if (!members.some((m) => m.state === 'busy')) return { suspend: [], destroy: [] };
-
 	const stale = members.filter(
 		(m) => m.state === 'idle' && !m.reservedForChat && staleMemberIds.has(m.id),
 	);
-	return {
-		suspend: stale.filter((m) => m.hasUnpushedCommits),
-		destroy: stale.filter((m) => !m.hasUnpushedCommits),
-	};
+	if (stale.length === 0) return { suspend: [], destroy: [] };
+
+	// Unchanged: work that reached no durable remote is suspended, never
+	// destroyed. See planIdleShutdown for the reasoning in full.
+	const pinned = stale.filter((m) => m.hasUnpushedCommits);
+	const disposable = stale.filter((m) => !m.hasUnpushedCommits);
+
+	// Three things already guarantee a warm start, and any one of them is enough:
+	// a busy member (about to become idle itself), a suspended member (a ~1s
+	// resume through the ladder's resume rung), or a pinned member this plan is
+	// about to suspend. The chat's own member does not count - `usable` excludes
+	// it from the ladder, so it is no route to serving a task run.
+	const resumableAlready =
+		pinned.length > 0 ||
+		members.some((m) => !m.reservedForChat && (m.state === 'busy' || m.state === 'suspended'));
+	if (resumableAlready) return { suspend: pinned, destroy: disposable };
+
+	// Nothing else can serve the next run, so the first stale member is held back
+	// and suspended. First rather than newest, matching planIdleShutdown's
+	// `[first, ...rest]`: consistency between the two planners is worth more than
+	// a marginal warmth heuristic, and `loadPoolMembers` orders by created_at.
+	const [keep, ...rest] = disposable;
+	return { suspend: keep ? [keep] : [], destroy: rest };
 }
 
 /** An idle container in some *other* project, offered up to cover a blocked run. */
@@ -312,6 +338,20 @@ export interface ReclaimCandidate {
 	memoryGb: number;
 	/** How long it has sat idle. The caller supplies the clock; this stays pure. */
 	idleForMs: number;
+	/**
+	 * How long the container has existed. A separate question from how long it
+	 * has been idle - see the age floor in {@link planCrossProjectReclaim}. Null
+	 * means the start was never stamped, which is treated as old so a member from
+	 * before that stamping existed is not newly protected.
+	 */
+	ageMs: number | null;
+	/**
+	 * How many members this candidate's project holds that could serve its next
+	 * run without a cold provision - busy, idle or suspended, this candidate
+	 * included. A property of the project rather than of the candidate, so the
+	 * caller counts it and this stays pure.
+	 */
+	projectResumableMembers: number;
 	hasUnpushedCommits: boolean;
 }
 
@@ -347,20 +387,35 @@ export interface ReclaimPlan {
  *   both runs pay a cold start to hand memory to a third project that would lose
  *   it the same way. This is what stops two starved projects reclaiming from each
  *   other in a loop.
+ * - **`minAgeMs` floors it again, on a different clock.** How long a container
+ *   has *existed* is a separate question from how long it has sat idle: one
+ *   created at T, claimed, and released at T+5s clears a 30s idle floor at T+35s
+ *   while still being a container the instance has only just paid a cold
+ *   provision for. Retiring it to hand its memory to a project that will pay the
+ *   same cold start for a replacement is a loss on both sides, which is what an
+ *   operator sees as their instance thrashing.
  *
- * Unpushed commits are suspended rather than destroyed, for the reason
- * {@link planIdleShutdown} sets out at length: suspend frees the memory and keeps
- * the only copy of the work.
+ * A candidate is **suspended rather than destroyed** whenever taking it would
+ * leave its project with no way to serve its own next run - and always when it
+ * holds unpushed commits, for the reason {@link planIdleShutdown} sets out at
+ * length. The two free identical budget memory, since a suspended member is not
+ * counted, so destroying buys the requester nothing and costs the victim a full
+ * cold provision. Bounded at one suspended member per project by construction:
+ * the arm fires only when the project has no other resumable member, and
+ * afterwards it has exactly one.
  */
 export function planCrossProjectReclaim(
 	candidates: readonly ReclaimCandidate[],
 	needGb: number,
 	minIdleMs: number,
+	minAgeMs = 0,
 ): ReclaimPlan {
 	const empty: ReclaimPlan = { suspend: [], destroy: [], freedGb: 0 };
 	if (needGb <= 0) return empty;
 
-	const eligible = candidates.filter((c) => c.idleForMs >= minIdleMs);
+	const eligible = candidates.filter(
+		(c) => c.idleForMs >= minIdleMs && (c.ageMs === null || c.ageMs >= minAgeMs),
+	);
 	if (eligible.reduce((sum, c) => sum + c.memoryGb, 0) < needGb) return empty;
 
 	const heldBy = new Map<string, number>();
@@ -374,10 +429,74 @@ export function planCrossProjectReclaim(
 	});
 
 	const plan: ReclaimPlan = { suspend: [], destroy: [], freedGb: 0 };
+	const takenFrom = new Map<string, number>();
 	for (const candidate of ordered) {
 		if (plan.freedGb >= needGb) break;
-		(candidate.hasUnpushedCommits ? plan.suspend : plan.destroy).push(candidate);
+		const taken = (takenFrom.get(candidate.projectId) ?? 0) + 1;
+		takenFrom.set(candidate.projectId, taken);
+		const wouldStrandVictim = taken >= candidate.projectResumableMembers;
+		(candidate.hasUnpushedCommits || wouldStrandVictim ? plan.suspend : plan.destroy).push(
+			candidate,
+		);
 		plan.freedGb += candidate.memoryGb;
 	}
 	return plan;
+}
+
+/** One completed cross-project reclaim, for {@link detectReclaimChurn}. */
+export interface ReclaimEvent {
+	atMs: number;
+	requestingProjectId: string;
+	victimProjectId: string;
+	freedGb: number;
+}
+
+export interface ChurnVerdict {
+	churning: boolean;
+	/** Reclaims inside the window. */
+	reclaims: number;
+	/** The pair trading containers back and forth, when that is what happened. */
+	reciprocal: readonly [string, string] | null;
+	freedGb: number;
+}
+
+/**
+ * Whether the instance is thrashing rather than reclaiming.
+ *
+ * Two shapes, and the first is the one an operator cannot otherwise see: two
+ * projects taking memory back off each other, every few minutes, indefinitely.
+ * A single project losing a container to a genuinely starved neighbour is the
+ * mechanism working as designed; the same pair swapping one container in a loop
+ * is a budget too small for the workload, and no amount of correct reclaiming
+ * will fix it.
+ *
+ * Pure, and here rather than beside the log call, because it is a decision about
+ * the pool and every other decision about the pool lives in this file.
+ */
+export function detectReclaimChurn(
+	events: readonly ReclaimEvent[],
+	nowMs: number,
+	windowMs: number,
+	minReclaims: number,
+): ChurnVerdict {
+	const recent = events.filter((e) => nowMs - e.atMs <= windowMs);
+	const freedGb = recent.reduce((sum, e) => sum + e.freedGb, 0);
+	if (recent.length < minReclaims) {
+		return { churning: false, reclaims: recent.length, reciprocal: null, freedGb };
+	}
+
+	// A pair is reciprocal when each has taken from the other inside the window.
+	const took = new Set(recent.map((e) => `${e.requestingProjectId}>${e.victimProjectId}`));
+	for (const edge of took) {
+		const [from, to] = edge.split('>');
+		if (took.has(`${to}>${from}`)) {
+			return { churning: true, reclaims: recent.length, reciprocal: [from, to], freedGb };
+		}
+	}
+	return {
+		churning: recent.length >= minReclaims,
+		reclaims: recent.length,
+		reciprocal: null,
+		freedGb,
+	};
 }

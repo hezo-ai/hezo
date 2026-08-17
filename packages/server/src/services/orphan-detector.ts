@@ -64,7 +64,14 @@ const ORPHAN_ERROR_TAIL_CHARS = 400;
 function orphanErrorMessage(neverStarted: boolean, logTail: string): string {
 	const verdict = neverStarted
 		? 'Never started: no host process was driving this run, so it was returned to the queue.'
-		: 'Orphaned: process no longer running';
+		: // Says what was observed rather than what was inferred. This pass performs
+			// no process check - it finds a `running` row that no live run in this
+			// process claims - and the old wording ("process no longer running")
+			// asserted one, which read as a fact while being a guess. It was also the
+			// text every setup failure ended up wearing, because those runs threw
+			// without recording anything and this was the only writer left.
+			'Orphaned: nothing was driving this run any more, so no result was ever recorded. ' +
+			'A restart, a crash or a wedged dispatch - not the agent failing.';
 	const excerpt = logTail.trim().slice(-ORPHAN_ERROR_TAIL_CHARS).trim();
 	return excerpt ? `${verdict}\n\nLast log output:\n${excerpt}` : verdict;
 }
@@ -155,8 +162,6 @@ export async function detectOrphans(
 		// here exactly like a healthy running one.
 		if (liveRunIds.has(run.id)) continue;
 
-		orphanCount++;
-
 		// The two arms are not the same event, and giving them one verdict was the
 		// bug. A `running` run had a process doing work that vanished mid-flight:
 		// output may be half-written, the container may hold a wedged tree, and the
@@ -174,7 +179,7 @@ export async function detectOrphans(
 		const tail = await readRunLogTail(db, run.id, ORPHAN_LOG_TAIL_CHARS);
 		const error = orphanErrorMessage(neverStarted, tail.text);
 
-		await db.query(
+		const reaped = await db.query<{ id: string }>(
 			`UPDATE heartbeat_runs
 			 SET status = $2::heartbeat_run_status,
 			     finished_at = now(),
@@ -182,14 +187,28 @@ export async function detectOrphans(
 			     -- Only a real process loss counts toward the escalation. A run that
 			     -- never started is being handed back, not retried after a failure.
 			     process_loss_retry_count = process_loss_retry_count + $4::int
-			 WHERE id = $1`,
+			 WHERE id = $1
+			   AND status IN ($5::heartbeat_run_status, $6::heartbeat_run_status)
+			 RETURNING id`,
 			[
 				run.id,
 				neverStarted ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
 				error,
 				neverStarted ? 0 : 1,
+				HeartbeatRunStatus.Queued,
+				HeartbeatRunStatus.Running,
 			],
 		);
+		// The row went terminal between the scan and this write - its own driver got
+		// there first, a container-death sweep claimed it, or an operator terminated
+		// it. That writer observed the run; this pass only ever observed its absence
+		// from an in-process registry, so their verdict stands and none of the repair
+		// below is this pass's to do. Unguarded, the race replaced a specific cause
+		// with the generic one and spent a strike on a run that had already reported
+		// itself.
+		if (reaped.rows.length === 0) continue;
+
+		orphanCount++;
 
 		// Task-less runs can't resolve a container here; the startup sweep is
 		// their backstop.
@@ -231,6 +250,7 @@ export async function detectOrphans(
 				runId: run.id,
 				memberId: run.member_id,
 				teamId: run.team_id,
+				taskId: run.task_id,
 				priorRetries: run.process_loss_retry_count,
 			},
 			tail.text,
@@ -258,7 +278,14 @@ export async function detectOrphans(
  */
 export async function retryOrEscalateLostRun(
 	db: Db,
-	run: { runId: string; memberId: string; teamId: string; priorRetries: number },
+	run: {
+		runId: string;
+		memberId: string;
+		teamId: string;
+		/** The task the lost run was working, so the retry returns to it. */
+		taskId?: string | null;
+		priorRetries: number;
+	},
 	/** Log excerpt the caller has already read, to save reading it twice. */
 	knownLogTail?: string,
 ): Promise<void> {
@@ -274,6 +301,14 @@ export async function retryOrEscalateLostRun(
 
 		await createWakeup(db, run.memberId, run.teamId, WakeupSource.Timer, {
 			reason: 'orphan_retry',
+			// Naming the task is what makes this a retry rather than a nudge. A
+			// task-less wakeup coalesces onto the agent's queued heartbeat and
+			// `activateAgent` then picks a task by its own ordering, so the retry
+			// could land on different work than was lost - and `retry_of_run_id`
+			// would record lineage across two unrelated tasks. It also brings the
+			// pre-dispatch busy and capacity guards into play, since every one of
+			// them is inside `if (wakeupTaskId)`.
+			...(run.taskId ? { task_id: run.taskId } : {}),
 			retry_count: run.priorRetries + 1,
 			max_retries: MAX_RETRIES,
 			previous_failure: {
@@ -283,15 +318,35 @@ export async function retryOrEscalateLostRun(
 			},
 		});
 	} else {
+		// One record per stuck agent, not one per ceiling. A partial unique index
+		// would be stronger, but this pass is serial in a single process and an
+		// index needs a migration for a guard that is not racing anything.
+		// The member id is bound twice on purpose: once as the uuid column and once
+		// as the text `payload->>` compares against. One parameter in both places
+		// leaves Postgres unable to deduce a single type for it.
 		await db.query(
-			`INSERT INTO approvals (team_id, type, payload)
-				 VALUES ($1, $2::approval_type, $3::jsonb)`,
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
+			 SELECT $1, $2::approval_type, $3::uuid, $5::jsonb
+			 WHERE NOT EXISTS (
+			   SELECT 1 FROM approvals
+			   WHERE team_id = $1 AND type = $2::approval_type AND status = 'pending'
+			     AND payload->>'type' = 'agent_error'
+			     AND payload->>'member_id' = $4::text
+			 )`,
 			[
 				run.teamId,
 				ApprovalType.Strategy,
+				run.memberId,
+				run.memberId,
 				JSON.stringify({
 					type: 'agent_error',
 					member_id: run.memberId,
+					// Named so the approval can be read back to the run that produced
+					// it; without these the record said an agent had failed and gave a
+					// human nowhere to look.
+					run_id: run.runId,
+					task_id: run.taskId ?? null,
+					last_error: knownLogTail?.trim().slice(-ORPHAN_LOG_TAIL_CHARS) || null,
 					message: `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
 				}),
 			],

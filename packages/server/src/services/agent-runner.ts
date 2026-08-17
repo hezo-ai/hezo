@@ -115,10 +115,10 @@ import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import {
+	buildMcpInjection,
 	HEZO_MCP_SERVER_NAME,
 	MCP_ADAPTERS,
 	type McpDescriptor,
-	validateInjection,
 } from './mcp-injectors';
 import { retryOrEscalateLostRun, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
@@ -127,6 +127,7 @@ import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
 import { CAPACITY_PARK_QUEUED_REASON, projectContainerMemoryGb } from './run-concurrency';
+import { classifyRunFailure, RunFailureClass } from './run-failure-classification';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
 	ensureRuntimeHomeDir,
@@ -141,8 +142,7 @@ import {
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { createBundleVault } from './sandbox/bundle-vault';
-import type { RunEndpoints } from './sandbox/endpoints';
-import { ExecStreamLostError } from './sandbox/errors';
+import { PREFLIGHT_TUNNEL_ENDPOINTS, type RunEndpoints } from './sandbox/endpoints';
 import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberDiskUsage, setPoolMemberUnpushedFlag } from './sandbox/pool-db';
@@ -735,7 +735,7 @@ export async function buildRuntimeInvocation(
 		.then((r) => r.rows.map((row) => row.slug))
 		.catch(() => [] as string[]);
 
-	const mcpInjection = adapter.build(mcpDescriptors, {
+	const mcpInjection = buildMcpInjection(runtimeType, mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
@@ -744,7 +744,6 @@ export async function buildRuntimeInvocation(
 		stopJudge,
 		systemPrompt,
 	});
-	validateInjection(adapter, mcpInjection);
 
 	// Through SandboxFiles, rooted at the subscription base: the container reads
 	// these, so on a backend whose container is not on this machine the write has
@@ -1097,14 +1096,29 @@ export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
  * task, post a comment, or record anything at all. The container is still alive,
  * so no `container_*` transition fires and nothing else would notice.
  */
-export type RunAbortReason = ContainerExitAbortReason | 'run_timeout' | 'tunnel_lost';
+export type RunAbortReason =
+	| ContainerExitAbortReason
+	| 'run_timeout'
+	| 'tunnel_lost'
+	| 'server_shutdown';
 
 const RUN_ABORT_REASONS: readonly string[] = [
 	'container_error',
 	'container_stopped',
 	'run_timeout',
 	'tunnel_lost',
+	'server_shutdown',
 ];
+
+/**
+ * What a run killed by a clean shutdown records.
+ *
+ * Deliberately distinguishable from `reconcileOnStartup`'s "Server restarted
+ * while run in flight": this one means the drain saw it coming, that one means
+ * it did not. Which of the two a run wears says whether the shutdown was orderly.
+ */
+export const RUN_LOST_TO_SHUTDOWN_ERROR =
+	'Server shut down while this run was in flight; it will be re-queued when Hezo comes back.';
 
 function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
 	const reason = signal?.reason as unknown;
@@ -1133,6 +1147,17 @@ function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
  * waited on (`retireSurplusIdleContainers`) runs on the job manager's clock.
  */
 const CAPACITY_PARK_POLL_MS = 5_000;
+
+/**
+ * The stand-in bearer the pre-claim dry run gives the `hezo` MCP descriptor.
+ *
+ * Shaped like the signed token the real run mints - three dot-separated
+ * segments of token characters - so an adapter that inlines it into a file is
+ * caught by the same check that would catch the real one. It is never written
+ * anywhere and never reaches a container: the dry run's output is discarded and
+ * `buildRuntimeInvocation` builds again with the real token.
+ */
+const PREFLIGHT_BEARER_TOKEN = 'preflight.dry.run';
 
 /**
  * How long a run waits for capacity before giving up and returning to the queue.
@@ -1173,6 +1198,7 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
 /** Error string stamped on an aborted run row — a friendly line for a timeout, else the raw reason. */
 function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	if (reason === 'run_timeout') return 'run reached its time limit';
+	if (reason === 'server_shutdown') return RUN_LOST_TO_SHUTDOWN_ERROR;
 	if (reason === 'tunnel_lost')
 		return (
 			'the run tunnel to the container closed mid-run, so the agent lost its Hezo tools, ' +
@@ -1180,6 +1206,42 @@ function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 			'with no way to record anything'
 		);
 	return reason ?? undefined;
+}
+
+/**
+ * Where each recovery records the run it is replacing, and whether that
+ * recovery draws on the lost-run retry budget.
+ *
+ * Three paths mint a replacement run and each names the prior run under its own
+ * key. One reader, so a fourth spelling is a row here rather than a branch at
+ * the call site.
+ */
+const RUN_LINEAGE_SOURCES: readonly {
+	read: (p: Record<string, unknown>) => unknown;
+	inheritsLossBudget: boolean;
+}[] = [
+	// The orphan pass's retry - the only one bounded by the lost-run ceiling.
+	{
+		read: (p) => (p.previous_failure as Record<string, unknown> | undefined)?.run_id,
+		inheritsLossBudget: true,
+	},
+	// A container coming back, and startup recovery. One-shot.
+	{ read: (p) => p.previous_run_id, inheritsLossBudget: false },
+	// A human pressing Retry. Somebody is asking for another attempt.
+	{ read: (p) => p.source_run_id, inheritsLossBudget: false },
+];
+
+export function extractReplacedRun(
+	payload: Record<string, unknown> | undefined,
+): ReplacedRun | null {
+	if (!payload) return null;
+	for (const source of RUN_LINEAGE_SOURCES) {
+		const id = source.read(payload);
+		if (typeof id === 'string') {
+			return { runId: id, inheritsLossBudget: source.inheritsLossBudget };
+		}
+	}
+	return null;
 }
 
 function extractTriggeredBy(payload: Record<string, unknown> | undefined): TriggeredBy | null {
@@ -1256,6 +1318,7 @@ export async function runAgent(
 		effectiveWakeupId,
 		extractTriggeredBy(wakeupPayload),
 		progressUpdate ? HeartbeatRunKind.ProgressUpdate : HeartbeatRunKind.Task,
+		extractReplacedRun(wakeupPayload),
 	);
 	const onContainerAcquired = onRunRegistered?.(heartbeatRunId);
 	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
@@ -1373,6 +1436,65 @@ export async function runAgent(
 		};
 	};
 
+	/**
+	 * The terminal verdict for a thrown run failure.
+	 *
+	 * The **signal** decides the status, not the shape of the thrown error. Only
+	 * Docker's exec reliably rejects with an `AbortError` when its attach is torn
+	 * down; a managed backend's exec may reject with anything or resolve outright,
+	 * and keying on the error name there recorded a timed-out run as `failed` while
+	 * still stamping it with the timeout's own message - measured against the live
+	 * Daytona API. An error with no abort reason behind it is a genuine failure; a
+	 * bare abort (user cancel, shutdown) is still `cancelled`.
+	 *
+	 * Shared with the setup window, which needs the same answer: a shutdown landing
+	 * inside `buildRunContext` is a cancellation, not a failure, and recording it as
+	 * one would put an unactionable row in the Errored view on every restart.
+	 */
+	const throwVerdict = (
+		error: unknown,
+	): { status: HeartbeatRunStatus; message: string; timedOut: boolean } => {
+		const isAbort = error instanceof Error && error.name === 'AbortError';
+		const reason = runAbortReason(runAbort.signal);
+		return {
+			status: reason
+				? abortedRunStatus(reason)
+				: isAbort
+					? HeartbeatRunStatus.Cancelled
+					: HeartbeatRunStatus.Failed,
+			message:
+				abortErrorMessage(reason) ?? (error instanceof Error ? error.message : String(error)),
+			timedOut: reason === 'run_timeout',
+		};
+	};
+
+	/**
+	 * Spend one strike of the lost-run budget, then retry or escalate.
+	 *
+	 * Counted the way the orphan detector counts it, so a transport loss, a failed
+	 * tunnel start and a vanished driver converge on one ceiling rather than each
+	 * retrying forever. Best-effort: failing to queue the retry must never replace
+	 * the real error already on the row.
+	 */
+	const spendLostRunStrike = async (): Promise<void> => {
+		try {
+			const bumped = await deps.db.query<{ process_loss_retry_count: number }>(
+				`UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1
+				 WHERE id = $1 RETURNING process_loss_retry_count`,
+				[heartbeatRunId],
+			);
+			await retryOrEscalateLostRun(deps.db, {
+				runId: heartbeatRunId,
+				memberId: agent.id,
+				teamId: runTeamId,
+				taskId: task?.id ?? null,
+				priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
+			});
+		} catch (e) {
+			log.error(`Run ${heartbeatRunId}: could not queue a transport retry:`, e);
+		}
+	};
+
 	let provider: AiProvider;
 	let runtimeType: AgentRuntime;
 	// Null on the agent-override path: the override names only a provider, and
@@ -1422,6 +1544,68 @@ export async function runAgent(
 	const modelOverride = agent.model_override_model ?? credential.defaultModel ?? null;
 
 	if (signal?.aborted) return finalizeAbort();
+
+	// Prove the host-side half of the run before the pool is touched.
+	//
+	// Same reasoning as the credential resolution above: a misconfigured instance
+	// is an ordinary state, not an exceptional one, and it must not cost a
+	// container. `validateInjection` is a hard failure that ends the run, and it
+	// used to fire ~4s *after* a sandbox had been provisioned - which on a full
+	// budget means after another project's container was retired to make room. One
+	// bad connector header therefore cost two cold provisions per lap, forever.
+	//
+	// The dry run is the real descriptor list, the real adapter and the real home
+	// paths; only the tunnel's loopback port is stand-in, because it is chosen by
+	// an in-container probe and cannot exist yet. Nothing in an adapter or in
+	// `validateInjection` reads a port, which a drift test pins across every
+	// runtime rather than a comment asserting it here.
+	//
+	// The descriptors are loaded once and threaded into the run, so this costs no
+	// extra query.
+	let connectorDescriptors: McpDescriptor[];
+	try {
+		connectorDescriptors = await loadConnectorDescriptors(deps.db, project.id);
+		const homePaths = MCP_ADAPTERS[runtimeType].capabilities.requiresHomeDir
+			? {
+					hostHomeDir: getHostSubscriptionRootImpl(
+						provider,
+						runtimeType,
+						deps.dataDir,
+						runTeamId,
+						project.id,
+						heartbeatRunId,
+					),
+					containerHomeDir: getContainerSubscriptionRootImpl(provider, runtimeType, heartbeatRunId),
+				}
+			: { hostHomeDir: null, containerHomeDir: null };
+		buildMcpInjection(
+			runtimeType,
+			[
+				{
+					kind: 'http',
+					name: HEZO_MCP_SERVER_NAME,
+					url: `${PREFLIGHT_TUNNEL_ENDPOINTS.hezoBaseUrl}/mcp`,
+					// Shaped like the real signed token so the inlined-bearer check has
+					// something to catch. The real one is minted later, with the run.
+					bearerToken: PREFLIGHT_BEARER_TOKEN,
+				},
+				...connectorDescriptors,
+			],
+			{
+				hostHomeDir: homePaths.hostHomeDir,
+				containerHomeDir: homePaths.containerHomeDir,
+				provider,
+				runModel: modelOverride,
+				projectDocSlugs: [],
+				stopJudge: true,
+				systemPrompt: null,
+			},
+		);
+	} catch (e) {
+		return finalizeFailure(
+			`This run cannot be prepared: ${(e as Error).message} No container was started.`,
+		);
+	}
 
 	/**
 	 * Record that this run is parked waiting for container capacity.
@@ -1688,14 +1872,13 @@ export async function runAgent(
 			};
 		}
 
-		// Loaded before the tunnel because its split-routing policy needs the
-		// connector hosts: the per-connector method allowlist is enforced *at the
-		// proxy*, so a connector routed direct would skip its policy check even when
-		// no secret is involved. They resolve from the db and the project alone -
-		// only the `hezo` descriptor needs the tunnel's endpoints, and that one is
-		// container loopback and never proxied - so nothing here waits on the
-		// tunnel. Threaded into `buildRunContext` after, so a run resolves them once.
-		const connectorDescriptors = await loadConnectorDescriptors(deps.db, project.id);
+		// The descriptors were loaded by the preflight above, before the container
+		// was claimed - they resolve from the db and the project alone, and only the
+		// `hezo` descriptor needs the tunnel's endpoints. They are needed here
+		// because the tunnel's split-routing policy is built from the connector
+		// hosts: the per-connector method allowlist is enforced *at the proxy*, so a
+		// connector routed direct would skip its policy check even when no secret is
+		// involved.
 
 		// The tunnel is how a container reaches Hezo - the only how, on every
 		// backend. Started here because it needs both allocations above: there is
@@ -2483,20 +2666,9 @@ export async function runAgent(
 			const durationMs = Date.now() - startTime;
 			const isAbort = (error as Error).name === 'AbortError';
 			const reason = runAbortReason(runAbort.signal);
-			const errorMessage = abortErrorMessage(reason) ?? (error as Error).message;
-			// The **signal** decides the status, not the shape of the thrown error.
-			// Only Docker's exec reliably rejects with an `AbortError` when its
-			// attach is torn down; a managed backend's exec may reject with
-			// anything or resolve outright, and keying on the error name there
-			// recorded a timed-out run as `failed` while still stamping it with the
-			// timeout's own message - measured against the live Daytona API. An
-			// error with no abort reason behind it is a genuine failure; a bare
-			// abort (user cancel, shutdown) is still `cancelled`.
-			const status = reason
-				? abortedRunStatus(reason)
-				: isAbort
-					? HeartbeatRunStatus.Cancelled
-					: HeartbeatRunStatus.Failed;
+			// Same verdict the setup window records, from one implementation - see
+			// `throwVerdict`, which carries the reasoning.
+			const { status, message: errorMessage } = throwVerdict(error);
 
 			// Aborting the exec only tears down its attach stream — Docker leaves the
 			// agent CLI running in the container, so a user-terminated or timed-out run
@@ -2540,28 +2712,12 @@ export async function runAgent(
 			// has a bounded retry that carries the previous attempt's log tail
 			// forward and escalates to an approval once it stops being worth
 			// retrying - so it takes that path instead of burning the agent's turn on
-			// a transport fault. Best-effort: a failure to queue the retry must not
-			// replace the real error.
-			if (error instanceof ExecStreamLostError) {
-				await (async () => {
-					// Counted the same way the orphan detector counts it, so repeated
-					// transport losses on one agent converge on the same ceiling rather
-					// than retrying forever.
-					const bumped = await deps.db.query<{ process_loss_retry_count: number }>(
-						`UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1
-						 WHERE id = $1 RETURNING process_loss_retry_count`,
-						[heartbeatRunId],
-					);
-					await retryOrEscalateLostRun(deps.db, {
-						runId: heartbeatRunId,
-						memberId: agent.id,
-						teamId: runTeamId,
-						priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
-					});
-				})().catch((e) =>
-					log.error(`Run ${heartbeatRunId}: could not queue a transport retry:`, e),
-				);
-			}
+			// a transport fault.
+			//
+			// Read from the shared classifier rather than a local `instanceof`, so the
+			// exec path and the setup window agree on what a retry is for and widening
+			// the set is one row rather than a second condition here.
+			if (classifyRunFailure(error) === RunFailureClass.Transient) await spendLostRunStrike();
 
 			await cleanupRunArtifacts();
 			return {
@@ -2573,6 +2729,63 @@ export async function runAgent(
 				timedOut: reason === 'run_timeout',
 			};
 		}
+	} catch (error) {
+		// Every throw between the container claim and the exec lands here: the
+		// credential lock, `markHeartbeatRunRunning`, the run-user probe, the ssh and
+		// egress allocations, the connector load, the tunnel, `buildRunContext`.
+		//
+		// Before this the only handler was the `finally` below. It released the run's
+		// resources and let the error leave `runAgent`, so the row stayed `running`
+		// with no error on it - and nothing downstream could then tell the truth.
+		// `postFailurePing` reads the row and returns early on a non-terminal status,
+		// so the task thread said nothing at all, and 30s later the orphan pass
+		// recorded that the process was no longer running when the process was alive
+		// and had thrown. The row is the record of what happened, so it is written
+		// here, by the code that holds the actual error.
+		//
+		// Returning rather than rethrowing is load-bearing: it routes into the
+		// job manager's normal completion path, so the wakeup settles, the failure
+		// ping fires and the next task is chained - all against a terminal row.
+		//
+		// `cleanupRunArtifacts` is deliberately not called: it is declared inside the
+		// exec block and is not in scope. The `finally` below is what releases the
+		// tunnel, both host ports and the container claim on this path, which is the
+		// job it was written for.
+		const verdict = throwVerdict(error);
+		const durationMs = Date.now() - startTime;
+		log.error(`Run ${heartbeatRunId} failed before the agent could start:`, error);
+		emit('stderr', `\n[runner] ${verdict.message}\n`);
+		await deps.logs.end(streamId);
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: verdict.status,
+				exitCode: -1,
+				durationMs,
+				error: verdict.message,
+			},
+			runBroadcast,
+		);
+		// Only a failure the infrastructure caused earns a recovery retry. A
+		// configuration error reproduces identically on every attempt, and the retry
+		// that used to be minted for one - by the orphan pass, on a row this path had
+		// abandoned - turned a single bad MCP injection into hundreds of failed runs
+		// on one task, each having claimed a container first.
+		if (
+			verdict.status === HeartbeatRunStatus.Failed &&
+			classifyRunFailure(error) === RunFailureClass.Transient
+		) {
+			await spendLostRunStrike();
+		}
+		return {
+			success: false,
+			exitCode: -1,
+			stderr: verdict.message,
+			durationMs,
+			heartbeatRunId,
+			timedOut: verdict.timedOut,
+		};
 	} finally {
 		releaseCredentialLock?.();
 		// These outlive every explicit cleanup path above, so this is the only
@@ -2590,6 +2803,23 @@ export async function runAgent(
 			[
 				'egress-proxy',
 				() => (egressProxyAllocated ? deps.egressProxy?.releaseRunProxy(heartbeatRunId) : null),
+			],
+			[
+				// A scrub, not tidiness: the per-run home carries the run CLI's own
+				// model-provider credential in plaintext, the one exception to the rule
+				// that no confidential value enters a run. `cleanupRunArtifacts` removes
+				// it on every path that reaches it, but it is declared inside the exec
+				// block and reads `context` - so a throw in setup, where the files are
+				// already written, left the credential on a container the pool hands to
+				// the next run. Derived rather than read off `context` for that reason;
+				// both home builders produce this same directory.
+				'per-run-home',
+				async () => {
+					if (!containerId) return;
+					const dir = getContainerSubscriptionRootImpl(provider, runtimeType, heartbeatRunId);
+					if (!dir) return;
+					await deps.docker.files(containerId, dir).removeDir('.');
+				},
 			],
 			['pool-container', () => releaseContainer()],
 		] as const) {
@@ -4045,6 +4275,19 @@ export interface TriggeredBy {
 	name: string;
 }
 
+/**
+ * The run this one replaces, and whether it inherits that run's retry budget.
+ *
+ * Only the lost-run chain spends the budget. A container coming back, a server
+ * restart and a human pressing Retry are one-shot recoveries already bounded by
+ * their own guards - none can feed itself, so none may be throttled by a ceiling
+ * the lost-run chain filled.
+ */
+export interface ReplacedRun {
+	runId: string;
+	inheritsLossBudget: boolean;
+}
+
 export async function createHeartbeatRun(
 	db: Db,
 	agent: AgentInfo,
@@ -4054,13 +4297,38 @@ export async function createHeartbeatRun(
 	wakeupId: string,
 	triggeredBy: TriggeredBy | null = null,
 	kind: HeartbeatRunKind = HeartbeatRunKind.Task,
+	replaces: ReplacedRun | null = null,
 ): Promise<string> {
 	const { runId, statusFlippedToInProgress } = await withTransaction(db, async () => {
+		// The retry budget is read from the replaced **row**, not from the wakeup
+		// payload that named it. Both columns existed and neither was ever written:
+		// `retry_of_run_id` had no writer at all, and a retried run took the schema
+		// default of 0 for `process_loss_retry_count` - so `priorRetries` was always
+		// 0, `0 + 1 < MAX_RETRIES` was always true, and the escalation branch in
+		// `retryOrEscalateLostRun` could not be reached. The chain had no end.
+		//
+		// Reading the row rather than the payload is what makes the ceiling
+		// unforgeable: a coalesced or hand-edited `retry_count` cannot reset it, and
+		// the worst a wrong `run_id` can do is name a real run and inherit its count.
 		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status, kind)
-			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status, $6::heartbeat_run_kind)
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status, kind,
+			                             retry_of_run_id, process_loss_retry_count)
+			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status, $6::heartbeat_run_kind, $7,
+			         CASE WHEN $8::boolean
+			              THEN COALESCE((SELECT prior.process_loss_retry_count
+			                               FROM heartbeat_runs prior WHERE prior.id = $7), 0)
+			              ELSE 0 END)
 			 RETURNING id`,
-			[agent.id, runTeamId, task?.id ?? null, wakeupId, HeartbeatRunStatus.Queued, kind],
+			[
+				agent.id,
+				runTeamId,
+				task?.id ?? null,
+				wakeupId,
+				HeartbeatRunStatus.Queued,
+				kind,
+				replaces?.runId ?? null,
+				replaces?.inheritsLossBudget ?? false,
+			],
 		);
 		const runId = runResult.rows[0].id;
 
@@ -4186,7 +4454,14 @@ async function updateHeartbeatRun(
 	},
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
-	await db.query(
+	// Guarded on a non-terminal status, so whoever declared the outcome first owns
+	// it. Several writers can reach one run - the runner's own catches, the
+	// container-death sweep, an operator terminate, the orphan pass - and the first
+	// to land is the one that actually observed the run; a later write would
+	// replace a specific cause with a vaguer one, and under MVCC an unconditional
+	// re-stamp also leaves a dead tuple behind. Same shape as
+	// `markHeartbeatRunRunning` and `failProjectRuns`.
+	const applied = await db.query<{ id: string }>(
 		`UPDATE heartbeat_runs
 		 SET status = $1::heartbeat_run_status,
 		     started_at = COALESCE(started_at, now()),
@@ -4197,7 +4472,9 @@ async function updateHeartbeatRun(
 		     output_tokens = COALESCE($5, output_tokens),
 		     cost_cents = COALESCE($6, cost_cents),
 		     usage_partial = COALESCE($7, usage_partial)
-		 WHERE id = $8`,
+		 WHERE id = $8
+		   AND status IN ($9::heartbeat_run_status, $10::heartbeat_run_status)
+		 RETURNING id`,
 		[
 			update.status,
 			update.exitCode,
@@ -4207,21 +4484,39 @@ async function updateHeartbeatRun(
 			update.usage?.costCents ?? null,
 			update.usagePartial ?? null,
 			runId,
+			HeartbeatRunStatus.Queued,
+			HeartbeatRunStatus.Running,
 		],
 	);
-	broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
-	broadcast.events?.emit({
-		type: 'agent_run.completed',
-		teamId: broadcast.teamId,
-		projectId: broadcast.projectId ?? null,
-		runId,
-		taskId: broadcast.taskId,
-		agentMemberId: broadcast.memberId,
-		status: update.status as HeartbeatRunStatus,
-		exitCode: update.exitCode,
-		error: update.error ?? null,
-	});
+	if (applied.rows.length > 0) {
+		broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
+		broadcast.events?.emit({
+			type: 'agent_run.completed',
+			teamId: broadcast.teamId,
+			projectId: broadcast.projectId ?? null,
+			runId,
+			taskId: broadcast.taskId,
+			agentMemberId: broadcast.memberId,
+			status: update.status as HeartbeatRunStatus,
+			exitCode: update.exitCode,
+			error: update.error ?? null,
+		});
+	} else {
+		// Logged only when the two verdicts disagree, so the ordinary idempotent
+		// case - the same path finalizing twice - stays quiet.
+		const current = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		const settled = current.rows[0]?.status;
+		if (settled && settled !== update.status) {
+			log.warn(
+				`Run ${runId}: kept terminal status '${settled}'; dropped a later '${update.status}'`,
+			);
+		}
+	}
 
+	// Outside the guard: tokens burned are burned whoever declared the outcome.
 	// Run completion is the canonical cost event: record the run's total spend as a
 	// single cost_entries row (guarded on positive usage so failure/abort paths and
 	// retries — which carry no usage — never double-insert), then reactively pause

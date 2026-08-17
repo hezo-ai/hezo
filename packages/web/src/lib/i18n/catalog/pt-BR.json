@@ -437,5 +437,17 @@
 	"toast.dismiss": "Dispensar",
 	"toast.error": "Algo deu errado",
 	"toast.info": "Atenção",
-	"toast.success": "Pronto"
+	"toast.success": "Pronto",
+	"comment.runError": "Erro",
+	"comment.runErrorExpand": "Ver o erro completo",
+	"tasks.lastRun.failed": "A última execução falhou",
+	"tasks.lastRun.timedOut": "A última execução expirou",
+	"tasks.lastRun.failedReason": "A última execução falhou: {reason}",
+	"tasks.lastRun.timedOutReason": "A última execução expirou: {reason}",
+	"tasks.lastRun.jump": "Ir para a execução",
+	"updates.confirm.restart": "O Hezo vai desligar e reiniciar na {version}.",
+	"updates.confirm.drain": "O Hezo espera alguns segundos para que as execuções de agente em andamento terminem e então para. O que ainda estiver rodando volta para a fila e começa de novo.",
+	"updates.confirm.runsInFlight.one": "{count} execução de agente está em andamento agora.",
+	"updates.confirm.runsInFlight.other": "{count} execuções de agente estão em andamento agora.",
+	"updates.confirm.reunlock": "Você vai precisar da sua chave mestra de 12 palavras para desbloquear o Hezo depois que ele reiniciar."
 }

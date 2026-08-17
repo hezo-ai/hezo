@@ -25,9 +25,35 @@ const REFRESH_BACKOFF_MAX_MS = 15 * 60_000;
 interface RefreshFailure {
 	attempts: number;
 	nextAttemptAt: number;
+	/**
+	 * Set when the failure cannot be retried out of. Carries the connection's
+	 * `updatedAt` at the time it was parked, so reconnecting - which moves that
+	 * timestamp - un-parks it without needing an explicit hook.
+	 */
+	parkedAtRowVersion?: number;
 }
 
 const failures = new Map<string, RefreshFailure>();
+
+/**
+ * Whether a refresh failure can ever succeed on a retry.
+ *
+ * Two shapes reach this, and neither improves with time: the grant is gone, so
+ * only a human reconnecting restores it; or the connection record is missing the
+ * fields a refresh needs, so it was never able to refresh at all. Retrying
+ * either is what produced connections sitting at 51 attempts and climbing, four
+ * times an hour, forever - a fixed cost with no path to success and nothing said
+ * to the operator beyond a log line.
+ *
+ * Matched on the message because that is what both the provider's token endpoint
+ * and the generic refresh give us; `invalid_grant` is the OAuth 2.0 error code
+ * for exactly this, so it is a contract rather than a phrase we invented.
+ */
+export function isPermanentRefreshFailure(message: string): boolean {
+	return /invalid_grant|invalid_client|unauthorized_client|needs token_url \+ client_id/i.test(
+		message,
+	);
+}
 
 function backoffDelay(attempts: number): number {
 	return Math.min(REFRESH_BACKOFF_BASE_MS * 2 ** (attempts - 1), REFRESH_BACKOFF_MAX_MS);
@@ -133,8 +159,10 @@ export async function refreshExpiringTokens(
 		provider: string;
 		expires_at: Date | null;
 		has_refresh: boolean;
+		updated_at: Date;
 	}>(
-		`SELECT id, provider, expires_at, refresh_token_secret_id IS NOT NULL AS has_refresh
+		`SELECT id, provider, expires_at, updated_at,
+		        refresh_token_secret_id IS NOT NULL AS has_refresh
 		 FROM oauth_connections
 		 WHERE expires_at IS NOT NULL
 		   AND expires_at <= $1
@@ -154,7 +182,23 @@ export async function refreshExpiringTokens(
 		// A connection whose last refresh failed stays out of the sweep until its
 		// backoff elapses — silently, since logging every suppressed retry would
 		// reproduce the flood this exists to stop.
-		.filter((r) => (failures.get(r.id)?.nextAttemptAt ?? 0) <= now);
+		//
+		// A parked one has an infinite backoff and only ever comes back by being
+		// reconnected, which moves `updated_at`. Comparing that here is what makes
+		// the park self-clearing: no hook to remember on the reconnect path, and
+		// nothing to go stale if a new way to reconnect is added later.
+		.filter((r) => {
+			const failure = failures.get(r.id);
+			if (!failure) return true;
+			if (
+				failure.parkedAtRowVersion !== undefined &&
+				r.updated_at.getTime() !== failure.parkedAtRowVersion
+			) {
+				failures.delete(r.id);
+				return true;
+			}
+			return failure.nextAttemptAt <= now;
+		});
 
 	// Chunked rather than one unbounded Promise.all: each refresh is a provider
 	// round-trip plus a secret read and decrypt, and those decrypts queue behind
@@ -225,14 +269,28 @@ async function doRefresh(deps: ConnectionStoreDeps, connectionId: string): Promi
 		log.info('oauth token refreshed', { id: conn.id, provider: conn.provider });
 	} catch (e) {
 		const message = (e as Error).message;
+		const permanent = isPermanentRefreshFailure(message);
 		const state = recordFailure(conn.id, Date.now());
-		log.warn('oauth token refresh failed', {
-			id: conn.id,
-			provider: conn.provider,
-			error: message,
-			attempts: state.attempts,
-			retry_in_s: Math.round((state.nextAttemptAt - Date.now()) / 1000),
-		});
+		if (permanent) {
+			// Park it rather than backing off: no number of attempts turns a revoked
+			// grant or a connection missing its token endpoint into a working one.
+			// Stamped with the row version so reconnecting clears this on its own.
+			state.nextAttemptAt = Number.POSITIVE_INFINITY;
+			state.parkedAtRowVersion = conn.updatedAt.getTime();
+			log.warn('oauth token refresh cannot succeed; reconnect required', {
+				id: conn.id,
+				provider: conn.provider,
+				error: message,
+			});
+		} else {
+			log.warn('oauth token refresh failed', {
+				id: conn.id,
+				provider: conn.provider,
+				error: message,
+				attempts: state.attempts,
+				retry_in_s: Math.round((state.nextAttemptAt - Date.now()) / 1000),
+			});
+		}
 		// Record it on the connector too, so a stale token is visible on the
 		// Connectors page instead of only in the log. Best-effort: a failure here
 		// must not mask the refresh failure we are already reporting.

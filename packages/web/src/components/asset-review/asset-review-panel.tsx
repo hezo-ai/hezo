@@ -119,7 +119,7 @@ export function AssetReviewPanel({
 					)}
 				</h2>
 				<div className="flex items-center gap-0.5">
-					<Tooltip content="Action this review — copy a handoff for an agent">
+					<Tooltip content="Action this review - copy a handoff for an agent">
 						<button
 							type="button"
 							aria-label="Action this review"

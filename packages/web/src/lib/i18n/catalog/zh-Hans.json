@@ -437,5 +437,17 @@
 	"toast.dismiss": "忽略",
 	"toast.error": "出错了",
 	"toast.info": "提示",
-	"toast.success": "完成"
+	"toast.success": "完成",
+	"comment.runError": "错误",
+	"comment.runErrorExpand": "查看完整错误",
+	"tasks.lastRun.failed": "上次运行失败",
+	"tasks.lastRun.timedOut": "上次运行超时",
+	"tasks.lastRun.failedReason": "上次运行失败：{reason}",
+	"tasks.lastRun.timedOutReason": "上次运行超时：{reason}",
+	"tasks.lastRun.jump": "跳转到运行",
+	"updates.confirm.restart": "Hezo 将关闭并以 {version} 重新启动。",
+	"updates.confirm.drain": "Hezo 会等待几秒钟，让进行中的代理运行完成，然后停止。仍在运行的会重新排队并从头开始。",
+	"updates.confirm.runsInFlight.one": "当前有 {count} 个代理运行正在进行。",
+	"updates.confirm.runsInFlight.other": "当前有 {count} 个代理运行正在进行。",
+	"updates.confirm.reunlock": "重启后需要用你的 12 个单词主密钥再次解锁 Hezo。"
 }

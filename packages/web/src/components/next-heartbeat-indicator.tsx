@@ -27,7 +27,7 @@ export function NextHeartbeatIndicator({
 	if (!nextHeartbeatAt) return null;
 	if (hasActionableWork && !countdown) return null;
 
-	const label = hasActionableWork ? countdown!.label : '—';
+	const label = hasActionableWork ? countdown!.label : '-';
 	const isDue = hasActionableWork && countdown!.isDue;
 
 	return (

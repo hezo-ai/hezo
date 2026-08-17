@@ -13,6 +13,16 @@ const log = logger.child('runtime');
 let active: StartupResult | null = null;
 let shuttingDown = false;
 
+/**
+ * How long shutdown waits for in-flight runs to write a terminal row.
+ *
+ * Sized against the documented systemd `TimeoutStopSec=30`: the in-container
+ * reap above it is bounded at 8s, and the closes below it need room too, so this
+ * plus both must fit inside that budget or the supervisor SIGKILLs mid-write.
+ * Lowering one without the other is what breaks it.
+ */
+const RUN_DRAIN_DEADLINE_MS = 10_000;
+
 export function setActiveRuntime(result: StartupResult): void {
 	active = result;
 }
@@ -33,9 +43,27 @@ export async function shutdownRuntime(result: StartupResult): Promise<void> {
 	// path's own kill is fire-and-forget and would race process.exit, stranding
 	// the agent CLIs in the warm containers until the next boot sweep. Bounded
 	// internally so a dead Docker socket can't wedge shutdown.
+	// Stop scheduling first, or the 5s wakeup cron keeps handing fresh runs to a
+	// process on its way out and the drain below never converges.
+	result.jobManager.stopAcceptingWork();
 	await result.jobManager
 		.killLiveRunProcesses()
 		.catch((err) => log.warn('live-run process reap during shutdown failed', err));
+	// Then give the aborts somewhere to land. Without this the registries were
+	// cleared synchronously and the DB closed while the runs just cancelled were
+	// still writing their terminal rows, so a clean restart looked to the next
+	// boot exactly like a crash.
+	const stranded = await result.jobManager.drainRunningRuns(RUN_DRAIN_DEADLINE_MS).catch((err) => {
+		log.warn('run drain during shutdown failed', err);
+		return [];
+	});
+	if (stranded.length > 0) {
+		log.warn(
+			`Shutdown: ${stranded.length} run(s) still in flight after ${RUN_DRAIN_DEADLINE_MS}ms; ` +
+				`startup reconciliation will fail and re-queue them: ` +
+				stranded.map((r) => `${r.runId}${r.taskId ? ` (task ${r.taskId})` : ''}`).join(', '),
+		);
+	}
 	result.jobManager.shutdown();
 	await result.chatSessionManager.stop();
 	await result.egressProxy.releaseAll();

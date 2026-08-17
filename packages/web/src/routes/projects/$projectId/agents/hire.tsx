@@ -349,7 +349,7 @@ function HireAgentPage() {
 	if (!approval) {
 		return (
 			<p className="text-sm text-text-2">
-				This hire proposal is no longer pending — it may have already been resolved.
+				This hire proposal is no longer pending - it may have already been resolved.
 			</p>
 		);
 	}

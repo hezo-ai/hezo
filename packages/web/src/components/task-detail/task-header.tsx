@@ -88,7 +88,7 @@ export function TaskHeader({
 			</nav>
 			<TaskTitle task={task} updateTask={updateTask} />
 
-			{/* Wire spec — status / priority / assignee render as quiet-tint badges
+			{/* Wire spec - status / priority / assignee render as quiet-tint badges
 			    (treatment A, the default), color-coding state at a glance the same way
 			    the task list does, with a mono runs / duration / cost summary pushed
 			    right. Assignee carries no semantic state, so it stays neutral. */}
@@ -109,7 +109,7 @@ export function TaskHeader({
 						<span className="inline-block w-1.5 h-1.5 rounded-full bg-info-soft-fg" />
 						{task.queued_wakeup.reason === 'instance_at_capacity' ||
 						task.queued_wakeup.reason === 'project_at_capacity'
-							? 'Queued — at the container limit'
+							? 'Queued - at the container limit'
 							: 'Run queued'}
 					</Badge>
 				)}
@@ -125,7 +125,7 @@ export function TaskHeader({
 				)}
 			</div>
 
-			{/* Always rendered, even with no description — the empty card is the only
+			{/* Always rendered, even with no description - the empty card is the only
 			    affordance for adding one. */}
 			<div
 				className="mb-5 rounded-md border border-border bg-surface overflow-hidden"

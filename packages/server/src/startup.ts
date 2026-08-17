@@ -457,10 +457,28 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		log.error('Failed to seed default team:', err);
 	}
 
+	// Before the app serves a request, and regardless of lock state: the API must
+	// never show a run as `running` when the process driving it is gone. Both
+	// halves below are raw SQL - the container-backend passes stay behind the
+	// unlock hook, where a connected engine exists.
+	setStartupPhase('workspace', 'Recovering runs interrupted by the last shutdown');
+	try {
+		await jobManager.reconcileDatabaseOnStartup();
+		await chatSessionManager.reconcileDatabaseOnStartup();
+	} catch (err) {
+		log.error('Startup database reconciliation failed:', err);
+	}
+
 	function startUnlockedServices(): void {
+		// The crons deliberately stay here rather than joining the repair above. A
+		// locked instance dispatches nothing - dispatch needs the backend and the
+		// provider credentials - and `MasterKeyManager` has no re-lock path, so no
+		// run can go stale while locked. The boot repair closes the only gap;
+		// starting the wakeup dispatcher against a pending engine would open a new
+		// one.
 		jobManager
-			.reconcileOnStartup()
-			.catch((err) => log.error('Startup reconciliation failed:', err))
+			.reconcileContainersOnStartup()
+			.catch((err) => log.error('Startup container reconciliation failed:', err))
 			.finally(() => {
 				jobManager.start();
 				// Warm the HQ container as soon as the instance is unlocked so the CEO
@@ -473,10 +491,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 						.catch((err) => log.error('Failed to warm HQ container on startup:', err)),
 				);
 			});
-		chatSessionManager
-			.reconcileOnStartup()
-			.catch((err) => log.error('CEO session reconciliation failed:', err))
-			.finally(() => chatSessionManager.start());
+		chatSessionManager.start();
 		// Re-encode any legacy plaintext webhook secret (migration 050) before the
 		// adapters come up. Needs the master key, which migrations at boot do not
 		// have — this is the first moment it exists. Idempotent: a no-op once every

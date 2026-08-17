@@ -305,7 +305,7 @@ export function ReviewSurface({
 			)}
 
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: mouseover raises the pointer-only hover-a-line ghost; keyboard users comment via selection or the focusable highlights */}
-			{/* biome-ignore lint/a11y/useKeyWithMouseEvents: same — the hover affordance has no keyboard analogue by design */}
+			{/* biome-ignore lint/a11y/useKeyWithMouseEvents: same - the hover affordance has no keyboard analogue by design */}
 			<div ref={contentRef} className="relative" onMouseOver={handleContentMouseOver}>
 				{prose}
 			</div>

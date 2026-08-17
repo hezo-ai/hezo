@@ -308,7 +308,7 @@ function ProjectAssetsPage() {
 				// A directory dragged from the OS arrives as an extensionless "file";
 				// folders can't be uploaded — files land in the folder that's open.
 				if (!file.type && !file.name.includes('.')) {
-					pushError(file.name, 'Folders can’t be uploaded — upload files individually');
+					pushError(file.name, 'Folders can’t be uploaded - upload files individually');
 					continue;
 				}
 				try {
@@ -510,14 +510,14 @@ function ProjectAssetsPage() {
 						description={
 							filter === ArchiveFilter.Archived
 								? 'Assets that you or agents archive appear here.'
-								: 'Everything is archived — switch the filter to Archived to browse or restore items.'
+								: 'Everything is archived - switch the filter to Archived to browse or restore items.'
 						}
 					/>
 				) : folderIsEmpty ? (
 					<EmptyState
 						icon={<Folder className="w-10 h-10" />}
 						title="This folder is empty"
-						description="Drop files here or use Upload — the folder persists once a file lands in it."
+						description="Drop files here or use Upload - the folder persists once a file lands in it."
 					/>
 				) : (
 					<ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -1131,7 +1131,7 @@ function AssetCard({
 					</Tooltip>
 					{isArchived ? (
 						<>
-							{/* Restore first; the hard delete only lives on archived cards —
+							{/* Restore first; the hard delete only lives on archived cards -
 							    active cards offer the reversible Archive instead. */}
 							<Tooltip content="Restore asset">
 								<button

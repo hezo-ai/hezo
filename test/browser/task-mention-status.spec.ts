@@ -48,11 +48,28 @@ test.describe('Task mention — status pill tooltip & terminal strikethrough', (
 			title: 'Cancelled target task',
 		});
 		const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-		const patchRes = await page.request.patch(
-			`/api/projects/${proj.slug}/tasks/${target.identifier.toLowerCase()}`,
-			{ headers, data: { status: 'cancelled' } },
-		);
-		expect(patchRes.ok()).toBeTruthy();
+		// Cancelling is unguarded, but it is not the last word: creating a task with
+		// an assignee fires a wakeup, and `createHeartbeatRun` flips the task to
+		// `in_progress` when the run row lands. Under load that flip arrives *after*
+		// this PATCH and quietly undoes it - the mention then resolves as
+		// non-terminal, so the link loses its strikethrough and the tooltip renders
+		// with no status pill. Re-assert until the cancel is the state that stuck.
+		const targetPath = `/api/projects/${proj.slug}/tasks/${target.identifier.toLowerCase()}`;
+		await expect(async () => {
+			const patchRes = await page.request.patch(targetPath, {
+				headers,
+				data: { status: 'cancelled' },
+			});
+			expect(patchRes.ok()).toBeTruthy();
+			const read = await page.request.get(targetPath, { headers });
+			const task = ((await read.json()) as { data: { status: string; has_active_run: boolean } })
+				.data;
+			// Both, and the second is the one that makes it stick: a run still in
+			// flight flips the status again the moment its row lands, so a cancel
+			// that has merely been *written* is not yet the state the page will see.
+			expect(task.has_active_run).toBe(false);
+			expect(task.status).toBe('cancelled');
+		}).toPass({ timeout: 30_000 });
 
 		const source = await createTaskViaApi(page, proj.slug, token, {
 			project_id: proj.id,

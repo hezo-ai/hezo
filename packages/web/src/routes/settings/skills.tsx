@@ -180,7 +180,7 @@ function InstanceSkillsPage() {
 						</div>
 						<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 							Every skill across every project. Each project's runs see its own skills plus any
-							scoped to "All projects" — author them here, search skills.sh, or let an agent create
+							scoped to "All projects" - author them here, search skills.sh, or let an agent create
 							one while it works.
 						</p>
 					</div>
@@ -221,7 +221,7 @@ function InstanceSkillsPage() {
 								? 'Edit skill'
 								: createScope === ALL_PROJECTS
 									? 'Add skill (All projects)'
-									: `Add skill — ${createScopeName}`
+									: `Add skill - ${createScopeName}`
 						}
 						onClose={resetForm}
 						onSubmit={handleSubmit}
@@ -252,7 +252,7 @@ function InstanceSkillsPage() {
 							/>
 						</div>
 						<Input
-							placeholder="Description (optional — auto-derived from content if empty)"
+							placeholder="Description (optional - auto-derived from content if empty)"
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
 						/>
@@ -303,7 +303,7 @@ function InstanceSkillsPage() {
 
 				{!skills.length ? (
 					<p className="text-[13px] text-text-2">
-						No skills yet. Add one above — global, or scoped to a project.
+						No skills yet. Add one above - global, or scoped to a project.
 					</p>
 				) : (
 					<div className="flex flex-col gap-1">
@@ -347,7 +347,7 @@ function InstanceSkillsPage() {
 				description={
 					<>
 						These recommended global skills will be added to this instance. They'll appear like any
-						skill you authored — edit, delete, or re-scope them freely.
+						skill you authored - edit, delete, or re-scope them freely.
 						<span className="mt-2 block font-medium text-text-1" data-testid="default-skill-names">
 							{missingDefaults.map((m) => m.name).join(', ')}
 						</span>

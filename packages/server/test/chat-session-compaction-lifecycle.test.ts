@@ -920,7 +920,7 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			[conversationId],
 		);
 
-		await manager.reconcileOnStartup();
+		await manager.reconcileDatabaseOnStartup();
 
 		const session = await ctx.db.query<{ status: string }>(
 			'SELECT status FROM chat_sessions LIMIT 1',

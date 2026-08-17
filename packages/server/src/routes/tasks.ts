@@ -67,6 +67,15 @@ const MAX_BATCH_TASKS = 50;
  */
 const LATEST_RUN_LOG_TAIL_CHARS = 64 * 1024;
 
+/**
+ * Outer bound on `heartbeat_runs.error` in a task projection.
+ *
+ * The column has no schema ceiling - a runner failure can carry a stack, the
+ * orphan pass appends a log tail - and the client renders only its first line
+ * (`runErrorSummary`). The single-run read serves the whole value.
+ */
+const LAST_RUN_ERROR_MAX_CHARS = 400;
+
 async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<CreateTaskCaller> {
 	const auth = c.get('auth');
 	const actorMemberId = await resolveAuthActorMemberId(c.get('db'), auth, teamId);
@@ -319,6 +328,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
               'queued_reason', ar.queued_reason
             ) ELSE NULL END AS active_run,
             lr.status AS last_run_status,
+            left(lr.error, ${LAST_RUN_ERROR_MAX_CHARS}) AS last_run_error,
             lr.run_id AS last_run_id,
             lr.comment_id AS last_run_comment_id,
             lr.comment_public_id AS last_run_comment_public_id,
@@ -351,7 +361,8 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        LIMIT 1
      ) qw ON true
      LEFT JOIN LATERAL (
-       SELECT hr.id AS run_id, hr.status, hrc.id AS comment_id, hrc.public_id AS comment_public_id
+       SELECT hr.id AS run_id, hr.status, hr.error, hrc.id AS comment_id,
+              hrc.public_id AS comment_public_id
        FROM heartbeat_runs hr
        LEFT JOIN task_comments hrc
          ON hrc.task_id = hr.task_id

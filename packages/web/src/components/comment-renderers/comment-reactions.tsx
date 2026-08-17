@@ -80,7 +80,7 @@ export function CommentReactions({ comment, projectId, taskId }: Props) {
 						</button>
 					</Popover.Trigger>
 					{/* Portal + z-50 so the picker escapes the comment card's
-					    `overflow-hidden` and the Virtuoso row's stacking context —
+					    `overflow-hidden` and the Virtuoso row's stacking context -
 					    an in-flow `absolute` popup was clipped and painted under the
 					    next comment. Radix flips it above the trigger near the
 					    viewport's bottom edge. */}

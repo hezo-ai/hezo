@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
@@ -142,6 +142,97 @@ describe('refreshExpiringTokens', () => {
 			[after?.accessTokenSecretId],
 		);
 		expect(decrypt(accessRow.rows[0].encrypted_value, key)).toBe('access-stale');
+	});
+
+	it('stops retrying a grant that can never be refreshed again', async () => {
+		// Two connections on a live instance sat at 51 attempts and climbing, four
+		// times an hour, forever: `invalid_grant` needs a human to reconnect and a
+		// connection missing its token endpoint was never able to refresh at all.
+		// Neither improves with another attempt.
+		await makeConnection({
+			provider: 'p-dead',
+			providerAccountId: 'a-dead',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		let calls = 0;
+		registerRefreshFn('p-dead', async () => {
+			calls++;
+			throw new Error('token endpoint error: invalid_grant - re-authentication required');
+		});
+
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(1);
+
+		// Jump well past the 15-minute backoff ceiling. Without the park this is
+		// exactly when the next of the 51 attempts would fire; with it there is no
+		// next attempt at all.
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(new Date(Date.now() + 60 * 60_000));
+			await refreshExpiringTokens({ db, masterKeyManager });
+			await refreshExpiringTokens({ db, masterKeyManager });
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(calls).toBe(1);
+	});
+
+	it('retries a transient refresh failure once its backoff elapses', async () => {
+		// The park must not swallow the ordinary case, which is what the backoff is
+		// for.
+		await makeConnection({
+			provider: 'p-flaky',
+			providerAccountId: 'a-flaky',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		let calls = 0;
+		registerRefreshFn('p-flaky', async () => {
+			calls++;
+			throw new Error('socket hang up');
+		});
+
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(1);
+		// Backed off, not parked: the same jump that proves the park above must let
+		// this one through, or the park has swallowed the ordinary case.
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(new Date(Date.now() + 60 * 60_000));
+			await refreshExpiringTokens({ db, masterKeyManager });
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(calls).toBe(2);
+	});
+
+	it('un-parks a connection once it is reconnected', async () => {
+		const conn = await makeConnection({
+			provider: 'p-reconnect',
+			providerAccountId: 'a-reconnect',
+			expiresAt: new Date(Date.now() - 1_000),
+			withRefresh: true,
+		});
+		let calls = 0;
+		registerRefreshFn('p-reconnect', async () => {
+			calls++;
+			throw new Error('token endpoint error: invalid_grant');
+		});
+
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(1);
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(1);
+
+		// Reconnecting moves `updated_at`, which is what clears the park - no hook
+		// on the reconnect path to remember or to go stale.
+		await db.query(
+			`UPDATE oauth_connections SET updated_at = now() + interval '1 second' WHERE id = $1`,
+			[conn.id],
+		);
+		await refreshExpiringTokens({ db, masterKeyManager });
+		expect(calls).toBe(2);
 	});
 
 	it('coalesces concurrent refreshes for the same connection', async () => {

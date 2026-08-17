@@ -315,7 +315,9 @@ test('agent header shows a dash when the agent has no work to do', async () => {
 
 	const indicator = await findByTestId('next-heartbeat');
 	expect(indicator.textContent).toContain('Next heartbeat');
-	expect(indicator.textContent).toContain('—');
+	// A plain hyphen is the "no value" glyph, per AGENTS.md's dash rule; this
+	// asserted the em dash the sweep replaced.
+	expect(indicator.textContent).toContain('-');
 	expect(indicator.textContent).not.toMatch(/due now|in \d/);
 });
 

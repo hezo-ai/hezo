@@ -64,7 +64,7 @@ const PROVIDER_GUIDES: Record<string, ProviderGuide> = {
 		steps: [
 			'Register a New OAuth App under GitHub Developer settings.',
 			'Enable “Device Flow” in the app’s settings and save.',
-			'Copy the app’s Client ID below — the device flow needs no client secret.',
+			'Copy the app’s Client ID below - the device flow needs no client secret.',
 		],
 	},
 };
@@ -227,7 +227,7 @@ export function ConnectorOAuthBrokerForm({
 				: 'Client secret (optional)';
 	const secretHint =
 		guide?.secret === 'none'
-			? 'This provider’s device flow doesn’t use a client secret — leave this blank.'
+			? 'This provider’s device flow doesn’t use a client secret - leave this blank.'
 			: guide?.secret === 'required'
 				? 'Paste the client secret shown next to the client ID in the console.'
 				: 'Only needed if your provider issues a secret for its device-flow client.';
@@ -280,7 +280,7 @@ export function ConnectorOAuthBrokerForm({
 					{statusMessage}
 				</p>
 				<p className="text-xs text-text-3">
-					Keep this open — it finishes as soon as you approve. The code expires in a few minutes; if
+					Keep this open - it finishes as soon as you approve. The code expires in a few minutes; if
 					it lapses, cancel and start again.
 				</p>
 				{onCancel && (
@@ -302,7 +302,7 @@ export function ConnectorOAuthBrokerForm({
 				</div>
 			)}
 
-			{/* How the device flow works — three plain steps. */}
+			{/* How the device flow works - three plain steps. */}
 			<div className="rounded-md border border-info-soft/60 bg-info-soft/40 px-3 py-2.5">
 				<div className="flex items-center gap-1.5 text-xs font-medium text-info-soft-fg mb-1.5">
 					<Info className="size-3.5" />
@@ -310,7 +310,7 @@ export function ConnectorOAuthBrokerForm({
 				</div>
 				<ol className="list-decimal ml-4 space-y-1 text-xs text-text-2 marker:text-text-3">
 					<li>Paste an OAuth client ID for {connectorLabel}.</li>
-					<li>Hezo shows a short code and a link — open it on any device and approve.</li>
+					<li>Hezo shows a short code and a link - open it on any device and approve.</li>
 					<li>
 						Hezo keeps the tokens fresh and hands your agents a placeholder, never the real token.
 					</li>
@@ -489,8 +489,8 @@ export function ConnectorOAuthBrokerForm({
 				<ShieldCheck className="size-4 shrink-0 text-info mt-0.5" />
 				<span>
 					The client secret and refresh token are stored encrypted in the Hezo vault and never enter
-					an agent run. Only the short-lived access token is exposed to agents — as a placeholder
-					the egress proxy fills in — and Hezo refreshes it automatically.
+					an agent run. Only the short-lived access token is exposed to agents - as a placeholder
+					the egress proxy fills in - and Hezo refreshes it automatically.
 				</span>
 			</div>
 

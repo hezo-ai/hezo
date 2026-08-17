@@ -9,7 +9,7 @@ interface ProjectPlanUploadProps {
 }
 
 const HELP_CONTENT =
-	'Attach a fuller document describing what this project is for when the description above isn’t enough — goals, scope, context, constraints. For a software team the Captain uses it to write the formal PRD; for other teams it’s used directly as the plan. Supported files: .md, .txt, .markdown.';
+	'Attach a fuller document describing what this project is for when the description above isn’t enough - goals, scope, context, constraints. For a software team the Captain uses it to write the formal PRD; for other teams it’s used directly as the plan. Supported files: .md, .txt, .markdown.';
 
 /**
  * Compact "attach project plan" control: a single minimal-height row with a

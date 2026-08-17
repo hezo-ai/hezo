@@ -21,8 +21,8 @@ export function BudgetBanner({ projectId }: { projectId: string }) {
 	if (!projectOver && overAgents.length === 0) return null;
 
 	const message = projectOver
-		? 'Project is over budget — agent runs are paused'
-		: `${overAgents.length} agent${overAgents.length === 1 ? '' : 's'} over budget — run${
+		? 'Project is over budget - agent runs are paused'
+		: `${overAgents.length} agent${overAgents.length === 1 ? '' : 's'} over budget - run${
 				overAgents.length === 1 ? '' : 's'
 			} paused`;
 

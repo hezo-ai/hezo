@@ -89,7 +89,7 @@ function InstanceCredentialsPage() {
 			.filter(Boolean);
 		if (!allowAllHosts && hosts.length === 0) {
 			setError(
-				'Add at least one allowed host (e.g. api.stripe.com) or check Allow all hosts — a secret with no hosts cannot be substituted by the egress proxy.',
+				'Add at least one allowed host (e.g. api.stripe.com) or check Allow all hosts - a secret with no hosts cannot be substituted by the egress proxy.',
 			);
 			return;
 		}
@@ -178,7 +178,7 @@ function InstanceCredentialsPage() {
 						<Tooltip
 							content={`In use by ${r.connectors.length} connector${
 								r.connectors.length === 1 ? '' : 's'
-							} — remove ${r.connectors.length === 1 ? 'it' : 'them'} first`}
+							} - remove ${r.connectors.length === 1 ? 'it' : 'them'} first`}
 						>
 							{/* Wrapping span keeps the tooltip working over a disabled button. */}
 							<span className="inline-flex">
@@ -280,7 +280,7 @@ function InstanceCredentialsPage() {
 								checked={allowAllHosts}
 								onChange={(e) => setAllowAllHosts(e.target.checked)}
 							/>
-							Allow this credential to reach any host (escape hatch — use sparingly)
+							Allow this credential to reach any host (escape hatch - use sparingly)
 						</label>
 						<label className="flex items-start gap-2 text-[13px] text-text-2">
 							<input
@@ -292,7 +292,7 @@ function InstanceCredentialsPage() {
 							/>
 							<span>
 								Allow substitution into small JSON request bodies (e.g. an API login that takes the
-								credential in the body). Off by default — enable only for APIs that require it.
+								credential in the body). Off by default - enable only for APIs that require it.
 							</span>
 						</label>
 						{error && <p className="text-[13px] text-danger">{error}</p>}

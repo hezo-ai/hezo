@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
 	CHAT_IDLE_TIMEOUT_MIN,
+	CONTAINER_RECLAIM_MIN_AGE_SEC,
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -48,7 +49,7 @@ import {
 } from './run-concurrency';
 import { DOCKER_HOST_GATEWAY_ENTRY } from './sandbox/endpoints';
 import { INSTANCE_LABEL, PROJECT_LABEL, TEAM_LABEL } from './sandbox/labels';
-import { planCrossProjectReclaim } from './sandbox/pool';
+import { detectReclaimChurn, planCrossProjectReclaim, type ReclaimEvent } from './sandbox/pool';
 import {
 	type ContainerAllocation,
 	claimPoolMember,
@@ -563,7 +564,7 @@ export async function provisionContainer(
 		// to absorb (see ContainerConfig.HostConfig.DiskGb).
 		const diskGb = await getProjectContainerDiskGb(db, project.id);
 
-		const { Id } = await docker.createContainer(containerName, {
+		const { Id, Warnings } = await docker.createContainer(containerName, {
 			Image: baseImage,
 			Cmd: ['sleep', 'infinity'],
 			Env: env,
@@ -585,6 +586,18 @@ export async function provisionContainer(
 		});
 
 		openStream(Id);
+		// The engine's own account of what it could not honour, on the container's
+		// own stream beside the MTU-pin warning rather than in a server log nobody
+		// correlates. Docker's canonical one is the missing swap-limit capability,
+		// and it matters here more than anywhere: the config above sets `MemorySwap`
+		// and the instance budget counts swap at full weight, so a kernel that
+		// silently drops the limit leaves the pool's arithmetic describing a machine
+		// that does not exist. A managed backend returns none of these.
+		// Defaulted, not trusted: the seam declares `Warnings` required, but a
+		// stub or a future adapter that omits it must not take a provision down
+		// with it - failing a container start over a missing advisory would be a
+		// worse bug than the one this line reports.
+		for (const warning of Warnings ?? []) emit('stderr', `⚠ ${warning}`);
 		// Joined the pool the moment the container exists, not once it is finished.
 		// Everything below - starting, the MTU pin, the CA, the repo sync, the MCP
 		// installs - is the expensive part, and until this write the container was
@@ -947,6 +960,33 @@ export async function assertProjectNotArchived(db: Db, projectId: string): Promi
  */
 const reclaimLock = new Map<string, Promise<unknown>>();
 
+/** How far back the churn check looks, and how loud it has to get to be worth saying. */
+const CHURN_WINDOW_MS = 10 * 60_000;
+const CHURN_MIN_RECLAIMS = 4;
+/** At most one churn warning per window, so a thrashing instance says so without flooding. */
+const CHURN_WARN_INTERVAL_MS = CHURN_WINDOW_MS;
+
+/**
+ * Recent cross-project reclaims, so the instance can say when it is thrashing
+ * rather than reclaiming.
+ *
+ * In-process and advisory - it only ever produces a log line, so losing it on
+ * restart costs nothing. Bounded two ways, which is the whole eviction rule:
+ * entries older than {@link CHURN_WINDOW_MS} are dropped on every write, and the
+ * ring is hard-capped so a pathological burst inside one window cannot grow it.
+ */
+const RECLAIM_HISTORY_CAP = 200;
+const reclaimHistory: ReclaimEvent[] = [];
+let lastChurnWarnAtMs = 0;
+
+function recordReclaims(events: readonly ReclaimEvent[], nowMs: number): void {
+	reclaimHistory.push(...events);
+	const cutoff = nowMs - CHURN_WINDOW_MS;
+	const kept = reclaimHistory.filter((e) => e.atMs >= cutoff).slice(-RECLAIM_HISTORY_CAP);
+	reclaimHistory.length = 0;
+	reclaimHistory.push(...kept);
+}
+
 interface ReclaimCandidateRow {
 	container_id: string;
 	project_id: string;
@@ -955,6 +995,8 @@ interface ReclaimCandidateRow {
 	memory_bytes: string | number | null;
 	has_unpushed_commits: boolean;
 	idle_for_ms: string | number;
+	age_ms: string | number | null;
+	project_resumable: string | number;
 }
 
 /**
@@ -995,7 +1037,15 @@ async function reclaimIdleCapacityForProject(
 			// sitting outside the window.
 			`SELECT m.container_id, m.project_id, p.slug, p.team_id, m.memory_bytes,
 			        m.has_unpushed_commits,
-			        EXTRACT(EPOCH FROM (now() - m.last_released_at)) * 1000 AS idle_for_ms
+			        EXTRACT(EPOCH FROM (now() - m.last_released_at)) * 1000 AS idle_for_ms,
+			        EXTRACT(EPOCH FROM (now() - m.created_at)) * 1000 AS age_ms,
+			        -- What the victim would have left to serve its own next run.
+			        -- Correlated rather than joined so the outer row set stays the
+			        -- reclaim candidates; served by idx_container_pool_members_project.
+			        (SELECT count(*) FROM container_pool_members s
+			          WHERE s.project_id = m.project_id
+			            AND s.state IN ('idle', 'busy', 'suspended')
+			            AND NOT s.reserved_for_chat) AS project_resumable
 			   FROM container_pool_members m
 			   JOIN projects p ON p.id = m.project_id
 			  WHERE m.state = 'idle' AND NOT m.reserved_for_chat
@@ -1024,10 +1074,13 @@ async function reclaimIdleCapacityForProject(
 						? (capGb.get(row.project_id) ?? 0)
 						: Number(row.memory_bytes) / 1024 ** 3,
 				idleForMs: Number(row.idle_for_ms),
+				ageMs: row.age_ms === null ? null : Number(row.age_ms),
+				projectResumableMembers: Number(row.project_resumable),
 				hasUnpushedCommits: row.has_unpushed_commits,
 			})),
 			needGb,
 			CONTAINER_RECLAIM_MIN_IDLE_SEC * 1000,
+			CONTAINER_RECLAIM_MIN_AGE_SEC * 1000,
 		);
 		if (plan.freedGb === 0) return false;
 
@@ -1048,6 +1101,34 @@ async function reclaimIdleCapacityForProject(
 			`project ${ref(requestingSlug, requestingProjectId)} needs ${needGb.toFixed(1)} GB; ` +
 				`reclaiming ${plan.freedGb.toFixed(1)} GB from ${byProject.size} other project(s)`,
 		);
+
+		// A single reclaim is the mechanism working. The same pair trading a
+		// container back and forth every few minutes is a budget too small for the
+		// workload, and nothing else on the instance says so - this was an info line
+		// among thousands while two projects churned for hours. Rate-limited to one
+		// per window, and it names the remedy rather than just the symptom.
+		const nowMs = Date.now();
+		recordReclaims(
+			[...byProject.keys()].map((victimProjectId) => ({
+				atMs: nowMs,
+				requestingProjectId,
+				victimProjectId,
+				freedGb: plan.freedGb / byProject.size,
+			})),
+			nowMs,
+		);
+		const churn = detectReclaimChurn(reclaimHistory, nowMs, CHURN_WINDOW_MS, CHURN_MIN_RECLAIMS);
+		if (churn.churning && nowMs - lastChurnWarnAtMs >= CHURN_WARN_INTERVAL_MS) {
+			lastChurnWarnAtMs = nowMs;
+			const pair = churn.reciprocal ? ` between two projects taking it back off each other,` : '';
+			log.warn(
+				`container memory is thrashing: ${churn.reclaims} reclaims in the last ` +
+					`${Math.round(CHURN_WINDOW_MS / 60_000)} minutes,${pair} ` +
+					`${churn.freedGb.toFixed(1)} GB churned. The instance memory budget is smaller ` +
+					`than the concurrent workload - raise it in Settings > Containers, or lower a ` +
+					`project's per-container cap.`,
+			);
+		}
 
 		let reclaimedAny = false;
 		for (const [victimId, group] of byProject) {
@@ -1688,13 +1769,20 @@ export async function stopContainerGracefully(
 	let exitReason: ContainerExitReason = 'container_stopped';
 	try {
 		await docker.stopContainer(containerId);
+		// Conditional on the id, exactly as `clearProjectContainerIfNamed` is on the
+		// destroy path. A project can hold several pool members, so writing
+		// `container_status = Stopped` for whichever one this is said the project's
+		// *designated* container was down when it may still be running - and that
+		// row is read by a capacity gate (`getActiveContainers` stops counting it,
+		// under-counting the budget) and by the idle pass (`IDLE_CANDIDATE_SQL`
+		// requires `running`, so the project is skipped from then on).
 		await db.query(
 			`UPDATE projects
 			 SET container_status = $1::container_status,
 			     container_last_logs = COALESCE($2, container_last_logs),
 			     container_error = NULL
-			 WHERE id = $3`,
-			[ContainerStatus.Stopped, annotatedLogs, projectId],
+			 WHERE id = $3 AND container_id = $4`,
+			[ContainerStatus.Stopped, annotatedLogs, projectId, containerId],
 		);
 		await setPoolMemberOutcome(db, containerId, annotatedLogs, null);
 		// A stopped container is a *suspended* pool member: it still exists and its
@@ -1708,13 +1796,15 @@ export async function stopContainerGracefully(
 		);
 	} catch (err) {
 		const errorMessage = err instanceof Error ? err.message : String(err);
+		// Same guard as the success arm: only the project's designated container may
+		// move the project row.
 		await db.query(
 			`UPDATE projects
 			 SET container_status = $1::container_status,
 			     container_last_logs = COALESCE($2, container_last_logs),
 			     container_error = $3
-			 WHERE id = $4`,
-			[ContainerStatus.Error, annotatedLogs, errorMessage, projectId],
+			 WHERE id = $4 AND container_id = $5`,
+			[ContainerStatus.Error, annotatedLogs, errorMessage, projectId, containerId],
 		);
 		await setPoolMemberOutcome(db, containerId, annotatedLogs, errorMessage);
 		exitReason = 'container_error';
@@ -1840,7 +1930,7 @@ export async function isProjectIdleForContainerStop(
 }
 
 /**
- * Idle members of projects that are *working*, on each member's own clock.
+ * Idle pool members past their own idle window, whatever their project is doing.
  *
  * The query above asks a project-shaped question - "has everything here gone
  * quiet?" - and a project with two busy containers and two idle ones never
@@ -1849,10 +1939,14 @@ export async function isProjectIdleForContainerStop(
  * memory. This asks the member-shaped question instead, which is the one that
  * bounds the budget.
  *
- * The `EXISTS` restricts it to working projects on purpose: a fully idle project
- * belongs to {@link findIdleContainerCandidates}, which retires its pool as a
- * unit and keeps one member suspended for a warm restart. Overlapping the two
- * would take that warm member away.
+ * It used to carry an `EXISTS ... state = 'busy'` so that a fully idle project
+ * was left to {@link findIdleContainerCandidates} and its warm-start guarantee.
+ * The two preconditions did not partition the space: a project whose runs last
+ * seconds is never quiet (queued wakeups and recent finishes keep it out of the
+ * project-shaped pass) and rarely busy when the once-a-minute cron samples it,
+ * so its idle members matched neither and pinned the budget indefinitely. The
+ * warm-start floor now lives in `planSurplusIdleRetirement`, where it is a
+ * property of the plan rather than of which pass ran, so this can be total.
  *
  * The chat's pinned member is excluded - it is not counted against the budget, so
  * retiring it frees nothing. Served by `idx_container_pool_members_idle`.
@@ -1864,10 +1958,6 @@ const STALE_IDLE_MEMBER_SQL = (extraSql: string, limitSql: string) => `
 	 WHERE m.state = 'idle'
 	   AND NOT m.reserved_for_chat
 	   AND m.last_released_at < now() - ($1 * interval '1 minute')
-	   AND EXISTS (
-	     SELECT 1 FROM container_pool_members b
-	      WHERE b.project_id = m.project_id AND b.state = 'busy'
-	   )
 	   ${extraSql}
 	 ORDER BY m.last_released_at
 	 ${limitSql}

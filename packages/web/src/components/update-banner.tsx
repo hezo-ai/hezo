@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { useState } from 'react';
 import { useMe } from '../hooks/use-me';
 import { useApplyUpdate, useDownloadUpdate, useUpdateStatus } from '../hooks/use-update-check';
+import { Trans, useI18n } from '../lib/i18n';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { UpdateRestartOverlay } from './update-restart-overlay';
@@ -55,6 +56,7 @@ export function UpdateBanner() {
 	// mid-download and surfaces "Install & restart" the moment the binary is staged —
 	// without a manual reload.
 	const { data } = useUpdateStatus({ poll: true });
+	const { t, plural } = useI18n();
 	const { data: me } = useMe();
 	const apply = useApplyUpdate();
 	const download = useDownloadUpdate();
@@ -102,16 +104,22 @@ export function UpdateBanner() {
 	const showInstall = canApply && staged;
 	const showRetry = canApply && !staged && errored;
 
+	// The old copy promised that in-flight runs "are paused and resume
+	// automatically". Neither half was true: a run is failed with exit code -1 and
+	// a *new* run is queued in its place. Say what happens.
+	const runsInFlight = data.runsInFlight ?? 0;
 	const confirmDescription = (
 		<>
-			Hezo will shut down and restart on <span className="font-medium">{latest}</span>. In-flight
-			agent runs are paused and resume automatically.
+			<Trans
+				k="updates.confirm.restart"
+				vars={{ version: <span className="font-medium">{latest}</span> }}
+			/>{' '}
+			{runsInFlight > 0 && <>{plural('updates.confirm.runsInFlight', runsInFlight)} </>}
+			{t('updates.confirm.drain')}
 			{!data.autoUnlock && (
 				<>
 					{' '}
-					<span className="font-medium text-text-1">
-						You'll need your 12-word master key to unlock Hezo again once it restarts.
-					</span>
+					<span className="font-medium text-text-1">{t('updates.confirm.reunlock')}</span>
 				</>
 			)}
 		</>
@@ -137,7 +145,7 @@ export function UpdateBanner() {
 				) : (
 					<span className="font-semibold">{latest}</span>
 				)}{' '}
-				is available — you're on {data.current}.
+				is available - you're on {data.current}.
 			</span>
 			<div className="flex items-center gap-2 sm:gap-3">
 				{showInstall ? (

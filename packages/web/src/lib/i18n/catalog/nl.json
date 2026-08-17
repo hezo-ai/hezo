@@ -437,5 +437,17 @@
 	"toast.dismiss": "Verbergen",
 	"toast.error": "Er ging iets mis",
 	"toast.info": "Let op",
-	"toast.success": "Klaar"
+	"toast.success": "Klaar",
+	"comment.runError": "Fout",
+	"comment.runErrorExpand": "Volledige fout tonen",
+	"tasks.lastRun.failed": "Laatste run is mislukt",
+	"tasks.lastRun.timedOut": "Laatste run heeft de tijdslimiet bereikt",
+	"tasks.lastRun.failedReason": "Laatste run is mislukt: {reason}",
+	"tasks.lastRun.timedOutReason": "Laatste run heeft de tijdslimiet bereikt: {reason}",
+	"tasks.lastRun.jump": "Ga naar de run",
+	"updates.confirm.restart": "Hezo wordt afgesloten en start opnieuw op met {version}.",
+	"updates.confirm.drain": "Hezo wacht een paar seconden tot lopende agent-runs klaar zijn en stopt dan. Wat nog draait, gaat terug in de wachtrij en begint opnieuw.",
+	"updates.confirm.runsInFlight.one": "Er is nu {count} agent-run bezig.",
+	"updates.confirm.runsInFlight.other": "Er zijn nu {count} agent-runs bezig.",
+	"updates.confirm.reunlock": "Je hebt je hoofdsleutel van 12 woorden nodig om Hezo na de herstart weer te ontgrendelen."
 }

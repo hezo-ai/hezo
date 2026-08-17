@@ -120,7 +120,7 @@ export function ActionReviewDialog({
 					Action this review
 				</Dialog.Title>
 				<Dialog.Description className="mb-3 text-[12.5px] leading-relaxed text-text-2">
-					Add this handoff as a comment on a task — pick one from Add to task, or copy it — and
+					Add this handoff as a comment on a task - pick one from Add to task, or copy it - and
 					assign it to the agent who should action the feedback. The agent reads the review comments
 					directly from the {sourceNoun}.
 				</Dialog.Description>

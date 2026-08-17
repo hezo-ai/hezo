@@ -35,7 +35,7 @@ export function ActionComment({ comment, projectId }: Props) {
 				data-testid="action-unknown"
 				title={kind ? `Unrecognized action: ${kind}` : undefined}
 			>
-				This item needs a newer version to display — refresh the page.
+				This item needs a newer version to display - refresh the page.
 			</p>
 		);
 	}

@@ -38,7 +38,7 @@ export function apiKeyGuideFor(
 				'Pick or create a project in the Google Cloud Console.',
 				'Enable the YouTube Data API v3 (APIs & Services → Library).',
 				'Open Credentials → Create credentials → API key, then paste it below.',
-				'No OAuth consent screen is needed — an API key covers public, read-only data.',
+				'No OAuth consent screen is needed - an API key covers public, read-only data.',
 			],
 		};
 	}

@@ -13,14 +13,15 @@ async function insertFailedRunWithComment(
 	workspace: SeededWorkspace,
 	task: SeededTask,
 	status: 'failed' | 'timed_out' = 'failed',
+	error: string | null = null,
 ): Promise<{ runId: string; commentId: string; commentPublicId: string }> {
 	const { db } = getTestContext();
 	const agentId = workspace.agents[0].id;
 	const runRes = await db.query<{ id: string }>(
-		`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at)
-		 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '1 minute', now())
+		`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, finished_at, error)
+		 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - interval '1 minute', now(), $5)
 		 RETURNING id`,
-		[agentId, workspace.team.id, task.id, status],
+		[agentId, workspace.team.id, task.id, status, error],
 	);
 	const runId = runRes.rows[0].id;
 	const commentRes = await db.query<{ id: string; public_id: string }>(
@@ -142,4 +143,60 @@ test('banner is suppressed while a retry is currently running', async () => {
 	await waitFor(() => {
 		expect(queryByTestId('last-run-failed-banner')).toBeNull();
 	});
+});
+
+test('the banner carries the reason, and never an em dash', async () => {
+	// The reason lived in exactly one place in the whole app - the run detail page
+	// - so a failed task said only that it had failed.
+	const seeded = { projectSlug: '', taskIdentifier: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const task = await seedTask(ws, project, { title: 'Reason Task' });
+			await insertFailedRunWithComment(
+				ws,
+				task,
+				'failed',
+				'This run cannot be prepared: adapter declared env-var bearer storage\nsecond line',
+			);
+			seeded.projectSlug = project.slug;
+			seeded.taskIdentifier = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskIdentifier },
+	});
+
+	const banner = await findByTestId('last-run-failed-banner', undefined, { timeout: 10_000 });
+	expect(banner.textContent).toContain('This run cannot be prepared');
+	// Only the first line: the stored value is multi-line by design.
+	expect(banner.textContent).not.toContain('second line');
+	expect(banner.textContent).not.toMatch(/[\u2013\u2014]/);
+});
+
+test('the banner falls back to the bare label when the run recorded no reason', async () => {
+	const seeded = { projectSlug: '', taskIdentifier: '' };
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Demo' });
+			const task = await seedTask(ws, project, { title: 'Bare Task' });
+			await insertFailedRunWithComment(ws, task, 'timed_out', null);
+			seeded.projectSlug = project.slug;
+			seeded.taskIdentifier = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskIdentifier },
+	});
+
+	const banner = await findByTestId('last-run-failed-banner', undefined, { timeout: 10_000 });
+	expect(banner.textContent).toContain('Last run timed out');
 });

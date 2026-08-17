@@ -55,7 +55,7 @@ export function AgentCliPicker({ provider, value, onChange, disabled }: AgentCli
 						variant={runtime === selected ? 'primary' : 'secondary'}
 						onClick={() => onChange(runtime)}
 					>
-						{/* Product name — never translated, same rule as Captain/CEO/Hezo. */}
+						{/* Product name - never translated, same rule as Captain/CEO/Hezo. */}
 						{AGENT_RUNTIME_LABELS[runtime]}
 						{runtime === defaultRuntime && (
 							<span className="text-[10px] uppercase tracking-wide opacity-70">

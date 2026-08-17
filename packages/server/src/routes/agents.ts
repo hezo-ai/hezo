@@ -132,7 +132,7 @@ const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr
 	hr.status, hr.queued_reason, hr.created_at, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents, hr.usage_partial,
 	hr.invocation_command, hr.working_dir,
-	hr.process_pid, hr.retry_of_run_id, hr.process_loss_retry_count,
+	hr.retry_of_run_id, hr.process_loss_retry_count,
 	i.identifier AS task_identifier, i.title AS task_title,
 	i.project_id AS project_id, p.slug AS project_slug, p.name AS project_name,
 	aw.source AS trigger_source,

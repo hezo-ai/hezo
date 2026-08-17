@@ -55,7 +55,7 @@ function withCaptain(roles: TeamRosterRow[]): TeamRosterRow[] {
 }
 
 /** The dash shown when a role reports to nobody in the roster. */
-const NO_REPORTS_TO = '—';
+const NO_REPORTS_TO = '-';
 
 /**
  * Turn a `reports_to_slug` into something a human reads: the title of the role it

@@ -389,6 +389,28 @@ export const CHAT_IDLE_TIMEOUT_MIN = 15;
 export const CONTAINER_RECLAIM_MIN_IDLE_SEC = 30;
 
 /**
+ * How long a container must have **existed** before another project may reclaim
+ * it, independent of how long it has sat idle.
+ *
+ * {@link CONTAINER_RECLAIM_MIN_IDLE_SEC} floors the idle clock; this floors the
+ * container's whole life, and they are different questions. One created at T,
+ * claimed, and released at T+5s clears the idle floor at T+35s while still being
+ * a container the instance has only just paid a cold provision for - an image
+ * resolve, a clone and a round of package installs. Retiring it to hand its
+ * memory to a project that will pay the same cold start for a replacement is a
+ * loss on both sides.
+ *
+ * Derived rather than picked. It must exceed {@link CONTAINER_IDLE_TIMEOUT_MIN}
+ * so a project's own surplus-idle pass always gets first refusal: that pass
+ * keeps the project warm and cross-project reclaim cannot, so memory reachable
+ * both ways should be freed the cheaper way. And it must stay inside the
+ * capacity-park window, so a run blocked behind this floor is still parked
+ * rather than requeued when the surplus pass frees the same memory properly.
+ * Five minutes sits between the two with room either side.
+ */
+export const CONTAINER_RECLAIM_MIN_AGE_SEC = 300;
+
+/**
  * The "latest few" messages kept in the active window after a compaction flush.
  * Internal constant (not an operator setting): everything older than this tail
  * is summarized into long-term memory and dropped from the chatbox.

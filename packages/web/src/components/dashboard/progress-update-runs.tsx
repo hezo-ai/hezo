@@ -114,7 +114,7 @@ export function ProgressUpdateRuns({ projectId }: { projectId: string }) {
 								data-testid="progress-update-run"
 								className="flex flex-col gap-1.5 px-3 py-2.5"
 							>
-								{/* Collapsible run card — the same summary/expand/log UI as an agent run on a task. */}
+								{/* Collapsible run card - the same summary/expand/log UI as an agent run on a task. */}
 								<LazyMount minHeight={32} testId="progress-update-run-lazy">
 									<RunCommentBody
 										projectId={projectId}

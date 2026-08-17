@@ -437,5 +437,17 @@
 	"toast.dismiss": "非表示",
 	"toast.error": "問題が発生しました",
 	"toast.info": "お知らせ",
-	"toast.success": "完了"
+	"toast.success": "完了",
+	"comment.runError": "エラー",
+	"comment.runErrorExpand": "エラーの全文を表示します",
+	"tasks.lastRun.failed": "前回の実行が失敗しました",
+	"tasks.lastRun.timedOut": "前回の実行がタイムアウトしました",
+	"tasks.lastRun.failedReason": "前回の実行が失敗しました: {reason}",
+	"tasks.lastRun.timedOutReason": "前回の実行がタイムアウトしました: {reason}",
+	"tasks.lastRun.jump": "実行に移動します",
+	"updates.confirm.restart": "Hezo を停止し、{version} で再起動します。",
+	"updates.confirm.drain": "Hezo は実行中のエージェント実行が終わるまで数秒待ってから停止します。まだ実行中のものは再度キューに入り、最初からやり直します。",
+	"updates.confirm.runsInFlight.one": "現在 {count} 件のエージェント実行が進行中です。",
+	"updates.confirm.runsInFlight.other": "現在 {count} 件のエージェント実行が進行中です。",
+	"updates.confirm.reunlock": "再起動後に Hezo のロックを解除するには、12 語のマスターキーが必要です。"
 }

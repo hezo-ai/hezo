@@ -73,7 +73,7 @@ function ExecutionDetailPage() {
 	);
 
 	const elapsed = useElapsedDuration(run?.started_at ?? '', run?.finished_at ?? null);
-	const elapsedDisplay = run?.started_at ? elapsed : '—';
+	const elapsedDisplay = run?.started_at ? elapsed : '-';
 
 	if (isLoading) return <div className="text-text-2 text-sm">Loading...</div>;
 	if (!run) return <div className="text-text-2 text-sm">Run not found.</div>;

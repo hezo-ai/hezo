@@ -1,5 +1,24 @@
 import { isAbsolute } from 'node:path';
+import { createPlaceholderRegex, PLACEHOLDER_PROBE } from '../../lib/credential-placeholder';
 import type { McpInjection, RuntimeMcpAdapter } from './types';
+
+/**
+ * A rendered file with every secret placeholder removed.
+ *
+ * A connector's `Authorization` header is `Bearer __HEZO_SECRET_<NAME>__` by
+ * design - the egress proxy substitutes the value at request time, and the real
+ * one never enters a run. The placeholder is made of characters the bearer
+ * pattern below accepts, so scanning the raw text reports the one value the
+ * whole scheme exists to put there. Blanking placeholders first leaves a real
+ * token as the only thing that can still match.
+ *
+ * The cheap literal probe skips the regex for the files that carry no
+ * placeholder at all, which is most of them.
+ */
+function withoutSecretPlaceholders(contents: string): string {
+	if (!contents.includes(PLACEHOLDER_PROBE)) return contents;
+	return contents.replace(createPlaceholderRegex(), '');
+}
 
 /**
  * Defensive sanity check on the spawn artifacts an adapter emits. Throws on
@@ -38,7 +57,7 @@ export function validateInjection(adapter: RuntimeMcpAdapter, injection: McpInje
 		// rendered. Passthrough files are exempt - see McpInjectionFile.passthrough.
 		for (const file of injection.files) {
 			if (file.passthrough) continue;
-			if (/Bearer [A-Za-z0-9._-]{8,}/.test(file.contents)) {
+			if (/Bearer [A-Za-z0-9._-]{8,}/.test(withoutSecretPlaceholders(file.contents))) {
 				throw new Error(
 					`adapter declared env-var bearer storage but inlined a bearer token in ${file.hostPath}`,
 				);

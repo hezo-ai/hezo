@@ -46,15 +46,15 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 
 	const statusLabel =
 		status === 'failed'
-			? 'Last connect attempt failed — try again'
+			? 'Last connect attempt failed - try again'
 			: status === 'degraded'
 				? // It connected once and the stored credential has since stopped being
 					// accepted, so this card is a reconnect prompt rather than a first-time
 					// setup step. Without this branch it fell into the green "connected"
 					// case above and told the operator everything was fine.
-					`${display_name} stopped working — reconnect to restore this agent's access`
+					`${display_name} stopped working - reconnect to restore this agent's access`
 				: status === 'revoked'
-					? 'Connector revoked — reconnect'
+					? 'Connector revoked - reconnect'
 					: `Connect ${display_name} to authorize this agent's access`;
 
 	return (
