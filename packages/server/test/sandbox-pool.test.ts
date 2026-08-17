@@ -5,6 +5,7 @@ import {
 } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
+	detectReclaimChurn,
 	type PoolCapacity,
 	type PoolMember,
 	planCrossProjectReclaim,
@@ -643,5 +644,63 @@ describe('reclaim floors', () => {
 		// blocked behind it is still parked rather than requeued.
 		expect(CONTAINER_RECLAIM_MIN_AGE_SEC).toBeGreaterThan(CONTAINER_IDLE_TIMEOUT_MIN * 60);
 		expect(CONTAINER_RECLAIM_MIN_AGE_SEC).toBeGreaterThan(CONTAINER_RECLAIM_MIN_IDLE_SEC);
+	});
+});
+
+describe('detectReclaimChurn', () => {
+	const ev = (atMs: number, from: string, to: string) => ({
+		atMs,
+		requestingProjectId: from,
+		victimProjectId: to,
+		freedGb: 4,
+	});
+	const WINDOW = 10 * 60_000;
+	const NOW = 1_000_000;
+
+	it('calls a reciprocal pair churn', () => {
+		// The shape an operator cannot otherwise see: two projects taking the same
+		// memory back off each other, indefinitely.
+		const verdict = detectReclaimChurn(
+			[
+				ev(NOW - 60_000, 'a', 'b'),
+				ev(NOW - 120_000, 'b', 'a'),
+				ev(NOW - 180_000, 'a', 'b'),
+				ev(NOW - 240_000, 'b', 'a'),
+			],
+			NOW,
+			WINDOW,
+			4,
+		);
+		expect(verdict.churning).toBe(true);
+		expect(verdict.reciprocal).toEqual(['a', 'b']);
+		expect(verdict.freedGb).toBe(16);
+	});
+
+	it('does not call one starved project reclaiming repeatedly churn on its own', () => {
+		// One project losing containers to a genuinely starved neighbour is the
+		// mechanism working, so it must not be reported as a reciprocal pair.
+		const verdict = detectReclaimChurn(
+			[ev(NOW - 60_000, 'a', 'b'), ev(NOW - 120_000, 'a', 'c')],
+			NOW,
+			WINDOW,
+			4,
+		);
+		expect(verdict.churning).toBe(false);
+		expect(verdict.reciprocal).toBeNull();
+	});
+
+	it('ignores events outside the window', () => {
+		const verdict = detectReclaimChurn(
+			[ev(NOW - WINDOW - 1, 'a', 'b'), ev(NOW - WINDOW - 2, 'b', 'a')],
+			NOW,
+			WINDOW,
+			1,
+		);
+		expect(verdict.reclaims).toBe(0);
+		expect(verdict.churning).toBe(false);
+	});
+
+	it('says nothing about an empty history', () => {
+		expect(detectReclaimChurn([], NOW, WINDOW, 1).churning).toBe(false);
 	});
 });

@@ -442,3 +442,61 @@ export function planCrossProjectReclaim(
 	}
 	return plan;
 }
+
+/** One completed cross-project reclaim, for {@link detectReclaimChurn}. */
+export interface ReclaimEvent {
+	atMs: number;
+	requestingProjectId: string;
+	victimProjectId: string;
+	freedGb: number;
+}
+
+export interface ChurnVerdict {
+	churning: boolean;
+	/** Reclaims inside the window. */
+	reclaims: number;
+	/** The pair trading containers back and forth, when that is what happened. */
+	reciprocal: readonly [string, string] | null;
+	freedGb: number;
+}
+
+/**
+ * Whether the instance is thrashing rather than reclaiming.
+ *
+ * Two shapes, and the first is the one an operator cannot otherwise see: two
+ * projects taking memory back off each other, every few minutes, indefinitely.
+ * A single project losing a container to a genuinely starved neighbour is the
+ * mechanism working as designed; the same pair swapping one container in a loop
+ * is a budget too small for the workload, and no amount of correct reclaiming
+ * will fix it.
+ *
+ * Pure, and here rather than beside the log call, because it is a decision about
+ * the pool and every other decision about the pool lives in this file.
+ */
+export function detectReclaimChurn(
+	events: readonly ReclaimEvent[],
+	nowMs: number,
+	windowMs: number,
+	minReclaims: number,
+): ChurnVerdict {
+	const recent = events.filter((e) => nowMs - e.atMs <= windowMs);
+	const freedGb = recent.reduce((sum, e) => sum + e.freedGb, 0);
+	if (recent.length < minReclaims) {
+		return { churning: false, reclaims: recent.length, reciprocal: null, freedGb };
+	}
+
+	// A pair is reciprocal when each has taken from the other inside the window.
+	const took = new Set(recent.map((e) => `${e.requestingProjectId}>${e.victimProjectId}`));
+	for (const edge of took) {
+		const [from, to] = edge.split('>');
+		if (took.has(`${to}>${from}`)) {
+			return { churning: true, reclaims: recent.length, reciprocal: [from, to], freedGb };
+		}
+	}
+	return {
+		churning: recent.length >= minReclaims,
+		reclaims: recent.length,
+		reciprocal: null,
+		freedGb,
+	};
+}
