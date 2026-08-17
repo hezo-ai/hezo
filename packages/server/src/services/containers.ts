@@ -22,7 +22,7 @@ import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { forEachConcurrent } from '../lib/concurrency';
-import { withKeyedLock } from '../lib/keyed-lock';
+import { type KeyedLockRegistry, withKeyedLock } from '../lib/keyed-lock';
 import { ref } from '../lib/log-ref';
 import { stripNulBytes, terminalStatusParams } from '../lib/sql';
 import { getDefaultRamCapPerContainerGb, getProjectContainerDiskGb } from '../lib/system-meta';
@@ -110,7 +110,7 @@ const log = logger.child('containers');
  * provision/stop step — so it is not a throughput ceiling on runs themselves.
  * Keyed by project id; in-process only (single-server assumption).
  */
-const containerLifecycleLocks = new Map<string, Promise<unknown>>();
+const containerLifecycleLocks: KeyedLockRegistry = new Map();
 export function withContainerLifecycleLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
 	return withKeyedLock(containerLifecycleLocks, projectId, fn);
 }
@@ -958,7 +958,7 @@ export async function assertProjectNotArchived(db: Db, projectId: string): Promi
  * how two reclaims in opposite directions deadlock. See {@link acquireRunContainer}
  * for the other half of that arrangement.
  */
-const reclaimLock = new Map<string, Promise<unknown>>();
+const reclaimLock: KeyedLockRegistry = new Map();
 
 /** How far back the churn check looks, and how loud it has to get to be worth saying. */
 const CHURN_WINDOW_MS = 10 * 60_000;

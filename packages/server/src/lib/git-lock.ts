@@ -4,9 +4,9 @@
 // brief setup/recovery steps must not overlap or they race on git's index/ref
 // locks. Keyed by project id, so different projects never block one another.
 // In-process only (single-server assumption), same as the rest of the runtime.
-import { withKeyedLock } from './keyed-lock';
+import { type KeyedLockRegistry, withKeyedLock } from './keyed-lock';
 
-const projectGitLocks = new Map<string, Promise<unknown>>();
+const projectGitLocks: KeyedLockRegistry = new Map();
 
 export function withProjectGitLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
 	return withKeyedLock(projectGitLocks, projectId, fn);

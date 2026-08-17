@@ -294,6 +294,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | "Is this run failure worth another attempt?" | `classifyRunFailure` (`services/run-failure-classification.ts`) - unrecognised is permanent, and no row may name a backend |
 | Waking the assignee after an assignment write | `wakeAgentIfAssigned` (`services/wakeup.ts`) |
 | "May this caller move this task's assignee?" | `assertNoBlockingRun` (`lib/reassign-guard.ts`) - not the one-run-per-task check, which is `isTaskBusyInDb` (`services/run-concurrency.ts`) |
+| Serialising async work per key, with or without a bound | `lib/keyed-lock.ts` - `withKeyedLock` for a scope, `acquireKeyedLock` when the wait needs a `signal`/`timeoutMs`. Each family owns its own `KeyedLockRegistry`; never a second mutex |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |

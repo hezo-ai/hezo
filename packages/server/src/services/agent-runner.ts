@@ -48,6 +48,13 @@ import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { describeSignalExit, signalFromExitCode } from '../lib/exit-code';
 import { withProjectGitLock } from '../lib/git-lock';
 import {
+	type AcquireOptions,
+	acquireKeyedLock,
+	currentOwner,
+	type KeyedLockRegistry,
+	KeyedLockTimeoutError,
+} from '../lib/keyed-lock';
+import {
 	detectPassiveTeammateAsks,
 	detectUnlinkedTeammateAsks,
 	extractMentionSlugs,
@@ -370,25 +377,35 @@ export const getHostSubscriptionRoot = getHostSubscriptionRootImpl;
 
 /**
  * Some subscription credentials carry a single-use refresh token (Codex), so
- * two parallel runs against the same credential would mutually invalidate
- * each other. This in-process mutex serialises runs on the credential row's
- * id when the provider's refresh token rotates.
+ * two parallel runs against the same credential would mutually invalidate each
+ * other. Runs serialise on the credential row's id when the provider's refresh
+ * token rotates.
+ *
+ * Held for the whole run rather than for the token read alone: the CLI rewrites
+ * the file at a moment of its own choosing, and the rotated value is read back
+ * and persisted during teardown. A waiter therefore queues behind a complete
+ * run - which is why the wait is bounded, and why it is taken before a container
+ * rather than after.
  */
-const credentialLocks = new Map<string, Promise<void>>();
+const credentialLocks: KeyedLockRegistry = new Map();
 
-export async function acquireCredentialLock(configId: string): Promise<() => void> {
-	const previous = credentialLocks.get(configId) ?? Promise.resolve();
-	let release!: () => void;
-	const next = new Promise<void>((resolve) => {
-		release = resolve;
-	});
-	const chain = previous.then(() => next);
-	credentialLocks.set(configId, chain);
-	await previous;
-	return () => {
-		release();
-		if (credentialLocks.get(configId) === chain) credentialLocks.delete(configId);
-	};
+/**
+ * Take the credential lock, resolving to the function that gives it back.
+ *
+ * A bounded wait is the point: this used to be an unbounded promise chain, so a
+ * holder that never returned parked every later run on the credential forever,
+ * with nothing to time it out, cancel it or say what it was waiting on.
+ */
+export function acquireCredentialLock(
+	configId: string,
+	opts: AcquireOptions = {},
+): Promise<() => void> {
+	return acquireKeyedLock(credentialLocks, configId, opts);
+}
+
+/** What holds this credential right now, for a waiter's run log. */
+export function credentialLockHolder(configId: string): string | null {
+	return currentOwner(credentialLocks, configId);
 }
 
 export interface RunContext {
@@ -1368,7 +1385,20 @@ export async function runAgent(
 	const emit = (stream: 'stdout' | 'stderr', text: string) =>
 		deps.logs.emit(streamId, stream, text);
 
+	/**
+	 * Gives the rotating credential back, when this run took it.
+	 *
+	 * Released from two places, and idempotent so both are safe. Every exit that
+	 * happens before the exec block is opened goes through one of the three
+	 * finalizers below, and everything from the exec block onward is covered by
+	 * that block's own `finally`. Splitting it this way is what lets the lock be
+	 * taken before a container is claimed: a waiter that gives up, aborts or gets
+	 * requeued must not still be holding it.
+	 */
+	let releaseCredentialLock: (() => void) | null = null;
+
 	const finalizeFailure = async (message: string): Promise<RunResult> => {
+		releaseCredentialLock?.();
 		emit('stderr', `[runner] ${message}\n`);
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
@@ -1411,6 +1441,7 @@ export async function runAgent(
 	}
 
 	const finalizeAbort = async (): Promise<RunResult> => {
+		releaseCredentialLock?.();
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
 		const reason = runAbortReason(runAbort.signal);
@@ -1626,10 +1657,11 @@ export async function runAgent(
 	};
 
 	/**
-	 * Give up waiting for capacity and hand the work back to the queue.
+	 * Give up waiting on the instance and hand the work back to the queue.
 	 *
-	 * Reached only after `CAPACITY_PARK_MAX_MS` of parking. Not a failure - the
-	 * instance is simply still at its memory budget - so the row is finalized
+	 * Reached from both waits a run can sit in - container capacity, and the
+	 * rotating provider credential - once either passes its ceiling. Neither is a
+	 * failure: the instance is busy, not the agent. So the row is finalized
 	 * `Cancelled` rather than `Failed`, and the caller re-queues the wakeup.
 	 *
 	 * Finalizing it is the load-bearing part. A row left `queued` here is
@@ -1640,6 +1672,7 @@ export async function runAgent(
 	 * wakeup is free to dispatch on the next tick.
 	 */
 	const finalizeRequeue = async (reason: string): Promise<RunResult> => {
+		releaseCredentialLock?.();
 		const message = `${reason} - returning this run to the queue.`;
 		emit('stdout', `[runner] ${message}\n`);
 		const durationMs = Date.now() - startTime;
@@ -1664,6 +1697,50 @@ export async function runAgent(
 			requeued: true,
 		};
 	};
+
+	// Human-friendly label for run-scoped logs (egress proxy, ssh-agent) and for
+	// naming this run as a lock holder, since a run has no friendly identifier of
+	// its own.
+	const runLabel = task ? `${agent.slug}/${task.identifier}` : `${agent.slug}/progress-update`;
+
+	// Rotation is a property of the CLI that rewrites the token file, so read it
+	// off the resolved runtime rather than the provider's default.
+	const runtimeHomeLayout = RUNTIME_HOME_LAYOUTS[runtimeType];
+	if (credential.authMethod === AiAuthMethod.Subscription && runtimeHomeLayout?.rotates) {
+		// Taken **before** a container is claimed, and deliberately so. The lock is
+		// held for a whole run, so a waiter can sit here for minutes; claiming first
+		// meant every waiter pinned a container's memory for that entire wait, which
+		// the pool counts as used and cannot reclaim. Worse, the container went idle
+		// while its run waited, so the backend stopped it underneath and the run then
+		// failed on the first call it made. A waiter now holds nothing.
+		const holder = credentialLockHolder(credential.configId);
+		if (holder) {
+			emit('stdout', `[runner] Waiting for ${holder} to finish with this credential.\n`);
+		}
+		// Records the true wait so the run comment reads honestly while blocked.
+		await deps.db.query(
+			`UPDATE heartbeat_runs SET queued_reason = $1
+			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
+			['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
+		);
+		try {
+			releaseCredentialLock = await acquireCredentialLock(credential.configId, {
+				signal: runAbort.signal,
+				// The same bound the capacity park gets, because it is the same
+				// judgement: the instance is busy, so come back rather than wait out a
+				// window the orphan pass has stopped believing in.
+				timeoutMs: deps.capacityPark?.maxMs ?? CAPACITY_PARK_MAX_MS,
+				owner: runLabel,
+			});
+		} catch (e) {
+			if (runAbort.signal.aborted) return finalizeAbort();
+			if (e instanceof KeyedLockTimeoutError) {
+				return finalizeRequeue('Another run still holds this provider credential');
+			}
+			throw e;
+		}
+		if (holder) emit('stdout', '[runner] Credential free, starting the run.\n');
+	}
 
 	// Containers run on demand, and this run claims one **for itself**: the pool
 	// ladder reuses a warm container that last served this task, else any warm
@@ -1791,25 +1868,16 @@ export async function runAgent(
 	//
 	// Every release here is idempotent, so the explicit cleanup paths below do not
 	// double-free.
-	let releaseCredentialLock: (() => void) | null = null;
 	let runTunnel: RunTunnel | null = null;
 	let sshSocketAllocated = false;
 	let egressProxyAllocated = false;
 	try {
-		// Rotation is a property of the CLI that rewrites the token file, so read it
-		// off the resolved runtime rather than the provider's default.
-		const layout = RUNTIME_HOME_LAYOUTS[runtimeType];
-		if (credential.authMethod === AiAuthMethod.Subscription && layout?.rotates) {
-			// Records the true wait so the run comment reads honestly while blocked.
-			await deps.db.query(
-				`UPDATE heartbeat_runs SET queued_reason = $1
-				 WHERE id = $2 AND status = $3::heartbeat_run_status`,
-				['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
-			);
-			releaseCredentialLock = await acquireCredentialLock(credential.configId);
-		}
+		// Two gates before the run becomes real, because waiting for a credential
+		// and then a container takes long enough that the run can be ended from
+		// underneath in the meantime.
+		if (runAbort.signal.aborted) return finalizeAbort();
 
-		await markHeartbeatRunRunning(
+		const started = await markHeartbeatRunRunning(
 			deps.db,
 			heartbeatRunId,
 			runBroadcast,
@@ -1819,10 +1887,23 @@ export async function runAgent(
 			// the runs that were on it (see `failProjectRuns`).
 			containerId,
 		);
-
-		// Human-friendly label for run-scoped logs (egress proxy, ssh-agent),
-		// since a run has no friendly identifier of its own.
-		const runLabel = task ? `${agent.slug}/${task.identifier}` : `${agent.slug}/progress-update`;
+		// The second gate, and the one an abort cannot cover: the orphan pass reaps
+		// a row without touching this run's signal. `markHeartbeatRunRunning` is
+		// guarded on the row still being `queued`, so against a reaped row it
+		// silently did nothing and the agent ran on anyway - a full run, billed to
+		// the provider, that the UI had already reported as cancelled.
+		if (!started) {
+			const message = 'This run was ended before it could start; stopping without executing.';
+			emit('stderr', `[runner] ${message}\n`);
+			await deps.logs.end(streamId);
+			return {
+				success: false,
+				exitCode: -1,
+				stderr: message,
+				durationMs: Date.now() - startTime,
+				heartbeatRunId,
+			};
+		}
 
 		// Detect the container's run-user once (cached). Drives every --user exec, the
 		// ssh socket owner, and the chowns that give the run-user ownership of the
@@ -4411,15 +4492,19 @@ async function markHeartbeatRunRunning(
 	broadcast: HeartbeatRunBroadcast,
 	adapter: { aiProviderConfigId: string | null; provider: AiProvider | null },
 	containerId: string | null,
-): Promise<void> {
+): Promise<boolean> {
 	// Stamp the resolved AI adapter config on the run so recordRunCostAndEnforce
 	// can attribute the run's cost to it without re-resolving, and the container
 	// so a container's death can fail only the runs it was actually carrying.
+	//
+	// `queued_reason` is cleared on the way past: it describes what the run was
+	// waiting for, so carrying it onto a started row - and from there onto the
+	// terminal one - states a wait that ended as though it were the outcome.
 	const result = await db.query<{ id: string }>(
 		`UPDATE heartbeat_runs
 		    SET status = $1::heartbeat_run_status, started_at = now(),
 		        ai_provider_config_id = $4, provider = $5::ai_provider,
-		        container_id = $6
+		        container_id = $6, queued_reason = NULL
 		  WHERE id = $2 AND status = $3::heartbeat_run_status
 		  RETURNING id`,
 		[
@@ -4431,9 +4516,13 @@ async function markHeartbeatRunRunning(
 			containerId,
 		],
 	);
-	if (result.rows.length > 0) {
-		broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'UPDATE');
-	}
+	// Guarded on the row still being `queued`, so whoever declared an outcome
+	// first owns it. Reporting whether it applied is what lets the caller stop:
+	// a run reaped or cancelled while it waited would otherwise sail past this
+	// no-op and execute in full against a terminal row.
+	if (result.rows.length === 0) return false;
+	broadcastHeartbeatRunChange(broadcast, runId, HeartbeatRunStatus.Running, 'UPDATE');
+	return true;
 }
 
 async function updateHeartbeatRun(

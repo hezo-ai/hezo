@@ -24,6 +24,7 @@ import { runLogTextSql } from '../src/db/run-log-chunks';
 import { DomainEventBus } from '../src/events/bus';
 import type { Env } from '../src/lib/types';
 import {
+	acquireCredentialLock,
 	getHostPromptPath,
 	getHostSubscriptionRoot,
 	type RunnerDeps,
@@ -1043,7 +1044,7 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 });
 
 describe('runAgent lifecycle — subscription credential lock + rotation', () => {
-	it('records the queued_reason while waiting on the rotating credential and persists a valid rotated auth blob', async () => {
+	it('records the queued_reason while blocked, clears it once running, and persists a valid rotated auth blob', async () => {
 		const originalAuthJson = JSON.stringify({
 			tokens: {
 				id_token: 'header.payload.sig',
@@ -1097,20 +1098,44 @@ describe('runAgent lifecycle — subscription credential lock + rotation', () =>
 			},
 		});
 
-		const result = await runAgent(
+		// Hold the credential so the run has something real to wait behind.
+		const releaseCredential = await acquireCredentialLock(configId, { owner: 'prior-run' });
+
+		const runPromise = runAgent(
 			baseDeps(docker),
 			makeAgent(),
 			{ ...makeTask(), runtime_type: 'codex' as const },
 			makeProject(),
 		);
+
+		// The wait is recorded on the queued row while it is actually happening.
+		const blocked = await vi.waitFor(
+			async () => {
+				const rows = await db.query<{ queued_reason: string | null; container_id: string | null }>(
+					`SELECT queued_reason, container_id FROM heartbeat_runs
+					 WHERE member_id = $1 AND status = 'queued'
+					 ORDER BY created_at DESC LIMIT 1`,
+					[agentId],
+				);
+				expect(rows.rows[0]?.queued_reason).toBe('waiting for prior run on this credential');
+				return rows.rows[0];
+			},
+			{ timeout: 5_000, interval: 10 },
+		);
+		// A waiter holds no container: the lock is taken before the pool is asked.
+		expect(blocked.container_id).toBeNull();
+
+		releaseCredential();
+		const result = await runPromise;
 		expect(result.success).toBe(true);
 
-		// The lock wait was recorded on the queued row.
+		// And cleared once the run started, so a terminal row does not read as
+		// though the wait were its outcome.
 		const run = await db.query<{ queued_reason: string | null }>(
 			'SELECT queued_reason FROM heartbeat_runs WHERE id = $1',
 			[result.heartbeatRunId],
 		);
-		expect(run.rows[0].queued_reason).toBe('waiting for prior run on this credential');
+		expect(run.rows[0].queued_reason).toBeNull();
 
 		// The rotated credential (valid blob) was written back encrypted.
 		const cfg = await db.query<{ encrypted_credential: string }>(

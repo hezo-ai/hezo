@@ -96,10 +96,13 @@ running, or one that was cancelled, belongs to neither narrow view and appears u
 The choice is part of the page address, so a filtered view can be bookmarked or shared,
 and opening a run and coming back returns you to the view you were in.
 
-A run waiting for a container to free up shows as queued, not as an error - it keeps its
-place and starts as soon as memory is available. If the wait outlasts its patience the run
-is recorded as cancelled and the work goes back on the queue to be picked up again; that
-is not a failure, and it is why cancelled runs are their own thing rather than errors. See
+A run waiting its turn shows as queued, not as an error - it keeps its place and starts as
+soon as whatever it is waiting for is free. There are two such waits: for a container to
+free up, and for another run to finish with the same AI provider credential, which some
+subscriptions can only lend to one run at a time. Either way, if the wait outlasts its
+patience the run is recorded as cancelled and the work goes back on the queue to be picked
+up again; that is not a failure, and it is why cancelled runs are their own thing rather
+than errors. Hover the queued run's info icon to see which wait it is in. See
 [how much can run at once](/docs/containers/overview#how-much-can-run-at-once).
 
 ## Per-agent model override

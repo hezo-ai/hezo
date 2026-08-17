@@ -2289,7 +2289,9 @@ clock it has: a `running` row against `started_at` (30 s safety window), a `queu
 against `created_at` (the 120 s grace window, which spans the whole not-yet-started phase).
 Both arms are guarded by the in-process live-run registry — the run id is registered the
 moment the row is inserted, so a run whose host-side driver still owns it (waiting on the
-credential lock, say) is skipped and only a row whose driver has vanished is failed. The two
+credential lock or on container capacity, say) is skipped and only a row whose driver has
+vanished is failed. Both of those waits are bounded and finalize themselves, so a driver
+that still owns a row is one that will settle it. The two
 kinds are distinguished only by their recorded `error` (`Never started: …` vs
 `Orphaned: nothing was driving this run any more …`); the retry/approval escalation is
 shared. Neither verdict claims a process check - there is none to make, since a run's work
@@ -2300,8 +2302,9 @@ the cause its own writer recorded rather than being overwritten with the generic
 repairs the *surroundings* (execution locks, agent `runtime_status`, claimed wakeups) but
 never the run row itself.
 
-**Capacity park.** The one `queued` state that is *not* stranded is a run waiting for
-container capacity. When the pool ladder can only queue (`PoolCapacityError`), `runAgent`
+**Capacity park.** The `queued` states that are *not* stranded are the two waits a run sits
+in on purpose: container capacity, and the rotating provider credential. When the pool
+ladder can only queue (`PoolCapacityError`), `runAgent`
 does not return: it stamps `queued_reason` (`CAPACITY_PARK_QUEUED_REASON`,
 `services/run-concurrency.ts`) and re-tries the ladder on a short poll, up to a ceiling of
 its own that is deliberately shorter than the agent's `run_timeout_min` — running to that
@@ -2317,6 +2320,29 @@ consequences elsewhere: the idle-stop scan's busy set excludes a parked run
 (`BUSY_PROJECTS_SQL`), since it holds no container and is waiting on the very reclaim that
 scan feeds; and the run reads honestly while parked, the run comment and run detail page
 both rendering "Queued - waiting for container capacity" from `queued_reason`.
+
+**Credential wait.** The second such wait, and it is taken *before* the container. Some
+subscription credentials carry a single-use refresh token (Codex today, `rotates` in
+`RUNTIME_HOME_LAYOUTS`), so runs against one serialise on the credential row's id through
+`lib/keyed-lock`. The lock is held for the whole run, because the CLI rewrites the token
+file whenever it likes and the rotated value is read back during teardown - so a waiter
+queues behind a complete run, not behind a token read.
+
+Two properties follow from that, and both were learned the hard way. The wait is **bounded**
+(the same ceiling the capacity park uses) and gives up through the same `finalizeRequeue`,
+because an unbounded promise chain had no way for a waiter to leave: a holder that never
+returned parked every later run on that credential permanently, and nothing - not the orphan
+pass, not the run timeout, not an operator Terminate - could recover it short of a restart.
+And it is taken **before** the pool ladder is asked, because a waiter that already holds a
+container pins memory the pool counts as used and cannot reclaim, for the entire wait. That
+container then sits idle while its own run waits, long enough for a managed backend's idle
+timer to stop it underneath, so the run failed on the first call it made once it finally
+woke. A waiter now holds nothing.
+
+`queued_reason` is cleared when the row flips to `running`, so it describes a wait in
+progress rather than trailing onto the terminal row as though it were the outcome.
+`markHeartbeatRunRunning` reports whether its `queued`-guarded `UPDATE` applied, and a run
+whose row was ended while it waited stops there instead of executing against it.
 
 The registry is in-memory, so it protects a park only for as long as the process lives.
 `CAPACITY_PARK_MAX_MS` (180 s) deliberately exceeds `STALE_STATE_GRACE_SECONDS` (120 s), so
