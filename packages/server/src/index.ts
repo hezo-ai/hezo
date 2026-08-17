@@ -12,6 +12,7 @@ import {
 	ExternalMigrationFailedError,
 	MigrationFailedError,
 } from './db/migrate-errors';
+import { promptDockerDesktopInstall } from './lib/docker-desktop-prompt';
 import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
 import { setupWorkerUnlockHandoff } from './lib/unlock-handoff';
@@ -23,7 +24,7 @@ import { setKeepOldContainers } from './services/containers';
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import { formatPortInUseMessage, probePort } from './services/port-preflight';
-import { SandboxBackendError } from './services/sandbox/errors';
+import { DockerNotInstalledError, SandboxBackendError } from './services/sandbox/errors';
 import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import {
@@ -296,6 +297,23 @@ void (async () => {
 				phase: getStartupProgress().phase,
 				version: HEZO_VERSION,
 			});
+			// One failure gets more than a printed message: no container runtime at
+			// all, on Windows. The binary is normally launched from Explorer there and
+			// owns its console window, so `process.exit(1)` closes the window the
+			// guidance was just printed to and the operator sees a flash of black and
+			// nothing else. Hold the exit open on a dialog that explains why a
+			// container runtime is required, and open the Store listing if they accept.
+			if (err instanceof DockerNotInstalledError) {
+				await promptDockerDesktopInstall({
+					platform: process.platform,
+					autoOpenEnabled: config.open,
+					desktopSession: browserAvailable({
+						platform: process.platform,
+						env: process.env,
+						hasDockerEnv: existsSync('/.dockerenv'),
+					}).available,
+				});
+			}
 			process.exit(1);
 		}
 		if (err instanceof PgDataCorruptError) {

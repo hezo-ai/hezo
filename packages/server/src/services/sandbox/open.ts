@@ -10,7 +10,7 @@ import {
 import { describeDockerSocket } from '../docker-socket';
 import { DaytonaClient, DEFAULT_DAYTONA_API_URL } from './daytona/client';
 import { DaytonaEngine } from './daytona/engine';
-import { SandboxBackendError } from './errors';
+import { DockerNotInstalledError, SandboxBackendError } from './errors';
 import type { ContainerEngine } from './types';
 
 const log = logger.child('sandbox-backend');
@@ -158,11 +158,15 @@ async function dockerPreflightWithRetry(
 			await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
 			continue;
 		}
-		throw new SandboxBackendError(
+		const message =
 			`${formatDockerPreflightMessage({ ...result, status: result.status })}\n\n` +
-				'Alternatively, set --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers ' +
-				'on a managed sandbox service instead of a local daemon.',
-		);
+			'Alternatively, set --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers ' +
+			'on a managed sandbox service instead of a local daemon.';
+		// Same message either way; the narrower type only tells the fatal-exit path
+		// that this is the one failure the operator may never get to read.
+		throw result.status === 'not-installed'
+			? new DockerNotInstalledError(message)
+			: new SandboxBackendError(message);
 	}
 }
 

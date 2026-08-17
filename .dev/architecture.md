@@ -1249,6 +1249,22 @@ plus a pointer to `--sandbox-backend` as the alternative to a local daemon.
 `HEZO_SKIP_DOCKER` (the same flag that swaps in the in-process fake docker for dev/tests)
 bypasses it by taking the fake branch in `startup()` before the backend is opened.
 
+*Not installed* additionally throws the narrower `DockerNotInstalledError`, and the reason is
+Windows-specific: launched from Explorer the binary owns its console window, which closes with
+the process, so `process.exit(1)` destroys the window the guidance was just printed to and the
+operator sees a flash of black and nothing else. On that platform the fatal-exit path in
+`index.ts` therefore stops for a native dialog first (`lib/docker-desktop-prompt.ts`:
+`powershell.exe` driving a WinForms message box, answer carried back as the exit code since
+stdio is ignored). The copy is `SANDBOX_RATIONALE` verbatim - the same security answer the
+console gives, since "install Docker" alone reads as an arbitrary dependency - and OK opens
+`ms-windows-store://pdp/?productid=XP8CBJ40XLBWKX` through the existing `openBrowser`
+launcher. The wait is deliberate (it holds the process open so the dialog stays on screen) but
+bounded at 120s, because nothing in `browserAvailable` proves a human is present and an
+unbounded wait on a service account is an invisible hang. Gated on Windows + `config.open` +
+`browserAvailable`, so `--no-open`, CI, SSH and containers never see it.
+*Installed-but-stopped* is deliberately excluded: the fix there is to start the runtime
+already on the machine, not to install another.
+
 **Any Docker-compatible runtime qualifies, and the socket is resolved rather than assumed.**
 The client speaks the Engine API over a Unix socket (Bun `fetch({unix})` for one-shot calls,
 `node:http` `socketPath` for streams), so `tcp://`/`npipe://`/`ssh://` endpoints are

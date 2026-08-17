@@ -83,7 +83,9 @@ not supported. See [Container runtimes](/docs/deployment/container-runtimes).
 On a desktop machine Hezo opens the web app in your default browser once the server is
 ready. It skips this automatically in environments without a browser - CI, containers,
 SSH sessions, and headless Linux (no `DISPLAY`/`WAYLAND_DISPLAY`) - and logs where to
-point your browser instead. Use `--no-open` (or `HEZO_OPEN=0`) to turn it off.
+point your browser instead. Use `--no-open` (or `HEZO_OPEN=0`) to turn it off. The same
+flag governs the Windows dialog Hezo shows when no container runtime is installed
+([Container runtimes](/docs/deployment/container-runtimes)).
 
 ## Back up
 
@@ -215,7 +217,7 @@ table with defaults and descriptions; the ones most often set outside a shell ar
 | `HEZO_MASTER_KEY` | `--master-key` | The twelve-word master key, for a single non-interactive startup. Do not persist it to disk - see [Master key](/docs/security/master-key). |
 | `HEZO_WEB_URL` | `--web-url` | Public base URL, so account sign-ins redirect back correctly. |
 | `HEZO_LOG_LEVEL` | `--log-level` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
-| `HEZO_OPEN` | `--no-open` | Set to `0` to stop the web app opening in your browser on startup. |
+| `HEZO_OPEN` | `--no-open` | Set to `0` to stop the web app opening in your browser on startup, and to suppress the Windows "no container runtime" dialog. |
 | `HEZO_TELEMETRY_ENABLED` | `--disable-telemetry` | Set to `0` to turn off the anonymous daily usage report. |
 
 The container variables are the ones that behave differently from the rest: they seed a

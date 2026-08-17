@@ -7,8 +7,8 @@ section: Deployment
 # Container runtimes
 
 Hezo runs every project's agents inside a container. That container is a **security
-boundary**, not a packaging convenience - it keeps agents off your host so a buggy or
-compromised agent can't reach your files, credentials, or wider network (see
+boundary**, not a packaging convenience - it keeps agents off the rest of your system, so a
+buggy or compromised agent can't reach your files, credentials, or wider network (see
 [Container isolation](/docs/security/container-isolation)).
 
 This page is about the default setup, where containers run on **your own machine**. If
@@ -41,6 +41,14 @@ experimental.
 **On Windows**, Docker Desktop and Rancher Desktop expose the Engine API as a *named pipe*
 (`npipe://`), which Hezo cannot connect to - it speaks the API over a Unix socket. Run Hezo
 inside WSL2, where Docker Desktop's WSL integration provides `/var/run/docker.sock`.
+
+If you start Hezo on Windows with **no container runtime installed at all**, it does not
+just print the guidance below and exit: launched from Explorer it owns its console window,
+which closes with the process, so you would never get to read it. Instead a dialog explains
+why a container runtime is required, and clicking **OK** opens
+[Docker Desktop in the Microsoft Store](https://apps.microsoft.com/detail/xp8cbj40xlbwkx).
+Install it, start it, then start Hezo again. `--no-open` (or `HEZO_OPEN=0`) suppresses the
+dialog along with the browser, and it never appears over SSH, in CI or in a container.
 
 ## How Hezo finds the daemon
 
