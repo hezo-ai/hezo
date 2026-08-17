@@ -43,9 +43,23 @@ export function commentCategoryPredicate(
 }
 
 /**
+ * Whether a caller-supplied `since` is a timestamp Postgres will accept.
+ *
+ * Checked before it reaches the query: the value is cast to `timestamptz`, so an
+ * unparseable one fails inside the statement and surfaces as an internal error
+ * rather than telling the caller what was wrong with what it sent.
+ */
+export function isValidSince(value: string): boolean {
+	return !Number.isNaN(Date.parse(value));
+}
+
+/**
  * SQL fragment restricting a comment read to rows created after `since`, pushing
  * its bind param onto `params`. Strictly after, so passing the timestamp a
  * previous read ended at returns what has happened since and nothing twice.
+ *
+ * Callers validate with {@link isValidSince} first; an unchecked value reaches
+ * the cast and fails there.
  */
 export function commentSincePredicate(
 	alias: string,

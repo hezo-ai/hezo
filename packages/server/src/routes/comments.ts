@@ -12,7 +12,11 @@ import type { MasterKeyManager } from '../crypto/master-key';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { signAssetUrl } from '../lib/asset-urls';
 import { broadcastChange, broadcastCommentFamilyChange } from '../lib/broadcast';
-import { commentCategoryPredicate, commentSincePredicate } from '../lib/comment-filters';
+import {
+	commentCategoryPredicate,
+	commentSincePredicate,
+	isValidSince,
+} from '../lib/comment-filters';
 import { attachRunStatuses } from '../lib/comment-run-status';
 import { normalizeAllowedHosts } from '../lib/credential-placeholder';
 import { validateCredentialValue } from '../lib/credential-validator';
@@ -112,7 +116,7 @@ commentsRoutes.get('/projects/:projectId/tasks/:taskId/comments', async (c) => {
 		return err(c, 'BAD_REQUEST', 'Unknown categories value', 400);
 	}
 	const since = c.req.query('since');
-	if (since !== undefined && Number.isNaN(Date.parse(since))) {
+	if (since !== undefined && !isValidSince(since)) {
 		return err(c, 'BAD_REQUEST', 'since must be an ISO-8601 timestamp', 400);
 	}
 	const filter: CommentReadFilter = { categories, since };

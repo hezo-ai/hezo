@@ -78,7 +78,11 @@ import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
-import { commentCategoryPredicate, commentSincePredicate } from '../lib/comment-filters';
+import {
+	commentCategoryPredicate,
+	commentSincePredicate,
+	isValidSince,
+} from '../lib/comment-filters';
 import { attachRunStatuses } from '../lib/comment-run-status';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import {
@@ -3205,6 +3209,12 @@ export function registerTools(
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
+			const sinceArg = args.since as string | undefined;
+			if (sinceArg !== undefined && !isValidSince(sinceArg)) {
+				return {
+					error: `Invalid since: ${sinceArg}. Pass an ISO-8601 timestamp, e.g. "2026-08-17T04:00:00.000Z".`,
+				};
+			}
 			const limit = parseListLimit(args.limit);
 			const categories =
 				(args.categories as ThreadRowCategory[] | undefined) ?? DEFAULT_THREAD_ROW_CATEGORIES;
@@ -3218,7 +3228,7 @@ export function registerTools(
 			}
 			const category = commentCategoryPredicate('ic', categories, params);
 			if (category) conditions.push(category);
-			const since = commentSincePredicate('ic', args.since as string | undefined, params);
+			const since = commentSincePredicate('ic', sinceArg, params);
 			if (since) conditions.push(since);
 			const keyset = keysetPredicate('ic', decodeCursor(args.cursor as string | undefined), params);
 			if (keyset) conditions.push(keyset);
@@ -7216,6 +7226,8 @@ export function registerTools(
 				activated_at: string | null;
 				revoked_at: string | null;
 				auth_error: string | null;
+				probed_at: string | null;
+				probe_error: string | null;
 				created_at: string;
 				updated_at: string;
 				oauth_secret_name: string | null;
@@ -7231,6 +7243,7 @@ export function registerTools(
 				        mc.install_status::text AS install_status, mc.install_error,
 				        mc.skill_id, mc.created_by_task_id,
 				        mc.activated_at::text AS activated_at, mc.revoked_at::text AS revoked_at, mc.auth_error,
+				        mc.probed_at::text AS probed_at, mc.probe_error::text AS probe_error,
 				        mc.enabled_methods, mc.discovered_methods,
 				        mc.created_at::text, mc.updated_at::text,
 				        s.name AS oauth_secret_name, s.allowed_hosts AS oauth_allowed_hosts, oc.scopes AS oauth_scopes,
