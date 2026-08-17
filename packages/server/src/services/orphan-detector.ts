@@ -64,7 +64,14 @@ const ORPHAN_ERROR_TAIL_CHARS = 400;
 function orphanErrorMessage(neverStarted: boolean, logTail: string): string {
 	const verdict = neverStarted
 		? 'Never started: no host process was driving this run, so it was returned to the queue.'
-		: 'Orphaned: process no longer running';
+		: // Says what was observed rather than what was inferred. This pass performs
+			// no process check - it finds a `running` row that no live run in this
+			// process claims - and the old wording ("process no longer running")
+			// asserted one, which read as a fact while being a guess. It was also the
+			// text every setup failure ended up wearing, because those runs threw
+			// without recording anything and this was the only writer left.
+			'Orphaned: nothing was driving this run any more, so no result was ever recorded. ' +
+			'A restart, a crash or a wedged dispatch - not the agent failing.';
 	const excerpt = logTail.trim().slice(-ORPHAN_ERROR_TAIL_CHARS).trim();
 	return excerpt ? `${verdict}\n\nLast log output:\n${excerpt}` : verdict;
 }
@@ -155,8 +162,6 @@ export async function detectOrphans(
 		// here exactly like a healthy running one.
 		if (liveRunIds.has(run.id)) continue;
 
-		orphanCount++;
-
 		// The two arms are not the same event, and giving them one verdict was the
 		// bug. A `running` run had a process doing work that vanished mid-flight:
 		// output may be half-written, the container may hold a wedged tree, and the
@@ -174,7 +179,7 @@ export async function detectOrphans(
 		const tail = await readRunLogTail(db, run.id, ORPHAN_LOG_TAIL_CHARS);
 		const error = orphanErrorMessage(neverStarted, tail.text);
 
-		await db.query(
+		const reaped = await db.query<{ id: string }>(
 			`UPDATE heartbeat_runs
 			 SET status = $2::heartbeat_run_status,
 			     finished_at = now(),
@@ -182,14 +187,28 @@ export async function detectOrphans(
 			     -- Only a real process loss counts toward the escalation. A run that
 			     -- never started is being handed back, not retried after a failure.
 			     process_loss_retry_count = process_loss_retry_count + $4::int
-			 WHERE id = $1`,
+			 WHERE id = $1
+			   AND status IN ($5::heartbeat_run_status, $6::heartbeat_run_status)
+			 RETURNING id`,
 			[
 				run.id,
 				neverStarted ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
 				error,
 				neverStarted ? 0 : 1,
+				HeartbeatRunStatus.Queued,
+				HeartbeatRunStatus.Running,
 			],
 		);
+		// The row went terminal between the scan and this write - its own driver got
+		// there first, a container-death sweep claimed it, or an operator terminated
+		// it. That writer observed the run; this pass only ever observed its absence
+		// from an in-process registry, so their verdict stands and none of the repair
+		// below is this pass's to do. Unguarded, the race replaced a specific cause
+		// with the generic one and spent a strike on a run that had already reported
+		// itself.
+		if (reaped.rows.length === 0) continue;
+
+		orphanCount++;
 
 		// Task-less runs can't resolve a container here; the startup sweep is
 		// their backstop.

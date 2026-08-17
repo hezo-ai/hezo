@@ -455,7 +455,48 @@ describe('detectOrphans for runs stranded before they started', () => {
 		expect(byId.get(queuedId)?.error).toContain('Never started');
 		// A process that vanished mid-run is.
 		expect(byId.get(runningId)?.status).toBe(HeartbeatRunStatus.Failed);
-		expect(byId.get(runningId)?.error).toContain('Orphaned: process no longer running');
+		expect(byId.get(runningId)?.error).toContain('Orphaned: nothing was driving this run');
+	});
+
+	it('leaves a run alone that went terminal between the scan and the write', async () => {
+		// The lost-update race. The scan sees a `running` row; by the time this pass
+		// writes, the run's own driver has recorded the real cause. Unguarded, the
+		// generic verdict replaced it and a strike was spent on a run that had
+		// already reported itself.
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		const runId = await insertOrphanRun(agentId, teamId, {});
+
+		// Settle the row from underneath the pass, after its SELECT and before its
+		// UPDATE, by hooking the query the scan itself makes.
+		const racingDb = {
+			...db,
+			query: async (sql: string, params?: unknown[]) => {
+				const res = await db.query(sql, params as never);
+				if (sql.includes('FROM heartbeat_runs hr')) {
+					await db.query(
+						`UPDATE heartbeat_runs SET status = $1::heartbeat_run_status,
+						   finished_at = now(), error = $2 WHERE id = $3`,
+						[HeartbeatRunStatus.Failed, 'the real cause', runId],
+					);
+				}
+				return res;
+			},
+		} as unknown as typeof db;
+
+		expect(await detectOrphans(racingDb, new Set())).toBe(0);
+
+		const row = await db.query<{ error: string; process_loss_retry_count: number }>(
+			'SELECT error, process_loss_retry_count FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(row.rows[0].error).toBe('the real cause');
+		expect(row.rows[0].process_loss_retry_count).toBe(0);
+		const wakeups = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'reason' = 'orphan_retry'`,
+			[agentId],
+		);
+		expect(wakeups.rows[0].c).toBe(0);
 	});
 });
 

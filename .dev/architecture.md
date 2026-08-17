@@ -2277,8 +2277,12 @@ against `created_at` (the 120 s grace window, which spans the whole not-yet-star
 Both arms are guarded by the in-process live-run registry — the run id is registered the
 moment the row is inserted, so a run whose host-side driver still owns it (waiting on the
 credential lock, say) is skipped and only a row whose driver has vanished is failed. The two
-kinds are distinguished only by their recorded `error` (`Orphaned: run never started` vs
-`Orphaned: process no longer running`); the retry/approval escalation is shared.
+kinds are distinguished only by their recorded `error` (`Never started: …` vs
+`Orphaned: nothing was driving this run any more …`); the retry/approval escalation is
+shared. Neither verdict claims a process check - there is none to make, since `process_pid`
+is written nowhere and liveness is the in-process registry alone. The reap `UPDATE` is
+guarded on a non-terminal status, so a row that settled between the scan and the write keeps
+the cause its own writer recorded rather than being overwritten with the generic one.
 `healStaleRunState` is the inverse pass and deliberately counts `queued` as active, so it
 repairs the *surroundings* (execution locks, agent `runtime_status`, claimed wakeups) but
 never the run row itself.
