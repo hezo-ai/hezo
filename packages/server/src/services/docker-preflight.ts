@@ -137,11 +137,16 @@ export async function evaluateDockerPreflight(
  * Why a container runtime is mandatory, shared by every failure message: the
  * container is a security sandbox, not just a packaging convenience. Agents run
  * untrusted-ish code, so isolating them from the host is the whole point.
+ *
+ * Exported because the Windows install dialog gives the same answer to the same
+ * question, and an operator who reads it in two places should not get two
+ * different accounts of why Hezo refuses to start.
  */
-const SANDBOX_RATIONALE = [
-	"Hezo runs each project's AI agents inside isolated OS containers. That",
-	'sandbox is a security boundary: it keeps agents off your host so a buggy or',
-	"compromised agent can't reach your files, credentials, or wider network.",
+export const SANDBOX_RATIONALE = [
+	"Hezo runs each project's AI agents inside isolated OS containers. That sandbox",
+	'is a security boundary: it keeps agents off the rest of your system, so a buggy',
+	"or compromised agent can't reach your files, your credentials, or your wider",
+	'network.',
 ];
 
 /** How to start each supported runtime, printed when nothing answered. */

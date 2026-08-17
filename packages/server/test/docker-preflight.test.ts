@@ -240,7 +240,7 @@ describe('formatDockerPreflightMessage', () => {
 			const msg = formatDockerPreflightMessage(result);
 			expect(msg).toContain('isolated OS containers');
 			expect(msg).toContain('security boundary');
-			expect(msg).toContain('host');
+			expect(msg).toContain('the rest of your system');
 		}
 	});
 

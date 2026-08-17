@@ -18,6 +18,27 @@ export class SandboxBackendError extends Error {
 }
 
 /**
+ * No container runtime is installed on this machine.
+ *
+ * A `SandboxBackendError` in every respect, carrying the same guidance and
+ * killing the boot the same way. It is a distinct type only so the fatal-exit
+ * path can recognise the one case where the operator may never read that
+ * guidance: on Windows the binary is normally launched from Explorer and owns
+ * its console window, which closes with the process, so the message is printed
+ * to a window that disappears before it can be read. There the exit stops for a
+ * dialog first (`lib/docker-desktop-prompt.ts`).
+ *
+ * Narrow on purpose. "Installed but not running" is excluded, because the fix
+ * there is to start the runtime already on the machine, not to install another.
+ */
+export class DockerNotInstalledError extends SandboxBackendError {
+	constructor(message: string, options?: { cause?: unknown }) {
+		super(message, options);
+		this.name = 'DockerNotInstalledError';
+	}
+}
+
+/**
  * A backend that builds from a registry was handed an image only a local Docker
  * daemon can resolve.
  *

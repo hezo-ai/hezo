@@ -20,9 +20,11 @@ the instance at a managed sandbox service instead (below).
   startup it checks for a working daemon and, if none is reachable, prints how to install
   or start one (with a link to
   [Docker's install page](https://docs.docker.com/get-docker/)) and exits - so set one up
-  first. See [Container runtimes](/docs/deployment/container-runtimes) for the full list,
-  how the socket is discovered, and the extra mount step VM-backed runtimes like Colima
-  need.
+  first. On **Windows**, where the console window closes with the process and would take
+  that message with it, Hezo instead shows a dialog and offers to open Docker Desktop in
+  the Microsoft Store. See [Container runtimes](/docs/deployment/container-runtimes) for
+  the full list, how the socket is discovered, and the extra mount step VM-backed runtimes
+  like Colima need.
 - A machine you're happy to leave running while agents work (a laptop is fine to
   start; a small always-on server is better for long-running teams).
 

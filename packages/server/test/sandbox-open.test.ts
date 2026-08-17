@@ -7,7 +7,7 @@ import { DockerClient } from '../src/services/docker';
 import { DOCKER_INSTALL_URL } from '../src/services/docker-preflight';
 import { DaytonaClient } from '../src/services/sandbox/daytona/client';
 import { DaytonaEngine } from '../src/services/sandbox/daytona/engine';
-import { SandboxBackendError } from '../src/services/sandbox/errors';
+import { DockerNotInstalledError, SandboxBackendError } from '../src/services/sandbox/errors';
 import { openSandboxBackend } from '../src/services/sandbox/open';
 
 afterEach(() => {
@@ -191,6 +191,9 @@ describe('openSandboxBackend preflights Docker', () => {
 			expect(err).toBeInstanceOf(SandboxBackendError);
 			expect(err.message).toContain('none appears');
 			expect(err.message).toContain(DOCKER_INSTALL_URL);
+			// Narrower type so the Windows fatal-exit path can stop for a dialog: the
+			// console window closes with the process there, taking this message with it.
+			expect(err).toBeInstanceOf(DockerNotInstalledError);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -204,6 +207,10 @@ describe('openSandboxBackend preflights Docker', () => {
 			const err = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch((e) => e);
 			expect(err.message).toContain('no daemon answered');
 			expect(err.message).not.toContain('none appears');
+			// "Start the runtime you have" is not "install one", so this must not send
+			// the operator to a Store listing for something already on the machine.
+			expect(err).toBeInstanceOf(SandboxBackendError);
+			expect(err).not.toBeInstanceOf(DockerNotInstalledError);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
