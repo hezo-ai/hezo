@@ -5,9 +5,16 @@ import {
 	type AiProvider,
 	RUNTIMES_WITH_ROTATING_CREDENTIAL,
 } from '@hezo/shared';
-import type { AiProviderCredential } from './ai-provider-keys';
+import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
+import {
+	type AiProviderCredential,
+	type AiProviderCredentialAndModel,
+	updateAiProviderCredential,
+} from './ai-provider-keys';
 import type { SandboxFiles } from './sandbox/files';
 import type { ContainerEngine } from './sandbox/types';
+import { validateSubscriptionBlob } from './subscription-auth';
 import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath } from './workspace';
 
 export const CONTAINER_SUBSCRIPTION_DIR = '/workspace/.hezo/subscription';
@@ -336,4 +343,57 @@ export async function ensureRuntimeHomeDir(
 		containerDir,
 		envEntry: `${layout.envVarName}=${containerDir}`,
 	};
+}
+
+/**
+ * Read a rotated subscription credential back out of the container and store it.
+ *
+ * The counterpart to {@link buildSubscriptionMount}, and the reason the
+ * credential lock is held for a whole execution rather than for the write: the
+ * CLI rewrites this file at a moment of its own choosing, so the value only
+ * settles once the process has exited. Whoever runs a rotating credential owes
+ * this call before releasing the lock - an execution that skips it leaves the
+ * stored credential one rotation behind, and the next run fails to refresh.
+ *
+ * Best-effort by design: a failed write-back must not fail the work that just
+ * succeeded, so problems are reported through `onNotice` rather than thrown.
+ */
+export async function persistRotatedSubscriptionAuth(opts: {
+	db: Db;
+	masterKeyManager: MasterKeyManager;
+	engine: ContainerEngine;
+	containerId: string;
+	provider: AiProvider;
+	credential: AiProviderCredentialAndModel;
+	mount: SubscriptionMount | null | undefined;
+	onNotice?: (text: string) => void;
+}): Promise<void> {
+	const { mount } = opts;
+	if (!mount?.rotates) return;
+	try {
+		// Through SandboxFiles: the *container* rewrote this file, so a backend
+		// whose container is not on this machine has to read it back through the
+		// provider's file API rather than off disk.
+		const mountFiles = opts.engine.files(opts.containerId, mount.containerDir);
+		if (!(await mountFiles.exists(mount.authFileRelative))) return;
+		const rotated = await mountFiles.read(mount.authFileRelative);
+		if (!rotated || rotated === opts.credential.value) return;
+		// The CLI rewrites this file on every run: a rotated credential on success,
+		// but an empty "tombstone" (blank tokens) when the refresh fails. Persisting
+		// a tombstone would wipe the stored credential, so only write back a value
+		// that still validates as a usable credential.
+		const check = validateSubscriptionBlob(opts.provider, rotated);
+		if (!check.ok) {
+			opts.onNotice?.(`skipping rotated-auth write-back: ${check.error ?? 'invalid credential'}`);
+			return;
+		}
+		await updateAiProviderCredential(
+			opts.db,
+			opts.masterKeyManager,
+			opts.credential.configId,
+			rotated,
+		);
+	} catch (e) {
+		opts.onNotice?.(`failed to persist rotated subscription auth: ${(e as Error).message}`);
+	}
 }

@@ -142,6 +142,7 @@ import {
 	getContainerSubscriptionRoot as getContainerSubscriptionRootImpl,
 	getHostSubscriptionBase,
 	getHostSubscriptionRoot as getHostSubscriptionRootImpl,
+	persistRotatedSubscriptionAuth,
 	RUNTIME_HOME_LAYOUTS,
 	type RuntimeHomeMount,
 	SUBSCRIPTION_DIR_MODE,
@@ -2054,43 +2055,17 @@ export async function runAgent(
 			: undefined;
 		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride);
 
-		const persistRotatedAuth = async () => {
-			const mount = context.subscriptionMount;
-			if (!mount?.rotates) return;
-			try {
-				// Through SandboxFiles: the *container* rewrote this file during the
-				// run, so a backend whose container is not on this machine has to
-				// read it back through the provider's file API rather than off disk.
-				const mountFiles = deps.docker.files(containerId, mount.containerDir);
-				if (await mountFiles.exists(mount.authFileRelative)) {
-					const rotated = await mountFiles.read(mount.authFileRelative);
-					if (!rotated || rotated === credential.value) return;
-					// The CLI rewrites this file on every run: a rotated credential on
-					// success, but an empty "tombstone" (blank tokens) when the refresh
-					// fails. Persisting a tombstone would wipe the stored credential, so
-					// only write back a value that still validates as a usable credential.
-					const check = validateSubscriptionBlob(provider, rotated);
-					if (!check.ok) {
-						emit(
-							'stderr',
-							`[runner] skipping rotated-auth write-back: ${check.error ?? 'invalid credential'}\n`,
-						);
-						return;
-					}
-					await updateAiProviderCredential(
-						deps.db,
-						deps.masterKeyManager,
-						credential.configId,
-						rotated,
-					);
-				}
-			} catch (e) {
-				emit(
-					'stderr',
-					`[runner] failed to persist rotated subscription auth: ${(e as Error).message}\n`,
-				);
-			}
-		};
+		const persistRotatedAuth = () =>
+			persistRotatedSubscriptionAuth({
+				db: deps.db,
+				masterKeyManager: deps.masterKeyManager,
+				engine: deps.docker,
+				containerId,
+				provider,
+				credential,
+				mount: context.subscriptionMount,
+				onNotice: (text: string) => emit('stderr', `[runner] ${text}\n`),
+			});
 
 		// Best-effort teardown of run-scoped artifacts. Each step is isolated so a
 		// failed or slow release can never block the run result from reaching the
