@@ -442,6 +442,54 @@ describe('validateInjection', () => {
 		).toThrow(/inlined a bearer token/);
 	});
 
+	// Every adapter that stores bearers in env, so a new one inherits the cases
+	// below rather than needing them written again.
+	const envVarAdapters = Object.entries(MCP_ADAPTERS).filter(
+		([, a]) => a.capabilities.bearerTokenStorage === 'env-var',
+	);
+
+	it('covers more than one env-var adapter', () => {
+		expect(envVarAdapters.length).toBeGreaterThan(1);
+	});
+
+	for (const [runtime, adapter] of envVarAdapters) {
+		// A connector's Authorization header is a placeholder by design; the egress
+		// proxy substitutes the value at request time. Reading it as an inlined
+		// token failed every run on these runtimes for any project with a
+		// bearer-auth MCP connector.
+		it(`accepts a secret placeholder in a rendered header (${runtime})`, () => {
+			expect(() =>
+				validateInjection(adapter, {
+					cliArgs: [],
+					envEntries: [],
+					files: [
+						{
+							hostPath: '/tmp/config.toml',
+							mode: 0o600,
+							contents: 'Authorization = "Bearer __HEZO_SECRET_NOTION_TOKEN__"',
+						},
+					],
+				}),
+			).not.toThrow();
+		});
+
+		it(`still rejects a real token alongside a placeholder (${runtime})`, () => {
+			expect(() =>
+				validateInjection(adapter, {
+					cliArgs: [],
+					envEntries: [],
+					files: [
+						{
+							hostPath: '/tmp/config.toml',
+							mode: 0o600,
+							contents: 'a = "Bearer __HEZO_SECRET_NOTION_TOKEN__"\nb = "Bearer sk-live-abcdefgh"',
+						},
+					],
+				}),
+			).toThrow(/inlined a bearer token/);
+		});
+	}
+
 	it('rejects a file mode that is zero or out of range', () => {
 		for (const mode of [0, 0o1000]) {
 			expect(() =>
