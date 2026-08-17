@@ -521,7 +521,10 @@ Slack **load-balances events across an app's open Socket Mode connections**, so 
 cross-instance ownership lease is needed. **Telegram** (`chat-channels/telegram.ts`) has
 **no history API**, so context comes from **passive accumulation**: the webhook route
 hands unclaimed group messages to `observeMessage` → `chat_observed_messages`, a bounded
-rolling buffer (~200/chat, deduped on message id, pruned per chat, topic-scoped reads),
+rolling buffer (~200/chat, deduped on message id, pruned per chat, topic-scoped reads,
+ordered by an arrival counter rather than `created_at` - that column is the transaction
+clock, and a burst of messages shares one value, so the prune used to choose arbitrarily
+among tied rows and could drop a message newer than one it kept),
 and `fetchThreadContext` reads it back — requires BotFather privacy mode off; mention =
 `@botusername` or a reply to the bot; `parseInbound` accepts only private DMs and the
 designated Topics supergroup, so team-group chatter can never leak into the DM path.
@@ -2338,6 +2341,18 @@ container pins memory the pool counts as used and cannot reclaim, for the entire
 container then sits idle while its own run waits, long enough for a managed backend's idle
 timer to stop it underneath, so the run failed on the first call it made once it finally
 woke. A waiter now holds nothing.
+
+**The CEO chat takes the same lock**, per exec rather than per session: a chat turn drives
+the same coding CLI, so on a rotating credential it consumes and rewrites the same
+single-use token, and each of the three CLI execs a session makes (turn, compaction,
+titling) can rotate it. Per-exec because a session is long-lived and holding it for the
+session would starve task runs. The bound is shorter than a run's and a timeout is
+reported to the operator rather than waited out, since someone is watching the chatbox.
+`persistRotatedSubscriptionAuth` (`services/runtime-home.ts`, beside the
+`buildSubscriptionMount` that put the file there) is the shared write-back both paths owe
+before releasing - the chat had neither lock nor write-back, so a turn overlapping a run
+invalidated that run's token and dropped whatever the CLI left behind, leaving the stored
+credential a rotation behind.
 
 `queued_reason` is cleared when the row flips to `running`, so it describes a wait in
 progress rather than trailing onto the terminal row as though it were the outcome.
