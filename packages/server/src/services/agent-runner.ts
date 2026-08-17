@@ -115,10 +115,10 @@ import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import {
+	buildMcpInjection,
 	HEZO_MCP_SERVER_NAME,
 	MCP_ADAPTERS,
 	type McpDescriptor,
-	validateInjection,
 } from './mcp-injectors';
 import { retryOrEscalateLostRun, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
@@ -142,7 +142,7 @@ import {
 } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { createBundleVault } from './sandbox/bundle-vault';
-import type { RunEndpoints } from './sandbox/endpoints';
+import { PREFLIGHT_TUNNEL_ENDPOINTS, type RunEndpoints } from './sandbox/endpoints';
 import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberDiskUsage, setPoolMemberUnpushedFlag } from './sandbox/pool-db';
@@ -735,7 +735,7 @@ export async function buildRuntimeInvocation(
 		.then((r) => r.rows.map((row) => row.slug))
 		.catch(() => [] as string[]);
 
-	const mcpInjection = adapter.build(mcpDescriptors, {
+	const mcpInjection = buildMcpInjection(runtimeType, mcpDescriptors, {
 		hostHomeDir: homeMount?.hostDir ?? null,
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
@@ -744,7 +744,6 @@ export async function buildRuntimeInvocation(
 		stopJudge,
 		systemPrompt,
 	});
-	validateInjection(adapter, mcpInjection);
 
 	// Through SandboxFiles, rooted at the subscription base: the container reads
 	// these, so on a backend whose container is not on this machine the write has
@@ -1135,6 +1134,17 @@ function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 const CAPACITY_PARK_POLL_MS = 5_000;
 
 /**
+ * The stand-in bearer the pre-claim dry run gives the `hezo` MCP descriptor.
+ *
+ * Shaped like the signed token the real run mints - three dot-separated
+ * segments of token characters - so an adapter that inlines it into a file is
+ * caught by the same check that would catch the real one. It is never written
+ * anywhere and never reaches a container: the dry run's output is discarded and
+ * `buildRuntimeInvocation` builds again with the real token.
+ */
+const PREFLIGHT_BEARER_TOKEN = 'preflight.dry.run';
+
+/**
  * How long a run waits for capacity before giving up and returning to the queue.
  *
  * Deliberately not the agent's own `run_timeout_min`: letting the park run to
@@ -1519,6 +1529,68 @@ export async function runAgent(
 
 	if (signal?.aborted) return finalizeAbort();
 
+	// Prove the host-side half of the run before the pool is touched.
+	//
+	// Same reasoning as the credential resolution above: a misconfigured instance
+	// is an ordinary state, not an exceptional one, and it must not cost a
+	// container. `validateInjection` is a hard failure that ends the run, and it
+	// used to fire ~4s *after* a sandbox had been provisioned - which on a full
+	// budget means after another project's container was retired to make room. One
+	// bad connector header therefore cost two cold provisions per lap, forever.
+	//
+	// The dry run is the real descriptor list, the real adapter and the real home
+	// paths; only the tunnel's loopback port is stand-in, because it is chosen by
+	// an in-container probe and cannot exist yet. Nothing in an adapter or in
+	// `validateInjection` reads a port, which a drift test pins across every
+	// runtime rather than a comment asserting it here.
+	//
+	// The descriptors are loaded once and threaded into the run, so this costs no
+	// extra query.
+	let connectorDescriptors: McpDescriptor[];
+	try {
+		connectorDescriptors = await loadConnectorDescriptors(deps.db, project.id);
+		const homePaths = MCP_ADAPTERS[runtimeType].capabilities.requiresHomeDir
+			? {
+					hostHomeDir: getHostSubscriptionRootImpl(
+						provider,
+						runtimeType,
+						deps.dataDir,
+						runTeamId,
+						project.id,
+						heartbeatRunId,
+					),
+					containerHomeDir: getContainerSubscriptionRootImpl(provider, runtimeType, heartbeatRunId),
+				}
+			: { hostHomeDir: null, containerHomeDir: null };
+		buildMcpInjection(
+			runtimeType,
+			[
+				{
+					kind: 'http',
+					name: HEZO_MCP_SERVER_NAME,
+					url: `${PREFLIGHT_TUNNEL_ENDPOINTS.hezoBaseUrl}/mcp`,
+					// Shaped like the real signed token so the inlined-bearer check has
+					// something to catch. The real one is minted later, with the run.
+					bearerToken: PREFLIGHT_BEARER_TOKEN,
+				},
+				...connectorDescriptors,
+			],
+			{
+				hostHomeDir: homePaths.hostHomeDir,
+				containerHomeDir: homePaths.containerHomeDir,
+				provider,
+				runModel: modelOverride,
+				projectDocSlugs: [],
+				stopJudge: true,
+				systemPrompt: null,
+			},
+		);
+	} catch (e) {
+		return finalizeFailure(
+			`This run cannot be prepared: ${(e as Error).message} No container was started.`,
+		);
+	}
+
 	/**
 	 * Record that this run is parked waiting for container capacity.
 	 *
@@ -1784,14 +1856,13 @@ export async function runAgent(
 			};
 		}
 
-		// Loaded before the tunnel because its split-routing policy needs the
-		// connector hosts: the per-connector method allowlist is enforced *at the
-		// proxy*, so a connector routed direct would skip its policy check even when
-		// no secret is involved. They resolve from the db and the project alone -
-		// only the `hezo` descriptor needs the tunnel's endpoints, and that one is
-		// container loopback and never proxied - so nothing here waits on the
-		// tunnel. Threaded into `buildRunContext` after, so a run resolves them once.
-		const connectorDescriptors = await loadConnectorDescriptors(deps.db, project.id);
+		// The descriptors were loaded by the preflight above, before the container
+		// was claimed - they resolve from the db and the project alone, and only the
+		// `hezo` descriptor needs the tunnel's endpoints. They are needed here
+		// because the tunnel's split-routing policy is built from the connector
+		// hosts: the per-connector method allowlist is enforced *at the proxy*, so a
+		// connector routed direct would skip its policy check even when no secret is
+		// involved.
 
 		// The tunnel is how a container reaches Hezo - the only how, on every
 		// backend. Started here because it needs both allocations above: there is

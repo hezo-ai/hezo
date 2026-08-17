@@ -1497,6 +1497,83 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		expect(row.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
 	});
 
+	it('refuses a run whose MCP config cannot build, without starting a container', async () => {
+		// The production failure, and the assertion that matters is the call count.
+		// `validateInjection` needs no container, so firing it after one had been
+		// provisioned made every lap pay a cold provision - and, on a full budget,
+		// retire another project's container to make room for it first.
+		//
+		// The poison is a realistic misconfiguration: a SaaS connector whose header
+		// carries a raw token instead of a `__HEZO_SECRET_*__` placeholder. Codex
+		// stores bearers in env, so inlining one into its config.toml is exactly the
+		// contract violation the adapter check exists for.
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, activated_at)
+			 VALUES ($1, 'saas', $2::jsonb, 'installed', now())`,
+			[
+				'preflight-poison',
+				JSON.stringify({
+					url: 'https://example.test/mcp',
+					headers: { Authorization: 'Bearer sk-live-not-a-placeholder' },
+				}),
+			],
+		);
+		await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
+		await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: JSON.stringify({
+					tokens: {
+						id_token: 'header.payload.sig',
+						access_token: 'header.payload.sig',
+						refresh_token: 'rt-preflight',
+						account_id: 'acct-preflight',
+					},
+				}),
+				auth_method: AiAuthMethod.Subscription,
+				label: 'openai-preflight',
+			}),
+		});
+		try {
+			let created = 0;
+			const base = makeDocker();
+			const docker = {
+				...base,
+				createContainer: async (...args: unknown[]) => {
+					created++;
+					return (base.createContainer as (...a: unknown[]) => unknown)(...args) as never;
+				},
+			} as unknown as ContainerEngine;
+
+			// Pinned to Codex because it stores bearers in env; on an `inline` runtime
+			// the adapter contract permits a header in a file and there is nothing to
+			// refuse.
+			const result = await runAgent(
+				baseDeps(docker),
+				makeAgent(),
+				{ ...makeTask(), runtime_type: 'codex' as const },
+				makeProject(),
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.stderr).toContain('cannot be prepared');
+			expect(result.stderr).toContain('No container was started');
+			expect(created).toBe(0);
+
+			const row = await db.query<{ status: string; error: string }>(
+				'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+			expect(row.rows[0].error).toContain('inlined a bearer token');
+		} finally {
+			await db.query('DELETE FROM mcp_connections WHERE name = $1', ['preflight-poison']);
+			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
+		}
+	});
+
 	it('leaves nothing for the orphan pass to reap after a setup failure', async () => {
 		// The end-to-end property. The row is terminal the moment the run fails, so
 		// the 30s pass never selects it and never overwrites the real cause with
