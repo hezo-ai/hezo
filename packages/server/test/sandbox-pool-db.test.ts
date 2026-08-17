@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import { reconcilePoolMembers } from '../src/services/containers';
 import {
+	claimPoolMember,
 	projectHasStrandedCommits,
 	setPoolMemberUnpushedFlag,
 } from '../src/services/sandbox/pool-db';
@@ -259,6 +260,29 @@ describe('reconcilePoolMembers', () => {
 		});
 	});
 
+	// The container-side half of the credential-wedge cascade. A run holding a
+	// container long enough for a managed backend's idle timer to stop it had its
+	// claim released here, so the container was handed to whoever asked next - or
+	// destroyed by the reclaim pass - while the run was still going to use it.
+	it('leaves a stopped busy member claimed for the run still holding it', async () => {
+		await seed('busy-stopped', 'busy', 300);
+		const result = await reconcile(engine([], [], { 'busy-stopped': 0 }));
+
+		expect(await stateOf('busy-stopped')).toBe('busy');
+		// Still reported, so the pass that fails the runs on a dead container
+		// still gets to do it - the claim is what must not move, not the news.
+		expect(result.transitions).toHaveLength(1);
+		expect(result.transitions[0]).toMatchObject({
+			containerId: 'busy-stopped',
+			newStatus: 'stopped',
+		});
+		const err = await db.query<{ last_error: string | null }>(
+			'SELECT last_error FROM container_pool_members WHERE container_id = $1',
+			['busy-stopped'],
+		);
+		expect(err.rows[0].last_error).toContain('Container stopped');
+	});
+
 	it('leaves an already-suspended member untouched', async () => {
 		// Nothing changed, so there is nothing to report - and re-emitting would
 		// fail runs for a container that stopped long ago.
@@ -356,5 +380,64 @@ describe('reconcilePoolMembers', () => {
 			await reconcile(reporting(null));
 			expect(await memoryOf('unanswered')).toBeNull();
 		});
+	});
+});
+
+/**
+ * The claim is the one-run-per-container rule being enforced, so what it refuses
+ * matters as much as what it allows.
+ */
+describe('claimPoolMember', () => {
+	let db: PgliteDb;
+	let projectId: string;
+
+	const seed = async (containerId: string, state: string) => {
+		await db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state)
+			 VALUES ($1, $2, $3::container_pool_state)`,
+			[projectId, containerId, state],
+		);
+	};
+
+	beforeAll(async () => {
+		db = await createTestDbWithMigrations();
+		const team = await db.query<{ id: string }>(
+			"INSERT INTO teams (name, slug) VALUES ('clm', 'clm') RETURNING id",
+		);
+		const project = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix) VALUES ($1, 'clm', 'clm', 'CLM') RETURNING id`,
+			[team.rows[0].id],
+		);
+		projectId = project.rows[0].id;
+	});
+	afterAll(() => db.close());
+	beforeEach(() => db.query('DELETE FROM container_pool_members'));
+
+	it('claims an idle member', async () => {
+		await seed('free', 'idle');
+		expect(await claimPoolMember(db, 'free', null)).toBe(true);
+	});
+
+	it('refuses a member another run already holds', async () => {
+		await seed('taken', 'busy');
+		expect(await claimPoolMember(db, 'taken', null)).toBe(false);
+	});
+
+	// `<> 'busy'` used to let these through, so a container the backend had just
+	// stopped was handed straight to a run, which died on its first call against
+	// a sandbox that was not up.
+	it('refuses a suspended member rather than handing a run a stopped container', async () => {
+		await seed('parked', 'suspended');
+		expect(await claimPoolMember(db, 'parked', null)).toBe(false);
+	});
+
+	it('refuses a member whose provisioning failed', async () => {
+		await seed('broken', 'error');
+		expect(await claimPoolMember(db, 'broken', null)).toBe(false);
+	});
+
+	it('refuses a member that is still coming up', async () => {
+		await seed('coming-up', 'creating');
+		expect(await claimPoolMember(db, 'coming-up', null)).toBe(false);
 	});
 });

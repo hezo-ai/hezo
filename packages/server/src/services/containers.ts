@@ -2771,10 +2771,24 @@ export async function reconcilePoolMembers(
 				? `Container exited with code ${exitCode} (${info.State.Status}).`
 				: `Container stopped (${info.State.Status}).`,
 		);
-		await setPoolMemberState(db, member.containerId, 'suspended');
-		log.info(
-			`pool member ${member.containerId.slice(0, 12)} (${member.state}) is stopped on the backend — suspended`,
-		);
+		// A `busy` member's container belongs to a live run, and the claim is that
+		// run's to give back. Suspending it here released the claim underneath the
+		// run: the container was then handed to whoever asked next, or destroyed by
+		// the reclaim pass, and the run died on its next call against a sandbox
+		// that was stopped or gone. The transition below still fires either way, so
+		// the run is failed cleanly by the pass that owns that - and its own
+		// teardown releases the claim.
+		if (member.state === 'busy') {
+			log.info(
+				`pool member ${member.containerId.slice(0, 12)} is stopped on the backend — ` +
+					'left claimed for the run still holding it',
+			);
+		} else {
+			await setPoolMemberState(db, member.containerId, 'suspended');
+			log.info(
+				`pool member ${member.containerId.slice(0, 12)} (${member.state}) is stopped on the backend — suspended`,
+			);
+		}
 		result.transitions.push({
 			projectId: member.projectId,
 			projectSlug: member.projectSlug,

@@ -161,11 +161,19 @@ export async function upsertPoolMember(
 /**
  * Move a member between states.
  *
- * `busy` is claimed rather than set: the `WHERE state <> 'busy'` makes the
+ * `busy` is claimed rather than set: the `WHERE state = 'idle'` makes the
  * transition the point at which two concurrent acquires are resolved, so the
  * loser sees zero rows and picks again instead of both runs believing they own
  * the container. That is the one-run-per-container rule actually being enforced,
  * rather than merely decided by the ladder a moment earlier.
+ *
+ * `idle` and not merely "not busy", because `suspended` and `error` are equally
+ * unclaimable and used to pass: a container the backend had just stopped was
+ * handed straight to a run, which then died on its first call against a sandbox
+ * that was not up. Every rung of the ladder already lands its member on `idle`
+ * first - the resume rung starts it, the reuse rung re-decides anything not
+ * running, and a freshly provisioned member is inserted `idle` - so this
+ * narrows what can be claimed without narrowing what can be acquired.
  *
  * Returns whether the row moved.
  */
@@ -179,7 +187,7 @@ export async function claimPoolMember(
 	const res = await db.query<{ container_id: string }>(
 		`UPDATE container_pool_members
 		    SET state = 'busy', last_task_id = COALESCE($2, last_task_id), updated_at = now()
-		  WHERE container_id = $1 AND state <> 'busy'
+		  WHERE container_id = $1 AND state = 'idle'
 		  RETURNING container_id`,
 		[containerId, lastTaskId],
 	);
