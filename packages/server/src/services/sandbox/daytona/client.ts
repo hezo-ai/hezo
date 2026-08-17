@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import { trackBackground } from '../../../lib/background';
 import { combineAbortSignals } from '../../../lib/net';
 import { logger } from '../../../logger';
-import { ExecStreamLostError } from '../errors';
+import { ContainerUnreachableError, ExecStreamLostError } from '../errors';
 import { chunkPtyPayload } from './command';
 
 const log = logger.child('daytona');
@@ -238,6 +238,32 @@ export interface CreateSandboxSpec {
 	autoDeleteInterval?: number;
 }
 
+/**
+ * The provider's wording for "the sandbox is not up, so I cannot route to it".
+ *
+ * Measured against the live API: a stopped or still-starting sandbox answers
+ * **400**, not a transient status, with this in the body - so nothing generic
+ * catches it and it read as a permanent failure of the run.
+ */
+const UNREACHABLE_BODY =
+	/failed to resolve container IP|Is the Sandbox started\?|sandbox is not running/i;
+
+/**
+ * Raise the right class for a failed request.
+ *
+ * The unreachable shape becomes a backend-agnostic `ContainerUnreachableError`
+ * here, inside the adapter, because a provider-named type may never be
+ * classified above the `ContainerEngine` seam. 404 is excluded deliberately:
+ * the engine turns "gone" into a null sandbox and raises its own error with
+ * more context than the response has.
+ */
+function daytonaFailure(message: string, status: number, body: string): Error {
+	if (status !== 404 && UNREACHABLE_BODY.test(body)) {
+		return new ContainerUnreachableError(message);
+	}
+	return new DaytonaApiError(message, status, body);
+}
+
 export class DaytonaApiError extends Error {
 	constructor(
 		message: string,
@@ -447,7 +473,7 @@ export class DaytonaClient implements DaytonaApi {
 				res.status === 403
 					? ' (the API key is likely missing a permission scope - volumes need read:volumes/write:volumes/delete:volumes)'
 					: '';
-			throw new DaytonaApiError(
+			throw daytonaFailure(
 				`Daytona ${method} ${path} failed (${res.status})${hint}: ${bodySnippet(text)}`,
 				res.status,
 				text,
@@ -607,7 +633,7 @@ export class DaytonaClient implements DaytonaApi {
 		});
 		const text = await res.text();
 		if (!res.ok) {
-			throw new DaytonaApiError(
+			throw daytonaFailure(
 				`Daytona execute failed (${res.status}): ${bodySnippet(text)}`,
 				res.status,
 				text,
@@ -662,7 +688,7 @@ export class DaytonaClient implements DaytonaApi {
 			// addressed to a session that does not exist, so the real failure would
 			// otherwise surface as a confusing "returned no cmdId" one step later.
 			const body = await created.text();
-			throw new DaytonaApiError(
+			throw daytonaFailure(
 				`Daytona session create failed (${created.status}): ${bodySnippet(body)}`,
 				created.status,
 				body,
@@ -705,7 +731,7 @@ export class DaytonaClient implements DaytonaApi {
 				// would take the `?? 0` below and report a failed command as a clean
 				// exit.
 				const body = await infoRes.text();
-				throw new DaytonaApiError(
+				throw daytonaFailure(
 					`Daytona command record fetch failed (${infoRes.status}): ${bodySnippet(body)}`,
 					infoRes.status,
 					body,
@@ -808,11 +834,7 @@ export class DaytonaClient implements DaytonaApi {
 			if (!res.ok) {
 				await res.arrayBuffer().catch(() => undefined);
 				if (!TRANSIENT_STATUSES.has(res.status)) {
-					throw new DaytonaApiError(
-						`Daytona command log stream failed (${res.status})`,
-						res.status,
-						'',
-					);
+					throw daytonaFailure(`Daytona command log stream failed (${res.status})`, res.status, '');
 				}
 				reconnects += 1;
 				if (reconnects > MAX_LOG_STREAM_RECONNECTS) {
@@ -901,7 +923,7 @@ export class DaytonaClient implements DaytonaApi {
 		// had already landed lands on this branch rather than failing the teardown.
 		if (!res.ok && res.status !== 404) {
 			const body = await res.text();
-			throw new DaytonaApiError(`Daytona session delete failed (${res.status})`, res.status, body);
+			throw daytonaFailure(`Daytona session delete failed (${res.status})`, res.status, body);
 		}
 	}
 
@@ -953,7 +975,7 @@ export class DaytonaClient implements DaytonaApi {
 		});
 		if (!res.ok) {
 			const text = await res.text().catch(() => '');
-			throw new DaytonaApiError(
+			throw daytonaFailure(
 				`Daytona POST /process/pty failed (${res.status}): ${bodySnippet(text)}`,
 				res.status,
 				text,
@@ -1220,7 +1242,7 @@ export class DaytonaClient implements DaytonaApi {
 		const res = await this.send('DELETE', `${base}/process/pty/${encodeURIComponent(sessionId)}`);
 		// A session that is already gone is the desired end state, not an error.
 		if (!res.ok && res.status !== 404) {
-			throw new DaytonaApiError(
+			throw daytonaFailure(
 				`Daytona DELETE /process/pty/${sessionId} failed (${res.status})`,
 				res.status,
 				await res.text(),
@@ -1254,7 +1276,7 @@ export class DaytonaClient implements DaytonaApi {
 		});
 		if (!res.ok && res.status !== 404) {
 			const text = await res.text();
-			throw new DaytonaApiError(
+			throw daytonaFailure(
 				`Daytona file ${method} ${path} failed (${res.status}): ${bodySnippet(text, 300)}`,
 				res.status,
 				text,

@@ -671,3 +671,48 @@ describe('a caller signal never costs a call its timeout', () => {
 		expect(signals[0]).toBeDefined();
 	});
 });
+
+// The production failure this exists for: a stopped or still-starting sandbox
+// answers 400 - not a transient status - so nothing generic caught it and every
+// run lost to a sandbox the provider had stopped underneath it was burned as a
+// permanent failure, with no retry and a failure ping on the task.
+describe('a sandbox that is not up reads as unreachable, not as a bad request', () => {
+	const NOT_STARTED = JSON.stringify({
+		statusCode: 400,
+		message:
+			'bad request: failed to resolve container IP after 3 attempts: no IP address found. Is the Sandbox started?',
+		code: 'BAD_REQUEST',
+	});
+
+	it('raises a backend-agnostic error from a file write', async () => {
+		scriptFetch([{ status: 400, raw: NOT_STARTED }]);
+		const err = await client()
+			.createFolder(sandbox, '/workspace')
+			.catch((e: unknown) => e as Error);
+		expect((err as Error).name).toBe('ContainerUnreachableError');
+	});
+
+	it('raises it from an exec too', async () => {
+		scriptFetch([{ status: 400, raw: NOT_STARTED }]);
+		const err = await client()
+			.execute(sandbox, 'echo hi')
+			.catch((e: unknown) => e as Error);
+		expect((err as Error).name).toBe('ContainerUnreachableError');
+	});
+
+	it('leaves an ordinary bad request as a provider error', async () => {
+		scriptFetch([{ status: 400, body: { message: 'invalid command' } }]);
+		const err = await client()
+			.execute(sandbox, 'echo hi')
+			.catch((e: unknown) => e as Error);
+		expect(err).toBeInstanceOf(DaytonaApiError);
+	});
+
+	it('names no backend, so nothing above the seam learns which provider it was', async () => {
+		scriptFetch([{ status: 400, raw: NOT_STARTED }]);
+		const err = await client()
+			.execute(sandbox, 'echo hi')
+			.catch((e: unknown) => e as Error);
+		expect((err as Error).name).not.toMatch(/Daytona/);
+	});
+});

@@ -3,6 +3,7 @@ import { statSync } from 'node:fs';
 import { DEFAULT_CONTAINER_DISK_GB } from '@hezo/shared';
 import { trackBackground } from '../../../lib/background';
 import { logger } from '../../../logger';
+import { ContainerUnreachableError } from '../errors';
 import { assertRegistryPullableImage, resolveDigestPinnedRef } from '../image-ref';
 import {
 	buildDiskUsageScript,
@@ -533,7 +534,8 @@ export class DaytonaEngine implements ContainerEngine {
 		const rec = this.execs.get(execId);
 		if (!rec) throw new Error(`unknown exec ${execId}`);
 		const sandbox = await this.fetch(rec.containerId);
-		if (!sandbox) throw new Error(`sandbox ${rec.containerId} not found`);
+		if (!sandbox)
+			throw new ContainerUnreachableError(`sandbox ${rec.containerId} no longer exists`);
 
 		let stdout = '';
 		if (opts.onChunk) {
@@ -591,7 +593,7 @@ export class DaytonaEngine implements ContainerEngine {
 	 */
 	async openExecChannel(containerId: string, config: ExecConfig): Promise<ContainerByteChannel> {
 		const sandbox = await this.fetch(containerId);
-		if (!sandbox) throw new Error(`sandbox ${containerId} not found`);
+		if (!sandbox) throw new ContainerUnreachableError(`sandbox ${containerId} no longer exists`);
 		const sessionId = `hezo-chan-${randomBytes(6).toString('hex')}`;
 		const pty = await this.client.openPty(
 			sandbox,
@@ -755,7 +757,7 @@ export class DaytonaEngine implements ContainerEngine {
 	files(containerId: string, containerRoot: string): SandboxFiles {
 		const load = async (): Promise<DaytonaSandbox> => {
 			const sandbox = await this.fetch(containerId);
-			if (!sandbox) throw new Error(`sandbox ${containerId} not found`);
+			if (!sandbox) throw new ContainerUnreachableError(`sandbox ${containerId} no longer exists`);
 			return sandbox;
 		};
 		// A thin forwarding shell so each operation resolves the sandbox lazily -

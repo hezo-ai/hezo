@@ -4,7 +4,7 @@ import {
 	RunFailureClass,
 	transientRunFailureNames,
 } from '../src/services/run-failure-classification';
-import { ExecStreamLostError } from '../src/services/sandbox/errors';
+import { ContainerUnreachableError, ExecStreamLostError } from '../src/services/sandbox/errors';
 import { TunnelPortsExhaustedError } from '../src/services/sandbox/tunnel/ports';
 
 describe('classifyRunFailure', () => {
@@ -14,6 +14,15 @@ describe('classifyRunFailure', () => {
 
 	it('treats exhausted tunnel ports as transient', () => {
 		expect(classifyRunFailure(new TunnelPortsExhaustedError('c1'))).toBe(RunFailureClass.Transient);
+	});
+
+	it('treats an unreachable container as transient', () => {
+		// The container was stopped or removed out from under the run - a
+		// provider's idle timer, a reclaim, an operator. The next attempt gets a
+		// container of its own and finds nothing wrong.
+		expect(classifyRunFailure(new ContainerUnreachableError('sandbox x no longer exists'))).toBe(
+			RunFailureClass.Transient,
+		);
 	});
 
 	it('treats an MCP injection fault as permanent', () => {

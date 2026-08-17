@@ -83,3 +83,25 @@ export class ExecStreamLostError extends Error {
 		this.name = 'ExecStreamLostError';
 	}
 }
+
+/**
+ * The container could not be reached: it is stopped, gone, or the backend
+ * cannot route to it.
+ *
+ * A fact about this attempt rather than about the instance, so it earns a
+ * bounded retry - the next attempt provisions or resumes a container of its own
+ * and finds nothing wrong. Left unclassified it was permanent, and a run lost to
+ * a sandbox the provider had stopped underneath it burned the agent's turn and
+ * posted a failure ping for infrastructure the agent had no part in.
+ *
+ * Backend-agnostic on purpose, and translated **inside** each adapter: a
+ * provider's own error type may never be classified above the `ContainerEngine`
+ * seam. Distinct from a quota or memory-cap refusal, which really is a fact
+ * about the instance and stays permanent.
+ */
+export class ContainerUnreachableError extends Error {
+	constructor(detail: string, options?: { cause?: unknown }) {
+		super(`the container could not be reached: ${detail}`, options);
+		this.name = 'ContainerUnreachableError';
+	}
+}
