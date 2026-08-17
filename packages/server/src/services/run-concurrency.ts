@@ -1,4 +1,9 @@
-import { CONTAINER_RECLAIM_MIN_IDLE_SEC, ContainerStatus, HeartbeatRunStatus } from '@hezo/shared';
+import {
+	CONTAINER_RECLAIM_MIN_IDLE_SEC,
+	ContainerStatus,
+	HeartbeatRunStatus,
+	QueuedRunReason,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
 
@@ -32,8 +37,13 @@ import type { ContainerEngine } from './sandbox/types';
  * pass reclaiming the very capacity it waits on. Written by `agent-runner`'s
  * capacity park and read by the idle-stop scan's busy set, so the two must not
  * drift.
+ *
+ * Re-exported from `@hezo/shared` rather than declared here: the web recognises
+ * the same value to explain the wait to an operator, and one definition is what
+ * keeps the stored string, the SQL that matches it and the UI that reads it from
+ * drifting apart.
  */
-export const CAPACITY_PARK_QUEUED_REASON = 'waiting for container capacity';
+export const CAPACITY_PARK_QUEUED_REASON = QueuedRunReason.CapacityPark;
 
 export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 	const active = await db.query(

@@ -24,6 +24,7 @@ import {
 	type PromptDelivery,
 	providerDirectUpstreamHosts,
 	providerRuntimeBinding,
+	QueuedRunReason,
 	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_COMMANDS,
 	RUNTIME_DISALLOWED_TOOLS_ARGS,
@@ -1724,7 +1725,7 @@ export async function runAgent(
 		await deps.db.query(
 			`UPDATE heartbeat_runs SET queued_reason = $1
 			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
-			['waiting for prior run on this credential', heartbeatRunId, HeartbeatRunStatus.Queued],
+			[QueuedRunReason.CredentialSerialized, heartbeatRunId, HeartbeatRunStatus.Queued],
 		);
 		try {
 			releaseCredentialLock = await acquireCredentialLock(credential.configId, {
