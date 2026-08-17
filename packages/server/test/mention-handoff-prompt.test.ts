@@ -6,6 +6,7 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	buildTaskPrompt,
+	loadCatchUpSinceLastRun,
 	loadCommentHistory,
 	loadCommentWakeContext,
 	loadMentionContext,
@@ -875,5 +876,85 @@ describe('recent comments block + comment-wake handoff (integration)', () => {
 		});
 		expect(resolved).toContain('Read the thread before you act');
 		expect(resolved).toContain('list_comments');
+	});
+});
+
+// What an agent returning to a task is told to read. Without this the prompt says
+// "read the thread", which on a task open for months means re-reading everything
+// every run - the shape that cost one production run millions of tokens.
+describe('catch-up since the agent last ran on a task', () => {
+	async function seedTask(title: string): Promise<string> {
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+			[teamId, projectId, Math.floor(Math.random() * 100000) + 5000, `CU-${title}`, title],
+		);
+		return r.rows[0].id;
+	}
+
+	async function seedFinishedRun(taskId: string, finishedAt: string): Promise<string> {
+		const r = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, finished_at)
+			 VALUES ($1, $2, $3, 'succeeded'::heartbeat_run_status, $4::timestamptz, $4::timestamptz)
+			 RETURNING id`,
+			[teamId, captainMemberId, taskId, finishedAt],
+		);
+		return r.rows[0].id;
+	}
+
+	async function seedComment(taskId: string, type: string, at: string, runId?: string) {
+		await db.query(
+			`INSERT INTO task_comments (task_id, content_type, content, created_at, created_by_run_id)
+			 VALUES ($1, $2::comment_content_type, $3::jsonb, $4::timestamptz, $5)`,
+			[taskId, type, JSON.stringify({ text: 'x', kind: 'status_change' }), at, runId ?? null],
+		);
+	}
+
+	it('returns nothing on the agent first run on a task', async () => {
+		const taskId = await seedTask('first');
+		expect(
+			await loadCatchUpSinceLastRun(db, captainMemberId, taskId, crypto.randomUUID()),
+		).toBeNull();
+	});
+
+	it('counts what landed after the previous run, excluding run markers', async () => {
+		const taskId = await seedTask('counts');
+		await seedFinishedRun(taskId, '2026-03-01T10:00:00Z');
+		await seedComment(taskId, 'text', '2026-03-01T09:00:00Z'); // before, ignored
+		await seedComment(taskId, 'text', '2026-03-01T11:00:00Z');
+		await seedComment(taskId, 'text', '2026-03-01T12:00:00Z');
+		await seedComment(taskId, 'system', '2026-03-01T13:00:00Z');
+		await seedComment(taskId, 'run', '2026-03-01T14:00:00Z');
+
+		const current = await seedFinishedRun(taskId, '2026-03-01T15:00:00Z');
+		const catchUp = await loadCatchUpSinceLastRun(db, captainMemberId, taskId, current);
+		expect(catchUp).not.toBeNull();
+		expect(new Date(catchUp!.since).toISOString()).toBe('2026-03-01T10:00:00.000Z');
+		// Two text rows plus the system row; the run marker is not part of the read.
+		expect(catchUp!.newRows).toBe(3);
+		expect(catchUp!.newComments).toBe(2);
+	});
+
+	it('does not count the run own writes back to it', async () => {
+		const taskId = await seedTask('self');
+		await seedFinishedRun(taskId, '2026-03-02T10:00:00Z');
+		const current = await seedFinishedRun(taskId, '2026-03-02T12:00:00Z');
+		await seedComment(taskId, 'text', '2026-03-02T11:00:00Z', current);
+
+		const catchUp = await loadCatchUpSinceLastRun(db, captainMemberId, taskId, current);
+		expect(catchUp!.newRows).toBe(0);
+	});
+
+	it('measures from the latest previous run, not the first', async () => {
+		const taskId = await seedTask('latest');
+		await seedFinishedRun(taskId, '2026-03-03T08:00:00Z');
+		await seedFinishedRun(taskId, '2026-03-03T14:00:00Z');
+		await seedComment(taskId, 'text', '2026-03-03T10:00:00Z'); // between the two
+		await seedComment(taskId, 'text', '2026-03-03T15:00:00Z');
+
+		const current = await seedFinishedRun(taskId, '2026-03-03T16:00:00Z');
+		const catchUp = await loadCatchUpSinceLastRun(db, captainMemberId, taskId, current);
+		expect(new Date(catchUp!.since).toISOString()).toBe('2026-03-03T14:00:00.000Z');
+		expect(catchUp!.newRows).toBe(1);
 	});
 });
