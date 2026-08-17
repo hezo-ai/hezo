@@ -1877,17 +1877,30 @@ and a fresh one be built.
   wedged instance, not a slow one. `findStaleIdleMembers` asks the member-shaped question
   instead, clocked on `last_released_at` (made total and indexed by migration 053; the old
   clock was `projects.container_last_started_at`, so starting any container reset the timer
-  for every idle sibling). It fires only for projects that have a `busy` member - a fully
-  idle project still belongs to the whole-project pass, which keeps one member suspended for
-  a warm restart.
+  for every idle sibling). It fires for **every** project. It used to require a `busy`
+  member, leaving a fully idle project to the whole-project pass and its warm-start
+  guarantee - but the two preconditions did not partition the space: a project whose runs
+  last seconds is never quiet (queued wakeups and recent finishes keep it out of the
+  project-shaped pass) and rarely busy when the once-a-minute cron samples it, so its idle
+  members matched neither and pinned the budget indefinitely. The warm-start floor now lives
+  in the planner, where it is a property of the plan rather than of which pass ran: one
+  member is held back and suspended only when nothing else - a busy, suspended or pinned
+  member - could serve the project's next run.
 - **Cross-project reclaim** (`planCrossProjectReclaim`, the `reclaim` rung of
   `selectPoolMember`). Closes the gap in between: rather than queue behind memory a
   neighbour is demonstrably not using, a blocked acquire retires enough of other projects'
   idle members to cover its shortfall. All-or-nothing (freeing part of the shortfall helps
   nobody and has destroyed a warm container to do it), only as much as the shortfall,
-  hoarder-first then longest-idle, and floored at `CONTAINER_RECLAIM_MIN_IDLE_SEC` so a
-  project mid-burst is not stripped of a container it is about to reuse - which is also what
-  stops two starved projects reclaiming from each other in a loop.
+  hoarder-first then longest-idle, and floored on two clocks:
+  `CONTAINER_RECLAIM_MIN_IDLE_SEC` so a project mid-burst is not stripped of a container it
+  is about to reuse, and `CONTAINER_RECLAIM_MIN_AGE_SEC` so a container the instance only
+  just paid a cold provision for is not retired to fund another cold provision elsewhere.
+  Between them they stop two starved projects reclaiming from each other in a loop. A
+  candidate is **suspended rather than destroyed** whenever taking it would leave its
+  project with nothing resumable, as well as when it holds unpushed commits: both free
+  identical budget memory, since a suspended member is not counted, so destroying buys the
+  requester nothing and costs the victim a full cold provision. Bounded at one suspended
+  member per project by construction.
 
 **Both dispatch gates count reclaimable memory as headroom, and must.** The gate runs *before*
 the pool, so leaving it out meant the run was skipped as `InstanceAtCapacity` and the reclaim

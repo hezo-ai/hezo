@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
 	CHAT_IDLE_TIMEOUT_MIN,
+	CONTAINER_RECLAIM_MIN_AGE_SEC,
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
 	ContainerStatus,
 	HeartbeatRunStatus,
@@ -955,6 +956,8 @@ interface ReclaimCandidateRow {
 	memory_bytes: string | number | null;
 	has_unpushed_commits: boolean;
 	idle_for_ms: string | number;
+	age_ms: string | number | null;
+	project_resumable: string | number;
 }
 
 /**
@@ -995,7 +998,15 @@ async function reclaimIdleCapacityForProject(
 			// sitting outside the window.
 			`SELECT m.container_id, m.project_id, p.slug, p.team_id, m.memory_bytes,
 			        m.has_unpushed_commits,
-			        EXTRACT(EPOCH FROM (now() - m.last_released_at)) * 1000 AS idle_for_ms
+			        EXTRACT(EPOCH FROM (now() - m.last_released_at)) * 1000 AS idle_for_ms,
+			        EXTRACT(EPOCH FROM (now() - m.created_at)) * 1000 AS age_ms,
+			        -- What the victim would have left to serve its own next run.
+			        -- Correlated rather than joined so the outer row set stays the
+			        -- reclaim candidates; served by idx_container_pool_members_project.
+			        (SELECT count(*) FROM container_pool_members s
+			          WHERE s.project_id = m.project_id
+			            AND s.state IN ('idle', 'busy', 'suspended')
+			            AND NOT s.reserved_for_chat) AS project_resumable
 			   FROM container_pool_members m
 			   JOIN projects p ON p.id = m.project_id
 			  WHERE m.state = 'idle' AND NOT m.reserved_for_chat
@@ -1024,10 +1035,13 @@ async function reclaimIdleCapacityForProject(
 						? (capGb.get(row.project_id) ?? 0)
 						: Number(row.memory_bytes) / 1024 ** 3,
 				idleForMs: Number(row.idle_for_ms),
+				ageMs: row.age_ms === null ? null : Number(row.age_ms),
+				projectResumableMembers: Number(row.project_resumable),
 				hasUnpushedCommits: row.has_unpushed_commits,
 			})),
 			needGb,
 			CONTAINER_RECLAIM_MIN_IDLE_SEC * 1000,
+			CONTAINER_RECLAIM_MIN_AGE_SEC * 1000,
 		);
 		if (plan.freedGb === 0) return false;
 
@@ -1688,13 +1702,20 @@ export async function stopContainerGracefully(
 	let exitReason: ContainerExitReason = 'container_stopped';
 	try {
 		await docker.stopContainer(containerId);
+		// Conditional on the id, exactly as `clearProjectContainerIfNamed` is on the
+		// destroy path. A project can hold several pool members, so writing
+		// `container_status = Stopped` for whichever one this is said the project's
+		// *designated* container was down when it may still be running - and that
+		// row is read by a capacity gate (`getActiveContainers` stops counting it,
+		// under-counting the budget) and by the idle pass (`IDLE_CANDIDATE_SQL`
+		// requires `running`, so the project is skipped from then on).
 		await db.query(
 			`UPDATE projects
 			 SET container_status = $1::container_status,
 			     container_last_logs = COALESCE($2, container_last_logs),
 			     container_error = NULL
-			 WHERE id = $3`,
-			[ContainerStatus.Stopped, annotatedLogs, projectId],
+			 WHERE id = $3 AND container_id = $4`,
+			[ContainerStatus.Stopped, annotatedLogs, projectId, containerId],
 		);
 		await setPoolMemberOutcome(db, containerId, annotatedLogs, null);
 		// A stopped container is a *suspended* pool member: it still exists and its
@@ -1708,13 +1729,15 @@ export async function stopContainerGracefully(
 		);
 	} catch (err) {
 		const errorMessage = err instanceof Error ? err.message : String(err);
+		// Same guard as the success arm: only the project's designated container may
+		// move the project row.
 		await db.query(
 			`UPDATE projects
 			 SET container_status = $1::container_status,
 			     container_last_logs = COALESCE($2, container_last_logs),
 			     container_error = $3
-			 WHERE id = $4`,
-			[ContainerStatus.Error, annotatedLogs, errorMessage, projectId],
+			 WHERE id = $4 AND container_id = $5`,
+			[ContainerStatus.Error, annotatedLogs, errorMessage, projectId, containerId],
 		);
 		await setPoolMemberOutcome(db, containerId, annotatedLogs, errorMessage);
 		exitReason = 'container_error';
@@ -1840,7 +1863,7 @@ export async function isProjectIdleForContainerStop(
 }
 
 /**
- * Idle members of projects that are *working*, on each member's own clock.
+ * Idle pool members past their own idle window, whatever their project is doing.
  *
  * The query above asks a project-shaped question - "has everything here gone
  * quiet?" - and a project with two busy containers and two idle ones never
@@ -1849,10 +1872,14 @@ export async function isProjectIdleForContainerStop(
  * memory. This asks the member-shaped question instead, which is the one that
  * bounds the budget.
  *
- * The `EXISTS` restricts it to working projects on purpose: a fully idle project
- * belongs to {@link findIdleContainerCandidates}, which retires its pool as a
- * unit and keeps one member suspended for a warm restart. Overlapping the two
- * would take that warm member away.
+ * It used to carry an `EXISTS ... state = 'busy'` so that a fully idle project
+ * was left to {@link findIdleContainerCandidates} and its warm-start guarantee.
+ * The two preconditions did not partition the space: a project whose runs last
+ * seconds is never quiet (queued wakeups and recent finishes keep it out of the
+ * project-shaped pass) and rarely busy when the once-a-minute cron samples it,
+ * so its idle members matched neither and pinned the budget indefinitely. The
+ * warm-start floor now lives in `planSurplusIdleRetirement`, where it is a
+ * property of the plan rather than of which pass ran, so this can be total.
  *
  * The chat's pinned member is excluded - it is not counted against the budget, so
  * retiring it frees nothing. Served by `idx_container_pool_members_idle`.
@@ -1864,10 +1891,6 @@ const STALE_IDLE_MEMBER_SQL = (extraSql: string, limitSql: string) => `
 	 WHERE m.state = 'idle'
 	   AND NOT m.reserved_for_chat
 	   AND m.last_released_at < now() - ($1 * interval '1 minute')
-	   AND EXISTS (
-	     SELECT 1 FROM container_pool_members b
-	      WHERE b.project_id = m.project_id AND b.state = 'busy'
-	   )
 	   ${extraSql}
 	 ORDER BY m.last_released_at
 	 ${limitSql}

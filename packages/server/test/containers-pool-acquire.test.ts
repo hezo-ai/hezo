@@ -326,13 +326,27 @@ describe('acquireRunContainer reclaiming from another project', () => {
 	async function seedIdle(
 		project: string,
 		containerId: string,
-		over: { idleMin?: number; unpushed?: boolean } = {},
+		over: { idleMin?: number; unpushed?: boolean; ageMin?: number } = {},
 	): Promise<void> {
+		// `ageMin` defaults well past the reclaim age floor, and above `idleMin`:
+		// a container cannot have been idle for longer than it has existed, and a
+		// row left at `created_at = now()` reads as one the instance has only just
+		// paid to build, which reclaim declines.
+		const idleMin = over.idleMin ?? 10;
 		await db.query(
 			`INSERT INTO container_pool_members
-			   (project_id, container_id, state, memory_bytes, has_unpushed_commits, last_released_at)
-			 VALUES ($1, $2, 'idle', $3, $4, now() - ($5 || ' minutes')::interval)`,
-			[project, containerId, CAP_BYTES, over.unpushed ?? false, over.idleMin ?? 10],
+			   (project_id, container_id, state, memory_bytes, has_unpushed_commits,
+			    last_released_at, created_at)
+			 VALUES ($1, $2, 'idle', $3, $4, now() - ($5 || ' minutes')::interval,
+			         now() - ($6 || ' minutes')::interval)`,
+			[
+				project,
+				containerId,
+				CAP_BYTES,
+				over.unpushed ?? false,
+				idleMin,
+				over.ageMin ?? Math.max(60, idleMin),
+			],
 		);
 	}
 
@@ -345,14 +359,62 @@ describe('acquireRunContainer reclaiming from another project', () => {
 		await setMaxContainerMemoryGb(db, 2);
 		try {
 			const acquired = await acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED);
-			expect(removed).toContain('donor-idle');
 			expect(acquired.containerId).not.toBe('donor-idle');
-			// The donor's row goes with the container - it is destroyed, never handed over.
-			const left = await db.query<{ container_id: string }>(
-				'SELECT container_id FROM container_pool_members WHERE project_id = $1',
+			// It was the donor's only container, so it is suspended rather than
+			// destroyed: both free the same budget memory, and suspend leaves the
+			// donor a ~1s resume instead of a full cold provision.
+			expect(stopped).toContain('donor-idle');
+			expect(removed).not.toContain('donor-idle');
+			const left = await db.query<{ container_id: string; state: string }>(
+				'SELECT container_id, state FROM container_pool_members WHERE project_id = $1',
 				[donor],
 			);
-			expect(left.rows).toEqual([]);
+			expect(left.rows).toEqual([{ container_id: 'donor-idle', state: 'suspended' }]);
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
+		}
+	});
+
+	it('destroys a donor’s surplus and keeps one resumable', async () => {
+		await emptyFleet();
+		const donor = await freshProject('Reclaim Surplus Donor');
+		const starved = await freshProject('Reclaim Surplus Starved');
+		await seedIdle(donor, 'donor-a');
+		await seedIdle(donor, 'donor-b');
+		// Room for two containers, both held by the donor.
+		await setMaxContainerMemoryGb(db, 4);
+		try {
+			await acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED);
+			// One container's worth covers the shortfall, and the donor still has
+			// another, so that one is destroyed outright.
+			expect(removed.length).toBe(1);
+			expect(stopped).toEqual([]);
+			const left = await db.query<{ c: number }>(
+				`SELECT COUNT(*)::int AS c FROM container_pool_members
+				  WHERE project_id = $1 AND state IN ('idle', 'suspended')`,
+				[donor],
+			);
+			expect(left.rows[0].c).toBe(1);
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
+		}
+	});
+
+	it('never reclaims a container the instance only just built', async () => {
+		// The age floor, distinct from the idle one: this container has been idle
+		// far longer than the idle window but was provisioned moments ago, so
+		// retiring it would throw away a cold provision the instance just paid for.
+		await emptyFleet();
+		const donor = await freshProject('Reclaim Fresh Donor');
+		const starved = await freshProject('Reclaim Fresh Starved');
+		await seedIdle(donor, 'donor-brandnew', { idleMin: 10, ageMin: 1 });
+		await setMaxContainerMemoryGb(db, 2);
+		try {
+			await expect(
+				acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED),
+			).rejects.toThrow(PoolCapacityError);
+			expect(removed).not.toContain('donor-brandnew');
+			expect(stopped).not.toContain('donor-brandnew');
 		} finally {
 			await setMaxContainerMemoryGb(db, 40);
 		}
