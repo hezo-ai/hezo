@@ -2116,6 +2116,39 @@ export function providerHasGuidedSignIn(
 	return runtime !== null && RUNTIMES_WITH_GUIDED_SIGN_IN.includes(runtime);
 }
 
+/**
+ * Runtimes whose CLI rotates a single-use refresh token in place.
+ *
+ * The credential is rewritten mid-run and read back afterwards, so two runs
+ * sharing one of these would invalidate each other's token. Runs on such a
+ * credential therefore serialise: the second waits for the first to finish, not
+ * merely to read the token.
+ *
+ * Lives here rather than beside the server's runtime-home table because both
+ * sides need it: the server to take the lock, and the web to tell an operator
+ * why a credential they are adding will only ever run one agent at a time. Two
+ * copies would drift into a UI promising concurrency the runner does not give.
+ */
+export const RUNTIMES_WITH_ROTATING_CREDENTIAL: readonly AgentRuntime[] = [AgentRuntime.Codex];
+
+/**
+ * Whether runs on this credential have to queue behind one another.
+ *
+ * Both halves matter. Rotation is a property of the **CLI**, so it is judged on
+ * the resolved runtime rather than the provider's default. And it only bites a
+ * **subscription**: the same provider's API key is not rewritten by anything, so
+ * those runs go in parallel.
+ */
+export function credentialSerializesRuns(
+	provider: AiProvider,
+	storedRuntime: AgentRuntime | null | undefined,
+	authMethod: AiAuthMethod,
+): boolean {
+	if (authMethod !== AiAuthMethod.Subscription) return false;
+	const runtime = effectiveRuntime(provider, storedRuntime);
+	return runtime !== null && RUNTIMES_WITH_ROTATING_CREDENTIAL.includes(runtime);
+}
+
 export function providerRuntimeBinding(
 	provider: AiProvider,
 	runtime: AgentRuntime,

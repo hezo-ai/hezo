@@ -69,6 +69,7 @@ import {
 	RUNTIME_MODEL_DELIVERY,
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
+	RUNTIMES_WITH_ROTATING_CREDENTIAL,
 } from '@hezo/shared';
 import {
 	buildProviderEnv,
@@ -91,7 +92,6 @@ import {
 	buildSubscriptionMount,
 	ensureRuntimeHomeDir,
 	getHostSubscriptionBase,
-	RUNTIME_HOME_LAYOUTS,
 	type RuntimeHomeMount,
 	SUBSCRIPTION_DIR_MODE,
 	type SubscriptionMount,
@@ -249,7 +249,7 @@ function assertSupportedPairing(mp: LiveModelProvider, runtime: AgentRuntime): v
  */
 function warnIfCredentialRotates(mp: LiveModelProvider, runtime: AgentRuntime): void {
 	if ((mp.authMethod ?? AiAuthMethod.ApiKey) !== AiAuthMethod.Subscription) return;
-	if (!RUNTIME_HOME_LAYOUTS[runtime]?.rotates) return;
+	if (!RUNTIMES_WITH_ROTATING_CREDENTIAL.includes(runtime)) return;
 	console.warn(`[conformance] ${mp.name} on ${runtime}: ${SUBSCRIPTION_ROTATION_WARNING}.`);
 }
 

@@ -11,6 +11,7 @@ import {
 	type CostTokens,
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
+	credentialSerializesRuns,
 	effectiveRuntime,
 	formatContainerMetaLogLine,
 	GEMINI_RUNTIME_ENV,
@@ -1703,10 +1704,11 @@ export async function runAgent(
 	// its own.
 	const runLabel = task ? `${agent.slug}/${task.identifier}` : `${agent.slug}/progress-update`;
 
-	// Rotation is a property of the CLI that rewrites the token file, so read it
-	// off the resolved runtime rather than the provider's default.
-	const runtimeHomeLayout = RUNTIME_HOME_LAYOUTS[runtimeType];
-	if (credential.authMethod === AiAuthMethod.Subscription && runtimeHomeLayout?.rotates) {
+	// Rotation is a property of the CLI that rewrites the token file, so this is
+	// judged on the resolved runtime rather than the provider's default. The
+	// predicate is shared with the web, which warns an operator adding such a
+	// credential that it will only ever run one agent at a time.
+	if (credentialSerializesRuns(provider, runtimeType, credential.authMethod)) {
 		// Taken **before** a container is claimed, and deliberately so. The lock is
 		// held for a whole run, so a waiter can sit here for minutes; claiming first
 		// meant every waiter pinned a container's memory for that entire wait, which

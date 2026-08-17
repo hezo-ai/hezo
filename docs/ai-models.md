@@ -136,9 +136,17 @@ provider's sign-in page, use **Paste credential manually** instead and follow th
 the form shows. The Gemini CLI offers no sign-in Hezo can drive, so that is the only
 option there.
 
-Codex rotates its credential each time Hezo runs it. Once Hezo holds a Codex
-subscription, avoid using the same login on your own machine - pick one or the other, or
-the two will fall out of step.
+Codex rotates its credential each time Hezo runs it. Two consequences follow.
+
+Once Hezo holds a Codex subscription, avoid using the same login on your own machine -
+pick one or the other, or the two will fall out of step.
+
+And **runs on a Codex subscription go one at a time.** The credential is rewritten
+mid-run, so a second run using it would invalidate the first; Hezo queues them instead,
+and a waiting run shows as queued with its reason rather than as an error. Nothing is
+lost, but the agents on that credential take turns. To run more at once, add a second
+Codex subscription, or use an OpenAI API key - a key is not rewritten by anything, so
+runs on it go in parallel. Subscriptions for other providers are unaffected.
 
 ## Where to get an API key
 

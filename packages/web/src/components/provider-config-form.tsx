@@ -3,6 +3,7 @@ import {
 	AI_PROVIDER_INFO,
 	AiAuthMethod,
 	AiProvider,
+	credentialSerializesRuns,
 	providerHasGuidedSignIn,
 } from '@hezo/shared';
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
@@ -174,6 +175,9 @@ export function ProviderConfigForm({
 	// credential in place is a different act from minting a new one.
 	const canGuidedSignIn =
 		!editing && Boolean(info.supportsSubscription) && providerHasGuidedSignIn(provider, runtime);
+	// Whether runs on the credential being configured have to queue behind one
+	// another, from the same predicate the runner gates its lock on.
+	const serializesRuns = credentialSerializesRuns(provider, runtime, authMethod);
 	// Editing already has a stored credential, so name or CLI alone is a valid save —
 	// except when the auth method is being switched, where the stored credential is
 	// the wrong shape for the new one and a replacement is the whole point.
@@ -303,6 +307,15 @@ export function ProviderConfigForm({
 
 			{authMethod === AiAuthMethod.Subscription ? (
 				<div className="flex flex-col gap-3">
+					{/* Stated up front, not buried in the paste instructions: the token
+					    rotates in place, so runs on this credential queue behind one
+					    another. An operator picking a subscription is choosing a
+					    concurrency limit, and should know before they pick it. */}
+					{serializesRuns && (
+						<p className="text-[13px] text-warning break-words">
+							{t('settings.provider.serializesRuns', { cli: info.runtimeLabel })}
+						</p>
+					)}
 					{/* Guided sign-in is offered only where a driver exists. Where it does
 					    not (Gemini today), the paste form is simply the whole branch -
 					    there is no button that would start something and hang. */}

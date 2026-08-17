@@ -1,5 +1,10 @@
 import { join } from 'node:path';
-import { AgentRuntime, AiAuthMethod, type AiProvider } from '@hezo/shared';
+import {
+	AgentRuntime,
+	AiAuthMethod,
+	type AiProvider,
+	RUNTIMES_WITH_ROTATING_CREDENTIAL,
+} from '@hezo/shared';
 import type { AiProviderCredential } from './ai-provider-keys';
 import type { SandboxFiles } from './sandbox/files';
 import type { ContainerEngine } from './sandbox/types';
@@ -84,9 +89,6 @@ export interface RuntimeHomeLayout {
 	 */
 	apiKeyAuthFile?: (apiKey: string) => string;
 	envVarName: string;
-	/** True when the runtime CLI rotates a single-use refresh token in place,
-	 *  so runs on the credential must serialise and the rotated file persist back. */
-	rotates: boolean;
 }
 
 /**
@@ -114,13 +116,11 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 		apiKeyAuthFile: (apiKey) =>
 			`${JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: apiKey }, null, 2)}\n`,
 		envVarName: 'CODEX_HOME',
-		rotates: true,
 	},
 	[AgentRuntime.Gemini]: {
 		dirPrefix: 'gemini',
 		authFileRelative: '.gemini/oauth_creds.json',
 		envVarName: 'GEMINI_CLI_HOME',
-		rotates: false,
 	},
 	// Claude Code needs a per-run config dir so the runner can drop a settings.json
 	// with the Stop hook the agent CLI loads via `--settings`. The envVarName is a
@@ -132,7 +132,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.ClaudeCode]: {
 		dirPrefix: 'claude-code',
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
-		rotates: false,
 	},
 	// OpenCode reads the config file via an explicit
 	// `OPENCODE_CONFIG=<dir>/opencode.json` env entry (OPENCODE_CONFIG wants a file
@@ -140,7 +139,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.OpenCode]: {
 		dirPrefix: 'opencode',
 		envVarName: 'HEZO_OPENCODE_CONFIG_DIR',
-		rotates: false,
 	},
 	// Unlike the Claude Code marker, GROK_HOME is a real env var the grok CLI
 	// honours: it relocates the `.grok` config/session root, so the CLI reads our
@@ -149,7 +147,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.Grok]: {
 		dirPrefix: 'grok',
 		envVarName: 'GROK_HOME',
-		rotates: false,
 	},
 	// `KIMI_CODE_HOME` is likewise a REAL variable the CLI consumes. It relocates
 	// the entire data root: config.toml, mcp.json, credentials, and the per-session
@@ -161,7 +158,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.Kimi]: {
 		dirPrefix: 'kimi-code',
 		envVarName: 'KIMI_CODE_HOME',
-		rotates: false,
 	},
 };
 
@@ -279,7 +275,7 @@ export async function buildSubscriptionMount(
 		// Only a subscription blob rotates. An api-key file is written from the
 		// stored key every run, so reading it back would persist a rotation that
 		// never happened over the operator's own credential.
-		rotates: layout.rotates && isSubscription,
+		rotates: RUNTIMES_WITH_ROTATING_CREDENTIAL.includes(runtime) && isSubscription,
 	};
 }
 

@@ -4,6 +4,7 @@ import {
 	AiAuthMethod,
 	type AiProvider,
 	AiProviderStatus,
+	credentialSerializesRuns,
 	effectiveRuntime,
 } from '@hezo/shared';
 import { Loader2, Pencil, Plus, ShieldCheck, Star, Trash2 } from 'lucide-react';
@@ -24,6 +25,7 @@ import { EditAiProviderDialog } from './edit-ai-provider-dialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { type Column, DataTable } from './ui/data-table';
+import { InfoTooltip } from './ui/info-tooltip';
 import { Tooltip } from './ui/tooltip';
 
 export function AiProvidersSection() {
@@ -81,6 +83,22 @@ export function AiProvidersSection() {
 						<span className="text-[13px]">{info?.name ?? c.provider}</span>
 						{resolved && (
 							<span className="text-xs text-text-3">{AGENT_RUNTIME_LABELS[resolved]}</span>
+						)}
+						{/* Only where it is true: this credential's CLI rewrites its token
+						    mid-run, so the runner queues runs on it one at a time. It is a
+						    property of the row, so it belongs on the row. */}
+						{credentialSerializesRuns(
+							c.provider as AiProvider,
+							c.runtime,
+							c.auth_method as AiAuthMethod,
+						) && (
+							<InfoTooltip
+								label={t('settings.provider.serializesRunsLabel')}
+								content={t('settings.provider.serializesRunsDetail', {
+									cli: resolved ? AGENT_RUNTIME_LABELS[resolved] : (info?.name ?? c.provider),
+								})}
+								data-testid="provider-serializes-runs"
+							/>
 						)}
 					</span>
 				);
