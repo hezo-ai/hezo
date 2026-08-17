@@ -860,3 +860,67 @@ describe('run-outcome filter on the runs list', () => {
 		expect(new Set([...p1.ids, ...p2.ids])).toEqual(new Set([seeded.failed, seeded.timedOut]));
 	});
 });
+
+// The All tab showed old failures above recent successes, permanently. A run
+// that ends before it goes running never stamps started_at, and ordering on
+// started_at alone put every such run first - DESC means NULLS FIRST - so on an
+// agent with a page of them the recent runs were unreachable behind them. The
+// row renders `started_at ?? created_at`, so the list is sorted on that.
+describe('runs list ordering', () => {
+	let orderAgentId: string;
+	const seeded: Record<string, string> = {};
+
+	beforeAll(async () => {
+		const agentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Ordered Runner' }),
+		});
+		orderAgentId = (await agentRes.json()).data.id as string;
+
+		// created_at, started_at (null = never went running), status.
+		const shapes: [string, string, string | null, string][] = [
+			['oldFailed', '2026-01-01T09:00:00Z', null, 'failed'],
+			['oldestOk', '2025-12-30T08:00:00Z', '2025-12-30T08:00:01Z', 'succeeded'],
+			['recentOk', '2026-01-05T11:00:00Z', '2026-01-05T11:00:02Z', 'succeeded'],
+			['middleFailed', '2026-01-03T10:00:00Z', null, 'failed'],
+		];
+		for (const [key, createdAt, startedAt, status] of shapes) {
+			const r = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (member_id, team_id, status, created_at, started_at)
+				 VALUES ($1, $2, $3::heartbeat_run_status, $4, $5)
+				 RETURNING id`,
+				[orderAgentId, teamId, status, createdAt, startedAt],
+			);
+			seeded[key] = r.rows[0].id;
+		}
+	});
+
+	async function listIds(query: string): Promise<string[]> {
+		const res = await app.request(
+			`/api/projects/${projectSlug}/agents/${orderAgentId}/heartbeat-runs${query}`,
+			{ headers: authHeader(token) },
+		);
+		expect(res.status).toBe(200);
+		return (await res.json()).data.map((r: { id: string }) => r.id);
+	}
+
+	it('orders every run by the clock it shows, newest first', async () => {
+		expect(await listIds('')).toEqual([
+			seeded.recentOk,
+			seeded.middleFailed,
+			seeded.oldFailed,
+			seeded.oldestOk,
+		]);
+	});
+
+	it('leads with the most recent run whatever its outcome', async () => {
+		const ids = await listIds('');
+		expect(ids[0]).toBe(seeded.recentOk);
+	});
+
+	it('orders the narrow tabs the same way', async () => {
+		expect(await listIds('?filter=succeeded')).toEqual([seeded.recentOk, seeded.oldestOk]);
+		expect(await listIds('?filter=errored')).toEqual([seeded.middleFailed, seeded.oldFailed]);
+	});
+});

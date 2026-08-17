@@ -1385,12 +1385,14 @@ agentsRoutes.get('/projects/:projectId/agents/:agentId/heartbeat-runs', async (c
 		 LEFT JOIN projects p ON p.id = i.project_id
 		 ${HEARTBEAT_RUN_TRIGGER_JOINS}
 		 WHERE ${whereFor(4)}
-		 -- A run only stamps started_at when it goes running, so every run that
-		 -- ended before that ties on NULL (and sorts first, DESC being NULLS
-		 -- FIRST). Offset paging over an arbitrary order within a tie can repeat
-		 -- or skip rows, so created_at - the only clock such a run has - breaks
-		 -- it, and id closes it.
-		 ORDER BY hr.started_at DESC, hr.created_at DESC, hr.id DESC
+		 -- Sorted by the clock the row actually shows. A run only stamps started_at
+		 -- when it goes running, so one that ended before that has none - and
+		 -- ordering on started_at alone put every such run above every started one
+		 -- for good, DESC being NULLS FIRST, which filled the first page with old
+		 -- failures and left today's successes unreachable behind them. created_at
+		 -- is the only clock such a run has, and is what the row renders; id closes
+		 -- the tie so offset paging cannot repeat or skip.
+		 ORDER BY COALESCE(hr.started_at, hr.created_at) DESC, hr.id DESC
 		 LIMIT $2 OFFSET $3`,
 		[agentId, perPage, offset, ...filterParams],
 	);
