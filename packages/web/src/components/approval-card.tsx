@@ -112,6 +112,23 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 			);
 		}
 		case ApprovalType.Strategy: {
+			// The orphan pass files a Strategy approval when an agent has burned its
+			// retry budget. It carries no `plan`, so it rendered as a bare
+			// "Proposing strategy" with nothing under it - a record that said an
+			// agent had failed while giving the reader nowhere to look.
+			if (p.type === 'agent_error') {
+				const lastError = p.last_error as string | undefined;
+				return (
+					<>
+						<span>{(p.message as string) ?? 'Agent needs attention'}</span>
+						{lastError && (
+							<span className="block text-xs text-text-2 mt-1 whitespace-pre-wrap">
+								{lastError}
+							</span>
+						)}
+					</>
+				);
+			}
 			const plan = p.plan as string | undefined;
 			return (
 				<>

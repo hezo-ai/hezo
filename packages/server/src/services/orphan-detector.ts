@@ -250,6 +250,7 @@ export async function detectOrphans(
 				runId: run.id,
 				memberId: run.member_id,
 				teamId: run.team_id,
+				taskId: run.task_id,
 				priorRetries: run.process_loss_retry_count,
 			},
 			tail.text,
@@ -277,7 +278,14 @@ export async function detectOrphans(
  */
 export async function retryOrEscalateLostRun(
 	db: Db,
-	run: { runId: string; memberId: string; teamId: string; priorRetries: number },
+	run: {
+		runId: string;
+		memberId: string;
+		teamId: string;
+		/** The task the lost run was working, so the retry returns to it. */
+		taskId?: string | null;
+		priorRetries: number;
+	},
 	/** Log excerpt the caller has already read, to save reading it twice. */
 	knownLogTail?: string,
 ): Promise<void> {
@@ -293,6 +301,14 @@ export async function retryOrEscalateLostRun(
 
 		await createWakeup(db, run.memberId, run.teamId, WakeupSource.Timer, {
 			reason: 'orphan_retry',
+			// Naming the task is what makes this a retry rather than a nudge. A
+			// task-less wakeup coalesces onto the agent's queued heartbeat and
+			// `activateAgent` then picks a task by its own ordering, so the retry
+			// could land on different work than was lost - and `retry_of_run_id`
+			// would record lineage across two unrelated tasks. It also brings the
+			// pre-dispatch busy and capacity guards into play, since every one of
+			// them is inside `if (wakeupTaskId)`.
+			...(run.taskId ? { task_id: run.taskId } : {}),
 			retry_count: run.priorRetries + 1,
 			max_retries: MAX_RETRIES,
 			previous_failure: {
@@ -302,15 +318,35 @@ export async function retryOrEscalateLostRun(
 			},
 		});
 	} else {
+		// One record per stuck agent, not one per ceiling. A partial unique index
+		// would be stronger, but this pass is serial in a single process and an
+		// index needs a migration for a guard that is not racing anything.
+		// The member id is bound twice on purpose: once as the uuid column and once
+		// as the text `payload->>` compares against. One parameter in both places
+		// leaves Postgres unable to deduce a single type for it.
 		await db.query(
-			`INSERT INTO approvals (team_id, type, payload)
-				 VALUES ($1, $2::approval_type, $3::jsonb)`,
+			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
+			 SELECT $1, $2::approval_type, $3::uuid, $5::jsonb
+			 WHERE NOT EXISTS (
+			   SELECT 1 FROM approvals
+			   WHERE team_id = $1 AND type = $2::approval_type AND status = 'pending'
+			     AND payload->>'type' = 'agent_error'
+			     AND payload->>'member_id' = $4::text
+			 )`,
 			[
 				run.teamId,
 				ApprovalType.Strategy,
+				run.memberId,
+				run.memberId,
 				JSON.stringify({
 					type: 'agent_error',
 					member_id: run.memberId,
+					// Named so the approval can be read back to the run that produced
+					// it; without these the record said an agent had failed and gave a
+					// human nowhere to look.
+					run_id: run.runId,
+					task_id: run.taskId ?? null,
+					last_error: knownLogTail?.trim().slice(-ORPHAN_LOG_TAIL_CHARS) || null,
 					message: `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
 				}),
 			],

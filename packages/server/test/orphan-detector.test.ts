@@ -10,7 +10,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import { appendRunLogChunks } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
-import { CAPACITY_PARK_MAX_MS } from '../src/services/agent-runner';
+import {
+	CAPACITY_PARK_MAX_MS,
+	createHeartbeatRun,
+	extractReplacedRun,
+} from '../src/services/agent-runner';
 import {
 	detectOrphans,
 	healStaleRunState,
@@ -198,6 +202,130 @@ describe('detectOrphans', () => {
 		expect(wakeups.rows.length).toBeGreaterThanOrEqual(1);
 		const payload = wakeups.rows[0].payload as Record<string, unknown>;
 		expect(payload.reason).toBe('orphan_retry');
+	});
+
+	it('the retry chain terminates, because a retried run inherits the count', async () => {
+		// The bug this exists for: `createHeartbeatRun` wrote neither
+		// `retry_of_run_id` nor `process_loss_retry_count`, so every retried run
+		// started at 0, `0 + 1 < MAX_RETRIES` was always true, and the escalation
+		// below was unreachable. The old coverage set the counter by hand on one
+		// row and so never drove reap -> wakeup -> new run -> reap at all.
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
+
+		const latestRetryPayload = async (): Promise<Record<string, unknown> | null> => {
+			const res = await db.query<{ payload: Record<string, unknown> }>(
+				`SELECT payload FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND payload->>'reason' = 'orphan_retry'
+				 ORDER BY created_at DESC LIMIT 1`,
+				[agentId],
+			);
+			return res.rows[0]?.payload ?? null;
+		};
+
+		// The replacement run the dispatcher would create for that retry wakeup.
+		const runReplacing = async (payload: Record<string, unknown>): Promise<string> => {
+			// Settle the queued retry first, exactly as dispatching it would. Left
+			// queued, the *next* reap's wakeup coalesces onto it (both are task-less)
+			// and its payload never advances.
+			await db.query(
+				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status
+				 WHERE member_id = $2 AND status = $3::wakeup_status
+				   AND payload->>'reason' = 'orphan_retry'`,
+				[WakeupStatus.Completed, agentId, WakeupStatus.Queued],
+			);
+			const wakeup = await db.query<{ id: string }>(
+				`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, status)
+				 VALUES ($1, $2, $3::wakeup_source, $4::jsonb, $5::wakeup_status) RETURNING id`,
+				[agentId, teamId, WakeupSource.Timer, JSON.stringify(payload), WakeupStatus.Claimed],
+			);
+			return createHeartbeatRun(
+				db,
+				{ id: agentId, title: 'A', slug: 'a', team_id: teamId } as never,
+				teamId,
+				null,
+				{ teamId, taskId: null, memberId: agentId },
+				wakeup.rows[0].id,
+				null,
+				undefined,
+				extractReplacedRun(payload),
+			);
+		};
+
+		const countOf = async (id: string): Promise<number> => {
+			const r = await db.query<{ n: number; retry_of: string | null }>(
+				'SELECT process_loss_retry_count AS n, retry_of_run_id AS retry_of FROM heartbeat_runs WHERE id = $1',
+				[id],
+			);
+			return r.rows[0].n;
+		};
+		const lineageOf = async (id: string): Promise<string | null> => {
+			const r = await db.query<{ retry_of: string | null }>(
+				'SELECT retry_of_run_id AS retry_of FROM heartbeat_runs WHERE id = $1',
+				[id],
+			);
+			return r.rows[0].retry_of;
+		};
+
+		const runA = await insertOrphanRun(agentId, teamId, {});
+		await detectOrphans(db, new Set());
+		const payloadA = await latestRetryPayload();
+		expect(payloadA?.retry_count).toBe(1);
+
+		const runB = await runReplacing(payloadA as Record<string, unknown>);
+		expect(await countOf(runB)).toBe(1);
+		expect(await lineageOf(runB)).toBe(runA);
+
+		await db.query(
+			`UPDATE heartbeat_runs SET status = $1::heartbeat_run_status,
+			   started_at = now() - interval '10 minutes' WHERE id = $2`,
+			[HeartbeatRunStatus.Running, runB],
+		);
+		await detectOrphans(db, new Set());
+		const payloadB = await latestRetryPayload();
+		expect(payloadB?.retry_count).toBe(2);
+
+		const runC = await runReplacing(payloadB as Record<string, unknown>);
+		expect(await countOf(runC)).toBe(2);
+		expect(await lineageOf(runC)).toBe(runB);
+
+		// The ceiling. Reaping C must escalate rather than mint a fourth attempt.
+		const retriesBefore = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'reason' = 'orphan_retry'`,
+			[agentId],
+		);
+		await db.query(
+			`UPDATE heartbeat_runs SET status = $1::heartbeat_run_status,
+			   started_at = now() - interval '10 minutes' WHERE id = $2`,
+			[HeartbeatRunStatus.Running, runC],
+		);
+		await detectOrphans(db, new Set());
+
+		const retriesAfter = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'reason' = 'orphan_retry'`,
+			[agentId],
+		);
+		expect(retriesAfter.rows[0].c).toBe(retriesBefore.rows[0].c);
+
+		const approvals = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM approvals
+			 WHERE team_id = $1 AND payload->>'type' = 'agent_error'`,
+			[teamId],
+		);
+		expect(approvals.rows[0].c).toBe(1);
+
+		// A second ceiling files nothing new: one record per stuck agent.
+		const runD = await insertOrphanRun(agentId, teamId, { retryCount: 2 });
+		await detectOrphans(db, new Set());
+		expect(await countOf(runD)).toBe(3);
+		const approvalsAgain = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM approvals
+			 WHERE team_id = $1 AND payload->>'type' = 'agent_error'`,
+			[teamId],
+		);
+		expect(approvalsAgain.rows[0].c).toBe(1);
 	});
 
 	it('creates an approval request when retry count >= 3 (MAX_RETRIES)', async () => {

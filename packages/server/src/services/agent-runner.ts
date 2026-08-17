@@ -1182,6 +1182,42 @@ function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	return reason ?? undefined;
 }
 
+/**
+ * Where each recovery records the run it is replacing, and whether that
+ * recovery draws on the lost-run retry budget.
+ *
+ * Three paths mint a replacement run and each names the prior run under its own
+ * key. One reader, so a fourth spelling is a row here rather than a branch at
+ * the call site.
+ */
+const RUN_LINEAGE_SOURCES: readonly {
+	read: (p: Record<string, unknown>) => unknown;
+	inheritsLossBudget: boolean;
+}[] = [
+	// The orphan pass's retry - the only one bounded by the lost-run ceiling.
+	{
+		read: (p) => (p.previous_failure as Record<string, unknown> | undefined)?.run_id,
+		inheritsLossBudget: true,
+	},
+	// A container coming back, and startup recovery. One-shot.
+	{ read: (p) => p.previous_run_id, inheritsLossBudget: false },
+	// A human pressing Retry. Somebody is asking for another attempt.
+	{ read: (p) => p.source_run_id, inheritsLossBudget: false },
+];
+
+export function extractReplacedRun(
+	payload: Record<string, unknown> | undefined,
+): ReplacedRun | null {
+	if (!payload) return null;
+	for (const source of RUN_LINEAGE_SOURCES) {
+		const id = source.read(payload);
+		if (typeof id === 'string') {
+			return { runId: id, inheritsLossBudget: source.inheritsLossBudget };
+		}
+	}
+	return null;
+}
+
 function extractTriggeredBy(payload: Record<string, unknown> | undefined): TriggeredBy | null {
 	const raw = payload?.triggered_by;
 	if (!raw || typeof raw !== 'object') return null;
@@ -1256,6 +1292,7 @@ export async function runAgent(
 		effectiveWakeupId,
 		extractTriggeredBy(wakeupPayload),
 		progressUpdate ? HeartbeatRunKind.ProgressUpdate : HeartbeatRunKind.Task,
+		extractReplacedRun(wakeupPayload),
 	);
 	const onContainerAcquired = onRunRegistered?.(heartbeatRunId);
 	await emitRunStarted(deps, heartbeatRunId, agent, task, project, effectiveWakeupId);
@@ -1424,6 +1461,7 @@ export async function runAgent(
 				runId: heartbeatRunId,
 				memberId: agent.id,
 				teamId: runTeamId,
+				taskId: task?.id ?? null,
 				priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
 			});
 		} catch (e) {
@@ -4150,6 +4188,19 @@ export interface TriggeredBy {
 	name: string;
 }
 
+/**
+ * The run this one replaces, and whether it inherits that run's retry budget.
+ *
+ * Only the lost-run chain spends the budget. A container coming back, a server
+ * restart and a human pressing Retry are one-shot recoveries already bounded by
+ * their own guards - none can feed itself, so none may be throttled by a ceiling
+ * the lost-run chain filled.
+ */
+export interface ReplacedRun {
+	runId: string;
+	inheritsLossBudget: boolean;
+}
+
 export async function createHeartbeatRun(
 	db: Db,
 	agent: AgentInfo,
@@ -4159,13 +4210,38 @@ export async function createHeartbeatRun(
 	wakeupId: string,
 	triggeredBy: TriggeredBy | null = null,
 	kind: HeartbeatRunKind = HeartbeatRunKind.Task,
+	replaces: ReplacedRun | null = null,
 ): Promise<string> {
 	const { runId, statusFlippedToInProgress } = await withTransaction(db, async () => {
+		// The retry budget is read from the replaced **row**, not from the wakeup
+		// payload that named it. Both columns existed and neither was ever written:
+		// `retry_of_run_id` had no writer at all, and a retried run took the schema
+		// default of 0 for `process_loss_retry_count` - so `priorRetries` was always
+		// 0, `0 + 1 < MAX_RETRIES` was always true, and the escalation branch in
+		// `retryOrEscalateLostRun` could not be reached. The chain had no end.
+		//
+		// Reading the row rather than the payload is what makes the ceiling
+		// unforgeable: a coalesced or hand-edited `retry_count` cannot reset it, and
+		// the worst a wrong `run_id` can do is name a real run and inherit its count.
 		const runResult = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status, kind)
-			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status, $6::heartbeat_run_kind)
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, wakeup_id, status, kind,
+			                             retry_of_run_id, process_loss_retry_count)
+			 VALUES ($1, $2, $3, $4, $5::heartbeat_run_status, $6::heartbeat_run_kind, $7,
+			         CASE WHEN $8::boolean
+			              THEN COALESCE((SELECT prior.process_loss_retry_count
+			                               FROM heartbeat_runs prior WHERE prior.id = $7), 0)
+			              ELSE 0 END)
 			 RETURNING id`,
-			[agent.id, runTeamId, task?.id ?? null, wakeupId, HeartbeatRunStatus.Queued, kind],
+			[
+				agent.id,
+				runTeamId,
+				task?.id ?? null,
+				wakeupId,
+				HeartbeatRunStatus.Queued,
+				kind,
+				replaces?.runId ?? null,
+				replaces?.inheritsLossBudget ?? false,
+			],
 		);
 		const runId = runResult.rows[0].id;
 
