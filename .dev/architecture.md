@@ -3588,7 +3588,7 @@ thread can show. `create_task` with an assignee, a reassignment, and a `blocked_
 cascade releases all wire a wake on the *recipient's* task, and `SHARED_INSTRUCTIONS` explicitly
 tells an agent to write `@@<slug>` rather than mention them again in that case - so a run that
 routed work exactly as instructed was reported as having stranded it. `agent_wakeup_requests`
-therefore carries `created_by_run_id` (migration `063_run_health.sql`, nullable, no backfill,
+therefore carries `created_by_run_id` (migration `065_run_health.sql`, nullable, no backfill,
 partial index), stamped on all three of `createWakeup`'s write paths: the insert, the coalesce
 `UPDATE`, and the idempotency-key early return that writes no row of its own. `wakeIfReady` stamps
 it on the deferred-to-queued flip too, since that notify path creates nothing at all.
@@ -4656,7 +4656,7 @@ row, and `summarize()` counts the run and system rows to label each folded group
 filtered default would silently empty those chips. One filter, one vocabulary, two defaults.
 The default selection is spelled as the literal `content_type <> 'run'::comment_content_type`
 so the planner can prove it implies `idx_comments_task_created_no_run`
-(`063_run_health.sql`), whose key carries `id` as well so the keyset tuple is an index
+(`065_run_health.sql`), whose key carries `id` as well so the keyset tuple is an index
 condition rather than a filter.
 
 **A page is narrowed, never rejected.** `limit` x `excerpt_chars` at their defaults exceeds

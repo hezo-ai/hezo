@@ -9,7 +9,7 @@ import {
  * The default selection's predicate, spelled as one literal.
  *
  * It must stay character-identical to the `WHERE` clause of
- * `idx_comments_task_created_no_run` in `063_run_health.sql`: the planner only
+ * `idx_comments_task_created_no_run` in `065_run_health.sql`: the planner only
  * uses a partial index when it can prove the query implies the index predicate,
  * and an equivalent-but-differently-spelled clause reads as a plain filter over
  * the whole thread instead.
