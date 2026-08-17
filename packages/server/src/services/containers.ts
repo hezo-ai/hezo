@@ -593,7 +593,11 @@ export async function provisionContainer(
 		// and the instance budget counts swap at full weight, so a kernel that
 		// silently drops the limit leaves the pool's arithmetic describing a machine
 		// that does not exist. A managed backend returns none of these.
-		for (const warning of Warnings) emit('stderr', `⚠ ${warning}`);
+		// Defaulted, not trusted: the seam declares `Warnings` required, but a
+		// stub or a future adapter that omits it must not take a provision down
+		// with it - failing a container start over a missing advisory would be a
+		// worse bug than the one this line reports.
+		for (const warning of Warnings ?? []) emit('stderr', `⚠ ${warning}`);
 		// Joined the pool the moment the container exists, not once it is finished.
 		// Everything below - starting, the MTU pin, the CA, the repo sync, the MCP
 		// installs - is the expensive part, and until this write the container was
