@@ -616,3 +616,58 @@ describe('openPty refuses a session the provider did not create', () => {
 		expect((err as DaytonaApiError).message).not.toContain('\n');
 	});
 });
+
+// A caller signal used to *replace* the per-attempt timeout rather than joining
+// it, so every call made with one was unbounded. Those are exactly the calls a
+// run makes while it holds a container and the provider credential, so one
+// wedged request parked the run - and every later run on that credential -
+// with nothing able to time it out.
+describe('a caller signal never costs a call its timeout', () => {
+	/**
+	 * A request that answers nothing and ends only when its signal says so.
+	 * Teardown DELETEs are answered rather than hung, so a spec measures the call
+	 * it is about rather than the session cleanup behind it.
+	 */
+	function hangingFetch(): { signals: Array<AbortSignal | undefined> } {
+		const signals: Array<AbortSignal | undefined> = [];
+		vi.stubGlobal('fetch', (_input: string | URL | Request, init?: RequestInit) => {
+			if ((init?.method ?? 'GET') === 'DELETE') return Promise.resolve(Response.json({}));
+			signals.push(init?.signal ?? undefined);
+			return new Promise<Response>((_resolve, reject) => {
+				// Same contract as the real thing, which rejects an already-aborted
+				// request rather than waiting for an event that has been and gone.
+				if (init?.signal?.aborted) return reject(init.signal.reason);
+				init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+			});
+		});
+		return { signals };
+	}
+
+	it('still times out an execute() given a signal that never fires', async () => {
+		hangingFetch();
+		const ac = new AbortController();
+		const err = await client()
+			.execute(sandbox, 'sleep 1000', { signal: ac.signal, timeoutMs: 25 })
+			.catch((e: unknown) => e as Error);
+		expect((err as Error).name).toBe('TimeoutError');
+	});
+
+	it('still lets the caller cancel well before the timeout', async () => {
+		hangingFetch();
+		const ac = new AbortController();
+		const pending = client()
+			.execute(sandbox, 'sleep 1000', { signal: ac.signal, timeoutMs: 60_000 })
+			.catch((e: unknown) => e as Error);
+		ac.abort(new Error('caller cancelled'));
+		expect(((await pending) as Error).message).toBe('caller cancelled');
+	});
+
+	it('still bounds a call the caller gave no signal for', async () => {
+		const { signals } = hangingFetch();
+		const err = await client()
+			.execute(sandbox, 'sleep 1000', { timeoutMs: 25 })
+			.catch((e: unknown) => e as Error);
+		expect((err as Error).name).toBe('TimeoutError');
+		expect(signals[0]).toBeDefined();
+	});
+});

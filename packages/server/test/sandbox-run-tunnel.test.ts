@@ -30,7 +30,7 @@ function scratch(): string {
  * have. `listening` starts false and is flipped when the channel is opened,
  * which is what a real container does.
  */
-function recordingEngine(opts: { neverBinds?: boolean } = {}) {
+function recordingEngine(opts: { neverBinds?: boolean; slowProbe?: boolean } = {}) {
 	const execs: ExecConfig[] = [];
 	const state = {
 		closed: false,
@@ -66,14 +66,31 @@ function recordingEngine(opts: { neverBinds?: boolean } = {}) {
 	const engine = {
 		...base,
 		execCreate: async (_id: string, config: ExecConfig) => {
-			probes.push((config?.Cmd ?? []).join(' '));
-			return 'exec-1';
+			const cmd = (config?.Cmd ?? []).join(' ');
+			probes.push(cmd);
+			// The two probes run the same grep against different scripts; only the
+			// readiness one reports `ready`. Told apart so a spec can slow one
+			// without slowing the other.
+			return cmd.includes('ready') ? 'exec-ready' : 'exec-ports-free';
 		},
-		execStart: async () => ({
-			stdout: state.listening && !opts.neverBinds ? 'ready\n' : '',
-			stderr: '',
-			exitCode: 0,
-		}),
+		execStart: async (execId: string, execOpts?: { signal?: AbortSignal }) => {
+			// A backend whose own per-request timeout is minutes where this wait is
+			// seconds. It answers only when something aborts it, which is what the
+			// probe's deadline now does.
+			if (opts.slowProbe && execId === 'exec-ready') {
+				await new Promise((_resolve, reject) => {
+					if (execOpts?.signal?.aborted) return reject(execOpts.signal.reason);
+					execOpts?.signal?.addEventListener('abort', () => reject(execOpts.signal?.reason), {
+						once: true,
+					});
+				});
+			}
+			return {
+				stdout: state.listening && !opts.neverBinds ? 'ready\n' : '',
+				stderr: '',
+				exitCode: 0,
+			};
+		},
 	} as unknown as ReturnType<typeof createStubDocker>;
 	return { engine, execs, state, probes };
 }
@@ -255,6 +272,19 @@ describe('startRunTunnel', () => {
 		const { engine, state } = recordingEngine({ neverBinds: true });
 		await expect(start(root, engine, 500)).rejects.toThrow(/did not bind its ports/);
 		// And it does not leak the channel it opened on the way out.
+		expect(state.closed).toBe(true);
+	});
+
+	it('holds its deadline even when a single probe outlasts it', async () => {
+		// The deadline used to be checked only *between* polls, so one unsignalled
+		// probe against a backend with a minutes-long request timeout ran far past
+		// the wait it belonged to - while the run held a container and the provider
+		// credential, which is the whole window this bound exists to protect.
+		const root = scratch();
+		const { engine, state } = recordingEngine({ slowProbe: true });
+		const startedAt = Date.now();
+		await expect(start(root, engine, 200)).rejects.toThrow(/did not bind its ports/);
+		expect(Date.now() - startedAt).toBeLessThan(5_000);
 		expect(state.closed).toBe(true);
 	});
 });

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import { trackBackground } from '../../../lib/background';
+import { combineAbortSignals } from '../../../lib/net';
 import { logger } from '../../../logger';
 import { ExecStreamLostError } from '../errors';
 import { chunkPtyPayload } from './command';
@@ -364,7 +365,8 @@ export class DaytonaClient implements DaytonaApi {
 	 *
 	 * The timeout is minted per attempt rather than shared: one signal created
 	 * outside the loop is already counting down when the second attempt starts,
-	 * and would abort it instantly.
+	 * and would abort it instantly. A caller's own signal is combined with it, so
+	 * supplying a cancel never costs the call its upper bound.
 	 */
 	private async send(
 		method: string,
@@ -373,7 +375,12 @@ export class DaytonaClient implements DaytonaApi {
 			body?: BodyInit;
 			headers?: Record<string, string>;
 			timeoutMs?: number;
-			/** A caller-owned cancel. Replaces the per-attempt timeout when given. */
+			/**
+			 * A caller-owned cancel, combined with the per-attempt timeout rather
+			 * than replacing it. Replacing it left every signalled call unbounded,
+			 * and those are exactly the calls a run makes while holding a container
+			 * and the credential lock.
+			 */
 			signal?: AbortSignal;
 			/** Overrides the method-derived default. */
 			retry?: boolean;
@@ -389,7 +396,10 @@ export class DaytonaClient implements DaytonaApi {
 					method,
 					headers: { Authorization: `Bearer ${this.apiKey}`, ...init.headers },
 					body: init.body,
-					signal: init.signal ?? AbortSignal.timeout(init.timeoutMs ?? CONTROL_TIMEOUT_MS),
+					signal: combineAbortSignals(
+						init.signal,
+						AbortSignal.timeout(init.timeoutMs ?? CONTROL_TIMEOUT_MS),
+					),
 				});
 				if (res.ok || !TRANSIENT_STATUSES.has(res.status)) {
 					if (attempt > 0) {

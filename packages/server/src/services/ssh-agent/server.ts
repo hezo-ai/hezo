@@ -7,7 +7,7 @@ import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { ref } from '../../lib/log-ref';
-import { closeServerWithDeadline } from '../../lib/net';
+import { closeServerWithDeadline, listenWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
 import {
 	type AgentIdentity,
@@ -111,13 +111,17 @@ export class SshAgentServer {
 				error: e.message,
 			}),
 		);
-		await new Promise<void>((resolve, reject) => {
-			unixServer.once('error', reject);
-			unixServer.listen(socketHostPath, () => {
-				unixServer.removeListener('error', reject);
-				resolve();
-			});
-		});
+		// Bound, and unwound on failure: a half-allocated run leaves this registry
+		// naming a socket nothing is listening on, and the caller's teardown only
+		// runs for a run that got a handle back.
+		try {
+			await listenWithDeadline(unixServer, 'ssh-agent unix listener', (onListening) =>
+				unixServer.listen(socketHostPath, onListening),
+			);
+		} catch (e) {
+			await this.releaseRunSocket(runId);
+			throw e;
+		}
 		this.listeners.set(runId, unixServer);
 
 		const tcpServer = createServer((socket) => {
@@ -136,14 +140,17 @@ export class SshAgentServer {
 				error: e.message,
 			}),
 		);
-		await new Promise<void>((resolve, reject) => {
-			tcpServer.once('error', reject);
-			const tcpBindHost = this.deps.tcpListenHost ?? TCP_LISTEN_HOST;
-			tcpServer.listen({ host: tcpBindHost, port: 0 }, () => {
-				tcpServer.removeListener('error', reject);
-				resolve();
-			});
-		});
+		const tcpBindHost = this.deps.tcpListenHost ?? TCP_LISTEN_HOST;
+		try {
+			await listenWithDeadline(tcpServer, 'ssh-agent tcp listener', (onListening) =>
+				tcpServer.listen({ host: tcpBindHost, port: 0 }, onListening),
+			);
+		} catch (e) {
+			// The unix listener is already registered, so the shared teardown is
+			// what closes it.
+			await this.releaseRunSocket(runId);
+			throw e;
+		}
 		this.tcpListeners.set(runId, tcpServer);
 		const tcpHostPort = (tcpServer.address() as AddressInfo).port;
 		const tokenHex = tokenBytes.toString('hex');
