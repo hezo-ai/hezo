@@ -1,8 +1,20 @@
 import { join } from 'node:path';
-import { AgentRuntime, AiAuthMethod, type AiProvider } from '@hezo/shared';
-import type { AiProviderCredential } from './ai-provider-keys';
+import {
+	AgentRuntime,
+	AiAuthMethod,
+	type AiProvider,
+	RUNTIMES_WITH_ROTATING_CREDENTIAL,
+} from '@hezo/shared';
+import type { MasterKeyManager } from '../crypto/master-key';
+import type { Db } from '../db/database';
+import {
+	type AiProviderCredential,
+	type AiProviderCredentialAndModel,
+	updateAiProviderCredential,
+} from './ai-provider-keys';
 import type { SandboxFiles } from './sandbox/files';
 import type { ContainerEngine } from './sandbox/types';
+import { validateSubscriptionBlob } from './subscription-auth';
 import { CONTAINER_WORKSPACE_ROOT, getWorkspacePath } from './workspace';
 
 export const CONTAINER_SUBSCRIPTION_DIR = '/workspace/.hezo/subscription';
@@ -84,9 +96,6 @@ export interface RuntimeHomeLayout {
 	 */
 	apiKeyAuthFile?: (apiKey: string) => string;
 	envVarName: string;
-	/** True when the runtime CLI rotates a single-use refresh token in place,
-	 *  so runs on the credential must serialise and the rotated file persist back. */
-	rotates: boolean;
 }
 
 /**
@@ -114,13 +123,11 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 		apiKeyAuthFile: (apiKey) =>
 			`${JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: apiKey }, null, 2)}\n`,
 		envVarName: 'CODEX_HOME',
-		rotates: true,
 	},
 	[AgentRuntime.Gemini]: {
 		dirPrefix: 'gemini',
 		authFileRelative: '.gemini/oauth_creds.json',
 		envVarName: 'GEMINI_CLI_HOME',
-		rotates: false,
 	},
 	// Claude Code needs a per-run config dir so the runner can drop a settings.json
 	// with the Stop hook the agent CLI loads via `--settings`. The envVarName is a
@@ -132,7 +139,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.ClaudeCode]: {
 		dirPrefix: 'claude-code',
 		envVarName: 'HEZO_CLAUDE_CONFIG_DIR',
-		rotates: false,
 	},
 	// OpenCode reads the config file via an explicit
 	// `OPENCODE_CONFIG=<dir>/opencode.json` env entry (OPENCODE_CONFIG wants a file
@@ -140,7 +146,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.OpenCode]: {
 		dirPrefix: 'opencode',
 		envVarName: 'HEZO_OPENCODE_CONFIG_DIR',
-		rotates: false,
 	},
 	// Unlike the Claude Code marker, GROK_HOME is a real env var the grok CLI
 	// honours: it relocates the `.grok` config/session root, so the CLI reads our
@@ -149,7 +154,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.Grok]: {
 		dirPrefix: 'grok',
 		envVarName: 'GROK_HOME',
-		rotates: false,
 	},
 	// `KIMI_CODE_HOME` is likewise a REAL variable the CLI consumes. It relocates
 	// the entire data root: config.toml, mcp.json, credentials, and the per-session
@@ -161,7 +165,6 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 	[AgentRuntime.Kimi]: {
 		dirPrefix: 'kimi-code',
 		envVarName: 'KIMI_CODE_HOME',
-		rotates: false,
 	},
 };
 
@@ -279,7 +282,7 @@ export async function buildSubscriptionMount(
 		// Only a subscription blob rotates. An api-key file is written from the
 		// stored key every run, so reading it back would persist a rotation that
 		// never happened over the operator's own credential.
-		rotates: layout.rotates && isSubscription,
+		rotates: RUNTIMES_WITH_ROTATING_CREDENTIAL.includes(runtime) && isSubscription,
 	};
 }
 
@@ -340,4 +343,57 @@ export async function ensureRuntimeHomeDir(
 		containerDir,
 		envEntry: `${layout.envVarName}=${containerDir}`,
 	};
+}
+
+/**
+ * Read a rotated subscription credential back out of the container and store it.
+ *
+ * The counterpart to {@link buildSubscriptionMount}, and the reason the
+ * credential lock is held for a whole execution rather than for the write: the
+ * CLI rewrites this file at a moment of its own choosing, so the value only
+ * settles once the process has exited. Whoever runs a rotating credential owes
+ * this call before releasing the lock - an execution that skips it leaves the
+ * stored credential one rotation behind, and the next run fails to refresh.
+ *
+ * Best-effort by design: a failed write-back must not fail the work that just
+ * succeeded, so problems are reported through `onNotice` rather than thrown.
+ */
+export async function persistRotatedSubscriptionAuth(opts: {
+	db: Db;
+	masterKeyManager: MasterKeyManager;
+	engine: ContainerEngine;
+	containerId: string;
+	provider: AiProvider;
+	credential: AiProviderCredentialAndModel;
+	mount: SubscriptionMount | null | undefined;
+	onNotice?: (text: string) => void;
+}): Promise<void> {
+	const { mount } = opts;
+	if (!mount?.rotates) return;
+	try {
+		// Through SandboxFiles: the *container* rewrote this file, so a backend
+		// whose container is not on this machine has to read it back through the
+		// provider's file API rather than off disk.
+		const mountFiles = opts.engine.files(opts.containerId, mount.containerDir);
+		if (!(await mountFiles.exists(mount.authFileRelative))) return;
+		const rotated = await mountFiles.read(mount.authFileRelative);
+		if (!rotated || rotated === opts.credential.value) return;
+		// The CLI rewrites this file on every run: a rotated credential on success,
+		// but an empty "tombstone" (blank tokens) when the refresh fails. Persisting
+		// a tombstone would wipe the stored credential, so only write back a value
+		// that still validates as a usable credential.
+		const check = validateSubscriptionBlob(opts.provider, rotated);
+		if (!check.ok) {
+			opts.onNotice?.(`skipping rotated-auth write-back: ${check.error ?? 'invalid credential'}`);
+			return;
+		}
+		await updateAiProviderCredential(
+			opts.db,
+			opts.masterKeyManager,
+			opts.credential.configId,
+			rotated,
+		);
+	} catch (e) {
+		opts.onNotice?.(`failed to persist rotated subscription auth: ${(e as Error).message}`);
+	}
 }

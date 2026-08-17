@@ -36,6 +36,11 @@ const TRANSIENT_ERROR_NAMES: Record<string, true> = {
 	// Tunnel ports are per-container, so a redispatch can land somewhere with
 	// room. Nothing about the run itself is wrong.
 	TunnelPortsExhaustedError: true,
+	// The container was stopped or removed out from under the run - a provider's
+	// idle timer, a reclaim, an operator. The next attempt gets a container of
+	// its own and finds nothing wrong. Not a quota or memory-cap refusal, which
+	// is a fact about the instance and reproduces exactly.
+	ContainerUnreachableError: true,
 };
 
 /**

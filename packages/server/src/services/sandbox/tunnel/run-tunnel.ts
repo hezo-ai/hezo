@@ -11,6 +11,9 @@ import type { TunnelHostPolicy } from './split-routing';
 
 const log = logger.child('run-tunnel');
 
+/** How long the pre-allocation port probe gets before it is read as "free". */
+const PORT_PROBE_TIMEOUT_MS = 10_000;
+
 /**
  * Starting and stopping the tunnel for one run.
  *
@@ -97,7 +100,11 @@ export async function startRunTunnel(opts: StartRunTunnelOptions): Promise<RunTu
 				AttachStdout: true,
 				AttachStderr: false,
 			});
-			return (await opts.engine.execStart(exec)).stdout.includes('busy');
+			// Bounded because failing is already the benign answer here. Unbounded,
+			// this inherited the backend's own request timeout - minutes - spent
+			// before the run has even reached the readiness wait.
+			const probe = AbortSignal.timeout(PORT_PROBE_TIMEOUT_MS);
+			return (await opts.engine.execStart(exec, { signal: probe })).stdout.includes('busy');
 		} catch {
 			return false;
 		}
@@ -243,6 +250,12 @@ async function waitForTunnelListeners(
 	const deadline = Date.now() + timeoutMs;
 	let lastError = '';
 	while (Date.now() < deadline) {
+		// The deadline has to reach inside the probe, not just sit between polls.
+		// A backend's own per-request timeout is minutes where this wait is
+		// seconds, so one unsignalled iteration outlasts the whole deadline and
+		// the failure surfaces long after the moment it describes - while the run
+		// holds a container and the provider credential.
+		const probe = AbortSignal.timeout(deadline - Date.now());
 		try {
 			const execId = await engine.execCreate(containerId, {
 				Cmd: ['sh', '-c', script],
@@ -250,13 +263,14 @@ async function waitForTunnelListeners(
 				AttachStdout: true,
 				AttachStderr: false,
 			});
-			const { stdout } = await engine.execStart(execId);
+			const { stdout } = await engine.execStart(execId, { signal: probe });
 			if (stdout.includes('ready')) return;
 		} catch (err) {
 			// A container that is still settling can refuse an exec; keep trying
 			// until the deadline rather than failing on the first one.
 			lastError = err instanceof Error ? err.message : String(err);
 		}
+		if (Date.now() >= deadline) break;
 		await new Promise((resolve) => setTimeout(resolve, LISTEN_POLL_MS));
 	}
 	throw new Error(

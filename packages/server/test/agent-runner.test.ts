@@ -2993,32 +2993,9 @@ describe('runAgent', () => {
 			expect(updatedAt.rows[0].updated_at).toBeDefined();
 		});
 
-		it('serialises concurrent runs against the same credential row', async () => {
-			const release1 = await acquireCredentialLock('cred-test-A');
-			let secondAcquired = false;
-			const secondPromise = acquireCredentialLock('cred-test-A').then((r) => {
-				secondAcquired = true;
-				return r;
-			});
-
-			// Brief wait — second lock must NOT have resolved yet.
-			await new Promise((resolve) => setTimeout(resolve, 20));
-			expect(secondAcquired).toBe(false);
-
-			release1();
-			const release2 = await secondPromise;
-			expect(secondAcquired).toBe(true);
-			release2();
-		});
-
-		it('does not block concurrent runs against different credential rows', async () => {
-			const releaseA = await acquireCredentialLock('cred-test-B');
-			const releaseB = await acquireCredentialLock('cred-test-C');
-			// Both held simultaneously — neither call hung.
-			releaseA();
-			releaseB();
-		});
-
+		// The mutex's own semantics (ordering, isolation, timeout, abort) belong to
+		// `lib/keyed-lock` and are covered by keyed-lock.test.ts. What matters here
+		// is what a *run* does while the credential is held.
 		it('keeps the heartbeat run in queued state while the credential lock is held', async () => {
 			const configId = await configureCodexSubscription('codex-queue-run');
 

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { trackBackground } from '../lib/background';
+import { combineAbortSignals } from '../lib/net';
 import type { ContainerRunUser } from './container-user';
 import type { ContainerEngine } from './docker';
 import { hostSandboxFiles, type SandboxFiles } from './sandbox/files';
@@ -36,14 +37,6 @@ export const GIT_HTTP_TIMEOUT_ENV = ['GIT_HTTP_LOW_SPEED_LIMIT=1000', 'GIT_HTTP_
  */
 export function mintGitOpScopeId(): string {
 	return `gitop-${randomBytes(8).toString('hex')}`;
-}
-
-/** Merge a run's abort signal with a per-op timeout signal (either may be absent). */
-function combineAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
-	const present = signals.filter((s): s is AbortSignal => s !== undefined);
-	if (present.length === 0) return undefined;
-	if (present.length === 1) return present[0];
-	return AbortSignal.any(present);
 }
 
 export interface GitExecResult {

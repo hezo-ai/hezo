@@ -13,6 +13,7 @@ import {
 	ChatSessionStatus,
 	ChatSystemMessageKind,
 	type CommentAttachment,
+	credentialSerializesRuns,
 	DEFAULT_TEAM_ID,
 	effectiveRuntime,
 	PROVIDER_RUNTIME_ADAPTERS,
@@ -24,17 +25,20 @@ import {
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
+import { KeyedLockTimeoutError } from '../lib/keyed-lock';
 import { withTransaction } from '../lib/sql';
 import { getMaxChatHistorySize } from '../lib/system-meta';
 import { logger } from '../logger';
 import { signChatSessionJwt } from '../middleware/auth';
 import {
+	acquireCredentialLock,
 	assertPromptDeliverable,
 	buildRuntimeInvocation,
 	type EgressEnvDescriptor,
 	getContainerPromptPath,
 	getPromptRelPath,
 	type RunnerDeps,
+	type SubscriptionMount,
 } from './agent-runner';
 import {
 	type AgentChatParser,
@@ -62,6 +66,7 @@ import { type ContainerRunUser, resolveContainerRunUser } from './container-user
 import { acquireRunContainer, type ContainerDeps } from './containers';
 import { getAgentSystemPrompt } from './documents';
 import { applyEffortToRuntime, type EffortRuntimeApplication } from './effort';
+import { persistRotatedSubscriptionAuth } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberChatReservation } from './sandbox/pool-db';
@@ -77,6 +82,16 @@ const log = logger.child('chat-session');
 
 /** Container working directory for the (repo-free) chat session. */
 const CHAT_WORKING_DIR = '/workspace';
+
+/**
+ * How long a chat turn waits for a rotating provider credential before telling
+ * the operator to try again.
+ *
+ * Shorter than a task run's ceiling on purpose: a run is re-queued and retried
+ * for free, while a person is sitting in front of the chatbox watching nothing
+ * happen. Failing fast with a message they can act on beats a longer silence.
+ */
+const CHAT_CREDENTIAL_WAIT_MS = 60_000;
 /** How often to verify the live session's container is still healthy. */
 const HEALTH_INTERVAL_MS = Number(process.env.HEZO_CHAT_HEALTH_INTERVAL_MS ?? 10_000);
 
@@ -235,6 +250,8 @@ interface LiveSession {
 	env: string[];
 	execCmd: string[];
 	promptDirective: string | null;
+	/** See {@link HostSideAllocation.subscriptionMount}. */
+	subscriptionMount: SubscriptionMount | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
 	/** Tears down the session's tunnel. Idempotent; see {@link HostSideAllocation}. */
@@ -303,6 +320,12 @@ interface HostSideAllocation {
 	env: string[];
 	execCmd: string[];
 	promptDirective: string | null;
+	/**
+	 * The subscription file this session's CLI reads, when it has one. Kept
+	 * because a rotating credential has to be read back out of the container
+	 * after every exec that could have rewritten it.
+	 */
+	subscriptionMount: SubscriptionMount | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
 	/**
@@ -1492,6 +1515,7 @@ export class ChatSessionManager {
 				env: invocation.env,
 				execCmd: invocation.execCmd,
 				promptDirective: effortApplication.promptDirective ?? null,
+				subscriptionMount: invocation.subscriptionMount,
 				releaseEgress,
 				releaseSsh,
 				closeTunnel: () => tunnel?.close(),
@@ -1640,15 +1664,17 @@ export class ChatSessionManager {
 				}
 			};
 
-			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
-				cmd: execCmd,
-				env,
-				workingDir: CHAT_WORKING_DIR,
-				signal: abort.signal,
-				onChunk: (chunk) => {
-					if (chunk.stream === 'stdout') handle(parser.onStdout(chunk.text));
-				},
-			});
+			await this.withCredentialLock(session, abort.signal, () =>
+				dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+					cmd: execCmd,
+					env,
+					workingDir: CHAT_WORKING_DIR,
+					signal: abort.signal,
+					onChunk: (chunk) => {
+						if (chunk.stream === 'stdout') handle(parser.onStdout(chunk.text));
+					},
+				}),
+			);
 			handle(parser.flush());
 			await finalize(ChatMessageStatus.Complete, parser.getUsage());
 			// After the reply has settled, so the operator is never kept waiting on it.
@@ -1904,13 +1930,15 @@ export class ChatSessionManager {
 		try {
 			// Drain output; the reply text is irrelevant — the memory write is the
 			// real product, landed via the update_chat_memory MCP tool.
-			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
-				cmd: execCmd,
-				env,
-				workingDir: CHAT_WORKING_DIR,
-				signal: abort.signal,
-				onChunk: () => undefined,
-			});
+			await this.withCredentialLock(session, abort.signal, () =>
+				dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+					cmd: execCmd,
+					env,
+					workingDir: CHAT_WORKING_DIR,
+					signal: abort.signal,
+					onChunk: () => undefined,
+				}),
+			);
 		} catch (e) {
 			// A new user turn preempts compaction — that's a clean stop, not a
 			// failure; nothing is evicted and it retries later.
@@ -2018,17 +2046,19 @@ export class ChatSessionManager {
 		const parser = createAgentChatParser(session.runtimeType);
 		let text = '';
 		try {
-			await dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
-				cmd: execCmd,
-				env,
-				workingDir: CHAT_WORKING_DIR,
-				signal: abort.signal,
-				onChunk: (chunk) => {
-					if (chunk.stream === 'stdout') {
-						for (const ev of parser.onStdout(chunk.text)) if (ev.text) text += ev.text;
-					}
-				},
-			});
+			await this.withCredentialLock(session, abort.signal, () =>
+				dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+					cmd: execCmd,
+					env,
+					workingDir: CHAT_WORKING_DIR,
+					signal: abort.signal,
+					onChunk: (chunk) => {
+						if (chunk.stream === 'stdout') {
+							for (const ev of parser.onStdout(chunk.text)) if (ev.text) text += ev.text;
+						}
+					},
+				}),
+			);
 			for (const ev of parser.flush()) if (ev.text) text += ev.text;
 		} catch (e) {
 			// A new user turn preempts title generation — a clean stop, retried later.
@@ -2115,6 +2145,63 @@ export class ChatSessionManager {
 		const live = this.live;
 		if (!live || this.suspended || live.containerId !== containerId) return;
 		await this.suspend();
+	}
+
+	/**
+	 * Run one CLI exec holding this session's provider credential, and store back
+	 * whatever the CLI rotated into it.
+	 *
+	 * A chat turn drives the same coding CLI a task run does, so on a rotating
+	 * subscription (Codex) it consumes and rewrites the single-use refresh token.
+	 * Without this the chat took no lock and kept no write-back: a turn overlapping
+	 * a task run invalidated that run's token, and the value the CLI left behind
+	 * was dropped, leaving the stored credential a rotation behind and the next
+	 * refresh failing. Silent credential corruption, on a live path.
+	 *
+	 * Bounded like every other wait on this lock, and reported rather than hung:
+	 * an operator sitting in front of the chatbox gets an error they can act on.
+	 * Non-rotating credentials skip all of it and run concurrently as before.
+	 */
+	private async withCredentialLock<T>(
+		session: LiveSession,
+		signal: AbortSignal,
+		fn: () => Promise<T>,
+	): Promise<T> {
+		const { provider, credential, runtimeType } = session.invocationInputs;
+		if (!credentialSerializesRuns(provider, runtimeType, credential.authMethod)) return fn();
+
+		let release: (() => void) | null = null;
+		try {
+			release = await acquireCredentialLock(credential.configId, {
+				signal,
+				timeoutMs: CHAT_CREDENTIAL_WAIT_MS,
+				owner: `chat/${session.sessionId.slice(0, 8)}`,
+			});
+		} catch (e) {
+			if (e instanceof KeyedLockTimeoutError) {
+				throw new Error(
+					'Another agent run is still using this provider credential. ' +
+						'This subscription can only run one agent at a time - try again in a moment.',
+				);
+			}
+			throw e;
+		}
+		try {
+			return await fn();
+		} finally {
+			// Before the release, so the next holder reads what this exec left.
+			await persistRotatedSubscriptionAuth({
+				db: this.deps.db,
+				masterKeyManager: this.deps.masterKeyManager,
+				engine: this.deps.docker,
+				containerId: session.containerId,
+				provider,
+				credential,
+				mount: session.subscriptionMount,
+				onNotice: (text: string) => log.warn(text, { session: session.sessionId }),
+			});
+			release();
+		}
 	}
 
 	/**

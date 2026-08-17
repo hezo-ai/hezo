@@ -8,8 +8,9 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { encrypt } from '../src/crypto/encryption';
+import { decrypt, encrypt } from '../src/crypto/encryption';
 import { signChatSessionJwt, verifyToken } from '../src/middleware/auth';
+import { acquireCredentialLock } from '../src/services/agent-runner';
 import { ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
@@ -850,6 +851,215 @@ describe('ChatSessionManager', () => {
 		const convo = await manager.getConversation(titled);
 		expect(convo?.title).toBe('Roadmap planning');
 		await manager.stop();
+	});
+
+	/**
+	 * A chat turn drives the same coding CLI a task run does, so on a rotating
+	 * subscription it consumes and rewrites the single-use refresh token. The chat
+	 * used to take no lock and keep no write-back, so a turn overlapping a task run
+	 * invalidated that run's token and dropped whatever the CLI left behind.
+	 */
+	describe('credential rotation', () => {
+		const ROTATED = JSON.stringify({
+			tokens: {
+				id_token: 'header.payload.sig2',
+				access_token: 'header.payload.sig2',
+				refresh_token: 'rt-rotated-by-chat',
+				account_id: 'acct-1',
+			},
+		});
+		const ORIGINAL = JSON.stringify({
+			tokens: {
+				id_token: 'header.payload.sig',
+				access_token: 'header.payload.sig',
+				refresh_token: 'rt-original',
+				account_id: 'acct-1',
+			},
+		});
+
+		/** A Codex subscription, the one credential shape that rotates. */
+		async function seedCodexSubscription(): Promise<string> {
+			const key = ctx.masterKeyManager.getKey();
+			if (!key) throw new Error('master key unavailable');
+			await ctx.db.query('DELETE FROM ai_provider_configs');
+			const res = await ctx.db.query<{ id: string }>(
+				`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, runtime)
+				 VALUES ('openai', 'subscription', 'codex-sub', $1, true, 'verified', 'codex')
+				 RETURNING id`,
+				[encrypt(ORIGINAL, key)],
+			);
+			const proj = await ctx.db.query<{ id: string }>(
+				`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+				[DEFAULT_TEAM_ID],
+			);
+			await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [
+				proj.rows[0].id,
+			]);
+			await seedProjectContainer(ctx.db, proj.rows[0].id, 'hq-container');
+			return res.rows[0].id;
+		}
+
+		beforeEach(async () => {
+			await ctx.db.query('DELETE FROM chat_messages');
+			await ctx.db.query('DELETE FROM chat_sessions');
+			await ctx.db.query('DELETE FROM chat_conversations');
+		});
+
+		test('holds the credential for the turn and stores what the CLI rotated into it', async () => {
+			const configId = await seedCodexSubscription();
+			let heldDuringExec = false;
+
+			const docker = createStubDocker(
+				{
+					execCreate: async () => 'exec-codex-chat',
+					execStart: async (
+						_execId: string,
+						opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+					) => {
+						// A second acquirer cannot get in while the turn is running, which is
+						// the whole point of taking the lock for the exec rather than around
+						// the token read.
+						const contender = acquireCredentialLock(configId, { timeoutMs: 20 }).then(
+							(release: () => void) => {
+								release();
+								return false;
+							},
+							() => true,
+						);
+						heldDuringExec = await contender;
+						const onChunk = opts.onChunk ?? (() => undefined);
+						await onChunk({ stream: 'stdout', text: assistantText('Hello') });
+						await onChunk({ stream: 'stdout', text: resultEvent(10, 5, 0.01) });
+						return { stdout: '', stderr: '' };
+					},
+				},
+				{ db: ctx.db, dataDir: ctx.dataDir },
+			);
+			const { manager } = makeManager(ctx, docker);
+
+			const { assistantMessageId } = await manager.sendTurn({ text: 'Hello CEO' });
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					'SELECT status FROM chat_messages WHERE id = $1',
+					[assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+
+			expect(heldDuringExec).toBe(true);
+			await manager.stop();
+		});
+
+		test('leaves a non-rotating credential unlocked, so chat and runs stay concurrent', async () => {
+			const key = ctx.masterKeyManager.getKey();
+			if (!key) throw new Error('master key unavailable');
+			await ctx.db.query('DELETE FROM ai_provider_configs');
+			const res = await ctx.db.query<{ id: string }>(
+				`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+				 VALUES ('anthropic', 'api_key', 'plain', $1, true, 'verified', 'claude-sonnet-4-6')
+				 RETURNING id`,
+				[encrypt('sk-ant-test', key)],
+			);
+			const proj = await ctx.db.query<{ id: string }>(
+				`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+				[DEFAULT_TEAM_ID],
+			);
+			await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [
+				proj.rows[0].id,
+			]);
+			await seedProjectContainer(ctx.db, proj.rows[0].id, 'hq-container');
+
+			let lockedOut = false;
+			const docker = createStubDocker(
+				{
+					execCreate: async () => 'exec-anthropic-chat',
+					execStart: async (
+						_execId: string,
+						opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+					) => {
+						lockedOut = await acquireCredentialLock(res.rows[0].id, { timeoutMs: 20 }).then(
+							(release: () => void) => {
+								release();
+								return false;
+							},
+							() => true,
+						);
+						const onChunk = opts.onChunk ?? (() => undefined);
+						await onChunk({ stream: 'stdout', text: assistantText('Hi') });
+						await onChunk({ stream: 'stdout', text: resultEvent(10, 5, 0.01) });
+						return { stdout: '', stderr: '' };
+					},
+				},
+				{ db: ctx.db, dataDir: ctx.dataDir },
+			);
+			const { manager } = makeManager(ctx, docker);
+
+			const { assistantMessageId } = await manager.sendTurn({ text: 'Hello CEO' });
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					'SELECT status FROM chat_messages WHERE id = $1',
+					[assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+
+			// An API key is not rewritten by anything, so nothing should be serialised.
+			expect(lockedOut).toBe(false);
+			await manager.stop();
+		});
+
+		test('writes a rotated credential back rather than dropping it', async () => {
+			const configId = await seedCodexSubscription();
+			const key = ctx.masterKeyManager.getKey();
+			if (!key) throw new Error('master key unavailable');
+
+			// The CLI rewrites its auth file mid-exec, which is exactly when Codex
+			// rotates. Written through SandboxFiles so the read-back path under test is
+			// the same one production uses.
+			let codexHome: string | null = null;
+			const docker = createStubDocker(
+				{
+					execCreate: async (_id: string, config: { Env?: string[] }) => {
+						const entry = (config.Env ?? []).find((e) => e.startsWith('CODEX_HOME='));
+						if (entry) codexHome = entry.slice('CODEX_HOME='.length);
+						return 'exec-codex-rotate';
+					},
+					execStart: async (
+						_execId: string,
+						opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+					) => {
+						if (codexHome) {
+							await docker.files('hq-container', codexHome).write('auth.json', ROTATED);
+						}
+						const onChunk = opts.onChunk ?? (() => undefined);
+						await onChunk({ stream: 'stdout', text: assistantText('Rotated') });
+						await onChunk({ stream: 'stdout', text: resultEvent(10, 5, 0.01) });
+						return { stdout: '', stderr: '' };
+					},
+				},
+				{ db: ctx.db, dataDir: ctx.dataDir },
+			);
+			const { manager } = makeManager(ctx, docker);
+			const { assistantMessageId } = await manager.sendTurn({ text: 'Hello CEO' });
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					'SELECT status FROM chat_messages WHERE id = $1',
+					[assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+
+			expect(codexHome).not.toBeNull();
+			// The turn stored what the CLI left behind. Dropping it left the row a
+			// rotation behind, and the next refresh on that credential fails.
+			const stored = await ctx.db.query<{ encrypted_credential: string }>(
+				'SELECT encrypted_credential FROM ai_provider_configs WHERE id = $1',
+				[configId],
+			);
+			expect(decrypt(stored.rows[0].encrypted_credential, key)).toBe(ROTATED);
+
+			await manager.stop();
+		});
 	});
 });
 

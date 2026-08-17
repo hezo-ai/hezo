@@ -815,3 +815,58 @@ test('Google subscription offers no sign-in button, because its CLI cannot be dr
 	expect(queryByRole('button', { name: /Paste credential manually/i })).toBeNull();
 	expect(container.querySelector('textarea')).not.toBeNull();
 });
+
+/**
+ * Codex rewrites its subscription credential mid-run, so the runner serialises
+ * runs on it. That is a concurrency limit the operator is choosing when they
+ * pick subscription auth, so it has to be visible at the moment they choose -
+ * not only in the paste instructions, which guided sign-in hides behind a
+ * "Paste credential manually" toggle.
+ */
+test('the add form warns that a rotating subscription runs one agent at a time', async () => {
+	const { findByRole, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+	const dialog = await findByRole('dialog');
+	await user.click(within(dialog).getByRole('button', { name: 'OpenAI' }));
+
+	// API key is the default, and has no such limit - nothing should be claimed.
+	expect(within(dialog).queryByText(/only one agent can use it at a time/)).toBeNull();
+
+	await user.click(within(dialog).getByRole('button', { name: /subscription/i }));
+	await within(dialog).findByText(/only one agent can use it at a time/);
+
+	// And it goes away again if they switch back, rather than sticking.
+	await user.click(within(dialog).getByRole('button', { name: 'API key' }));
+	await waitFor(() =>
+		expect(within(dialog).queryByText(/only one agent can use it at a time/)).toBeNull(),
+	);
+});
+
+test('the providers list marks only the credential whose runs serialise', async () => {
+	const { findByText, container } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			await postProvider({
+				provider: 'openai',
+				api_key: '{"tokens":{"refresh_token":"rt","access_token":"at","id_token":"it"}}',
+				auth_method: 'subscription',
+				label: 'codex-sub',
+			});
+			// Same provider, same CLI, but an API key is not rewritten by anything -
+			// so this row must carry no marker. Provider alone is the wrong predicate.
+			await postProvider({ provider: 'openai', api_key: 'sk-plain-key', label: 'codex-key' });
+		},
+	});
+
+	await findByText('codex-sub');
+	await findByText('codex-key');
+
+	const markers = container.querySelectorAll('[data-testid="provider-serializes-runs"]');
+	expect(markers.length).toBe(1);
+	expect(markers[0].closest('tr')?.textContent).toContain('codex-sub');
+});

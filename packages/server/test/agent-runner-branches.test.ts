@@ -13,7 +13,6 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
 	type AgentAttachment,
-	acquireCredentialLock,
 	buildCoachReviewPrompt,
 	buildProgressUpdatePrompt,
 	buildProviderEnv,
@@ -985,40 +984,4 @@ describe('buildCoachReviewPrompt', () => {
 	});
 });
 
-// --------------------------------------------------------------------------
-// acquireCredentialLock — serialises overlapping acquisitions on one config id
-// and lets a different config id proceed concurrently.
-// --------------------------------------------------------------------------
-describe('acquireCredentialLock', () => {
-	it('serialises two acquisitions on the same config id (second waits for the first release)', async () => {
-		const id = `cfg-${Math.random().toString(36).slice(2)}`;
-		const release1 = await acquireCredentialLock(id);
-
-		let secondAcquired = false;
-		const secondPromise = acquireCredentialLock(id).then((release2) => {
-			secondAcquired = true;
-			return release2;
-		});
-
-		// While the first lock is held, the second must not have acquired yet.
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(secondAcquired).toBe(false);
-
-		release1();
-		const release2 = await secondPromise;
-		expect(secondAcquired).toBe(true);
-		release2();
-	});
-
-	it('lets a different config id acquire immediately (no cross-id blocking)', async () => {
-		const a = `cfg-a-${Math.random().toString(36).slice(2)}`;
-		const b = `cfg-b-${Math.random().toString(36).slice(2)}`;
-		const releaseA = await acquireCredentialLock(a);
-		// Different id → resolves without waiting on A.
-		const releaseB = await acquireCredentialLock(b);
-		releaseA();
-		releaseB();
-		expect(true).toBe(true);
-	});
-});
+// The credential mutex itself is `lib/keyed-lock`, covered by keyed-lock.test.ts.

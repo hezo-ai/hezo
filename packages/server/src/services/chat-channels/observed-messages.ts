@@ -50,13 +50,18 @@ export async function recordObservedMessage(db: Db, input: ObservedMessageInput)
 		],
 	);
 	// Keep only the newest rows per chat — the buffer is context, not an archive.
+	//
+	// Ordered by `seq`, not `created_at`: that column is the transaction clock, and
+	// a burst of messages lands inside one tick, so it is not a total order. The
+	// keep-set was an arbitrary pick among tied rows, which could delete a message
+	// that arrived after one it kept.
 	await db.query(
 		`DELETE FROM chat_observed_messages
 		 WHERE channel = $1::chat_channel AND external_chat_id = $2
 		   AND id NOT IN (
 		     SELECT id FROM chat_observed_messages
 		     WHERE channel = $1::chat_channel AND external_chat_id = $2
-		     ORDER BY created_at DESC LIMIT $3
+		     ORDER BY seq DESC LIMIT $3
 		   )`,
 		[input.channel, input.externalChatId, OBSERVED_BUFFER_LIMIT],
 	);
@@ -83,7 +88,7 @@ export async function readObservedContext(
 		 FROM chat_observed_messages
 		 WHERE channel = $1::chat_channel AND external_chat_id = $2
 		   ${scoped ? 'AND thread_scope = $4' : ''}
-		 ORDER BY created_at DESC LIMIT $3`,
+		 ORDER BY seq DESC LIMIT $3`,
 		scoped
 			? [opts.channel, opts.externalChatId, limit, opts.threadScope]
 			: [opts.channel, opts.externalChatId, limit],

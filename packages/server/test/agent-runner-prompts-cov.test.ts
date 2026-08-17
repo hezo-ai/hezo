@@ -17,7 +17,6 @@ import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import {
-	acquireCredentialLock,
 	buildProgressUpdatePrompt,
 	buildProviderEnv,
 	buildTaskPrompt,
@@ -697,21 +696,6 @@ describe('small helpers (direct)', () => {
 			defaultModel: null,
 		} as any);
 		expect(deepseek.some((e) => e.startsWith('ANTHROPIC_BASE_URL='))).toBe(true);
-	});
-
-	it('acquireCredentialLock serialises same-id acquisitions and isolates different ids', async () => {
-		const order: string[] = [];
-		const release1 = await acquireCredentialLock('cfg-a');
-		const second = acquireCredentialLock('cfg-a').then((rel) => {
-			order.push('second-acquired');
-			rel();
-		});
-		const releaseOther = await acquireCredentialLock('cfg-b'); // no cross-id blocking
-		order.push('other-acquired');
-		release1();
-		await second;
-		releaseOther();
-		expect(order).toEqual(['other-acquired', 'second-acquired']);
 	});
 
 	it('prompt path helpers agree on the per-run file name', () => {
