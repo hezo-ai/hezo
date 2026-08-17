@@ -31,8 +31,26 @@ import { useTask, useUpdateTask } from '../../../../hooks/use-tasks';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Everything below this boundary is per-task-VISIT state: the open document
+ * preview, the reply target, the view override, the mobile meta drawer. The
+ * router reuses ONE component instance for every task on this route, so a plain
+ * `useState` survives a task→task navigation and leaks into the next task —
+ * the previous task's document stayed pinned in the preview panel, and a stale
+ * `replyTarget` would parent the next comment to a comment on another task.
+ *
+ * Remounting on task identity is what makes "per visit" true, and keeps it true
+ * for state added later without every new `useState` having to remember to
+ * reset itself. Nothing worth carrying across tasks lives here — the preview
+ * panel's width is in localStorage and the task data is in the query cache, so
+ * a remount costs a re-render, not a refetch.
+ */
 function TaskDetailPage() {
 	const { projectId, taskId } = Route.useParams();
+	return <TaskDetailView key={`${projectId}/${taskId}`} projectId={projectId} taskId={taskId} />;
+}
+
+function TaskDetailView({ projectId, taskId }: { projectId: string; taskId: string }) {
 	const navigate = useNavigate();
 	const { data: task, isLoading } = useTask(projectId, taskId);
 
@@ -72,8 +90,8 @@ function TaskDetailPage() {
 	const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
 	// Which view this page visit shows. The instance default is the value; the
 	// rail control overrides it for this visit only and writes nothing, so a
-	// reload - or opening another task - is back on the default. That is the whole
-	// of the per-visit rule: plain state on the route, nothing to go stale.
+	// reload - or opening another task - is back on the default. Plain state plus
+	// the remount above is the whole of the per-visit rule; nothing to go stale.
 	const { data: instanceSettings } = useInstanceSettings();
 	const defaultView = instanceSettings?.default_task_view ?? DEFAULT_TASK_VIEW;
 	const [viewOverride, setViewOverride] = useState<TaskView | null>(null);
@@ -83,7 +101,8 @@ function TaskDetailPage() {
 	// base width) and is user-resizable by dragging the divider between it and the
 	// task content (persisted in localStorage); and its own full-screen overlay
 	// (above the main content and the meta drawer) below lg. It is independent of
-	// the meta side rail.
+	// the meta side rail, and scoped to this task by the remount above — a doc
+	// opened from one task's comments must not follow the reader into the next.
 	const [preview, setPreview] = useState<PreviewItem | null>(null);
 	// The meta side rail is a collapsed-by-default drawer on mobile, toggled by
 	// the chevron. It is independent of the preview panel — opening/closing a

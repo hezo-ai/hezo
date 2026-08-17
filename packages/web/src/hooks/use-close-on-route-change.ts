@@ -6,9 +6,12 @@ import { useEffect, useRef } from 'react';
  * menu — when the app navigates to a different page.
  *
  * Not every overlay unmounts on navigation. The ones rendered under `<Outlet />`
- * do, by accident of where they live; the ones rendered by the shell chrome in
- * `routes/__root.tsx` sit ABOVE the `<Outlet />` and never unmount, so their
- * `open` state survives a client-side navigation. The failure mode is a link
+ * do, by accident of where they live — but only when the ROUTE changes, since
+ * one component instance serves every set of params for a route (a task-detail
+ * overlay outlives a task→task navigation; that route remounts itself on task
+ * identity instead of reaching for this hook). The ones rendered by the shell
+ * chrome in `routes/__root.tsx` sit ABOVE the `<Outlet />` and never unmount, so
+ * their `open` state survives a client-side navigation. The failure mode is a link
  * inside the overlay: the page underneath swaps, the overlay does not, and a
  * full-screen Radix modal (overlay `z-[80]`, content `z-[90]`) is left covering
  * the page the reader just asked for, with no way through but its close button.
