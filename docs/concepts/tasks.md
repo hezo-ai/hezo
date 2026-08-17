@@ -87,6 +87,14 @@ When a run is triggered by an **@-mention**, or by a **reply** to one of the age
 earlier comments, the triggering comment is put in front of the agent directly, so it acts
 on exactly the message that woke it.
 
+An agent returning to a task it has worked before is told **when its last run there
+finished, and how much has happened since**, so catching up means reading what is new
+rather than the whole thread again. On a task that has been open for months that is the
+difference between a handful of comments and a year of them. What an agent reads is the
+conversation and the task's own changes - status moves, reassignments, links. The
+one-line-per-run markers are left out, because a run's outcome and its log are richer on
+the agent's own Executions tab than a marker in a thread.
+
 The practical upshot: keep discussion, decisions, and hand-offs on the task. Whatever
 lands in the thread is inherited by the next agent that picks the task up - so the
 conversation compounds instead of evaporating between runs.

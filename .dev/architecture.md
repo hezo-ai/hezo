@@ -3567,10 +3567,28 @@ form that notifies no one? That combination is what a stranded handoff *is*, wha
 carried it. It also covers a structural hole neither other layer reaches - the net only inspects
 the run's **final message**, and `create_comment` only inspects **one comment at a time**, so
 nothing looked at what a run achieved in aggregate, which is exactly where a passively addressed
-ask posted as a comment lives. `agent_wakeup_requests` carries no `created_by_run_id`, so "did
-this run wake anyone" is derived from the run's own comments (an active `@`-mention, or a
-`parent_comment_id` reply that wakes the parent author) rather than queried directly; no migration
-is involved.
+ask posted as a comment lives. "Did this run wake anyone **on this task**" is derived from the
+run's own comments: an active `@`-mention, or a `parent_comment_id` reply that wakes the parent
+author.
+
+That alone was not the whole answer, because a run notifies people without writing anything a
+thread can show. `create_task` with an assignee, a reassignment, and a `blocked_by` edge the
+cascade releases all wire a wake on the *recipient's* task, and `SHARED_INSTRUCTIONS` explicitly
+tells an agent to write `@@<slug>` rather than mention them again in that case - so a run that
+routed work exactly as instructed was reported as having stranded it. `agent_wakeup_requests`
+therefore carries `created_by_run_id` (migration `063_run_health.sql`, nullable, no backfill,
+partial index), stamped on all three of `createWakeup`'s write paths: the insert, the coalesce
+`UPDATE`, and the idempotency-key early return that writes no row of its own. `wakeIfReady` stamps
+it on the deferred-to-queued flip too, since that notify path creates nothing at all.
+
+`resolveRunStructuralWakes` reads those back and drops every named teammate the run notified that
+way. The credit is **run-wide**, not per task, because such a wake lands on the recipient's task
+and never on the one being judged. Mention and reply wakes are excluded from it even though they
+carry the same run id: those land on the task whose thread carried them, where the per-task rule
+above already judges them, and crediting them run-wide would let an `@`-mention on one task excuse
+a handoff stranded on another - the exact hole the per-task scoping closes. `createTask` and the
+two run-reachable `wakeAgentIfAssigned` call sites **await** their wakeup rather than leaving it
+fire-and-forget, because this check reads it back at the end of the same run.
 
 The aggregate is **per task, not per run**. A run comments on whatever tasks it touches, so answered
 run-wide the question lets a run that woke a teammate on its own task strand a handoff in a comment
@@ -4531,6 +4549,43 @@ cache, `useCommentBody`). A `?view=skeleton` list is index-ordered by
 (default mode). Deep-link (`#comment-<id>`) targets load their body eagerly so the anchor
 lands on stable height. Reactions stay on the skeleton row (one source of truth), so their
 optimistic mutation and WS invalidation are unchanged.
+
+**Which rows a thread read returns.** `task-thread.ts` also names the three categories a
+reader can ask for - `conversation` (what people and agents wrote, plus anything awaiting a
+person), `events` (status, assignee, title and parent changes, task links, run-failure
+notices) and `runs` (one marker per agent execution) - as a `Record<CommentContentType, …>`,
+so a content type added later is a compile error until someone categorises it. An
+unrecognised type reads as `conversation`: an unknown row is shown, never silently withheld.
+`lib/comment-filters.ts` turns a selection into SQL for both surfaces.
+
+**The two surfaces default differently, on purpose.** MCP `list_comments` defaults to
+`["conversation","events"]`; the REST route defaults to every row. The agent's scarce
+resource is the context window it reads a thread into, and on a task open for months the run
+markers are the bulk of it while `list_task_runs` reports the same executions with their
+outcome attached. The browser's constraint is the opposite: `TaskView.Detailed` renders every
+row, and `summarize()` counts the run and system rows to label each folded group, so a
+filtered default would silently empty those chips. One filter, one vocabulary, two defaults.
+The default selection is spelled as the literal `content_type <> 'run'::comment_content_type`
+so the planner can prove it implies `idx_comments_task_created_no_run`
+(`063_run_health.sql`), whose key carries `id` as well so the keyset tuple is an index
+condition rather than a filter.
+
+**A page is narrowed, never rejected.** `limit` x `excerpt_chars` at their defaults exceeds
+`MCP_RESULT_BYTE_LIMIT`, so a full page of long comments used to be discarded whole with a
+`result_too_large` telling the caller to retry smaller - which is how one production run came
+to walk an 850-row thread three times at three different excerpt widths. The width is now
+derived from the page size, with a shrink loop behind it for the part arithmetic cannot cover
+(structured bodies and attachment URLs are returned whole), and the value used comes back as
+`excerpt_chars_applied`. `getCommentsFull` remains the one deliberately unbounded read here -
+no `LIMIT` at all - because the web app needs the whole thread to fold it.
+
+**Catch-up has an end.** Each task run's prompt carries the timestamp its previous run on
+that task finished plus how much is new since (one seek on `idx_runs_member_task_finished`,
+added by `061`), and names the exact `list_comments(since: …)` call. Without that an agent was
+told to read the full thread and to follow every cursor to the end, from four surfaces at
+once, every run, forever. Task threads still have no compaction - unlike chat sessions, which
+compact and evict (`chat-memory.ts`) - so a standing task's thread grows without bound; the
+filter and `since` make that affordable rather than solved.
 
 **Thread views.** The feed renders a *row model*, not the raw comment list. The rule that
 builds it lives in `@hezo/shared` (`task-thread.ts`): a row stays visible if it is
