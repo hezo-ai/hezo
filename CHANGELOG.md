@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.49.0 - 2026-08-17
+
+### Features
+
+- **runs:** explain what a queued run is waiting for ([#987](https://github.com/hezo-ai/hezo/pull/987))
+
+### Bug Fixes
+
+- **runs:** thread-read cost, false handoff warning, and dead connector descriptors ([#985](https://github.com/hezo-ai/hezo/pull/985))
+- **runs:** stop the credential-lock wedge stranding runs and pinning containers ([#986](https://github.com/hezo-ai/hezo/pull/986))
+- **web:** scope task-detail panel state to the task being viewed ([#984](https://github.com/hezo-ai/hezo/pull/984))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.48.2...0.49.0
+
 ## 0.48.2 - 2026-08-17
 
 ### Bug Fixes
