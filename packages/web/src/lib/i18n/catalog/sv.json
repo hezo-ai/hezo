@@ -437,5 +437,17 @@
 	"toast.dismiss": "Dölj",
 	"toast.error": "Något gick fel",
 	"toast.info": "Observera",
-	"toast.success": "Klart"
+	"toast.success": "Klart",
+	"comment.runError": "Fel",
+	"comment.runErrorExpand": "Visa hela felet",
+	"tasks.lastRun.failed": "Den senaste körningen misslyckades",
+	"tasks.lastRun.timedOut": "Den senaste körningen nådde tidsgränsen",
+	"tasks.lastRun.failedReason": "Den senaste körningen misslyckades: {reason}",
+	"tasks.lastRun.timedOutReason": "Den senaste körningen nådde tidsgränsen: {reason}",
+	"tasks.lastRun.jump": "Gå till körningen",
+	"updates.confirm.restart": "Hezo stängs av och startar om på {version}.",
+	"updates.confirm.drain": "Hezo väntar några sekunder på att pågående agentkörningar ska bli klara och stannar sedan. Det som fortfarande kör läggs tillbaka i kön och börjar om.",
+	"updates.confirm.runsInFlight.one": "{count} agentkörning pågår just nu.",
+	"updates.confirm.runsInFlight.other": "{count} agentkörningar pågår just nu.",
+	"updates.confirm.reunlock": "Du behöver din huvudnyckel på 12 ord för att låsa upp Hezo igen efter omstarten."
 }

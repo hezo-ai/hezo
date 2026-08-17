@@ -32,7 +32,7 @@ export function RelatedItemsList({
 		<div className="mt-1 pl-4 border-l border-border flex flex-col gap-0.5" data-testid={testId}>
 			{label && <span className="text-[11px] uppercase tracking-wide text-text-3">{label}</span>}
 			{items.length === 0 ? (
-				<span className="text-xs text-text-3">{emptyLabel ?? '—'}</span>
+				<span className="text-xs text-text-3">{emptyLabel ?? '-'}</span>
 			) : (
 				items.map((it) =>
 					it.href ? (

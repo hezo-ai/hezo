@@ -51,7 +51,7 @@ export function AutomationsSection({
 					<span className="text-text-2 block mt-0.5">
 						When an agent replies to a comment that @-mentioned it, automatically wake the original
 						commenter so they see the response right away. Disable to have the original commenter
-						pick up accumulated replies on their next heartbeat instead — useful when a single
+						pick up accumulated replies on their next heartbeat instead - useful when a single
 						comment @-mentions several agents and you'd rather batch their responses.
 					</span>
 				</span>

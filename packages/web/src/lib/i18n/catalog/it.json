@@ -437,5 +437,17 @@
 	"toast.dismiss": "Ignora",
 	"toast.error": "Qualcosa è andato storto",
 	"toast.info": "Nota",
-	"toast.success": "Fatto"
+	"toast.success": "Fatto",
+	"comment.runError": "Errore",
+	"comment.runErrorExpand": "Mostra l'errore completo",
+	"tasks.lastRun.failed": "L'ultima esecuzione non è riuscita",
+	"tasks.lastRun.timedOut": "L'ultima esecuzione è scaduta",
+	"tasks.lastRun.failedReason": "L'ultima esecuzione non è riuscita: {reason}",
+	"tasks.lastRun.timedOutReason": "L'ultima esecuzione è scaduta: {reason}",
+	"tasks.lastRun.jump": "Vai all'esecuzione",
+	"updates.confirm.restart": "Hezo si arresterà e ripartirà con {version}.",
+	"updates.confirm.drain": "Hezo attende qualche secondo che le esecuzioni degli agenti in corso finiscano, poi si ferma. Ciò che è ancora in esecuzione torna in coda e riparte da capo.",
+	"updates.confirm.runsInFlight.one": "{count} esecuzione di agente è in corso adesso.",
+	"updates.confirm.runsInFlight.other": "{count} esecuzioni di agente sono in corso adesso.",
+	"updates.confirm.reunlock": "Ti servirà la chiave principale di 12 parole per sbloccare Hezo dopo il riavvio."
 }

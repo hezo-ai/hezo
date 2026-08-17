@@ -52,7 +52,7 @@ function DocPreviewPage() {
 					</span>
 					<div className="flex shrink-0 items-center gap-1">
 						<ReviewToolbarActions projectId={projectId} filename={filename} variant="inline" />
-						{/* Archived docs are read-only — mirror the Documents toolbar and drop
+						{/* Archived docs are read-only - mirror the Documents toolbar and drop
 						    Edit while keeping History. */}
 						{!doc.archived_at && (
 							<Tooltip content="Edit document">
@@ -80,7 +80,7 @@ function DocPreviewPage() {
 								<History className="h-4 w-4" />
 							</Link>
 						</Tooltip>
-						{/* Same client-side download the Documents toolbar offers — this
+						{/* Same client-side download the Documents toolbar offers - this
 						    standalone tab is where a doc gets read in full, so it's where
 						    saving a copy is most likely to be wanted. */}
 						<DocumentDownloadMenu filename={filename} content={doc.content} variant="icon" />

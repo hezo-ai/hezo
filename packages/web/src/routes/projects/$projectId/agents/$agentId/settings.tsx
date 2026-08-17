@@ -327,8 +327,8 @@ function AgentSettingsPage() {
 							? 'Disabling unassigns this agent from open tasks and stops it from being scheduled.'
 							: 'This agent is disabled and cannot be assigned new work. Enable to resume scheduling.'}
 				</div>
-				{/* The HQ instance singletons (CEO/Coach) can never be disabled — the disable
-				    button is hidden for them — but if one is somehow disabled, the admin can
+				{/* The HQ instance singletons (CEO/Coach) can never be disabled - the disable
+				    button is hidden for them - but if one is somehow disabled, the admin can
 				    still re-enable it to recover. */}
 				{!isInstanceAgent && agent.admin_status === AgentAdminStatus.Enabled && (
 					<Button

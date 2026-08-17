@@ -76,7 +76,7 @@ export function ProjectSidebar({
 			<span className="inline-flex items-center gap-1.5">
 				<span>Containers</span>
 				{containerFailed && (
-					<Tooltip content="Container failed — click for details" side="right">
+					<Tooltip content="Container failed - click for details" side="right">
 						<span
 							role="img"
 							data-testid="project-sidebar-container-error"
@@ -148,7 +148,7 @@ export function ProjectSidebar({
 			<span className="inline-flex items-center gap-1.5">
 				<span>{t('nav.goals')}</span>
 				{hasNoGoals && (
-					<Tooltip content="No goals yet — create one to focus the team" side="right">
+					<Tooltip content="No goals yet - create one to focus the team" side="right">
 						<span
 							role="img"
 							aria-label="No goals yet"
@@ -189,7 +189,7 @@ export function ProjectSidebar({
 			label: t('nav.assets'),
 		},
 		...(isInternal
-			? // HQ has no Budget or Settings — Container stays at the top level, after
+			? // HQ has no Budget or Settings - Container stays at the top level, after
 				// Connectors and Skills, with Activity last as everywhere else.
 				[connectorsPage, skillsPage, containerPage, activityPage]
 			: [
@@ -260,7 +260,7 @@ export function ProjectSidebar({
 						<span className="flex flex-1 items-center gap-1.5 min-w-0">
 							<Globe
 								className="w-3 h-3 shrink-0 text-text-3"
-								aria-label="Global agent — works across all projects"
+								aria-label="Global agent - works across all projects"
 							/>
 							<AgentStatusLabel
 								variant="sidebar"

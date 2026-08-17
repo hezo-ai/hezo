@@ -283,7 +283,7 @@ function MethodCategory({
 											// operator take it for a declaration.
 											<span
 												className="text-[10px] uppercase tracking-wide text-text-3"
-												title="Category inferred from the method name — this server declares no read-only hint"
+												title="Category inferred from the method name - this server declares no read-only hint"
 											>
 												inferred
 											</span>

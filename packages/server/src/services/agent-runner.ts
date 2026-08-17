@@ -1096,14 +1096,29 @@ export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
  * task, post a comment, or record anything at all. The container is still alive,
  * so no `container_*` transition fires and nothing else would notice.
  */
-export type RunAbortReason = ContainerExitAbortReason | 'run_timeout' | 'tunnel_lost';
+export type RunAbortReason =
+	| ContainerExitAbortReason
+	| 'run_timeout'
+	| 'tunnel_lost'
+	| 'server_shutdown';
 
 const RUN_ABORT_REASONS: readonly string[] = [
 	'container_error',
 	'container_stopped',
 	'run_timeout',
 	'tunnel_lost',
+	'server_shutdown',
 ];
+
+/**
+ * What a run killed by a clean shutdown records.
+ *
+ * Deliberately distinguishable from `reconcileOnStartup`'s "Server restarted
+ * while run in flight": this one means the drain saw it coming, that one means
+ * it did not. Which of the two a run wears says whether the shutdown was orderly.
+ */
+export const RUN_LOST_TO_SHUTDOWN_ERROR =
+	'Server shut down while this run was in flight; it will be re-queued when Hezo comes back.';
 
 function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
 	const reason = signal?.reason as unknown;
@@ -1183,6 +1198,7 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
 /** Error string stamped on an aborted run row — a friendly line for a timeout, else the raw reason. */
 function abortErrorMessage(reason: RunAbortReason | null): string | undefined {
 	if (reason === 'run_timeout') return 'run reached its time limit';
+	if (reason === 'server_shutdown') return RUN_LOST_TO_SHUTDOWN_ERROR;
 	if (reason === 'tunnel_lost')
 		return (
 			'the run tunnel to the container closed mid-run, so the agent lost its Hezo tools, ' +

@@ -32,7 +32,7 @@ export function MarkdownThumbnail({ url, contentType }: { url: string; contentTy
 			aria-hidden
 			className="pointer-events-none h-full w-full overflow-hidden [mask-image:linear-gradient(to_bottom,black_65%,transparent)]"
 		>
-			{/* prose-sm rendered at ~60% via transform — proportional headings and
+			{/* prose-sm rendered at ~60% via transform - proportional headings and
 			    spacing read as a real document; w-[166%] refills the width post-scale. */}
 			<div className="w-[166%] origin-top-left scale-[0.6] px-3 py-2 prose prose-sm max-w-none [&_*]:text-text-1!">
 				<Markdown remarkPlugins={[remarkGfm]} components={THUMBNAIL_COMPONENTS}>

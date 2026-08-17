@@ -29,13 +29,13 @@ export function ReviewHelp({
 					<li>
 						On a <strong>text asset</strong> (markdown, plain text),{' '}
 						<strong>select any text</strong> or <strong>hover a line</strong> to leave an anchored
-						comment — exactly like a document. Other asset types (images, HTML, PDFs, …) take{' '}
+						comment - exactly like a document. Other asset types (images, HTML, PDFs, …) take{' '}
 						<strong>whole-asset comments</strong> from the review panel.
 					</li>
 				) : (
 					<>
 						<li>
-							<strong>Select any text</strong> in the document to leave a comment on it — the text
+							<strong>Select any text</strong> in the document to leave a comment on it - the text
 							stays highlighted.
 						</li>
 						<li>
@@ -48,8 +48,8 @@ export function ReviewHelp({
 					<strong>Click a highlight</strong> (or its margin icon) to edit or delete that comment.
 				</li>
 				<li>
-					The <strong>clipboard button</strong> opens a handoff you can copy — or post straight onto
-					a task you pick from the <strong>Add to task</strong> list — agents read the comments
+					The <strong>clipboard button</strong> opens a handoff you can copy - or post straight onto
+					a task you pick from the <strong>Add to task</strong> list - agents read the comments
 					directly from the {isAsset ? 'asset' : 'document'}.
 				</li>
 				<li>
@@ -60,8 +60,8 @@ export function ReviewHelp({
 				<TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
 				<span>
 					{isAsset
-						? 'Any write to the asset — by you or an agent — automatically deletes all existing review comments. A review applies to the current version of the asset only.'
-						: 'Any update to the document — by you or an agent — automatically deletes all existing review comments. A review applies to the current version of the document only.'}
+						? 'Any write to the asset - by you or an agent - automatically deletes all existing review comments. A review applies to the current version of the asset only.'
+						: 'Any update to the document - by you or an agent - automatically deletes all existing review comments. A review applies to the current version of the document only.'}
 				</span>
 			</div>
 		</HelpDialog>

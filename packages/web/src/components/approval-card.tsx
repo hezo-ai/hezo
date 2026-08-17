@@ -153,7 +153,7 @@ function ApprovalMessage({ approval }: { approval: Approval }) {
 			return (
 				<>
 					<span>
-						Suggesting goal <span className="font-medium">{title}</span> — approving creates it
+						Suggesting goal <span className="font-medium">{title}</span> - approving creates it
 					</span>
 					{p.measurement && (
 						<span className="block text-xs text-text-2 mt-1">
@@ -320,7 +320,7 @@ export function ApprovalCard({ approval, showTeam = false }: ApprovalCardProps) 
 						</Button>
 					</Link>
 				)}
-				{/* Hires are decided only on the edit/review page, never inline — the
+				{/* Hires are decided only on the edit/review page, never inline - the
 				    proposal must be opened and reviewed before approve/deny. */}
 				{approval.type !== ApprovalType.Hire && (
 					<>

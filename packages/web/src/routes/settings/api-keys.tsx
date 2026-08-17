@@ -59,7 +59,7 @@ function ApiKeysPage() {
 			return label ? (
 				<span className="text-xs font-mono text-text-2">{label}</span>
 			) : (
-				<span className="text-text-3">—</span>
+				<span className="text-text-3">-</span>
 			);
 		},
 	};
@@ -181,7 +181,7 @@ function ApiKeysPage() {
 					</div>
 					<p className="text-[13px] text-text-2 mt-1 max-w-[680px]">
 						An API key connects an external tool or agent to this Hezo instance over MCP. A key acts
-						with <span className="font-medium">full access</span> — every project and team — so only
+						with <span className="font-medium">full access</span> - every project and team - so only
 						create or approve keys you trust. Revoke one at any time to disable it immediately.
 					</p>
 				</div>
@@ -189,7 +189,7 @@ function ApiKeysPage() {
 				{newKey && (
 					<div className="border border-success rounded-md bg-success-soft p-3 mb-5">
 						<p className="text-xs text-success-soft-fg font-medium mb-1">
-							New API key created — copy it now, it won't be shown again:
+							New API key created - copy it now, it won't be shown again:
 						</p>
 						<div className="flex items-center gap-2">
 							<code className="text-xs font-mono break-all flex-1">{newKey}</code>

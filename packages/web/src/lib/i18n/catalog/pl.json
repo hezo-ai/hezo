@@ -437,5 +437,17 @@
 	"toast.dismiss": "Ukryj",
 	"toast.error": "Coś poszło nie tak",
 	"toast.info": "Uwaga",
-	"toast.success": "Gotowe"
+	"toast.success": "Gotowe",
+	"comment.runError": "Błąd",
+	"comment.runErrorExpand": "Pokaż pełny błąd",
+	"tasks.lastRun.failed": "Ostatnie uruchomienie nie powiodlo sie",
+	"tasks.lastRun.timedOut": "Ostatnie uruchomienie przekroczylo limit czasu",
+	"tasks.lastRun.failedReason": "Ostatnie uruchomienie nie powiodlo sie: {reason}",
+	"tasks.lastRun.timedOutReason": "Ostatnie uruchomienie przekroczylo limit czasu: {reason}",
+	"tasks.lastRun.jump": "Przejdz do uruchomienia",
+	"updates.confirm.restart": "Hezo zostanie zamkniete i uruchomi sie ponownie w wersji {version}.",
+	"updates.confirm.drain": "Hezo czeka kilka sekund na zakonczenie trwajacych uruchomien agentow, a potem sie zatrzymuje. To, co nadal dziala, wraca do kolejki i zaczyna od poczatku.",
+	"updates.confirm.runsInFlight.one": "Trwa teraz {count} uruchomienie agenta.",
+	"updates.confirm.runsInFlight.other": "Trwa teraz {count} uruchomien agentow.",
+	"updates.confirm.reunlock": "Do odblokowania Hezo po restarcie potrzebny bedzie 12-wyrazowy klucz glowny."
 }

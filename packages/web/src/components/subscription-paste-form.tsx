@@ -15,7 +15,7 @@ export const SUBSCRIPTION_INSTRUCTIONS: Partial<Record<AiProvider, ProviderInstr
 			</>,
 			<>
 				Run <code>claude setup-token</code> (requires a Claude Pro or Max subscription). A browser
-				window opens — sign in with the Claude account whose subscription you want to use.
+				window opens - sign in with the Claude account whose subscription you want to use.
 			</>,
 			<>
 				Copy the token it prints (it starts with <code>sk-ant-oat01-</code>) and paste it into the
@@ -38,7 +38,7 @@ export const SUBSCRIPTION_INSTRUCTIONS: Partial<Record<AiProvider, ProviderInstr
 				Install the Codex CLI on your local machine: <code>npm install -g @openai/codex</code>.
 			</>,
 			<>
-				Run <code>codex login</code>. A browser window will open at <code>auth.openai.com</code> —
+				Run <code>codex login</code>. A browser window will open at <code>auth.openai.com</code> -
 				sign in with the ChatGPT account whose subscription you want to use.
 			</>,
 			<>
@@ -50,7 +50,7 @@ export const SUBSCRIPTION_INSTRUCTIONS: Partial<Record<AiProvider, ProviderInstr
 		footer: (
 			<>
 				Heads up: this credential auto-rotates each time Hezo runs Codex. Don't keep using the same
-				login on your laptop afterwards — pick one or the other, otherwise the refresh token will
+				login on your laptop afterwards - pick one or the other, otherwise the refresh token will
 				desync. To stop, remove the credential here and re-run <code>codex login</code> locally.
 			</>
 		),
@@ -65,12 +65,12 @@ export const SUBSCRIPTION_INSTRUCTIONS: Partial<Record<AiProvider, ProviderInstr
 			</>,
 			<>
 				Run <code>gemini</code> and choose <strong>Sign in with Google</strong>. A browser window
-				will open — sign in with the Google account whose Gemini access you want to use.
+				will open - sign in with the Google account whose Gemini access you want to use.
 			</>,
 			<>
 				Open <code>~/.gemini/oauth_creds.json</code> (macOS/Linux) or{' '}
 				<code>%USERPROFILE%\.gemini\oauth_creds.json</code> (Windows). On newer Gemini CLI versions
-				the credential may be stored in your OS keychain instead — sign out and back in with{' '}
+				the credential may be stored in your OS keychain instead - sign out and back in with{' '}
 				<code>GEMINI_FORCE_FILE_STORAGE=true</code> set to force a plaintext file.
 			</>,
 			<>Copy the entire contents of that file and paste them into the box below.</>,

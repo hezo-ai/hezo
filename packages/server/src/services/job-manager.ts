@@ -114,6 +114,15 @@ const MAX_CONSECUTIVE_TIMEOUT_CONTINUATIONS = 5;
 // gets at most one progress run a day from this path and a dormant one gets none.
 const PROGRESS_REFRESH_INTERVAL_HOURS = 24;
 const FAILURE_PING_ERROR_MAX_LEN = 500;
+/**
+ * The outcomes that must never post a failure notice: a cancel is the user's own
+ * doing, and a success has nothing to report.
+ */
+const NON_PINGING_STATUSES: HeartbeatRunStatus[] = [
+	HeartbeatRunStatus.Succeeded,
+	HeartbeatRunStatus.Cancelled,
+];
+
 const FAILURE_TERMINAL_STATUSES: HeartbeatRunStatus[] = [
 	HeartbeatRunStatus.Failed,
 	HeartbeatRunStatus.TimedOut,
@@ -397,6 +406,8 @@ export class JobManager {
 	private cron: Cron;
 	private runningTasks = new Map<string, RunningTask>();
 	private liveRuns = new Map<string, LiveRun>();
+	/** Set by {@link stopAcceptingWork}; makes `launchTask` refuse new work. */
+	private draining = false;
 	private guards = new Map<string, boolean>();
 	/**
 	 * Containers the last orphan sweep found unreferenced. One sighting is not
@@ -742,6 +753,10 @@ export class JobManager {
 		timeoutMs: number,
 		runContext?: RunDispatchContext,
 	): boolean {
+		// A shutdown in progress must not take new work: the wakeup cron fires every
+		// five seconds, so without this a drain would keep being handed fresh runs
+		// by the very scheduler it is waiting out.
+		if (this.draining) return false;
 		if (this.runningTasks.has(key)) return false;
 		const ac = new AbortController();
 
@@ -812,6 +827,60 @@ export class JobManager {
 		return new Map(this.runningTasks);
 	}
 
+	/**
+	 * Stop scheduling and refuse new dispatches.
+	 *
+	 * Separate from {@link shutdown} so a drain can sit between them. Aborting and
+	 * clearing the registries in one step, as `shutdown` does, leaves the abort
+	 * nowhere to land: the DB closes while the runs it just cancelled are still
+	 * writing their terminal rows.
+	 */
+	/**
+	 * How many agent runs are in flight right now.
+	 *
+	 * The same figure `autoInstallStagedUpdate` gates on, exposed so the update
+	 * banner shows one definition of busy rather than inventing a second.
+	 */
+	inFlightRunCount(): number {
+		return this.runningTasks.size;
+	}
+
+	stopAcceptingWork(): void {
+		this.draining = true;
+		this.cron.shutdown();
+	}
+
+	/**
+	 * Abort every in-flight run and wait, bounded, for its completion path to
+	 * write a terminal row. Returns what was still in flight at the deadline, so
+	 * the caller can name it rather than exiting silently on unfinished work.
+	 *
+	 * Ordering is the caller's and it matters: `killLiveRunProcesses()` goes
+	 * first, so the in-container tree is already dead and the abort lands in
+	 * milliseconds rather than waiting on an exec that will never end.
+	 */
+	async drainRunningRuns(deadlineMs: number): Promise<LiveRun[]> {
+		const entries = [...this.runningTasks.values()];
+		if (entries.length === 0) return [];
+		log.info(`Shutdown: draining ${entries.length} in-flight run(s), up to ${deadlineMs}ms`);
+		for (const task of entries) {
+			clearTimeout(task.timeoutId);
+			task.abortController.abort('server_shutdown');
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		await Promise.race([
+			Promise.allSettled(entries.map((e) => e.promise)),
+			new Promise<void>((resolve) => {
+				timer = setTimeout(resolve, deadlineMs);
+			}),
+		]);
+		if (timer) clearTimeout(timer);
+		const stillRunning = new Set(
+			entries.filter((e) => this.runningTasks.get(e.key) === e).map((e) => e.key),
+		);
+		return [...this.liveRuns.values()].filter((r) => stillRunning.has(r.taskKey));
+	}
+
 	shutdown(): void {
 		for (const task of this.runningTasks.values()) {
 			clearTimeout(task.timeoutId);
@@ -859,16 +928,32 @@ export class JobManager {
 	}
 
 	/**
+	 * Both halves of startup reconciliation, in order. The shape existing callers
+	 * and tests already use.
+	 */
+	async reconcileOnStartup(): Promise<void> {
+		await this.reconcileDatabaseOnStartup();
+		await this.reconcileContainersOnStartup();
+	}
+
+	/**
 	 * Reconcile DB state with the (now-empty) in-process run registry. Runs in
 	 * `running` or `queued` state from the previous process were necessarily lost
 	 * with that process — fail them, reset their agents to idle, release locks,
 	 * broadcast, and enqueue recovery wakeups so work resumes.
 	 *
-	 * Also self-heals projects stuck in `error` state whose underlying container
-	 * is actually alive (e.g. from a prior false-positive transport-error trip).
+	 * **Deliberately callable before the vault is unlocked.** It is raw SQL and
+	 * broadcasts; nothing here decrypts anything or touches the container backend.
+	 * Coming up locked after a restart is the intended behaviour, not a gap - but
+	 * while this was behind the unlock hook, an instance that came up locked
+	 * served stranded `running` rows and stuck-busy agents until a human arrived,
+	 * with the orphan cron not started either.
+	 *
+	 * Idempotent by construction: every UPDATE is guarded by a status predicate,
+	 * so a second call finds no rows and queues no wakeups.
 	 */
-	async reconcileOnStartup(): Promise<void> {
-		const { db, docker, wsManager } = this.deps;
+	async reconcileDatabaseOnStartup(): Promise<void> {
+		const { db, wsManager } = this.deps;
 
 		const stranded = await db.query<{
 			id: string;
@@ -1001,7 +1086,19 @@ export class JobManager {
 				`Startup reconciliation: failed ${stranded.rows.length} stranded run(s), reset ${resetAgents.rows.length} agent(s) to idle, failed ${strandedRepos.rows.length} interrupted repo setup(s)`,
 			);
 		}
+	}
 
+	/**
+	 * The container-backend half of startup reconciliation.
+	 *
+	 * Split from the DB half because this one genuinely needs a connected engine,
+	 * so it stays behind the unlock hook while the repair above runs at boot.
+	 *
+	 * Also self-heals projects stuck in `error` state whose underlying container
+	 * is actually alive (e.g. from a prior false-positive transport-error trip).
+	 */
+	async reconcileContainersOnStartup(): Promise<void> {
+		const { docker } = this.deps;
 		// Ahead of every other container pass: the ones below adopt, restart and
 		// re-provision from the same rows, so a retired project must be emptied
 		// before they look at it.
@@ -2642,6 +2739,7 @@ export class JobManager {
 				taskIdentifier,
 				teamId,
 				result.heartbeatRunId,
+				result.stderr?.trim() || null,
 			);
 		}
 
@@ -3132,6 +3230,8 @@ export class JobManager {
 		taskIdentifier: string,
 		teamId: string,
 		runId: string,
+		/** What the caller knows went wrong, for a row that recorded nothing. */
+		fallbackError: string | null = null,
 	): Promise<void> {
 		const { db } = this.deps;
 
@@ -3140,7 +3240,17 @@ export class JobManager {
 			[runId],
 		);
 		const run = runRow.rows[0];
-		if (!run || !FAILURE_TERMINAL_STATUSES.includes(run.status)) return;
+		if (!run) return;
+		// An explicit no-ping list rather than a terminal-status gate. A cancel is
+		// the user's own doing and a success has nothing to report; those are the
+		// only two outcomes that must never ping. Everything else reaching here has
+		// already been judged a failure by the caller - and gating on *terminal*
+		// meant a run whose driver threw before finalizing it silenced the thread
+		// entirely, which is the case this whole area exists to report.
+		if (NON_PINGING_STATUSES.includes(run.status)) return;
+		const status = FAILURE_TERMINAL_STATUSES.includes(run.status)
+			? run.status
+			: HeartbeatRunStatus.Failed;
 
 		const recent = await db.query<{ status: HeartbeatRunStatus }>(
 			`SELECT status FROM heartbeat_runs
@@ -3164,10 +3274,11 @@ export class JobManager {
 			return;
 		}
 
-		const truncatedError = run.error
-			? run.error.length > FAILURE_PING_ERROR_MAX_LEN
-				? `${run.error.slice(0, FAILURE_PING_ERROR_MAX_LEN)}…`
-				: run.error
+		const rawError = run.error ?? fallbackError;
+		const truncatedError = rawError
+			? rawError.length > FAILURE_PING_ERROR_MAX_LEN
+				? `${rawError.slice(0, FAILURE_PING_ERROR_MAX_LEN)}…`
+				: rawError
 			: null;
 
 		const inserted = await db.query<Record<string, unknown>>(
@@ -3180,7 +3291,7 @@ export class JobManager {
 				JSON.stringify({
 					kind: 'run_failed',
 					run_id: runId,
-					status: run.status,
+					status,
 					error: truncatedError,
 					member_id: memberId,
 					agent_slug: agentSlug,

@@ -102,7 +102,7 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 						  handlers, and pointerdown bubbles up here anyway. The wrapper is
 						  also what the hook measures and transforms, so the lifted avatar
 						  and its displaced neighbours all move *inside* the scroll
-						  container — `overflow-y-auto` never has an escaping element to
+						  container - `overflow-y-auto` never has an escaping element to
 						  clip. `items-center` keeps it shrink-to-fit, so it adds no layout.
 						*/
 						return (
@@ -141,7 +141,7 @@ export function ProjectRail({ showHome = false }: { showHome?: boolean } = {}) {
 						  bottom while the avatars scroll beneath. The full-width opaque
 						  wrapper masks avatars sliding under. The shadow is always on
 						  (upward, so the overflow box can't clip it away in the stuck
-						  position) — there is no separator border in either state.
+						  position) - there is no separator border in either state.
 						*/
 						<div className="sticky bottom-0 z-10 shrink-0 w-full flex justify-center py-1 bg-surface-2">
 							<Tooltip content="New project" side="right">

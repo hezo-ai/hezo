@@ -75,7 +75,7 @@ export function ReviewToolbarActions({
 					</button>
 				</Tooltip>
 			)}
-			<Tooltip content="Action this review — copy a handoff for an agent">
+			<Tooltip content="Action this review - copy a handoff for an agent">
 				<button
 					type="button"
 					aria-label="Action this review"

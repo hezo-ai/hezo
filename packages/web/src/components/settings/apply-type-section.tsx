@@ -26,7 +26,7 @@ export function ApplyTypeSection({ projectId }: { projectId: string }) {
 		setResult(
 			added.length > 0
 				? `Added ${added.length} role${added.length === 1 ? '' : 's'}: ${added.join(', ')}.`
-				: 'Already up to date — nothing to add.',
+				: 'Already up to date - nothing to add.',
 		);
 	}
 
@@ -34,7 +34,7 @@ export function ApplyTypeSection({ projectId }: { projectId: string }) {
 		<section data-testid="apply-type-section">
 			<h2 className="text-[15px] font-medium mb-1">Refresh from a type</h2>
 			<p className="text-[13px] text-text-2 mb-3">
-				Merge a team type into this team — adds any missing roles and refreshes built-in prompts.
+				Merge a team type into this team - adds any missing roles and refreshes built-in prompts.
 				Never removes agents or customizations you've added. To copy another team's setup, save it
 				as a type first, then apply it here.
 			</p>

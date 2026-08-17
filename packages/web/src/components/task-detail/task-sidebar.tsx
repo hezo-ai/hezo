@@ -251,7 +251,7 @@ export function TaskSidebar({
 								</AgentRef>
 							) : (
 								<AgentStatusLabel
-									name="—"
+									name="-"
 									runtimeStatus={AgentRuntimeStatus.Idle}
 									badge={assigneeRunBadge}
 									className="flex-1 min-w-0"
@@ -279,7 +279,7 @@ export function TaskSidebar({
 								) : (
 									<span className="flex flex-1 min-w-0 items-center">
 										<AgentStatusLabel
-											name="—"
+											name="-"
 											runtimeStatus={AgentRuntimeStatus.Idle}
 											className="min-w-0"
 										/>
@@ -376,7 +376,7 @@ export function TaskSidebar({
 							{task.project_name}
 						</Link>
 					) : (
-						<span className="text-[13px] text-text-1">—</span>
+						<span className="text-[13px] text-text-1">-</span>
 					)}
 				</div>
 

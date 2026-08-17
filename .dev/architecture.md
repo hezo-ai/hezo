@@ -2292,8 +2292,8 @@ moment the row is inserted, so a run whose host-side driver still owns it (waiti
 credential lock, say) is skipped and only a row whose driver has vanished is failed. The two
 kinds are distinguished only by their recorded `error` (`Never started: …` vs
 `Orphaned: nothing was driving this run any more …`); the retry/approval escalation is
-shared. Neither verdict claims a process check - there is none to make, since `process_pid`
-is written nowhere and liveness is the in-process registry alone. The reap `UPDATE` is
+shared. Neither verdict claims a process check - there is none to make, since a run's work
+happens inside a container and liveness is the in-process registry alone. The reap `UPDATE` is
 guarded on a non-terminal status, so a row that settled between the scan and the write keeps
 the cause its own writer recorded rather than being overwritten with the generic one.
 `healStaleRunState` is the inverse pass and deliberately counts `queued` as active, so it
@@ -3039,9 +3039,12 @@ gate that blocks the agent from ending its turn with unfinished work.
 
 **Sessions & recovery.** `agent_task_sessions` persists per-task session state; each
 heartbeat spawns a fresh subprocess and injects handoff markdown from the prior session,
-with compaction policies rotating on token/run/age thresholds. The orphan detector uses
-`heartbeat_runs.process_pid`/`retry_of_run_id`/`process_loss_retry_count` to recover runs
-whose process disappeared. A ~30 s sweep (`processBudgetResumes`) lifts budget-paused
+with compaction policies rotating on token/run/age thresholds. The orphan detector recovers
+runs whose driver disappeared, bounded by `heartbeat_runs.process_loss_retry_count` - which
+a retried run inherits from the run named in `retry_of_run_id`, so the chain reaches its
+ceiling instead of restarting at zero every lap. `process_pid` was dropped in migration 062:
+it was never written, because a run's work happens in a container and there is no host pid
+to record. A ~30 s sweep (`processBudgetResumes`) lifts budget-paused
 agents back to `idle` once a window rolls over or a limit is raised.
 
 ---

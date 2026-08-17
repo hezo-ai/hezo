@@ -227,7 +227,7 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 		<div data-testid={testId}>
 			{/* The viewport's height is left to the content so a space-taking
 			    horizontal scrollbar gets a gutter below the chart instead of eating
-			    ~15px out of the box and shearing the bottom row's border — the same
+			    ~15px out of the box and shearing the bottom row's border - the same
 			    border PR #620 was about. Its vertical overflow must be stated
 			    explicitly: a non-`visible` value on one axis computes the other to
 			    `auto`, which would let a vertical scrollbar appear alongside.
@@ -243,13 +243,13 @@ export function OrgChartTree({ roots, projectId, mode, hint, testId }: OrgChartT
 				}`}
 			>
 				{/* The scaled chart keeps its untransformed layout box, so this sizer
-				    carries the painted size instead — it is what gives the viewport a
+				    carries the painted size instead - it is what gives the viewport a
 				    correct scroll extent, and clipping to it keeps the untransformed
 				    tree's layout overflow from leaking into that extent.
 
 				    `mx-auto` is the whole centring story: CSS 2.1 §10.3.3 zeroes
 				    over-constrained auto margins, so the sizer centres while the chart
-				    fits and goes flush left the moment it outgrows the viewport —
+				    fits and goes flush left the moment it outgrows the viewport -
 				    which is what puts the chart's left edge at scrollLeft 0 instead of
 				    stranding it out of reach. `justify-center` on a scroll container
 				    would strand it, the same way the old measurement did. */}

@@ -245,7 +245,7 @@ function AssetViewerPage() {
 				}
 				aside={
 					<>
-						{/* Mobile pull-in for the review panel — same affordance as the task
+						{/* Mobile pull-in for the review panel - same affordance as the task
 						    page's side rail: edge chevron + scrim, hidden at lg+. */}
 						<button
 							type="button"

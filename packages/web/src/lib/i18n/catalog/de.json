@@ -437,5 +437,17 @@
 	"toast.dismiss": "Ausblenden",
 	"toast.error": "Etwas ist schiefgelaufen",
 	"toast.info": "Hinweis",
-	"toast.success": "Fertig"
+	"toast.success": "Fertig",
+	"comment.runError": "Fehler",
+	"comment.runErrorExpand": "Vollständigen Fehler anzeigen",
+	"tasks.lastRun.failed": "Letzter Lauf fehlgeschlagen",
+	"tasks.lastRun.timedOut": "Letzter Lauf hat das Zeitlimit erreicht",
+	"tasks.lastRun.failedReason": "Letzter Lauf fehlgeschlagen: {reason}",
+	"tasks.lastRun.timedOutReason": "Letzter Lauf hat das Zeitlimit erreicht: {reason}",
+	"tasks.lastRun.jump": "Zum Lauf springen",
+	"updates.confirm.restart": "Hezo wird beendet und startet mit {version} neu.",
+	"updates.confirm.drain": "Hezo wartet einige Sekunden, bis laufende Agentenläufe abgeschlossen sind, und stoppt dann. Was noch läuft, wird neu eingereiht und beginnt von vorne.",
+	"updates.confirm.runsInFlight.one": "{count} Agentenlauf ist gerade aktiv.",
+	"updates.confirm.runsInFlight.other": "{count} Agentenläufe sind gerade aktiv.",
+	"updates.confirm.reunlock": "Sie benötigen Ihren 12-Wörter-Hauptschlüssel, um Hezo nach dem Neustart wieder zu entsperren."
 }

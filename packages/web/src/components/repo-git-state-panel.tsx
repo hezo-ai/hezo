@@ -104,7 +104,7 @@ export function RepoGitStatePanel({ projectId, repoId, repoName }: RepoGitStateP
 					className="rounded-md border border-border bg-surface-2 p-3 text-xs text-text-2"
 					data-testid={`repo-git-container-stopped-${repoName}`}
 				>
-					Container is stopped —{' '}
+					Container is stopped -{' '}
 					<Link
 						to="/projects/$projectId/container"
 						params={{ projectId }}

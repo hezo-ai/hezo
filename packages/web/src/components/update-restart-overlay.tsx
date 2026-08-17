@@ -122,7 +122,7 @@ export function UpdateRestartOverlay({
 					{targetVersion ? `Restarting onto ${targetVersion}. ` : 'Restarting. '}
 					In-flight agent runs are paused and resume automatically.{' '}
 					{autoUnlock
-						? 'Hezo will come back unlocked — no master key needed.'
+						? 'Hezo will come back unlocked - no master key needed.'
 						: "When Hezo comes back you'll need your 12-word master key to unlock it again."}
 				</p>
 			</div>

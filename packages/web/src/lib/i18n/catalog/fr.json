@@ -437,5 +437,17 @@
 	"toast.dismiss": "Ignorer",
 	"toast.error": "Une erreur est survenue",
 	"toast.info": "À noter",
-	"toast.success": "Terminé"
+	"toast.success": "Terminé",
+	"comment.runError": "Erreur",
+	"comment.runErrorExpand": "Afficher l'erreur complète",
+	"tasks.lastRun.failed": "La dernière exécution a échoué",
+	"tasks.lastRun.timedOut": "La dernière exécution a expiré",
+	"tasks.lastRun.failedReason": "La dernière exécution a échoué : {reason}",
+	"tasks.lastRun.timedOutReason": "La dernière exécution a expiré : {reason}",
+	"tasks.lastRun.jump": "Aller à l'exécution",
+	"updates.confirm.restart": "Hezo va s’arrêter puis redémarrer sur {version}.",
+	"updates.confirm.drain": "Hezo attend quelques secondes que les exécutions d'agent en cours se terminent, puis s'arrête. Ce qui tourne encore est remis en file et repart de zéro.",
+	"updates.confirm.runsInFlight.one": "{count} exécution d'agent est en cours.",
+	"updates.confirm.runsInFlight.other": "{count} exécutions d'agent sont en cours.",
+	"updates.confirm.reunlock": "Vous aurez besoin de votre clé maîtresse de 12 mots pour déverrouiller Hezo après le redémarrage."
 }

@@ -101,7 +101,7 @@ function ProjectSkillsPage() {
 					Skills
 				</h1>
 				<p className="text-sm text-text-3 mt-1">
-					Reusable skill docs for this project's agents. These are scoped to this project — edit or
+					Reusable skill docs for this project's agents. These are scoped to this project - edit or
 					remove them here. Global skills are shown below for reference and are managed on the{' '}
 					<Link to="/settings/skills" className="underline hover:text-text-1">
 						global Skills page
@@ -139,7 +139,7 @@ function ProjectSkillsPage() {
 						/>
 					</div>
 					<Input
-						placeholder="Description (optional — auto-derived from content if empty)"
+						placeholder="Description (optional - auto-derived from content if empty)"
 						value={description}
 						onChange={(e) => setDescription(e.target.value)}
 					/>

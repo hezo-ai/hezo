@@ -79,7 +79,7 @@ export function HireProposalComment({ comment, projectId }: Props) {
 					</p>
 					{roleDescription && <p className="text-xs text-text-2 mt-0.5">{roleDescription}</p>}
 					<p className="text-xs text-text-2 mt-1">
-						Pending admin review — edit and review the full spec to approve or deny.
+						Pending admin review - edit and review the full spec to approve or deny.
 					</p>
 				</div>
 			</div>

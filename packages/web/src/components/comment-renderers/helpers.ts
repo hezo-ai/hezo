@@ -49,6 +49,25 @@ export function runStatusLabel(status: string): string {
 	return status;
 }
 
+/**
+ * The one-line form of a run's `error`, for a place with a line to spare.
+ *
+ * The stored value is multi-line by design - a runner failure carries a stack,
+ * the orphan pass appends a log tail - and the first line is the verdict in
+ * every writer's shape, which is what a summary wants. The whole text stays one
+ * click away in the expanded block and on the run page.
+ */
+export const RUN_ERROR_SUMMARY_MAX_CHARS = 180;
+
+export function runErrorSummary(error: string | null | undefined): string | null {
+	if (!error) return null;
+	const first = error.split('\n', 1)[0].trim();
+	if (!first) return null;
+	return first.length > RUN_ERROR_SUMMARY_MAX_CHARS
+		? `${first.slice(0, RUN_ERROR_SUMMARY_MAX_CHARS).trimEnd()}...`
+		: first;
+}
+
 export function runStatusDotClass(status: string): string {
 	if (status === HeartbeatRunStatus.Running || status === HeartbeatRunStatus.Queued)
 		return 'bg-warning animate-pulse';

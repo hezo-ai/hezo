@@ -21,7 +21,7 @@ export function Toaster() {
 		<RadixToast.Provider swipeDirection="right" duration={ERROR_DURATION_MS}>
 			{/* Persistent connection indicator, pinned above transient toasts. It never
 			    auto-dismisses (duration Infinity), so it stays until the socket heals
-			    or the user clears it — via the close button or a right swipe, both of
+			    or the user clears it - via the close button or a right swipe, both of
 			    which route through onOpenChange into a 20s snooze. Reconnect attempts
 			    continue underneath; if the socket is still down when the snooze
 			    expires the indicator comes back. */}

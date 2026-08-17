@@ -39,7 +39,7 @@ export function CommentRefLink({
 }) {
 	return (
 		<Tooltip
-			content={`Comment in ${taskIdentifier.toUpperCase()}${taskTitle ? ` — ${taskTitle}` : ''}`}
+			content={`Comment in ${taskIdentifier.toUpperCase()}${taskTitle ? ` - ${taskTitle}` : ''}`}
 		>
 			<Link
 				to="/projects/$projectId/tasks/$taskId"

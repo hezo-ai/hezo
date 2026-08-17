@@ -10,7 +10,7 @@ export function GeneralSection({ team }: { team: Team | undefined }) {
 					<span className="text-xs font-medium uppercase tracking-wider text-text-2 block mb-1.5">
 						Team name
 					</span>
-					<div className="text-[13px]">{team?.name ?? '—'}</div>
+					<div className="text-[13px]">{team?.name ?? '-'}</div>
 				</div>
 				{team?.description && (
 					<div>

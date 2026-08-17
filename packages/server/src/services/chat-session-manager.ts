@@ -460,8 +460,12 @@ export class ChatSessionManager {
 	 * Mark sessions left `starting`/`running` by a previous process as crashed —
 	 * their in-container process (if any) is orphaned and the in-memory state is
 	 * gone. Frees the singleton index so a fresh session can start.
+	 *
+	 * Three statements and nothing else, so like the job manager's own DB repair
+	 * it runs at boot regardless of lock state - an instance that comes up locked
+	 * would otherwise serve a session that reads as live and can never answer.
 	 */
-	async reconcileOnStartup(): Promise<void> {
+	async reconcileDatabaseOnStartup(): Promise<void> {
 		await this.deps.db.query(
 			`UPDATE chat_sessions SET status = $1, stopped_at = now()
 			 WHERE status IN ($2, $3)`,

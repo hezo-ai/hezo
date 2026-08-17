@@ -51,7 +51,7 @@ function ChatSettingsPage() {
 				<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
 					Chat apps connect in two modes. <span className="font-medium">Assistant (DM)</span>: DM
 					the bot and each conversation becomes its own CEO chat thread, listed in the chatbox here
-					— only linked identities may chat, and replies go back where you asked.{' '}
+					- only linked identities may chat, and replies go back where you asked.{' '}
 					<span className="font-medium">Coworker (channels)</span>: invite the bot to a channel and
 					anyone there can @-mention it; it reads the recent channel messages for context and
 					replies in-thread. Channel threads show up read-only in the web chatbox.
@@ -76,13 +76,13 @@ function TelegramSection() {
 		>
 			<h2 className="text-[15px] font-medium mb-1">
 				Telegram{' '}
-				<span className="text-text-2 font-normal text-[13px]">— assistant + coworker modes</span>
+				<span className="text-text-2 font-normal text-[13px]">- assistant + coworker modes</span>
 			</h2>
 			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
 				Create a bot with @BotFather, then paste its token. Saving registers the inbound webhook
 				automatically. A private DM is one thread; the Topics supergroup you designate below gives
 				you parallel personal threads (one per topic). For coworker mode, add the bot to any other
-				group and disable BotFather privacy mode (/setprivacy → Disable) so it can see mentions —
+				group and disable BotFather privacy mode (/setprivacy → Disable) so it can see mentions -
 				anyone there can then @-mention it, and it answers with the group’s recent messages as
 				context.
 			</p>
@@ -123,13 +123,13 @@ function SlackSection() {
 		>
 			<h2 className="text-[15px] font-medium mb-1">
 				Slack{' '}
-				<span className="text-text-2 font-normal text-[13px]">— assistant + coworker modes</span>
+				<span className="text-text-2 font-normal text-[13px]">- assistant + coworker modes</span>
 			</h2>
 			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
 				The CEO joins your Slack workspace as a coworker: invite it to a channel, @-mention it, and
 				it reads the conversation for context and replies in the thread. It also answers DMs as a
 				personal assistant (linked identities only). Create the Slack app from the manifest in the
-				docs, install it, then paste both tokens — no public URL needed (Socket Mode).
+				docs, install it, then paste both tokens - no public URL needed (Socket Mode).
 			</p>
 			<div className="flex flex-col gap-3">
 				<label className="flex items-center gap-2 text-[13px]">
@@ -144,7 +144,7 @@ function SlackSection() {
 				<div>
 					<label className="block text-[13px] font-medium mb-1" htmlFor="slack-token">
 						Bot token <span className="text-text-2">(xoxb-…)</span>{' '}
-						{slack?.has_token && <span className="text-text-2">(set — paste to replace)</span>}
+						{slack?.has_token && <span className="text-text-2">(set - paste to replace)</span>}
 					</label>
 					<Input
 						id="slack-token"
@@ -160,7 +160,7 @@ function SlackSection() {
 				<div>
 					<label className="block text-[13px] font-medium mb-1" htmlFor="slack-app-token">
 						App-level token <span className="text-text-2">(xapp-…, Socket Mode)</span>{' '}
-						{slack?.has_app_token && <span className="text-text-2">(set — paste to replace)</span>}
+						{slack?.has_app_token && <span className="text-text-2">(set - paste to replace)</span>}
 					</label>
 					<Input
 						id="slack-app-token"
@@ -181,7 +181,7 @@ function SlackSection() {
 							checked={groupMode}
 							onChange={(e) => setGroupMode(e.target.checked)}
 						/>
-						Coworker mode — respond to @-mentions in channels the bot is invited to
+						Coworker mode - respond to @-mentions in channels the bot is invited to
 					</label>
 					<label className="flex items-center gap-2 text-[13px]">
 						<input
@@ -190,7 +190,7 @@ function SlackSection() {
 							checked={dmMode}
 							onChange={(e) => setDmMode(e.target.checked)}
 						/>
-						Assistant mode — answer DMs from linked identities (each DM is a thread here)
+						Assistant mode - answer DMs from linked identities (each DM is a thread here)
 					</label>
 				</div>
 				{validationErrors.length > 0 && (
@@ -239,14 +239,14 @@ function DiscordSection() {
 		>
 			<h2 className="text-[15px] font-medium mb-1">
 				Discord{' '}
-				<span className="text-text-2 font-normal text-[13px]">— assistant + coworker modes</span>
+				<span className="text-text-2 font-normal text-[13px]">- assistant + coworker modes</span>
 			</h2>
 			<p className="text-[13px] text-text-2 mb-3 max-w-[680px]">
 				The CEO joins your Discord server as a coworker: @-mention it in a channel and it reads the
 				recent messages for context and replies there. It also answers DMs as a personal assistant
 				(linked identities only). Create a bot in the Discord Developer Portal, enable the{' '}
 				<span className="font-medium">Message Content</span> intent, invite it to your server, then
-				paste its bot token — no public URL needed (gateway connection).
+				paste its bot token - no public URL needed (gateway connection).
 			</p>
 			<div className="flex flex-col gap-3">
 				<label className="flex items-center gap-2 text-[13px]">
@@ -261,7 +261,7 @@ function DiscordSection() {
 				<div>
 					<label className="block text-[13px] font-medium mb-1" htmlFor="discord-token">
 						Bot token{' '}
-						{discord?.has_token && <span className="text-text-2">(set — paste to replace)</span>}
+						{discord?.has_token && <span className="text-text-2">(set - paste to replace)</span>}
 					</label>
 					<Input
 						id="discord-token"
@@ -282,7 +282,7 @@ function DiscordSection() {
 							checked={groupMode}
 							onChange={(e) => setGroupMode(e.target.checked)}
 						/>
-						Coworker mode — respond to @-mentions in channels on servers the bot joined
+						Coworker mode - respond to @-mentions in channels on servers the bot joined
 					</label>
 					<label className="flex items-center gap-2 text-[13px]">
 						<input
@@ -291,7 +291,7 @@ function DiscordSection() {
 							checked={dmMode}
 							onChange={(e) => setDmMode(e.target.checked)}
 						/>
-						Assistant mode — answer DMs from linked identities (each DM is a thread here)
+						Assistant mode - answer DMs from linked identities (each DM is a thread here)
 					</label>
 				</div>
 				{validationErrors.length > 0 && (
@@ -354,7 +354,7 @@ function ChannelForm({
 			<div>
 				<label className="block text-[13px] font-medium mb-1" htmlFor={`${channel}-token`}>
 					Bot token{' '}
-					{config?.has_token && <span className="text-text-2">(set — paste to replace)</span>}
+					{config?.has_token && <span className="text-text-2">(set - paste to replace)</span>}
 				</label>
 				<Input
 					id={`${channel}-token`}
@@ -370,7 +370,7 @@ function ChannelForm({
 			<div>
 				<label className="block text-[13px] font-medium mb-1" htmlFor={`${channel}-group`}>
 					Your Topics supergroup id{' '}
-					<span className="text-text-2">(optional — your personal parallel threads)</span>
+					<span className="text-text-2">(optional - your personal parallel threads)</span>
 				</label>
 				<Input
 					id={`${channel}-group`}
@@ -388,7 +388,7 @@ function ChannelForm({
 					checked={groupMode}
 					onChange={(e) => setGroupMode(e.target.checked)}
 				/>
-				Coworker mode — respond to mentions in other groups the bot is added to
+				Coworker mode - respond to mentions in other groups the bot is added to
 			</label>
 			<div>
 				<Button size="sm" data-testid={`${channel}-save`} onClick={handleSave} disabled={saving}>
@@ -425,7 +425,7 @@ function IdentitiesSection() {
 				Only these external accounts may DM the CEO (assistant mode). Telegram: your numeric user id
 				(message @userinfobot to find it). Slack: your member ID (profile → ⋯ → Copy member ID,
 				starts with U). Discord: your user ID (enable Developer Mode, then right-click your name →
-				Copy User ID). Coworker mode doesn't use this list — inviting the bot to a channel is the
+				Copy User ID). Coworker mode doesn't use this list - inviting the bot to a channel is the
 				authorization there.
 			</p>
 

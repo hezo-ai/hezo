@@ -265,7 +265,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 							<AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
 							<span>
 								<span className="font-semibold text-text-1">
-									No one can recover it — not even Hezo.
+									No one can recover it - not even Hezo.
 								</span>{' '}
 								Lose these words and your data is locked away for good.
 							</span>
@@ -274,7 +274,7 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 							<Lock className="w-4 h-4 shrink-0 mt-0.5" />
 							<span>
 								<span className="font-semibold text-text-1">Save it now</span> in a password manager
-								or another safe place — you'll confirm it on the next step.
+								or another safe place - you'll confirm it on the next step.
 							</span>
 						</div>
 					</div>

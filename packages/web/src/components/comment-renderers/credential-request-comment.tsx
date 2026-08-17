@@ -122,7 +122,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 								className="text-xs text-warning-soft-fg mt-1"
 								data-testid="credential-no-hosts-warning"
 							>
-								⚠ Not scoped to any host — this credential won't be substituted into any request
+								⚠ Not scoped to any host - this credential won't be substituted into any request
 								until an allowlist is set.
 							</p>
 						)
@@ -179,7 +179,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 					)}
 					<div className="flex flex-col gap-1">
 						<label htmlFor={`hosts-${comment.id}`} className="text-xs text-text-2">
-							Allowed hosts — the API host(s) this value may be sent to (comma-separated). The
+							Allowed hosts - the API host(s) this value may be sent to (comma-separated). The
 							egress proxy substitutes it only for these hosts.
 						</label>
 						<input
@@ -197,7 +197,7 @@ export function CredentialRequestComment({ comment, projectId, taskId }: Props) 
 						/>
 						{showSuggestionHint && (
 							<p className="text-xs text-text-3" data-testid="credential-hosts-suggested">
-								Suggested from the request — review and edit if these aren't right.
+								Suggested from the request - review and edit if these aren't right.
 							</p>
 						)}
 					</div>

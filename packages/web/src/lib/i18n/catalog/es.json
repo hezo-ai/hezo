@@ -437,5 +437,17 @@
 	"toast.dismiss": "Descartar",
 	"toast.error": "Algo salió mal",
 	"toast.info": "Aviso",
-	"toast.success": "Listo"
+	"toast.success": "Listo",
+	"comment.runError": "Error",
+	"comment.runErrorExpand": "Ver el error completo",
+	"tasks.lastRun.failed": "El último intento falló",
+	"tasks.lastRun.timedOut": "El último intento agotó el tiempo",
+	"tasks.lastRun.failedReason": "El último intento falló: {reason}",
+	"tasks.lastRun.timedOutReason": "El último intento agotó el tiempo: {reason}",
+	"tasks.lastRun.jump": "Ir al intento",
+	"updates.confirm.restart": "Hezo se apagará y reiniciará con {version}.",
+	"updates.confirm.drain": "Hezo espera unos segundos a que terminen los intentos de agente en curso y luego se detiene. Lo que siga en marcha vuelve a la cola y empieza de nuevo.",
+	"updates.confirm.runsInFlight.one": "{count} intento de agente está en curso ahora mismo.",
+	"updates.confirm.runsInFlight.other": "{count} intentos de agente están en curso ahora mismo.",
+	"updates.confirm.reunlock": "Necesitarás tu clave maestra de 12 palabras para desbloquear Hezo cuando se reinicie."
 }

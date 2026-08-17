@@ -204,14 +204,14 @@ function ProjectDocumentsPage() {
 
 	return (
 		<>
-			{/* Section header — frames Documents as the team's long-term memory,
+			{/* Section header - frames Documents as the team's long-term memory,
 			    mirroring the Assets page header. On mobile it hides once a doc is
 			    open or the new-doc form is up (single-pane), staying visible on md+
 			    where the two-pane layout always shows the list. */}
 			<div className={`mb-4 ${!file && !isCreating ? '' : 'hidden md:block'}`}>
 				<h1 className="text-base font-semibold text-text-1">Documents</h1>
 				<p className="text-[13px] text-text-2">
-					Your team's long-term memory — the guidelines, research, and reference material the team
+					Your team's long-term memory - the guidelines, research, and reference material the team
 					builds up and returns to across the project.
 				</p>
 			</div>

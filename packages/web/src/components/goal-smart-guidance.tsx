@@ -18,7 +18,7 @@ export function GoalSmartGuidance({ className = '' }: { className?: string }) {
 				{GOAL_SMART_GUIDANCE.map((item) => (
 					<li key={item.letter} className="text-xs text-text-3 leading-relaxed">
 						<span className="font-semibold text-text-2">
-							{item.letter} — {item.label}:
+							{item.letter} - {item.label}:
 						</span>{' '}
 						{item.hint}
 					</li>

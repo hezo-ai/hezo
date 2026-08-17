@@ -409,7 +409,7 @@ export function DocsLibrary({
 						    editor z-30) so an open comment editor is never hidden. */}
 						{/* `flex-wrap` + the title's `basis-full sm:basis-auto` keep the
 						    title on its own full-width first line on mobile, with the
-						    action cluster wrapping beneath it — the whole set of icon
+						    action cluster wrapping beneath it - the whole set of icon
 						    buttons can't share a 375px line with a readable title, and a
 						    `min-w-0` title squeezed by `shrink-0` actions would otherwise
 						    collapse to zero width (an invisible heading). Tablet/desktop
@@ -501,7 +501,7 @@ export function DocsLibrary({
 											</Button>
 										)}
 										{/* Active docs offer Archive (reversible, no confirm); the hard
-										    delete only appears on archived docs — a two-step flow that
+										    delete only appears on archived docs - a two-step flow that
 										    keeps the destructive action off the everyday toolbar. */}
 										{!readOnly &&
 											!archivedInfo &&
@@ -559,7 +559,7 @@ export function DocsLibrary({
 									<span className="text-text-2">
 										Hidden from the Active list and from agents
 										{archivedInfo.archivedByName
-											? ` — archived by ${archivedInfo.archivedByName}`
+											? ` - archived by ${archivedInfo.archivedByName}`
 											: ''}{' '}
 										<RelativeTime iso={archivedInfo.archivedAt} />.
 									</span>
@@ -584,7 +584,7 @@ export function DocsLibrary({
 						)}
 
 						{/* The doc's "what this is" line, above the metadata banner. Only
-						    shown when set — an empty description reads as no subtitle. */}
+						    shown when set - an empty description reads as no subtitle. */}
 						{mode === 'view' && supportsDescription && docDescription && (
 							<p
 								className="text-[13px] leading-relaxed text-text-2 mb-4"

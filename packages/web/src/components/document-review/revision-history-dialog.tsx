@@ -90,7 +90,7 @@ export function RevisionHistoryDialog({
 									</div>
 									<div className="px-3 py-2.5">
 										{e.isInitial || !e.changelog.trim() ? (
-											<p className="text-xs italic text-text-3">Initial version — no changelog.</p>
+											<p className="text-xs italic text-text-3">Initial version - no changelog.</p>
 										) : (
 											<MarkdownProse projectId={projectId} projectSlug={projectSlug}>
 												{e.changelog}

@@ -153,7 +153,7 @@ function BindingBanner({ project, projectId }: { project: EntityBudgetStatus; pr
 					<strong className="font-semibold">
 						{WINDOW_LABELS[binding.key]} is the binding window
 					</strong>{' '}
-					— at {p}% of the {dollars(binding.s.limitCents)} {binding.key} cap. Runs pause at the cap;
+					- at {p}% of the {dollars(binding.s.limitCents)} {binding.key} cap. Runs pause at the cap;
 					about {dollars(remaining)} left {scope}.
 				</p>
 			</div>

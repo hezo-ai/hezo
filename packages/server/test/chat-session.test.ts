@@ -691,7 +691,7 @@ describe('ChatSessionManager', () => {
 			[ceo.rows[0].id, DEFAULT_TEAM_ID, projectId],
 		);
 		const { manager } = makeManager(ctx, makeChatDocker(ctx.dataDir, projectId).docker);
-		await manager.reconcileOnStartup();
+		await manager.reconcileDatabaseOnStartup();
 		const r = await ctx.db.query<{ status: string }>('SELECT status FROM chat_sessions LIMIT 1');
 		expect(r.rows[0].status).toBe(ChatSessionStatus.Crashed);
 	});
@@ -714,7 +714,7 @@ describe('ChatSessionManager', () => {
 		const done = await insert('complete', 'all good');
 		const userMsg = await insert('complete', 'hello', 'user');
 
-		await manager.reconcileOnStartup();
+		await manager.reconcileDatabaseOnStartup();
 
 		const rows = await ctx.db.query<{ id: string; status: string }>(
 			'SELECT id, status FROM chat_messages',

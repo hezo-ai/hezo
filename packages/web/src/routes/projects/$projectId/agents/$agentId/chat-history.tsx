@@ -19,12 +19,12 @@ function ChatHistoryHelp() {
 					The chatbox keeps the most recent messages verbatim, up to a size cap. When the
 					conversation grows past that cap, the assistant summarizes the whole window into this{' '}
 					<strong className="text-text-1">long-term memory</strong> and the older messages drop out
-					of the live chat — so scrolling up tops out at what's still in the window.
+					of the live chat - so scrolling up tops out at what's still in the window.
 				</p>
 				<p>
 					This long-term memory is fed back into the assistant on every turn, so the gist of past
 					exchanges survives even after the raw messages scroll away. It captures durable, standing
-					knowledge only — operator preferences, decisions, and the gist of off-project threads —
+					knowledge only - operator preferences, decisions, and the gist of off-project threads -
 					not live project or task state, which the assistant always reads fresh.
 				</p>
 				<p>

@@ -437,5 +437,17 @@
 	"toast.dismiss": "숨기기",
 	"toast.error": "문제가 발생했습니다",
 	"toast.info": "알림",
-	"toast.success": "완료"
+	"toast.success": "완료",
+	"comment.runError": "오류",
+	"comment.runErrorExpand": "전체 오류 보기",
+	"tasks.lastRun.failed": "마지막 실행이 실패했어요",
+	"tasks.lastRun.timedOut": "마지막 실행이 시간을 초과했어요",
+	"tasks.lastRun.failedReason": "마지막 실행이 실패했어요: {reason}",
+	"tasks.lastRun.timedOutReason": "마지막 실행이 시간을 초과했어요: {reason}",
+	"tasks.lastRun.jump": "실행으로 이동",
+	"updates.confirm.restart": "Hezo를 종료하고 {version}으로 다시 시작해요.",
+	"updates.confirm.drain": "Hezo는 진행 중인 에이전트 실행이 끝날 때까지 몇 초 기다린 뒤 멈춰요. 그래도 남아 있는 실행은 큐로 돌아가 처음부터 다시 시작해요.",
+	"updates.confirm.runsInFlight.one": "지금 에이전트 실행 {count}건이 진행 중이에요.",
+	"updates.confirm.runsInFlight.other": "지금 에이전트 실행 {count}건이 진행 중이에요.",
+	"updates.confirm.reunlock": "다시 시작한 뒤 Hezo 잠금을 해제하려면 12단어 마스터 키가 필요해요."
 }

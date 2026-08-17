@@ -221,7 +221,7 @@ export function GoalDetailPage({ projectId, goalId }: GoalDetailPageProps) {
 
 	return (
 		<div className="max-w-3xl">
-			{/* `Progress › Goals › <goal>` — the shared primitive, so this reads the same as the
+			{/* `Progress › Goals › <goal>` - the shared primitive, so this reads the same as the
 			    task and asset breadcrumbs rather than being a third hand-rolled one. */}
 			<div className="mb-2">
 				<Breadcrumb

@@ -19,7 +19,7 @@ export function ReloadPromptBanner() {
 			className="shrink-0 flex flex-col sm:flex-row sm:items-center gap-2 px-4 py-2.5 text-[13px] bg-info-soft text-info-soft-fg border-b border-border"
 		>
 			<span className="flex-1">
-				Hezo was updated in the background. Refresh to load the latest version — some items may not
+				Hezo was updated in the background. Refresh to load the latest version - some items may not
 				display correctly until you do.
 			</span>
 			<Button

@@ -140,6 +140,9 @@ export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 			// the unlock after the update restart.
 			autoUnlock: opts.autoUnlock || (isSupervisedWorker() && typeof process.send === 'function'),
 			canApply: isSupervisedWorker(),
+			// The same count the auto-install cron defers on, so the banner and the
+			// scheduler agree on what "busy" means.
+			runsInFlight: c.get('jobManager')?.inFlightRunCount() ?? 0,
 		});
 	});
 
@@ -175,6 +178,16 @@ export function buildUpdatesRoutes(opts: { autoUnlock: boolean }): Hono<Env> {
 		const state = await readUpdateState(dataDir);
 		if (state.state !== UpdateState.Staged) {
 			return err(c, 'NO_STAGED_UPDATE', 'No staged update to apply', 409);
+		}
+		// Deliberately does not refuse. The auto-install cron defers on in-flight
+		// work because nobody asked it to restart now; an operator pressing the
+		// button did, and the drain in `shutdownRuntime` is what makes that safe.
+		// Logged so an operator restart is attributable in the journal.
+		const inFlight = c.get('jobManager')?.inFlightRunCount() ?? 0;
+		if (inFlight > 0) {
+			log.warn(
+				`Applying update with ${inFlight} agent run(s) in flight; they will be drained, then re-queued`,
+			);
 		}
 		setTimeout(() => {
 			void exitToApplyUpdate();

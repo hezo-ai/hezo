@@ -264,7 +264,7 @@ export function GoalsList({ projectId }: GoalsListProps) {
 						<div className="flex flex-col gap-3">
 							<p className="text-sm text-text-2 leading-relaxed">
 								Goals are the outcomes the Captain steers the team toward. Write each one so
-								progress is unambiguous — strong goals follow the{' '}
+								progress is unambiguous - strong goals follow the{' '}
 								<span className="font-semibold">SMART</span> framework:
 							</p>
 							<GoalSmartGuidance className="border-0 bg-transparent p-0" />
@@ -294,7 +294,7 @@ export function GoalsList({ projectId }: GoalsListProps) {
 					{view === 'archived'
 						? 'No archived goals.'
 						: suggestions.length > 0
-							? 'No active goals yet — approve a suggestion above to create one.'
+							? 'No active goals yet - approve a suggestion above to create one.'
 							: 'No active goals.'}
 				</div>
 			) : (

@@ -32,7 +32,7 @@ function VarChip({ chip, onInsert }: { chip: EditorChip; onInsert: (token: strin
 				e.preventDefault();
 				setOpen((o) => !o);
 			}}
-			aria-label={chip.description ? `${chip.token} — ${chip.description}` : chip.token}
+			aria-label={chip.description ? `${chip.token} - ${chip.description}` : chip.token}
 			className="text-[11px] px-2 py-0.5 rounded-md bg-info-soft text-info-soft-fg cursor-pointer hover:opacity-80"
 		>
 			{chip.token}

@@ -156,4 +156,47 @@ describe('startup boot paths (master key, routes, socket cleanup)', () => {
 		expect(result.masterKeyState).toBe('locked');
 		expect(result.masterKeyManager.getState()).toBe('locked');
 	}, 60_000);
+
+	it('repairs a stranded run on a locked boot, with the job manager still stopped', async () => {
+		// The gap this closes. Reconciliation used to run only from the unlock hook,
+		// so an instance that came up locked - the intended behaviour after a plain
+		// restart or a crash - served a `running` row and a stuck-busy agent until a
+		// human arrived, with the orphan cron not started either.
+		{
+			const seedRuntime = await startup(baseConfig(dataDir));
+			const team = await seedRuntime.db.query<{ id: string }>(
+				`INSERT INTO teams (name, slug) VALUES ('Stranded', 'stranded-boot') RETURNING id`,
+			);
+			await seedRuntime.db.query(
+				`INSERT INTO members (team_id, member_type, display_name)
+				 VALUES ($1, 'agent', 'Worker')`,
+				[team.rows[0].id],
+			);
+			const member = await seedRuntime.db.query<{ id: string }>(
+				`SELECT id FROM members WHERE team_id = $1 LIMIT 1`,
+				[team.rows[0].id],
+			);
+			await seedRuntime.db.query(
+				`INSERT INTO heartbeat_runs (team_id, member_id, status, started_at)
+				 VALUES ($1, $2, 'running'::heartbeat_run_status, now())`,
+				[team.rows[0].id, member.rows[0].id],
+			);
+			seedRuntime.jobManager.shutdown();
+			await seedRuntime.chatSessionManager.stop();
+			await waitForBackground();
+			await seedRuntime.db.close().catch(() => undefined);
+		}
+
+		result = await startup(baseConfig(dataDir));
+		expect(result.masterKeyState).toBe('locked');
+		// Still locked, so the crons stay stopped - the repair is not a licence to
+		// start dispatching against a backend that is not connected.
+		expect((result.jobManager as unknown as { started: boolean }).started).toBe(false);
+
+		const rows = await result.db.query<{ status: string; error: string | null }>(
+			`SELECT status::text AS status, error FROM heartbeat_runs
+			 WHERE status IN ('running', 'queued')`,
+		);
+		expect(rows.rows).toEqual([]);
+	}, 60_000);
 });

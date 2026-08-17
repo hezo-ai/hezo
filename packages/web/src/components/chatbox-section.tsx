@@ -70,10 +70,10 @@ export function ChatboxSection() {
 				<h2 className="text-[13px] font-medium mb-1">Long-term memory</h2>
 				<p className="text-[13px] text-text-2 max-w-[680px]">
 					When the window fills, the assistant summarizes the older messages into a durable
-					long-term memory and drops them from the chatbox — so standing facts survive even as
+					long-term memory and drops them from the chatbox - so standing facts survive even as
 					messages scroll out. That memory is fed back into every chat turn, and it captures durable
 					operator preferences, decisions, and the gist of off-project threads (never live project
-					or task data, which is always read fresh). It's maintained automatically — you never have
+					or task data, which is always read fresh). It's maintained automatically - you never have
 					to tell the assistant to remember anything. You can review and edit it on the assistant's{' '}
 					<Link
 						to="/projects/$projectId/agents/$agentId/chat-history"

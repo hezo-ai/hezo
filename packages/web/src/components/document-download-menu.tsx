@@ -99,7 +99,7 @@ export function DocumentDownloadMenu({
 			{variant === 'icon' ? <Tooltip content="Download document">{trigger}</Tooltip> : trigger}
 			<Popover.Portal>
 				{/* z-[70] clears the task-detail preview panel, which is a full-screen
-				    z-[60] overlay below lg — at z-50 the portalled menu painted behind
+				    z-[60] overlay below lg - at z-50 the portalled menu painted behind
 				    it and was invisible on mobile. Dialogs (z-[80]/[90]) still win. */}
 				<Popover.Content
 					align="end"
