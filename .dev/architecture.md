@@ -555,6 +555,18 @@ mid-flight never reaches the run-completion cost record, so `reconcileOnStartup`
 its surviving partial `cost_cents` on reboot (shared `recordRunCostAndEnforce`) — an
 interrupted run still counts against budgets.
 
+**There is no mid-run ceiling, and that is a known gap.** Budgets are evaluated before
+dispatch and again at run completion, so a single run can overshoot its agent's whole daily
+cap by an unbounded margin; the overshoot is only discovered when its cost row lands, and
+what it clamps is the *next* run. The only per-run limit is wall-clock `run_timeout_min`.
+The wiring for a ceiling exists - `parser.getUsage()` is refreshed on every output chunk and
+`runAbort` already carries a typed reason union - but a real one needs a new failure
+classification, a throttled read of the remaining window (`cost_entries` is only written at
+completion), an operator-facing control, and a token backstop, because the local providers
+price to $0 and a cost-only ceiling would never fire there. Deliberately not built: the
+thread-read fixes removed the cause of the run that prompted the question, and a blunt
+ceiling would mostly fire on legitimately expensive work.
+
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
 unique scoping and full revision history in `document_revisions`. Project docs additionally
@@ -4014,10 +4026,18 @@ upstream 401s. A failed refresh now backs off per connection (30 s doubling to a
 ceiling, cleared on success) so a structurally broken connection can't re-attempt on every
 proxied request, and records the reason on the backing connector's `mcp_connections.auth_error`
 (cleared on the next success) so it surfaces on the Connectors page rather than only in the
-log. A **`connector-health` cron** (`job-manager.ts`, every 5 min, bounded to 25 connections
-per tick at concurrency 5, ordered soonest-to-expire, skipped entirely while the vault is
-locked) calls the same `refreshExpiringTokens` with a 10-minute horizon — wider than its own
-tick, so a token expiring *between* ticks is renewed rather than lapsing. Without it nothing
+log. A **`connector-health` cron** (`job-manager.ts`, every 5 min) runs **two independent legs**,
+each in its own try/catch so one third party cannot stop the other. The **token leg** is bounded
+to 25 connections per tick at concurrency 5, ordered soonest-to-expire, skipped entirely while
+the vault is locked, and calls `refreshExpiringTokens` with a 10-minute horizon — wider than its
+own tick, so a token expiring *between* ticks is renewed rather than lapsing. The **probe leg**
+(`probeUnverifiedConnectors`) re-proves the uncredentialed hosted connectors, 10 per tick at
+concurrency 3, re-probing after 6 hours, ordered `probed_at ASC NULLS FIRST, created_at ASC` to
+match `idx_mcp_connections_probe_due` exactly, and excluding placeholder-header rows. It runs
+**even while the instance is locked**, because it decrypts nothing — it only probes rows with no
+stored credential — so a locked instance still learns that a public MCP has started demanding
+auth. The two legs watch disjoint sets: the token leg selects `FROM oauth_connections`, which is
+precisely why it was structurally blind to a connector with no connection. Without it nothing
 refreshes on an idle instance, because the egress path only runs when an agent makes a
 proxied call: a grant could die and the first signal would be a degraded deliverable. The
 sweep is also the recovery path — a provider blip that broke twenty connectors un-breaks them
@@ -4089,12 +4109,63 @@ next connect — an address change no longer needs delete-and-recreate.
 
 **Run exclusion.** `loadConnectorsForRun(db, projectId)` returns the run's project's own
 connectors plus global ones (a project connector shadows a global of the same name). It
-skips revoked rows, plus SaaS rows that are known to want auth but haven't completed it —
-no `oauth_connection_id` **and** no `api_key_secret_id`, and any of: agent-requested
-(`created_by_task_id`), discovery persisted `config.dcr`, or an attempt recorded
-`auth_error`. Injecting those would just 401 on every run. A connector that finished either
-handshake (an OAuth connection or a pasted API key) is always included, as are operator rows
-that never attempted auth (public / header-authenticated MCPs).
+skips revoked rows, and enforces one invariant on hosted servers:
+
+> An uncredentialed SaaS connector reaches an agent run only while Hezo's most recent probe
+> of it completed the MCP handshake with no credential.
+
+The predicate is `revoked_at IS NULL AND (kind <> 'saas' OR <credentialed> OR (probed_at IS
+NOT NULL AND probe_error IS NULL))`, where `<credentialed>` is the exported
+`SAAS_CREDENTIALED_SQL`: an `oauth_connection_id`, an `api_key_secret_id`, or a
+`config.headers` value matching the `__HEZO_SECRET_*__` grammar (built from
+`PLACEHOLDER_PROBE` + `SECRET_NAME_BODY` in `@hezo/shared`, so the predicate cannot drift
+from what the egress proxy substitutes). A credentialed connector is always included and its
+health is the token sweep's business; a placeholder-header one is included on the strength of
+that header, because the proxy substitutes it at request time and no server-side probe can
+reproduce that.
+
+This replaced three *guesses* at the same fact — agent-requested (`created_by_task_id`), a
+cached `config.dcr`, a recorded `auth_error` — with one measurement. None of the three caught
+an operator-added row that quietly wanted auth: on a production instance three such rows
+(Higgsfield, Typefully, GitHub Copilot) were handed to every run and failed `initialize`
+inside the container, where nothing on the server side could see it, on every run forever.
+
+**Probe evidence** lives on two `mcp_connections` columns (migration 063) and is written by
+exactly one function, `discoverConnectorMethods` (`services/connectors/method-discovery.ts`):
+`probed_at` (the last attempt of any outcome, and the sweep's pacing clock) and `probe_error`
+(a `connector_probe_error` enum, `auth_required` | `unreachable`, NULL when the handshake
+completed). The evidence is the **`initialize` handshake, not the tool catalog** — the MCP
+client asserts the `tools` capability before sending `tools/list`, so a server exposing only
+prompts or resources fails the catalog call while being perfectly usable. A catalog-phase
+failure therefore stamps `probed_at`, clears `probe_error`, and leaves `discovered_methods` /
+`methods_listed_at` alone.
+
+Two rules decide what a probe may persist, and they differ on purpose:
+
+- **`auth_error` is written only when the probe carried every credential a run would carry**
+  (a stored token or key, and no `__HEZO_SECRET_*__` header it had to strip). `buildProbeHeaders`
+  drops such a header rather than sending the literal placeholder, so a probe of a
+  header-authenticated row goes out with less than a run does; its 401 is about the probe, not
+  the connector, and recording it would permanently exclude a working connector. This holds in
+  both directions — such a probe does not *clear* `auth_error` on success either.
+- **`probe_error` is written on every attempt that reached the server**, including one that
+  could not carry a credential, so `locked` / `not_found` / `unsupported_kind` never burn the
+  pacing clock.
+
+The whole probe runs under one `AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)`, injected through
+the transports' `fetch` override (the SDK overwrites `requestInit.signal` with its own
+controller, so that route is inert). Without it `client.connect` runs on a bare fetch with no
+deadline, which is survivable for two operator-initiated callers and fatal on a cron. The SSE
+fallback is skipped on 401/403 and after a completed Streamable-HTTP handshake: the same URL
+gives the same answer, and asking twice only doubles what a refusing provider receives.
+
+**Probing happens at three moments.** At registration, awaited, by `add_connector`, `POST
+/api/projects/:projectId/connectors` and the admin `POST /api/connectors`, which return
+`{ reachable, probe, note }` alongside the row (`describeProbeVerdict`). Backgrounded by
+`POST /api/projects/:projectId/connectors/ensure`, whose response is one step of an OAuth flow
+the user just clicked and whose callback re-runs discovery anyway. And on the sweep below. All
+three `DO UPDATE SET` clauses that can re-point a connector also reset `probed_at` /
+`probe_error`, or a row proven public at one URL would stay "proven" at another.
 
 **MCP connections** (`mcp_connections`, see § 3 scoping). `kind='saas'` carries
 `{ url, headers, apiKey? }`. Connector auth is **always emitted as a `__HEZO_SECRET_*__`
@@ -4138,6 +4209,18 @@ Health is written through one seam, `setConnectorAuthError` — the token refres
 result instead of an opaque SDK transport string), and `test_connector` all record through it,
 and every success path clears it. **Known limitation:** an API-key connector can never become
 `degraded`, because the only writer keys on `oauth_connection_id`.
+
+The ladder gained one branch for the probe evidence, below both `auth_error` branches and
+above the local-transport short-circuit: a SaaS row with neither credential link is `Active`
+when `connectorHasPlaceholderHeader(config)`, or when `probed_at && !probe_error`, and
+otherwise falls through to `Pending`. `connectorStatusRow` therefore carries `config`,
+`probed_at` and `probe_error`, which every caller's projection has to select — a compile
+error if it does not. `connectorOAuthStatus` collapsed to "non-SaaS → `none`, else the same
+ladder": `none` used to double as "nobody has started connecting this row", which read to an
+agent as "no auth needed" for exactly the rows that needed some. It now narrows to "this kind
+has no OAuth story", so an `api` or `local` row keeps reporting `none`, a verified-public or
+header-credentialed hosted row reports `active`, and an unverified one reports `pending`.
+`failed` still means only "a connect a human ran errored".
 
 **GitHub's row is roster-aware.** GitHub is not an `mcp_connections` row until someone
 connects it (`POST …/connectors/ensure` materializes it), so the project Connectors page

@@ -160,6 +160,8 @@
 	"connectors.banner.action": "View connectors",
 	"connectors.banner.many": "{count} connectors have stopped working. Reconnect them so agents can use them again.",
 	"connectors.banner.one": "{name} has stopped working. Reconnect it so agents can use it again.",
+	"connectors.probe.authRequired": "This server asked for a credential Hezo doesn't have, so agents can't use it yet.",
+	"connectors.probe.unreachable": "Hezo couldn't reach this server on its last check, so agents can't use it yet.",
 	"connectors.reconnect": "Reconnect",
 	"connectors.status.needsReconnect": "Needs reconnect",
 	"container.diskSize.help": "How much disk each of this project's containers gets. Leave it on the instance default unless this project's checkout and dependencies need more.",

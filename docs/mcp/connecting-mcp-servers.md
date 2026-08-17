@@ -28,8 +28,16 @@ an agent's environment in any form.
 
 ## Hosted MCP servers
 
-Hosted, HTTP-based MCP servers connect by **URL plus any headers** they need. They're
-available to your agents as soon as you add them.
+Hosted, HTTP-based MCP servers connect by **URL plus any headers** they need.
+
+When you add one, Hezo contacts the server straight away and records what came back. A
+server that answers with no credential is public, and your agents get it on their next
+run. A server that asks for a credential Hezo doesn't have is held back until you connect
+the account or paste an API key, so it never reaches a run only to fail inside one where
+you can't see it. Hezo re-checks these servers periodically, so a public server that later
+starts demanding auth drops out on its own. The connector's card says which of these
+applies. A server authenticated by a placeholder header is exempt: Hezo can't reproduce
+that substitution from its own side, so it takes the header at its word.
 
 Header values can reference your stored secrets with a **placeholder** rather than a
 literal key - so an API-key header is filled in by the [egress

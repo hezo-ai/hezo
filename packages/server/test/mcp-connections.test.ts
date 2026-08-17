@@ -454,8 +454,8 @@ describe('POST /teams/:teamId/connectors/ensure', () => {
 describe('loadConnectorDescriptors', () => {
 	it('returns saas connections as http descriptors', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status)
-			 VALUES ('service-a', 'saas', $1::jsonb, 'installed')`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, probed_at)
+			 VALUES ('service-a', 'saas', $1::jsonb, 'installed', now())`,
 			[JSON.stringify({ url: 'https://service-a.example/mcp', headers: { 'x-key': 'v' } })],
 		);
 		const descriptors = await loadConnectorDescriptors(db);
@@ -470,8 +470,8 @@ describe('loadConnectorDescriptors', () => {
 
 	it('carries the github X-MCP-Toolsets header (defaults + actions) on the descriptor', async () => {
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status)
-			 VALUES ('github', 'saas', $1::jsonb, 'installed')`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, probed_at)
+			 VALUES ('github', 'saas', $1::jsonb, 'installed', now())`,
 			[
 				JSON.stringify({
 					url: 'https://api.githubcopilot.com/mcp/',
@@ -522,8 +522,8 @@ describe('loadConnectorDescriptors', () => {
 		// The absence of the keys is the contract: every adapter then emits exactly
 		// the config it emitted before method access existed.
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status)
-			 VALUES ('unrestricted', 'saas', $1::jsonb, 'installed')`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, probed_at)
+			 VALUES ('unrestricted', 'saas', $1::jsonb, 'installed', now())`,
 			[JSON.stringify({ url: 'https://unrestricted.example/mcp' })],
 		);
 		const descriptors = await loadConnectorDescriptors(db);
@@ -536,8 +536,8 @@ describe('loadConnectorDescriptors', () => {
 	it('carries both views of an allowlist, deriving the deny list from the catalog', async () => {
 		await db.query(
 			`INSERT INTO mcp_connections
-			   (name, kind, config, install_status, enabled_methods, discovered_methods)
-			 VALUES ('restricted', 'saas', $1::jsonb, 'installed', $2::jsonb, $3::jsonb)`,
+			   (name, kind, config, install_status, enabled_methods, discovered_methods, probed_at)
+			 VALUES ('restricted', 'saas', $1::jsonb, 'installed', $2::jsonb, $3::jsonb, now())`,
 			[
 				JSON.stringify({ url: 'https://restricted.example/mcp' }),
 				JSON.stringify(['get_issue']),
@@ -559,8 +559,8 @@ describe('loadConnectorDescriptors', () => {
 		// runtimes still restrict correctly; the deny-list ones simply have nothing
 		// to name, which is exactly why the proxy is the enforcement leg.
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status, enabled_methods)
-			 VALUES ('no-catalog', 'saas', $1::jsonb, 'installed', $2::jsonb)`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, enabled_methods, probed_at)
+			 VALUES ('no-catalog', 'saas', $1::jsonb, 'installed', $2::jsonb, now())`,
 			[JSON.stringify({ url: 'https://no-catalog.example/mcp' }), JSON.stringify(['get_issue'])],
 		);
 		const descriptors = await loadConnectorDescriptors(db);
@@ -572,8 +572,8 @@ describe('loadConnectorDescriptors', () => {
 	it('treats an empty allowlist as "nothing enabled", not as unrestricted', async () => {
 		await db.query(
 			`INSERT INTO mcp_connections
-			   (name, kind, config, install_status, enabled_methods, discovered_methods)
-			 VALUES ('all-off', 'saas', $1::jsonb, 'installed', '[]'::jsonb, $2::jsonb)`,
+			   (name, kind, config, install_status, enabled_methods, discovered_methods, probed_at)
+			 VALUES ('all-off', 'saas', $1::jsonb, 'installed', '[]'::jsonb, $2::jsonb, now())`,
 			[
 				JSON.stringify({ url: 'https://all-off.example/mcp' }),
 				JSON.stringify([{ name: 'get_issue', readOnly: true, inferred: false }]),

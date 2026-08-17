@@ -7188,7 +7188,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_connectors',
-		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
+		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means it is credentialed and connected, or Hezo probed the server and it answered with no credential needed, so its MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means it cannot reach a run yet, either waiting on the human to click Connect or waiting on a probe that has not yet found the server answering without a credential; "failed" means the connect attempt errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means the row is not a hosted MCP server at all (a local stdio server, or an `api` REST connector), so it has no OAuth story to report. A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Two fields carry the probe evidence behind a hosted row: `probed_at` is when Hezo last checked the server, and `probe_error` is why that check failed ("auth_required" when the server demanded a credential Hezo does not have, "unreachable" when it did not answer), or null when it completed the MCP handshake. A connector whose auth rides a __HEZO_SECRET_<NAME>__ header is exempt: the egress proxy substitutes that at request time, which a server-side probe cannot reproduce, so it reads "active" with no probe needed. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
 		{
 			project: projectArg(),
 			...listPagingArgs(),
@@ -7509,7 +7509,7 @@ export function registerTools(
 	tool(
 		server,
 		'add_connector',
-		'Register a connector for your project - a SaaS HTTP MCP server (`saas`), a local stdio MCP server (`local`), or a credentialed REST API you call directly with no MCP server (`api`). The connection is scoped to your project - available to this project\'s agent runs, alongside any global "all projects" connectors. SaaS servers go into the agent\'s descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect. An `api` connector has no MCP server: attach a credential to it (Connectors page → API key) and it surfaces in `list_connectors` as an `api_auth` block whose placeholder you put in the auth header/query and send to `base_url` directly - the egress proxy substitutes, scoped to `allowed_hosts`.',
+		'Register a connector for your project - a SaaS HTTP MCP server (`saas`), a local stdio MCP server (`local`), or a credentialed REST API you call directly with no MCP server (`api`). The connection is scoped to your project - available to this project\'s agent runs, alongside any global "all projects" connectors. Hezo checks a SaaS server at registration and hands it to agent runs only while it answers that check without a credential; the response tells you which happened in `reachable`, `probe` and `note`. A server that wants auth stays out of runs until a human connects it or attaches an API key. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time; those count as the connector\'s credential, so a server authenticated that way reaches runs without needing to pass the check. Local servers must be installed before they take effect. An `api` connector has no MCP server: attach a credential to it (Connectors page → API key) and it surfaces in `list_connectors` as an `api_auth` block whose placeholder you put in the auth header/query and send to `base_url` directly - the egress proxy substitutes, scoped to `allowed_hosts`.',
 		{
 			project: projectArg(),
 			name: z
@@ -7563,6 +7563,9 @@ export function registerTools(
 			// so it is atomic: a check-then-upsert could be raced by a concurrent OAuth
 			// completion. An unchanged re-registration still succeeds, so an agent
 			// re-declaring a connector it already owns is a no-op, not an error.
+			//
+			// A re-point drops the probe evidence with the config it was gathered
+			// against: a server proven public at one URL is not proven at another.
 			const r = await db.query<{
 				id: string;
 				install_status: string;
@@ -7574,6 +7577,8 @@ export function registerTools(
 				     config = EXCLUDED.config,
 				     install_status = EXCLUDED.install_status,
 				     install_error = NULL,
+				     probed_at = NULL,
+				     probe_error = NULL,
 				     updated_at = now()
 				 WHERE (mcp_connections.oauth_connection_id IS NULL
 				        AND mcp_connections.api_key_secret_id IS NULL)
@@ -7598,16 +7603,35 @@ export function registerTools(
 					hint: 'Re-pointing a credentialed connector is a human-only operation - ask an admin to change it on the Connectors page, or register a new connector under a different name.',
 				};
 			}
-			const note =
-				kind === 'local'
-					? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'
-					: kind === 'api'
-						? 'API connector registered. Attach a credential (Connectors page → API key), then call list_connectors to get its api_auth placeholder + base_url.'
-						: 'SaaS MCP registered. Will be available to the next agent run in this scope.';
+			if (kind !== 'saas') {
+				return {
+					id: r.rows[0].id,
+					install_status: r.rows[0].install_status,
+					reachable: null,
+					probe: null,
+					note:
+						kind === 'local'
+							? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'
+							: 'API connector registered. Attach a credential (Connectors page → API key), then call list_connectors to get its api_auth placeholder + base_url.',
+				};
+			}
+			// Hosted servers are checked here rather than assumed reachable. An
+			// uncredentialed one that quietly demands auth used to be handed to every
+			// run and fail its handshake inside the container, where nothing could
+			// see it. Awaited: whether it answers decides whether it reaches a run,
+			// so the agent that registered it learns that now.
+			const { describeProbeVerdict, discoverConnectorMethods } = await import(
+				'../services/connectors/method-discovery'
+			);
+			const verdict = describeProbeVerdict(
+				await discoverConnectorMethods({ db, masterKeyManager }, r.rows[0].id, 'create'),
+			);
 			return {
 				id: r.rows[0].id,
 				install_status: r.rows[0].install_status,
-				note,
+				reachable: verdict.reachable,
+				probe: verdict.probe,
+				note: verdict.note,
 			};
 		},
 		db,

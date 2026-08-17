@@ -24,6 +24,7 @@ import {
 	markApiKeyActive,
 } from '../services/connectors/lifecycle';
 import type {
+	ConnectorProbeVerdict,
 	MethodDiscoveryDeps,
 	MethodDiscoveryResult,
 } from '../services/connectors/method-discovery';
@@ -39,6 +40,7 @@ const log = logger.child('connectors-route');
 const CONNECTOR_COLUMNS = `id, name, display_name, kind::text AS kind,
         config, oauth_connection_id, api_key_secret_id, project_id, install_status::text AS install_status, install_error,
         skill_id, created_by_task_id, activated_at, revoked_at, auth_error,
+        probed_at, probe_error::text AS probe_error,
         enabled_methods, discovered_methods, methods_listed_at,
         requested_access::text AS requested_access,
         created_at, updated_at`;
@@ -48,7 +50,8 @@ const CONNECTOR_COLUMNS = `id, name, display_name, kind::text AS kind,
 const CONNECTOR_COLUMNS_MC = `mc.id, mc.name, mc.display_name, mc.kind::text AS kind,
         mc.config, mc.oauth_connection_id, mc.api_key_secret_id, mc.project_id, mc.install_status::text AS install_status,
         mc.install_error, mc.skill_id, mc.created_by_task_id, mc.activated_at, mc.revoked_at,
-        mc.auth_error, mc.enabled_methods, mc.discovered_methods, mc.methods_listed_at,
+        mc.auth_error, mc.probed_at, mc.probe_error::text AS probe_error,
+        mc.enabled_methods, mc.discovered_methods, mc.methods_listed_at,
         mc.requested_access::text AS requested_access,
         mc.created_at, mc.updated_at`;
 
@@ -151,35 +154,58 @@ function unknownMethodNames(enabled: string[] | null, catalog: McpMethodInfo[] |
 	return enabled.filter((n) => !known.has(n));
 }
 
+/** The method-discovery module, loaded on demand: it pulls in the MCP client
+ * SDK, which a request that never touches a connector should not pay for. */
+const methodDiscovery = () => import('../services/connectors/method-discovery');
+
 /** Run discovery for a connector with the request's own deps. */
 async function refreshConnectorMethods(
 	deps: MethodDiscoveryDeps,
 	connectorId: string,
-	trigger: 'connect' | 'manual' = 'manual',
+	trigger: 'connect' | 'create' | 'manual' = 'manual',
 ): Promise<MethodDiscoveryResult> {
-	const { discoverConnectorMethods } = await import('../services/connectors/method-discovery');
+	const { discoverConnectorMethods } = await methodDiscovery();
 	return discoverConnectorMethods(deps, connectorId, trigger);
 }
 
-/** Turn a discovery failure into something an operator can act on. */
-function describeDiscoveryFailure(result: { reason: string; detail?: string }): string {
-	switch (result.reason) {
-		case 'unsupported_kind':
-			return 'Method access applies to hosted MCP servers only.';
-		case 'not_connected':
-			return 'Connect this server before listing its methods.';
-		case 'locked':
-			return 'Hezo is locked, so this connector’s credential can’t be read. Unlock and try again.';
-		case 'not_found':
-			return 'connector not found';
-		case 'auth_failed':
-			// The case that used to surface as a bare "Error POSTing to endpoint:" -
-			// complete, but useless, because an expired grant answers 401 with an
-			// empty body and the SDK puts the body last. Say what actually happened.
-			return `This server rejected Hezo's credential (${result.detail ?? 'unauthorized'}). Its authorization has expired or been revoked - reconnect the connector, then list its methods again.`;
-		default:
-			return `The server did not answer: ${result.detail ?? 'unknown error'}`;
-	}
+/**
+ * Probe a just-registered hosted MCP server, and say what it means.
+ *
+ * Awaited rather than backgrounded: whether the server answers Hezo without a
+ * credential is what decides whether the connector reaches an agent run at all,
+ * so the person who just registered it gets that answer with the registration
+ * instead of discovering it days later in a run log they cannot see.
+ *
+ * Returns null for a connector kind that has no server to probe.
+ */
+async function probeOnCreate(
+	deps: MethodDiscoveryDeps,
+	kind: string,
+	connectorId: string,
+): Promise<ConnectorProbeVerdict | null> {
+	if (kind !== ConnectorTransport.Saas) return null;
+	const { describeProbeVerdict } = await methodDiscovery();
+	const result = await refreshConnectorMethods(deps, connectorId, 'create').catch(
+		(e): MethodDiscoveryResult => ({
+			ok: false,
+			reason: 'probe_failed',
+			detail: (e as Error).message,
+			phase: 'handshake',
+		}),
+	);
+	return describeProbeVerdict(result);
+}
+
+/** Re-read a connector after a probe, so the response carries the evidence the
+ * request just gathered rather than the row as it stood before. */
+async function rereadConnector(
+	db: Env['Variables']['db'],
+	connectorId: string,
+): Promise<Record<string, unknown> | null> {
+	const r = await db.query(`SELECT ${CONNECTOR_COLUMNS} FROM mcp_connections WHERE id = $1`, [
+		connectorId,
+	]);
+	return (r.rows[0] as Record<string, unknown>) ?? null;
 }
 
 // The bundled OAuth-provider descriptors (Google/YouTube, GitHub, …) used to
@@ -334,8 +360,10 @@ connectorsRoutes.post('/connectors', async (c) => {
 	// Re-adding an existing name in the same scope is a reconfiguration: config is
 	// replaced wholesale (dropping any stale config.dcr for a changed URL) and a
 	// previous OAuth attempt's auth_error is cleared, so the row starts from a
-	// clean slate. An active row keeps oauth_connection_id/activated_at. The
-	// conflict target names the partial unique index matching the row's scope.
+	// clean slate. The probe evidence goes with it - it was gathered against the
+	// old URL, and a row proven public at one address is not proven at another.
+	// An active row keeps oauth_connection_id/activated_at. The conflict target
+	// names the partial unique index matching the row's scope.
 	const conflictTarget = projectId
 		? '(project_id, name) WHERE project_id IS NOT NULL'
 		: '(name) WHERE project_id IS NULL';
@@ -349,6 +377,8 @@ connectorsRoutes.post('/connectors', async (c) => {
 		     install_status = EXCLUDED.install_status,
 		     install_error = NULL,
 		     auth_error = NULL,
+		     probed_at = NULL,
+		     probe_error = NULL,
 		     updated_at = now()
 		 RETURNING ${CONNECTOR_COLUMNS}`,
 		[
@@ -369,7 +399,12 @@ connectorsRoutes.post('/connectors', async (c) => {
 		connectionId: createdRow.id,
 		name: createdRow.name,
 	});
-	return ok(c, result.rows[0], 201);
+	const probe = await probeOnCreate(
+		{ db, masterKeyManager: c.get('masterKeyManager') },
+		body.kind,
+		createdRow.id,
+	);
+	return ok(c, { ...(await rereadConnector(db, createdRow.id)), probe }, 201);
 });
 
 // Admin surface: re-scope a connector to a different project (or to the global
@@ -557,7 +592,10 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/methods/refresh', asy
 		{ db, masterKeyManager: c.get('masterKeyManager') },
 		id,
 	);
-	if (!result.ok) return err(c, 'INVALID_REQUEST', describeDiscoveryFailure(result), 400);
+	if (!result.ok) {
+		const { describeDiscoveryFailure } = await methodDiscovery();
+		return err(c, 'INVALID_REQUEST', describeDiscoveryFailure(result), 400);
+	}
 
 	const found = await loadConnectorMethods(db, id, projectId);
 	return ok(c, found);
@@ -636,7 +674,10 @@ connectorsRoutes.post('/connectors/:id/methods/refresh', async (c) => {
 		{ db, masterKeyManager: c.get('masterKeyManager') },
 		id,
 	);
-	if (!result.ok) return err(c, 'INVALID_REQUEST', describeDiscoveryFailure(result), 400);
+	if (!result.ok) {
+		const { describeDiscoveryFailure } = await methodDiscovery();
+		return err(c, 'INVALID_REQUEST', describeDiscoveryFailure(result), 400);
+	}
 
 	return ok(c, await loadConnectorMethods(db, id, null));
 });
@@ -959,6 +1000,8 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 	// Only local (stdio) MCPs need an installer pass; saas and api are usable at
 	// once (api is a direct REST call — nothing to install).
 	const initialStatus = body.kind === ConnectorTransport.Local ? 'pending' : 'installed';
+	// A re-point drops the probe evidence with the config it was gathered
+	// against: a server proven public at one URL is not proven at another.
 	const result = await db.query(
 		`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status, project_id)
 		 VALUES ($1, $2::mcp_connection_kind, $3::jsonb, $4, $5::mcp_install_status, $6)
@@ -968,6 +1011,8 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 		     oauth_connection_id = EXCLUDED.oauth_connection_id,
 		     install_status = EXCLUDED.install_status,
 		     install_error = NULL,
+		     probed_at = NULL,
+		     probe_error = NULL,
 		     updated_at = now()
 		 RETURNING ${CONNECTOR_COLUMNS}`,
 		[
@@ -1003,7 +1048,12 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 		);
 	}
 
-	return ok(c, inserted, 201);
+	const probe = await probeOnCreate(
+		{ db, masterKeyManager: c.get('masterKeyManager') },
+		body.kind,
+		inserted.id as string,
+	);
+	return ok(c, { ...(await rereadConnector(db, inserted.id as string)), probe }, 201);
 });
 
 async function kickoffLocalInstall(
@@ -1084,6 +1134,15 @@ connectorsRoutes.post('/projects/:projectId/connectors/ensure', async (c) => {
 			name: row.name as string,
 		});
 	}
+	// Backgrounded, unlike the two create routes: this response is one step in
+	// starting an OAuth flow the user just clicked, and the callback re-runs
+	// discovery anyway. Blocking it on a third-party round trip would only slow
+	// the redirect they are waiting for.
+	trackBackground(
+		probeOnCreate({ db, masterKeyManager: c.get('masterKeyManager') }, row.kind, row.id).catch(
+			(e) => log.warn('connector probe after ensure failed', { error: (e as Error).message }),
+		),
+	);
 	return ok(c, row);
 });
 

@@ -3,6 +3,7 @@ export * from './avatar/pixel-avatar.js';
 export * from './budget.js';
 export * from './constants.js';
 export * from './credentials/host-match.js';
+export * from './credentials/placeholder.js';
 export * from './credentials/suggest-allowed-hosts.js';
 export * from './crypto/auth.js';
 export * from './crypto/mnemonic.js';

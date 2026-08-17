@@ -337,6 +337,16 @@ const CONNECTOR_HEALTH_BATCH_LIMIT = 25;
 const CONNECTOR_HEALTH_CONCURRENCY = 5;
 /** Must exceed the tick, or a token expiring between ticks lapses before renewal. */
 const CONNECTOR_HEALTH_HORIZON_MS = 10 * 60_000;
+/** Uncredentialed hosted connectors re-proved per tick. Smaller than the token
+ *  batch: each is a full MCP handshake against a third party, and the ordering
+ *  is oldest-evidence-first, so the next tick continues where this one stopped. */
+const CONNECTOR_PROBE_BATCH_LIMIT = 10;
+/** Simultaneous MCP handshakes per tick. */
+const CONNECTOR_PROBE_CONCURRENCY = 3;
+/** How stale probe evidence may get before it is re-gathered. Hours rather than
+ *  minutes: what it watches is a provider deciding its public server now wants
+ *  auth, which is a deployment, and each check costs that provider a handshake. */
+const CONNECTOR_PROBE_INTERVAL_MS = 6 * 60 * 60_000;
 // Container status reconciliation and orphaned-run detection. These run on a
 // fixed wall-clock tick rather than reacting to an event, so they keep firing
 // even while nothing is happening. The defaults (1s / 30s) keep the dashboard
@@ -3802,28 +3812,55 @@ export class JobManager {
 	}
 
 	/**
-	 * Keep OAuth-backed connectors alive, and notice promptly when one dies.
+	 * Keep connectors honest: renew the tokens that are about to lapse, and
+	 * re-prove the hosted servers that carry no credential at all.
 	 *
-	 * This is both halves of the same tick: a connection whose refresh succeeds
-	 * has its `auth_error` cleared, so a provider blip that degraded twenty
-	 * connectors un-degrades them here with no human action; one whose refresh
-	 * fails has the reason recorded, which is what turns the connector `degraded`
-	 * and lights the operator's project banner.
+	 * Two legs, each in its own try/catch so one third party cannot stop the
+	 * other running. They watch disjoint sets - the token leg reads
+	 * `oauth_connections`, which is exactly why it was blind to a connector with
+	 * no connection - and they differ on the master key: renewing decrypts, so it
+	 * waits for an unlock, while probing decrypts nothing and runs regardless. A
+	 * locked instance still learns that a public MCP has started demanding auth.
+	 *
+	 * The token leg is both halves of the same tick: a connection whose refresh
+	 * succeeds has its `auth_error` cleared, so a provider blip that degraded
+	 * twenty connectors un-degrades them here with no human action; one whose
+	 * refresh fails has the reason recorded, which is what turns the connector
+	 * `degraded` and lights the operator's project banner.
 	 */
 	private async sweepConnectorHealth(): Promise<void> {
 		// Nothing to refresh while the vault is locked, and attempting it would log
 		// a "could not decrypt refresh token" warning per candidate every 5 minutes
 		// for as long as the instance stays locked.
-		if (!this.deps.masterKeyManager.getKey()) return;
-		const { refreshExpiringTokens } = await import('./oauth/token-resolver');
-		await refreshExpiringTokens(
-			{ db: this.deps.db, masterKeyManager: this.deps.masterKeyManager },
-			{
-				horizonMs: CONNECTOR_HEALTH_HORIZON_MS,
-				limit: CONNECTOR_HEALTH_BATCH_LIMIT,
-				concurrency: CONNECTOR_HEALTH_CONCURRENCY,
-			},
-		);
+		if (this.deps.masterKeyManager.getKey()) {
+			try {
+				const { refreshExpiringTokens } = await import('./oauth/token-resolver');
+				await refreshExpiringTokens(
+					{ db: this.deps.db, masterKeyManager: this.deps.masterKeyManager },
+					{
+						horizonMs: CONNECTOR_HEALTH_HORIZON_MS,
+						limit: CONNECTOR_HEALTH_BATCH_LIMIT,
+						concurrency: CONNECTOR_HEALTH_CONCURRENCY,
+					},
+				);
+			} catch (e) {
+				log.warn('connector token refresh sweep failed', { error: (e as Error).message });
+			}
+		}
+
+		try {
+			const { probeUnverifiedConnectors } = await import('./connectors/method-discovery');
+			await probeUnverifiedConnectors(
+				{ db: this.deps.db, masterKeyManager: this.deps.masterKeyManager },
+				{
+					limit: CONNECTOR_PROBE_BATCH_LIMIT,
+					staleAfterMs: CONNECTOR_PROBE_INTERVAL_MS,
+					concurrency: CONNECTOR_PROBE_CONCURRENCY,
+				},
+			);
+		} catch (e) {
+			log.warn('connector probe sweep failed', { error: (e as Error).message });
+		}
 	}
 
 	/**

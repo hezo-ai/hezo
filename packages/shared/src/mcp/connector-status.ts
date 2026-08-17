@@ -26,6 +26,7 @@
  * its own fix - do not "solve" it by loosening the ladder here.
  */
 
+import { connectorHasPlaceholderHeader } from '../credentials/placeholder.js';
 import { ConnectorTransport } from '../types/common.js';
 
 export const ConnectorStatus = {
@@ -57,18 +58,24 @@ export type ConnectorOAuthStatus = ConnectorStatus | typeof CONNECTOR_OAUTH_STAT
  */
 export interface ConnectorStatusRow {
 	kind: string;
+	config: Record<string, unknown> | null;
 	oauth_connection_id: string | null;
 	api_key_secret_id: string | null;
 	activated_at: string | null;
 	revoked_at: string | null;
 	auth_error: string | null;
+	/** When Hezo last probed the server, of any outcome. Null means never. */
+	probed_at: string | null;
+	/** Why that probe failed; null when it completed the MCP handshake. */
+	probe_error: string | null;
 }
 
 /**
  * The connector's state as an operator or an agent should understand it.
  *
- * Ordering is load-bearing: both auth branches sit above the local-transport
- * short-circuit, or a local connector could never be reported broken.
+ * Ordering is load-bearing: both auth branches sit above the credential-free
+ * branch and the local-transport short-circuit, or a connector with a recorded
+ * failure could never be reported broken.
  */
 export function connectorStatus(row: ConnectorStatusRow): ConnectorStatus {
 	if (row.revoked_at) return ConnectorStatus.Revoked;
@@ -83,6 +90,18 @@ export function connectorStatus(row: ConnectorStatusRow): ConnectorStatus {
 	// key stored in the vault and referenced by api_key_secret_id; the descriptor
 	// emits a placeholder for it. Active once the key is stored and stamped.
 	if (row.api_key_secret_id && row.activated_at) return ConnectorStatus.Active;
+	// A hosted server with neither auth link is either genuinely public or
+	// authenticated by an operator-configured placeholder header the egress proxy
+	// substitutes. The placeholder case is unprobeable from this side, so it is
+	// taken at its word; the rest is Active only on the evidence of a probe that
+	// completed the MCP handshake. Without that evidence the connector reads
+	// Pending and never reaches a run, which is the whole point: an unproven row
+	// used to be handed to every run and 401 inside the container where nothing
+	// here could see it.
+	if (row.kind === ConnectorTransport.Saas) {
+		if (connectorHasPlaceholderHeader(row.config)) return ConnectorStatus.Active;
+		if (row.probed_at && !row.probe_error) return ConnectorStatus.Active;
+	}
 	// Local (stdio) connectors authenticate via credential placeholders
 	// (__HEZO_SECRET_*__ - e.g. a username/password login that fetches a token),
 	// not OAuth, so there is no oauth_connection_id/activated_at handshake. A
@@ -91,27 +110,23 @@ export function connectorStatus(row: ConnectorStatusRow): ConnectorStatus {
 	return ConnectorStatus.Pending;
 }
 
-/** The extra columns `list_connectors` consults to tell "pending" from "none". */
-export interface ConnectorOAuthStatusRow extends ConnectorStatusRow {
-	config: Record<string, unknown> | null;
-	created_by_task_id: string | null;
-}
-
 /**
  * `list_connectors`' view of the same state.
  *
- * It differs from `connectorStatus` in two ways that are part of the tool's
- * contract, not accidents: a non-SaaS row has no OAuth story to report, and a
- * SaaS row nobody has started connecting reads as `none` rather than `pending`
- * unless a connect flow actually exists for it (a cached DCR registration, or
- * the task that requested it).
+ * The one difference from `connectorStatus` is part of the tool's contract, not
+ * an accident: a non-SaaS row has no OAuth story to report at all. Everything
+ * else is the same ladder, so an agent and an operator cannot read a connector
+ * differently.
+ *
+ * `none` narrows to exactly that - "this kind has no OAuth story" - rather than
+ * doubling as "nobody has started connecting this". A SaaS row Hezo has proven
+ * public, or one authenticated by a placeholder header, is `active`; an
+ * unproven one is `pending`, which is what it is: waiting on something before
+ * it can reach a run.
  */
-export function connectorOAuthStatus(row: ConnectorOAuthStatusRow): ConnectorOAuthStatus {
+export function connectorOAuthStatus(row: ConnectorStatusRow): ConnectorOAuthStatus {
 	if (row.kind !== ConnectorTransport.Saas) return CONNECTOR_OAUTH_STATUS_NONE;
-	const status = connectorStatus(row);
-	if (status !== ConnectorStatus.Pending) return status;
-	const hasDcr = !!row.config && Object.hasOwn(row.config, 'dcr');
-	return hasDcr || row.created_by_task_id ? ConnectorStatus.Pending : CONNECTOR_OAUTH_STATUS_NONE;
+	return connectorStatus(row);
 }
 
 /** True when the connector's tools can be expected to work right now. */

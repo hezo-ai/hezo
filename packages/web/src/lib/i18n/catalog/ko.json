@@ -160,6 +160,8 @@
 	"connectors.banner.action": "커넥터 보기",
 	"connectors.banner.many": "커넥터 {count}개가 더 이상 작동하지 않아요. 에이전트가 다시 사용할 수 있도록 재연결해 주세요.",
 	"connectors.banner.one": "{name}이(가) 더 이상 작동하지 않아요. 에이전트가 다시 사용할 수 있도록 재연결해 주세요.",
+	"connectors.probe.authRequired": "이 서버는 Hezo에 없는 자격 증명을 요구해요. 그래서 에이전트가 아직 사용할 수 없어요.",
+	"connectors.probe.unreachable": "마지막 확인에서 이 서버에 연결하지 못했어요. 그래서 에이전트가 아직 사용할 수 없어요.",
 	"connectors.reconnect": "재연결",
 	"connectors.status.needsReconnect": "재연결 필요",
 	"container.diskSize.help": "이 프로젝트의 각 컨테이너가 받는 디스크 용량이에요. 이 프로젝트의 체크아웃과 의존성이 더 필요하지 않다면 인스턴스 기본값으로 두세요.",

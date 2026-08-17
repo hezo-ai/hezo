@@ -124,11 +124,18 @@ function postChunkedThroughProxy(
 	});
 }
 
-/** Insert an active saas connector pointed at the fake server. */
+/**
+ * Insert an active saas connector pointed at the fake server.
+ *
+ * `probed_at` stands in for the probe that proved the server answers without a
+ * credential: an uncredentialed hosted connector reaches a run only on that
+ * evidence, and a connector that does not reach the run has no allowlist to
+ * enforce - which is what these tests are about.
+ */
 async function seedConnector(enabledMethods: string[] | null): Promise<void> {
 	await db.query(
-		`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, activated_at, api_key_secret_id, enabled_methods)
-		 VALUES ($1, 'saas', $2::jsonb, 'installed', $3, now(), NULL, $4::jsonb)`,
+		`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, activated_at, probed_at, api_key_secret_id, enabled_methods)
+		 VALUES ($1, 'saas', $2::jsonb, 'installed', $3, now(), now(), NULL, $4::jsonb)`,
 		[
 			'tracker',
 			JSON.stringify({ url: `http://${upstreamHost}/mcp` }),
@@ -276,8 +283,8 @@ describe('egress enforcement of a connector method allowlist', () => {
 		// A restricted connector on one host must not leak its allowlist onto
 		// every other host the run talks to.
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, activated_at, enabled_methods)
-			 VALUES ('other', 'saas', $1::jsonb, 'installed', $2, now(), $3::jsonb)`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, activated_at, probed_at, enabled_methods)
+			 VALUES ('other', 'saas', $1::jsonb, 'installed', $2, now(), now(), $3::jsonb)`,
 			[
 				JSON.stringify({ url: 'http://elsewhere.invalid/mcp' }),
 				projectId,

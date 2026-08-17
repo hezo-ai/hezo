@@ -3,6 +3,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { ConnectorMethodsDialog } from '../../components/connector-methods-dialog';
+import { ConnectorProbeNotice } from '../../components/connector-probe-notice';
 import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
 import { RelatedItemsList } from '../../components/related-items-list';
 import { Badge } from '../../components/ui/badge';
@@ -408,6 +409,7 @@ function InstanceConnectorRow({
 			{/* The detail under a `degraded`/`failed` badge - the provider's own words
 			    about why the credential stopped being accepted. */}
 			{connector.auth_error && <p className="text-xs text-danger mt-1">{connector.auth_error}</p>}
+			<ConnectorProbeNotice connector={connector} />
 			{rowError && <p className="text-xs text-danger mt-1">{rowError}</p>}
 			{rowInfo && <p className="text-xs text-text-3 mt-1">{rowInfo}</p>}
 			<ConfirmDialog

@@ -710,52 +710,52 @@ describe('fetch_skill_file MCP tool', () => {
 	});
 });
 
-describe('loadConnectorsForRun excludes pending/revoked', () => {
-	it('only returns active or operator-created connectors', async () => {
-		// Pending connector created via our flow — should be excluded (it has
-		// a created_by_task_id, no oauth_connection_id yet, kind='saas').
-		const taskRes = await db.query<{ id: string }>(
-			`INSERT INTO tasks (team_id, project_id, assignee_id, number, identifier, title)
-			 SELECT $1, $2, $3, COALESCE(MAX(number), 0) + 1, 'EXC-' || (COALESCE(MAX(number), 0) + 1)::text, 'filter'
-			 FROM tasks WHERE project_id = $2
-			 RETURNING id`,
-			[teamId, projectId, captainId],
+describe('loadConnectorsForRun requires evidence a connector can be reached', () => {
+	/** The gate's one rule, per row: does a run get this connector, and why. */
+	async function seed(name: string, columns: string, values: string): Promise<void> {
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status${columns})
+			 VALUES ($1, 'saas', $2::jsonb, 'installed'${values})`,
+			[name, JSON.stringify({ url: `https://${name}.example/mcp` })],
 		);
-		await createOrFetchConnector(db, {
-			name: 'pending',
-			displayName: 'Pending',
-			mcpUrl: `${fake.url}/mcp`,
-			mcpTransport: 'http',
-			createdByTaskId: taskRes.rows[0].id,
-		});
-		// A row similar to operator-created MCP (no created_by_task_id, no oauth) —
-		// included in the result so existing behavior for public MCPs is preserved.
+	}
+
+	it('injects a hosted connector only on proof it answers, or on a credential it carries', async () => {
+		// Never probed. This is the population the change is about: it used to be
+		// handed to every run, 401 at handshake inside the container where nothing
+		// here could see it, and be handed over again forever.
+		await seed('unprobed', '', '');
+		// Probed, and it answered without a credential: genuinely public.
+		await seed('verified-public', ', probed_at', ', now()');
+		// Probed, and it demanded one.
+		await seed(
+			'refused',
+			', probed_at, probe_error',
+			", now(), 'auth_required'::connector_probe_error",
+		);
+		// Authenticated by an operator-configured placeholder the egress proxy
+		// substitutes. Unprobeable from this side - the probe cannot substitute it -
+		// so the credential itself is the evidence.
 		await db.query(
 			`INSERT INTO mcp_connections (name, kind, config, install_status)
-			 VALUES ('operator', $1::mcp_connection_kind, '{"url": "https://public.example/mcp"}'::jsonb, 'installed')`,
-			[ConnectorTransport.Saas],
+			 VALUES ('header-auth', 'saas', $1::jsonb, 'installed')`,
+			[
+				JSON.stringify({
+					url: 'https://header-auth.example/mcp',
+					headers: { Authorization: 'Bearer __HEZO_SECRET_TRACKER__' },
+				}),
+			],
 		);
-		// Operator rows that are *known* to want OAuth but haven't completed it
-		// are excluded: discovery persisted config.dcr, or an attempt recorded
-		// auth_error. Injecting either would just 401 on every run.
-		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status)
-			 VALUES ('dcr-pending', $1::mcp_connection_kind,
-			         '{"url": "https://oauth.example/mcp", "dcr": {"client_id": "c1"}}'::jsonb, 'installed')`,
-			[ConnectorTransport.Saas],
-		);
-		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status, auth_error)
-			 VALUES ('oauth-failed', $1::mcp_connection_kind,
-			         '{"url": "https://broken.example/mcp"}'::jsonb, 'installed', 'discovery: boom')`,
-			[ConnectorTransport.Saas],
-		);
+		await seed('revoked', ', probed_at, revoked_at', ', now(), now()');
+
 		const { loadConnectorsForRun } = await import('../src/services/connectors/connections');
-		const rows = await loadConnectorsForRun(db);
-		expect(rows.find((r) => r.name === 'operator')).toBeTruthy();
-		expect(rows.find((r) => r.name === 'pending')).toBeUndefined();
-		expect(rows.find((r) => r.name === 'dcr-pending')).toBeUndefined();
-		expect(rows.find((r) => r.name === 'oauth-failed')).toBeUndefined();
+		const names = (await loadConnectorsForRun(db)).map((r) => r.name);
+
+		expect(names).toContain('verified-public');
+		expect(names).toContain('header-auth');
+		expect(names).not.toContain('unprobed');
+		expect(names).not.toContain('refused');
+		expect(names).not.toContain('revoked');
 	});
 
 	it('scopes to the run project (own + global) and a project connector shadows a global one', async () => {
@@ -769,25 +769,24 @@ describe('loadConnectorsForRun excludes pending/revoked', () => {
 			`INSERT INTO projects (team_id, name, slug, task_prefix) VALUES ($1, 'Other', 'other-run', 'OTHR') RETURNING id`,
 			[otherTeam.rows[0].id],
 		);
+		// All probed, so scoping is the only thing under test here.
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
-			 VALUES ('other-only', 'saas', '{"url":"https://other/mcp"}'::jsonb, 'installed', $1)`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, probed_at)
+			 VALUES ('other-only', 'saas', '{"url":"https://other/mcp"}'::jsonb, 'installed', $1, now())`,
 			[otherProject.rows[0].id],
 		);
-		// A global 'shared' and this project's own 'shared' — the project one wins.
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
-			 VALUES ('shared', 'saas', '{"url":"https://global/mcp"}'::jsonb, 'installed', NULL)`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, probed_at)
+			 VALUES ('shared', 'saas', '{"url":"https://global/mcp"}'::jsonb, 'installed', NULL, now())`,
 		);
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
-			 VALUES ('shared', 'saas', '{"url":"https://project/mcp"}'::jsonb, 'installed', $1)`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, probed_at)
+			 VALUES ('shared', 'saas', '{"url":"https://project/mcp"}'::jsonb, 'installed', $1, now())`,
 			[projectId],
 		);
-		// A plain global connector remains visible to every project.
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id)
-			 VALUES ('global-visible', 'saas', '{"url":"https://gv/mcp"}'::jsonb, 'installed', NULL)`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, probed_at)
+			 VALUES ('global-visible', 'saas', '{"url":"https://gv/mcp"}'::jsonb, 'installed', NULL, now())`,
 		);
 
 		const rows = await loadConnectorsForRun(db, projectId);

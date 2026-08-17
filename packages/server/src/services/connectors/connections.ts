@@ -1,4 +1,10 @@
-import { ConnectorTransport, type McpInstallStatus, type McpMethodInfo } from '@hezo/shared';
+import {
+	ConnectorTransport,
+	type McpInstallStatus,
+	type McpMethodInfo,
+	PLACEHOLDER_PROBE,
+	SECRET_NAME_BODY,
+} from '@hezo/shared';
 import type { Db } from '../../db/database';
 import { credentialPlaceholder } from '../../lib/credential-placeholder';
 import { logger } from '../../logger';
@@ -147,7 +153,27 @@ export interface ConnectorRow {
 	discovered_methods: McpMethodInfo[] | null;
 	created_at: string;
 	updated_at: string;
+	/** When Hezo last probed the server, of any outcome. Null means never. */
+	probed_at: string | null;
+	/** Why that probe failed; null when it completed the MCP handshake. */
+	probe_error: string | null;
 }
+
+/**
+ * A hosted connector already carries a credential a run would send: a completed
+ * OAuth connection, a pasted API key, or an operator-configured
+ * `__HEZO_SECRET_*__` header the egress proxy substitutes at request time.
+ *
+ * The pattern is built from the shared grammar rather than written out, so the
+ * predicate cannot drift from what the egress proxy actually substitutes.
+ * `COALESCE` because a row with no `headers` key yields SQL NULL, and a NULL
+ * inside a `NOT (...)` would quietly drop the row instead of matching nothing.
+ */
+export const SAAS_CREDENTIALED_SQL = `(
+	oauth_connection_id IS NOT NULL
+	OR api_key_secret_id IS NOT NULL
+	OR COALESCE((config->'headers')::text, '') ~ '${PLACEHOLDER_PROBE}${SECRET_NAME_BODY}__'
+)`;
 
 /**
  * Load MCP connections exposed to an agent run. Scoped to the run's project: its
@@ -155,20 +181,22 @@ export interface ConnectorRow {
  * connector share a name, the project's own wins (it shadows the global) — the
  * `ORDER BY … (project_id IS NULL) DESC` emits globals first so the last-write
  * Map keeps the project row.
+ *
+ * The invariant this query enforces: **an uncredentialed hosted connector
+ * reaches a run only while Hezo's most recent probe of it completed the MCP
+ * handshake with no credential.** A row that has never been probed, or whose
+ * last probe failed, stays out - it would only 401 at handshake inside the
+ * container, where nothing on this side can see it, and be handed over again on
+ * the next run forever.
  */
 export async function loadConnectorsForRun(
 	db: Db,
 	projectId?: string | null,
 ): Promise<ConnectorRow[]> {
-	// Filters: skip revoked (user disconnected); skip saas rows that are known
-	// to want auth but haven't completed it — no oauth_connection_id AND no
-	// api_key_secret_id, plus any of: agent-requested via the connector flow,
-	// discovery already persisted config.dcr, or an auth attempt recorded
-	// auth_error. Injecting those would just 401 on every run. A connector that
-	// HAS completed auth (either an OAuth connection or a pasted API key) is
-	// always included. Operator-created rows that never attempted auth carry none
-	// of these markers and continue to be included regardless (existing behavior
-	// for public / header-authenticated MCPs).
+	// Filters: skip revoked (the user disconnected it); include every non-hosted
+	// row and every hosted row that carries a credential; for the rest, require
+	// probe evidence. `probe_error IS NULL` alone is not enough - it is the value
+	// a never-probed row also has, and "we have not asked" is not "it answered".
 	const scopeClause = projectId != null ? `AND (project_id = $1 OR project_id IS NULL)` : '';
 	const params = projectId != null ? [projectId] : [];
 	const result = await db.query<ConnectorRow>(
@@ -176,13 +204,13 @@ export async function loadConnectorsForRun(
 		        config, oauth_connection_id, api_key_secret_id,
 		        install_status::text AS install_status, install_error,
 		        enabled_methods, discovered_methods,
-		        created_at::text, updated_at::text
+		        created_at::text, updated_at::text,
+		        probed_at::text AS probed_at, probe_error::text AS probe_error
 		 FROM mcp_connections
 		 WHERE revoked_at IS NULL
-		   AND NOT (kind = 'saas' AND oauth_connection_id IS NULL AND api_key_secret_id IS NULL
-		            AND (created_by_task_id IS NOT NULL
-		                 OR config ? 'dcr'
-		                 OR auth_error IS NOT NULL))
+		   AND (kind <> 'saas'
+		        OR ${SAAS_CREDENTIALED_SQL}
+		        OR (probed_at IS NOT NULL AND probe_error IS NULL))
 		   ${scopeClause}
 		 ORDER BY name ASC, (project_id IS NULL) DESC`,
 		params,

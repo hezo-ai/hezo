@@ -160,6 +160,8 @@
 	"connectors.banner.action": "查看连接器",
 	"connectors.banner.many": "{count} 个连接器已停止工作。请重新连接，让智能体可以继续使用。",
 	"connectors.banner.one": "{name} 已停止工作。请重新连接，让智能体可以继续使用。",
+	"connectors.probe.authRequired": "该服务器需要 Hezo 没有的凭据，因此智能体暂时无法使用它。",
+	"connectors.probe.unreachable": "上次检查时 Hezo 无法连接该服务器，因此智能体暂时无法使用它。",
 	"connectors.reconnect": "重新连接",
 	"connectors.status.needsReconnect": "需要重新连接",
 	"container.diskSize.help": "本项目每个容器可获得的磁盘空间。除非本项目的检出和依赖需要更多空间，否则请保持实例默认值。",

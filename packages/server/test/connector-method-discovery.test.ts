@@ -239,10 +239,24 @@ describe('discoverConnectorMethods', () => {
 		const unauthorized = await startTestMcpHttpServer({ failWithStatus: 401 });
 		try {
 			const id = await seedConnector();
-			await db.query(`UPDATE mcp_connections SET config = $1::jsonb WHERE id = $2`, [
-				JSON.stringify({ url: `http://127.0.0.1:${unauthorized.port}/mcp` }),
-				id,
-			]);
+			// Credentialed, matching the incident: the probe carries everything a run
+			// would carry, so a 401 really is the stored grant being rejected.
+			const secret = await db.query<{ id: string }>(
+				`INSERT INTO secrets (name, encrypted_value) VALUES ($1, $2) RETURNING id`,
+				[`TOK_${Math.random().toString(36).slice(2, 8)}`, await encryptForTest('stale-token')],
+			);
+			const conn = await db.query<{ id: string }>(
+				`INSERT INTO oauth_connections
+				   (provider, provider_account_id, provider_account_label, access_token_secret_id)
+				 VALUES ('fake', $1, 'Fake', $2) RETURNING id`,
+				[`acct-${Math.random().toString(36).slice(2, 8)}`, secret.rows[0].id],
+			);
+			await db.query(
+				`UPDATE mcp_connections
+				 SET config = $1::jsonb, oauth_connection_id = $2, activated_at = now()
+				 WHERE id = $3`,
+				[JSON.stringify({ url: `http://127.0.0.1:${unauthorized.port}/mcp` }), conn.rows[0].id, id],
+			);
 			const result = await discoverConnectorMethods(deps, id);
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -256,6 +270,32 @@ describe('discoverConnectorMethods', () => {
 				[id],
 			);
 			expect(row.rows[0].auth_error).toContain('401');
+		} finally {
+			await unauthorized.close();
+		}
+	});
+
+	// The other half of the same rule. An uncredentialed row's 401 says the server
+	// wants a credential, not that a stored one was rejected - so it is recorded as
+	// probe evidence and must not light the "reconnect this" banner, which is for a
+	// connection that worked and stopped.
+	it('records an uncredentialed refusal as probe evidence, not as a rejected credential', async () => {
+		const unauthorized = await startTestMcpHttpServer({ failWithStatus: 401 });
+		try {
+			const id = await seedConnector();
+			await db.query(`UPDATE mcp_connections SET config = $1::jsonb WHERE id = $2`, [
+				JSON.stringify({ url: `http://127.0.0.1:${unauthorized.port}/mcp` }),
+				id,
+			]);
+			const result = await discoverConnectorMethods(deps, id);
+			expect(result.ok).toBe(false);
+
+			const row = await db.query<{ auth_error: string | null; probe_error: string | null }>(
+				`SELECT auth_error, probe_error FROM mcp_connections WHERE id = $1`,
+				[id],
+			);
+			expect(row.rows[0].probe_error).toBe('auth_required');
+			expect(row.rows[0].auth_error).toBeNull();
 		} finally {
 			await unauthorized.close();
 		}

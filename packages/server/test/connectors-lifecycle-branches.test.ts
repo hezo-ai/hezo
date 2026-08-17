@@ -54,11 +54,14 @@ afterAll(async () => {
 describe('statusOf precedence', () => {
 	const base = {
 		kind: ConnectorTransport.Saas,
+		config: {},
 		oauth_connection_id: null,
 		api_key_secret_id: null,
 		activated_at: null,
 		revoked_at: null,
 		auth_error: null,
+		probed_at: null,
+		probe_error: null,
 	};
 
 	it('revoked wins over everything', () => {

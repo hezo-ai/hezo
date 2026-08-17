@@ -160,6 +160,8 @@
 	"connectors.banner.action": "Ver conectores",
 	"connectors.banner.many": "{count} conectores han dejado de funcionar. Vuelve a conectarlos para que tus agentes puedan usarlos de nuevo.",
 	"connectors.banner.one": "{name} ha dejado de funcionar. Vuelve a conectarlo para que tus agentes puedan usarlo de nuevo.",
+	"connectors.probe.authRequired": "Este servidor pide una credencial que Hezo no tiene, así que los agentes aún no pueden usarlo.",
+	"connectors.probe.unreachable": "Hezo no pudo contactar con este servidor en la última comprobación, así que los agentes aún no pueden usarlo.",
 	"connectors.reconnect": "Reconectar",
 	"connectors.status.needsReconnect": "Requiere reconexión",
 	"container.diskSize.help": "Cuánto disco recibe cada contenedor de este proyecto. Déjalo en el valor predeterminado de la instancia salvo que la copia de trabajo y las dependencias de este proyecto necesiten más.",

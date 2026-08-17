@@ -294,6 +294,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | "Did this execution strand a handoff?" | `detectNoWakeExits` (`services/comment-wakeups.ts`) |
 | "Who did this run notify without writing a comment?" | `created_by_run_id` on `agent_wakeup_requests` |
 | Which rows of a task thread a reader wants | `packages/shared/src/task-thread.ts`, SQL via `lib/comment-filters.ts` |
+| "May an uncredentialed hosted MCP reach a run?" | `probed_at IS NOT NULL AND probe_error IS NULL`, written only by `discoverConnectorMethods` (`services/connectors/method-discovery.ts`) and read through `SAAS_CREDENTIALED_SQL` (`services/connectors/connections.ts`) |
 | "Is this run failure worth another attempt?" | `classifyRunFailure` (`services/run-failure-classification.ts`) - unrecognised is permanent, and no row may name a backend |
 | Waking the assignee after an assignment write | `wakeAgentIfAssigned` (`services/wakeup.ts`) |
 | "May this caller move this task's assignee?" | `assertNoBlockingRun` (`lib/reassign-guard.ts`) - not the one-run-per-task check, which is `isTaskBusyInDb` (`services/run-concurrency.ts`) |

@@ -160,6 +160,8 @@
 	"connectors.banner.action": "Voir les connecteurs",
 	"connectors.banner.many": "{count} connecteurs ne fonctionnent plus. Reconnectez-les pour que vos agents puissent les utiliser à nouveau.",
 	"connectors.banner.one": "{name} ne fonctionne plus. Reconnectez-le pour que vos agents puissent l'utiliser à nouveau.",
+	"connectors.probe.authRequired": "Ce serveur demande un identifiant que Hezo ne possède pas, donc les agents ne peuvent pas encore l'utiliser.",
+	"connectors.probe.unreachable": "Hezo n'a pas pu joindre ce serveur lors de la dernière vérification, donc les agents ne peuvent pas encore l'utiliser.",
 	"connectors.reconnect": "Reconnecter",
 	"connectors.status.needsReconnect": "Reconnexion requise",
 	"container.diskSize.help": "L'espace disque attribué à chaque conteneur de ce projet. Conservez la valeur par défaut de l'instance sauf si la copie de travail et les dépendances de ce projet en demandent davantage.",

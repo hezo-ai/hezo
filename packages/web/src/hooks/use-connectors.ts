@@ -1,4 +1,5 @@
 import {
+	type ConnectorProbeError,
 	type ConnectorStatus,
 	connectorNeedsHuman,
 	connectorStatus,
@@ -36,6 +37,14 @@ export interface Connector {
 	activated_at: string | null;
 	revoked_at: string | null;
 	auth_error: string | null;
+	/**
+	 * When Hezo last probed the MCP server, of any outcome; null means never.
+	 * A hosted connector carrying no credential reaches agent runs only while its
+	 * most recent probe completed the handshake.
+	 */
+	probed_at: string | null;
+	/** Why that probe failed; null when it completed the MCP handshake. */
+	probe_error: ConnectorProbeError | null;
 	created_at: string;
 	updated_at: string;
 	/** Linked OAuth account's username/label (e.g. GitHub login), when connected. */
