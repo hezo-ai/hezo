@@ -536,3 +536,34 @@ export const CHANGELOG_SECTIONS = [
 
 export const CHANGELOG_OTHER_HEADING = 'Other';
 export const CHANGELOG_BREAKING_HEADING = 'Breaking Changes';
+
+/**
+ * Why a run is sitting in `queued`, as stamped on `heartbeat_runs.queued_reason`.
+ *
+ * The values are the stored strings, so they are what a pre-existing row already
+ * holds and what the server's own SQL matches on. They live here rather than
+ * server-side because the web has to recognise a reason to explain it: an
+ * operator reading "queued" wants to know whether that is normal and whether it
+ * needs them, and the two answers differ per reason.
+ *
+ * `CAPACITY_PARK` is load-bearing beyond display - a run parked on it holds no
+ * container, so the idle pass must not count its project as busy or it would
+ * never reclaim the capacity that run is waiting for.
+ */
+export const QueuedRunReason = {
+	/** At the instance's memory budget; waiting for a container to be released. */
+	CapacityPark: 'waiting for container capacity',
+	/** The provider credential runs one agent at a time; waiting its turn. */
+	CredentialSerialized: 'waiting for prior run on this credential',
+} as const;
+export type QueuedRunReason = (typeof QueuedRunReason)[keyof typeof QueuedRunReason];
+
+export const QUEUED_RUN_REASONS = [
+	QueuedRunReason.CapacityPark,
+	QueuedRunReason.CredentialSerialized,
+] as const;
+
+/** Whether a stored `queued_reason` is one this build knows how to explain. */
+export function isQueuedRunReason(value: unknown): value is QueuedRunReason {
+	return typeof value === 'string' && (QUEUED_RUN_REASONS as readonly string[]).includes(value);
+}

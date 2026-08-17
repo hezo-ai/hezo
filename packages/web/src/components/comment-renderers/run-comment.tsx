@@ -1,4 +1,4 @@
-import { HeartbeatRunStatus } from '@hezo/shared';
+import { HeartbeatRunStatus, isQueuedRunReason, QueuedRunReason } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { AlertTriangle, DoorOpen, Loader2, RotateCw } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
@@ -13,13 +13,14 @@ import {
 import { useProjectMeta } from '../../hooks/use-projects';
 import { useRetryFailedRun } from '../../hooks/use-retry-failed-run';
 import { useRunLogs } from '../../hooks/use-run-logs';
-import { useI18n } from '../../lib/i18n';
+import { type MessageKey, useI18n } from '../../lib/i18n';
 import { agentDisplayName } from '../agent-identity-tooltip';
 import { agentPageParams } from '../agent-link';
 import { LazyMount } from '../lazy-mount';
 import { LogViewer } from '../log-viewer';
 import { useOpenPreview } from '../task-detail/preview-context';
 import { TerminateRunButton } from '../terminate-run-button';
+import { InfoTooltip } from '../ui/info-tooltip';
 import { RelativeTime } from '../ui/relative-time';
 import { Tooltip } from '../ui/tooltip';
 import type { CommentDataOf } from './comment-data';
@@ -95,6 +96,48 @@ function containerNotReadyReason(health: ContainerHealth | null): string {
 			// the retry lazy-starts the container).
 			return 'Container hit an error - fix it from the Container page to retry';
 	}
+}
+
+/**
+ * What each recognised wait means, in the operator's terms. A table rather than
+ * a branch, so a reason added to the shared list is a compile error here until
+ * someone writes the explanation for it.
+ */
+const QUEUED_REASON_COPY: Record<QueuedRunReason, { label: MessageKey; help: MessageKey }> = {
+	[QueuedRunReason.CapacityPark]: {
+		label: 'thread.working.reason.capacity',
+		help: 'thread.working.reason.capacityHelp',
+	},
+	[QueuedRunReason.CredentialSerialized]: {
+		label: 'thread.working.reason.credential',
+		help: 'thread.working.reason.credentialHelp',
+	},
+};
+
+/**
+ * The reason a run is queued, with what it means behind an info icon.
+ *
+ * "Queued" on its own reads like something is stuck, and the two reasons differ
+ * in whether the operator can do anything about it. A reason this build does not
+ * recognise still renders, verbatim and without an icon, so an older row or a
+ * newer server never leaves the row blank.
+ */
+function QueuedReason({ reason }: { reason: string }) {
+	const { t } = useI18n();
+	if (!isQueuedRunReason(reason)) return <span className="opacity-80"> - {reason}</span>;
+	const copy = QUEUED_REASON_COPY[reason];
+	return (
+		<span className="opacity-80">
+			{' '}
+			- {t(copy.label)}{' '}
+			<InfoTooltip
+				label={t(copy.label)}
+				content={t(copy.help)}
+				className="inline-block align-text-bottom"
+				data-testid="queued-reason-help"
+			/>
+		</span>
+	);
 }
 
 function RunRetryButton({
@@ -357,7 +400,7 @@ export function RunCommentBody({
 					? t('thread.working.queued')
 					: t('thread.working.now')}
 				{status === HeartbeatRunStatus.Queued && run?.queued_reason && (
-					<span className="opacity-80"> - {run.queued_reason}</span>
+					<QueuedReason reason={run.queued_reason} />
 				)}
 			</span>
 			{elapsed && (
