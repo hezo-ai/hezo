@@ -2512,6 +2512,10 @@ export class JobManager {
 						err,
 					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+					// Settle the row *before* the bookkeeping below, which reads it.
+					// `postFailurePing` returns early on a non-terminal status, so a run
+					// that threw past its own finalizer used to notify nobody at all.
+					if (registeredRunId) await this.finalizeThrownRun(registeredRunId, err);
 					// The completion bookkeeping (lock release, idle flip, wakeup
 					// resolution) must still run or the agent stays stuck busy with
 					// no recovery path. Synthesize a failed result; the failure-ping
@@ -2918,6 +2922,8 @@ export class JobManager {
 						err,
 					);
 					if (registeredRunId) this.unregisterLiveRun(registeredRunId);
+					// Before the completion bookkeeping, which reads the row.
+					if (registeredRunId) await this.finalizeThrownRun(registeredRunId, err);
 					await this.onProgressUpdateComplete(memberId, teamId, wakeupId, {
 						success: false,
 						exitCode: -1,
@@ -3191,6 +3197,47 @@ export class JobManager {
 			'INSERT',
 			commentRow,
 		);
+	}
+
+	/**
+	 * Last resort: leave no run row non-terminal after a throw.
+	 *
+	 * `runAgent` finalizes its own row on every path it knows about. This covers
+	 * the ones it does not - a throw in the plumbing between the row's insert and
+	 * its first `try`, a failure inside a catch's own bookkeeping - and it covers
+	 * whatever is added there next, which is what makes the property permanent
+	 * rather than a description of today's call graph.
+	 *
+	 * It matters because everything downstream reads the row rather than the
+	 * thrown error: `postFailurePing` returns early on a non-terminal status, so
+	 * the task thread stayed silent, and the orphan pass then declared the process
+	 * lost when the process was alive and had thrown.
+	 *
+	 * Status-guarded, so a row the runner did finalize keeps its own richer
+	 * verdict; this only ever writes when nothing else did. No usage is passed, so
+	 * it cannot touch cost accounting.
+	 */
+	private async finalizeThrownRun(runId: string, err: unknown): Promise<void> {
+		const message = err instanceof Error ? err.message : String(err);
+		await this.deps.db
+			.query(
+				`UPDATE heartbeat_runs
+				 SET status = $1::heartbeat_run_status,
+				     started_at = COALESCE(started_at, now()),
+				     finished_at = now(),
+				     exit_code = COALESCE(exit_code, -1),
+				     error = COALESCE(error, $2)
+				 WHERE id = $3
+				   AND status IN ($4::heartbeat_run_status, $5::heartbeat_run_status)`,
+				[
+					HeartbeatRunStatus.Failed,
+					message,
+					runId,
+					HeartbeatRunStatus.Queued,
+					HeartbeatRunStatus.Running,
+				],
+			)
+			.catch((e) => log.error(`Could not finalize thrown run ${runId}:`, e));
 	}
 
 	private async chainNextTaskWakeup(
