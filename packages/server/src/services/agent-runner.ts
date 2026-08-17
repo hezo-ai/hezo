@@ -2604,6 +2604,63 @@ export async function runAgent(
 				timedOut: reason === 'run_timeout',
 			};
 		}
+	} catch (error) {
+		// Every throw between the container claim and the exec lands here: the
+		// credential lock, `markHeartbeatRunRunning`, the run-user probe, the ssh and
+		// egress allocations, the connector load, the tunnel, `buildRunContext`.
+		//
+		// Before this the only handler was the `finally` below. It released the run's
+		// resources and let the error leave `runAgent`, so the row stayed `running`
+		// with no error on it - and nothing downstream could then tell the truth.
+		// `postFailurePing` reads the row and returns early on a non-terminal status,
+		// so the task thread said nothing at all, and 30s later the orphan pass
+		// recorded that the process was no longer running when the process was alive
+		// and had thrown. The row is the record of what happened, so it is written
+		// here, by the code that holds the actual error.
+		//
+		// Returning rather than rethrowing is load-bearing: it routes into the
+		// job manager's normal completion path, so the wakeup settles, the failure
+		// ping fires and the next task is chained - all against a terminal row.
+		//
+		// `cleanupRunArtifacts` is deliberately not called: it is declared inside the
+		// exec block and is not in scope. The `finally` below is what releases the
+		// tunnel, both host ports and the container claim on this path, which is the
+		// job it was written for.
+		const verdict = throwVerdict(error);
+		const durationMs = Date.now() - startTime;
+		log.error(`Run ${heartbeatRunId} failed before the agent could start:`, error);
+		emit('stderr', `\n[runner] ${verdict.message}\n`);
+		await deps.logs.end(streamId);
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: verdict.status,
+				exitCode: -1,
+				durationMs,
+				error: verdict.message,
+			},
+			runBroadcast,
+		);
+		// Only a failure the infrastructure caused earns a recovery retry. A
+		// configuration error reproduces identically on every attempt, and the retry
+		// that used to be minted for one - by the orphan pass, on a row this path had
+		// abandoned - turned a single bad MCP injection into hundreds of failed runs
+		// on one task, each having claimed a container first.
+		if (
+			verdict.status === HeartbeatRunStatus.Failed &&
+			classifyRunFailure(error) === RunFailureClass.Transient
+		) {
+			await spendLostRunStrike();
+		}
+		return {
+			success: false,
+			exitCode: -1,
+			stderr: verdict.message,
+			durationMs,
+			heartbeatRunId,
+			timedOut: verdict.timedOut,
+		};
 	} finally {
 		releaseCredentialLock?.();
 		// These outlive every explicit cleanup path above, so this is the only
@@ -2621,6 +2678,23 @@ export async function runAgent(
 			[
 				'egress-proxy',
 				() => (egressProxyAllocated ? deps.egressProxy?.releaseRunProxy(heartbeatRunId) : null),
+			],
+			[
+				// A scrub, not tidiness: the per-run home carries the run CLI's own
+				// model-provider credential in plaintext, the one exception to the rule
+				// that no confidential value enters a run. `cleanupRunArtifacts` removes
+				// it on every path that reaches it, but it is declared inside the exec
+				// block and reads `context` - so a throw in setup, where the files are
+				// already written, left the credential on a container the pool hands to
+				// the next run. Derived rather than read off `context` for that reason;
+				// both home builders produce this same directory.
+				'per-run-home',
+				async () => {
+					if (!containerId) return;
+					const dir = getContainerSubscriptionRootImpl(provider, runtimeType, heartbeatRunId);
+					if (!dir) return;
+					await deps.docker.files(containerId, dir).removeDir('.');
+				},
 			],
 			['pool-container', () => releaseContainer()],
 		] as const) {

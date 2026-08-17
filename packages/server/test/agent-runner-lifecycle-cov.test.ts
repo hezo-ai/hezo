@@ -32,6 +32,7 @@ import {
 } from '../src/services/agent-runner';
 import { ensureProjectContainerRunning } from '../src/services/containers';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { detectOrphans } from '../src/services/orphan-detector';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
 import { CONTAINER_SUBSCRIPTION_BASE } from '../src/services/runtime-home';
 import type { ContainerEngine } from '../src/services/sandbox/types';
@@ -1333,11 +1334,22 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 			} as any,
 		});
 
-		// Setup failures propagate out of `runAgent` (the job manager catches them);
-		// the point here is that the resources are released on the way past.
-		await expect(runAgent(deps, makeAgent(), makeTask(), makeProject())).rejects.toThrow(
-			'refused the write',
+		// A setup failure is recorded, not propagated: `runAgent` resolves with a
+		// failed result and the row carries the real cause. It used to throw past
+		// every writer, leaving the row `running` with no error - which silenced the
+		// failure ping (it returns early on a non-terminal status) and left the
+		// orphan pass to invent "process no longer running" 30s later.
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+		expect(result.success).toBe(false);
+		expect(result.stderr).toContain('refused the write');
+
+		const row = await db.query<{ status: string; error: string | null; finished_at: string }>(
+			'SELECT status, error, finished_at FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
 		);
+		expect(row.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(row.rows[0].error).toContain('refused the write');
+		expect(row.rows[0].finished_at).not.toBeNull();
 
 		// The tunnel really did start - otherwise the assertion below is vacuous.
 		expect(rootsSeen).toContain(CONTAINER_WORKSPACE_ROOT);
@@ -1348,6 +1360,161 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		expect(sshCalls.released.sort()).toEqual(sshCalls.allocated.sort());
 		expect(egressCalls.released.sort()).toEqual(egressCalls.allocated.sort());
 		expect(sshCalls.allocated.some((id) => !id.startsWith('provision-'))).toBe(true);
+	});
+
+	/** The same injection the release test uses: fails inside `buildRunContext`. */
+	const dockerRefusingTheRuntimeHome = (): ContainerEngine => {
+		const base = makeDocker({
+			openExecChannel: async () => ({
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: () => {},
+				close: () => {},
+			}),
+		});
+		const stubFiles = base.files.bind(base);
+		return {
+			...base,
+			files: (containerId: string, containerRoot: string) => {
+				if (containerRoot.startsWith(CONTAINER_SUBSCRIPTION_BASE)) {
+					throw new Error('sandbox file API refused the write');
+				}
+				return stubFiles(containerId, containerRoot);
+			},
+		} as unknown as ContainerEngine;
+	};
+
+	const orphanRetriesFor = async (memberId: string): Promise<number> => {
+		const res = await db.query<{ c: number }>(
+			`SELECT COUNT(*)::int AS c FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND payload->>'reason' = 'orphan_retry'`,
+			[memberId],
+		);
+		return res.rows[0].c;
+	};
+
+	it('does not mint a recovery retry for a setup failure that will reproduce', async () => {
+		// A configuration fault fails identically on every attempt, so a retry costs
+		// a container and buys nothing. This is the loop that turned one bad MCP
+		// injection into hundreds of failed runs on a single task.
+		const before = await orphanRetriesFor(agentId);
+
+		const result = await runAgent(
+			baseDeps(dockerRefusingTheRuntimeHome()),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+		);
+
+		expect(result.success).toBe(false);
+		expect(await orphanRetriesFor(agentId)).toBe(before);
+		const row = await db.query<{ process_loss_retry_count: number }>(
+			'SELECT process_loss_retry_count FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(row.rows[0].process_loss_retry_count).toBe(0);
+	});
+
+	it('mints one bounded retry when the setup failure is a lost transport', async () => {
+		const before = await orphanRetriesFor(agentId);
+
+		const base = makeDocker({
+			openExecChannel: async () => ({
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: () => {},
+				close: () => {},
+			}),
+		});
+		const stubFiles = base.files.bind(base);
+		const docker = {
+			...base,
+			files: (containerId: string, containerRoot: string) => {
+				if (containerRoot.startsWith(CONTAINER_SUBSCRIPTION_BASE)) {
+					// Classified by name, so constructing it here needs no import from
+					// the sandbox package - which is the property being relied on.
+					throw Object.assign(new Error('output stream closed'), {
+						name: 'ExecStreamLostError',
+					});
+				}
+				return stubFiles(containerId, containerRoot);
+			},
+		} as unknown as ContainerEngine;
+
+		const result = await runAgent(baseDeps(docker), makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(false);
+		expect(await orphanRetriesFor(agentId)).toBe(before + 1);
+		const row = await db.query<{ process_loss_retry_count: number }>(
+			'SELECT process_loss_retry_count FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(row.rows[0].process_loss_retry_count).toBe(1);
+	});
+
+	it('records a cancelled run, not a failed one, when the abort lands mid-setup', async () => {
+		// A shutdown reaching `buildRunContext` is a cancellation, and recording it
+		// as a failure would put an unactionable row in the Errored view on every
+		// restart. The shape is the real one: aborting the signal makes the awaited
+		// operation reject with an AbortError.
+		const controller = new AbortController();
+		const base = makeDocker({
+			openExecChannel: async () => ({
+				write: () => {},
+				onData: () => {},
+				onStderr: () => {},
+				onClose: () => {},
+				close: () => {},
+			}),
+		});
+		const stubFiles = base.files.bind(base);
+		const docker = {
+			...base,
+			files: (containerId: string, containerRoot: string) => {
+				if (containerRoot.startsWith(CONTAINER_SUBSCRIPTION_BASE)) {
+					controller.abort();
+					throw new DOMException('Aborted', 'AbortError');
+				}
+				return stubFiles(containerId, containerRoot);
+			},
+		} as unknown as ContainerEngine;
+
+		const result = await runAgent(
+			baseDeps(docker),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			controller.signal,
+		);
+
+		const row = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(row.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
+	});
+
+	it('leaves nothing for the orphan pass to reap after a setup failure', async () => {
+		// The end-to-end property. The row is terminal the moment the run fails, so
+		// the 30s pass never selects it and never overwrites the real cause with
+		// "Orphaned: process no longer running".
+		const result = await runAgent(
+			baseDeps(dockerRefusingTheRuntimeHome()),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+		);
+
+		expect(await detectOrphans(db, new Set())).toBe(0);
+		const row = await db.query<{ error: string | null }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(row.rows[0].error).toContain('refused the write');
+		expect(row.rows[0].error).not.toContain('Orphaned');
 	});
 });
 
