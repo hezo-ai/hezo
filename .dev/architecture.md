@@ -4124,6 +4124,12 @@ health is the token sweep's business; a placeholder-header one is included on th
 that header, because the proxy substitutes it at request time and no server-side probe can
 reproduce that.
 
+**The enforcement leg is deliberately wider than the injection leg.** `loadMcpHostRestrictions`
+reads `loadConnectorsInScope` - every non-revoked connector in scope, gate or no gate - rather
+than the injected set. An operator who restricted a connector's methods restricted the
+*server*, and an agent can reach a URL it read off a `list_connectors` row without ever being
+handed a descriptor for it, so withholding the descriptor must not also withhold the rule.
+
 This replaced three *guesses* at the same fact — agent-requested (`created_by_task_id`), a
 cached `config.dcr`, a recorded `auth_error` — with one measurement. None of the three caught
 an operator-added row that quietly wanted auth: on a production instance three such rows
@@ -4134,11 +4140,11 @@ inside the container, where nothing on the server side could see it, on every ru
 exactly one function, `discoverConnectorMethods` (`services/connectors/method-discovery.ts`):
 `probed_at` (the last attempt of any outcome, and the sweep's pacing clock) and `probe_error`
 (a `connector_probe_error` enum, `auth_required` | `unreachable`, NULL when the handshake
-completed). The evidence is the **`initialize` handshake, not the tool catalog** — the MCP
-client asserts the `tools` capability before sending `tools/list`, so a server exposing only
-prompts or resources fails the catalog call while being perfectly usable. A catalog-phase
-failure therefore stamps `probed_at`, clears `probe_error`, and leaves `discovered_methods` /
-`methods_listed_at` alone.
+completed). The evidence is the **`initialize` handshake, not the tool catalog** — a server
+exposing only prompts or resources completes the handshake and refuses `tools/list`, and is
+perfectly usable, so gating on `methods_listed_at` would exclude a whole class of public
+servers. A catalog-phase failure therefore stamps `probed_at`, clears `probe_error`, and
+leaves `discovered_methods` / `methods_listed_at` alone.
 
 Two rules decide what a probe may persist, and they differ on purpose:
 

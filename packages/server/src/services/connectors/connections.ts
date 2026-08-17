@@ -193,10 +193,39 @@ export async function loadConnectorsForRun(
 	db: Db,
 	projectId?: string | null,
 ): Promise<ConnectorRow[]> {
-	// Filters: skip revoked (the user disconnected it); include every non-hosted
-	// row and every hosted row that carries a credential; for the rest, require
-	// probe evidence. `probe_error IS NULL` alone is not enough - it is the value
-	// a never-probed row also has, and "we have not asked" is not "it answered".
+	// Include every non-hosted row and every hosted row that carries a credential;
+	// for the rest, require probe evidence. `probe_error IS NULL` alone is not
+	// enough - it is the value a never-probed row also has, and "we have not
+	// asked" is not "it answered".
+	return selectConnectorsInScope(
+		db,
+		projectId,
+		`AND (kind <> 'saas'
+		      OR ${SAAS_CREDENTIALED_SQL}
+		      OR (probed_at IS NOT NULL AND probe_error IS NULL))`,
+	);
+}
+
+/**
+ * Every connector in scope the user has not disconnected, whether or not a run
+ * is given a descriptor for it.
+ *
+ * Used for the egress method allowlist rather than the descriptor set. An
+ * operator who restricted a connector's methods restricted the *server*, and an
+ * agent can reach a URL it read off `list_connectors` without a descriptor - so
+ * withholding the descriptor must not also withhold the restriction. The
+ * enforcement leg is deliberately wider than the injection leg.
+ */
+async function loadConnectorsInScope(db: Db, projectId?: string | null): Promise<ConnectorRow[]> {
+	return selectConnectorsInScope(db, projectId, '');
+}
+
+/** The shared read behind both, differing only in the reachability predicate. */
+async function selectConnectorsInScope(
+	db: Db,
+	projectId: string | null | undefined,
+	gate: string,
+): Promise<ConnectorRow[]> {
 	const scopeClause = projectId != null ? `AND (project_id = $1 OR project_id IS NULL)` : '';
 	const params = projectId != null ? [projectId] : [];
 	const result = await db.query<ConnectorRow>(
@@ -208,9 +237,7 @@ export async function loadConnectorsForRun(
 		        probed_at::text AS probed_at, probe_error::text AS probe_error
 		 FROM mcp_connections
 		 WHERE revoked_at IS NULL
-		   AND (kind <> 'saas'
-		        OR ${SAAS_CREDENTIALED_SQL}
-		        OR (probed_at IS NOT NULL AND probe_error IS NULL))
+		   ${gate}
 		   ${scopeClause}
 		 ORDER BY name ASC, (project_id IS NULL) DESC`,
 		params,
@@ -260,7 +287,7 @@ export async function loadMcpHostRestrictions(
 	db: Db,
 	projectId?: string | null,
 ): Promise<Map<string, McpHostRestriction>> {
-	const rows = await loadConnectorsForRun(db, projectId);
+	const rows = await loadConnectorsInScope(db, projectId);
 	const map = new Map<string, McpHostRestriction>();
 	for (const row of rows) {
 		if (row.kind !== ConnectorTransport.Saas) continue;

@@ -1301,19 +1301,41 @@ describe('MCP MCP-connection tools', () => {
 			name: 'extra-saas',
 			kind: 'saas',
 			config: { url: 'https://mcp.example.com/' },
-		})) as { id?: string; install_status?: string; note?: string; error?: string };
+		})) as {
+			id?: string;
+			install_status?: string;
+			reachable?: boolean;
+			probe?: string;
+			note?: string;
+			error?: string;
+		};
 		expect(added.error).toBeUndefined();
 		expect(added.id).toBeTruthy();
 		expect(added.install_status).toBe('installed');
+		// Registering a hosted server probes it, and the agent is told what came
+		// back rather than being left to find out inside a run. This address does
+		// not answer, so the connector is registered but held out of runs.
+		expect(added.reachable).toBe(false);
+		expect(added.probe).toBe('unreachable');
+		expect(added.note).toContain('stays out of agent runs');
 
 		const listed = (
 			(await callTool('list_connectors', { project: projectId })) as {
-				items: Array<{ id: string; name: string; oauth_status: string }>;
+				items: Array<{
+					id: string;
+					name: string;
+					oauth_status: string;
+					probe_error: string | null;
+				}>;
 			}
 		).items;
 		const row = listed.find((r) => r.name === 'extra-saas');
 		expect(row).toBeDefined();
-		expect(row?.oauth_status).toBe('none');
+		// `pending`, not `none`: the row is a hosted MCP that has not been shown to
+		// work, which is a state the agent can act on. `none` now means only "this
+		// kind has no OAuth story at all".
+		expect(row?.oauth_status).toBe('pending');
+		expect(row?.probe_error).toBe('unreachable');
 
 		const removed = (await callTool('remove_connector', {
 			project: projectId,

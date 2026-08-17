@@ -38,11 +38,11 @@ interface StartOpts {
 	/** Reject every request with this status — for probe-failure paths. */
 	failWithStatus?: number;
 	/**
-	 * Answer `initialize` without declaring the `tools` capability, the shape of a
-	 * server exposing only prompts or resources. The MCP client asserts the
-	 * capability before sending `tools/list`, so the catalog call fails while the
-	 * handshake succeeds - the case that separates "this server does not work"
-	 * from "this server has no tools".
+	 * Complete the handshake but refuse `tools/list`, declaring `prompts` instead
+	 * of `tools`. This is the shape of a server exposing only prompts or
+	 * resources, and it is the case that separates "this server does not work"
+	 * from "this server has no tools" - the first must keep a connector out of
+	 * agent runs, the second must not.
 	 */
 	toolsUnsupported?: boolean;
 	/**
@@ -170,6 +170,16 @@ function renderMcpResponse(
 	}
 
 	if (req.method === 'tools/list') {
+		if (toolsUnsupported) {
+			return {
+				status: 200,
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id,
+					error: { code: -32601, message: 'Method not found' },
+				}),
+			};
+		}
 		return {
 			status: 200,
 			body: JSON.stringify({

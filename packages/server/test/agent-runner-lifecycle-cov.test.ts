@@ -1532,9 +1532,12 @@ describe('runAgent lifecycle — egress + ssh wiring', () => {
 		// carries a raw token instead of a `__HEZO_SECRET_*__` placeholder. Codex
 		// stores bearers in env, so inlining one into its config.toml is exactly the
 		// contract violation the adapter check exists for.
+		// `probed_at` because only a connector that reaches a run can poison its
+		// config: an uncredentialed hosted server is held out of runs until a probe
+		// shows it answers, and a raw token is not a `__HEZO_SECRET_*__` credential.
 		await db.query(
-			`INSERT INTO mcp_connections (name, kind, config, install_status, activated_at)
-			 VALUES ($1, 'saas', $2::jsonb, 'installed', now())`,
+			`INSERT INTO mcp_connections (name, kind, config, install_status, activated_at, probed_at)
+			 VALUES ($1, 'saas', $2::jsonb, 'installed', now(), now())`,
 			[
 				'preflight-poison',
 				JSON.stringify({

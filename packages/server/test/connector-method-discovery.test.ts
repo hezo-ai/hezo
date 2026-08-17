@@ -344,6 +344,149 @@ describe('discoverConnectorMethods', () => {
 		expect(row.rows[0].auth_error).toBeNull();
 	});
 
+	it('stamps the handshake as evidence even when the server serves no tool catalog', async () => {
+		// A server exposing only prompts or resources completes the handshake and
+		// refuses `tools/list`. Gating a run on the catalog would exclude a whole
+		// class of perfectly usable servers, so the evidence is `initialize`.
+		const promptsOnly = await startTestMcpHttpServer({ toolsUnsupported: true });
+		try {
+			const id = await seedConnector();
+			await db.query(`UPDATE mcp_connections SET config = $1::jsonb WHERE id = $2`, [
+				JSON.stringify({ url: `http://127.0.0.1:${promptsOnly.port}/mcp` }),
+				id,
+			]);
+
+			const result = await discoverConnectorMethods(deps, id);
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.reason).toBe('probe_failed');
+				expect(result.phase).toBe('catalog');
+			}
+
+			const row = await db.query<{
+				probed_at: string | null;
+				probe_error: string | null;
+				methods_listed_at: string | null;
+				discovered_methods: unknown;
+			}>(
+				`SELECT probed_at::text AS probed_at, probe_error::text AS probe_error,
+				        methods_listed_at::text AS methods_listed_at, discovered_methods
+				 FROM mcp_connections WHERE id = $1`,
+				[id],
+			);
+			expect(row.rows[0].probed_at).not.toBeNull();
+			expect(row.rows[0].probe_error).toBeNull();
+			// The catalog is untouched, so a previously-listed one is not wiped by a
+			// server that has since stopped answering tools/list.
+			expect(row.rows[0].methods_listed_at).toBeNull();
+			expect(row.rows[0].discovered_methods).toBeNull();
+
+			// And it reaches runs, which is the whole point.
+			const { loadConnectorsForRun } = await import('../src/services/connectors/connections');
+			const rows = await loadConnectorsForRun(db);
+			expect(rows.some((r) => r.id === id)).toBe(true);
+		} finally {
+			await promptsOnly.close();
+		}
+	});
+
+	it('records nothing about a credential the probe could not carry', async () => {
+		// Finding (A): a `config.headers` placeholder is substituted by the egress
+		// proxy at request time. `buildProbeHeaders` strips it rather than sending
+		// the literal string, so the probe goes out with less than a run would and
+		// its 401 is about the probe. Recording it would have made one "List
+		// methods" click exclude a working connector permanently.
+		const unauthorized = await startTestMcpHttpServer({ failWithStatus: 401 });
+		try {
+			const id = await seedConnector();
+			await db.query(`UPDATE mcp_connections SET config = $1::jsonb WHERE id = $2`, [
+				JSON.stringify({
+					url: `http://127.0.0.1:${unauthorized.port}/mcp`,
+					headers: { Authorization: 'Bearer __HEZO_SECRET_TRACKER_KEY__' },
+				}),
+				id,
+			]);
+
+			const result = await discoverConnectorMethods(deps, id);
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.reason).toBe('auth_unverifiable');
+
+			const row = await db.query<{
+				auth_error: string | null;
+				probed_at: string | null;
+				probe_error: string | null;
+			}>(
+				`SELECT auth_error, probed_at::text AS probed_at, probe_error::text AS probe_error
+				 FROM mcp_connections WHERE id = $1`,
+				[id],
+			);
+			expect(row.rows[0].auth_error).toBeNull();
+			expect(row.rows[0].probe_error).toBeNull();
+			expect(row.rows[0].probed_at).not.toBeNull();
+
+			// The header is its own credential, so the connector keeps reaching runs.
+			const { loadConnectorsForRun } = await import('../src/services/connectors/connections');
+			expect((await loadConnectorsForRun(db)).some((r) => r.id === id)).toBe(true);
+		} finally {
+			await unauthorized.close();
+		}
+	});
+
+	it('does not clear a stale auth_error on a success it reached without the credential', async () => {
+		// The same rule read the other way. A probe that could not carry the row's
+		// own credential has no standing to declare it healthy either.
+		const open = await startTestMcpHttpServer({ tools: TOOLS });
+		try {
+			const id = await seedConnector();
+			await db.query(
+				`UPDATE mcp_connections SET config = $1::jsonb, auth_error = 'probe: HTTP 401' WHERE id = $2`,
+				[
+					JSON.stringify({
+						url: `http://127.0.0.1:${open.port}/mcp`,
+						headers: { 'X-Api-Key': '__HEZO_SECRET_TRACKER_KEY__' },
+					}),
+					id,
+				],
+			);
+
+			const result = await discoverConnectorMethods(deps, id);
+			expect(result.ok).toBe(true);
+			const row = await db.query<{ auth_error: string | null; probe_error: string | null }>(
+				`SELECT auth_error, probe_error::text AS probe_error FROM mcp_connections WHERE id = $1`,
+				[id],
+			);
+			expect(row.rows[0].auth_error).toBe('probe: HTTP 401');
+			expect(row.rows[0].probe_error).toBeNull();
+		} finally {
+			await open.close();
+		}
+	});
+
+	it('leaves no probe evidence on a row it never reached', async () => {
+		// `locked`, `not_found` and `unsupported_kind` never contacted anything, so
+		// stamping them would let those cases burn the sweep's pacing clock and
+		// pass an unproven connector off as proven.
+		const secret = await db.query<{ id: string }>(
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+			 VALUES ($1, 'enc', 'api_token'::secret_category, '{127.0.0.1}')
+			 RETURNING id`,
+			[`MCP_NOPROBE_${Math.random().toString(36).slice(2, 8)}`.toUpperCase()],
+		);
+		const id = await seedConnector();
+		await db.query(
+			`UPDATE mcp_connections SET api_key_secret_id = $1, activated_at = now() WHERE id = $2`,
+			[secret.rows[0].id, id],
+		);
+		const lockedDeps = { db, masterKeyManager: { getKey: () => null } as never };
+		expect((await discoverConnectorMethods(lockedDeps, id)).ok).toBe(false);
+
+		const row = await db.query<{ probed_at: string | null }>(
+			`SELECT probed_at::text AS probed_at FROM mcp_connections WHERE id = $1`,
+			[id],
+		);
+		expect(row.rows[0].probed_at).toBeNull();
+	});
+
 	it('reports not_found for an unknown connector', async () => {
 		const result = await discoverConnectorMethods(deps, '00000000-0000-0000-0000-000000000000');
 		expect(result.ok).toBe(false);

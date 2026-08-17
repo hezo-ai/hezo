@@ -279,6 +279,34 @@ describe('egress enforcement of a connector method allowlist', () => {
 		}
 	});
 
+	// The enforcement leg is deliberately wider than the injection leg: an
+	// operator who restricted a connector's methods restricted the server, and an
+	// agent can reach a URL it read off `list_connectors` without ever being given
+	// a descriptor for it. Withholding the descriptor must not withhold the rule.
+	it('still enforces the allowlist for a connector no run is given a descriptor for', async () => {
+		await db.query(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, enabled_methods)
+			 VALUES ('unproven', 'saas', $1::jsonb, 'installed', $2, $3::jsonb)`,
+			[
+				JSON.stringify({ url: `http://${upstreamHost}/mcp` }),
+				projectId,
+				JSON.stringify(['allowed_tool']),
+			],
+		);
+		const { loadConnectorsForRun, loadMcpHostRestrictions } = await import(
+			'../src/services/connectors/connections'
+		);
+		// Never probed, so it is not handed to a run ...
+		expect(
+			(await loadConnectorsForRun(db, projectId)).find((r) => r.name === 'unproven'),
+		).toBeUndefined();
+		// ... and its allowlist is enforced at the proxy all the same.
+		const restrictions = await loadMcpHostRestrictions(db, projectId);
+		const entry = [...restrictions.values()].find((r) => r.connectorName === 'unproven');
+		expect(entry).toBeTruthy();
+		expect([...(entry?.enabled ?? [])]).toContain('allowed_tool');
+	});
+
 	it('does not restrict a host that no connector in this run covers', async () => {
 		// A restricted connector on one host must not leak its allowlist onto
 		// every other host the run talks to.
