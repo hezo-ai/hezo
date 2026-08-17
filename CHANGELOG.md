@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.48.2 - 2026-08-17
+
+### Bug Fixes
+
+- **runs:** stop a config error becoming an unbounded retry storm ([#982](https://github.com/hezo-ai/hezo/pull/982))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.48.1...0.48.2
+
 ## 0.48.1 - 2026-08-16
 
 ### Bug Fixes
