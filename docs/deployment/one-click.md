@@ -37,6 +37,8 @@ screen.
 - **DigitalOcean** - a Marketplace 1-Click Droplet is in the works; until it's
   listed, use the [cloud-init snippet](#deploy-it) below (paste it into the
   Droplet's user-data field).
+- **xCloud** manages a server you already own rather than creating one, so it takes a
+  slightly different path - see [Deploying on xCloud](#deploying-on-xcloud) below.
 
 Every other provider - Hetzner, Vultr, Linode, AWS Lightsail, or any Ubuntu VM -
 uses the portable [cloud-init snippet](#deploy-it) below.
@@ -61,6 +63,10 @@ On first boot the snippet:
 It deliberately does **not** set your master key - that's generated in your browser
 on first run and shown once, so it can't be pre-filled. The deploy gets you to the
 setup screen; you take it from there.
+
+On a server managed by a control panel, the proxy, the certificate and the firewall are
+the panel's job instead - the installer has explicit modes for that, and
+[Deploying on xCloud](#deploying-on-xcloud) is the worked example.
 
 ## Deploy it
 
@@ -112,6 +118,53 @@ read them before you paste if you'd like to see exactly what runs.
 | Vultr | **Additional Features → Enable Cloud-Init User-Data** |
 | Linode | **Add User Data** |
 | AWS Lightsail | **Add launch script** - and also open ports **80** and **443** in the Lightsail firewall (its console firewall is separate from the server's) |
+
+## Deploying on xCloud
+
+[xCloud](https://xcloud.host/) is a control panel that manages a server you own rather
+than creating one for you, and it brings its own Nginx, its own firewall and its own
+certificates. So there is no snippet to paste at create time: you connect the server,
+create a site, and Hezo installs behind that site as a normal host service.
+
+**Connect the server to xCloud first.** It only accepts a fresh, empty Ubuntu 24.04 LTS
+x64 server, so a box that already has Hezo on it is one it will refuse.
+
+1. **Create an Ubuntu 24.04 LTS x64 server**, 2 GB RAM or more, and connect it to
+   xCloud.
+2. **Create a site** for your domain and let xCloud issue its certificate. Load it over
+   HTTPS before going further - that keeps certificate problems separate from Hezo
+   problems.
+3. **SSH in and install Hezo:**
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.sh \
+     | sudo HEZO_PROXY=none HEZO_FIREWALL=none HEZO_DOMAIN_OVERRIDE=hezo.example.com bash
+   ```
+
+   The two modes tell the installer that this host already has a reverse proxy and a
+   managed firewall, so it installs no Caddy and leaves your rules alone. **Put the
+   variables after `sudo`, not before `curl`** - `sudo` scrubs the environment, and a
+   run that loses them is the run that installs Caddy against xCloud's Nginx and resets
+   xCloud's firewall.
+
+4. **Point the site at Hezo.** In the site's **NGINX** tab, add the reverse-proxy
+   directives from [Serve it over
+   HTTPS](/docs/deployment/cloud#serve-it-over-https) to the location that proxies to
+   `127.0.0.1:3100`. Read the generated vhost first and add only what is missing;
+   `proxy_http_version 1.1` is the one most often absent, and without it the live
+   activity stream never connects.
+5. **Open `https://your-domain`** and complete
+   [first-run setup](/docs/getting-started/first-run).
+
+What differs from the snippet path: your own domain instead of `<ip>.sslip.io`, xCloud's
+certificate instead of Caddy's, and xCloud's firewall instead of the one the installer
+would have written. That last one is worth a check - Hezo listens on port 3100 on every
+interface, so confirm from another machine that `http://<server-ip>:3100` is **not**
+reachable. xCloud opens only 22, 80 and 443 by default, so it should not be.
+
+The full operator runbook, including how to verify the WebSocket upgrade and what to
+send xCloud about a catalogue listing, is in
+[`deploy/xcloud/README.md`](https://github.com/hezo-ai/hezo/blob/main/deploy/xcloud/README.md).
 
 ## Using managed data hosting
 
@@ -252,6 +305,10 @@ to configure, and no browser warnings.
 **Prefer your own domain?** Point an A record at the server's IP, then set
 `HEZO_DOMAIN_OVERRIDE` (uncomment the line in the snippet above). Caddy provisions a
 certificate for that name instead.
+
+All of this is the Caddy path. On a panel-managed server the panel holds the certificate
+and `HEZO_DOMAIN_OVERRIDE` names the domain it already serves - see
+[Deploying on xCloud](#deploying-on-xcloud).
 
 ## After it's up
 

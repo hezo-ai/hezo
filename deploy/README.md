@@ -10,16 +10,22 @@ host** — not to a managed-container PaaS. These artifacts automate that host s
 
 | Path | Purpose |
 |---|---|
-| `provision.sh` | The canonical, self-contained installer. Creates a swap file (default 6 GB, `HEZO_SWAP_SIZE`) so low-RAM hosts don't get OOM-killed, installs Docker, downloads the `hezo` binary, sets up Caddy (automatic HTTPS + WebSocket passthrough), installs the systemd units, exempts Hezo from needrestart's automatic restarts, and locks the firewall down. Single source of truth — everything else runs it. |
+| `provision.sh` | The canonical, self-contained installer. Creates a swap file (default 6 GB, `HEZO_SWAP_SIZE`) so low-RAM hosts don't get OOM-killed, installs Docker, downloads the `hezo` binary, sets up Caddy (automatic HTTPS + WebSocket passthrough), installs the systemd units, exempts Hezo from needrestart's automatic restarts, and locks the firewall down. The last two of those are modes: `HEZO_PROXY=none` installs no Caddy and `HEZO_FIREWALL=none` touches no rules, for hosts where something else already owns them. Single source of truth — everything else runs it. |
 | `cloud-init/hezo.cloud-config.yaml` | Portable cloud-init user-data. Paste it into any VPS provider's "User data" field; it fetches and runs `provision.sh` on first boot. |
 | `aws/` | CloudFormation **Launch Stack** template (`hezo.cfn.yaml`) — an EC2 VM whose UserData runs `provision.sh`. See [`aws/README.md`](aws/README.md). |
 | `gcp/` | **Open in Cloud Shell** deploy — `deploy.sh` creates a Compute Engine VM (startup script runs `provision.sh`) with a guided `tutorial.md`. See [`gcp/README.md`](gcp/README.md). |
 | `marketplace/digitalocean/` | Packer template that bakes `provision.sh` into a DigitalOcean Marketplace 1-Click image. See [`marketplace/digitalocean/README.md`](marketplace/digitalocean/README.md). |
+| `xcloud/` | Running Hezo behind a control panel's own Nginx (`HEZO_PROXY=none HEZO_FIREWALL=none`), plus the catalogue-outreach runbook. See [`xcloud/README.md`](xcloud/README.md). |
 
 Every per-provider button hands `provision.sh` (or the cloud-init) to a fresh VM —
 there is one installer, wrapped per provider. Hezo needs the **host Docker socket**
 (it launches a container per project), so all of these target a **real VM**; a
 managed-container PaaS (Render, Railway, Cloud Run) can't run it.
+
+A VM already managed by a control panel is still a fresh VM to Hezo, but the panel owns
+80/443 and the firewall. `provision.sh` has two explicit modes for that — `HEZO_PROXY`
+and `HEZO_FIREWALL`, both documented in its header — so there is still one installer
+rather than a second script per panel.
 
 ### How one-click per provider stands today
 
@@ -28,6 +34,7 @@ managed-container PaaS (Render, Railway, Cloud Run) can't run it.
 | **Google Cloud** | `gcp/` Cloud Shell button | Nothing — Cloud Shell reads this repo directly; works on `main`. |
 | **AWS** | `aws/hezo.cfn.yaml` | A one-time upload of the template to a public S3 URL (CloudFormation quick-create requires S3). Manual `aws cloudformation deploy` works today. |
 | **DigitalOcean** | `marketplace/digitalocean/` Packer image | An external DO vendor account + DO's image review to publish the listing. The cloud-init path works today. |
+| **xCloud** | `xcloud/` runbook + the `provision.sh` modes | A curated catalogue with no public submission process, spec or intake form — outreach to `support@xcloud.host` only. The manual path works today. |
 
 ## How it works
 
@@ -53,7 +60,10 @@ deliberately. See `docs/deployment/self-hosting.md` § Keeping the host patched.
 Firewall posture: only **80/443** are public; **3100** (the Hezo server) and
 **20000–29999** (the per-run egress proxy) stay host-local, while the Docker
 bridge (`docker0`) can still reach the host so agent containers get their tools.
-See `docs/deployment/self-hosting.md` § Networking & firewall.
+See `docs/deployment/self-hosting.md` § Networking & firewall. Under
+`HEZO_FIREWALL=none` none of that is written and the host's existing rules decide the
+posture — Hezo binds `0.0.0.0:3100`, so closing that port becomes the other firewall's
+job.
 
 ## Using it
 
@@ -80,6 +90,14 @@ throwaway VM/droplet:
 2. **Throwaway droplet:** create a small droplet with the cloud-init, then from your
    laptop hit `https://<ip>.sslip.io/health` (a valid cert proves the Let's Encrypt
    path) and load the root URL to confirm you reach the master-key gate. Destroy it.
+3. **The modes, if you touched them:** on a VM with `nginx` and a few `ufw` rules
+   already in place, run with `HEZO_PROXY=none HEZO_FIREWALL=none
+   HEZO_DOMAIN_OVERRIDE=hezo.local` and check that `caddy` is absent, `/etc/caddy` was
+   never created, `ufw status numbered` is byte-identical to before, and
+   `/etc/hezo/hezo.env` carries `HEZO_WEB_URL=https://hezo.local`. Then re-run with **no**
+   variables at all — the modes persist in `/etc/hezo/deploy.env`, so the second run must
+   still install no Caddy and touch no rules. Bad values (`HEZO_PROXY=nginx`) and
+   `HEZO_PROXY=none` without a domain must both refuse before mutating anything.
 
 ## DigitalOcean Marketplace image (Phase 2)
 

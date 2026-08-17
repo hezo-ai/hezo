@@ -125,7 +125,7 @@ network:
 - **Everything sensitive rides on every request** - your admin password, agent output,
   task content. TLS is the baseline.
 
-Configure the proxy to do all three of:
+Configure the proxy to do all four of:
 
 - **Pass through WebSocket upgrades** - the web app streams agent activity in real
   time.
@@ -134,8 +134,10 @@ Configure the proxy to do all three of:
   an MCP connection registers with its provider) from the forwarded scheme and host;
   without this header it falls back to `http://` and OAuth connects fail even though
   you're browsing over HTTPS.
+- **Accept a large enough request body** - task attachments go up to 10 MB, so a proxy
+  with a smaller cap rejects them before Hezo ever sees the upload.
 
-With Caddy all three are the default - a complete Caddyfile is:
+With Caddy all four are the default - a complete Caddyfile is:
 
 ```
 hezo.example.com {
@@ -143,14 +145,35 @@ hezo.example.com {
 }
 ```
 
-For nginx, set the headers explicitly on the proxied location:
+nginx needs each one spelled out on the proxied location, and its defaults work against
+you on three of them:
 
 ```nginx
-proxy_set_header Host $host;
+proxy_pass http://127.0.0.1:3100;
+proxy_http_version 1.1;
+
+proxy_set_header Host              $host;
+proxy_set_header X-Real-IP         $remote_addr;
+proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
 proxy_set_header X-Forwarded-Proto $scheme;
-proxy_set_header Upgrade $http_upgrade;
+
+proxy_set_header Upgrade    $http_upgrade;
 proxy_set_header Connection "upgrade";
+
+proxy_read_timeout   3600s;
+proxy_send_timeout   3600s;
+client_max_body_size 12m;
 ```
+
+The three easy ones to miss:
+
+- **`proxy_http_version 1.1`** - nginx talks HTTP/1.0 upstream by default, and a
+  WebSocket upgrade cannot be negotiated over 1.0. The `Upgrade` and `Connection`
+  headers alone will not get you a live stream.
+- **`proxy_read_timeout`** - the default is 60 seconds, so an idle activity stream is
+  cut about once a minute.
+- **`client_max_body_size`** - the default is 1 MB, well under Hezo's 10 MB attachment
+  limit; `12m` leaves headroom for the multipart envelope.
 
 On a private network (a VPN or mesh) where a public certificate authority can't see
 your hostname, use a private CA or a DNS-01 certificate - see

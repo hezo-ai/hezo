@@ -17,14 +17,36 @@
 #   6. exempts Hezo from needrestart's automatic restarts (it comes back locked)
 #   7. locks the firewall down (only 80/443 public; 3100 + egress ports stay host-local)
 #
+# Steps 4 and 7 assume this script owns the host. On a server managed by a control
+# panel (xCloud, RunCloud, Ploi, cPanel) the panel already owns 80/443 and the
+# firewall, so declare that with HEZO_PROXY=none and HEZO_FIREWALL=none below and
+# point the panel's site at 127.0.0.1:3100. See deploy/xcloud/README.md.
+#
 # It never sets the master key: that is generated in the browser on first run and
 # shown once, so it cannot be pre-seeded. After boot, open the printed URL and
 # finish the short setup (create master key, set admin password, connect a model).
 #
 # Optional environment variables (set in the shell, or seeded into /etc/hezo/deploy.env
 # by cloud-init before this script runs — see deploy/cloud-init/hezo.cloud-config.yaml):
+#   HEZO_PROXY             which reverse proxy fronts Hezo: caddy (default) or none.
+#                          `none` means one is already installed and owns 80/443 - this
+#                          script then installs no Caddy, derives no sslip.io address,
+#                          and requires HEZO_DOMAIN_OVERRIDE (the name that proxy serves)
+#                          so HEZO_WEB_URL is correct. Point the existing proxy at
+#                          127.0.0.1:3100, passing Host, X-Forwarded-Proto and the
+#                          WebSocket upgrade headers. Use it on a control-panel host.
+#   HEZO_FIREWALL          which firewall this script configures: ufw (default) or none.
+#                          `none` leaves the host's rules completely untouched - use it
+#                          when a control panel or cloud firewall owns them, so this
+#                          script never resets rules it did not create. Note what that
+#                          hands you: Hezo binds 0.0.0.0:3100 and has no bind-host
+#                          setting, so keeping 3100 off the public internet becomes
+#                          entirely your firewall's job. Verify it from another machine.
+#                          Both modes are persisted into /etc/hezo/deploy.env, so a later
+#                          bare re-run on the same host stays in them.
 #   HEZO_DOMAIN_OVERRIDE   use this domain instead of <public-ip>.sslip.io
-#                          (point an A record at the host first; Caddy gets a cert for it)
+#                          (point an A record at the host first; Caddy gets a cert for it).
+#                          Required when HEZO_PROXY=none.
 #   HEZO_DATABASE_URL      managed/external Postgres 14+ connection string
 #                          (postgres://user:pass@host:5432/hezo?sslmode=require).
 #                          sslmode follows libpq rules: require encrypts without
@@ -73,6 +95,41 @@ if [[ -f "${DEPLOY_ENV}" ]]; then
 fi
 
 log() { echo "[hezo-provision] $*"; }
+
+# ---------------------------------------------------------------------------
+# Modes. Both default to this script owning the host, so every existing wrapper
+# (cloud-init, AWS, GCP, the DigitalOcean image) behaves exactly as before. They
+# are declared by the operator, never sniffed: nothing here detects an installed
+# nginx and quietly changes course.
+# ---------------------------------------------------------------------------
+PROXY="${HEZO_PROXY:-caddy}"
+FIREWALL="${HEZO_FIREWALL:-ufw}"
+
+case "${PROXY}" in
+	caddy | none) ;;
+	*)
+		echo "HEZO_PROXY must be 'caddy' or 'none' (got '${PROXY}')." >&2
+		exit 1
+		;;
+esac
+
+case "${FIREWALL}" in
+	ufw | none) ;;
+	*)
+		echo "HEZO_FIREWALL must be 'ufw' or 'none' (got '${FIREWALL}')." >&2
+		exit 1
+		;;
+esac
+
+# With no Caddy there is no sslip.io derivation, so the domain the existing proxy
+# serves has to be supplied - Hezo builds absolute URLs (the OAuth callback an MCP
+# connection registers with its provider among them) from HEZO_WEB_URL, and a blank
+# one fails later at connect time rather than here.
+if [[ "${PROXY}" == "none" && -z "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
+	echo "HEZO_PROXY=none needs HEZO_DOMAIN_OVERRIDE set to the domain your reverse proxy serves" >&2
+	echo "(it becomes HEZO_WEB_URL=https://<domain>). See deploy/xcloud/README.md." >&2
+	exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Swap file — give low-RAM hosts a memory cushion so the install itself and
@@ -232,11 +289,17 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 	install -m 600 /dev/null "${ENV_FILE}"
 	cat >"${ENV_FILE}" <<EOF
 HEZO_DATA_DIR=${DATA_DIR}
-# HEZO_WEB_URL is written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
+# HEZO_WEB_URL is written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh),
+# or right below when an existing reverse proxy owns the address (HEZO_PROXY=none).
 # Do NOT put your master key in this file. Hezo keeps it in memory only and comes up locked
 # after each restart by design; unlock it from the browser gate. A copy of the key on disk
 # next to the encrypted data would let anyone who reads this box decrypt your vault.
 EOF
+	# With an existing proxy there is nothing to derive: the domain it serves was
+	# supplied up front, so write the URL now rather than deferring to first boot.
+	if [[ "${PROXY}" == "none" ]]; then
+		echo "HEZO_WEB_URL=https://${HEZO_DOMAIN_OVERRIDE}" >>"${ENV_FILE}"
+	fi
 	# Managed data hosting (optional): persist the database / asset-storage settings
 	# provided at provision time so the systemd unit picks them up. To wire them into
 	# an already-provisioned host, edit this file directly and restart hezo — see
@@ -248,30 +311,44 @@ EOF
 	done
 fi
 
-# Persist optional settings the first-boot unit reads (domain override, swap size).
-if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" || -n "${HEZO_SWAP_SIZE:-}" ]]; then
+# Persist the settings that must survive this run: the modes (read back by the block
+# at the top of this script, and by the first-boot unit) plus the domain override and
+# swap size. The modes are written only when they are not the default, so a Caddy
+# install writes exactly the file it always did.
+#
+# Persisting them is what makes a later bare re-run safe. Someone who pipes this
+# script into `sudo bash` again on a panel-managed host, without re-typing the two
+# variables, must not get Caddy installed and their firewall reset - so the host
+# remembers. An explicit variable still wins, so switching modes stays possible.
+if [[ "${PROXY}" != "caddy" || "${FIREWALL}" != "ufw" || -n "${HEZO_DOMAIN_OVERRIDE:-}" || -n "${HEZO_SWAP_SIZE:-}" ]]; then
 	install -m 600 /dev/null "${DEPLOY_ENV}"
+	[[ "${PROXY}" != "caddy" ]] && echo "HEZO_PROXY=${PROXY}" >>"${DEPLOY_ENV}"
+	[[ "${FIREWALL}" != "ufw" ]] && echo "HEZO_FIREWALL=${FIREWALL}" >>"${DEPLOY_ENV}"
 	[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && echo "HEZO_DOMAIN_OVERRIDE=${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV}"
 	[[ -n "${HEZO_SWAP_SIZE:-}" ]] && echo "HEZO_SWAP_SIZE=${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV}"
 fi
 
 # ---------------------------------------------------------------------------
 # 5. Caddy (reverse proxy, automatic HTTPS, WebSocket passthrough)
+#    Skipped wholesale under HEZO_PROXY=none: the proxy already on this host owns
+#    80/443, and installing Caddy beside it would leave two services fighting for
+#    the same ports. Nothing is written under /etc/caddy in that mode.
 # ---------------------------------------------------------------------------
-if ! command -v caddy >/dev/null 2>&1; then
-	log "Installing Caddy…"
-	apt-get update -y
-	apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
-	curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
-		gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-	curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' |
-		tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
-	apt-get update -y
-	apt-get install -y caddy
-fi
+if [[ "${PROXY}" == "caddy" ]]; then
+	if ! command -v caddy >/dev/null 2>&1; then
+		log "Installing Caddy…"
+		apt-get update -y
+		apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+		curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
+			gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+		curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' |
+			tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+		apt-get update -y
+		apt-get install -y caddy
+	fi
 
-# The site address is provided at runtime by hezo-firstboot via /etc/caddy/hezo.env.
-cat >/etc/caddy/Caddyfile <<'EOF'
+	# The site address is provided at runtime by hezo-firstboot via /etc/caddy/hezo.env.
+	cat >/etc/caddy/Caddyfile <<'EOF'
 # Managed by Hezo provision.sh — the site address comes from HEZO_SITE_ADDRESS
 # (written to /etc/caddy/hezo.env by hezo-firstboot). Caddy provisions a
 # Let's Encrypt certificate for it automatically and passes WebSocket upgrades
@@ -281,9 +358,9 @@ cat >/etc/caddy/Caddyfile <<'EOF'
 }
 EOF
 
-# Feed HEZO_SITE_ADDRESS into Caddy's process and order it after first-boot.
-install -d /etc/systemd/system/caddy.service.d
-cat >/etc/systemd/system/caddy.service.d/hezo.conf <<'EOF'
+	# Feed HEZO_SITE_ADDRESS into Caddy's process and order it after first-boot.
+	install -d /etc/systemd/system/caddy.service.d
+	cat >/etc/systemd/system/caddy.service.d/hezo.conf <<'EOF'
 [Unit]
 After=hezo-firstboot.service
 Wants=hezo-firstboot.service
@@ -291,11 +368,18 @@ Wants=hezo-firstboot.service
 [Service]
 EnvironmentFile=/etc/caddy/hezo.env
 EOF
-# Placeholder so caddy's EnvironmentFile exists before first-boot writes the real value.
-[[ -f /etc/caddy/hezo.env ]] || echo 'HEZO_SITE_ADDRESS=:80' >/etc/caddy/hezo.env
+	# Placeholder so caddy's EnvironmentFile exists before first-boot writes the real value.
+	[[ -f /etc/caddy/hezo.env ]] || echo 'HEZO_SITE_ADDRESS=:80' >/etc/caddy/hezo.env
+else
+	log "HEZO_PROXY=none: leaving the existing reverse proxy alone (point it at 127.0.0.1:3100)."
+fi
 
 # ---------------------------------------------------------------------------
 # 6. First-boot unit: derive the public URL, wire it into Caddy + Hezo
+#    Installed in every mode - it also creates swap on the machine-image path -
+#    but under HEZO_PROXY=none there is no address to derive, so it stops after
+#    the swap step. provision.sh already wrote HEZO_WEB_URL from the domain the
+#    existing proxy serves.
 # ---------------------------------------------------------------------------
 cat >/usr/local/sbin/hezo-firstboot.sh <<'EOF'
 #!/usr/bin/env bash
@@ -314,6 +398,15 @@ SENTINEL="/var/lib/hezo/.firstboot-done"
 # skipped it at build time.
 if [[ -x /usr/local/sbin/hezo-ensure-swap.sh ]]; then
 	HEZO_SWAP_SIZE="${HEZO_SWAP_SIZE:-}" /usr/local/sbin/hezo-ensure-swap.sh || true
+fi
+
+# An existing reverse proxy owns the address and its certificate; there is no Caddy
+# to point anywhere and HEZO_WEB_URL was written at provision time.
+if [[ "${HEZO_PROXY:-caddy}" == "none" ]]; then
+	install -d /var/lib/hezo
+	touch "${SENTINEL}"
+	echo "hezo-firstboot: existing reverse proxy owns the address; nothing to derive"
+	exit 0
 fi
 
 if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
@@ -402,8 +495,15 @@ EOF
 # 9. Firewall — only 80/443 public; keep 3100 and the egress range host-local,
 #    but let the Docker bridge reach the host (agents call back over docker0).
 #    See docs/deployment/self-hosting.md § Networking & firewall.
+#
+#    Skipped wholesale under HEZO_FIREWALL=none, `ufw --force reset` included:
+#    on a host whose rules belong to a control panel or a cloud firewall, that
+#    reset would delete rules this script never created. Hezo binds 0.0.0.0:3100,
+#    so in that mode closing 3100 to the internet is the other firewall's job.
 # ---------------------------------------------------------------------------
-if command -v ufw >/dev/null 2>&1; then
+if [[ "${FIREWALL}" == "none" ]]; then
+	log "HEZO_FIREWALL=none: leaving the host firewall untouched."
+elif command -v ufw >/dev/null 2>&1; then
 	ufw --force reset >/dev/null 2>&1 || true
 	ufw default deny incoming
 	ufw default allow outgoing
@@ -425,14 +525,28 @@ if [[ "${HEZO_IMAGE_BUILD:-}" == "1" ]]; then
 	# absent, so it fires) which sets the real <ip>.sslip.io address, then Caddy and
 	# Hezo start. Guard against a baked sentinel/URL just in case.
 	rm -f /var/lib/hezo/.firstboot-done
-	systemctl enable hezo-firstboot.service caddy hezo
+	systemctl enable hezo-firstboot.service hezo
+	if [[ "${PROXY}" == "caddy" ]]; then
+		systemctl enable caddy
+	fi
 	log "Image build: services enabled for first boot (not started). URL is derived on the user's first boot."
 else
 	systemctl enable --now hezo-firstboot.service
-	systemctl enable --now caddy
-	# Re-run Caddy now that the real site address exists.
-	systemctl restart caddy
+	if [[ "${PROXY}" == "caddy" ]]; then
+		systemctl enable --now caddy
+		# Re-run Caddy now that the real site address exists.
+		systemctl restart caddy
+	fi
 	systemctl enable --now hezo
-	log "Done. Once DNS + certificate settle (a few seconds), open the URL from:"
-	log "  cat /etc/hezo/hezo.env    # HEZO_WEB_URL=https://<host>.sslip.io"
+	if [[ "${PROXY}" == "caddy" ]]; then
+		log "Done. Once DNS + certificate settle (a few seconds), open the URL from:"
+		log "  cat /etc/hezo/hezo.env    # HEZO_WEB_URL=https://<host>.sslip.io"
+	else
+		log "Done. Hezo is listening on port 3100."
+		log "Point your ${HEZO_DOMAIN_OVERRIDE} site at 127.0.0.1:3100, then open"
+		log "  https://${HEZO_DOMAIN_OVERRIDE}"
+		if [[ "${FIREWALL}" == "none" ]]; then
+			log "Confirm port 3100 is NOT reachable from outside this host - Hezo binds 0.0.0.0."
+		fi
+	fi
 fi

@@ -106,14 +106,16 @@ firewall, and drops you at the in-browser setup.
   <a href="https://ssh.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/hezo-ai/hezo&cloudshell_workspace=deploy/gcp&cloudshell_tutorial=tutorial.md"><img src="https://img.shields.io/badge/Deploy_on-Google_Cloud-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white" alt="Deploy on Google Cloud" height="34" /></a>
   <a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://hezo-deploy.s3.us-east-1.amazonaws.com/hezo.cfn.yaml&stackName=hezo"><img src="https://img.shields.io/badge/Deploy_on-AWS-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white" alt="Deploy on AWS" height="34" /></a>
   <a href="./docs/deployment/one-click.md"><img src="https://img.shields.io/badge/Deploy_on-DigitalOcean-0080FF?style=for-the-badge&logo=digitalocean&logoColor=white" alt="Deploy on DigitalOcean" height="34" /></a>
+  <a href="./docs/deployment/one-click.md#deploying-on-xcloud"><img src="https://img.shields.io/badge/Deploy_on-xCloud-1B1F3B?style=for-the-badge" alt="Deploy on xCloud" height="34" /></a>
 </p>
 
 **Google Cloud** and **AWS** are one-click today - Google Cloud opens Cloud Shell
 and runs the deploy, and AWS opens a CloudFormation **Launch Stack** (pick a size,
 then **Create stack**). **DigitalOcean** opens a short guide until its
-[Marketplace image](./deploy/marketplace/digitalocean/README.md) is listed. Any
-provider that takes cloud-init works too - see
-[One-click deploy](./docs/deployment/one-click.md).
+[Marketplace image](./deploy/marketplace/digitalocean/README.md) is listed, and
+**xCloud** opens one too - it manages a server you already own, so Hezo installs
+behind the panel's own Nginx rather than bringing its own. Any provider that takes
+cloud-init works too - see [One-click deploy](./docs/deployment/one-click.md).
 
 > These buttons target VM providers because the default setup runs each project's agents
 > on the host's own container-runtime socket, which needs a **real VM** - not a
