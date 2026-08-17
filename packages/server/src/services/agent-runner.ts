@@ -127,6 +127,7 @@ import { loadReactionsForTask, type ReactionGroup } from './reactions';
 import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
 import { CAPACITY_PARK_QUEUED_REASON, projectContainerMemoryGb } from './run-concurrency';
+import { classifyRunFailure, RunFailureClass } from './run-failure-classification';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
 	ensureRuntimeHomeDir,
@@ -142,7 +143,6 @@ import {
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { createBundleVault } from './sandbox/bundle-vault';
 import type { RunEndpoints } from './sandbox/endpoints';
-import { ExecStreamLostError } from './sandbox/errors';
 import type { SandboxFiles } from './sandbox/files';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberDiskUsage, setPoolMemberUnpushedFlag } from './sandbox/pool-db';
@@ -1373,6 +1373,64 @@ export async function runAgent(
 		};
 	};
 
+	/**
+	 * The terminal verdict for a thrown run failure.
+	 *
+	 * The **signal** decides the status, not the shape of the thrown error. Only
+	 * Docker's exec reliably rejects with an `AbortError` when its attach is torn
+	 * down; a managed backend's exec may reject with anything or resolve outright,
+	 * and keying on the error name there recorded a timed-out run as `failed` while
+	 * still stamping it with the timeout's own message - measured against the live
+	 * Daytona API. An error with no abort reason behind it is a genuine failure; a
+	 * bare abort (user cancel, shutdown) is still `cancelled`.
+	 *
+	 * Shared with the setup window, which needs the same answer: a shutdown landing
+	 * inside `buildRunContext` is a cancellation, not a failure, and recording it as
+	 * one would put an unactionable row in the Errored view on every restart.
+	 */
+	const throwVerdict = (
+		error: unknown,
+	): { status: HeartbeatRunStatus; message: string; timedOut: boolean } => {
+		const isAbort = error instanceof Error && error.name === 'AbortError';
+		const reason = runAbortReason(runAbort.signal);
+		return {
+			status: reason
+				? abortedRunStatus(reason)
+				: isAbort
+					? HeartbeatRunStatus.Cancelled
+					: HeartbeatRunStatus.Failed,
+			message:
+				abortErrorMessage(reason) ?? (error instanceof Error ? error.message : String(error)),
+			timedOut: reason === 'run_timeout',
+		};
+	};
+
+	/**
+	 * Spend one strike of the lost-run budget, then retry or escalate.
+	 *
+	 * Counted the way the orphan detector counts it, so a transport loss, a failed
+	 * tunnel start and a vanished driver converge on one ceiling rather than each
+	 * retrying forever. Best-effort: failing to queue the retry must never replace
+	 * the real error already on the row.
+	 */
+	const spendLostRunStrike = async (): Promise<void> => {
+		try {
+			const bumped = await deps.db.query<{ process_loss_retry_count: number }>(
+				`UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1
+				 WHERE id = $1 RETURNING process_loss_retry_count`,
+				[heartbeatRunId],
+			);
+			await retryOrEscalateLostRun(deps.db, {
+				runId: heartbeatRunId,
+				memberId: agent.id,
+				teamId: runTeamId,
+				priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
+			});
+		} catch (e) {
+			log.error(`Run ${heartbeatRunId}: could not queue a transport retry:`, e);
+		}
+	};
+
 	let provider: AiProvider;
 	let runtimeType: AgentRuntime;
 	// Null on the agent-override path: the override names only a provider, and
@@ -2483,20 +2541,9 @@ export async function runAgent(
 			const durationMs = Date.now() - startTime;
 			const isAbort = (error as Error).name === 'AbortError';
 			const reason = runAbortReason(runAbort.signal);
-			const errorMessage = abortErrorMessage(reason) ?? (error as Error).message;
-			// The **signal** decides the status, not the shape of the thrown error.
-			// Only Docker's exec reliably rejects with an `AbortError` when its
-			// attach is torn down; a managed backend's exec may reject with
-			// anything or resolve outright, and keying on the error name there
-			// recorded a timed-out run as `failed` while still stamping it with the
-			// timeout's own message - measured against the live Daytona API. An
-			// error with no abort reason behind it is a genuine failure; a bare
-			// abort (user cancel, shutdown) is still `cancelled`.
-			const status = reason
-				? abortedRunStatus(reason)
-				: isAbort
-					? HeartbeatRunStatus.Cancelled
-					: HeartbeatRunStatus.Failed;
+			// Same verdict the setup window records, from one implementation - see
+			// `throwVerdict`, which carries the reasoning.
+			const { status, message: errorMessage } = throwVerdict(error);
 
 			// Aborting the exec only tears down its attach stream — Docker leaves the
 			// agent CLI running in the container, so a user-terminated or timed-out run
@@ -2540,28 +2587,12 @@ export async function runAgent(
 			// has a bounded retry that carries the previous attempt's log tail
 			// forward and escalates to an approval once it stops being worth
 			// retrying - so it takes that path instead of burning the agent's turn on
-			// a transport fault. Best-effort: a failure to queue the retry must not
-			// replace the real error.
-			if (error instanceof ExecStreamLostError) {
-				await (async () => {
-					// Counted the same way the orphan detector counts it, so repeated
-					// transport losses on one agent converge on the same ceiling rather
-					// than retrying forever.
-					const bumped = await deps.db.query<{ process_loss_retry_count: number }>(
-						`UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1
-						 WHERE id = $1 RETURNING process_loss_retry_count`,
-						[heartbeatRunId],
-					);
-					await retryOrEscalateLostRun(deps.db, {
-						runId: heartbeatRunId,
-						memberId: agent.id,
-						teamId: runTeamId,
-						priorRetries: Math.max(0, (bumped.rows[0]?.process_loss_retry_count ?? 1) - 1),
-					});
-				})().catch((e) =>
-					log.error(`Run ${heartbeatRunId}: could not queue a transport retry:`, e),
-				);
-			}
+			// a transport fault.
+			//
+			// Read from the shared classifier rather than a local `instanceof`, so the
+			// exec path and the setup window agree on what a retry is for and widening
+			// the set is one row rather than a second condition here.
+			if (classifyRunFailure(error) === RunFailureClass.Transient) await spendLostRunStrike();
 
 			await cleanupRunArtifacts();
 			return {
@@ -4186,7 +4217,14 @@ async function updateHeartbeatRun(
 	},
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
-	await db.query(
+	// Guarded on a non-terminal status, so whoever declared the outcome first owns
+	// it. Several writers can reach one run - the runner's own catches, the
+	// container-death sweep, an operator terminate, the orphan pass - and the first
+	// to land is the one that actually observed the run; a later write would
+	// replace a specific cause with a vaguer one, and under MVCC an unconditional
+	// re-stamp also leaves a dead tuple behind. Same shape as
+	// `markHeartbeatRunRunning` and `failProjectRuns`.
+	const applied = await db.query<{ id: string }>(
 		`UPDATE heartbeat_runs
 		 SET status = $1::heartbeat_run_status,
 		     started_at = COALESCE(started_at, now()),
@@ -4197,7 +4235,9 @@ async function updateHeartbeatRun(
 		     output_tokens = COALESCE($5, output_tokens),
 		     cost_cents = COALESCE($6, cost_cents),
 		     usage_partial = COALESCE($7, usage_partial)
-		 WHERE id = $8`,
+		 WHERE id = $8
+		   AND status IN ($9::heartbeat_run_status, $10::heartbeat_run_status)
+		 RETURNING id`,
 		[
 			update.status,
 			update.exitCode,
@@ -4207,21 +4247,39 @@ async function updateHeartbeatRun(
 			update.usage?.costCents ?? null,
 			update.usagePartial ?? null,
 			runId,
+			HeartbeatRunStatus.Queued,
+			HeartbeatRunStatus.Running,
 		],
 	);
-	broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
-	broadcast.events?.emit({
-		type: 'agent_run.completed',
-		teamId: broadcast.teamId,
-		projectId: broadcast.projectId ?? null,
-		runId,
-		taskId: broadcast.taskId,
-		agentMemberId: broadcast.memberId,
-		status: update.status as HeartbeatRunStatus,
-		exitCode: update.exitCode,
-		error: update.error ?? null,
-	});
+	if (applied.rows.length > 0) {
+		broadcastHeartbeatRunChange(broadcast, runId, update.status, 'UPDATE');
+		broadcast.events?.emit({
+			type: 'agent_run.completed',
+			teamId: broadcast.teamId,
+			projectId: broadcast.projectId ?? null,
+			runId,
+			taskId: broadcast.taskId,
+			agentMemberId: broadcast.memberId,
+			status: update.status as HeartbeatRunStatus,
+			exitCode: update.exitCode,
+			error: update.error ?? null,
+		});
+	} else {
+		// Logged only when the two verdicts disagree, so the ordinary idempotent
+		// case - the same path finalizing twice - stays quiet.
+		const current = await db.query<{ status: string }>(
+			'SELECT status FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		const settled = current.rows[0]?.status;
+		if (settled && settled !== update.status) {
+			log.warn(
+				`Run ${runId}: kept terminal status '${settled}'; dropped a later '${update.status}'`,
+			);
+		}
+	}
 
+	// Outside the guard: tokens burned are burned whoever declared the outcome.
 	// Run completion is the canonical cost event: record the run's total spend as a
 	// single cost_entries row (guarded on positive usage so failure/abort paths and
 	// retries — which carry no usage — never double-insert), then reactively pause
