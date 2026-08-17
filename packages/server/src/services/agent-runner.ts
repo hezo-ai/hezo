@@ -1737,7 +1737,12 @@ export async function runAgent(
 			if (e instanceof KeyedLockTimeoutError) {
 				return finalizeRequeue('Another run still holds this provider credential');
 			}
-			throw e;
+			// Finalized rather than rethrown: nothing above this catches, and a
+			// throw here would leave the row `queued` with no driver - which is the
+			// stranded-run shape the whole wait is arranged to avoid.
+			return finalizeFailure(
+				`Could not take the provider credential: ${e instanceof Error ? e.message : String(e)}`,
+			);
 		}
 		if (holder) emit('stdout', '[runner] Credential free, starting the run.\n');
 	}
