@@ -106,6 +106,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 		authorUserId,
 		effort,
 		parentCommentId,
+		authorRunId,
 		wsManager,
 	} = params;
 
@@ -169,6 +170,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 					...effortPayload,
 				},
 				idempotencyKey,
+				authorRunId ?? null,
 			).catch((e) => log.error('Failed to create mention wakeup:', e)),
 		);
 	}
@@ -185,6 +187,7 @@ export async function fireCommentWakeups(params: FireCommentWakeupsParams): Prom
 			parentCommentId,
 			alreadyWokenAgentIds: mentionedAgentIds,
 			effortPayload,
+			authorRunId: authorRunId ?? null,
 		});
 		if (repliedTo) woke.push(repliedTo);
 	}
@@ -269,6 +272,14 @@ export async function detectNoWakeExits(
 		selfMemberId: string;
 		comments: readonly NoWakeExitComment[];
 		extraOutward?: ReadonlyMap<string, readonly string[]>;
+		/**
+		 * The run being judged. Teammates it notified structurally - an assignment,
+		 * a reassignment, a blocker it cleared - are credited RUN-WIDE and dropped
+		 * from every task's `named` set: those wakes land on the recipient's own
+		 * task, never on the one being judged here, so a task-scoped credit could
+		 * never see them. Absent for a chat turn, which has no run.
+		 */
+		runId?: string | null;
 	},
 ): Promise<NoWakeExitFinding[]> {
 	const byTask = new Map<string, NoWakeExitComment[]>();
@@ -296,6 +307,10 @@ export async function detectNoWakeExits(
 		[Array.from(byTask.keys())],
 	);
 
+	const structurallyNotified = input.runId
+		? await resolveRunStructuralWakes(db, input.runId)
+		: new Set<string>();
+
 	// Memoized per team — one call in the ordinary single-team case.
 	const rosterByTeam = new Map<string, string[]>();
 	const rosterFor = async (teamId: string): Promise<string[]> => {
@@ -310,9 +325,11 @@ export async function detectNoWakeExits(
 	for (const row of touched.rows) {
 		if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(row.status)) continue;
 		const comments = byTask.get(row.id) ?? [];
-		// A wake is an active `@`-mention or a reply (which wakes the parent author).
-		// agent_wakeup_requests carries no originating-execution id, so this is
-		// derived from the execution's own comments rather than queried directly.
+		// A wake ON THIS TASK is an active `@`-mention or a reply (which wakes the
+		// parent author). Deliberately stays per task: judged run-wide, a run that
+		// woke someone here could strand a handoff on another task and pass clean.
+		// A wake the run wired structurally is credited separately, below, because
+		// it lands on the recipient's task rather than this one.
 		const wokeSomeone = comments.some(
 			(c) => extractMentionSlugs(c.content).length > 0 || c.parent_comment_id !== null,
 		);
@@ -327,10 +344,46 @@ export async function detectNoWakeExits(
 			}
 			for (const slug of detectUnlinkedTeammateReferences(text, roster)) named.add(slug);
 		}
+		// Someone this run already notified is not stranded, however the text names
+		// them. Per teammate, not per task: routing work to them elsewhere answers
+		// the question this check asks, which is whether anyone was left waiting.
+		for (const slug of structurallyNotified) named.delete(slug);
 		if (named.size === 0) continue;
 		findings.push({ taskId: row.id, identifier: row.identifier, named: Array.from(named) });
 	}
 	return findings;
+}
+
+/**
+ * Teammate handles this run notified by routing work to them rather than by
+ * writing to a thread - an assignment, a reassignment, a blocker it cleared - in
+ * either spelling, lowercased to match what the detectors produce.
+ *
+ * Mention and reply wakes are excluded even though they carry the same run id.
+ * Those land on the task whose thread carried them, where `wokeSomeone` already
+ * judges them per task; crediting them run-wide would let an @-mention on one
+ * task excuse a handoff stranded on another, which is the hole the per-task
+ * scoping exists to close.
+ *
+ * No status filter, deliberately. A `deferred` row is a wake parked behind a
+ * blocker that fires the moment it clears - the `blocked_by` routing the shared
+ * instructions name - and `coalesced`/`completed` already reached the agent.
+ */
+async function resolveRunStructuralWakes(db: Db, runId: string): Promise<Set<string>> {
+	const r = await db.query<{ slug: string; human_name_slug: string | null }>(
+		`SELECT DISTINCT ma.slug, ma.human_name_slug
+		 FROM agent_wakeup_requests w
+		 JOIN member_agents ma ON ma.id = w.member_id
+		 WHERE w.created_by_run_id = $1
+		   AND w.source <> ALL($2::wakeup_source[])`,
+		[runId, [WakeupSource.Mention, WakeupSource.Reply]],
+	);
+	const out = new Set<string>();
+	for (const row of r.rows) {
+		out.add(row.slug.toLowerCase());
+		if (row.human_name_slug) out.add(row.human_name_slug.toLowerCase());
+	}
+	return out;
 }
 
 /**
@@ -437,6 +490,8 @@ interface ReplyWakeupCtx {
 	parentCommentId: string;
 	alreadyWokenAgentIds: Set<string>;
 	effortPayload: Record<string, unknown>;
+	/** The run that authored the reply, so its own exit check can see this wake. */
+	authorRunId: string | null;
 }
 
 /** Returns the slug of the agent woken by the reply, or null if none was. */
@@ -450,6 +505,7 @@ async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<string | nu
 		parentCommentId,
 		alreadyWokenAgentIds,
 		effortPayload,
+		authorRunId,
 	} = ctx;
 
 	const settings = await db.query<{ wake: boolean | null }>(
@@ -491,6 +547,7 @@ async function fireExplicitReplyWakeup(ctx: ReplyWakeupCtx): Promise<string | nu
 				...effortPayload,
 			},
 			idempotencyKey,
+			authorRunId,
 		);
 		return isAgent.rows[0].slug;
 	} catch (e) {

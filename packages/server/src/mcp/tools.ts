@@ -28,6 +28,7 @@ import {
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
+	DEFAULT_THREAD_ROW_CATEGORIES,
 	DocumentType,
 	extensionOf,
 	extractBacktickedLooseAssetPaths,
@@ -50,6 +51,8 @@ import {
 	summarizeMethodAccess,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
+	THREAD_ROW_CATEGORIES,
+	type ThreadRowCategory,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -75,6 +78,11 @@ import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
 import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
+import {
+	commentCategoryPredicate,
+	commentSincePredicate,
+	isValidSince,
+} from '../lib/comment-filters';
 import { attachRunStatuses } from '../lib/comment-run-status';
 import { credentialPlaceholder, validateSecretName } from '../lib/credential-placeholder';
 import {
@@ -685,9 +693,16 @@ export function oversizeRemedies(
 	if ('excerpt_chars' in schema) {
 		remedies.push('Pass `excerpt_chars: 300` to truncate long fields.');
 	}
-	const filters = ['status', 'assignee_slug', 'assignee_id', 'filter', 'type', 'project'].filter(
-		(f) => f in schema && args[f] === undefined,
-	);
+	const filters = [
+		'status',
+		'assignee_slug',
+		'assignee_id',
+		'filter',
+		'type',
+		'project',
+		'categories',
+		'since',
+	].filter((f) => f in schema && args[f] === undefined);
 	if (filters.length > 0) {
 		remedies.push(`Narrow the query with ${filters.map((f) => `\`${f}\``).join(' / ')}.`);
 	}
@@ -751,6 +766,37 @@ const DEFAULT_TASK_EXCERPT_CHARS = 500;
  * surfaces promised a single-item read that did not.
  */
 const DEFAULT_COMMENT_EXCERPT_CHARS = 2_000;
+
+/** Ceiling a caller may ask for. A listing triages; `get_comment` serves a whole body. */
+const MAX_COMMENT_EXCERPT_CHARS = 4_000;
+
+/**
+ * Floor for the width derived from the page size, so a full-width page still
+ * leaves each row worth reading. It never raises a caller that asked for less.
+ */
+const MIN_COMMENT_EXCERPT_CHARS = 200;
+
+/**
+ * Page bytes the excerpt budget may not spend: row ids, authors, timestamps,
+ * reactions, attachment URLs, structured bodies returned whole, and the
+ * escaping inflation of pretty-printed JSON.
+ */
+const COMMENT_LIST_ENVELOPE_RESERVE = 12_000;
+
+/**
+ * The excerpt width a page can actually afford.
+ *
+ * The default width times the default page size is well over the result cap, so
+ * a full page of long comments was rejected whole and the caller told to retry
+ * smaller - which costs a round trip per guess and re-reads what it already
+ * paged. Deriving the width from the page size returns a shorter excerpt instead
+ * of nothing at all.
+ */
+function effectiveCommentExcerptChars(requested: number | undefined, limit: number): number {
+	const affordable = Math.floor((MCP_RESULT_BYTE_LIMIT - COMMENT_LIST_ENVELOPE_RESERVE) / limit);
+	const asked = requested ?? DEFAULT_COMMENT_EXCERPT_CHARS;
+	return Math.min(asked, Math.max(MIN_COMMENT_EXCERPT_CHARS, affordable));
+}
 
 /**
  * Warn when a caller supplied a `changelog` that had nowhere to land.
@@ -2010,6 +2056,9 @@ export function registerTools(
 
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const actorApiKeyId = apiKeyIdFromAuth(auth);
+			// Every wakeup this write causes carries the run behind it, so that run's
+			// own no-wake exit check can see whom it notified.
+			const callerRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
 
 			// Renames and description edits are recorded on this surface too, so an
 			// agent's edit leaves the same thread entry a human's does. Awaited for the
@@ -2085,7 +2134,7 @@ export function registerTools(
 				// only add an open child, never clear a gate.
 				if (oldParentTaskId) {
 					trackBackground(
-						wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId).catch((e) =>
+						wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId, callerRunId).catch((e) =>
 							log.error('Failed to wake former parent after re-parent:', e),
 						),
 					);
@@ -2126,7 +2175,18 @@ export function registerTools(
 				} catch (e) {
 					log.error('Failed to record assignee change:', e);
 				}
-				wakeAgentIfAssigned(db, args.assignee_id as string, teamId, taskId);
+				// Awaited: this run's own no-wake exit check reads the wakeup back at
+				// the end of the run, so a handover made as the last action would
+				// otherwise be reported as notifying nobody.
+				await wakeAgentIfAssigned(
+					db,
+					args.assignee_id as string,
+					teamId,
+					taskId,
+					undefined,
+					undefined,
+					callerRunId,
+				);
 			}
 
 			if (args.status && currentStatus) {
@@ -2141,6 +2201,7 @@ export function registerTools(
 						actorApiKeyId,
 						wsManager,
 						dataDir,
+						callerRunId,
 					);
 				} catch (e) {
 					log.error('Failed to trigger status automations:', e);
@@ -2219,7 +2280,7 @@ export function registerTools(
 			if (r.rows.length === 0) return { error: 'Dependency not found' };
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			await reconcileBlockedStatus(db, teamId, taskId, actorMemberId, wsManager);
-			await wakeIfReady(db, taskId);
+			await wakeIfReady(db, taskId, auth.type === AuthType.Agent ? (auth.runId ?? null) : null);
 			return { removed: true };
 		},
 		db,
@@ -3110,7 +3171,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_comments',
-		`List comments for a task, newest first. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A \`run\` row also carries \`run_status\` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.`,
+		`List comments for a task, newest first. Returns the conversation and the task's own changes by default and leaves out the one-row-per-execution agent run markers - pass \`categories\` to change that, and prefer \`list_task_runs\`, which reports each run's status, exit code and log length rather than a bare marker. To catch up rather than re-read, pass \`since\` with the timestamp your last read ended at; a run prompt gives you the time of your previous run on the task. Paged: returns \`limit\` rows (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false. (\`before\`, taking a comment id or public_id, still works for walking back from a known comment.) Long text comments come back truncated at \`excerpt_chars\` (default ${DEFAULT_COMMENT_EXCERPT_CHARS}, narrowed to whatever a page of \`limit\` rows can carry and reported as \`excerpt_chars_applied\`); structured comments (system/option/task_link) are always returned whole. A truncated row sets \`text_truncated: true\` alongside \`text_length\` and a \`text_paging_hint\` naming the exact follow-up call - the excerpt sits in \`content.text\`, the same field a whole comment uses, so check \`text_truncated\` before treating what you got as the entire comment. Read the full body with \`get_comment\`; raising \`excerpt_chars\` is not the intended recovery path. Each row includes parent_comment_id (UUID or null) so you can see reply threading - when you reply substantively to a comment, pass that comment's id back as parent_comment_id in create_comment. Each row also has a public_id (a creation-timestamp slug like 20261009112345); that's how you cite a specific comment elsewhere: write a comment link as <TASK-ID>#comment-<public_id> (e.g. IN-42#comment-20261009112345), which renders as a clickable link straight to that comment. A \`run\` row also carries \`run_status\` - how that run actually ended - because the row itself is written when the run starts and the failure notices beside it are not written for every failure.`,
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -3124,9 +3185,23 @@ export function registerTools(
 				.number()
 				.int()
 				.positive()
+				.max(MAX_COMMENT_EXCERPT_CHARS)
 				.optional()
 				.describe(
-					`Cap for content.text on text-typed comments, with text_truncated/text_length companions (default ${DEFAULT_COMMENT_EXCERPT_CHARS}).`,
+					`Cap for content.text on text-typed comments, with text_truncated/text_length companions (default ${DEFAULT_COMMENT_EXCERPT_CHARS}, ceiling ${MAX_COMMENT_EXCERPT_CHARS}). Narrowed further when a page of \`limit\` rows could not otherwise fit; the value used comes back as \`excerpt_chars_applied\`.`,
+				),
+			categories: z
+				.array(z.enum(THREAD_ROW_CATEGORIES))
+				.nonempty()
+				.optional()
+				.describe(
+					`Which kinds of row to return. \`conversation\` is what people and agents wrote plus anything awaiting a person (credential requests, approvals); \`events\` is the task's own machinery - status, assignee, title and parent changes, task links and run-failure notices; \`runs\` is one marker per agent execution. Defaults to ["conversation","events"], because run markers are the bulk of a long thread and say nothing the thread does not.`,
+				),
+			since: z
+				.string()
+				.optional()
+				.describe(
+					'ISO-8601 timestamp. Return only comments created strictly after it, newest first. Use this to read what is new instead of walking a thread you have already read.',
 				),
 			...listPagingArgs(),
 		},
@@ -3134,7 +3209,15 @@ export function registerTools(
 			const scope = await resolveTaskScope(db, auth, args);
 			if ('error' in scope) return scope;
 			const { teamId, taskId } = scope;
+			const sinceArg = args.since as string | undefined;
+			if (sinceArg !== undefined && !isValidSince(sinceArg)) {
+				return {
+					error: `Invalid since: ${sinceArg}. Pass an ISO-8601 timestamp, e.g. "2026-08-17T04:00:00.000Z".`,
+				};
+			}
 			const limit = parseListLimit(args.limit);
+			const categories =
+				(args.categories as ThreadRowCategory[] | undefined) ?? DEFAULT_THREAD_ROW_CATEGORIES;
 			const conditions = ['ic.task_id = $1'];
 			const params: unknown[] = [taskId];
 			if (args.before) {
@@ -3143,6 +3226,10 @@ export function registerTools(
 					`(ic.created_at, ic.id) < (SELECT created_at, id FROM task_comments WHERE (id::text = $${params.length} OR public_id = $${params.length}) AND task_id = $1 LIMIT 1)`,
 				);
 			}
+			const category = commentCategoryPredicate('ic', categories, params);
+			if (category) conditions.push(category);
+			const since = commentSincePredicate('ic', sinceArg, params);
+			if (since) conditions.push(since);
 			const keyset = keysetPredicate('ic', decodeCursor(args.cursor as string | undefined), params);
 			if (keyset) conditions.push(keyset);
 			const r = await db.query<Record<string, unknown>>(
@@ -3174,27 +3261,47 @@ export function registerTools(
 				attachments: attachmentsByComment.get(row.id as string) ?? [],
 			}));
 			await attachRunStatuses(db, taskId, enriched);
-			const max = (args.excerpt_chars as number | undefined) ?? DEFAULT_COMMENT_EXCERPT_CHARS;
-			const rows = enriched.map((row) => {
-				if (row.content_type !== CommentContentType.Text) return row;
-				const content = row.content as { text?: string } | null;
-				const text = content?.text;
-				if (typeof text !== 'string' || text.length <= max) return row;
-				const ex = excerpt(text, max);
-				// The excerpt is written back into `content.text`, the same key that
-				// carries a full body, so nothing about the string itself says it is
-				// partial. Name the recovery call on the row - a sibling boolean is
-				// easy to miss, and a reader who misses it treats the excerpt as the
-				// whole comment.
+			const requested = args.excerpt_chars as number | undefined;
+			const buildPage = (max: number) => {
+				const rows = enriched.map((row) => {
+					if (row.content_type !== CommentContentType.Text) return row;
+					const content = row.content as { text?: string } | null;
+					const text = content?.text;
+					if (typeof text !== 'string' || text.length <= max) return row;
+					const ex = excerpt(text, max);
+					// The excerpt is written back into `content.text`, the same key that
+					// carries a full body, so nothing about the string itself says it is
+					// partial. Name the recovery call on the row - a sibling boolean is
+					// easy to miss, and a reader who misses it treats the excerpt as the
+					// whole comment.
+					return {
+						...row,
+						content: { ...content, text: ex.excerpt },
+						text_truncated: ex.truncated,
+						text_length: ex.length,
+						text_paging_hint: `Showing the first ${ex.excerpt?.length ?? 0} of ${ex.length} characters. Call get_comment(comment_id: "${row.id}") for the full body.`,
+					};
+				});
 				return {
-					...row,
-					content: { ...content, text: ex.excerpt },
-					text_truncated: ex.truncated,
-					text_length: ex.length,
-					text_paging_hint: `Showing the first ${ex.excerpt?.length ?? 0} of ${ex.length} characters. Call get_comment(comment_id: "${row.id}") for the full body.`,
+					...pagedList(rows as ListRow[], limit, 'list_comments'),
+					categories_applied: categories,
+					excerpt_chars_applied: max,
 				};
-			});
-			return pagedList(rows as ListRow[], limit, 'list_comments');
+			};
+			// Structured bodies and attachment URLs are returned whole, so sizing the
+			// excerpt off the page size cannot promise a fit on its own. Narrow until
+			// the page fits rather than letting it be rejected and walked again.
+			let max = effectiveCommentExcerptChars(requested, limit);
+			const floor = Math.min(MIN_COMMENT_EXCERPT_CHARS, max);
+			let page = buildPage(max);
+			while (
+				max > floor &&
+				Buffer.byteLength(JSON.stringify(page, null, 2), 'utf8') > MCP_RESULT_BYTE_LIMIT
+			) {
+				max = Math.max(floor, Math.floor(max / 2));
+				page = buildPage(max);
+			}
+			return page;
 		},
 		db,
 	);
@@ -7081,7 +7188,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_connectors',
-		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means OAuth completed and the MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means waiting on the human to click Connect; "failed" means the OAuth flow errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means no OAuth needed (e.g., an env-var-token MCP or a public one). A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
+		'List the connectors available to agent runs in your project (its own connectors plus global "all projects" ones; a project connector shadows a global one of the same name). Each row includes a derived `oauth_status` so you can tell whether a connector is usable: "active" means it is credentialed and connected, or Hezo probed the server and it answered with no credential needed, so its MCP tools should appear in your tool list on your next run; "degraded" means it WAS connected and its stored token has stopped working (the grant expired or was revoked - see auth_error), so its tools may still be listed but calls through them fail, and only the human can fix it by reconnecting; "pending" means it cannot reach a run yet, either waiting on the human to click Connect or waiting on a probe that has not yet found the server answering without a credential; "failed" means the connect attempt errored before it ever connected (see auth_error); "revoked" means a human disconnected it; "none" means the row is not a hosted MCP server at all (a local stdio server, or an `api` REST connector), so it has no OAuth story to report. A "degraded" connector is not a Hezo bug and not something to retry around silently - report it to the human with an active @admin comment naming the connector and asking them to reconnect it. Two fields carry the probe evidence behind a hosted row: `probed_at` is when Hezo last checked the server, and `probe_error` is why that check failed ("auth_required" when the server demanded a credential Hezo does not have, "unreachable" when it did not answer), or null when it completed the MCP handshake. A connector whose auth rides a __HEZO_SECRET_<NAME>__ header is exempt: the egress proxy substitutes that at request time, which a server-side probe cannot reproduce, so it reads "active" with no probe needed. Do NOT confuse `install_status` (which tracks local-package install state and is meaningless for SaaS MCPs) with `oauth_status`. An active OAuth-backed connector also carries `rest_auth` = `{ placeholder, allowed_hosts, scopes }`: put `placeholder` (e.g. in an `Authorization: Bearer <placeholder>` header) on a raw HTTP request to authenticate the provider\'s REST API directly when no MCP tool covers what you need - the egress proxy substitutes the real token, but ONLY for requests to `allowed_hosts`; you never see the value. Use this instead of requesting a PAT (e.g. for GitHub repo-settings edits that the `github` MCP does not expose). A connector of kind `api` (a credentialed REST API with no MCP server) carries `api_auth` = `{ base_url, placeholder, allowed_hosts, placement, name, docs_url }` instead: put `placeholder` in the `name` header (when `placement` is "header", prefixed by any scheme) or `name` query parameter (when `placement` is "query") and send the request to `base_url` - the egress proxy substitutes the real key, scoped to `allowed_hosts`. `placeholder` is null until a human attaches the credential on the Connectors page; `api_auth` is null for non-api rows. An `api` connector may instead be OAuth-backed (a human connected it via the device flow): then `api_auth.placeholder` is a broker-managed OAuth access token that Hezo keeps refreshed host-side - use it exactly the same way.',
 		{
 			project: projectArg(),
 			...listPagingArgs(),
@@ -7119,6 +7226,8 @@ export function registerTools(
 				activated_at: string | null;
 				revoked_at: string | null;
 				auth_error: string | null;
+				probed_at: string | null;
+				probe_error: string | null;
 				created_at: string;
 				updated_at: string;
 				oauth_secret_name: string | null;
@@ -7134,6 +7243,7 @@ export function registerTools(
 				        mc.install_status::text AS install_status, mc.install_error,
 				        mc.skill_id, mc.created_by_task_id,
 				        mc.activated_at::text AS activated_at, mc.revoked_at::text AS revoked_at, mc.auth_error,
+				        mc.probed_at::text AS probed_at, mc.probe_error::text AS probe_error,
 				        mc.enabled_methods, mc.discovered_methods,
 				        mc.created_at::text, mc.updated_at::text,
 				        s.name AS oauth_secret_name, s.allowed_hosts AS oauth_allowed_hosts, oc.scopes AS oauth_scopes,
@@ -7399,7 +7509,7 @@ export function registerTools(
 	tool(
 		server,
 		'add_connector',
-		'Register a connector for your project - a SaaS HTTP MCP server (`saas`), a local stdio MCP server (`local`), or a credentialed REST API you call directly with no MCP server (`api`). The connection is scoped to your project - available to this project\'s agent runs, alongside any global "all projects" connectors. SaaS servers go into the agent\'s descriptor list immediately. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time. Local servers must be installed before they take effect. An `api` connector has no MCP server: attach a credential to it (Connectors page → API key) and it surfaces in `list_connectors` as an `api_auth` block whose placeholder you put in the auth header/query and send to `base_url` directly - the egress proxy substitutes, scoped to `allowed_hosts`.',
+		'Register a connector for your project - a SaaS HTTP MCP server (`saas`), a local stdio MCP server (`local`), or a credentialed REST API you call directly with no MCP server (`api`). The connection is scoped to your project - available to this project\'s agent runs, alongside any global "all projects" connectors. Hezo checks a SaaS server at registration and hands it to agent runs only while it answers that check without a credential; the response tells you which happened in `reachable`, `probe` and `note`. A server that wants auth stays out of runs until a human connects it or attaches an API key. Header values may include __HEZO_SECRET_<NAME>__ placeholders that the egress proxy substitutes at request time; those count as the connector\'s credential, so a server authenticated that way reaches runs without needing to pass the check. Local servers must be installed before they take effect. An `api` connector has no MCP server: attach a credential to it (Connectors page → API key) and it surfaces in `list_connectors` as an `api_auth` block whose placeholder you put in the auth header/query and send to `base_url` directly - the egress proxy substitutes, scoped to `allowed_hosts`.',
 		{
 			project: projectArg(),
 			name: z
@@ -7453,6 +7563,9 @@ export function registerTools(
 			// so it is atomic: a check-then-upsert could be raced by a concurrent OAuth
 			// completion. An unchanged re-registration still succeeds, so an agent
 			// re-declaring a connector it already owns is a no-op, not an error.
+			//
+			// A re-point drops the probe evidence with the config it was gathered
+			// against: a server proven public at one URL is not proven at another.
 			const r = await db.query<{
 				id: string;
 				install_status: string;
@@ -7464,6 +7577,8 @@ export function registerTools(
 				     config = EXCLUDED.config,
 				     install_status = EXCLUDED.install_status,
 				     install_error = NULL,
+				     probed_at = NULL,
+				     probe_error = NULL,
 				     updated_at = now()
 				 WHERE (mcp_connections.oauth_connection_id IS NULL
 				        AND mcp_connections.api_key_secret_id IS NULL)
@@ -7488,16 +7603,35 @@ export function registerTools(
 					hint: 'Re-pointing a credentialed connector is a human-only operation - ask an admin to change it on the Connectors page, or register a new connector under a different name.',
 				};
 			}
-			const note =
-				kind === 'local'
-					? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'
-					: kind === 'api'
-						? 'API connector registered. Attach a credential (Connectors page → API key), then call list_connectors to get its api_auth placeholder + base_url.'
-						: 'SaaS MCP registered. Will be available to the next agent run in this scope.';
+			if (kind !== 'saas') {
+				return {
+					id: r.rows[0].id,
+					install_status: r.rows[0].install_status,
+					reachable: null,
+					probe: null,
+					note:
+						kind === 'local'
+							? 'Local MCP registered with status pending. Install via the installer or container provision before agent runs can use it.'
+							: 'API connector registered. Attach a credential (Connectors page → API key), then call list_connectors to get its api_auth placeholder + base_url.',
+				};
+			}
+			// Hosted servers are checked here rather than assumed reachable. An
+			// uncredentialed one that quietly demands auth used to be handed to every
+			// run and fail its handshake inside the container, where nothing could
+			// see it. Awaited: whether it answers decides whether it reaches a run,
+			// so the agent that registered it learns that now.
+			const { describeProbeVerdict, discoverConnectorMethods } = await import(
+				'../services/connectors/method-discovery'
+			);
+			const verdict = describeProbeVerdict(
+				await discoverConnectorMethods({ db, masterKeyManager }, r.rows[0].id, 'create'),
+			);
 			return {
 				id: r.rows[0].id,
 				install_status: r.rows[0].install_status,
-				note,
+				reachable: verdict.reachable,
+				probe: verdict.probe,
+				note: verdict.note,
 			};
 		},
 		db,

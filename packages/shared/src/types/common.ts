@@ -1484,6 +1484,23 @@ export type McpInstallStatus = (typeof McpInstallStatus)[keyof typeof McpInstall
 export const ConnectorAccess = { Read: 'read', Write: 'write' } as const;
 export type ConnectorAccess = (typeof ConnectorAccess)[keyof typeof ConnectorAccess];
 
+/**
+ * Why Hezo's last probe of a hosted MCP server failed. Mirrors the
+ * `connector_probe_error` PG enum.
+ *
+ * A closed set on purpose: the value reaches operators and agents, while the
+ * underlying transport message quotes the upstream body, and an upstream that
+ * echoes its request headers back would put a live credential in a column. The
+ * full detail stays in the server log.
+ */
+export const ConnectorProbeError = {
+	/** The server demanded a credential the probe could not supply. */
+	AuthRequired: 'auth_required',
+	/** The server refused, timed out, or spoke something other than MCP. */
+	Unreachable: 'unreachable',
+} as const;
+export type ConnectorProbeError = (typeof ConnectorProbeError)[keyof typeof ConnectorProbeError];
+
 export const AgentTypeSource = {
 	Builtin: 'builtin',
 	Custom: 'custom',

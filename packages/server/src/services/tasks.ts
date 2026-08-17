@@ -202,10 +202,21 @@ export async function createTask(
 
 	const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 	if (isAgent.rows.length > 0) {
-		trackBackground(
-			createWakeup(db, assigneeId, teamId, WakeupSource.Assignment, {
-				task_id: task.id,
-			}).catch((e) => log.error('Failed to create wakeup for assignment:', e)),
+		// Awaited, unlike most background work: when an agent run files this task,
+		// that run's own no-wake exit check reads the wakeup back at the end of the
+		// run to see whom it notified. Left fire-and-forget, filing a task for a
+		// teammate as the run's last action reads as a stranded handoff. The catch
+		// stays inside the wrapper, so awaiting cannot throw.
+		await trackBackground(
+			createWakeup(
+				db,
+				assigneeId,
+				teamId,
+				WakeupSource.Assignment,
+				{ task_id: task.id },
+				undefined,
+				caller.runId ?? null,
+			).catch((e) => log.error('Failed to create wakeup for assignment:', e)),
 		);
 	}
 

@@ -160,6 +160,8 @@
 	"connectors.banner.action": "Vedi i connettori",
 	"connectors.banner.many": "{count} connettori hanno smesso di funzionare. Riconnettili per far sì che i tuoi agenti possano usarli di nuovo.",
 	"connectors.banner.one": "{name} ha smesso di funzionare. Riconnettilo per far sì che i tuoi agenti possano usarlo di nuovo.",
+	"connectors.probe.authRequired": "Questo server chiede una credenziale che Hezo non ha, quindi gli agenti non possono ancora usarlo.",
+	"connectors.probe.unreachable": "Hezo non è riuscito a raggiungere questo server all'ultimo controllo, quindi gli agenti non possono ancora usarlo.",
 	"connectors.reconnect": "Riconnetti",
 	"connectors.status.needsReconnect": "Riconnessione necessaria",
 	"container.diskSize.help": "Quanto disco riceve ogni contenitore di questo progetto. Lascia il valore predefinito dell'istanza a meno che checkout e dipendenze di questo progetto non richiedano di più.",

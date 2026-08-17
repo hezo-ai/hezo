@@ -2135,8 +2135,19 @@ describe('MCP tool: result shape — no embeddings, opt-in excerpts, size guard'
 		);
 		const commentId = comment.rows[0].id;
 
-		const rows = await callListViaMcp('list_comments', { project: projectId, task_id: taskId });
+		// Run markers are left out of the default read, so this asks for them.
+		const rows = await callListViaMcp('list_comments', {
+			project: projectId,
+			task_id: taskId,
+			categories: ['runs'],
+		});
 		expect(rows.find((r) => r.id === commentId)!.run_status).toBe('failed');
+
+		const defaulted = await callListViaMcp('list_comments', {
+			project: projectId,
+			task_id: taskId,
+		});
+		expect(defaulted.some((r) => r.id === commentId)).toBe(false);
 
 		const single = (await callToolViaMcp('get_comment', {
 			project: projectId,

@@ -1,6 +1,7 @@
 import { Check, Eye, Plug } from 'lucide-react';
 import { connectorStatus, useConnector } from '../../hooks/use-connectors';
 import { ConnectorCompletion } from '../connector-completion';
+import { ConnectorProbeNotice } from '../connector-probe-notice';
 import type { CommentDataOf } from './comment-data';
 
 interface Props {
@@ -94,6 +95,7 @@ export function ConnectRequiredComment({ comment, projectId }: Props) {
 					{connector?.auth_error && (
 						<p className="text-xs text-danger-soft-fg mt-1">{connector.auth_error}</p>
 					)}
+					{connector && <ConnectorProbeNotice connector={connector} />}
 				</div>
 			</div>
 			<div className="flex flex-col gap-2 pl-6">

@@ -5,6 +5,19 @@ import { logger } from '../logger';
 
 const log = logger.child('wakeup');
 
+/**
+ * Queue a wakeup.
+ *
+ * `createdByRunId` records the agent run whose write caused it, when there is
+ * one. The no-wake exit check reads it back to answer "did this run notify the
+ * teammates it named?", which it cannot derive from the run's comments: an
+ * assignment, a reassignment and a released blocker all notify someone without
+ * anybody writing an @-mention. Null is the correct value for every wakeup no
+ * run caused - a heartbeat, a timer, an operator pressing Run now, a sweep.
+ *
+ * All three write paths below stamp it. Missing one loses the attribution
+ * intermittently, depending only on whether a queued wakeup already existed.
+ */
 export async function createWakeup(
 	db: Db,
 	memberId: string,
@@ -12,6 +25,7 @@ export async function createWakeup(
 	source: WakeupSource,
 	payload: Record<string, unknown> = {},
 	idempotencyKey?: string,
+	createdByRunId?: string | null,
 ): Promise<string> {
 	if (idempotencyKey) {
 		const existing = await db.query<{ id: string }>(
@@ -20,6 +34,14 @@ export async function createWakeup(
 			[idempotencyKey, WakeupStatus.Queued],
 		);
 		if (existing.rows.length > 0) {
+			// The trigger still happened even though it wrote no new row, so the
+			// run that fired it gets the credit for reaching this agent.
+			if (createdByRunId) {
+				await db.query(`UPDATE agent_wakeup_requests SET created_by_run_id = $1 WHERE id = $2`, [
+					createdByRunId,
+					existing.rows[0].id,
+				]);
+			}
 			return existing.rows[0].id;
 		}
 	}
@@ -51,13 +73,21 @@ export async function createWakeup(
 		// Guard against the dispatcher claiming the row between the SELECT and
 		// here. If it already moved out of `queued`, fall through to a fresh
 		// insert so this trigger still produces a pending run.
+		//
+		// The attribution uses `COALESCE` so a run claims the row it just
+		// contributed to, while a write with no run behind it leaves an existing
+		// attribution alone rather than erasing it. One column cannot hold two
+		// runs, so where two concurrent runs notify the same agent about the same
+		// task only the later is credited; the check warns rather than acts, so the
+		// cost of that is a spurious warning, never a missed one.
 		const merged = await db.query<{ id: string }>(
 			`UPDATE agent_wakeup_requests
 			 SET coalesced_count = coalesced_count + 1,
-			     payload = $1::jsonb
+			     payload = $1::jsonb,
+			     created_by_run_id = COALESCE($4::uuid, created_by_run_id)
 			 WHERE id = $2 AND status = $3::wakeup_status
 			 RETURNING id`,
-			[JSON.stringify(mergedPayload), existingRow.id, WakeupStatus.Queued],
+			[JSON.stringify(mergedPayload), existingRow.id, WakeupStatus.Queued, createdByRunId ?? null],
 		);
 
 		if (merged.rows.length > 0) {
@@ -66,10 +96,18 @@ export async function createWakeup(
 	}
 
 	const result = await db.query<{ id: string }>(
-		`INSERT INTO agent_wakeup_requests (member_id, team_id, source, payload, idempotency_key)
-		 VALUES ($1, $2, $3::wakeup_source, $4::jsonb, $5)
+		`INSERT INTO agent_wakeup_requests
+		   (member_id, team_id, source, payload, idempotency_key, created_by_run_id)
+		 VALUES ($1, $2, $3::wakeup_source, $4::jsonb, $5, $6)
 		 RETURNING id`,
-		[memberId, teamId, source, JSON.stringify(payload), idempotencyKey ?? null],
+		[
+			memberId,
+			teamId,
+			source,
+			JSON.stringify(payload),
+			idempotencyKey ?? null,
+			createdByRunId ?? null,
+		],
 	);
 
 	return result.rows[0].id;
@@ -199,10 +237,16 @@ function mergePayloads(
 	return merged;
 }
 
-// Fire-and-forget: the agent's run is inherently async, so callers don't await
-// this. The whole body — including the member-agent lookup — is wrapped in
+// The agent's run is inherently async, so most callers don't await this. The
+// whole body — including the member-agent lookup — is wrapped in
 // trackBackground + catch so a rejection from either query can't surface as an
 // unhandled rejection or race test teardown (the tracker is drained on close).
+//
+// It returns the tracked promise so a caller inside an agent run CAN await it:
+// that run's own no-wake exit check reads the row back at the end of the run, so
+// a reassignment made as the last action would otherwise land after the check
+// and be reported as a handoff that notified nobody. Awaiting is safe - the
+// catch is inside the promise, so it never rejects.
 //
 // Humans get no wakeup, hence the member_agents lookup rather than a bare insert.
 export function wakeAgentIfAssigned(
@@ -212,16 +256,22 @@ export function wakeAgentIfAssigned(
 	taskId: string,
 	source: WakeupSource = WakeupSource.Assignment,
 	extraPayload: Record<string, unknown> = {},
-): void {
-	if (!assigneeId) return;
-	trackBackground(
+	createdByRunId: string | null = null,
+): Promise<void> {
+	if (!assigneeId) return Promise.resolve();
+	return trackBackground(
 		(async () => {
 			const isAgent = await db.query('SELECT id FROM member_agents WHERE id = $1', [assigneeId]);
 			if (isAgent.rows.length === 0) return;
-			await createWakeup(db, assigneeId, teamId, source, {
-				task_id: taskId,
-				...extraPayload,
-			});
+			await createWakeup(
+				db,
+				assigneeId,
+				teamId,
+				source,
+				{ task_id: taskId, ...extraPayload },
+				undefined,
+				createdByRunId,
+			);
 		})().catch((e) => log.error('Failed to create wakeup for assignment:', e)),
 	);
 }

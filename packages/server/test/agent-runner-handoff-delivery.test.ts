@@ -1,4 +1,10 @@
-import { AiProvider, ContainerStatus, HeartbeatRunStatus, WakeupSource } from '@hezo/shared';
+import {
+	AiProvider,
+	type AuditActorType,
+	ContainerStatus,
+	HeartbeatRunStatus,
+	WakeupSource,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -8,6 +14,7 @@ import type { Env } from '../src/lib/types';
 import { type RunnerDeps, runAgent } from '../src/services/agent-runner';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import type { ContainerEngine } from '../src/services/sandbox/types';
+import { createTask } from '../src/services/tasks';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -1158,6 +1165,119 @@ describe('no-wake exit check', () => {
 			);
 			expect(log).toContain(`woke no one on ${other.identifier}`);
 			expect(log).toContain(`woke no one on ${own.rows[0].identifier}`);
+		});
+	});
+
+	describe('structural wakes the run caused', () => {
+		/**
+		 * Mock exec that routes work to `assigneeId` through the real service - so
+		 * the assignment wakeup is written exactly as production writes it - then
+		 * emits `finalMessage`.
+		 */
+		function filesTaskFor(assigneeId: string, finalMessage: string) {
+			return async (
+				_execId: string,
+				opts: { onChunk?: (c: { stream: string; text: string }) => Promise<void> },
+			) => {
+				const runRow = await db.query<{ id: string }>(
+					`SELECT id FROM heartbeat_runs WHERE task_id = $1 AND status = 'running'`,
+					[taskId],
+				);
+				await createTask(
+					db,
+					teamId,
+					{ project_id: projectId, title: 'Routed work', assignee_id: assigneeId },
+					{
+						actorType: 'agent' as AuditActorType,
+						actorMemberId: agentId,
+						runId: runRow.rows[0].id,
+					},
+					undefined,
+				);
+				const event = JSON.stringify({
+					type: 'result',
+					is_error: false,
+					result: finalMessage,
+					usage: {},
+				});
+				await opts.onChunk?.({ stream: 'stdout', text: `${event}\n` });
+				return { stdout: '', stderr: '' };
+			};
+		}
+
+		// The prod shape this got wrong. The shared instructions tell an agent to
+		// route work with `create_task` and then refer to the recipient as
+		// `@@<slug>` rather than mentioning them again, so a run that followed them
+		// was reported as stranding the handoff it had just delivered.
+		it('stays silent when the run filed a task for the teammate it names passively', async () => {
+			const other = await otherAgent();
+			await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [
+				taskId,
+			]);
+			const deps = makeDeps(
+				createMockDocker({
+					producesOutput: true,
+					execStart: filesTaskFor(other.id, `Filed the follow-up, routed to @@${other.slug}.`),
+				}),
+			);
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+			expect(result.success).toBe(true);
+			expect(await logFor(runIdOf(result))).not.toContain('woke no one');
+		});
+
+		it('credits the teammate it routed to and still warns about one it did not', async () => {
+			const routed = await otherAgent();
+			const stranded = await db.query<{ slug: string }>(
+				`SELECT ma.slug FROM member_agents ma
+				 JOIN members m ON m.id = ma.id
+				 WHERE m.team_id = $1 AND ma.id <> $2 AND ma.id <> $3 LIMIT 1`,
+				[teamId, agentId, routed.id],
+			);
+			const strandedSlug = stranded.rows[0].slug;
+			await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [
+				taskId,
+			]);
+			const deps = makeDeps(
+				createMockDocker({
+					producesOutput: true,
+					execStart: filesTaskFor(
+						routed.id,
+						`Routed to @@${routed.slug}; @@${strandedSlug} holds the earlier notes.`,
+					),
+				}),
+			);
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+			const log = await logFor(runIdOf(result));
+			expect(log).toContain('woke no one');
+			expect(log).toContain(`@${strandedSlug}`);
+			expect(log).not.toContain(`@${routed.slug}`);
+		});
+
+		// The credit is run-scoped, not task-scoped, on purpose: the wakeup lands on
+		// the NEW task, never on the one being judged, so a task-scoped credit could
+		// not see it. This fails if anyone narrows it later.
+		it('credits a wake that landed on a different task from the one judged', async () => {
+			const other = await otherAgent();
+			await db.query(`UPDATE tasks SET status = 'in_progress'::task_status WHERE id = $1`, [
+				taskId,
+			]);
+			const deps = makeDeps(
+				createMockDocker({
+					producesOutput: true,
+					execStart: filesTaskFor(other.id, `Handled, see @@${other.slug}.`),
+				}),
+			);
+			const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+			const wake = await db.query<{ task_id: string }>(
+				`SELECT payload->>'task_id' AS task_id FROM agent_wakeup_requests
+				 WHERE created_by_run_id = $1 AND member_id = $2`,
+				[runIdOf(result), other.id],
+			);
+			expect(wake.rows.length).toBe(1);
+			expect(wake.rows[0].task_id).not.toBe(taskId);
+			expect(await logFor(runIdOf(result))).not.toContain('woke no one');
 		});
 	});
 });

@@ -19,6 +19,7 @@ const CONNECTOR_COLS = `id, name, display_name, kind::text AS kind,
         install_error, skill_id, created_by_task_id,
         activated_at::text AS activated_at, revoked_at::text AS revoked_at, auth_error,
         requested_access::text AS requested_access, access_applied_at::text AS access_applied_at,
+        probed_at::text AS probed_at, probe_error::text AS probe_error,
         created_at::text AS created_at, updated_at::text AS updated_at`;
 
 export interface CreateConnectorInput {
@@ -76,6 +77,10 @@ export interface ConnectorRow {
 	auth_error: string | null;
 	requested_access: string | null;
 	access_applied_at: string | null;
+	/** When Hezo last probed the server, of any outcome. Null means never. */
+	probed_at: string | null;
+	/** Why that probe failed; null when it completed the MCP handshake. */
+	probe_error: string | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -91,11 +96,14 @@ export function statusOf(
 	row: Pick<
 		ConnectorRow,
 		| 'kind'
+		| 'config'
 		| 'oauth_connection_id'
 		| 'api_key_secret_id'
 		| 'activated_at'
 		| 'revoked_at'
 		| 'auth_error'
+		| 'probed_at'
+		| 'probe_error'
 	>,
 ): ConnectorStatus {
 	return connectorStatus(row);

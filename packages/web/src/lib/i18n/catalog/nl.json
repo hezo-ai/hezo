@@ -160,6 +160,8 @@
 	"connectors.banner.action": "Connectoren bekijken",
 	"connectors.banner.many": "{count} connectoren werken niet meer. Verbind ze opnieuw zodat je agents ze weer kunnen gebruiken.",
 	"connectors.banner.one": "{name} werkt niet meer. Verbind opnieuw zodat je agents het weer kunnen gebruiken.",
+	"connectors.probe.authRequired": "Deze server vraagt om inloggegevens die Hezo niet heeft, dus je agents kunnen hem nog niet gebruiken.",
+	"connectors.probe.unreachable": "Hezo kon deze server bij de laatste controle niet bereiken, dus je agents kunnen hem nog niet gebruiken.",
 	"connectors.reconnect": "Opnieuw verbinden",
 	"connectors.status.needsReconnect": "Opnieuw verbinden nodig",
 	"container.diskSize.help": "Hoeveel schijfruimte elke container van dit project krijgt. Laat het op de instantiestandaard staan tenzij de checkout en afhankelijkheden van dit project meer nodig hebben.",

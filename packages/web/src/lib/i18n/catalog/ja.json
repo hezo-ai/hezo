@@ -160,6 +160,8 @@
 	"connectors.banner.action": "コネクタを表示",
 	"connectors.banner.many": "コネクタ {count} 件が使用できなくなりました。エージェントが再び利用できるよう、接続し直してください。",
 	"connectors.banner.one": "{name} が使用できなくなりました。エージェントが再び利用できるよう、接続し直してください。",
+	"connectors.probe.authRequired": "このサーバーは Hezo が持っていない認証情報を求めています。そのため、エージェントはまだ利用できません。",
+	"connectors.probe.unreachable": "前回の確認でこのサーバーに接続できませんでした。そのため、エージェントはまだ利用できません。",
 	"connectors.reconnect": "再接続",
 	"connectors.status.needsReconnect": "再接続が必要",
 	"container.diskSize.help": "このプロジェクトの各コンテナが受け取るディスク容量です。このプロジェクトのチェックアウトと依存関係がより多くを必要としない限り、インスタンスの既定値のままにしてください。",

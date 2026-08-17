@@ -176,17 +176,23 @@ export function buildConnectorRecipesSkill(
 	lines.push('| `oauth_status` | Meaning | What to do |');
 	lines.push('| --- | --- | --- |');
 	lines.push(
-		'| `active` | OAuth done; tools appear as `mcp__<connector_name>__<tool>` | Use them. Active but no tools at all is a bug worth flagging, not a reason to re-ask the human to connect |',
+		'| `active` | Connected, or a public server Hezo probed and found answering with no credential; tools appear as `mcp__<connector_name>__<tool>` | Use them. Active but no tools at all is a bug worth flagging, not a reason to re-ask the human to connect |',
 	);
 	lines.push(
-		'| `pending` | The human has not clicked Connect yet | Do not repost the ask; the connect_required comment is still live |',
+		'| `pending` | Not reaching runs yet: the human has not clicked Connect, or no probe has yet found the server answering without a credential | Do not repost the ask; the connect_required comment is still live |',
 	);
 	lines.push('| `failed` | An attempt errored | Read `auth_error` and surface it to the human |');
 	lines.push(
 		'| `degraded` | It worked and has stopped; the stored token no longer refreshes | Not fixable from inside the run. Escalate, then carry on with what the task can still achieve |',
 	);
 	lines.push('| `revoked` | A human explicitly disconnected | Do not auto-reconnect; ask first |');
+	lines.push(
+		'| `none` | Not a hosted MCP server at all: a local stdio server, or an `api` REST connector | Nothing to connect. For `api`, read the `api_auth` block instead |',
+	);
 	lines.push('');
+	lines.push(
+		'- **A hosted server carrying no credential reaches runs only while Hezo can reach it.** `probed_at` is when it was last checked and `probe_error` is why that check failed (`auth_required`, `unreachable`), or null when it answered. A server that starts demanding auth drops out of runs at the next check rather than failing inside one. A connector whose auth is a `__HEZO_SECRET_<NAME>__` header is exempt: the egress proxy substitutes it at request time, which no server-side check can reproduce.',
+	);
 	lines.push(
 		"- **Before reporting that a connector's tools are missing, check `tools_this_run` on its `list_connectors` row.** It measures *your own run* - how many of that connector's tools the runtime handed you - rather than guessing. A non-zero count means they are present, so search your tool list again under the `mcp__<connector_name>__<tool>` naming, which is not always what the vendor's docs call them. `0` means it connected and contributed nothing callable, a real fault worth escalating. `null` means nothing measured it.",
 	);

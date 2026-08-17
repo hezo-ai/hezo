@@ -112,9 +112,13 @@ describe('connector-recipes virtual skill: get_skill', () => {
 		// every one of its six values is accounted for.
 		expect(content).toContain('## Connector status');
 		expect(content).toContain('Not `install_status`');
-		for (const status of ['active', 'pending', 'failed', 'degraded', 'revoked']) {
+		for (const status of ['active', 'pending', 'failed', 'degraded', 'revoked', 'none']) {
 			expect(content, status).toContain(`| \`${status}\` |`);
 		}
+		// And the evidence behind an uncredentialed hosted row, which is what
+		// decides whether it reaches a run at all.
+		expect(content).toContain('`probed_at`');
+		expect(content).toContain('`probe_error`');
 		// The never-assert-broken-without-measuring rule and its two instruments.
 		expect(content).toContain('`tools_this_run`');
 		expect(content).toContain('Never assert a connector is broken');

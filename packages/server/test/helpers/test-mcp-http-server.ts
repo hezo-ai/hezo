@@ -37,6 +37,19 @@ interface StartOpts {
 	tools?: TestMcpTool[];
 	/** Reject every request with this status — for probe-failure paths. */
 	failWithStatus?: number;
+	/**
+	 * Complete the handshake but refuse `tools/list`, declaring `prompts` instead
+	 * of `tools`. This is the shape of a server exposing only prompts or
+	 * resources, and it is the case that separates "this server does not work"
+	 * from "this server has no tools" - the first must keep a connector out of
+	 * agent runs, the second must not.
+	 */
+	toolsUnsupported?: boolean;
+	/**
+	 * Accept the request and never answer it, so a probe carrying no deadline
+	 * waits forever. The only way to show that the deadline is real.
+	 */
+	hang?: boolean;
 }
 
 /**
@@ -76,6 +89,8 @@ export async function startTestMcpHttpServer(opts: StartOpts = {}): Promise<Test
 				parsedBody: parsed,
 			});
 
+			if (opts.hang) return;
+
 			if (opts.failWithStatus) {
 				const body = JSON.stringify({ error: 'test-forced failure' });
 				res.writeHead(opts.failWithStatus, {
@@ -86,7 +101,11 @@ export async function startTestMcpHttpServer(opts: StartOpts = {}): Promise<Test
 				return;
 			}
 
-			const response = renderMcpResponse(parsed, opts.tools ?? DEFAULT_TOOLS);
+			const response = renderMcpResponse(
+				parsed,
+				opts.tools ?? DEFAULT_TOOLS,
+				opts.toolsUnsupported,
+			);
 			res.writeHead(response.status, {
 				'content-type': 'application/json',
 				'content-length': Buffer.byteLength(response.body).toString(),
@@ -111,6 +130,9 @@ export async function startTestMcpHttpServer(opts: StartOpts = {}): Promise<Test
 			requests.length = 0;
 		},
 		async close(): Promise<void> {
+			// Forced, not graceful: a `hang` server is holding a request open that
+			// will never be answered, and a graceful close would wait for it.
+			server.closeAllConnections();
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		},
 	};
@@ -121,7 +143,11 @@ interface RenderedMcpResponse {
 	body: string;
 }
 
-function renderMcpResponse(parsed: unknown, tools: TestMcpTool[]): RenderedMcpResponse {
+function renderMcpResponse(
+	parsed: unknown,
+	tools: TestMcpTool[],
+	toolsUnsupported = false,
+): RenderedMcpResponse {
 	if (!parsed || typeof parsed !== 'object') {
 		return { status: 200, body: JSON.stringify({ ok: true }) };
 	}
@@ -136,7 +162,7 @@ function renderMcpResponse(parsed: unknown, tools: TestMcpTool[]): RenderedMcpRe
 				id,
 				result: {
 					protocolVersion: '2024-11-05',
-					capabilities: { tools: {} },
+					capabilities: toolsUnsupported ? { prompts: {} } : { tools: {} },
 					serverInfo: { name: 'hezo-test-mcp', version: '0.0.0' },
 				},
 			}),
@@ -144,6 +170,16 @@ function renderMcpResponse(parsed: unknown, tools: TestMcpTool[]): RenderedMcpRe
 	}
 
 	if (req.method === 'tools/list') {
+		if (toolsUnsupported) {
+			return {
+				status: 200,
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id,
+					error: { code: -32601, message: 'Method not found' },
+				}),
+			};
+		}
 		return {
 			status: 200,
 			body: JSON.stringify({

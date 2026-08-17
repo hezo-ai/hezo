@@ -81,7 +81,14 @@ describe('global connectors', () => {
 		const teamRows = (await teamListRes.json()).data as { name: string }[];
 		expect(teamRows.some((r) => r.name === 'shared-docs')).toBe(true);
 
-		// And the run-loader returns it (no team/project scope).
+		// The run loader is the one surface that gates on reachability. The URL
+		// above answers nothing here, so the create-time probe recorded that and the
+		// connector stays out of runs until it is proven - it would otherwise fail
+		// its handshake inside the container, where nothing here can see it.
+		expect((await loadConnectorsForRun(db)).some((r) => r.name === 'shared-docs')).toBe(false);
+
+		await db.query(`UPDATE mcp_connections SET probed_at = now(), probe_error = NULL
+		                WHERE name = 'shared-docs'`);
 		const forRun = await loadConnectorsForRun(db);
 		expect(forRun.some((r) => r.name === 'shared-docs')).toBe(true);
 	});
@@ -306,13 +313,18 @@ describe('instance connector OAuth (admin auth-start)', () => {
 			expect(data.auth_url).toBeNull();
 			expect(data.reason).toMatch(/Could not discover OAuth endpoints/);
 
-			// Not marked failed — and still available to agent runs.
+			// A failed OAuth discovery is not a failed connector: `auth_error` stays
+			// clear and the row reads pending, so the operator sees "not connected
+			// yet" rather than "this broke".
 			const row = await getConnector(db, conn.id);
 			expect(row?.auth_error).toBeNull();
 			expect(statusOf(row!)).toBe('pending');
+			// It does not reach a run, though. This server answers nothing, so there
+			// is no evidence it can be talked to, and handing it to a run would only
+			// fail the handshake inside the container where nothing here sees it.
 			expect(
 				(await loadConnectorsForRun(db)).find((r) => r.name === 'header-auth-mcp'),
-			).toBeTruthy();
+			).toBeUndefined();
 		} finally {
 			await new Promise<void>((resolve, reject) => plain.close((e) => (e ? reject(e) : resolve())));
 		}

@@ -47,6 +47,7 @@ async function notifyParentOfOAuthVerification(
 	teamId: string,
 	taskId: string,
 	wsManager?: WebSocketManager,
+	createdByRunId: string | null = null,
 ): Promise<void> {
 	const result = await db.query<{
 		parent_task_id: string | null;
@@ -95,10 +96,15 @@ async function notifyParentOfOAuthVerification(
 
 	if (captainId) {
 		try {
-			await createWakeup(db, captainId, teamId, WakeupSource.Automation, {
-				task_id: row.parent_task_id,
-				trigger: 'oauth_verified',
-			});
+			await createWakeup(
+				db,
+				captainId,
+				teamId,
+				WakeupSource.Automation,
+				{ task_id: row.parent_task_id, trigger: 'oauth_verified' },
+				undefined,
+				createdByRunId,
+			);
 		} catch (e) {
 			log.error('Failed to wake Captain on OAuth verification completion:', e);
 		}
@@ -113,14 +119,19 @@ async function notifyParentOfOAuthVerification(
  * into a single queued wakeup; the dispatch-time `assignmentWakeupAlreadyServed`
  * guard suppresses runs that already covered this state.
  */
-async function wakeParentIfChildrenClosed(db: Db, teamId: string, taskId: string): Promise<void> {
+async function wakeParentIfChildrenClosed(
+	db: Db,
+	teamId: string,
+	taskId: string,
+	createdByRunId: string | null = null,
+): Promise<void> {
 	const parentRow = await db.query<{ parent_task_id: string | null }>(
 		'SELECT parent_task_id FROM tasks WHERE id = $1 AND team_id = $2',
 		[taskId, teamId],
 	);
 	const parentTaskId = parentRow.rows[0]?.parent_task_id;
 	if (!parentTaskId) return;
-	await wakeTaskIfChildrenClosed(db, teamId, parentTaskId);
+	await wakeTaskIfChildrenClosed(db, teamId, parentTaskId, createdByRunId);
 }
 
 /**
@@ -134,6 +145,7 @@ export async function wakeTaskIfChildrenClosed(
 	db: Db,
 	teamId: string,
 	parentTaskId: string,
+	createdByRunId: string | null = null,
 ): Promise<void> {
 	const childrenCheck = await assertChildrenAllClosed(db, teamId, parentTaskId);
 	if (!childrenCheck.ok) return;
@@ -157,6 +169,7 @@ export async function wakeTaskIfChildrenClosed(
 		WakeupSource.Assignment,
 		{ task_id: parentTaskId, reason: 'children_closed' },
 		`children-closed:${parentTaskId}`,
+		createdByRunId,
 	);
 }
 
@@ -174,6 +187,7 @@ export async function triggerStatusAutomations(
 	actorApiKeyId: string | null,
 	wsManager?: WebSocketManager,
 	dataDir?: string | null,
+	createdByRunId: string | null = null,
 ): Promise<void> {
 	await recordStatusChange(
 		db,
@@ -196,7 +210,14 @@ export async function triggerStatusAutomations(
 	const newTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(newStatus);
 	if (oldTerminal !== newTerminal) {
 		try {
-			await recomputeDownstreamReadiness(db, teamId, taskId, actorMemberId, wsManager);
+			await recomputeDownstreamReadiness(
+				db,
+				teamId,
+				taskId,
+				actorMemberId,
+				wsManager,
+				createdByRunId,
+			);
 		} catch (e) {
 			log.error('Failed to recompute downstream readiness:', e);
 		}
@@ -204,7 +225,7 @@ export async function triggerStatusAutomations(
 
 	if ((TERMINAL_TASK_STATUSES as readonly string[]).includes(newStatus)) {
 		try {
-			await wakeParentIfChildrenClosed(db, teamId, taskId);
+			await wakeParentIfChildrenClosed(db, teamId, taskId, createdByRunId);
 		} catch (e) {
 			log.error('Failed to wake parent on child closure:', e);
 		}
@@ -245,15 +266,20 @@ export async function triggerStatusAutomations(
 		);
 		if (coach.rows.length > 0) {
 			trackBackground(
-				createWakeup(db, coach.rows[0].id, teamId, WakeupSource.Automation, {
-					task_id: taskId,
-					trigger: 'task_done',
-				}).catch((e) => log.error('Failed to wake Coach:', e)),
+				createWakeup(
+					db,
+					coach.rows[0].id,
+					teamId,
+					WakeupSource.Automation,
+					{ task_id: taskId, trigger: 'task_done' },
+					undefined,
+					createdByRunId,
+				).catch((e) => log.error('Failed to wake Coach:', e)),
 			);
 		}
 
 		try {
-			await notifyParentOfOAuthVerification(db, teamId, taskId, wsManager);
+			await notifyParentOfOAuthVerification(db, teamId, taskId, wsManager, createdByRunId);
 		} catch (e) {
 			log.error('Failed to notify parent of OAuth verification:', e);
 		}

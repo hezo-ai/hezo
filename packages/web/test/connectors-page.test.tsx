@@ -7,11 +7,21 @@ import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
 // Seed a global (instance-wide) saas MCP connector via the project-scoped route.
 // `config.dcr` is pre-baked so the redirect "Connect" path can build an authorize
 // URL entirely in-process (no PRM discovery / DCR network call).
+/**
+ * Seed a hosted (saas) MCP connector.
+ *
+ * The create route probes the server and records what came back, and the
+ * harness reroutes any `/mcp` path into the in-process Hono app, so an
+ * `https://…/mcp` seed URL would answer the probe and land the row `active`.
+ * Pass `probed: true` for a connector these specs mean to be reachable;
+ * otherwise the evidence is cleared, leaving the freshly-registered state the
+ * spec is describing.
+ */
 async function seedSaasConnector(
 	ws: SeededWorkspace,
-	input: { name: string; url: string; withDcr?: boolean },
+	input: { name: string; url: string; withDcr?: boolean; probed?: boolean },
 ): Promise<{ id: string; name: string }> {
-	const { apiBase } = getTestContext();
+	const { apiBase, db } = getTestContext();
 	const config: Record<string, unknown> = { url: input.url };
 	if (input.withDcr) {
 		config.dcr = {
@@ -33,7 +43,14 @@ async function seedSaasConnector(
 		body: JSON.stringify({ name: input.name, kind: 'saas', config }),
 	});
 	if (res.status !== 201) throw new Error(`seedSaasConnector failed: ${res.status}`);
-	return (await res.json()).data;
+	const row = (await res.json()).data as { id: string; name: string };
+	if (!input.probed) {
+		await db.query(
+			`UPDATE mcp_connections SET probed_at = NULL, probe_error = NULL WHERE id = $1`,
+			[row.id],
+		);
+	}
+	return row;
 }
 
 // Seed a local (stdio) MCP connector — e.g. a self-hosted umami server that logs

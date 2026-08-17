@@ -160,6 +160,8 @@
 	"connectors.banner.action": "Konnektoren anzeigen",
 	"connectors.banner.many": "{count} Konnektoren funktionieren nicht mehr. Stellen Sie die Verbindungen wieder her, damit Ihre Agenten sie nutzen können.",
 	"connectors.banner.one": "{name} funktioniert nicht mehr. Stellen Sie die Verbindung wieder her, damit Ihre Agenten den Konnektor nutzen können.",
+	"connectors.probe.authRequired": "Dieser Server verlangt Zugangsdaten, die Hezo nicht hat. Agenten können ihn deshalb noch nicht nutzen.",
+	"connectors.probe.unreachable": "Hezo hat diesen Server bei der letzten Prüfung nicht erreicht. Agenten können ihn deshalb noch nicht nutzen.",
 	"connectors.reconnect": "Neu verbinden",
 	"connectors.status.needsReconnect": "Neu verbinden nötig",
 	"container.diskSize.help": "Wie viel Speicherplatz jeder Container dieses Projekts erhält. Belassen Sie den Instanzstandard, sofern Checkout und Abhängigkeiten dieses Projekts nicht mehr benötigen.",

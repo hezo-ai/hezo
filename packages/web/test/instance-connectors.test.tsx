@@ -3,8 +3,21 @@ import { expect, test, vi } from 'vitest';
 import { renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
 
+/**
+ * Seed a global connector, then clear the probe evidence the create route just
+ * recorded.
+ *
+ * The route probes the MCP server, and the harness reroutes any `/mcp` path
+ * into the in-process Hono app, so a `https://…/mcp` seed URL answers the probe
+ * and the row lands `active`. These specs are about the OAuth states, so they
+ * start each row from the freshly-registered state instead.
+ */
 async function seedInstanceConnector(
-	ctx: { token: string; apiBase: (p: string, i?: RequestInit) => Promise<Response> },
+	ctx: {
+		token: string;
+		apiBase: (p: string, i?: RequestInit) => Promise<Response>;
+		db: { query: (sql: string, params?: unknown[]) => Promise<unknown> };
+	},
 	body: Record<string, unknown>,
 ) {
 	const res = await ctx.apiBase('/api/connectors', {
@@ -13,6 +26,10 @@ async function seedInstanceConnector(
 		body: JSON.stringify(body),
 	});
 	if (res.status !== 201) throw new Error(`seed connector failed: ${res.status}`);
+	await ctx.db.query(
+		`UPDATE mcp_connections SET probed_at = NULL, probe_error = NULL WHERE name = $1`,
+		[body.name],
+	);
 }
 
 test('lists seeded instance connectors and creates a new one via the form', async () => {

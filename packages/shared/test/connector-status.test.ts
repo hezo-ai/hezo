@@ -10,11 +10,14 @@ import {
 
 const base = {
 	kind: 'saas',
+	config: null,
 	oauth_connection_id: null,
 	api_key_secret_id: null,
 	activated_at: null,
 	revoked_at: null,
 	auth_error: null,
+	probed_at: null,
+	probe_error: null,
 };
 
 describe('connectorStatus', () => {
@@ -59,7 +62,6 @@ describe('connectorStatus', () => {
 			ConnectorStatus.Active,
 		);
 		expect(connectorStatus({ ...base, kind: 'local' })).toBe(ConnectorStatus.Active);
-		expect(connectorStatus(base)).toBe(ConnectorStatus.Pending);
 	});
 
 	it('can report a local connector broken - the auth branches sit above the local short-circuit', () => {
@@ -79,17 +81,79 @@ describe('connectorStatus', () => {
 	});
 });
 
-describe('connectorOAuthStatus', () => {
-	const oauthBase = { ...base, config: null, created_by_task_id: null };
+describe('connectorStatus on an uncredentialed hosted server', () => {
+	it('reads pending until a probe has actually answered', () => {
+		// The bug: a row like this was assumed public, handed to every run, and
+		// 401ed at handshake inside the container where nothing could see it.
+		expect(connectorStatus(base)).toBe(ConnectorStatus.Pending);
+	});
 
+	it('reads active once a probe completed the handshake', () => {
+		expect(connectorStatus({ ...base, probed_at: '2026-08-01T00:00:00Z' })).toBe(
+			ConnectorStatus.Active,
+		);
+	});
+
+	it('reads pending again when the last probe failed', () => {
+		expect(
+			connectorStatus({
+				...base,
+				probed_at: '2026-08-01T00:00:00Z',
+				probe_error: 'auth_required',
+			}),
+		).toBe(ConnectorStatus.Pending);
+		expect(
+			connectorStatus({
+				...base,
+				probed_at: '2026-08-01T00:00:00Z',
+				probe_error: 'unreachable',
+			}),
+		).toBe(ConnectorStatus.Pending);
+	});
+
+	it('takes a placeholder header as a credential, with no probe needed', () => {
+		// The egress proxy substitutes it at request time. Nothing on this side can
+		// reproduce that, so a probe of such a row could only ever record a refusal
+		// that says nothing about whether the connector works in a run.
+		const withHeader = {
+			...base,
+			config: { headers: { Authorization: 'Bearer __HEZO_SECRET_TYPEFULLY_KEY__' } },
+		};
+		expect(connectorStatus(withHeader)).toBe(ConnectorStatus.Active);
+		// And a failed probe of it does not take that away.
+		expect(connectorStatus({ ...withHeader, probed_at: 'now', probe_error: 'auth_required' })).toBe(
+			ConnectorStatus.Active,
+		);
+	});
+
+	it('ignores a header value that is not a valid placeholder', () => {
+		expect(
+			connectorStatus({ ...base, config: { headers: { 'X-Key': '__HEZO_SECRET_lower__' } } }),
+		).toBe(ConnectorStatus.Pending);
+		expect(connectorStatus({ ...base, config: { headers: { 'X-Key': 'plain-value' } } })).toBe(
+			ConnectorStatus.Pending,
+		);
+	});
+
+	it('never lets probe evidence outrank a recorded failure', () => {
+		expect(
+			connectorStatus({ ...base, probed_at: 'now', auth_error: 'connect attempt errored' }),
+		).toBe(ConnectorStatus.Failed);
+		expect(connectorStatus({ ...base, probed_at: 'now', revoked_at: 'now' })).toBe(
+			ConnectorStatus.Revoked,
+		);
+	});
+});
+
+describe('connectorOAuthStatus', () => {
 	it('reports no OAuth story for non-SaaS rows', () => {
 		// Preserves the MCP tool's existing contract: local/api rows have never
 		// reported a connector state here, and collapsing the ladders must not
 		// start making them report `active`.
-		expect(connectorOAuthStatus({ ...oauthBase, kind: 'local' })).toBe(CONNECTOR_OAUTH_STATUS_NONE);
+		expect(connectorOAuthStatus({ ...base, kind: 'local' })).toBe(CONNECTOR_OAUTH_STATUS_NONE);
 		expect(
 			connectorOAuthStatus({
-				...oauthBase,
+				...base,
 				kind: 'api',
 				api_key_secret_id: 'k',
 				activated_at: 'now',
@@ -97,20 +161,27 @@ describe('connectorOAuthStatus', () => {
 		).toBe(CONNECTOR_OAUTH_STATUS_NONE);
 	});
 
-	it('separates a real pending connect from a row nobody has started', () => {
-		expect(connectorOAuthStatus(oauthBase)).toBe(CONNECTOR_OAUTH_STATUS_NONE);
-		expect(connectorOAuthStatus({ ...oauthBase, config: { dcr: {} } })).toBe(
-			ConnectorStatus.Pending,
-		);
-		expect(connectorOAuthStatus({ ...oauthBase, created_by_task_id: 'task-1' })).toBe(
-			ConnectorStatus.Pending,
-		);
+	it('reads an unproven hosted row as pending rather than none', () => {
+		// `none` used to double as "nobody has started connecting this", which read
+		// to an agent as "no auth needed" for exactly the rows that needed some.
+		expect(connectorOAuthStatus(base)).toBe(ConnectorStatus.Pending);
+		expect(connectorOAuthStatus({ ...base, config: { dcr: {} } })).toBe(ConnectorStatus.Pending);
+	});
+
+	it('reads a proven hosted row as active', () => {
+		expect(connectorOAuthStatus({ ...base, probed_at: 'now' })).toBe(ConnectorStatus.Active);
+		expect(
+			connectorOAuthStatus({
+				...base,
+				config: { headers: { 'X-Api-Key': '__HEZO_SECRET_TYPEFULLY__' } },
+			}),
+		).toBe(ConnectorStatus.Active);
 	});
 
 	it('surfaces degraded to agents', () => {
 		expect(
 			connectorOAuthStatus({
-				...oauthBase,
+				...base,
 				oauth_connection_id: 'oc-1',
 				activated_at: 'now',
 				auth_error: 'token refresh: invalid_grant',

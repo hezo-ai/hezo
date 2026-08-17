@@ -5,6 +5,7 @@ import { AlertTriangle, Check, ExternalLink, Github, Plug, Plus, Trash2, X } fro
 import { useCallback, useMemo, useState } from 'react';
 import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-flow-dialog';
 import { ConnectorOAuthBrokerForm } from '../../../components/connector-oauth-broker-form';
+import { ConnectorProbeNotice } from '../../../components/connector-probe-notice';
 import { ConnectorSettingsSection } from '../../../components/connector-settings-section';
 import { InfiniteScrollSentinel } from '../../../components/infinite-scroll-sentinel';
 import { Badge } from '../../../components/ui/badge';
@@ -688,6 +689,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					{connector.auth_error && (
 						<p className="text-xs text-danger-soft-fg mt-2">{connector.auth_error}</p>
 					)}
+					<ConnectorProbeNotice connector={connector} />
 					{error && <p className="text-xs text-danger-soft-fg mt-2">{error}</p>}
 					{info && <p className="text-xs text-text-3 mt-2">{info}</p>}
 				</div>

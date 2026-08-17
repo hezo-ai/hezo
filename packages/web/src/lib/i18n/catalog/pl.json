@@ -160,6 +160,8 @@
 	"connectors.banner.action": "Zobacz konektory",
 	"connectors.banner.many": "Konektory ({count}) przestały działać. Połącz je ponownie, aby agenci znów mogli z nich korzystać.",
 	"connectors.banner.one": "{name} przestał działać. Połącz go ponownie, aby agenci znów mogli z niego korzystać.",
+	"connectors.probe.authRequired": "Ten serwer wymaga poświadczeń, których Hezo nie ma, więc agenci nie mogą go jeszcze używać.",
+	"connectors.probe.unreachable": "Hezo nie mogło połączyć się z tym serwerem podczas ostatniego sprawdzenia, więc agenci nie mogą go jeszcze używać.",
 	"connectors.reconnect": "Połącz ponownie",
 	"connectors.status.needsReconnect": "Wymaga ponownego połączenia",
 	"container.diskSize.help": "Ile dysku otrzymuje każdy kontener tego projektu. Zostaw wartość domyślną instancji, chyba że kopia robocza i zależności tego projektu potrzebują więcej.",

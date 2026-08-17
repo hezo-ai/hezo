@@ -95,13 +95,51 @@ describe('agent triggering', () => {
 		expect(wakeups[0].payload).toHaveProperty('task_id');
 	});
 
-	it('creates wakeup when task is assigned to agent via PATCH', async () => {
+	// PATCHes to a DIFFERENT agent. The route wakes only on a change, so this used
+	// to re-send the assignee the task already had and pass on a race: the
+	// creation wakeup was fire-and-forget and often landed after `clearWakeups`,
+	// which made it look like the PATCH had produced it.
+	it('creates wakeup when task is reassigned to another agent via PATCH', async () => {
+		const other = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			 JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 AND ma.id <> $2 LIMIT 1`,
+			[teamId, agentId],
+		);
+		const otherAgentId = other.rows[0].id;
+
 		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				project_id: projectId,
-				title: 'Unassigned task',
+				title: 'Task to hand over',
+				assignee_id: agentId,
+			}),
+		});
+		const taskId = (await taskRes.json()).data.id;
+
+		await clearWakeups();
+
+		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ assignee_id: otherAgentId }),
+		});
+		expect(patchRes.status).toBe(200);
+
+		const wakeups = await getWakeups(otherAgentId);
+		expect(wakeups.length).toBe(1);
+		expect(wakeups[0].source).toBe('assignment');
+	});
+
+	it('wakes nobody when the PATCH re-sends the assignee the task already has', async () => {
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Already assigned task',
 				assignee_id: agentId,
 			}),
 		});
@@ -116,11 +154,7 @@ describe('agent triggering', () => {
 		});
 		expect(patchRes.status).toBe(200);
 
-		await new Promise((r) => setTimeout(r, 50));
-
-		const wakeups = await getWakeups(agentId);
-		expect(wakeups.length).toBe(1);
-		expect(wakeups[0].source).toBe('assignment');
+		expect(await getWakeups(agentId)).toEqual([]);
 	});
 
 	it('creates wakeup when sub-task is created with agent assignee', async () => {

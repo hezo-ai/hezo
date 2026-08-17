@@ -1736,6 +1736,11 @@ export class ChatSessionManager {
 				[session.ceoMemberId, assistantMessageId],
 			);
 			if (posted.rows.length === 0) return;
+			// No `runId`: a chat turn is not a run, so the structural-wake credit a
+			// task run gets is unavailable here. A turn that files a task for a
+			// teammate and then names them passively is still warned about. Known,
+			// and the cost is a warning the operator can disregard rather than a
+			// handoff nobody hears about.
 			const findings = await detectNoWakeExits(this.deps.db, {
 				selfMemberId: session.ceoMemberId,
 				comments: posted.rows,
