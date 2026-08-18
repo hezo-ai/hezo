@@ -105,6 +105,37 @@ describe('heartbeat-runs API', () => {
 		expect(verify.rows[0].task_id).toBe(taskId);
 	});
 
+	it('projects cancel_reason, which is the only thing telling a cancel apart', async () => {
+		// Without this the whole attribution is dead in production while the suite
+		// stays green: the web tests stub the response, so they pass against a
+		// server that never returns the field. `cancelled` covers a person stopping
+		// a run and the instance abandoning one, and only the second offers Retry.
+		const cancelled = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, finished_at, cancel_reason)
+			 VALUES ($1, $2, $3, 'cancelled'::heartbeat_run_status, now(), 'abandoned')
+			 RETURNING id`,
+			[agentId, teamId, taskId],
+		);
+		const cancelledId = cancelled.rows[0].id;
+
+		const list = await app.request(
+			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs`,
+			{ headers: authHeader(token) },
+		);
+		expect(list.status).toBe(200);
+		const rows = (await list.json()).data as { id: string; cancel_reason: string | null }[];
+		expect(rows.find((r) => r.id === cancelledId)?.cancel_reason).toBe('abandoned');
+
+		const single = await app.request(
+			`/api/projects/${projectSlug}/agents/${agentId}/heartbeat-runs/${cancelledId}`,
+			{ headers: authHeader(token) },
+		);
+		expect(single.status).toBe(200);
+		expect((await single.json()).data.cancel_reason).toBe('abandoned');
+
+		await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [cancelledId]);
+	});
+
 	it('lists runs with task info', async () => {
 		await db.query(
 			`UPDATE heartbeat_runs

@@ -235,7 +235,9 @@ export function RunCommentBody({
 	// owed with nothing carrying it. The rest are read off `RUN_CANCEL_BEHAVIOUR`
 	// rather than listed here, so a new reason is decided once: a Terminate is
 	// somebody choosing to stop, and a handback has already re-queued the work, so
-	// a button on either is at best dead and at worst a double dispatch.
+	// a button on either is at best dead and at worst a double dispatch. The fold
+	// rule in `comments-section.tsx` reads the same table, which is what keeps this
+	// button and the row it sits on from disagreeing.
 	const canRetry =
 		Boolean(taskId) &&
 		runId === retryableRunId &&

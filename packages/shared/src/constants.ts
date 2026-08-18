@@ -603,6 +603,15 @@ export const RUN_CANCEL_REASONS = [
  * `offerRetry` is false for `handed_back` on purpose. The work is already queued
  * there, so a Retry button would be dead UI at best and a double dispatch at
  * worst; `abandoned` is the only cancel where a person still has something to do.
+ *
+ * **Scope:** this drives the Retry affordance only - the button on the run card
+ * and the thread fold that keeps that card open. Those two must agree, because a
+ * fold that opens on a row with no button, or a button on a folded row, is worse
+ * than either answer alone. It deliberately does NOT reach the task list's
+ * errored icon or the last-run banner, which track `failed`/`timed_out` and whose
+ * copy says the run failed - untrue of a run that never started. An abandoned run
+ * is surfaced instead by its thread notice and by the approval it raises, so it
+ * is not silent; it just is not counted as an error.
  */
 export const RUN_CANCEL_BEHAVIOUR: Record<
 	RunCancelReason,

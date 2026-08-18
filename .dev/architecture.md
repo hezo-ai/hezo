@@ -2341,13 +2341,22 @@ orphan-retry lineage, and the never-started arm never incremented it - an inheri
 every later never-start into a permanent dead end that filed one approval (guarded
 `NOT EXISTS` per member) and queued nothing again. `handBackNeverStartedWork` is its own
 bounded ladder: hand the original wakeup back (free, unbounded, the dispatcher owns the
-work), else mint one replacement naming the task (bounded, and it spends the strike it
-reads), else abandon. The replacement carries the **original wakeup's `source`**, because
-`timer` is in `GATED_WAKEUP_SOURCES` and is not exempt from the no-work backoff while
-`mention` is neither - the old fallback silently downgraded a teammate's direct ask into a
-wakeup the dependency gate could park indefinitely. It names its lineage under
-`previous_run_id` rather than `previous_failure.run_id`, since only the latter carries
-`inheritsLossBudget` in `RUN_LINEAGE_SOURCES`. Neither verdict claims a process check - there is none to make, since a run's work
+work), else mint one replacement naming the task, else abandon. The replacement carries the
+**original wakeup's `source`**, because `timer` is in `GATED_WAKEUP_SOURCES` and is not
+exempt from the no-work backoff while `mention` is neither - the old fallback silently
+downgraded a teammate's direct ask into a wakeup the dependency gate could park
+indefinitely.
+
+**The second rung's bound only exists because two halves travel together**: it increments
+`process_loss_retry_count` *and* names its lineage under `previous_failure.run_id`, the one
+key `RUN_LINEAGE_SOURCES` gives `inheritsLossBudget`. An earlier revision spent the strike
+but named `previous_run_id`, which does not inherit - so `createHeartbeatRun` handed every
+replacement a count of zero, the increment landed on a terminal row nothing reads again, and
+the ceiling was unreachable through its own lineage however many times it lapped. A test
+that hand-sets the counter cannot see that; `the never-started chain actually climbs, lap by
+lap` drives real laps and asserts the count reaching the ceiling. The first rung stays
+unbounded by design - the wakeup is intact and the dispatcher owns it - which is what `main`
+did too. Neither verdict claims a process check - there is none to make, since a run's work
 happens inside a container and liveness is the in-process registry alone. The reap `UPDATE` is
 guarded on a non-terminal status, so a row that settled between the scan and the write keeps
 the cause its own writer recorded rather than being overwritten with the generic one.
@@ -2377,7 +2386,7 @@ deadline would finalize the run `timed_out`, trading one errored row for another
 while that call is in flight, so the orphan pass leaves the row alone for exactly as long as
 a driver owns it, and the run resumes on the same row rather than being replaced by a second
 one. Returning instead left the row unowned — blocking the retry of its own wakeup through
-`isTaskBusyInDb`, then failing 120 s later as `Orphaned: run never started`, and counting
+`isTaskBusyInDb`, then being reaped 120 s later as a run that never started, and counting
 toward the lost-run escalation. Past the ceiling the row is finalized `Cancelled` (never
 `Failed` — a full instance is not the agent failing) and the wakeup is re-queued. Two
 consequences elsewhere: the idle-stop scan's busy set excludes a parked run
@@ -2403,10 +2412,15 @@ idle-reclaim cron frees, so it resolves in seconds and giving up early costs not
 this queues behind a *whole other run* bounded by that run's `run_timeout_min` (60 minutes
 by default). At the park's 180 s a second run on a rotating credential gave up, re-queued,
 redispatched 5 s later and gave up again until the holder finished: a thrash loop that never
-converged. So it is derived from the waiting run's own timeout with headroom (80%, floored
-at the park's ceiling, capped at 30 minutes) - headroom because running to `run_timeout_min`
-itself lets `launchTask`'s wall-clock timer finalize the run `timed_out`, trading one
-errored row for another, which is the same reason the park does not use it raw. FIFO on the
+converged. So it is derived from the waiting run's own timeout with headroom (80%, capped
+at 15 minutes) - headroom because running to `run_timeout_min` itself lets `launchTask`'s
+wall-clock timer finalize the run `timed_out`, trading one errored row for another, which is
+the same reason the park does not use it raw. **Deliberately unfloored**: an earlier revision
+floored it at the park's 180 s, which inverted that invariant for any `run_timeout_min` of 3
+or less (settable to 1), where a 180 s wait outlives a 60 s timer. And the cap is not
+cosmetic - a dispatch with no spare container takes a `pendingContainerStarts` reservation
+*before* `launchTask` and holds it until the run settles, so every minute of this wait is a
+minute of instance memory budget charged for a container that has not been asked for. FIFO on the
 lock is the correct model; giving up early only randomises who goes next.
 
 And it is taken **before** the pool ladder is asked, because a waiter that already holds a
@@ -2445,8 +2459,15 @@ The handback itself is one seam, `settleWakeupForRun` (`services/wakeup.ts`), sh
 `JobManager.onAgentComplete`: the two answered the same question separately, which is how
 the sweeper's `claimed` guard ended up missing from the completion path and how both ended
 up stamping `instance_at_capacity` on handbacks that had nothing to do with capacity. The
-seam reports `handback_failed` rather than a bare boolean, so neither caller can assume work
-is queued when it is not. A never-started handback is stamped `run_never_started` and the
+seam reports `handback_failed` rather than a bare boolean, and **both callers act on it**:
+each records the outcome on the run row through `recordHandbackOutcome`
+(`services/run-handback.ts`) only once the answer is in, mapping a failed handback to
+`abandoned` plus a thread notice. An earlier revision fixed this on the sweeper alone and
+left `finalizeRequeue` stamping `handed_back` before attempting the handback - reproducing,
+on the completion path, the very defect the sweeper was restructured to remove. That
+recorder is also where first-writer-wins lives: it declines to write over a `cancel_reason`
+somebody else already set, so a human's Terminate is never relabelled as something the
+instance did. A never-started handback is stamped `run_never_started` and the
 credential give-up `credential_busy`; `BUSY_PROJECTS_SQL` excludes only the two *capacity*
 reasons from its busy set, so a mislabelled handback had the idle pass reclaim the container
 out from under work that was about to run.

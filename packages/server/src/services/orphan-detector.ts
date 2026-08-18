@@ -2,7 +2,6 @@ import {
 	AgentRuntimeStatus,
 	ApprovalType,
 	HeartbeatRunStatus,
-	RunCancelReason,
 	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
@@ -13,13 +12,18 @@ import { readRunLogTail } from '../db/run-log-chunks';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
-import { recordRunAbandoned } from './task-events';
+import { HANDBACK_OUTCOME_COPY, type HandbackOutcome, recordHandbackOutcome } from './run-handback';
 import { createWakeup, settleWakeupForRun } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('orphan-detector');
 
-const MAX_RETRIES = 3;
+/**
+ * How many attempts a piece of work gets before Hezo stops and asks for a human.
+ * Exported so a test can drive the chain to its ceiling without hard-coding a
+ * number that would silently stop matching if this moved.
+ */
+export const MAX_RETRIES = 3;
 const SAFETY_WINDOW_SECONDS = 30;
 /** Failure excerpt handed to the retry wakeup. */
 const ORPHAN_LOG_TAIL_CHARS = 1_000;
@@ -80,41 +84,15 @@ const ORPHAN_VERDICT: Record<OrphanArm, string> = {
 		'A restart, a crash or a wedged dispatch - not the agent failing.',
 };
 
-/**
- * What happened to the work, written once it is known.
- *
- * A table rather than a branch, so a new outcome is a compile error here until
- * someone writes the sentence for it. Every sentence names a state the reader
- * can see for themselves: the queue, the Inbox, the Retry button.
- */
-const ORPHAN_OUTCOME_COPY: Record<HandbackOutcome, string> = {
-	requeued: 'The work is back in the queue and will be picked up automatically.',
-	replaced: 'A fresh run has been queued to pick this work back up.',
-	escalated:
-		'Hezo has stopped retrying this and asked for a human. There is a pending item in your Inbox.',
-	abandoned:
-		'Nothing was left to put back on the queue, so this will not restart on its own. ' +
-		'Use Retry to run it again.',
-};
-
 /** The run's `error`, carrying the outcome and the actual cause where the log has one. */
 function orphanErrorMessage(arm: OrphanArm, outcome: HandbackOutcome, logTail: string): string {
-	const verdict = `${ORPHAN_VERDICT[arm]} ${ORPHAN_OUTCOME_COPY[outcome]}`;
+	const verdict = `${ORPHAN_VERDICT[arm]} ${HANDBACK_OUTCOME_COPY[outcome]}`;
 	const excerpt = logTail.trim().slice(-ORPHAN_ERROR_TAIL_CHARS).trim();
 	return excerpt ? `${verdict}\n\nLast log output:\n${excerpt}` : verdict;
 }
 
 /** Which of the two stranded shapes a reaped row was. */
 type OrphanArm = 'never_started' | 'orphaned';
-
-/**
- * What became of the work a reaped run was carrying.
- *
- * `abandoned` is the one outcome that leaves work owed with nothing carrying it,
- * which is why it is named rather than folded into `escalated`: it is what the
- * run row, the Retry affordance and the thread notice all key off.
- */
-type HandbackOutcome = 'requeued' | 'replaced' | 'escalated' | 'abandoned';
 
 export async function detectOrphans(
 	db: Db,
@@ -257,73 +235,69 @@ export async function detectOrphans(
 
 		await setAgentIdleIfNoActiveRuns(db, run.member_id, run.team_id, run.id, wsManager);
 
-		const outcome = neverStarted
-			? await handBackNeverStartedWork(db, run)
-			: (await retryOrEscalateLostRun(
-						db,
-						{
-							runId: run.id,
-							memberId: run.member_id,
-							teamId: run.team_id,
-							taskId: run.task_id,
-							priorRetries: run.process_loss_retry_count,
-						},
-						tail.text,
-					)) === 'retried'
-				? 'replaced'
-				: 'escalated';
+		// The row is terminal from here, so nothing will rescan it: a throw past this
+		// point strands the work permanently. Isolate each orphan so one bad row
+		// cannot also abandon every other orphan in the batch, and log loudly enough
+		// that a strand is findable rather than silent.
+		try {
+			const outcome = neverStarted
+				? await handBackNeverStartedWork(db, run)
+				: (await retryOrEscalateLostRun(
+							db,
+							{
+								runId: run.id,
+								memberId: run.member_id,
+								teamId: run.team_id,
+								taskId: run.task_id,
+								priorRetries: run.process_loss_retry_count,
+							},
+							tail.text,
+						)) === 'retried'
+					? 'replaced'
+					: 'escalated';
 
-		// Now the outcome is known, and only now, the row can say what happened to
-		// the work. Guarded on the status this pass just wrote, so a terminate or a
-		// container sweep landing in between keeps its own more specific record.
-		//
-		// `cancel_reason` rides along on the same write. Only the never-started arm
-		// sets one: the orphaned arm is `Failed`, and a failure's cause is its
-		// error, not a cancel attribution.
-		const error = orphanErrorMessage(arm, outcome, tail.text);
-		await db.query(
-			`UPDATE heartbeat_runs SET error = $1, cancel_reason = COALESCE($4, cancel_reason)
-			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
-			[
-				error,
-				run.id,
-				terminalStatus,
-				neverStarted
-					? outcome === 'abandoned'
-						? RunCancelReason.Abandoned
-						: RunCancelReason.HandedBack
-					: null,
-			],
-		);
-
-		// Broadcast after the second write, so an open run page receives the final
-		// text rather than the provisional verdict.
-		broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
-			id: run.id,
-			member_id: run.member_id,
-			task_id: run.task_id,
-			project_id: run.project_id,
-			status: terminalStatus,
-			error,
-		});
-
-		// The only outcome a reader has to do something about, so the only one worth
-		// a row in the thread. Everything else either re-runs on its own or was
-		// somebody's own decision to stop.
-		if (outcome === 'abandoned' && run.task_id) {
-			await recordRunAbandoned(
+			// Now the outcome is known, and only now, the row can say what happened to
+			// the work. The recorder reports whether its guarded write applied, so a
+			// terminate or a container sweep landing in between keeps its own more
+			// specific record and this pass stays silent about a row it did not write.
+			const error = orphanErrorMessage(arm, outcome, tail.text);
+			const recorded = await recordHandbackOutcome(
 				db,
-				run.team_id,
-				run.task_id,
-				run.id,
-				run.agent_slug,
+				{
+					runId: run.id,
+					taskId: run.task_id,
+					teamId: run.team_id,
+					agentSlug: run.agent_slug,
+					terminalStatus,
+				},
+				outcome,
+				error,
 				wsManager,
-			).catch((e) => log.error(`Failed to post abandoned-run notice for run ${run.id}:`, e));
-		}
+			);
 
-		log.info(
-			`Reaped ${arm} run ${run.id} (member ${run.member_id}, task ${run.task_id ?? 'none'}): ${outcome}`,
-		);
+			// Broadcast after the second write and only if it landed, so an open run
+			// page receives the final text rather than the provisional verdict, and is
+			// never told a row says something it does not.
+			if (recorded) {
+				broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
+					id: run.id,
+					member_id: run.member_id,
+					task_id: run.task_id,
+					project_id: run.project_id,
+					status: terminalStatus,
+					error,
+				});
+			}
+
+			log.info(
+				`Reaped ${arm} run ${run.id} (member ${run.member_id}, task ${run.task_id ?? 'none'}): ${outcome}`,
+			);
+		} catch (e) {
+			log.error(
+				`Reaped ${arm} run ${run.id} but could not settle its work - it is stranded and needs a human:`,
+				e,
+			);
+		}
 	}
 
 	return orphanCount;
@@ -382,9 +356,16 @@ async function handBackNeverStartedWork(
 			).rows[0]
 		: undefined;
 
-	// A wakeup that names no task is only worth handing back when the run had no
-	// task either - a progress update, say, where the agent picks its own work.
-	if (run.wakeup_id && (original?.task_id || !run.task_id)) {
+	// Hand the original back whatever it names. An earlier revision gated this on
+	// the payload naming a task, to stop an "intent-less" synthetic wakeup coming
+	// back as a task-less nudge - but `createSyntheticOnDemandWakeup` is reachable
+	// only from the progress-update path, which passes no task, so that gate never
+	// fired for the rows it was written for. What it did catch was the ordinary
+	// heartbeat wakeup, whose payload names no task because `activateAgent` chooses
+	// one: those were left dangling in `claimed` for `healStaleRunState` to
+	// mislabel. A wakeup that names no task is not intent-less, it is "find work",
+	// and handing it back says exactly that.
+	if (run.wakeup_id) {
 		const settled = await settleWakeupForRun(db, run.wakeup_id, {
 			kind: 'handback',
 			reason: WakeupSkipReason.RunNeverStarted,
@@ -392,7 +373,21 @@ async function handBackNeverStartedWork(
 		if (settled.kind === 'requeued') return 'requeued';
 	}
 
-	if (!run.task_id || run.process_loss_retry_count + 1 >= MAX_RETRIES) {
+	// No task to name means no replacement can be minted that points at this work,
+	// so the ladder ends here however many strikes are left. Said plainly rather
+	// than borrowed from the retry ceiling, which would tell a human this agent had
+	// failed three times when it may not have run at all.
+	if (!run.task_id) {
+		await fileLostRunApproval(
+			db,
+			{ runId: run.id, memberId: run.member_id, teamId: run.team_id, taskId: null },
+			undefined,
+			'A run could not be started and there was no task to retry it against. Manual intervention required.',
+		);
+		return 'abandoned';
+	}
+
+	if (run.process_loss_retry_count + 1 >= MAX_RETRIES) {
 		await fileLostRunApproval(db, {
 			runId: run.id,
 			memberId: run.member_id,
@@ -402,6 +397,18 @@ async function handBackNeverStartedWork(
 		return 'abandoned';
 	}
 
+	// Spend the strike, then hand the replacement a lineage that INHERITS it.
+	// Those two halves must travel together or the ceiling above is unreachable:
+	// `previous_run_id` carries `inheritsLossBudget: false`, so a replacement named
+	// that way starts back at zero and the chain never climbs however many times it
+	// laps. `previous_failure.run_id` is the key `RUN_LINEAGE_SOURCES` gives the
+	// budget to, and it is now the honest one - this arm fills the counter it reads.
+	//
+	// The original defect was the mirror of that, not this: the arm read the
+	// ceiling while never incrementing it, so a count inherited from an unrelated
+	// process-loss chain dead-ended it permanently. Incrementing consistently fixes
+	// both, because the count now means one thing - how many attempts this work has
+	// had without producing a result.
 	await db.query(
 		'UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1 WHERE id = $1',
 		[run.id],
@@ -409,11 +416,9 @@ async function handBackNeverStartedWork(
 	await createWakeup(db, run.member_id, run.team_id, original?.source ?? WakeupSource.Timer, {
 		reason: 'never_started_retry',
 		task_id: run.task_id,
-		// Named under `previous_run_id`, NOT `previous_failure.run_id`:
-		// `RUN_LINEAGE_SOURCES` gives only the latter `inheritsLossBudget`, and a
-		// replacement for a run that produced nothing must record where it came
-		// from without inheriting a budget it never spent.
-		previous_run_id: run.id,
+		retry_count: run.process_loss_retry_count + 1,
+		max_retries: MAX_RETRIES,
+		previous_failure: { run_id: run.id },
 	});
 	return 'replaced';
 }
@@ -497,6 +502,8 @@ async function fileLostRunApproval(
 	db: Db,
 	run: { runId: string; memberId: string; teamId: string; taskId?: string | null },
 	knownLogTail?: string,
+	/** Override for a give-up that is not the retry ceiling, so the record stays true. */
+	message = `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
 ): Promise<void> {
 	// One record per stuck agent, not one per ceiling. A partial unique index
 	// would be stronger, but this pass is serial in a single process and an
@@ -527,7 +534,7 @@ async function fileLostRunApproval(
 				run_id: run.runId,
 				task_id: run.taskId ?? null,
 				last_error: knownLogTail?.trim().slice(-ORPHAN_LOG_TAIL_CHARS) || null,
-				message: `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
+				message,
 			}),
 		],
 	);

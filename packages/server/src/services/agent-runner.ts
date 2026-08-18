@@ -35,7 +35,7 @@ import {
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_SYSTEM_PROMPT_FILE,
-	RunCancelReason,
+	type RunCancelReason,
 	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -1234,17 +1234,30 @@ export const CAPACITY_PARK_MAX_MS = 3 * 60_000;
  * Derived from the waiting run's own timeout rather than fixed, with headroom,
  * because waiting past that deadline lets `launchTask`'s wall-clock timer abort
  * the run as `timed_out` - trading one errored row for another, which is the
- * same reason the capacity park does not use `run_timeout_min` raw. Floored at
- * the capacity park's ceiling so an unusually short agent timeout cannot regress
- * the wait below what it already tolerated, and capped so a mis-configured
- * multi-hour timeout cannot park a run for that long.
+ * same reason the capacity park does not use `run_timeout_min` raw.
+ *
+ * **Deliberately unfloored.** An earlier revision floored this at the capacity
+ * park's ceiling so a short agent timeout could not regress the wait; that
+ * inverted the invariant above for any `run_timeout_min` of 3 or less (settable
+ * to 1 in the UI), where a 180 s wait outlives a 60 s wall-clock timer and the
+ * run is finalized `timed_out` instead of handing back. The fraction alone keeps
+ * the wait inside the run's own budget at every setting.
+ *
+ * The cap bounds a cost the wait carries that is easy to miss: a dispatch with
+ * no spare container takes a `pendingContainerStarts` reservation *before*
+ * `launchTask`, and it is charged against the instance memory budget until the
+ * run settles. So a waiter reserves a container's worth of headroom for a
+ * container it has not asked for yet, and every minute of this wait is a minute
+ * another project can be told the instance is at capacity. 15 minutes covers the
+ * "a run takes several minutes" case this exists for while keeping that
+ * reservation bounded.
  */
 const CREDENTIAL_WAIT_MAX_FRACTION = 0.8;
-const CREDENTIAL_WAIT_CAP_MS = 30 * 60_000;
+const CREDENTIAL_WAIT_CAP_MS = 15 * 60_000;
 
 export function credentialWaitMaxMs(runTimeoutMin: number | null | undefined): number {
 	const budget = (runTimeoutMin ?? 0) * 60_000 * CREDENTIAL_WAIT_MAX_FRACTION;
-	return Math.min(Math.max(budget, CAPACITY_PARK_MAX_MS), CREDENTIAL_WAIT_CAP_MS);
+	return Math.min(budget, CREDENTIAL_WAIT_CAP_MS);
 }
 
 /**
@@ -1740,10 +1753,13 @@ export async function runAgent(
 				exitCode: -1,
 				durationMs,
 				error: message,
-				// Not a cancel anyone has to act on: the caller re-queues the wakeup,
-				// so the work is already carried. Recorded anyway so a reader can tell
-				// this apart from a Terminate without parsing the message.
-				cancelReason: RunCancelReason.HandedBack,
+				// Deliberately NOT stamping `cancel_reason` here. Whether the work is
+				// actually carried is not known until the caller settles the wakeup,
+				// and the guard there can bite. Writing `handed_back` at this point
+				// asserted an outcome before attempting it - the same defect the orphan
+				// sweeper was restructured to avoid - and left it standing when the
+				// handback failed. `JobManager.settleWakeupForRun` records it once the
+				// answer is in, through the recorder the sweeper shares.
 			},
 			runBroadcast,
 		);
@@ -4696,7 +4712,13 @@ async function updateHeartbeatRun(
 		     output_tokens = COALESCE($5, output_tokens),
 		     cost_cents = COALESCE($6, cost_cents),
 		     usage_partial = COALESCE($7, usage_partial),
-		     cancel_reason = COALESCE($11, cancel_reason)
+		     -- First writer wins, the opposite direction to the columns above. A
+		     -- cancel attribution says WHO stopped the run, and the first writer to
+		     -- reach the row is the one that knows: terminateHeartbeatRun backfills
+		     -- operator_terminated while the abort is still cascading, and the
+		     -- runner's own finalizer would otherwise overwrite it moments later
+		     -- with its own less specific verdict.
+		     cancel_reason = COALESCE(cancel_reason, $11)
 		 WHERE id = $8
 		   AND status IN ($9::heartbeat_run_status, $10::heartbeat_run_status)
 		 RETURNING id`,

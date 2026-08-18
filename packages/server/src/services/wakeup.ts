@@ -1,5 +1,6 @@
 import {
 	HeartbeatRunStatus,
+	TERMINAL_WAKEUP_STATUSES,
 	type WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
@@ -298,11 +299,30 @@ export async function settleWakeupForRun(
 		return res.rows.length > 0 ? { kind: 'requeued' } : { kind: 'handback_failed' };
 	}
 
+	// Guarded the same way the handback arm is, and for the mirror reason. A
+	// wakeup that already reached a terminal status has had its outcome decided by
+	// whoever got there first, and that party knew more: `terminateHeartbeatRun`
+	// settles `cancelled` the moment a person presses Terminate, while the aborting
+	// run reaches `onAgentComplete` seconds later and would relabel it `failed` -
+	// the exact label the terminate path exists to avoid. Without this, the
+	// double-`onAgentComplete` on the runner's own catch path could also flip a
+	// wakeup that had just been handed back.
 	const status = SETTLEMENT_TERMINAL_STATUS[intent.kind];
-	await db.query(
-		`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-		[status, wakeupId],
+	const applied = await db.query<{ id: string }>(
+		`UPDATE agent_wakeup_requests
+		    SET status = $1::wakeup_status, completed_at = now()
+		  WHERE id = $2 AND status <> ALL($3::wakeup_status[])
+		 RETURNING id`,
+		[status, wakeupId, TERMINAL_WAKEUP_STATUSES],
 	);
+	if (applied.rows.length === 0) {
+		const current = await db.query<{ status: WakeupStatus }>(
+			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		const standing = current.rows[0]?.status;
+		return standing ? { kind: 'terminal', status: standing } : { kind: 'nothing_to_settle' };
+	}
 	return { kind: 'terminal', status };
 }
 
