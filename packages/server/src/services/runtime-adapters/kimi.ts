@@ -1,10 +1,17 @@
 import { join } from 'node:path';
-import { AgentRuntime, RUNTIME_SYSTEM_PROMPT_FILE } from '@hezo/shared';
+import {
+	AgentEffort,
+	AgentRuntime,
+	kimiModelContextSize,
+	RUNTIME_SYSTEM_PROMPT_FILE,
+} from '@hezo/shared';
+import { extractKimiUsageFromSessionLog } from '../agent-stream-parser';
 import {
 	buildDocWriteGuardScript,
 	DOC_WRITE_GUARD_FILENAME,
 	DOC_WRITE_GUARD_MATCHER,
 } from '../doc-write-guard';
+import { GENERIC_PROMPT_DIRECTIVE } from '../effort';
 import { buildJudgeScriptForRuntime } from '../stop-hook-prompt';
 import { bearerEnvVarName, escapeTomlBasicString } from './toml';
 import type {
@@ -12,7 +19,7 @@ import type {
 	McpInjection,
 	McpInjectionFile,
 	McpStdioDescriptor,
-	RuntimeMcpAdapter,
+	RuntimeAdapter,
 } from './types';
 
 /**
@@ -173,11 +180,84 @@ function renderConfigToml(
 	return lines.join('\n');
 }
 
-export const kimiAdapter: RuntimeMcpAdapter = {
+/**
+ * Basename of Kimi Code's per-session wire log, written under
+ * `$KIMI_CODE_HOME/sessions/<workspace>/<session>/agents/<agent>/`. Its
+ * `stream-json` stdout carries no token usage at all, so - as with Grok - cost is
+ * recovered from this file. The path depth is an upstream implementation detail,
+ * so the home is searched rather than the path reconstructed.
+ */
+const KIMI_SESSION_LOG_BASENAME = 'wire.jsonl';
+
+/**
+ * Depth cap for the wire-log search. The real path sits five levels below the
+ * home dir; eight leaves room for an upstream layout change without ever letting
+ * a symlink loop or a surprise `node_modules` turn run teardown into a full-disk
+ * walk.
+ */
+const KIMI_SESSION_LOG_MAX_DEPTH = 8;
+
+/**
+ * Kimi Code accepts `low|medium|high|xhigh|max`. It has no `minimal`, so the
+ * lowest Hezo level maps to `low` and `max` maps straight through. `xhigh` is
+ * deliberately unused - Hezo's ladder tops out at `max`, and reaching past
+ * `high` for that level would make the two indistinguishable.
+ */
+const KIMI_THINKING_EFFORT: Record<AgentEffort, string> = {
+	[AgentEffort.Minimal]: 'low',
+	[AgentEffort.Low]: 'low',
+	[AgentEffort.Medium]: 'medium',
+	[AgentEffort.High]: 'high',
+	[AgentEffort.Max]: 'max',
+};
+
+export const kimiAdapter: RuntimeAdapter = {
 	capabilities: {
 		transport: 'streamable-http',
 		bearerTokenStorage: 'env-var',
 		requiresHomeDir: true,
+	},
+	// A real, documented thinking-effort knob, unlike OpenCode and Grok - it is part
+	// of the same shell-read KIMI_MODEL_* family the credential travels in. The
+	// prompt directive rides along too: it costs nothing and keeps behaviour
+	// consistent when a model ignores the knob.
+	applyEffort: (effort) => ({
+		extraArgs: [],
+		extraEnv: [`KIMI_MODEL_THINKING_EFFORT=${KIMI_THINKING_EFFORT[effort]}`],
+		promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
+	}),
+	staticEnvValue(key, value, ctx) {
+		if (!ctx.runModel) return value;
+		// The CLI selects its model from `KIMI_MODEL_NAME`, not only from `--model`:
+		// that variable is what activates the shell-read `KIMI_MODEL_*` credential
+		// family at all, so the run's selected model has to land there rather than
+		// only on a flag. The table's value stays the fallback when nothing is pinned.
+		if (key === 'KIMI_MODEL_NAME') return ctx.runModel;
+		// Tracks the selected model rather than the pinned default: the window is a
+		// property of the model, and declaring the default's window for a smaller one
+		// makes the CLI compact too late and the endpoint refuse.
+		if (key === 'KIMI_MODEL_MAX_CONTEXT_SIZE') return String(kimiModelContextSize(ctx.runModel));
+		return value;
+	},
+	async recoverUsage({ files, price, onError }) {
+		const logPaths = await files.findByName(
+			'sessions',
+			KIMI_SESSION_LOG_BASENAME,
+			KIMI_SESSION_LOG_MAX_DEPTH,
+		);
+		if (logPaths.length === 0) return null;
+		try {
+			// The home dir is per-run, so in practice there is exactly one session.
+			// Concatenating tolerates a resumed or sub-agent session without
+			// double-counting: the extractor dedupes by record identity, not by file.
+			const contents = (await Promise.all(logPaths.map((p) => files.read(p)))).join('\n');
+			return extractKimiUsageFromSessionLog(contents, price);
+		} catch (e) {
+			onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
+			return null;
+		} finally {
+			for (const p of logPaths) await files.remove(p);
+		}
 	},
 	build(descriptors, ctx): McpInjection {
 		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {

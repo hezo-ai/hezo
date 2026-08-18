@@ -9,9 +9,9 @@ import {
 	DOC_WRITE_GUARD_FILENAME,
 	DOC_WRITE_GUARD_MATCHER,
 } from '../src/services/doc-write-guard';
-import { claudeCodeAdapter } from '../src/services/mcp-injectors/claude-code';
-import { grokAdapter } from '../src/services/mcp-injectors/grok';
-import { kimiAdapter } from '../src/services/mcp-injectors/kimi';
+import { claudeCodeAdapter } from '../src/services/runtime-adapters/claude-code';
+import { grokAdapter } from '../src/services/runtime-adapters/grok';
+import { kimiAdapter } from '../src/services/runtime-adapters/kimi';
 import { buildClaudeCodeSettings } from '../src/services/stop-hook-prompt';
 
 let dir: string;

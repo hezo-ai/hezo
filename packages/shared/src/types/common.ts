@@ -1684,48 +1684,6 @@ export interface ProviderRuntimeAdapter extends ProviderRuntimeBinding {
 }
 
 /**
- * Claude Code emits background traffic (Statsig feature-flag polling, OTel,
- * auto-update checks, Sentry) to api.anthropic.com regardless of
- * ANTHROPIC_BASE_URL. None of it serves Hezo's headless flow — for
- * non-Anthropic providers it's noise that hammers the egress proxy at a
- * host nobody is paying for, and for the Anthropic provider itself it
- * still bypasses NO_PROXY in several Claude Code subsystems (undici fetch,
- * Sentry transport) and lands in the MITM proxy. Stamp these flags into
- * env for every Claude Code runtime.
- *
- * Alongside the telemetry/noise-suppression `DISABLE_*` flags, this bag also
- * carries a headless background-wait override: `claude -p` caps how long it
- * waits for still-running background tasks and then terminates them, which
- * kills Hezo's legitimately long background work. See
- * `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` below.
- */
-export const CLAUDE_CODE_QUIET_ENV = {
-	DISABLE_TELEMETRY: '1',
-	DISABLE_ERROR_REPORTING: '1',
-	DISABLE_AUTOUPDATER: '1',
-	DISABLE_NON_ESSENTIAL_MODEL_CALLS: '1',
-	DISABLE_BUG_COMMAND: '1',
-	// Headless `claude -p` caps waiting for still-running background tasks at 600s
-	// and then kills them ("Background tasks still running after 600s; terminating").
-	// Hezo runs legitimately long background work (Workflow fan-out agents, long
-	// `run_in_background` jobs); `0` removes the ceiling so the run waits for its own
-	// background tasks instead of terminating them early. The wait is then bounded
-	// only by the run's overall container/heartbeat lifecycle, not an arbitrary cap.
-	CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0',
-} as const;
-
-/**
- * The Gemini CLI refuses to run in an "untrusted" folder and silently downgrades
- * `--yolo` to manual tool approval, which hangs a headless run; Hezo agents run
- * headless in `/workspace`. Trusting the workspace is the documented headless
- * setting (https://geminicli.com/docs/cli/trusted-folders). Applied to every
- * Gemini-runtime provider, mirroring `CLAUDE_CODE_QUIET_ENV` for Claude Code.
- */
-export const GEMINI_RUNTIME_ENV = {
-	GEMINI_CLI_TRUST_WORKSPACE: 'true',
-} as const;
-
-/**
  * Moonshot's default coding model, shared by both ways of running Kimi: Claude
  * Code against the Anthropic-compatible gateway, and Moonshot's own CLI. Both
  * bindings below carry it, and either Moonshot provider can be configured onto
@@ -1968,15 +1926,18 @@ export function providerDirectUpstreamHosts(
 }
 
 /**
- * Normalize a model id before passing it to Claude Code CLI. DeepSeek runs
- * append `[1m]` themselves; including it in env or `--model` yields
- * `deepseek-v4-pro[1m][1m]` and provider 400s.
+ * Per-provider fixups applied to a model id before it reaches the Claude Code
+ * CLI. A provider absent here needs none, which is the common case.
  */
+const CLAUDE_CODE_MODEL_FIXUPS: Partial<Record<AiProvider, (model: string) => string>> = {
+	// DeepSeek runs append `[1m]` themselves, so carrying it in env or `--model`
+	// yields `deepseek-v4-pro[1m][1m]` and the provider 400s.
+	[AiProvider.DeepSeek]: (model) => model.replace(/\[1m\]/gi, ''),
+};
+
+/** Normalize a model id before passing it to the Claude Code CLI. */
 export function claudeCodeModelArg(provider: AiProvider, model: string): string {
-	if (provider === AiProvider.DeepSeek) {
-		return model.replace(/\[1m\]/gi, '');
-	}
-	return model;
+	return CLAUDE_CODE_MODEL_FIXUPS[provider]?.(model) ?? model;
 }
 
 /**
@@ -2736,11 +2697,16 @@ export interface AiProviderModel {
  * TTS, image generation). This filters to the models an agent CLI can actually
  * be pointed at.
  */
-export function parseProviderModels(provider: AiProvider, json: unknown): AiProviderModel[] {
-	if (!json || typeof json !== 'object') return [];
-	const body = json as Record<string, unknown>;
-
-	if (provider === AiProvider.Google) {
+/**
+ * Providers whose model-list response is not the OpenAI-style `{ data: [...] }`
+ * shape. A provider absent here is parsed by the default reader below.
+ */
+const PROVIDER_MODEL_READERS: Partial<
+	Record<AiProvider, (body: Record<string, unknown>) => AiProviderModel[]>
+> = {
+	// Google returns `{ models: [{ name: "models/<id>", displayName, … }] }` and
+	// lists far more than chat models, so the generation methods are the filter.
+	[AiProvider.Google]: (body) => {
 		const models = Array.isArray(body.models) ? (body.models as Record<string, unknown>[]) : [];
 		return models
 			.filter((m) => {
@@ -2755,8 +2721,25 @@ export function parseProviderModels(provider: AiProvider, json: unknown): AiProv
 				return { id, label };
 			})
 			.filter((m) => m.id);
-	}
+	},
+};
 
+/**
+ * Ids a provider lists that no agent CLI can be pointed at. Keyed per provider
+ * because only the provider knows what its own non-chat models look like.
+ */
+const PROVIDER_NON_CHAT_MODEL_RE: Partial<Record<AiProvider, RegExp>> = {
+	[AiProvider.OpenAI]: /(embedding|whisper|tts|audio|dall-e|image|moderation|omni-moderation)/,
+};
+
+export function parseProviderModels(provider: AiProvider, json: unknown): AiProviderModel[] {
+	if (!json || typeof json !== 'object') return [];
+	const body = json as Record<string, unknown>;
+
+	const reader = PROVIDER_MODEL_READERS[provider];
+	if (reader) return reader(body);
+
+	const nonChat = PROVIDER_NON_CHAT_MODEL_RE[provider];
 	const data = Array.isArray(body.data) ? (body.data as Record<string, unknown>[]) : [];
 	return data
 		.map((m) => {
@@ -2768,17 +2751,7 @@ export function parseProviderModels(provider: AiProvider, json: unknown): AiProv
 				'';
 			return { id, label: displayName || id };
 		})
-		.filter((m) => m.id && isChatModelId(provider, m.id));
-}
-
-function isChatModelId(provider: AiProvider, id: string): boolean {
-	const lower = id.toLowerCase();
-	if (provider === AiProvider.OpenAI) {
-		if (/(embedding|whisper|tts|audio|dall-e|image|moderation|omni-moderation)/.test(lower)) {
-			return false;
-		}
-	}
-	return true;
+		.filter((m) => m.id && !nonChat?.test(m.id.toLowerCase()));
 }
 
 /**

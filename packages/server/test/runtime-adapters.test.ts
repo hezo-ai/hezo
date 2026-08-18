@@ -1,7 +1,15 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { AgentEffort, AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from '../src/services/mcp-injectors';
-import type { McpInjectionFile } from '../src/services/mcp-injectors/types';
+import {
+	applyEffortToRuntime,
+	type McpDescriptor,
+	RUNTIME_ADAPTERS,
+	type RuntimeEnvContext,
+	validateInjection,
+} from '../src/services/runtime-adapters';
+import type { McpInjectionFile } from '../src/services/runtime-adapters/types';
 import {
 	STOP_HOOK_JUDGE_MODEL_ANTHROPIC,
 	STOP_HOOK_JUDGE_MODEL_DEEPSEEK,
@@ -21,14 +29,14 @@ const HEZO_DESCRIPTOR: McpDescriptor = {
 	bearerToken: TOKEN,
 };
 
-describe('MCP_ADAPTERS', () => {
+describe('RUNTIME_ADAPTERS', () => {
 	it('has an adapter for every AgentRuntime', () => {
 		const runtimes = Object.values(AgentRuntime);
 		expect(runtimes.length).toBeGreaterThan(0);
 		for (const runtime of runtimes) {
-			expect(MCP_ADAPTERS[runtime]).toBeDefined();
+			expect(RUNTIME_ADAPTERS[runtime]).toBeDefined();
 		}
-		expect(Object.keys(MCP_ADAPTERS).sort()).toEqual([...runtimes].sort());
+		expect(Object.keys(RUNTIME_ADAPTERS).sort()).toEqual([...runtimes].sort());
 	});
 
 	describe('STOP_HOOK_RULES deferral semantics', () => {
@@ -68,7 +76,7 @@ describe('MCP_ADAPTERS', () => {
 
 	it('every adapter produces a valid injection for a single Hezo descriptor', () => {
 		for (const runtime of Object.values(AgentRuntime)) {
-			const adapter = MCP_ADAPTERS[runtime];
+			const adapter = RUNTIME_ADAPTERS[runtime];
 			const injection = adapter.build([HEZO_DESCRIPTOR], {
 				hostHomeDir: adapter.capabilities.requiresHomeDir ? HOME : null,
 				containerHomeDir: adapter.capabilities.requiresHomeDir ? HOME : null,
@@ -79,7 +87,7 @@ describe('MCP_ADAPTERS', () => {
 });
 
 describe('claude-code adapter', () => {
-	const adapter = MCP_ADAPTERS[AgentRuntime.ClaudeCode];
+	const adapter = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode];
 
 	it('emits --mcp-config / --strict-mcp-config CLI flags with the right shape', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
@@ -193,7 +201,7 @@ describe('claude-code adapter', () => {
 });
 
 describe('codex adapter', () => {
-	const adapter = MCP_ADAPTERS[AgentRuntime.Codex];
+	const adapter = RUNTIME_ADAPTERS[AgentRuntime.Codex];
 
 	it('writes config.toml at <home>/config.toml with mode 0o600 and no inline bearer token', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
@@ -322,7 +330,7 @@ describe('codex adapter', () => {
 });
 
 describe('gemini adapter', () => {
-	const adapter = MCP_ADAPTERS[AgentRuntime.Gemini];
+	const adapter = RUNTIME_ADAPTERS[AgentRuntime.Gemini];
 
 	it('writes .gemini/settings.json at <home>/.gemini/settings.json with mode 0o600', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
@@ -404,7 +412,7 @@ describe('gemini adapter', () => {
 });
 
 describe('validateInjection', () => {
-	const codex = MCP_ADAPTERS[AgentRuntime.Codex];
+	const codex = RUNTIME_ADAPTERS[AgentRuntime.Codex];
 
 	it('rejects a non-absolute file path', () => {
 		expect(() =>
@@ -444,7 +452,7 @@ describe('validateInjection', () => {
 
 	// Every adapter that stores bearers in env, so a new one inherits the cases
 	// below rather than needing them written again.
-	const envVarAdapters = Object.entries(MCP_ADAPTERS).filter(
+	const envVarAdapters = Object.entries(RUNTIME_ADAPTERS).filter(
 		([, a]) => a.capabilities.bearerTokenStorage === 'env-var',
 	);
 
@@ -534,7 +542,7 @@ describe('validateInjection', () => {
 });
 
 describe('opencode adapter', () => {
-	const adapter = MCP_ADAPTERS[AgentRuntime.OpenCode];
+	const adapter = RUNTIME_ADAPTERS[AgentRuntime.OpenCode];
 
 	it('declares inline bearer storage and a required home dir', () => {
 		expect(adapter.capabilities.requiresHomeDir).toBe(true);
@@ -727,7 +735,7 @@ describe('opencode adapter', () => {
 });
 
 describe('grok adapter', () => {
-	const adapter = MCP_ADAPTERS[AgentRuntime.Grok];
+	const adapter = RUNTIME_ADAPTERS[AgentRuntime.Grok];
 	const GROK_HOME = '/workspace/.hezo/subscription/grok/run-1';
 
 	it('declares inline bearer storage and a required home dir', () => {
@@ -807,7 +815,7 @@ describe('grok adapter', () => {
 });
 
 describe('kimi adapter', () => {
-	const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+	const adapter = RUNTIME_ADAPTERS[AgentRuntime.Kimi];
 	const KIMI_HOME = '/workspace/.hezo/subscription/kimi-code/run-1';
 	const HOMES = { hostHomeDir: KIMI_HOME, containerHomeDir: KIMI_HOME };
 
@@ -1001,7 +1009,7 @@ describe('stopJudge: false omits the completeness judge', () => {
 		injection.files.find((f) => f.hostPath.endsWith(name));
 
 	it('claude-code drops the Stop group but keeps the doc-write guard', () => {
-		const adapter = MCP_ADAPTERS[AgentRuntime.ClaudeCode];
+		const adapter = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode];
 		const withJudge = JSON.parse(
 			adapter.build([HEZO_DESCRIPTOR], { ...HOMES, projectDocSlugs: ['prd.md'] }).files[0].contents,
 		) as { hooks: { Stop?: unknown[]; PreToolUse?: unknown[] } };
@@ -1023,7 +1031,7 @@ describe('stopJudge: false omits the completeness judge', () => {
 	});
 
 	it('codex drops both the hook block and the judge script', () => {
-		const adapter = MCP_ADAPTERS[AgentRuntime.Codex];
+		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Codex];
 		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
 
 		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
@@ -1035,7 +1043,7 @@ describe('stopJudge: false omits the completeness judge', () => {
 	});
 
 	it('gemini drops both the AfterAgent hook and the judge script', () => {
-		const adapter = MCP_ADAPTERS[AgentRuntime.Gemini];
+		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Gemini];
 		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
 
 		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
@@ -1049,7 +1057,7 @@ describe('stopJudge: false omits the completeness judge', () => {
 	});
 
 	it('kimi drops the Stop entry while keeping the permission rule the CLI needs', () => {
-		const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Kimi];
 		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
 
 		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
@@ -1066,7 +1074,7 @@ describe('stopJudge: false omits the completeness judge', () => {
 			AgentRuntime.Gemini,
 			AgentRuntime.Kimi,
 		]) {
-			const injection = MCP_ADAPTERS[runtime].build([HEZO_DESCRIPTOR], HOMES);
+			const injection = RUNTIME_ADAPTERS[runtime].build([HEZO_DESCRIPTOR], HOMES);
 			const emitsJudge =
 				injection.files.some((f) => f.hostPath.endsWith('stop-hook-judge.mjs')) ||
 				injection.files.some((f) => f.contents.includes(STOP_HOOK_RULES.slice(0, 60)));
@@ -1079,7 +1087,7 @@ describe('per-connector MCP method filtering', () => {
 	const HOMES = { hostHomeDir: HOME, containerHomeDir: HOME };
 
 	describe('claude-code', () => {
-		const adapter = MCP_ADAPTERS[AgentRuntime.ClaudeCode];
+		const adapter = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode];
 
 		it('denies the withheld tools by fully-qualified name in settings.json', () => {
 			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
@@ -1107,7 +1115,7 @@ describe('per-connector MCP method filtering', () => {
 	});
 
 	describe('gemini', () => {
-		const adapter = MCP_ADAPTERS[AgentRuntime.Gemini];
+		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Gemini];
 
 		it('emits includeTools as the per-server allowlist', () => {
 			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
@@ -1125,7 +1133,7 @@ describe('per-connector MCP method filtering', () => {
 	});
 
 	describe('opencode', () => {
-		const adapter = MCP_ADAPTERS[AgentRuntime.OpenCode];
+		const adapter = RUNTIME_ADAPTERS[AgentRuntime.OpenCode];
 
 		it('denies the server namespace then re-allows the enabled tools, in that order', () => {
 			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
@@ -1151,7 +1159,7 @@ describe('per-connector MCP method filtering', () => {
 		it('emits both enabledTools and disabledTools per server in mcp.json', () => {
 			// Kimi Code supports both views natively, so unlike every other runtime
 			// the descriptor maps across one-to-one with no reshaping.
-			const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+			const adapter = RUNTIME_ADAPTERS[AgentRuntime.Kimi];
 			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
 			const mcp = injection.files.find((f) => f.hostPath.endsWith('mcp.json'));
 			const parsed = JSON.parse(mcp?.contents ?? '') as {
@@ -1162,7 +1170,7 @@ describe('per-connector MCP method filtering', () => {
 		});
 
 		it('emits no filter at all for an unrestricted server', () => {
-			const adapter = MCP_ADAPTERS[AgentRuntime.Kimi];
+			const adapter = RUNTIME_ADAPTERS[AgentRuntime.Kimi];
 			const injection = adapter.build([HEZO_DESCRIPTOR], HOMES);
 			const mcp = injection.files.find((f) => f.hostPath.endsWith('mcp.json'));
 			const parsed = JSON.parse(mcp?.contents ?? '') as {
@@ -1178,7 +1186,7 @@ describe('per-connector MCP method filtering', () => {
 			// Deliberate: guessing a TOML key risks the CLI rejecting the whole
 			// config. The egress proxy still enforces the allowlist for these runs.
 			for (const runtime of [AgentRuntime.Codex, AgentRuntime.Grok]) {
-				const injection = MCP_ADAPTERS[runtime].build([RESTRICTED_DESCRIPTOR], HOMES);
+				const injection = RUNTIME_ADAPTERS[runtime].build([RESTRICTED_DESCRIPTOR], HOMES);
 				const contents = injection.files.map((f) => f.contents).join('\n');
 				expect(contents, runtime).toContain('[mcp_servers.linear]');
 				expect(contents, runtime).not.toContain('get_issue');
@@ -1188,9 +1196,230 @@ describe('per-connector MCP method filtering', () => {
 
 	it('every adapter still produces a valid injection when a descriptor is restricted', () => {
 		for (const runtime of Object.values(AgentRuntime)) {
-			const adapter = MCP_ADAPTERS[runtime];
+			const adapter = RUNTIME_ADAPTERS[runtime];
 			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
 			expect(() => validateInjection(adapter, injection), runtime).not.toThrow();
 		}
+	});
+});
+
+// The seam these exercise exists so nothing outside `runtime-adapters/` names a
+// runtime. Each case pins the behaviour that used to be an `if` in the runner.
+describe('runtime adapter behaviour beyond MCP', () => {
+	const envCtx = (over: Partial<RuntimeEnvContext> = {}): RuntimeEnvContext => ({
+		provider: AiProvider.Anthropic,
+		runModel: null,
+		baseUrl: null,
+		...over,
+	});
+
+	describe('constantEnv', () => {
+		it('lifts Claude Code background-wait ceiling and silences its telemetry', () => {
+			const env = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].constantEnv ?? {};
+			expect(env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).toBe('0');
+			expect(env.DISABLE_TELEMETRY).toBe('1');
+		});
+
+		it('trusts the workspace for Gemini so headless --yolo is not downgraded', () => {
+			expect(RUNTIME_ADAPTERS[AgentRuntime.Gemini].constantEnv?.GEMINI_CLI_TRUST_WORKSPACE).toBe(
+				'true',
+			);
+		});
+
+		it('gives every other runtime nothing, rather than an empty ceremony', () => {
+			for (const runtime of [AgentRuntime.Codex, AgentRuntime.OpenCode, AgentRuntime.Grok]) {
+				expect(RUNTIME_ADAPTERS[runtime].constantEnv, runtime).toBeUndefined();
+			}
+		});
+	});
+
+	describe('staticEnvValue', () => {
+		const claude = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode];
+
+		it('points the Claude Code subagent at the run model on a custom endpoint', () => {
+			const ctx = envCtx({ provider: AiProvider.DeepSeek, runModel: 'deepseek-v4-pro[1m]' });
+			// The [1m] suffix is Claude Code's own; the upstream id must not carry it.
+			expect(claude.staticEnvValue?.('CLAUDE_CODE_SUBAGENT_MODEL', 'pinned', ctx)).toBe(
+				'deepseek-v4-pro',
+			);
+		});
+
+		it('leaves the Anthropic subagent on its pinned constant', () => {
+			// Anthropic serves the constant already, so the run model must not win.
+			const ctx = envCtx({ provider: AiProvider.Anthropic, runModel: 'claude-opus-4-6' });
+			expect(claude.staticEnvValue?.('CLAUDE_CODE_SUBAGENT_MODEL', 'pinned', ctx)).toBe('pinned');
+		});
+
+		it('leaves every other key alone', () => {
+			const ctx = envCtx({ provider: AiProvider.DeepSeek, runModel: 'deepseek-v4-pro' });
+			expect(claude.staticEnvValue?.('ANTHROPIC_BASE_URL', 'https://x', ctx)).toBe('https://x');
+		});
+
+		it('lands the run model on KIMI_MODEL_NAME with a matching context window', () => {
+			const kimi = RUNTIME_ADAPTERS[AgentRuntime.Kimi];
+			const ctx = envCtx({ provider: AiProvider.Kimi, runModel: 'kimi-k3' });
+			expect(kimi.staticEnvValue?.('KIMI_MODEL_NAME', 'default', ctx)).toBe('kimi-k3');
+			const size = kimi.staticEnvValue?.('KIMI_MODEL_MAX_CONTEXT_SIZE', '0', ctx);
+			expect(Number(size)).toBeGreaterThan(0);
+		});
+
+		it('keeps the pinned Kimi default when the run selects no model', () => {
+			const kimi = RUNTIME_ADAPTERS[AgentRuntime.Kimi];
+			expect(kimi.staticEnvValue?.('KIMI_MODEL_NAME', 'default', envCtx())).toBe('default');
+		});
+	});
+
+	describe('credentialEnv', () => {
+		it('stamps a local endpoint on Claude Code and blanks the key it would prefer', () => {
+			// Claude Code prefers ANTHROPIC_API_KEY over ANTHROPIC_AUTH_TOKEN, so an
+			// inherited host key would silently win and be sent to the operator's own
+			// server.
+			const out = RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].credentialEnv?.(
+				envCtx({ provider: AiProvider.Ollama, baseUrl: 'http://host.docker.internal:11434' }),
+			);
+			expect(out).toEqual([
+				'ANTHROPIC_BASE_URL=http://host.docker.internal:11434',
+				'ANTHROPIC_API_KEY=',
+			]);
+		});
+
+		it('adds nothing when the credential carries no endpoint', () => {
+			expect(RUNTIME_ADAPTERS[AgentRuntime.ClaudeCode].credentialEnv?.(envCtx())).toEqual([]);
+		});
+	});
+
+	describe('modelArg', () => {
+		it('qualifies a bare OpenRouter id for OpenCode', () => {
+			expect(
+				RUNTIME_ADAPTERS[AgentRuntime.OpenCode].modelArg?.(
+					AiProvider.OpenRouter,
+					'deepseek/deepseek-v4-pro-0813',
+				),
+			).toBe('openrouter/deepseek/deepseek-v4-pro-0813');
+		});
+
+		it('leaves a runtime that takes the stored id undeclared', () => {
+			// Absent means "pass it through", which is what the runner then does.
+			for (const runtime of [AgentRuntime.Codex, AgentRuntime.Gemini, AgentRuntime.Grok]) {
+				expect(RUNTIME_ADAPTERS[runtime].modelArg, runtime).toBeUndefined();
+			}
+		});
+	});
+
+	describe('extraArgs', () => {
+		it('points Grok at a debug file inside its own per-run home', () => {
+			expect(
+				RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({ containerHomeDir: '/home/node/.grok' }),
+			).toEqual(['--debug-file', '/home/node/.grok/debug.log']);
+		});
+
+		it('asks for no debug file when there is no host-readable home to put it in', () => {
+			expect(RUNTIME_ADAPTERS[AgentRuntime.Grok].extraArgs?.({ containerHomeDir: null })).toEqual(
+				[],
+			);
+		});
+
+		it('is undeclared for runtimes that report usage on their stream', () => {
+			for (const runtime of [AgentRuntime.ClaudeCode, AgentRuntime.Codex, AgentRuntime.OpenCode]) {
+				expect(RUNTIME_ADAPTERS[runtime].extraArgs, runtime).toBeUndefined();
+			}
+		});
+	});
+
+	describe('recoverUsage', () => {
+		it('is declared by exactly the runtimes whose stream carries no usage', () => {
+			const declared = Object.values(AgentRuntime).filter(
+				(r) => RUNTIME_ADAPTERS[r].recoverUsage !== undefined,
+			);
+			expect(new Set(declared)).toEqual(new Set([AgentRuntime.Grok, AgentRuntime.Kimi]));
+		});
+	});
+
+	describe('terminatesBackgroundWork', () => {
+		it('is claimed only by Claude Code, the one CLI that reports it', () => {
+			const claiming = Object.values(AgentRuntime).filter(
+				(r) => RUNTIME_ADAPTERS[r].terminatesBackgroundWork,
+			);
+			expect(claiming).toEqual([AgentRuntime.ClaudeCode]);
+		});
+	});
+
+	describe('applyEffort', () => {
+		it('gives Claude Code its own prompt vocabulary and no flags', () => {
+			const r = applyEffortToRuntime(AgentRuntime.ClaudeCode, AgentEffort.Max);
+			expect(r.promptDirective).toBe('ultrathink');
+			expect(r.extraArgs).toEqual([]);
+			expect(r.extraEnv).toEqual([]);
+		});
+
+		it('gives Codex a config flag and Kimi an env var', () => {
+			expect(applyEffortToRuntime(AgentRuntime.Codex, AgentEffort.High).extraArgs).toEqual([
+				'-c',
+				'model_reasoning_effort=high',
+			]);
+			expect(applyEffortToRuntime(AgentRuntime.Kimi, AgentEffort.Max).extraEnv).toEqual([
+				'KIMI_MODEL_THINKING_EFFORT=max',
+			]);
+		});
+
+		it('falls back to the portable directive for a runtime with no native lever', () => {
+			// OpenCode writes effort into its own config; Grok's flag values are not
+			// stable. Both are steered by the prompt alone.
+			for (const runtime of [AgentRuntime.OpenCode, AgentRuntime.Grok]) {
+				const r = applyEffortToRuntime(runtime, AgentEffort.High);
+				expect(r.extraArgs, runtime).toEqual([]);
+				expect(r.extraEnv, runtime).toEqual([]);
+				expect(r.promptDirective, runtime).toContain('Reason deeply');
+			}
+		});
+	});
+});
+
+// The rule this seam exists to keep (AGENTS.md, Code design): a CLI's or model
+// provider's own quirks live in its adapter, never in generic code. A grep is the
+// only thing that can enforce it - a branch on a runtime compiles perfectly well.
+describe('no runtime or provider branching outside the adapters', () => {
+	const SRC_ROOTS = [
+		resolve(__dirname, '../src'),
+		resolve(__dirname, '../../shared/src'),
+		resolve(__dirname, '../../web/src'),
+	];
+
+	// A comparison or a switch case. Table KEYS (`[AgentRuntime.Codex]: …`) are the
+	// sanctioned form and deliberately not matched.
+	const BRANCH_RE = /(===|!==|case)\s*(AgentRuntime|AiProvider)\./;
+
+	/**
+	 * The one self-identifying predicate: it answers "is this a Claude Code run
+	 * against a third-party endpoint", so naming the runtime IS the question, not a
+	 * branch in generic flow. It cannot live in the adapter without a cycle - the
+	 * Claude Code adapter already imports the judge module that calls it.
+	 */
+	const ALLOWED = ['types/common.ts:claudeCodeProviderUsesCustomEndpoint'];
+
+	const walk = (dir: string): string[] =>
+		readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+			const full = join(dir, e.name);
+			if (e.isDirectory()) return e.name === 'node_modules' ? [] : walk(full);
+			return /\.tsx?$/.test(e.name) ? [full] : [];
+		});
+
+	it('finds no branch on a runtime or provider in generic code', () => {
+		const offenders: string[] = [];
+		for (const root of SRC_ROOTS) {
+			for (const file of walk(root)) {
+				if (file.includes('/runtime-adapters/')) continue;
+				readFileSync(file, 'utf8')
+					.split('\n')
+					.forEach((line, i) => {
+						if (!BRANCH_RE.test(line)) return;
+						if (ALLOWED.some((a) => file.endsWith(a.split(':')[0]))) return;
+						offenders.push(
+							`${file.replace(resolve(__dirname, '../..'), '')}:${i + 1} ${line.trim()}`,
+						);
+					});
+			}
+		}
+		expect(offenders, `move this into the runtime's adapter:\n${offenders.join('\n')}`).toEqual([]);
 	});
 });

@@ -1,11 +1,12 @@
 import { join } from 'node:path';
+import { GENERIC_PROMPT_DIRECTIVE } from '../effort';
 import { buildGeminiJudgeScript } from '../stop-hook-prompt';
 import type {
 	McpHttpDescriptor,
 	McpInjection,
 	McpInjectionFile,
 	McpStdioDescriptor,
-	RuntimeMcpAdapter,
+	RuntimeAdapter,
 } from './types';
 
 interface GeminiHttpEntry {
@@ -88,12 +89,30 @@ function buildStdioEntry(d: McpStdioDescriptor): GeminiStdioEntry {
 
 const JUDGE_SCRIPT_BASENAME = 'stop-hook-judge.mjs';
 
-export const geminiAdapter: RuntimeMcpAdapter = {
+/**
+ * The Gemini CLI refuses to run in an "untrusted" folder and silently downgrades
+ * `--yolo` to manual tool approval, which hangs a headless run. Hezo agents run
+ * headless in `/workspace`, so the workspace is trusted explicitly - the
+ * documented headless setting (https://geminicli.com/docs/cli/trusted-folders).
+ */
+const GEMINI_RUNTIME_ENV = {
+	GEMINI_CLI_TRUST_WORKSPACE: 'true',
+} as const;
+
+export const geminiAdapter: RuntimeAdapter = {
 	capabilities: {
 		transport: 'streamable-http',
 		bearerTokenStorage: 'inline',
 		requiresHomeDir: true,
 	},
+	constantEnv: GEMINI_RUNTIME_ENV,
+	// The CLI reads the Hezo ladder's own spellings straight off this variable, so
+	// no mapping table is needed here.
+	applyEffort: (effort) => ({
+		extraArgs: [],
+		extraEnv: [`GEMINI_REASONING_EFFORT=${effort}`],
+		promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
+	}),
 	build(descriptors, ctx): McpInjection {
 		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {
 			throw new Error('gemini mcp adapter requires hostHomeDir and containerHomeDir');

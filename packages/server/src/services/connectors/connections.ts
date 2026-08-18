@@ -8,7 +8,7 @@ import {
 import type { Db } from '../../db/database';
 import { credentialPlaceholder } from '../../lib/credential-placeholder';
 import { logger } from '../../logger';
-import type { McpDescriptor } from '../mcp-injectors';
+import type { McpDescriptor } from '../runtime-adapters';
 
 const log = logger.child('connectors');
 

@@ -1,7 +1,7 @@
 import { hostMatchesAllowedHosts } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
-import type { McpDescriptor } from '../src/services/mcp-injectors/types';
+import type { McpDescriptor } from '../src/services/runtime-adapters/types';
 import {
 	buildTunnelHostPolicy,
 	hostNeedsProxy,

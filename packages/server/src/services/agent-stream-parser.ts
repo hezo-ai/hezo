@@ -18,7 +18,7 @@
  * tokens uniformly across runtimes.
  */
 import { AgentRuntime, type CostTokens } from '@hezo/shared';
-import { HEZO_MCP_SERVER_NAME } from './mcp-injectors/types';
+import { HEZO_MCP_SERVER_NAME } from './runtime-adapters/types';
 
 export interface AgentRunUsage {
 	inputTokens: number;
@@ -110,38 +110,38 @@ export function createAgentStreamParser(
 	price: PriceModelFn = NO_PRICE,
 	runModel?: string | null,
 ): AgentStreamParser {
-	switch (runtime) {
-		case AgentRuntime.ClaudeCode:
-			return createClaudeCodeParser(price);
-		// Codex names no model in its stream (see `createCodexParser`), so like
-		// OpenCode it depends on the run's own model to price at all.
-		case AgentRuntime.Codex:
-			return createCodexParser(price, runModel?.trim() || undefined);
-		case AgentRuntime.Gemini:
-			return createGeminiParser(price);
-		// OpenCode (`run --format json`) emits JSONL but with shapes that vary
-		// across versions and aren't fully documented. The generic parser is
-		// lenient — it renders recognizable assistant text / tool activity and
-		// captures token usage from whatever terminal event carries it, dropping
-		// anything it doesn't recognize so the log stays clean. It names no model
-		// anywhere in the stream, so pricing depends on the run's own model.
-		case AgentRuntime.OpenCode:
-			return createGenericJsonlParser(price, runModel?.trim() || undefined);
-		// Grok's `streaming-json` emits thought/text/end events and NO token usage;
-		// usage is recovered post-run from the `--debug-file` (see the runner and
-		// `extractGrokUsageFromDebugLog`), so this parser's getUsage() stays null.
-		case AgentRuntime.Grok:
-			return createGrokParser();
-		// Kimi Code's `stream-json` is role-discriminated JSONL and, like Grok,
-		// carries no token usage; usage is recovered post-run from the per-session
-		// `wire.jsonl` (see the runner and `extractKimiUsageFromSessionLog`), so this
-		// parser's getUsage() stays null.
-		case AgentRuntime.Kimi:
-			return createKimiParser();
-		default:
-			return createPassthroughParser();
-	}
+	return (STREAM_PARSER_FACTORIES[runtime] ?? createPassthroughParser)(
+		price,
+		runModel?.trim() || undefined,
+	);
 }
+
+/**
+ * Which parser reads which CLI's stream. A `Record` rather than a switch so a
+ * runtime added to the enum without a parser is a compile error.
+ *
+ * Every factory takes the same two arguments and ignores what it does not need:
+ * Claude Code and Gemini name their model in the stream, while Codex, OpenCode
+ * and the two usage-less runtimes do not, and depend on the run's own model to
+ * price at all.
+ */
+const STREAM_PARSER_FACTORIES: Record<
+	AgentRuntime,
+	(price: PriceModelFn, runModel: string | undefined) => AgentStreamParser
+> = {
+	[AgentRuntime.ClaudeCode]: (price) => createClaudeCodeParser(price),
+	[AgentRuntime.Codex]: (price, runModel) => createCodexParser(price, runModel),
+	[AgentRuntime.Gemini]: (price) => createGeminiParser(price),
+	// OpenCode emits JSONL whose shapes vary across versions and are not fully
+	// documented, so it gets the lenient generic parser: recognizable text and
+	// tool activity render, usage is taken from whatever terminal event carries
+	// it, and unrecognized events are dropped so the log stays clean.
+	[AgentRuntime.OpenCode]: (price, runModel) => createGenericJsonlParser(price, runModel),
+	// Grok and Kimi Code report no usage on their streams at all; it is recovered
+	// post-run from a file their adapter names, so getUsage() here stays null.
+	[AgentRuntime.Grok]: () => createGrokParser(),
+	[AgentRuntime.Kimi]: () => createKimiParser(),
+};
 
 function createPassthroughParser(): AgentStreamParser {
 	return {
@@ -273,23 +273,23 @@ export function createAgentChatParser(
 	price: PriceModelFn = NO_PRICE,
 	runModel?: string | null,
 ): AgentChatParser {
-	switch (runtime) {
-		case AgentRuntime.ClaudeCode:
-			return createClaudeChatParser(price);
-		case AgentRuntime.Codex:
-			return createCodexChatParser(price, runModel?.trim() || undefined);
-		case AgentRuntime.Gemini:
-			return createGeminiChatParser(price);
-		case AgentRuntime.OpenCode:
-			return createGenericChatParser(price, runModel?.trim() || undefined);
-		case AgentRuntime.Grok:
-			return createGrokChatParser();
-		case AgentRuntime.Kimi:
-			return createKimiChatParser();
-		default:
-			return { onStdout: () => [], flush: () => [], getUsage: () => null };
-	}
+	const factory = CHAT_PARSER_FACTORIES[runtime];
+	if (!factory) return { onStdout: () => [], flush: () => [], getUsage: () => null };
+	return factory(price, runModel?.trim() || undefined);
 }
+
+/** The chat-side counterpart of {@link STREAM_PARSER_FACTORIES}, same contract. */
+const CHAT_PARSER_FACTORIES: Record<
+	AgentRuntime,
+	(price: PriceModelFn, runModel: string | undefined) => AgentChatParser
+> = {
+	[AgentRuntime.ClaudeCode]: (price) => createClaudeChatParser(price),
+	[AgentRuntime.Codex]: (price, runModel) => createCodexChatParser(price, runModel),
+	[AgentRuntime.Gemini]: (price) => createGeminiChatParser(price),
+	[AgentRuntime.OpenCode]: (price, runModel) => createGenericChatParser(price, runModel),
+	[AgentRuntime.Grok]: () => createGrokChatParser(),
+	[AgentRuntime.Kimi]: () => createKimiChatParser(),
+};
 
 function createClaudeChatParser(price: PriceModelFn): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
@@ -531,7 +531,7 @@ function initToolNames(tools: unknown[] | undefined): string[] {
 /**
  * How many tools each MCP server contributed, counted by the
  * `mcp__<server>__<tool>` namespace the injector builds (see
- * `mcp-injectors/claude-code.ts`).
+ * `runtime-adapters/claude-code.ts`).
  *
  * Matched against the server names the event itself reports rather than by
  * splitting on `__`, so a connector whose own name contains the separator is
@@ -1239,6 +1239,35 @@ interface GenericTokenBuckets {
  * names, and cache-creation is kept rather than dropped - it is the dominant
  * bucket on a first step and is billed at its own rate.
  */
+/**
+ * Pull a message out of an OpenCode error event.
+ *
+ * Its API errors arrive as `{ name, data: { message, statusCode, … } }`, which
+ * the shared flat probe finds nothing in. The class name and HTTP status are
+ * folded into the text because the status is frequently the only part
+ * {@link classifyRuntimeError} can act on - OpenRouter answers a rejected key
+ * with `User not found.`, which names no auth problem at all. Nothing else on
+ * `data` is read: it also carries the whole upstream response header set, which
+ * never belongs in a log line.
+ */
+function extractOpencodeError(event: Record<string, unknown>): string {
+	const error = isRecord(event.error) ? event.error : undefined;
+	if (error && isRecord(error.data)) {
+		const data = error.data;
+		const message = firstString(data, ['message']);
+		if (message) {
+			const name = firstString(error, ['name']);
+			const status = typeof data.statusCode === 'number' ? data.statusCode : undefined;
+			const prefix = name && !message.startsWith(name) ? `${name}: ` : '';
+			return `${prefix}${message}${status ? ` (HTTP ${status})` : ''}`;
+		}
+	}
+	return extractErrorMessage(
+		event.error as { message?: string } | string | undefined,
+		typeof event.message === 'string' ? event.message : undefined,
+	);
+}
+
 function extractGenericUsage(event: Record<string, unknown>): GenericTokenBuckets | null {
 	const part = isRecord(event.part) ? event.part : undefined;
 	const u = [event.usage, event.tokens, event.stats, part?.usage, part?.tokens].find(isRecord);
@@ -1332,10 +1361,7 @@ function createGenericJsonlParser(
 		const captured = extractGenericUsage(event);
 		if (captured) tokens = addGenericUsage(tokens, captured);
 
-		const errText = extractErrorMessage(
-			event.error,
-			typeof event.message === 'string' ? event.message : undefined,
-		);
+		const errText = extractOpencodeError(event);
 		if (/error|fail/i.test(type) && errText) {
 			// Retained as well as rendered: the log line explains the step, while the
 			// retained value is what reaches the run row so a failure states its cause
@@ -1965,28 +1991,15 @@ function extractToolResultText(content: unknown): string {
 }
 
 /**
- * Pull a human-readable message out of an event's error field.
- *
- * Three shapes are probed because the runtimes disagree: a bare string, a flat
- * `{ message }`, and a nested `{ name, data: { message, statusCode } }`. The
- * class name and HTTP status are folded into the returned text when present -
- * the status is what lets {@link classifyRuntimeError} recognise an auth or
- * billing rejection, which the message alone frequently does not name ("User
- * not found." for a rejected key). Nothing else on the error is read: the
- * nested form also carries the whole upstream response header set, which never
- * belongs in a log line.
+ * The two error envelopes shared across runtimes: a bare string, or an object
+ * carrying `message`. A runtime whose envelope differs unwraps it in its own
+ * section and passes the result here, rather than teaching this probe its shape.
  */
-function extractErrorMessage(error: unknown, fallback?: string): string {
+function extractErrorMessage(
+	error: { message?: string } | string | undefined,
+	fallback?: string,
+): string {
 	if (typeof error === 'string' && error) return error;
-	if (isRecord(error)) {
-		const data = isRecord(error.data) ? error.data : undefined;
-		const message = firstString(error, ['message']) ?? (data && firstString(data, ['message']));
-		if (message) {
-			const name = firstString(error, ['name']);
-			const status = data && typeof data.statusCode === 'number' ? data.statusCode : undefined;
-			const prefix = name && !message.startsWith(name) ? `${name}: ` : '';
-			return `${prefix}${message}${status ? ` (HTTP ${status})` : ''}`;
-		}
-	}
+	if (error && typeof error === 'object' && typeof error.message === 'string') return error.message;
 	return typeof fallback === 'string' ? fallback : '';
 }

@@ -3387,10 +3387,38 @@ sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has
 its per-run `opencode.json` (see below); `grok` steers effort through the portable prompt
 directive alone. It's also exposed as `HEZO_AGENT_EFFORT`.
 
-**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, six
+**Per-runtime wiring** lives in the runtime adapters (`services/runtime-adapters/`, six
 adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
 servers, and wires the stop-hook.
+
+**This directory is the only place a runtime is named**, and that is the point of it. The
+run pipeline holds an `AgentRuntime` it never inspects: it asks `RUNTIME_ADAPTERS[runtime]`
+and gets an answer. Beyond the MCP artifacts each adapter also declares, all optional and
+absent for most runtimes:
+
+| Member | Answers | Declared by |
+|---|---|---|
+| `constantEnv` | env this CLI needs whatever provider drives it | Claude Code (telemetry off, background-wait ceiling lifted), Gemini (workspace trusted) |
+| `staticEnvValue` | rewrite one provider-table env value for this run | Claude Code (subagent tracks the run model on a third-party endpoint), Kimi (model name + its context window) |
+| `credentialEnv` | env implied by the credential rather than a table | Claude Code (a local provider's per-install endpoint, plus blanking the key it would otherwise prefer) |
+| `modelArg` | the form this CLI's `--model` accepts | Claude Code, OpenCode |
+| `extraArgs` | argv no shared table can express | Grok (`--debug-file` inside its own home) |
+| `recoverUsage` | usage for a CLI whose stream reports none | Grok, Kimi |
+| `applyEffort` | how this CLI is asked to reason harder | Claude Code, Codex, Gemini, Kimi |
+| `terminatesBackgroundWork` | can it exit 0 having killed unfinished work | Claude Code |
+
+An absent member means "nothing extra", never "unsupported" - the caller has a defined
+answer either way, so no call site needs to know which runtime it holds. The rule is
+enforced by a grep test in `runtime-adapters.test.ts`: a `=== AgentRuntime.X`, `!==` or
+`case` anywhere in `packages/*/src` outside this directory fails the suite, because a branch
+on a runtime compiles perfectly well and nothing else would catch it. The one allowed
+exception is `claudeCodeProviderUsesCustomEndpoint`, where naming the runtime *is* the
+question being asked rather than a branch in generic flow.
+
+The same rule covers AI providers, which have no per-provider module: their quirks live as
+rows in a per-provider table (`PROVIDER_RUNTIME_ADAPTERS`, `SUBSCRIPTION_VALIDATORS`,
+`PROVIDER_MODEL_READERS`, `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`) rather than as branches.
 
 **Prompt delivery** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE`) has three
 modes. `stdin` redirects the prompt file into the CLI — Claude Code, Codex, Gemini and
@@ -3435,7 +3463,7 @@ a hang regression is a timeout rather than a passing string match, an E2BIG regr
 asserted non-zero exit, and the two copies cannot drift.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
-TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its
+TOML rendering for the Codex config lives in `runtime-adapters/toml.ts`. Kimi Code splits its
 configuration in two — MCP servers in `mcp.json`, the `[[hooks]]` Stop entry and
 `[permission.rules]` in `config.toml`, both under `$KIMI_CODE_HOME` — and is the only adapter
 whose per-server tool filter maps one-to-one onto the descriptor (`enabledTools` /
@@ -3513,7 +3541,7 @@ resulting reasoning parts on the `--format json` stream for the log.
 **Kimi Code** (`mcp.json`) raises per-server `startupTimeoutMs`/`toolTimeoutMs` from its 30 s /
 60 s defaults; these are set per-server rather than through the global
 `KIMI_MCP_*_TIMEOUT_MS` env vars so one slow connector can't be masked by a blanket override.
-All values live as named constants in each `mcp-injectors/*.ts` adapter.
+All values live as named constants in each `runtime-adapters/*.ts` adapter.
 
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing

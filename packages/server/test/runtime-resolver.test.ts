@@ -97,7 +97,15 @@ describe('resolveRuntimeForTask', () => {
 			'google-two',
 		);
 
-		await db.query(`UPDATE ai_provider_configs SET is_default = false`);
+		// Backdated so "oldest" is a fact rather than a tie: both inserts can land in
+		// the same millisecond, and the assertion is about age, not about which of two
+		// equally-aged rows the database happens to return first.
+		await db.query(
+			`UPDATE ai_provider_configs
+			    SET is_default = false,
+			        created_at = CASE WHEN provider = $1 THEN now() - interval '1 hour' ELSE now() END`,
+			[AiProvider.OpenAI],
+		);
 
 		expect(await resolveRuntimeForTask(db, null)).toEqual({
 			ok: true,
@@ -247,7 +255,14 @@ describe('resolveRuntimeForTask', () => {
 		);
 		// No row carries the flag — nothing was designated, so nothing is being
 		// substituted for and the oldest verified credential is the honest answer.
-		await db.query(`UPDATE ai_provider_configs SET is_default = false`);
+		// Backdated for the same reason as above: two inserts can share a millisecond,
+		// and this asserts on age rather than on tie-breaking order.
+		await db.query(
+			`UPDATE ai_provider_configs
+			    SET is_default = false,
+			        created_at = CASE WHEN provider = $1 THEN now() - interval '1 hour' ELSE now() END`,
+			[AiProvider.DeepSeek],
+		);
 
 		expect(await resolveRuntimeForTask(db, null)).toEqual({
 			ok: true,

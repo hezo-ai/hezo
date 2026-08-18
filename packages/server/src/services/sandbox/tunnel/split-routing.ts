@@ -1,6 +1,6 @@
 import { hostMatchesAllowedHosts } from '@hezo/shared';
 import type { Db } from '../../../db/database';
-import type { McpDescriptor } from '../../mcp-injectors/types';
+import type { McpDescriptor } from '../../runtime-adapters/types';
 
 /**
  * Which hosts a container must send through Hezo's egress proxy, and which it
