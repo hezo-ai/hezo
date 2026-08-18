@@ -121,10 +121,12 @@ export function ModelPicker({
 				emptyLabel={t('settings.provider.model.empty')}
 				loading={models.isFetching}
 				loadingLabel={t('settings.provider.model.loading')}
+				// `||`, not `??`: an upstream failure can carry an empty `message`, and a
+				// blank row reads as "no error" in the one place that has to say there was.
 				errorLabel={
 					models.error
-						? ((models.error as { message?: string }).message ??
-							t('settings.provider.model.loadFailed'))
+						? (models.error as { message?: string }).message ||
+							t('settings.provider.model.loadFailed')
 						: null
 				}
 				contentClassName="w-[300px]"
