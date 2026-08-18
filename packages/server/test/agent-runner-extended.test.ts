@@ -12,7 +12,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decrypt, encrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { runLogTextSql } from '../src/db/run-log-chunks';
 import { DomainEventBus } from '../src/events/bus';
+import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import {
 	buildTaskPrompt,
@@ -24,6 +26,7 @@ import {
 	type RunnerDeps,
 	runAgent,
 } from '../src/services/agent-runner';
+import type { ConnectorRunRejection, RunProxyScope } from '../src/services/egress/proxy';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { PricingService, upsertManualRate } from '../src/services/pricing';
 import type { ContainerEngine } from '../src/services/sandbox/types';
@@ -37,6 +40,7 @@ import {
 	stubEngineSeams,
 } from './helpers/app';
 import { withRunUserStub } from './helpers/run-user-docker';
+import { startTestMcpHttpServer } from './helpers/test-mcp-http-server';
 
 // Read the prompt the run wrote to its host prompt file, located from the
 // HEZO_PROMPT_FILE env var captured off the exec opts.
@@ -246,11 +250,15 @@ function baseDeps(docker: ContainerEngine, extra: Partial<RunnerDeps> = {}): Run
 /** Minimal in-process fake of the egress proxy used by runAgent. */
 function fakeEgressProxy() {
 	const calls = { allocated: [] as string[], released: [] as string[] };
+	const scopes: RunProxyScope[] = [];
 	return {
 		calls,
+		/** Every scope a run allocated with, so a test can drive its callbacks. */
+		scopes,
 		proxy: {
-			allocateRunProxy: async (runId: string, _ctx: unknown) => {
+			allocateRunProxy: async (runId: string, scope: RunProxyScope) => {
 				calls.allocated.push(runId);
+				scopes.push(scope);
 				return { proxyHost: '127.0.0.1', proxyPort: 18080, token: 'testtoken0123456789abcdef' };
 			},
 			releaseRunProxy: async (runId: string) => {
@@ -353,6 +361,78 @@ describe('runAgent — egress proxy + ssh agent env injection', () => {
 		expect(egress.calls.released).toContain(result.heartbeatRunId);
 		expect(ssh.calls.allocated).toContain(result.heartbeatRunId);
 		expect(ssh.calls.released).toContain(result.heartbeatRunId);
+	});
+
+	it('writes a connector refusal into the run log twice: what the run saw, then the re-check', async () => {
+		// The proxy reporting a hosted connector's refusal is covered in
+		// egress-connector-rejection.test.ts; this drives the run's side of it.
+		// The connector is api-key credentialed and its server refuses everything,
+		// so Hezo's own re-check confirms the credential is dead and records it -
+		// the same write that lights the project banner and "Needs reconnect".
+		const refusing = await startTestMcpHttpServer({ failWithStatus: 401 });
+		const secret = await db.query<{ id: string }>(
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+			 VALUES ('MCP_IBKR_RUN_KEY', $1, 'api_token'::secret_category, '{127.0.0.1}') RETURNING id`,
+			[encrypt('live-key', masterKeyManager.getKey()!)],
+		);
+		const connector = await db.query<{ id: string }>(
+			`INSERT INTO mcp_connections (name, kind, config, install_status, project_id, activated_at, api_key_secret_id)
+			 VALUES ('ibkr', 'saas', $1::jsonb, 'installed', $2, now(), $3) RETURNING id`,
+			[
+				JSON.stringify({ url: `http://127.0.0.1:${refusing.port}/mcp` }),
+				projectId,
+				secret.rows[0].id,
+			],
+		);
+		const egress = fakeEgressProxy();
+		const rejection: ConnectorRunRejection = {
+			connectorId: connector.rows[0].id,
+			connectorName: 'ibkr',
+			credentialed: true,
+			kind: 'upstream_rejected',
+			status: 401,
+			reason: 'http_401',
+			credentialSent: true,
+		};
+		const docker = createMockDocker(taskId, {
+			execStart: async () => {
+				// The CLI's MCP client hits the connector at startup; the proxy sees the
+				// 401 and reports it while the exec is still running.
+				egress.scopes[0]?.onConnectorRejection?.(rejection);
+				await waitForBackground();
+				return { stdout: 'ok', stderr: '' };
+			},
+			execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
+		});
+		try {
+			const result = await runAgent(
+				baseDeps(docker, {
+					egressProxy: egress.proxy,
+					egressCAPath: '/tmp/test-data/egress-ca.crt',
+				}),
+				makeAgent(),
+				makeTask(),
+				makeProject(),
+			);
+			const row = await db.query<{ log_text: string }>(
+				`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+				[result.heartbeatRunId],
+			);
+			expect(row.rows[0].log_text).toContain(
+				'[runner] WARNING: connector "ibkr" refused this run\'s request (HTTP 401) although its credential was sent.',
+			);
+			expect(row.rows[0].log_text).toContain(
+				'[runner] connector "ibkr": Hezo\'s re-check confirms the credential is no longer accepted',
+			);
+			const health = await db.query<{ auth_error: string | null }>(
+				`SELECT auth_error FROM mcp_connections WHERE id = $1`,
+				[connector.rows[0].id],
+			);
+			expect(health.rows[0].auth_error).toContain('401');
+		} finally {
+			await refusing.close();
+			await db.query(`DELETE FROM mcp_connections WHERE id = $1`, [connector.rows[0].id]);
+		}
 	});
 
 	it('wraps the exec command with the ssh bridge runner argv when an agent server is present', async () => {

@@ -44,6 +44,7 @@ import type { Db } from '../db/database';
 import { appendRunLogChunks, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
+import { trackBackground } from '../lib/background';
 import { broadcastProjectUpdate, broadcastRowChange } from '../lib/broadcast';
 import { commentCategoryPredicate } from '../lib/comment-filters';
 import { describeSignalExit, signalFromExitCode } from '../lib/exit-code';
@@ -84,6 +85,7 @@ import {
 	resolveWarnableSlugs,
 } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
+import { describeConnectorRejection, recheckRejectedConnector } from './connectors/run-rejection';
 import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerRunUser,
@@ -1953,6 +1955,32 @@ export async function runAgent(
 				agentId: agent.id,
 				projectId: project.id,
 				label: runLabel,
+				// A hosted connector refusing this run is reported in two lines: what
+				// the run saw, right away, and what Hezo's own re-check of the
+				// connector found, when it lands. The re-check writes the connector's
+				// health through its sanctioned writer, so the Connectors page and its
+				// banner follow from the same call; a verdict arriving after the log
+				// closed goes to the server log instead of nowhere.
+				onConnectorRejection: (event) => {
+					emit('stderr', `\n[runner] WARNING: ${describeConnectorRejection(event, runtimeType)}\n`);
+					trackBackground(
+						recheckRejectedConnector(
+							{ db: deps.db, masterKeyManager: deps.masterKeyManager, wsManager: deps.wsManager },
+							event,
+							{
+								runId: heartbeatRunId,
+								label: runLabel,
+								teamId: project.team_id,
+								projectId: project.id,
+							},
+						)
+							.then((verdict) => {
+								if (deps.logs.isActive(streamId)) emit('stderr', `[runner] ${verdict}\n`);
+								else log.warn(`Run ${heartbeatRunId}: ${verdict}`);
+							})
+							.catch((e) => log.error(`Run ${heartbeatRunId}: connector re-check failed:`, e)),
+					);
+				},
 			});
 			egressAllocated = true;
 			egressProxyAllocated = true;

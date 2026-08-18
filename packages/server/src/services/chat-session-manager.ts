@@ -62,11 +62,13 @@ import {
 } from './chat-memory';
 import { detectNoWakeExits, formatNoWakeExitWarning } from './comment-wakeups';
 import { loadConnectorDescriptors } from './connectors/connections';
+import { reportConnectorRunRejection } from './connectors/run-rejection';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
 import { acquireRunContainer, type ContainerDeps } from './containers';
 import { getAgentSystemPrompt } from './documents';
 import type { EffortRuntimeApplication } from './effort';
+import type { ConnectorRunRejection } from './egress';
 import { applyEffortToRuntime } from './runtime-adapters';
 import { persistRotatedSubscriptionAuth } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
@@ -341,6 +343,8 @@ interface CurrentTurn {
 	assistantMessageId: string;
 	abort: AbortController;
 	promise: Promise<void>;
+	/** The turn's scope, so a session-wide event can be posted into the thread it concerns. */
+	ctx: ConversationContext;
 }
 
 /**
@@ -677,7 +681,7 @@ export class ChatSessionManager {
 
 		const abort = new AbortController();
 		const promise = this.runTurn(session, ctx, assistantMessageId, abort, input.injectedContext);
-		convo.current = { assistantMessageId, abort, promise };
+		convo.current = { assistantMessageId, abort, promise, ctx };
 		// Title the thread as early as possible: kick off title generation from the
 		// first user message *in parallel* with the reply (off its own prompt file, so
 		// the two execs never collide), so the switcher/rail label flips from "New
@@ -1382,6 +1386,7 @@ export class ChatSessionManager {
 					agentId: inputs.ceoMemberId,
 					projectId: inputs.projectId,
 					label,
+					onConnectorRejection: (event) => this.onConnectorRejection(event, inputs, sessionId),
 				});
 				egressHost = {
 					host: allocated.proxyHost,
@@ -1588,6 +1593,10 @@ export class ChatSessionManager {
 	): Promise<void> {
 		const { conversationId } = ctx;
 		const convo = this.getConvoRuntime(conversationId);
+		// The session's proxy outlives every turn, and a connector refusal is
+		// reported once per proxy - so each turn starts with a clean slate, or a
+		// connector that stayed broken would be reported on the first turn only.
+		this.deps.egressProxy?.resetConnectorRejections(session.sessionId);
 		const {
 			write: writePrompt,
 			remove: removePrompt,
@@ -1768,6 +1777,85 @@ export class ChatSessionManager {
 			}
 		} catch (e) {
 			log.error('CEO chat no-wake exit check failed', e);
+		}
+	}
+
+	/**
+	 * A hosted connector refused a request a turn of this session made. Same two
+	 * phases as a task run's log gets - the observed fact now, Hezo's re-check
+	 * verdict when it lands - posted as system messages into every conversation
+	 * with a turn in flight, since the session's proxy cannot tell which one the
+	 * request served. That imprecision is the same one the no-wake check accepts,
+	 * and its cost is a warning in a sibling thread rather than none anywhere.
+	 */
+	private onConnectorRejection(
+		event: ConnectorRunRejection,
+		inputs: HostSideInputs,
+		sessionId: string,
+	): void {
+		// Resolved now, not when the verdict lands: the re-check can outlast the
+		// turn that provoked it, and the verdict belongs in the thread that saw the
+		// refusal, whether or not it is still mid-turn by then.
+		const targets = [...this.convos.values()]
+			.map((convo) => convo.current?.ctx)
+			.filter((ctx): ctx is ConversationContext => ctx !== undefined);
+		trackBackground(
+			(async () => {
+				// The project's team, whose room the Connectors page listens on; the
+				// session itself is scoped to HQ.
+				const project = await this.deps.db.query<{ team_id: string }>(
+					'SELECT team_id FROM projects WHERE id = $1',
+					[inputs.projectId],
+				);
+				const post = (line: string) => this.postConnectorWarning(line, targets);
+				await reportConnectorRunRejection(
+					{
+						db: this.deps.db,
+						masterKeyManager: this.deps.masterKeyManager,
+						wsManager: this.deps.wsManager,
+					},
+					event,
+					{
+						runtime: inputs.runtimeType,
+						runId: sessionId,
+						label: 'chat',
+						teamId: project.rows[0]?.team_id ?? DEFAULT_TEAM_ID,
+						projectId: inputs.projectId,
+					},
+					{ observed: post, verdict: post },
+				);
+			})().catch((e) => log.error('CEO chat connector rejection report failed', e)),
+		);
+	}
+
+	/** One warning row per target thread; logged when there is none to post into. */
+	private async postConnectorWarning(
+		content: string,
+		targets: readonly ConversationContext[],
+	): Promise<void> {
+		if (targets.length === 0) {
+			log.warn(`CEO chat: ${content}`);
+			return;
+		}
+		for (const ctx of targets) {
+			const messageId = await this.insertMessage({
+				conversationId: ctx.conversationId,
+				role: ChatMessageRole.System,
+				channel: ctx.channel,
+				status: ChatMessageStatus.Complete,
+				content,
+				systemKind: ChatSystemMessageKind.ConnectorRefused,
+				completed: true,
+			});
+			this.broadcastStart(
+				ctx.conversationId,
+				messageId,
+				ChatMessageRole.System,
+				ctx.channel,
+				content,
+				undefined,
+				ChatSystemMessageKind.ConnectorRefused,
+			);
 		}
 	}
 

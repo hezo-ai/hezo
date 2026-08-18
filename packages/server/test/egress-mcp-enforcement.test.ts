@@ -1,6 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
-import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -9,6 +8,7 @@ import { type HezoCA, loadOrCreateCA } from '../src/services/egress/ca';
 import { EgressProxy } from '../src/services/egress/proxy';
 import { safeClose } from './helpers';
 import { createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import { rawRequestThroughProxy } from './helpers/egress-http';
 
 /**
  * The method allowlist enforced end-to-end through a live proxy.
@@ -58,31 +58,11 @@ function postThroughProxy(
 	body: string,
 	contentType = 'application/json',
 ): Promise<{ status: number; body: string }> {
-	const url = `http://${upstreamHost}/mcp`;
-	const lines = [
-		`POST ${url} HTTP/1.1`,
-		`Host: ${upstreamHost}`,
-		'Connection: close',
-		`Content-Type: ${contentType}`,
-		`Content-Length: ${Buffer.byteLength(body)}`,
-	];
-	const text = `${lines.join('\r\n')}\r\n\r\n${body}`;
-	return new Promise((resolve, reject) => {
-		const sock = connect({ host: '127.0.0.1', port });
-		const chunks: Buffer[] = [];
-		sock.on('connect', () => sock.write(text));
-		sock.on('data', (c: Buffer) => chunks.push(c));
-		sock.on('end', () => {
-			const all = Buffer.concat(chunks).toString();
-			const sep = all.indexOf('\r\n\r\n');
-			const head = sep === -1 ? all : all.slice(0, sep);
-			resolve({
-				status: Number(head.split('\r\n')[0]?.split(' ')[1] ?? '0'),
-				body: sep === -1 ? '' : all.slice(sep + 4),
-			});
-		});
-		sock.on('error', reject);
-		sock.setTimeout(20_000, () => sock.destroy(new Error('proxy fetch timed out')));
+	return rawRequestThroughProxy(port, {
+		method: 'POST',
+		url: `http://${upstreamHost}/mcp`,
+		headers: { 'Content-Type': contentType, 'Content-Length': String(Buffer.byteLength(body)) },
+		body,
 	});
 }
 
@@ -95,32 +75,13 @@ function postChunkedThroughProxy(
 	port: number,
 	body: string,
 ): Promise<{ status: number; body: string }> {
-	const url = `http://${upstreamHost}/mcp`;
-	const head = [
-		`POST ${url} HTTP/1.1`,
-		`Host: ${upstreamHost}`,
-		'Connection: close',
-		'Content-Type: application/json',
-		'Transfer-Encoding: chunked',
-	].join('\r\n');
 	// One chunk, then the terminating zero-length chunk.
 	const chunked = `${Buffer.byteLength(body).toString(16)}\r\n${body}\r\n0\r\n\r\n`;
-	return new Promise((resolve, reject) => {
-		const sock = connect({ host: '127.0.0.1', port });
-		const chunks: Buffer[] = [];
-		sock.on('connect', () => sock.write(`${head}\r\n\r\n${chunked}`));
-		sock.on('data', (c: Buffer) => chunks.push(c));
-		sock.on('end', () => {
-			const all = Buffer.concat(chunks).toString();
-			const sep = all.indexOf('\r\n\r\n');
-			const headPart = sep === -1 ? all : all.slice(0, sep);
-			resolve({
-				status: Number(headPart.split('\r\n')[0]?.split(' ')[1] ?? '0'),
-				body: sep === -1 ? '' : all.slice(sep + 4),
-			});
-		});
-		sock.on('error', reject);
-		sock.setTimeout(20_000, () => sock.destroy(new Error('proxy fetch timed out')));
+	return rawRequestThroughProxy(port, {
+		method: 'POST',
+		url: `http://${upstreamHost}/mcp`,
+		headers: { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' },
+		body: chunked,
 	});
 }
 
@@ -293,7 +254,7 @@ describe('egress enforcement of a connector method allowlist', () => {
 				JSON.stringify(['allowed_tool']),
 			],
 		);
-		const { loadConnectorsForRun, loadMcpHostRestrictions } = await import(
+		const { loadConnectorsForRun, loadMcpHostBindings } = await import(
 			'../src/services/connectors/connections'
 		);
 		// Never probed, so it is not handed to a run ...
@@ -301,10 +262,26 @@ describe('egress enforcement of a connector method allowlist', () => {
 			(await loadConnectorsForRun(db, projectId)).find((r) => r.name === 'unproven'),
 		).toBeUndefined();
 		// ... and its allowlist is enforced at the proxy all the same.
-		const restrictions = await loadMcpHostRestrictions(db, projectId);
-		const entry = [...restrictions.values()].find((r) => r.connectorName === 'unproven');
+		const bindings = await loadMcpHostBindings(db, projectId);
+		const entry = [...bindings.values()].find((b) => b.restriction?.connectorName === 'unproven');
 		expect(entry).toBeTruthy();
-		expect([...(entry?.enabled ?? [])]).toContain('allowed_tool');
+		expect([...(entry?.restriction?.enabled ?? [])]).toContain('allowed_tool');
+	});
+
+	it('binds an unrestricted connector for attribution without a restriction to enforce', async () => {
+		// The binding map now covers every hosted connector, so a refusal can be
+		// reported against the right one; only the restricted ones carry an
+		// allowlist, which is the half the inspection path keys on.
+		await seedConnector(null);
+		const { loadMcpHostBindings } = await import('../src/services/connectors/connections');
+		const bindings = await loadMcpHostBindings(db, projectId);
+		const entry = [...bindings.values()].find((b) =>
+			b.connectors.some((c) => c.name === 'tracker'),
+		);
+		expect(entry).toBeTruthy();
+		expect(entry?.restriction).toBeNull();
+		expect(entry?.connectors).toHaveLength(1);
+		expect(entry?.connectors[0]).toMatchObject({ pathname: '/mcp', credentialed: false });
 	});
 
 	it('does not restrict a host that no connector in this run covers', async () => {

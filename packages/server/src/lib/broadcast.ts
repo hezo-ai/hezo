@@ -75,7 +75,18 @@ export function broadcastConnectorChange(
 	action: ChangeAction,
 	row: Record<string, unknown>,
 ): void {
-	broadcastChange(c, wsRoom.team(ids.teamId), 'mcp_connections', action, {
+	broadcastConnectorRowChange(c.get('wsManager'), ids, action, row);
+}
+
+/** The same connector broadcast for a service with no request context - a run
+ * or a background check that changed a connector's recorded state. */
+export function broadcastConnectorRowChange(
+	wsManager: WebSocketManager | undefined,
+	ids: { teamId: string; projectId: string | null },
+	action: ChangeAction,
+	row: Record<string, unknown>,
+): void {
+	broadcastRowChange(wsManager, wsRoom.team(ids.teamId), 'mcp_connections', action, {
 		...row,
 		team_id: ids.teamId,
 		project_id: ids.projectId ?? (typeof row.project_id === 'string' ? row.project_id : null),

@@ -61,6 +61,12 @@ import { CountOverlayBadge } from '../ui/count-overlay-badge';
 import { Tooltip } from '../ui/tooltip';
 import { ConvertToTaskDialog } from './convert-to-task-dialog';
 
+/** System-message kinds rendered as an amber warning row rather than a marker. */
+const WARNING_SYSTEM_KINDS: ReadonlySet<ChatSystemMessageKind> = new Set<ChatSystemMessageKind>([
+	ChatSystemMessageKind.HandoffNotDelivered,
+	ChatSystemMessageKind.ConnectorRefused,
+]);
+
 /**
  * Floating chat with the CEO, pinned bottom-right (on portrait mobile screens
  * the launcher can be dragged elsewhere). Talks to the single global CEO
@@ -1047,19 +1053,21 @@ function MessageBubble({
 	// thread: reading it off the conversation would make every system row in a
 	// converted thread render as the converted-task link.
 	//
-	// A handoff warning carries a full sentence rather than a label, so unlike the
+	// A warning carries a full sentence rather than a label, so unlike the
 	// converted marker it wraps instead of truncating — its whole point is naming
-	// the task and the teammate who was not notified.
+	// the task and the teammate who was not notified, or the connector that
+	// refused the turn and what Hezo found when it re-checked.
 	if (
 		message.role === 'system' &&
-		message.system_kind === ChatSystemMessageKind.HandoffNotDelivered
+		message.system_kind &&
+		WARNING_SYSTEM_KINDS.has(message.system_kind)
 	) {
 		return (
 			<div
 				className="flex items-start gap-2 rounded-md bg-warning-soft px-3 py-2 text-[11.5px] leading-relaxed text-warning-soft-fg"
 				data-testid="chat-message"
 				data-role="system"
-				data-system-kind="handoff_not_delivered"
+				data-system-kind={message.system_kind}
 			>
 				<TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 				<span className="min-w-0">{message.content}</span>
