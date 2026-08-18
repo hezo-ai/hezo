@@ -1723,6 +1723,32 @@ line into the stream as they detect it. Stranded commits stay above all three: t
 only time-sensitive item, at the accepted cost that a run that committed and was then
 killed leaves the signal to the exit-code column.
 
+Beneath every one of them sits an unconditional backstop, and it is the rung that makes the
+run row's `error` non-nullable in practice. Each candidate above is conditional: two are
+gated on a clean exit, one on a signal, and the captured terminal error on the runtime
+having reported something the parser recognised. A CLI that exits non-zero having said
+nothing intelligible matched none of them, so the row kept `status='failed'`, a real
+`exit_code`, and a NULL reason - the board showed a bare "failed" and the log stopped at the
+`$` invocation echo. The backstop names the one fact such a run always carries, its exit
+code, and by doing so also repairs the `run_failed` task comment, which reads `run.error`
+and had nothing to print. It is deliberately last: it speaks only when nothing better can.
+
+Reaching that rung less often is a parser concern, not a runner one. `getTerminalError()`
+is what carries a runtime's own explanation onto the row, and a parser that returns null
+there sends every failure to the backstop. Claude Code, Grok and Kimi always reported one;
+Codex, Gemini and the generic (OpenCode) parser computed the text, rendered it to the log
+and threw it away, which is why a rejected provider credential on those runtimes surfaced as
+a bare exit code. All six now retain it, classified through `classifyRuntimeError` so a 401
+or 402 reads as an actionable sentence rather than the upstream's own wording.
+
+The messages themselves are nested inconsistently across runtimes, so `extractErrorMessage`
+probes three shapes: a bare string, a flat `{ message }`, and OpenCode's
+`{ name, data: { message, statusCode } }`. It folds the class name and HTTP status into the
+text it returns, because the status is frequently the only part a classifier can act on -
+OpenRouter answers a rejected key with `User not found.`, which names no auth problem at
+all. Nothing else on the error is read: that nested form also carries the whole upstream
+response header set, which must never reach a log line.
+
 **The tunnel is the only way a container reaches Hezo**, on every backend, with no gate and
 no second path. `RunEndpoints` always names container loopback, where the in-container
 client listens; `host.docker.internal` survives only for an operator-configured local model
@@ -3449,6 +3475,15 @@ line while every step's counts are still summed - one run summary rather than a 
 success banner between each pair of tool calls. Because OpenCode is documented to sometimes
 exit before its final `step_finish` (sst/opencode#26855, #31435), the parser writes that
 summary from `flush()` if no `[done]` was reached, rather than losing it with the event.
+
+**Two OpenCode flags exist for the failure path.** `--print-logs --log-level ERROR` puts the
+CLI's own diagnostics on **stderr**, leaving stdout pure JSON; the runner already relays
+stderr verbatim, so this needs no parser work and costs a healthy run almost nothing. It buys
+the provider and model behind a failure, which the JSON `error` event does not name and whose
+message is sometimes only `Unexpected server error`. The auto-approve flag is `--auto`: the
+table previously held Claude Code's `--dangerously-skip-permissions`, which OpenCode's parser
+accepts and ignores rather than rejecting, so the intent went unapplied for every run and
+would have become a hard failure the day OpenCode started refusing unknown arguments.
 
 **Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
 legitimately long agent/background work; every runtime is relaxed at its own config surface

@@ -779,6 +779,7 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 	let turns = 0;
 	let modelId: string | undefined = runModel;
 	let finalMessage: string | null = null;
+	let terminalError: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as CodexEvent;
@@ -827,7 +828,9 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 
 		if (type === 'error') {
 			const msg = extractErrorMessage(event.error, event.message);
-			return msg ? [`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`] : [];
+			if (!msg) return [];
+			terminalError = classifyRuntimeError(msg) ?? terminalError;
+			return [`[tool-error] ${msg.replace(/\s+/g, ' ').trim()}`];
 		}
 
 		return [];
@@ -836,7 +839,7 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 	return createJsonlParser(
 		renderEvent,
 		() => usage,
-		() => null,
+		() => terminalError,
 		() => finalMessage,
 	);
 }
@@ -976,6 +979,7 @@ interface GeminiEvent {
 function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let finalMessage: string | null = null;
+	let terminalError: string | null = null;
 	/**
 	 * Assistant text arrives as consecutive `message` events that are CHUNKS of
 	 * one answer, not whole answers - a reply of `HEZO-LIVE-OK` streams as
@@ -1033,13 +1037,20 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 			const costCents = priceGeminiModels(event.stats, price);
 			usage = { inputTokens: input, outputTokens: output, costCents };
 			const status = event.error ? 'error' : 'success';
+			if (event.error) {
+				const msg = extractErrorMessage(event.error);
+				if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
+			}
 			out.push(`[done] ${status} tokens=${input}/${output}`);
 			return out;
 		}
 
 		if (type === 'error') {
 			const msg = extractErrorMessage(event.error, event.message);
-			if (msg) out.push(msg.replace(/\s+/g, ' ').trim());
+			if (msg) {
+				terminalError = classifyRuntimeError(msg) ?? terminalError;
+				out.push(msg.replace(/\s+/g, ' ').trim());
+			}
 			return out;
 		}
 
@@ -1049,7 +1060,7 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 	return createJsonlParser(
 		renderEvent,
 		() => usage,
-		() => null,
+		() => terminalError,
 		// Flushed here too: a run whose last event is an assistant chunk has text
 		// still buffered, and the final message is exactly what the handoff net
 		// would deliver.
@@ -1300,6 +1311,7 @@ function createGenericJsonlParser(
 	let modelId: string | undefined = fallbackModelId;
 	let finalMessage: string | null = null;
 	let doneEmitted = false;
+	let terminalError: string | null = null;
 
 	// The running total rather than the terminal step's own counts: the line reads
 	// as what the whole run spent, which is what it is once several steps report.
@@ -1321,10 +1333,14 @@ function createGenericJsonlParser(
 		if (captured) tokens = addGenericUsage(tokens, captured);
 
 		const errText = extractErrorMessage(
-			event.error as { message?: string } | string | undefined,
+			event.error,
 			typeof event.message === 'string' ? event.message : undefined,
 		);
 		if (/error|fail/i.test(type) && errText) {
+			// Retained as well as rendered: the log line explains the step, while the
+			// retained value is what reaches the run row so a failure states its cause
+			// somewhere the reader does not have to open the log to find.
+			terminalError = classifyRuntimeError(errText) ?? terminalError;
 			return [`[tool-error] ${errText.replace(/\s+/g, ' ').trim()}`];
 		}
 
@@ -1367,7 +1383,7 @@ function createGenericJsonlParser(
 	const base = createJsonlParser(
 		renderEvent,
 		() => (tokens ? priceGenericUsage(tokens, price, modelId) : null),
-		() => null,
+		() => terminalError,
 		() => finalMessage,
 	);
 
@@ -1948,11 +1964,29 @@ function extractToolResultText(content: unknown): string {
 	return '';
 }
 
-function extractErrorMessage(
-	error: { message?: string } | string | undefined,
-	fallback?: string,
-): string {
+/**
+ * Pull a human-readable message out of an event's error field.
+ *
+ * Three shapes are probed because the runtimes disagree: a bare string, a flat
+ * `{ message }`, and a nested `{ name, data: { message, statusCode } }`. The
+ * class name and HTTP status are folded into the returned text when present -
+ * the status is what lets {@link classifyRuntimeError} recognise an auth or
+ * billing rejection, which the message alone frequently does not name ("User
+ * not found." for a rejected key). Nothing else on the error is read: the
+ * nested form also carries the whole upstream response header set, which never
+ * belongs in a log line.
+ */
+function extractErrorMessage(error: unknown, fallback?: string): string {
 	if (typeof error === 'string' && error) return error;
-	if (error && typeof error === 'object' && typeof error.message === 'string') return error.message;
+	if (isRecord(error)) {
+		const data = isRecord(error.data) ? error.data : undefined;
+		const message = firstString(error, ['message']) ?? (data && firstString(data, ['message']));
+		if (message) {
+			const name = firstString(error, ['name']);
+			const status = data && typeof data.statusCode === 'number' ? data.statusCode : undefined;
+			const prefix = name && !message.startsWith(name) ? `${name}: ` : '';
+			return `${prefix}${message}${status ? ` (HTTP ${status})` : ''}`;
+		}
+	}
 	return typeof fallback === 'string' ? fallback : '';
 }

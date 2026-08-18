@@ -2684,6 +2684,18 @@ export async function runAgent(
 			// otherwise lives only in the log; surface it on the run row so the board
 			// shows why the run failed instead of a bare "failed".
 			const terminalError = success ? null : parser.getTerminalError();
+			// The backstop that keeps a failed run from reporting nothing. Every cause
+			// above is conditional: two are gated on a clean exit, one on a signal, and
+			// the last on the runtime having reported something the parser recognises. A
+			// CLI that exits non-zero having said nothing intelligible - a rejected
+			// credential, an argument the CLI refused, a runtime whose parser extracts no
+			// terminal error - matches none of them, and without this the row carries a
+			// status and an exit code but no reason. It claims only what is certain: the
+			// exit code is the one fact such a run always leaves behind.
+			const unexplainedExitError =
+				!success && !exitedClean
+					? `agent CLI exited with code ${execOutcome.exitCode} without reporting a reason - see the log above for anything the CLI printed`
+					: undefined;
 			// Ordered by what the human has to act on. Stranded commits come first
 			// because they are the only one where the fix is time-sensitive: the work
 			// exists in exactly one container.
@@ -2712,6 +2724,7 @@ export async function runAgent(
 			else if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 			else if (reportedNoWork && !producedOutput)
 				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
+			else if (unexplainedExitError) emit('stderr', `\n[runner] ${unexplainedExitError}\n`);
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -2727,6 +2740,7 @@ export async function runAgent(
 						signalError ??
 						terminalError ??
 						noOutputError ??
+						unexplainedExitError ??
 						undefined,
 					// Grok's usage comes from the debug log (runUsage); every other
 					// runtime reports it on the stream (parser.getUsage()).

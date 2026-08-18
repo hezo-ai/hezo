@@ -575,6 +575,127 @@ describe('runAgent', () => {
 		expect(run.rows[0].error).toContain('produced no output');
 	});
 
+	// The backstop. Every other cause is conditional - two on a clean exit, one on
+	// a signal, one on the runtime having reported something the parser knows - so
+	// a CLI that exits non-zero saying nothing intelligible used to leave the run
+	// row's reason NULL, and the board showed a bare "failed".
+	it('records a reason for a non-zero exit the runtime never explained', async () => {
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker({
+				producesOutput: false,
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 1, Running: false, Pid: 0 }),
+			}),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(result.success).toBe(false);
+		expect(result.exitCode).toBe(1);
+
+		const run = await db.query<{ status: string; exit_code: number; error: string | null }>(
+			'SELECT status, exit_code, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Failed);
+		expect(run.rows[0].exit_code).toBe(1);
+		expect(run.rows[0].error).toContain('exited with code 1');
+	});
+
+	// The whole chain for the failure this was written against: OpenCode nests a
+	// rejected credential under `error.data`, and every link between that event and
+	// the run row used to drop it - so the board said "failed" and nothing else.
+	it('lands an OpenCode provider rejection on the run row as an actionable reason', async () => {
+		const errorEvent = JSON.stringify({
+			type: 'error',
+			timestamp: 1,
+			sessionID: 'ses_x',
+			error: {
+				name: 'APIError',
+				data: {
+					message: 'User not found.',
+					statusCode: 401,
+					responseHeaders: { server: 'cloudflare' },
+				},
+			},
+		});
+		// The runtime pin needs a verified credential that runs on it, or the run
+		// fails on the pin before the CLI is ever reached.
+		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+		await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openrouter',
+				api_key: 'sk-or-test',
+				label: 'openrouter-opencode',
+			}),
+		});
+		globalThis.fetch = originalFetch;
+
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker({
+				producesOutput: false,
+				execStart: async () => ({ stdout: `${errorEvent}\n`, stderr: '' }),
+				execInspect: async () => ({ ExitCode: 1, Running: false, Pid: 0 }),
+			}),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			{ ...makeTask(), runtime_type: 'opencode' as const },
+			makeProject(),
+		);
+
+		expect(result.success).toBe(false);
+
+		const run = await db.query<{ error: string | null }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		// The classified sentence, not the bare exit code the backstop would give.
+		expect(run.rows[0].error).toContain('AI provider authentication failed');
+		expect(run.rows[0].error).toContain('User not found.');
+		expect(run.rows[0].error).not.toContain('cloudflare');
+	});
+
+	// A signal kill is a louder and later fact than a bare non-zero exit, so the
+	// backstop must not displace the message that names it.
+	it('leaves a signal kill reported as a signal, not as an unexplained exit', async () => {
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker({
+				producesOutput: false,
+				execStart: async () => ({ stdout: '', stderr: '' }),
+				execInspect: async () => ({ ExitCode: 137, Running: false, Pid: 0 }),
+			}),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		const run = await db.query<{ error: string | null }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].error).not.toContain('without reporting a reason');
+		expect(run.rows[0].error).toBeTruthy();
+	});
+
 	it('succeeds a clean exit that declared no work via report_no_work', async () => {
 		const deps: RunnerDeps = {
 			db,

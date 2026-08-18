@@ -907,6 +907,63 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		);
 		expect(out).toBe('[thinking] weighing it up\n');
 	});
+
+	// A rejected provider credential, exactly as the CLI reports it: the message
+	// is nested under `error.data`, which a probe reading only `error.message`
+	// found empty - so the event rendered nothing and the run failed in silence.
+	const apiError = {
+		type: 'error',
+		timestamp: 1,
+		sessionID: 'ses_x',
+		error: {
+			name: 'APIError',
+			data: {
+				message: 'User not found.',
+				statusCode: 401,
+				isRetryable: false,
+				responseHeaders: { server: 'cloudflare', 'cf-ray': 'a2cd2a726aeffd40-SIN' },
+			},
+		},
+	};
+
+	it('renders a provider error whose message is nested under error.data', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(apiError)}\n`)).toBe(
+			'[tool-error] APIError: User not found. (HTTP 401)\n',
+		);
+	});
+
+	it('reports a nested provider error as the run terminal error, classified', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.getTerminalError()).toBeNull();
+		parser.onStdout(`${JSON.stringify(apiError)}\n`);
+		// The status code is what makes this recognisable: "User not found." names
+		// no auth problem on its own.
+		expect(parser.getTerminalError()).toBe(
+			"AI provider authentication failed — check the team's provider credential. (APIError: User not found. (HTTP 401))",
+		);
+	});
+
+	it('keeps the upstream response headers out of the log and the run row', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(`${JSON.stringify(apiError)}\n`);
+		expect(out).not.toContain('cloudflare');
+		expect(parser.getTerminalError()).not.toContain('cloudflare');
+	});
+
+	it('still reads an error carrying a flat message', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(
+			parser.onStdout(`${JSON.stringify({ type: 'error', error: { message: 'boom' } })}\n`),
+		).toBe('[tool-error] boom\n');
+		expect(parser.getTerminalError()).toBe('boom');
+	});
+
+	it('leaves the terminal error null for a run that reports no error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		parser.onStdout(`${JSON.stringify({ type: 'message', text: 'all good' })}\n`);
+		expect(parser.getTerminalError()).toBeNull();
+	});
 });
 
 describe('getFinalAssistantMessage', () => {

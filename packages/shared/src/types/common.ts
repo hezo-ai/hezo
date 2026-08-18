@@ -2356,7 +2356,12 @@ export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> 
 	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
 	[AgentRuntime.Gemini]: ['--yolo'],
-	[AgentRuntime.OpenCode]: ['--dangerously-skip-permissions'],
+	// OpenCode's own auto-approve flag, and NOT `--dangerously-skip-permissions`:
+	// that is Claude Code's spelling. OpenCode accepts unknown flags without
+	// complaint, so a wrong one here never applies and never announces itself -
+	// verify this name against `opencode run --help` rather than assuming a run
+	// that starts cleanly is approving anything.
+	[AgentRuntime.OpenCode]: ['--auto'],
 	// Grok's Claude-Code-style permission modes; bypassPermissions skips every
 	// approval prompt so a headless `docker exec` run never hangs on one.
 	[AgentRuntime.Grok]: ['--permission-mode', 'bypassPermissions'],
@@ -2504,7 +2509,20 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	// unpinned in the agent image, so an upstream rename of this flag would fail
 	// every OpenCode run on an unknown argument - check it first if OpenCode runs
 	// start dying at exec.
-	[AgentRuntime.OpenCode]: ['--format', 'json', '--thinking'],
+	//
+	// `--print-logs` puts the CLI's own diagnostics on stderr, which the runner
+	// already relays verbatim, while stdout stays pure JSON. At ERROR level it is
+	// near-silent on a healthy run and carries the provider and model behind a
+	// failure - context the JSON error event omits, and which the event's own
+	// message is sometimes too generic to replace.
+	[AgentRuntime.OpenCode]: [
+		'--format',
+		'json',
+		'--thinking',
+		'--print-logs',
+		'--log-level',
+		'ERROR',
+	],
 	// Grok's `streaming-json` emits thought/text/end events. Unlike the others
 	// its stream carries NO token usage — cost is recovered post-run from the
 	// `--debug-file` tracing spans (added per-run in the runner). See
