@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} przeniósł to zadanie na najwyższy poziom",
 	"comment.parentPromotedFrom": "{actor} przeniósł to zadanie na najwyższy poziom (było pod {from})",
 	"comment.repoDesignated": "Repozytorium {repo} ustawiono jako wyznaczone repozytorium.",
+	"comment.runAbandoned": "Uruchomienie dla {agent} nie mogło się rozpocząć i nie zostanie automatycznie ponowione.",
 	"comment.runAgentFallback": "agenta",
 	"comment.runFailed": "Uruchomienie dla {agent} nie powiodło się.",
 	"comment.runFailedWithError": "Uruchomienie dla {agent} nie powiodło się: {error}",

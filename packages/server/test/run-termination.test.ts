@@ -1,7 +1,10 @@
+import { RunCancelReason, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { terminateHeartbeatRun } from '../src/services/run-termination';
+import { settleWakeupForRun } from '../src/services/wakeup';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -40,12 +43,23 @@ async function makeRun(status: 'queued' | 'running' | 'succeeded'): Promise<stri
 	return r.rows[0].id;
 }
 
-async function getRunRow(runId: string): Promise<{ status: string; error: string | null }> {
-	const r = await db.query<{ status: string; error: string | null }>(
-		'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+async function getRunRow(
+	runId: string,
+): Promise<{ status: string; error: string | null; cancel_reason: string | null }> {
+	const r = await db.query<{ status: string; error: string | null; cancel_reason: string | null }>(
+		'SELECT status, error, cancel_reason FROM heartbeat_runs WHERE id = $1',
 		[runId],
 	);
 	return r.rows[0];
+}
+
+async function getWakeupStatus(runId: string): Promise<string | undefined> {
+	const r = await db.query<{ status: string }>(
+		`SELECT w.status FROM agent_wakeup_requests w
+		 JOIN heartbeat_runs hr ON hr.wakeup_id = w.id WHERE hr.id = $1`,
+		[runId],
+	);
+	return r.rows[0]?.status;
 }
 
 interface SysCommentRow {
@@ -129,6 +143,15 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 		const row = await getRunRow(runId);
 		expect(row.status).toBe('cancelled');
 		expect(row.error).toBe('Terminated by user');
+		// A person chose to stop this, so no Retry is offered and the work is not
+		// owed. Recording it structurally is what keeps that decision out of the
+		// error prose every reader would otherwise have to parse.
+		expect(row.cancel_reason).toBe(RunCancelReason.OperatorTerminated);
+
+		// Settled here rather than left `claimed` for healStaleRunState to record
+		// as `failed` two minutes later. Both were the wrong label for withdrawn
+		// work, and a still-claimed row suppresses chainNextTaskWakeup meanwhile.
+		expect(await getWakeupStatus(runId)).toBe(WakeupStatus.Cancelled);
 
 		const sysComments = await getSystemComments(taskId);
 		const terminationComment = sysComments.find(
@@ -136,6 +159,54 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 		);
 		expect(terminationComment).toBeTruthy();
 		expect(terminationComment?.content?.reason).toBe('Terminated by user');
+	});
+
+	it("a running run keeps the human's attribution once its abort cascades", async () => {
+		// The `wasLive` branch, which every other case here misses: `makeRun()`
+		// rows are not registered with the JobManager, so `cancelLiveRun` always
+		// returned false and this half was never executed. It is where the two
+		// races the change had to settle both live - the run is still in flight,
+		// and its own finalizer reaches the row and the wakeup moments later.
+		const runId = await makeRun('running');
+		const liveJobManager = {
+			cancelLiveRun: () => true,
+		} as unknown as Parameters<typeof terminateHeartbeatRun>[0]['jobManager'];
+
+		const result = await terminateHeartbeatRun(
+			{ db, wsManager: undefined, jobManager: liveJobManager },
+			runId,
+			'Terminated by user',
+			null,
+		);
+		expect(result.terminated).toBe(true);
+
+		// Backfilled while the abort is still cascading; the row stays `running`
+		// until the runner's own finalizer lands.
+		const backfilled = await getRunRow(runId);
+		expect(backfilled.cancel_reason).toBe(RunCancelReason.OperatorTerminated);
+		expect(await getWakeupStatus(runId)).toBe(WakeupStatus.Cancelled);
+
+		// The runner's own finalizer cannot undo that, and no test asserts it here
+		// on purpose: `updateHeartbeatRun` does not carry `cancel_reason` in its SET
+		// list at all, so the guarantee is structural rather than a COALESCE
+		// direction to pin. An earlier version of this test hand-wrote that COALESCE
+		// and asserted its own SQL preserved the value, under a comment crediting
+		// production - which passed just as happily with production mutated.
+		//
+		// Its wakeup settlement survives too: the terminal arm declines to
+		// relabel a wakeup that already reached a terminal status, so work somebody
+		// withdrew is not reported as work that failed.
+		await settleWakeupForRun(
+			db,
+			(
+				await db.query<{ wakeup_id: string }>(
+					'SELECT wakeup_id FROM heartbeat_runs WHERE id = $1',
+					[runId],
+				)
+			).rows[0].wakeup_id,
+			{ kind: 'fail' },
+		);
+		expect(await getWakeupStatus(runId)).toBe(WakeupStatus.Cancelled);
 	});
 
 	it('returns 409 when the run is already terminal', async () => {
@@ -189,6 +260,10 @@ describe('PATCH /tasks status → Cancelled', () => {
 		const row = await getRunRow(runId);
 		expect(row.status).toBe('cancelled');
 		expect(row.error).toBe('Task cancelled');
+		// Withdrawn, not operator-terminated: nobody stopped this run, the work it
+		// was doing stopped being wanted. Both mean no Retry, and they differ only
+		// in what a reader is told.
+		expect(row.cancel_reason).toBe(RunCancelReason.WorkWithdrawn);
 
 		const sysComments = await getSystemComments(taskId);
 		const terminationComment = sysComments.find(

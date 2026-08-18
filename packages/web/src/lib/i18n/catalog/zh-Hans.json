@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} 将此任务提升到顶层",
 	"comment.parentPromotedFrom": "{actor} 将此任务提升到顶层（原先位于 {from} 之下）",
 	"comment.repoDesignated": "仓库 {repo} 已设为指定仓库。",
+	"comment.runAbandoned": "{agent} 的运行未能启动，且不会自动重试。",
 	"comment.runAgentFallback": "代理",
 	"comment.runFailed": "{agent} 的运行失败。",
 	"comment.runFailedWithError": "{agent} 的运行失败：{error}",

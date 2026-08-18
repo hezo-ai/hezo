@@ -129,7 +129,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 const HEARTBEAT_RUN_COLUMNS = `hr.id, hr.member_id, hr.team_id, hr.wakeup_id, hr.task_id, hr.kind,
 	-- created_at, not just started_at: a run that ended before it ever started has
 	-- no started_at, and created_at is the only clock it has to be placed by.
-	hr.status, hr.queued_reason, hr.created_at, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
+	hr.status, hr.queued_reason, hr.cancel_reason, hr.created_at, hr.started_at, hr.finished_at, hr.exit_code, hr.error,
 	hr.input_tokens, hr.output_tokens, hr.cost_cents, hr.usage_partial,
 	hr.invocation_command, hr.working_dir,
 	hr.retry_of_run_id, hr.process_loss_retry_count,

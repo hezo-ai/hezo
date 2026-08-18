@@ -3,6 +3,7 @@ import {
 	findGroupKeyForRow,
 	HeartbeatRunStatus,
 	isWorkingThreadRow,
+	runCancelOffersRetry,
 	type TaskView,
 	type ThreadFoldContext,
 } from '@hezo/shared';
@@ -287,7 +288,9 @@ export function CommentsSection({
 	// offering nothing to act on.
 	const lastRunFailed =
 		task.last_run_status === HeartbeatRunStatus.Failed ||
-		task.last_run_status === HeartbeatRunStatus.TimedOut;
+		task.last_run_status === HeartbeatRunStatus.TimedOut ||
+		(task.last_run_status === HeartbeatRunStatus.Cancelled &&
+			runCancelOffersRetry(task.last_run_cancel_reason));
 	const foldCtx = useMemo<ThreadFoldContext>(
 		() => ({
 			activeRunId: task.active_run?.id ?? null,

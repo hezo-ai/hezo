@@ -17,6 +17,12 @@ export interface HeartbeatRun {
 	project_name: string | null;
 	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
 	queued_reason: string | null;
+	/**
+	 * Why a `cancelled` run was cancelled. Read through `isRunCancelReason` so a
+	 * value from a newer server degrades rather than throwing. Null on every other
+	 * status, and on any run cancelled before the attribution existed.
+	 */
+	cancel_reason: string | null;
 	created_at: string;
 	/** Null until the run goes running - a run that ended before that never gets one. */
 	started_at: string | null;

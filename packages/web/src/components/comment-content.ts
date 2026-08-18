@@ -85,6 +85,18 @@ export interface SystemRunFailedContent {
 	text?: string;
 }
 
+/**
+ * A run the instance gave up on with nothing left carrying its work. Posted only
+ * on that outcome, so its presence in a thread is itself the signal that
+ * somebody has to act; `run_id` names the run whose card offers Retry.
+ */
+export interface SystemRunAbandonedContent {
+	kind: 'run_abandoned';
+	agent_slug?: string | null;
+	run_id?: string;
+	text?: string;
+}
+
 export interface SystemRepoDesignatedContent {
 	kind: 'repo_designated';
 	repo_identifier?: string;
@@ -110,6 +122,7 @@ export type SystemContent =
 	| SystemParentChangeContent
 	| SystemDescriptionChangeContent
 	| SystemRunFailedContent
+	| SystemRunAbandonedContent
 	| SystemRepoDesignatedContent
 	| SystemGenericContent;
 

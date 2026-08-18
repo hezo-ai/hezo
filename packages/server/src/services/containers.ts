@@ -1850,6 +1850,11 @@ const BUSY_PROJECTS_SQL = `
 	 JOIN tasks t ON t.id = hr.task_id
 	 WHERE hr.finished_at > now() - ($1 * interval '1 minute')
 	UNION
+	-- The exclusion list is capacity-only **by design**, and a new WakeupSkipReason
+	-- does not belong on it by reflex. Every other reason names work that is ready
+	-- to dispatch and therefore wants its container kept warm; only a wakeup
+	-- waiting on the very reclaim this scan feeds must be left out, or it
+	-- deadlocks. 'credential_busy' and 'run_never_started' are deliberately absent.
 	SELECT DISTINCT t.project_id FROM agent_wakeup_requests w
 	 JOIN tasks t ON t.id = (w.payload->>'task_id')::uuid
 	 WHERE w.status = 'queued'

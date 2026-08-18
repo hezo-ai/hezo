@@ -11,7 +11,13 @@
 // So the two properties asserted here are: the wait is bounded and hands the
 // work back, and a waiter holds no container while it waits.
 
-import { AgentRuntime, AiAuthMethod, AiProvider, ContainerStatus } from '@hezo/shared';
+import {
+	AgentRuntime,
+	AiAuthMethod,
+	AiProvider,
+	ContainerStatus,
+	WakeupSkipReason,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -139,8 +145,9 @@ async function runRow(id: string) {
 		started_at: string | null;
 		container_id: string | null;
 		error: string | null;
+		cancel_reason: string | null;
 	}>(
-		`SELECT status, queued_reason, started_at, container_id, error
+		`SELECT status, queued_reason, started_at, container_id, error, cancel_reason
 		   FROM heartbeat_runs WHERE id = $1`,
 		[id],
 	);
@@ -260,10 +267,22 @@ describe('runAgent credential wait', () => {
 			// instance being busy, not the agent failing, so no failure ping and no
 			// lost-run strike.
 			expect(result.requeued).toBe(true);
+			// Which wait gave up, named at the source. The seam honours whatever it
+			// is handed, so only an assertion here can catch this caller choosing
+			// the wrong one - and it used to hand over `instance_at_capacity`
+			// regardless, which has the idle pass reclaim the project's container
+			// out from under work that is only waiting for a credential.
+			expect(result.requeueReason).toBe(WakeupSkipReason.CredentialBusy);
+
 			const row = await runRow(result.heartbeatRunId as string);
 			expect(row.status).toBe('cancelled');
 			expect(row.error).toContain('returning this run to the queue');
 			expect(row.container_id).toBeNull();
+			// And no attribution yet: whether the work is actually carried is not
+			// known until the caller settles the wakeup, so the row must not claim
+			// `handed_back` here. `JobManager.settleWakeupForRun` records it once the
+			// answer is in, and records `abandoned` when the handback fails.
+			expect(row.cancel_reason).toBeNull();
 		} finally {
 			release();
 		}

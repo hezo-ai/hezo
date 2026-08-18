@@ -61,7 +61,8 @@ the **View** control at the top of a task's right-hand panel.
 
 **Conversation** is the default. It shows what people and agents wrote, plus anything
 waiting on someone: a credential request, an approval, a repo-setup choice, and the latest
-failed run with its Retry button. Everything else folds into grouped chips that sit where
+run that still needs a person - one that failed or timed out, or one Hezo gave up on
+starting - with its Retry button. Everything else folds into grouped chips that sit where
 those events happened, labelled with what is inside them - "8 events - 4 failed runs - 4
 changes". Click one to read the rows it holds. An agent working right now gets its own row
 at the foot of the thread, which opens onto its live output.

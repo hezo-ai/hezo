@@ -2354,12 +2354,54 @@ moment the row is inserted, so a run whose host-side driver still owns it (waiti
 credential lock or on container capacity, say) is skipped and only a row whose driver has
 vanished is failed. Both of those waits are bounded and finalize themselves, so a driver
 that still owns a row is one that will settle it. The two
-kinds are distinguished only by their recorded `error` (`Never started: …` vs
-`Orphaned: nothing was driving this run any more …`); the retry/approval escalation is
-shared. Neither verdict claims a process check - there is none to make, since a run's work
+kinds are distinguished by their recorded `error` (`Never started: …` vs
+`Orphaned: nothing was driving this run any more …`) and, for the never-started arm, by
+`heartbeat_runs.cancel_reason`. That column is the structural half: `cancelled` covers both
+somebody choosing to stop a run (`operator_terminated`, `work_withdrawn`) and the instance
+giving up on one (`handed_back`, `abandoned`), and only `abandoned` leaves work owed with
+nothing carrying it. Behaviour hangs off `RUN_CANCEL_BEHAVIOUR` (`@hezo/shared`) rather than
+a status test at each reader, so the Retry button appears on exactly that one case. Deriving
+it from the `error` prose was the alternative, and `requeueContainerKilledRuns` already does
+that (`WHERE error = 'container_error'`) - a control signal built on a sentence, in an area
+whose sentences get reworded.
+
+**The two arms no longer share an escalation ladder.** A never-started run spent no strike,
+so gating it on the process-loss budget was a defect: `retryOrEscalateLostRun` reads
+`process_loss_retry_count` for its ceiling, `createHeartbeatRun` inherits that count down an
+orphan-retry lineage, and the never-started arm never incremented it - an inherited 2 turned
+every later never-start into a permanent dead end that filed one approval (guarded
+`NOT EXISTS` per member) and queued nothing again. `handBackNeverStartedWork` is its own
+bounded ladder: hand the original wakeup back (free, unbounded, the dispatcher owns the
+work), else mint one replacement naming the task, else abandon. The replacement carries the
+**original wakeup's `source`**, because `timer` is in `GATED_WAKEUP_SOURCES` and is not
+exempt from the no-work backoff while `mention` is neither - the old fallback silently
+downgraded a teammate's direct ask into a wakeup the dependency gate could park
+indefinitely.
+
+**The second rung's bound only exists because two halves travel together**: it increments
+`process_loss_retry_count` *and* names its lineage under `previous_failure.run_id`, the one
+key `RUN_LINEAGE_SOURCES` gives `inheritsLossBudget`. An earlier revision spent the strike
+but named `previous_run_id`, which does not inherit - so `createHeartbeatRun` handed every
+replacement a count of zero, the increment landed on a terminal row nothing reads again, and
+the ceiling was unreachable through its own lineage however many times it lapped. A test
+that hand-sets the counter cannot see that; `the never-started chain actually climbs, lap by
+lap` drives real laps and asserts the count reaching the ceiling. The first rung stays
+unbounded by design - the wakeup is intact and the dispatcher owns it - which is what `main`
+did too. Neither verdict claims a process check - there is none to make, since a run's work
 happens inside a container and liveness is the in-process registry alone. The reap `UPDATE` is
 guarded on a non-terminal status, so a row that settled between the scan and the write keeps
 the cause its own writer recorded rather than being overwritten with the generic one.
+
+**The reap writes twice, and the order is the point.** The first write claims the row and
+records the **verdict** alone - what was observed, true whatever happens next. The work is
+then settled, and a second write appends the **outcome** and `cancel_reason` before the
+broadcast fires, so an open run page receives the final text. Composing both at once is what
+let a row assert "so it was returned to the queue" for a handback that had not been
+attempted yet and could still fail, which made a stranded ask indistinguishable from a
+served one. The sentences live in two `Record` tables in `orphan-detector.ts`, so a new
+outcome is a compile error until someone writes its copy. `abandoned` is additionally the
+only outcome that posts to the thread (`recordRunAbandoned`), because it is the only one a
+reader has to act on.
 `healStaleRunState` is the inverse pass and deliberately counts `queued` as active, so it
 repairs the *surroundings* (execution locks, agent `runtime_status`, claimed wakeups) but
 never the run row itself.
@@ -2375,7 +2417,7 @@ deadline would finalize the run `timed_out`, trading one errored row for another
 while that call is in flight, so the orphan pass leaves the row alone for exactly as long as
 a driver owns it, and the run resumes on the same row rather than being replaced by a second
 one. Returning instead left the row unowned — blocking the retry of its own wakeup through
-`isTaskBusyInDb`, then failing 120 s later as `Orphaned: run never started`, and counting
+`isTaskBusyInDb`, then being reaped 120 s later as a run that never started, and counting
 toward the lost-run escalation. Past the ceiling the row is finalized `Cancelled` (never
 `Failed` — a full instance is not the agent failing) and the wakeup is re-queued. Two
 consequences elsewhere: the idle-stop scan's busy set excludes a parked run
@@ -2391,10 +2433,27 @@ file whenever it likes and the rotated value is read back during teardown - so a
 queues behind a complete run, not behind a token read.
 
 Two properties follow from that, and both were learned the hard way. The wait is **bounded**
-(the same ceiling the capacity park uses) and gives up through the same `finalizeRequeue`,
+and gives up through the same `finalizeRequeue`,
 because an unbounded promise chain had no way for a waiter to leave: a holder that never
 returned parked every later run on that credential permanently, and nothing - not the orphan
 pass, not the run timeout, not an operator Terminate - could recover it short of a restart.
+**Its ceiling is `credentialWaitMaxMs`, not the capacity park's**, though it used to be both.
+The two look alike and are not the same judgement: the park waits for a container slot the
+idle-reclaim cron frees, so it resolves in seconds and giving up early costs nothing, while
+this queues behind a *whole other run* bounded by that run's `run_timeout_min` (60 minutes
+by default). At the park's 180 s a second run on a rotating credential gave up, re-queued,
+redispatched 5 s later and gave up again until the holder finished: a thrash loop that never
+converged. So it is derived from the waiting run's own timeout with headroom (80%, capped
+at 15 minutes) - headroom because running to `run_timeout_min` itself lets `launchTask`'s
+wall-clock timer finalize the run `timed_out`, trading one errored row for another, which is
+the same reason the park does not use it raw. **Deliberately unfloored**: an earlier revision
+floored it at the park's 180 s, which inverted that invariant for any `run_timeout_min` of 3
+or less (settable to 1), where a 180 s wait outlives a 60 s timer. And the cap is not
+cosmetic - a dispatch with no spare container takes a `pendingContainerStarts` reservation
+*before* `launchTask` and holds it until the run settles, so every minute of this wait is a
+minute of instance memory budget charged for a container that has not been asked for. FIFO on the
+lock is the correct model; giving up early only randomises who goes next.
+
 And it is taken **before** the pool ladder is asked, because a waiter that already holds a
 container pins memory the pool counts as used and cannot reclaim, for the entire wait. That
 container then sits idle while its own run waits, long enough for a managed backend's idle
@@ -2424,9 +2483,25 @@ a restart mid-park hands every parked row straight to the orphan pass with no dr
 vouch for it - and a restart is exactly when the pool is cold and capacity tightest, so the
 two coincide rather than being independent. That pairing is only tolerable because the
 orphan pass's verdict for a run that never started is itself non-destructive: it finalizes
-the row `Cancelled`, hands the *original* wakeup back to the queue (`claimed` → `queued`,
-mirroring `settleWakeupForRun`) and spends no strike of the lost-run escalation, so the
+the row `Cancelled`, hands the *original* wakeup back to the queue (`claimed` → `queued`)
+and spends no strike of the lost-run escalation, so the
 work is redispatched rather than lost or reported as a failure the operator must act on.
+The handback itself is one seam, `settleWakeupForRun` (`services/wakeup.ts`), shared with
+`JobManager.onAgentComplete`: the two answered the same question separately, which is how
+the sweeper's `claimed` guard ended up missing from the completion path and how both ended
+up stamping `instance_at_capacity` on handbacks that had nothing to do with capacity. The
+seam reports `handback_failed` rather than a bare boolean, and **both callers act on it**:
+each records the outcome on the run row through `recordHandbackOutcome`
+(`services/run-handback.ts`) only once the answer is in, mapping a failed handback to
+`abandoned` plus a thread notice. An earlier revision fixed this on the sweeper alone and
+left `finalizeRequeue` stamping `handed_back` before attempting the handback - reproducing,
+on the completion path, the very defect the sweeper was restructured to remove. That
+recorder is also where first-writer-wins lives: it declines to write over a `cancel_reason`
+somebody else already set, so a human's Terminate is never relabelled as something the
+instance did. A never-started handback is stamped `run_never_started` and the
+credential give-up `credential_busy`; `BUSY_PROJECTS_SQL` excludes only the two *capacity*
+reasons from its busy set, so a mislabelled handback had the idle pass reclaim the container
+out from under work that was about to run.
 The `running` arm is unchanged and still `Failed` - a process that vanished mid-flight did
 lose work. `capacity-park-grace` in `orphan-detector.test.ts` pins the constant
 relationship so neither can be moved without meeting the assumption. The run's `error`

@@ -2,6 +2,8 @@ import {
 	AgentRuntimeStatus,
 	ApprovalType,
 	HeartbeatRunStatus,
+	RunCancelReason,
+	WakeupSkipReason,
 	WakeupSource,
 	WakeupStatus,
 } from '@hezo/shared';
@@ -18,6 +20,7 @@ import {
 import {
 	detectOrphans,
 	healStaleRunState,
+	MAX_RETRIES,
 	STALE_STATE_GRACE_SECONDS,
 } from '../src/services/orphan-detector';
 import { safeClose } from './helpers';
@@ -369,14 +372,36 @@ describe('detectOrphans', () => {
 
 describe('detectOrphans for runs stranded before they started', () => {
 	/** A `queued` run has no `started_at`, so it ages against `created_at`. */
-	async function insertQueuedRun(age: string, opts: { taskId?: string } = {}): Promise<string> {
+	async function insertQueuedRun(
+		age: string,
+		opts: { taskId?: string; inheritFrom?: string | null } = {},
+	): Promise<string> {
 		const result = await db.query<{ id: string }>(
-			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, created_at)
-			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - $5::interval)
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, created_at,
+			                             retry_of_run_id, process_loss_retry_count)
+			 VALUES ($1, $2, $3, $4::heartbeat_run_status, now() - $5::interval, $6,
+			         COALESCE((SELECT prior.process_loss_retry_count
+			                     FROM heartbeat_runs prior WHERE prior.id = $6), 0))
 			 RETURNING id`,
-			[teamId, agentId, opts.taskId ?? null, HeartbeatRunStatus.Queued, age],
+			[
+				teamId,
+				agentId,
+				opts.taskId ?? null,
+				HeartbeatRunStatus.Queued,
+				age,
+				opts.inheritFrom ?? null,
+			],
 		);
 		return result.rows[0].id;
+	}
+
+	async function abandonedNotices(forTaskId: string): Promise<number> {
+		const r = await db.query<{ count: string }>(
+			`SELECT count(*)::text AS count FROM task_comments
+			 WHERE task_id = $1 AND content->>'kind' = 'run_abandoned'`,
+			[forTaskId],
+		);
+		return Number(r.rows[0].count);
 	}
 
 	async function clearRuns(): Promise<void> {
@@ -411,9 +436,12 @@ describe('detectOrphans for runs stranded before they started', () => {
 		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
 		expect(run.rows[0].error).toContain('Never started');
 		expect(run.rows[0].finished_at).not.toBeNull();
-		// And it spends none of the three strikes that raise "manual intervention
-		// required" - those are for a run that got a fair attempt and lost it.
-		expect(run.rows[0].process_loss_retry_count).toBe(0);
+		// This run had no wakeup to hand back, so the work was carried by a fresh
+		// replacement run - and minting one spends a strike, which is what bounds
+		// the chain. Only a genuine handback of the original wakeup is free (see
+		// `hands the original wakeup back...` below): there the dispatcher already
+		// owns the work and no new attempt was made.
+		expect(run.rows[0].process_loss_retry_count).toBe(1);
 
 		// The point of the reap: the task stops reading as having an active run,
 		// which is what blocks reassignment and shows the agent as busy.
@@ -472,6 +500,23 @@ describe('detectOrphans for runs stranded before they started', () => {
 			[agentId],
 		);
 		expect(all.rows[0].count).toBe('1');
+
+		// Handing the original row back spends no strike: nothing was attempted,
+		// the dispatcher already owns the work, and charging the lost-run budget
+		// for it is what let an inherited count dead-end this arm permanently.
+		const strikes = await db.query<{ process_loss_retry_count: number }>(
+			'SELECT process_loss_retry_count FROM heartbeat_runs WHERE wakeup_id = $1',
+			[wakeupId],
+		);
+		expect(strikes.rows[0].process_loss_retry_count).toBe(0);
+
+		// The row says what actually happened, and only after it happened.
+		const run = await db.query<{ error: string }>(
+			'SELECT error FROM heartbeat_runs WHERE wakeup_id = $1',
+			[wakeupId],
+		);
+		expect(run.rows[0].error).toContain('back in the queue');
+		expect(run.rows[0].error).toContain('Never started');
 	});
 
 	it('carries the real cause into the error so the run page does not just say it never started', async () => {
@@ -514,6 +559,13 @@ describe('detectOrphans for runs stranded before they started', () => {
 		expect(row).toBeDefined();
 		expect(row?.project_id).toBeTruthy();
 		expect(row?.status).toBe(HeartbeatRunStatus.Cancelled);
+		// And it carries the FINAL text, not the provisional verdict. The reap
+		// writes the verdict alone and the outcome is appended only once the work
+		// has been settled; broadcasting between the two would push a sentence to an
+		// open run page that the row no longer says. Asserting only id/status left
+		// that ordering unobserved - reverting it broke nothing.
+		expect(String(row?.error ?? '')).toContain('Never started');
+		expect(String(row?.error ?? '')).toContain('queue');
 	});
 
 	it('capacity-park-grace: a park outliving the grace window is survivable, not a failure', async () => {
@@ -584,6 +636,312 @@ describe('detectOrphans for runs stranded before they started', () => {
 		// A process that vanished mid-run is.
 		expect(byId.get(runningId)?.status).toBe(HeartbeatRunStatus.Failed);
 		expect(byId.get(runningId)?.error).toContain('Orphaned: nothing was driving this run');
+	});
+
+	it('replaces a wakeup it cannot hand back, keeping the source that decides the gates', async () => {
+		// The downgrade this closes: when the handback guard misses, the fallback
+		// used to mint a `timer` wakeup whatever the original was. `timer` is in
+		// GATED_WAKEUP_SOURCES and is not exempt from the no-work backoff, while a
+		// `mention` is neither - so a teammate's direct ask came back as a wakeup
+		// the dependency gate could park indefinitely.
+		await clearRuns();
+		const taskId = await createTask(teamId);
+		// After createTask: assigning the task fires its own `assignment` wakeup,
+		// which would otherwise be the row these assertions find.
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		// Already settled, so the `claimed`-only handback guard cannot take it.
+		const wakeup = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
+			 VALUES ($1, $2, $3::wakeup_source, $4::wakeup_status, $5::jsonb)
+			 RETURNING id`,
+			[
+				agentId,
+				teamId,
+				WakeupSource.Mention,
+				WakeupStatus.Failed,
+				JSON.stringify({ task_id: taskId }),
+			],
+		);
+		const runId = await insertQueuedRun('10 minutes', { taskId });
+		await db.query('UPDATE heartbeat_runs SET wakeup_id = $1 WHERE id = $2', [
+			wakeup.rows[0].id,
+			runId,
+		]);
+
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		const replacement = await db.query<{ source: string; payload: Record<string, unknown> }>(
+			`SELECT source, payload FROM agent_wakeup_requests
+			 WHERE member_id = $1 AND status = $2::wakeup_status`,
+			[agentId, WakeupStatus.Queued],
+		);
+		expect(replacement.rows).toHaveLength(1);
+		expect(replacement.rows[0].source).toBe(WakeupSource.Mention);
+		expect(replacement.rows[0].payload.task_id).toBe(taskId);
+		// Lineage under `previous_failure.run_id`, the one key RUN_LINEAGE_SOURCES
+		// gives the loss budget to. The strike this arm just spent has to travel to
+		// the replacement or the ceiling can never be reached - see the lap-by-lap
+		// test above.
+		expect((replacement.rows[0].payload.previous_failure as { run_id: string }).run_id).toBe(runId);
+		expect(replacement.rows[0].payload.previous_run_id).toBeUndefined();
+
+		// And the row says a fresh run was queued, not that the original went back.
+		const run = await db.query<{ error: string }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].error).toContain('A fresh run has been queued');
+	});
+
+	it('hands back a wakeup that names no task, because that means "find work"', async () => {
+		// A heartbeat wakeup carries no `task_id` - `activateAgent` chooses the task
+		// - so a guard requiring the payload to name one skipped every heartbeat and
+		// left the original dangling in `claimed` for healStaleRunState to mislabel
+		// `failed`. That guard was written for "intent-less" synthetic wakeups, which
+		// are only ever minted for task-less progress-update runs and so never met
+		// it. A wakeup naming no task is not intent-less; handing it back says
+		// exactly what it said the first time.
+		await clearRuns();
+		const taskId = await createTask(teamId);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		const heartbeat = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, claimed_at)
+			 VALUES ($1, $2, $3::wakeup_source, $4::wakeup_status, '{}'::jsonb, now())
+			 RETURNING id`,
+			[agentId, teamId, WakeupSource.Heartbeat, WakeupStatus.Claimed],
+		);
+		const runId = await insertQueuedRun('10 minutes', { taskId });
+		await db.query('UPDATE heartbeat_runs SET wakeup_id = $1 WHERE id = $2', [
+			heartbeat.rows[0].id,
+			runId,
+		]);
+
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		const settled = await db.query<{ status: string; last_skipped_reason: string | null }>(
+			'SELECT status, last_skipped_reason FROM agent_wakeup_requests WHERE id = $1',
+			[heartbeat.rows[0].id],
+		);
+		expect(settled.rows[0].status).toBe(WakeupStatus.Queued);
+		// And it is labelled for what it is. Stamping `instance_at_capacity` here -
+		// which this used to - has the idle pass reclaim the project's container out
+		// from under work that dispatches on the next tick.
+		expect(settled.rows[0].last_skipped_reason).toBe(WakeupSkipReason.RunNeverStarted);
+
+		// No replacement was minted: the original still carries the work.
+		const all = await db.query<{ count: string }>(
+			'SELECT count(*)::text AS count FROM agent_wakeup_requests WHERE member_id = $1',
+			[agentId],
+		);
+		expect(all.rows[0].count).toBe('1');
+	});
+
+	it('an inherited retry count does not dead-end a run that never started', async () => {
+		// The permanent dead end: this arm read `process_loss_retry_count` for its
+		// ceiling but never incremented it, and `createHeartbeatRun` inherits the
+		// count down an orphan-retry lineage. So an inherited 2 filed one approval,
+		// guarded NOT EXISTS per member, and queued nothing ever again.
+		await clearRuns();
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
+		const taskId = await createTask(teamId);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		const runId = await insertQueuedRun('10 minutes', { taskId });
+		await db.query('UPDATE heartbeat_runs SET process_loss_retry_count = 1 WHERE id = $1', [runId]);
+
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		const queued = await db.query<{ id: string }>(
+			`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND status = $2::wakeup_status`,
+			[agentId, WakeupStatus.Queued],
+		);
+		expect(queued.rows).toHaveLength(1);
+		const approvals = await db.query<{ id: string }>(
+			'SELECT id FROM approvals WHERE team_id = $1',
+			[teamId],
+		);
+		expect(approvals.rows).toHaveLength(0);
+	});
+
+	it('records the cancel attribution and posts a notice only when work is abandoned', async () => {
+		// Three writers set `cancel_reason` and none of them was asserted, so the
+		// Retry button and the thread fold could both be silently killed. And the
+		// notice was untested in BOTH directions: it could be removed entirely, or
+		// fired on every requeue, with the suite green either way.
+		await clearRuns();
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
+		const taskId = await createTask(teamId);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM task_comments WHERE task_id = $1', [taskId]);
+
+		// A run whose work goes back on the queue is not something to act on.
+		const wakeup = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, claimed_at)
+			 VALUES ($1, $2, $3::wakeup_source, $4::wakeup_status, jsonb_build_object('task_id', $5::text), now())
+			 RETURNING id`,
+			[agentId, teamId, WakeupSource.Mention, WakeupStatus.Claimed, taskId],
+		);
+		const requeuedRun = await insertQueuedRun('10 minutes', { taskId });
+		await db.query('UPDATE heartbeat_runs SET wakeup_id = $1 WHERE id = $2', [
+			wakeup.rows[0].id,
+			requeuedRun,
+		]);
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		const handed = await db.query<{ cancel_reason: string | null }>(
+			'SELECT cancel_reason FROM heartbeat_runs WHERE id = $1',
+			[requeuedRun],
+		);
+		expect(handed.rows[0].cancel_reason).toBe(RunCancelReason.HandedBack);
+		expect(await abandonedNotices(taskId)).toBe(0);
+
+		// A run nothing is carrying is. Drive it to the ceiling.
+		await clearRuns();
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		const abandonedRun = await insertQueuedRun('10 minutes', { taskId });
+		await db.query('UPDATE heartbeat_runs SET process_loss_retry_count = $1 WHERE id = $2', [
+			MAX_RETRIES - 1,
+			abandonedRun,
+		]);
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		const abandoned = await db.query<{ cancel_reason: string | null }>(
+			'SELECT cancel_reason FROM heartbeat_runs WHERE id = $1',
+			[abandonedRun],
+		);
+		expect(abandoned.rows[0].cancel_reason).toBe(RunCancelReason.Abandoned);
+		// Exactly one, naming the run whose card carries the Retry button.
+		expect(await abandonedNotices(taskId)).toBe(1);
+		const notice = await db.query<{ content: { run_id?: string } }>(
+			`SELECT content FROM task_comments
+			 WHERE task_id = $1 AND content->>'kind' = 'run_abandoned'`,
+			[taskId],
+		);
+		expect(notice.rows[0].content.run_id).toBe(abandonedRun);
+	});
+
+	it("leaves a human's own cancel attribution alone, and posts no notice over it", async () => {
+		// First writer wins. A person pressing Terminate backfills
+		// `operator_terminated` while the abort is still cascading; this pass must
+		// not relabel that as something the instance did, nor tell the thread the
+		// work was abandoned when somebody chose to stop it.
+		await clearRuns();
+		const taskId = await createTask(teamId);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		await db.query('DELETE FROM task_comments WHERE task_id = $1', [taskId]);
+		const runId = await insertQueuedRun('10 minutes', { taskId });
+		await db.query('UPDATE heartbeat_runs SET cancel_reason = $1 WHERE id = $2', [
+			RunCancelReason.OperatorTerminated,
+			runId,
+		]);
+
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		const row = await db.query<{ cancel_reason: string | null }>(
+			'SELECT cancel_reason FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(row.rows[0].cancel_reason).toBe(RunCancelReason.OperatorTerminated);
+		expect(await abandonedNotices(taskId)).toBe(0);
+	});
+
+	it('the never-started chain actually climbs, lap by lap, to its ceiling', async () => {
+		// The regression this exists for: the arm used to spend its strike on the
+		// row it had just reaped and then hand the replacement a `previous_run_id`
+		// lineage, which does NOT inherit the loss budget - so every lap started
+		// back at zero and the ceiling was unreachable. Hand-setting the counter
+		// (as the two tests below do) cannot see that; only driving real laps can.
+		await clearRuns();
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
+		const taskId = await createTask(teamId);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+
+		const counts: number[] = [];
+		let previousRunId: string | null = null;
+		for (let lap = 0; lap < MAX_RETRIES; lap++) {
+			// Each lap: the replacement wakeup from the previous lap becomes a run
+			// that also never starts. `createHeartbeatRun` is what carries the budget
+			// across, so the run must be minted the way production mints it.
+			const wakeup = await db.query<{ id: string; payload: Record<string, unknown> }>(
+				`SELECT id, payload FROM agent_wakeup_requests
+				 WHERE member_id = $1 AND status = $2::wakeup_status`,
+				[agentId, WakeupStatus.Queued],
+			);
+			const runId = await insertQueuedRun('10 minutes', {
+				taskId,
+				// Mirror createHeartbeatRun's inheritance rather than re-implementing
+				// it: a lineage naming previous_failure.run_id carries the count.
+				inheritFrom: lap === 0 ? null : previousRunId,
+			});
+			if (wakeup.rows[0]) {
+				await db.query('UPDATE heartbeat_runs SET wakeup_id = $1 WHERE id = $2', [
+					wakeup.rows[0].id,
+					runId,
+				]);
+				await db.query(
+					`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, claimed_at = now() WHERE id = $2`,
+					[WakeupStatus.Failed, wakeup.rows[0].id],
+				);
+			}
+
+			expect(await detectOrphans(db, new Set())).toBe(1);
+
+			const after = await db.query<{ process_loss_retry_count: number }>(
+				'SELECT process_loss_retry_count FROM heartbeat_runs WHERE id = $1',
+				[runId],
+			);
+			counts.push(after.rows[0].process_loss_retry_count);
+			previousRunId = runId;
+		}
+
+		// 1, 2, then the third lap trips the ceiling and gives up rather than
+		// spending a fourth strike. Before the fix this was 1, 1, 1 - every lap
+		// started back at zero, so the ceiling was never reached at all.
+		expect(counts).toEqual([1, 2, 2]);
+
+		// And the final lap gave up rather than queueing a fourth replacement.
+		const queued = await db.query<{ id: string }>(
+			`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND status = $2::wakeup_status`,
+			[agentId, WakeupStatus.Queued],
+		);
+		expect(queued.rows).toHaveLength(0);
+		const approvals = await db.query<{ id: string }>(
+			'SELECT id FROM approvals WHERE team_id = $1',
+			[teamId],
+		);
+		expect(approvals.rows).toHaveLength(1);
+	});
+
+	it('gives up visibly once the never-started chain hits its ceiling', async () => {
+		// The bound still exists, and it is now reachable only by spending strikes
+		// this arm actually filled. What changed is that the give-up says so on the
+		// row rather than claiming the work went back on the queue.
+		await clearRuns();
+		await db.query('DELETE FROM approvals WHERE team_id = $1', [teamId]);
+		const taskId = await createTask(teamId);
+		await db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [agentId]);
+		const runId = await insertQueuedRun('10 minutes', { taskId });
+		await db.query('UPDATE heartbeat_runs SET process_loss_retry_count = 2 WHERE id = $1', [runId]);
+
+		expect(await detectOrphans(db, new Set())).toBe(1);
+
+		const queued = await db.query<{ id: string }>(
+			`SELECT id FROM agent_wakeup_requests WHERE member_id = $1 AND status = $2::wakeup_status`,
+			[agentId, WakeupStatus.Queued],
+		);
+		expect(queued.rows).toHaveLength(0);
+		const approvals = await db.query<{ type: string }>(
+			'SELECT type FROM approvals WHERE team_id = $1',
+			[teamId],
+		);
+		expect(approvals.rows).toHaveLength(1);
+		expect(approvals.rows[0].type).toBe(ApprovalType.Strategy);
+
+		const run = await db.query<{ error: string }>(
+			'SELECT error FROM heartbeat_runs WHERE id = $1',
+			[runId],
+		);
+		expect(run.rows[0].error).toContain('will not restart on its own');
+		expect(run.rows[0].error).not.toContain('back in the queue');
 	});
 
 	it('leaves a run alone that went terminal between the scan and the write', async () => {

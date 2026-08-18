@@ -90,6 +90,7 @@ import {
 	reclaimableForOthers,
 	sumProjectContainerMemoryGb,
 } from './run-concurrency';
+import { recordHandbackOutcome } from './run-handback';
 import { reclaimBusyPoolMembers } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
@@ -99,6 +100,8 @@ import {
 	assignmentWakeupAlreadyServed,
 	createProgressUpdateWakeup,
 	createWakeup,
+	type SettlementIntent,
+	settleWakeupForRun,
 } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -2718,7 +2721,15 @@ export class JobManager {
 			this.deps.wsManager,
 		);
 
-		if (await this.settleWakeupForRun(wakeupId, result)) return;
+		if (
+			await this.settleWakeupForRun(wakeupId, result, {
+				taskId,
+				teamId,
+				agentSlug,
+			})
+		) {
+			return;
+		}
 
 		// A run cut off by its wall-clock time limit is not a failure. Queue a same-task
 		// continuation so the agent resumes it (committed work is already pushed) and skip the
@@ -3064,44 +3075,78 @@ export class JobManager {
 			result.heartbeatRunId,
 			this.deps.wsManager,
 		);
-		await this.settleWakeupForRun(wakeupId, result);
+		// No task and no roster slug to name: a progress-update run's handback is
+		// recorded on its own row, and the abandoned notice has no thread to land in.
+		await this.settleWakeupForRun(wakeupId, result, { taskId: null, teamId, agentSlug: null });
 	}
 
 	/**
 	 * Settle a wakeup now its run has finished, and say whether the caller should
 	 * stop.
 	 *
-	 * A run that never started because the instance was at its container-memory
-	 * budget is **not** a failure - the dispatcher's own gate tests for exactly
-	 * that state, and a moment later it may not hold. So the wakeup goes back to
-	 * `queued` the same way the dispatcher's transient branch does, and `true`
-	 * stops the caller before the failure ping and the next-task chain, neither of
-	 * which should fire for a scheduling race. Every other outcome is terminal.
+	 * A run that handed its work back - the instance was at its container-memory
+	 * budget, or another run still held the rotating provider credential - is
+	 * **not** a failure. The dispatcher's own gates test for exactly those states,
+	 * and a moment later they may not hold. So the wakeup goes back to `queued`
+	 * and `true` stops the caller before the failure ping and the next-task chain,
+	 * neither of which should fire for a scheduling race. Every other outcome is
+	 * terminal.
+	 *
+	 * A thin mapping over the shared seam (`services/wakeup.ts`): this method owns
+	 * the `RunResult` vocabulary, `settleWakeupForRun` owns the writes. Keeping the
+	 * mapping here is what lets both this path and the orphan sweeper share one
+	 * handback, rather than each maintaining its own.
 	 */
 	private async settleWakeupForRun(
 		wakeupId: string | undefined,
-		result: { success: boolean; requeued?: boolean },
+		result: {
+			success: boolean;
+			requeued?: boolean;
+			requeueReason?: WakeupSkipReason;
+			heartbeatRunId?: string;
+		},
+		/** Where to record the outcome. Omitted only where there is no run row to write. */
+		run?: { taskId: string | null; teamId: string; agentSlug: string | null },
 	): Promise<boolean> {
-		const { db } = this.deps;
-		if (result.requeued) {
-			if (wakeupId) {
-				await db.query(
-					`UPDATE agent_wakeup_requests
-					 SET status = $1::wakeup_status, claimed_at = NULL,
-					     last_skipped_at = now(), last_skipped_reason = $2
-					 WHERE id = $3`,
-					[WakeupStatus.Queued, WakeupSkipReason.InstanceAtCapacity, wakeupId],
+		const intent: SettlementIntent = result.requeued
+			? // The runner names the wait it gave up on; capacity is only the default
+				// for a caller that predates the distinction.
+				{ kind: 'handback', reason: result.requeueReason ?? WakeupSkipReason.InstanceAtCapacity }
+			: result.success
+				? { kind: 'complete' }
+				: { kind: 'fail' };
+		const settled = await settleWakeupForRun(this.deps.db, wakeupId, intent);
+
+		// A handback's run row may not assert an outcome until there is one. The
+		// runner finalized it `Cancelled` saying it was returning to the queue; only
+		// here is it known whether that happened, so only here is it recorded -
+		// through the same recorder the orphan sweeper uses, so the two cannot say
+		// different things about the same event.
+		if (intent.kind === 'handback' && result.heartbeatRunId && run) {
+			const requeued = settled.kind === 'requeued';
+			if (!requeued) {
+				log.warn(
+					`Wakeup ${wakeupId} could not be handed back (already settled) - run ${result.heartbeatRunId} is abandoned and needs a human`,
 				);
 			}
-			return true;
-		}
-		if (wakeupId) {
-			await db.query(
-				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
+			await recordHandbackOutcome(
+				this.deps.db,
+				{
+					runId: result.heartbeatRunId,
+					taskId: run.taskId,
+					teamId: run.teamId,
+					agentSlug: run.agentSlug,
+					terminalStatus: HeartbeatRunStatus.Cancelled,
+				},
+				requeued ? 'requeued' : 'abandoned',
+				undefined,
+				this.deps.wsManager,
 			);
 		}
-		return false;
+
+		// `false` on a failed handback so the caller stops treating this as a
+		// scheduling race: nothing is carrying the work, and the row now says so.
+		return settled.kind === 'requeued';
 	}
 
 	/**

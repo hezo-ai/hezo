@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} heeft deze taak naar het hoogste niveau verplaatst",
 	"comment.parentPromotedFrom": "{actor} heeft deze taak naar het hoogste niveau verplaatst (stond onder {from})",
 	"comment.repoDesignated": "Repository {repo} ingesteld als aangewezen repository.",
+	"comment.runAbandoned": "Uitvoering voor {agent} kon niet worden gestart en wordt niet automatisch opnieuw geprobeerd.",
 	"comment.runAgentFallback": "een agent",
 	"comment.runFailed": "Uitvoering voor {agent} is mislukt.",
 	"comment.runFailedWithError": "Uitvoering voor {agent} is mislukt: {error}",

@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} flyttade den här uppgiften till toppnivån",
 	"comment.parentPromotedFrom": "{actor} flyttade den här uppgiften till toppnivån (låg under {from})",
 	"comment.repoDesignated": "Repository {repo} angavs som utsett repository.",
+	"comment.runAbandoned": "Körningen för {agent} kunde inte startas och görs inte om automatiskt.",
 	"comment.runAgentFallback": "en agent",
 	"comment.runFailed": "Körningen för {agent} misslyckades.",
 	"comment.runFailedWithError": "Körningen för {agent} misslyckades: {error}",

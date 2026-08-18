@@ -1,0 +1,39 @@
+-------------------------------------------------------------------------------
+-- Why a run was cancelled
+-------------------------------------------------------------------------------
+--
+-- `cancelled` means four different things and the row said which only in prose.
+-- Two of them are a person deciding to stop: an operator pressing Terminate, or
+-- a task being cancelled or re-opened so its pending work is moot. The other two
+-- are the instance giving up on its own: the capacity park and the credential
+-- wait handing their work back, and the orphan sweep reaping a run whose driver
+-- vanished before the agent launched. Only the last of those can leave work owed
+-- with nothing carrying it, and only that one needs a human.
+--
+-- Readers had nowhere to ask. The web offers Retry on `failed`/`timed_out`
+-- alone, so a run the instance abandoned showed a reader a dead row with no
+-- affordance, while an operator's own Terminate would have sprouted one if the
+-- status test were simply widened. Deriving the difference from `error` was the
+-- alternative, and `requeueContainerKilledRuns` already selects on
+-- `error = 'container_error'` - a control signal built on prose, in a change
+-- that rewords run error prose. One column ends both problems.
+--
+-- TEXT rather than a PG enum, matching its two neighbours on this table,
+-- `queued_reason` and `no_work_reason`. The value set lives in `@hezo/shared`
+-- (`RunCancelReason`), read through a guard so a value written by a newer server
+-- degrades to "no Retry" on an older client rather than crashing it, and behaviour
+-- hangs off `RUN_CANCEL_BEHAVIOUR` so a new reason is one row rather than a case
+-- at four call sites. TEXT also avoids `ALTER TYPE ... ADD VALUE`, which cannot
+-- have its new value used in the same transaction a migration runs in.
+--
+-- Nullable with no backfill, and NULL is the honest value rather than a gap -
+-- the same reasoning 065 records for `created_by_run_id`. The attribution did
+-- not exist before, so no existing row has one, and no SQL can recover which of
+-- the four a historical cancel was. NULL stays correct for every run that was
+-- not cancelled at all, which is the overwhelming majority.
+--
+-- No index. The column is projected onto a run the reader already named; nothing
+-- filters or sorts on it, so an index would cost writes and serve no query.
+
+ALTER TABLE heartbeat_runs
+    ADD COLUMN IF NOT EXISTS cancel_reason TEXT;

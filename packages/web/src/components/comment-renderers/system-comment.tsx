@@ -9,6 +9,7 @@ import type {
 	SystemDescriptionChangeContent,
 	SystemParentChangeContent,
 	SystemRepoDesignatedContent,
+	SystemRunAbandonedContent,
 	SystemRunFailedContent,
 	SystemStatusChangeContent,
 	SystemTaskLinkContent,
@@ -30,6 +31,9 @@ function isStatusChange(c: SystemContent): c is SystemStatusChangeContent {
 }
 function isRunFailed(c: SystemContent): c is SystemRunFailedContent {
 	return c.kind === 'run_failed';
+}
+function isRunAbandoned(c: SystemContent): c is SystemRunAbandonedContent {
+	return c.kind === 'run_abandoned';
 }
 function isRepoDesignated(c: SystemContent): c is SystemRepoDesignatedContent {
 	return c.kind === 'repo_designated';
@@ -72,6 +76,10 @@ export function SystemComment({ comment, projectId }: Props) {
 
 	if (content && isRunFailed(content)) {
 		return <RunFailedBody content={content} projectId={projectId} timestamp={timestamp} />;
+	}
+
+	if (content && isRunAbandoned(content)) {
+		return <RunAbandonedBody content={content} projectId={projectId} timestamp={timestamp} />;
 	}
 
 	if (content && isRepoDesignated(content)) {
@@ -357,6 +365,51 @@ function RunFailedBody({
 							error: error ? <span className="text-text-3">{error}</span> : null,
 						}}
 					/>
+				</span>
+			</span>
+			{timestamp}
+		</div>
+	);
+}
+
+/**
+ * Deliberately shaped like `RunFailedBody` rather than sharing with it: the two
+ * sentences differ in every language (one reports a failure, the other reports
+ * that nothing ran and nothing will), and folding them into one template with a
+ * variable would force a wrong agreement somewhere.
+ */
+function RunAbandonedBody({
+	content,
+	projectId,
+	timestamp,
+}: {
+	content: SystemRunAbandonedContent;
+	projectId?: string;
+	timestamp: React.ReactNode;
+}) {
+	const { t } = useI18n();
+	const agentSlug = typeof content.agent_slug === 'string' ? content.agent_slug : '';
+	const agentNode =
+		agentSlug && projectId ? (
+			<Link
+				to="/projects/$projectId/agents/$agentId"
+				params={{ projectId, agentId: agentSlug }}
+				className="text-xs text-info-soft-fg hover:underline"
+				data-testid="run-abandoned-agent"
+			>
+				@{agentSlug}
+			</Link>
+		) : (
+			<span className="text-xs text-text-2">{t('comment.runAgentFallback')}</span>
+		);
+	return (
+		<div
+			className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2 leading-[26px]"
+			data-testid="run-abandoned-comment"
+		>
+			<span className="text-xs text-text-2 inline-flex items-baseline gap-1.5 flex-wrap">
+				<span>
+					<Trans k="comment.runAbandoned" vars={{ agent: agentNode }} />
 				</span>
 			</span>
 			{timestamp}

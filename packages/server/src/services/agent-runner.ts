@@ -34,6 +34,7 @@ import {
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	type ThreadRowCategory,
+	WakeupSkipReason,
 	WakeupSource,
 	WsMessageType,
 	wsRoom,
@@ -236,11 +237,15 @@ export interface RunResult {
 	/** The run ended by hitting its wall-clock time limit; drives an automatic same-task continuation. */
 	timedOut?: boolean;
 	/**
-	 * The run never started because the instance was at its container-memory
-	 * budget. Not a failure: the wakeup is re-queued and dispatched again, and no
-	 * failure ping is posted.
+	 * The run never started because the instance was busy, and handed its work
+	 * back. Not a failure: the wakeup is re-queued and dispatched again, and no
+	 * failure ping is posted. Two waits reach it - the container-memory budget and
+	 * the rotating provider credential - so the cause travels beside it rather
+	 * than being assumed.
 	 */
 	requeued?: boolean;
+	/** Which wait gave up, so the queued wakeup reports the real reason it is waiting. */
+	requeueReason?: WakeupSkipReason;
 }
 
 export interface RunnerDeps {
@@ -1125,6 +1130,51 @@ const PREFLIGHT_BEARER_TOKEN = 'preflight.dry.run';
 export const CAPACITY_PARK_MAX_MS = 3 * 60_000;
 
 /**
+ * How long a run waits for the rotating provider credential before handing its
+ * work back.
+ *
+ * **Deliberately not {@link CAPACITY_PARK_MAX_MS}, which it used to share.** The
+ * two waits look alike and are not the same judgement. The capacity park waits
+ * for a container slot the idle-reclaim cron frees, so it resolves in seconds
+ * and giving up early costs nothing. This lock is held for a *whole other run*
+ * (the CLI rewrites the token file whenever it likes and the rotated value is
+ * read back during teardown), so what is being waited on is bounded by that
+ * run's `run_timeout_min` - 60 minutes by default. At a 3 minute ceiling a
+ * second run on a rotating credential gave up, re-queued, redispatched 5s later
+ * and gave up again, over and over, until the holder finished: a thrash loop
+ * that never converged and filled the run list on the way. Queueing on the lock
+ * is FIFO and correct; giving up early only randomises who goes next.
+ *
+ * Derived from the waiting run's own timeout rather than fixed, with headroom,
+ * because waiting past that deadline lets `launchTask`'s wall-clock timer abort
+ * the run as `timed_out` - trading one errored row for another, which is the
+ * same reason the capacity park does not use `run_timeout_min` raw.
+ *
+ * **Deliberately unfloored.** An earlier revision floored this at the capacity
+ * park's ceiling so a short agent timeout could not regress the wait; that
+ * inverted the invariant above for any `run_timeout_min` of 3 or less (settable
+ * to 1 in the UI), where a 180 s wait outlives a 60 s wall-clock timer and the
+ * run is finalized `timed_out` instead of handing back. The fraction alone keeps
+ * the wait inside the run's own budget at every setting.
+ *
+ * The cap bounds a cost the wait carries that is easy to miss: a dispatch with
+ * no spare container takes a `pendingContainerStarts` reservation *before*
+ * `launchTask`, and it is charged against the instance memory budget until the
+ * run settles. So a waiter reserves a container's worth of headroom for a
+ * container it has not asked for yet, and every minute of this wait is a minute
+ * another project can be told the instance is at capacity. 15 minutes covers the
+ * "a run takes several minutes" case this exists for while keeping that
+ * reservation bounded.
+ */
+const CREDENTIAL_WAIT_MAX_FRACTION = 0.8;
+const CREDENTIAL_WAIT_CAP_MS = 15 * 60_000;
+
+export function credentialWaitMaxMs(runTimeoutMin: number | null | undefined): number {
+	const budget = (runTimeoutMin ?? 0) * 60_000 * CREDENTIAL_WAIT_MAX_FRACTION;
+	return Math.min(budget, CREDENTIAL_WAIT_CAP_MS);
+}
+
+/**
  * Sleep that returns early when the run is aborted, so a cancel or a shutdown
  * during a capacity park is not held for the rest of the poll interval.
  */
@@ -1600,7 +1650,10 @@ export async function runAgent(
 	 * lost-run escalation. A terminal row does none of that, so the requeued
 	 * wakeup is free to dispatch on the next tick.
 	 */
-	const finalizeRequeue = async (reason: string): Promise<RunResult> => {
+	const finalizeRequeue = async (
+		reason: string,
+		requeueReason: WakeupSkipReason,
+	): Promise<RunResult> => {
 		releaseCredentialLock?.();
 		const message = `${reason} - returning this run to the queue.`;
 		emit('stdout', `[runner] ${message}\n`);
@@ -1614,6 +1667,13 @@ export async function runAgent(
 				exitCode: -1,
 				durationMs,
 				error: message,
+				// Deliberately NOT stamping `cancel_reason` here. Whether the work is
+				// actually carried is not known until the caller settles the wakeup,
+				// and the guard there can bite. Writing `handed_back` at this point
+				// asserted an outcome before attempting it - the same defect the orphan
+				// sweeper was restructured to avoid - and left it standing when the
+				// handback failed. `JobManager.settleWakeupForRun` records it once the
+				// answer is in, through the recorder the sweeper shares.
 			},
 			runBroadcast,
 		);
@@ -1624,6 +1684,7 @@ export async function runAgent(
 			durationMs,
 			heartbeatRunId,
 			requeued: true,
+			requeueReason,
 		};
 	};
 
@@ -1653,19 +1714,31 @@ export async function runAgent(
 			 WHERE id = $2 AND status = $3::heartbeat_run_status`,
 			[QueuedRunReason.CredentialSerialized, heartbeatRunId, HeartbeatRunStatus.Queued],
 		);
+		// Read here rather than carried on `AgentInfo`: only a rotating credential
+		// reaches this block, so the extra round trip is on the slow path alone and
+		// every other caller of `runAgent` is left unchanged.
+		const timeoutRow = await deps.db.query<{ run_timeout_min: number }>(
+			'SELECT run_timeout_min FROM member_agents WHERE id = $1',
+			[agent.id],
+		);
 		try {
 			releaseCredentialLock = await acquireCredentialLock(credential.configId, {
 				signal: runAbort.signal,
-				// The same bound the capacity park gets, because it is the same
-				// judgement: the instance is busy, so come back rather than wait out a
-				// window the orphan pass has stopped believing in.
-				timeoutMs: deps.capacityPark?.maxMs ?? CAPACITY_PARK_MAX_MS,
+				// See {@link credentialWaitMaxMs}: this waits on a whole other run, not
+				// on the idle-reclaim cron, so it does not share the capacity park's
+				// ceiling. `deps.capacityPark?.maxMs` still overrides it, which is what
+				// lets a test drive either wait to its deadline quickly.
+				timeoutMs:
+					deps.capacityPark?.maxMs ?? credentialWaitMaxMs(timeoutRow.rows[0]?.run_timeout_min),
 				owner: runLabel,
 			});
 		} catch (e) {
 			if (runAbort.signal.aborted) return finalizeAbort();
 			if (e instanceof KeyedLockTimeoutError) {
-				return finalizeRequeue('Another run still holds this provider credential');
+				return finalizeRequeue(
+					'Another run still holds this provider credential',
+					WakeupSkipReason.CredentialBusy,
+				);
 			}
 			// Finalized rather than rethrown: nothing above this catches, and a
 			// throw here would leave the row `queued` with no driver - which is the
@@ -1735,7 +1808,9 @@ export async function runAgent(
 				);
 			} catch (e) {
 				if (!(e instanceof PoolCapacityError)) throw e;
-				if (Date.now() >= parkDeadline) return finalizeRequeue(e.message);
+				if (Date.now() >= parkDeadline) {
+					return finalizeRequeue(e.message, WakeupSkipReason.InstanceAtCapacity);
+				}
 				if (!parked) {
 					// Once, not per poll: a line every 5s would make the run log the
 					// new noise, and the wait itself is already on the row as
@@ -4565,6 +4640,13 @@ async function updateHeartbeatRun(
 		     output_tokens = COALESCE($5, output_tokens),
 		     cost_cents = COALESCE($6, cost_cents),
 		     usage_partial = COALESCE($7, usage_partial)
+		     -- cancel_reason is deliberately absent from this SET list. A cancel
+		     -- attribution says WHO stopped the run, and this finalizer is never that
+		     -- party: terminateHeartbeatRun backfills operator_terminated while the
+		     -- abort is still cascading, and the orphan sweeper records its own
+		     -- through recordHandbackOutcome. Leaving the column out entirely is what
+		     -- makes their writes survive, rather than a COALESCE direction a later
+		     -- simplification could quietly reverse.
 		 WHERE id = $8
 		   AND status IN ($9::heartbeat_run_status, $10::heartbeat_run_status)
 		 RETURNING id`,

@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} hat diese Aufgabe auf die oberste Ebene verschoben",
 	"comment.parentPromotedFrom": "{actor} hat diese Aufgabe auf die oberste Ebene verschoben (war unter {from})",
 	"comment.repoDesignated": "Repository {repo} wurde als zugewiesenes Repository festgelegt.",
+	"comment.runAbandoned": "Lauf für {agent} konnte nicht gestartet werden und wird nicht automatisch wiederholt.",
 	"comment.runAgentFallback": "einen Agenten",
 	"comment.runFailed": "Lauf für {agent} fehlgeschlagen.",
 	"comment.runFailedWithError": "Lauf für {agent} fehlgeschlagen: {error}",

@@ -99,11 +99,22 @@ and opening a run and coming back returns you to the view you were in.
 A run waiting its turn shows as queued, not as an error - it keeps its place and starts as
 soon as whatever it is waiting for is free. There are two such waits: for a container to
 free up, and for another run to finish with the same AI provider credential, which some
-subscriptions can only lend to one run at a time. Either way, if the wait outlasts its
-patience the run is recorded as cancelled and the work goes back on the queue to be picked
-up again; that is not a failure, and it is why cancelled runs are their own thing rather
-than errors. Hover the queued run's info icon to see which wait it is in. See
+subscriptions can only lend to one run at a time. The credential wait is the longer of the
+two, because it queues behind a whole other run rather than behind a container being
+reclaimed. Either way, if the wait outlasts its patience the run is recorded as cancelled
+and the work goes back on the queue to be picked up again; that is not a failure, and it is
+why cancelled runs are their own thing rather than errors. Hover the queued run's info icon
+to see which wait it is in. See
 [how much can run at once](/docs/containers/overview#how-much-can-run-at-once).
+
+Cancelled covers one more case, and it is the only one that asks anything of you. If a run
+is queued but never begins - Hezo lost track of it before the agent launched - the work is
+put back on the queue and runs again on its own. Should that keep happening, Hezo stops
+after three attempts, says so on the run, posts a note in the task, and raises an item in
+your Inbox. That run carries a **Retry** button, which is the only cancelled run that does:
+a run you stopped yourself, or one whose work is already back on the queue, has nothing
+left to press. A run like that is not counted as an error, so it does not raise the task's
+error marker; the note in the task and the Inbox item are how you find it.
 
 ## Per-agent model override
 

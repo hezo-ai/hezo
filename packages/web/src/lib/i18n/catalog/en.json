@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} promoted this task to top level",
 	"comment.parentPromotedFrom": "{actor} promoted this task to top level (was under {from})",
 	"comment.repoDesignated": "Repository {repo} set as the designated repo.",
+	"comment.runAbandoned": "Run for {agent} could not be started and will not be retried automatically.",
 	"comment.runAgentFallback": "agent",
 	"comment.runFailed": "Run for {agent} failed.",
 	"comment.runFailedWithError": "Run for {agent} failed: {error}",

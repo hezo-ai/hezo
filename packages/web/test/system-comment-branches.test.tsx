@@ -150,6 +150,45 @@ test('status_change auto_unblock WITHOUT projectId falls through to the plain st
 	expect(queryByTestId('status-change-cascade')).toBeNull();
 });
 
+// ─── run_abandoned ────────────────────────────────────────────────────────
+
+test('run_abandoned: says the run could not be started, not that it failed', async () => {
+	// Its own sentence rather than a status variable on the failed one: this run
+	// never began, so "failed" would be untrue, and several of the twelve
+	// languages inflect the two differently.
+	const { findByTestId, queryByTestId } = renderSystem(
+		comment({ kind: 'run_abandoned', agent_slug: 'risk-verifier', run_id: 'r1' }),
+		'proj',
+	);
+	const wrapper = await findByTestId('run-abandoned-comment');
+	expect(wrapper.textContent).toContain('could not be started');
+	expect(wrapper.textContent).toContain('not be retried automatically');
+	// And it is not the failed renderer wearing different copy.
+	expect(queryByTestId('run-failed-comment')).toBeNull();
+
+	const link = (await findByTestId('run-abandoned-agent')) as HTMLAnchorElement;
+	expect(link.textContent).toBe('@risk-verifier');
+	expect(link.getAttribute('href')).toContain('/projects/proj/agents/risk-verifier');
+});
+
+test('run_abandoned: no agent_slug → fallback span, no link', async () => {
+	const { findByTestId, queryByTestId } = renderSystem(
+		comment({ kind: 'run_abandoned', run_id: 'r1' }),
+		'proj',
+	);
+	const wrapper = await findByTestId('run-abandoned-comment');
+	expect(wrapper.textContent).toContain('agent');
+	expect(queryByTestId('run-abandoned-agent')).toBeNull();
+});
+
+test('run_abandoned: agent_slug present but no projectId → span, no link', async () => {
+	const { findByTestId, queryByTestId } = renderSystem(
+		comment({ kind: 'run_abandoned', agent_slug: 'captain', run_id: 'r1' }),
+	);
+	await findByTestId('run-abandoned-comment');
+	expect(queryByTestId('run-abandoned-agent')).toBeNull();
+});
+
 // ─── run_failed ───────────────────────────────────────────────────────────
 
 test('run_failed: timed_out status, agent link, and error suffix', async () => {

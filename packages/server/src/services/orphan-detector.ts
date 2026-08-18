@@ -12,12 +12,18 @@ import { readRunLogTail } from '../db/run-log-chunks';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
-import { createWakeup } from './wakeup';
+import { HANDBACK_OUTCOME_COPY, type HandbackOutcome, recordHandbackOutcome } from './run-handback';
+import { createWakeup, settleWakeupForRun } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('orphan-detector');
 
-const MAX_RETRIES = 3;
+/**
+ * How many attempts a piece of work gets before Hezo stops and asks for a human.
+ * Exported so a test can drive the chain to its ceiling without hard-coding a
+ * number that would silently stop matching if this moved.
+ */
+export const MAX_RETRIES = 3;
 const SAFETY_WINDOW_SECONDS = 30;
 /** Failure excerpt handed to the retry wakeup. */
 const ORPHAN_LOG_TAIL_CHARS = 1_000;
@@ -55,46 +61,38 @@ export interface DetectOrphansOpts {
 const ORPHAN_ERROR_TAIL_CHARS = 400;
 
 /**
- * The run's `error`, carrying the actual cause where the log has one.
+ * What was observed, in the operator's terms. True whatever happens next, which
+ * is the whole point: it is written by the reap `UPDATE` before the work has
+ * been settled, so it may not assert an outcome.
  *
- * The bare verdict on its own ("run never started") named the symptom and left
- * the reason - almost always the instance being at its container-memory budget -
- * sitting in a log the reader had to open separately.
+ * The never-started verdict used to end "so it was returned to the queue" - a
+ * claim composed before the handback was attempted and stamped on the row
+ * whether or not the handback succeeded. Its other half named a "host process",
+ * which is this server, not the container and not the operator's machine.
+ * Neither told a reader anything they could act on.
  */
-function orphanErrorMessage(neverStarted: boolean, logTail: string): string {
-	const verdict = neverStarted
-		? 'Never started: no host process was driving this run, so it was returned to the queue.'
-		: // Says what was observed rather than what was inferred. This pass performs
-			// no process check - it finds a `running` row that no live run in this
-			// process claims - and the old wording ("process no longer running")
-			// asserted one, which read as a fact while being a guess. It was also the
-			// text every setup failure ended up wearing, because those runs threw
-			// without recording anything and this was the only writer left.
-			'Orphaned: nothing was driving this run any more, so no result was ever recorded. ' +
-			'A restart, a crash or a wedged dispatch - not the agent failing.';
+const ORPHAN_VERDICT: Record<OrphanArm, string> = {
+	never_started: 'Never started: this run was queued but never began, so no work was done.',
+	// Says what was observed rather than what was inferred. This pass performs no
+	// process check - it finds a `running` row that no live run in this process
+	// claims - and the old wording ("process no longer running") asserted one,
+	// which read as a fact while being a guess. It was also the text every setup
+	// failure ended up wearing, because those runs threw without recording
+	// anything and this was the only writer left.
+	orphaned:
+		'Orphaned: nothing was driving this run any more, so no result was ever recorded. ' +
+		'A restart, a crash or a wedged dispatch - not the agent failing.',
+};
+
+/** The run's `error`, carrying the outcome and the actual cause where the log has one. */
+function orphanErrorMessage(arm: OrphanArm, outcome: HandbackOutcome, logTail: string): string {
+	const verdict = `${ORPHAN_VERDICT[arm]} ${HANDBACK_OUTCOME_COPY[outcome]}`;
 	const excerpt = logTail.trim().slice(-ORPHAN_ERROR_TAIL_CHARS).trim();
 	return excerpt ? `${verdict}\n\nLast log output:\n${excerpt}` : verdict;
 }
 
-/**
- * Hand a claimed wakeup back to the queue. Returns whether it was still claimed.
- *
- * The status guard is load-bearing: another path may have settled this wakeup
- * already, and returning a completed one to the queue dispatches its work a
- * second time. The boolean is how the caller knows whether the work was handed
- * back or still needs a retry raised for it.
- */
-async function requeueWakeup(db: Db, wakeupId: string): Promise<boolean> {
-	const res = await db.query(
-		`UPDATE agent_wakeup_requests
-		 SET status = $1::wakeup_status, claimed_at = NULL,
-		     last_skipped_at = now(), last_skipped_reason = $2
-		 WHERE id = $3 AND status = $4::wakeup_status
-		 RETURNING id`,
-		[WakeupStatus.Queued, WakeupSkipReason.InstanceAtCapacity, wakeupId, WakeupStatus.Claimed],
-	);
-	return res.rows.length > 0;
-}
+/** Which of the two stranded shapes a reaped row was. */
+type OrphanArm = 'never_started' | 'orphaned';
 
 export async function detectOrphans(
 	db: Db,
@@ -122,9 +120,11 @@ export async function detectOrphans(
 		container_id: string | null;
 		process_loss_retry_count: number;
 		status: HeartbeatRunStatus;
+		agent_slug: string | null;
 	}>(
 		`SELECT hr.id, hr.member_id, hr.team_id, hr.task_id, hr.wakeup_id,
 		        hr.process_loss_retry_count, hr.status,
+		        (SELECT ma.slug FROM member_agents ma WHERE ma.id = hr.member_id) AS agent_slug,
 		        -- The team fallback is load-bearing for the broadcast, not a nicety.
 		        -- A progress-update run carries no task, so the task lookup alone
 		        -- left project_id NULL - and the client skips a heartbeat_runs
@@ -172,28 +172,38 @@ export async function detectOrphans(
 		// nobody could act on, and minted a fresh retry wakeup on every pass rather
 		// than returning the one already sitting there claimed.
 		const neverStarted = run.status === HeartbeatRunStatus.Queued;
+		const arm: OrphanArm = neverStarted ? 'never_started' : 'orphaned';
+		const terminalStatus = neverStarted ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed;
 
 		// Read once and use twice - the message below and, on the failure arm, the
 		// retry wakeup's excerpt. This runs on a 30s cron, so a second read per
 		// orphan is a cost with nothing to show for it.
 		const tail = await readRunLogTail(db, run.id, ORPHAN_LOG_TAIL_CHARS);
-		const error = orphanErrorMessage(neverStarted, tail.text);
 
+		// Claim the row FIRST, with the verdict alone. The outcome sentence is
+		// appended below, once the work has actually been settled. Writing both at
+		// once is what let this row assert "returned to the queue" for a handback
+		// that had not been attempted yet and could still fail - the defect a
+		// stranded ask looked identical to a served one through. The row carries a
+		// true statement at every instant, including if this process dies between
+		// the two writes.
 		const reaped = await db.query<{ id: string }>(
 			`UPDATE heartbeat_runs
 			 SET status = $2::heartbeat_run_status,
 			     finished_at = now(),
 			     error = $3,
 			     -- Only a real process loss counts toward the escalation. A run that
-			     -- never started is being handed back, not retried after a failure.
+			     -- never started is being handed back, not retried after a failure;
+			     -- its own bounded ladder spends the budget below, where it also
+			     -- reads it.
 			     process_loss_retry_count = process_loss_retry_count + $4::int
 			 WHERE id = $1
 			   AND status IN ($5::heartbeat_run_status, $6::heartbeat_run_status)
 			 RETURNING id`,
 			[
 				run.id,
-				neverStarted ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
-				error,
+				terminalStatus,
+				ORPHAN_VERDICT[arm],
 				neverStarted ? 0 : 1,
 				HeartbeatRunStatus.Queued,
 				HeartbeatRunStatus.Running,
@@ -225,39 +235,192 @@ export async function detectOrphans(
 
 		await setAgentIdleIfNoActiveRuns(db, run.member_id, run.team_id, run.id, wsManager);
 
-		broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
-			id: run.id,
-			member_id: run.member_id,
-			task_id: run.task_id,
-			project_id: run.project_id,
-			status: neverStarted ? HeartbeatRunStatus.Cancelled : HeartbeatRunStatus.Failed,
-			error,
-		});
+		// The row is terminal from here, so nothing will rescan it: a throw past this
+		// point strands the work permanently. Isolate each orphan so one bad row
+		// cannot also abandon every other orphan in the batch, and log loudly enough
+		// that a strand is findable rather than silent.
+		try {
+			const outcome = neverStarted
+				? await handBackNeverStartedWork(db, run)
+				: (await retryOrEscalateLostRun(
+							db,
+							{
+								runId: run.id,
+								memberId: run.member_id,
+								teamId: run.team_id,
+								taskId: run.task_id,
+								priorRetries: run.process_loss_retry_count,
+							},
+							tail.text,
+						)) === 'retried'
+					? 'replaced'
+					: 'escalated';
 
-		// A run that never started is put back rather than retried: the original
-		// wakeup returns to the queue for the dispatcher to pick up, exactly as
-		// `JobManager.settleWakeupForRun` does for the capacity park's own give-up
-		// path. Guarded on `claimed` so a wakeup already settled by another path is
-		// not resurrected. With no wakeup to return (a run started by something
-		// else) there is nothing to hand back, so fall through to the retry path
-		// rather than dropping the work.
-		const requeued = neverStarted && run.wakeup_id ? await requeueWakeup(db, run.wakeup_id) : false;
-		if (requeued) continue;
+			// Now the outcome is known, and only now, the row can say what happened to
+			// the work. The recorder reports whether its guarded write applied, so a
+			// terminate or a container sweep landing in between keeps its own more
+			// specific record and this pass stays silent about a row it did not write.
+			const error = orphanErrorMessage(arm, outcome, tail.text);
+			const recorded = await recordHandbackOutcome(
+				db,
+				{
+					runId: run.id,
+					taskId: run.task_id,
+					teamId: run.team_id,
+					agentSlug: run.agent_slug,
+					terminalStatus,
+				},
+				outcome,
+				error,
+				wsManager,
+			);
 
-		await retryOrEscalateLostRun(
-			db,
-			{
-				runId: run.id,
-				memberId: run.member_id,
-				teamId: run.team_id,
-				taskId: run.task_id,
-				priorRetries: run.process_loss_retry_count,
-			},
-			tail.text,
-		);
+			// Broadcast after the second write and only if it landed, so an open run
+			// page receives the final text rather than the provisional verdict, and is
+			// never told a row says something it does not.
+			if (recorded) {
+				broadcastRowChange(wsManager, wsRoom.team(run.team_id), 'heartbeat_runs', 'UPDATE', {
+					id: run.id,
+					member_id: run.member_id,
+					task_id: run.task_id,
+					project_id: run.project_id,
+					status: terminalStatus,
+					error,
+				});
+			}
+
+			log.info(
+				`Reaped ${arm} run ${run.id} (member ${run.member_id}, task ${run.task_id ?? 'none'}): ${outcome}`,
+			);
+		} catch (e) {
+			log.error(
+				`Reaped ${arm} run ${run.id} but could not settle its work - it is stranded and needs a human:`,
+				e,
+			);
+		}
 	}
 
 	return orphanCount;
+}
+
+/**
+ * Put back the work a run that never started was carrying.
+ *
+ * Split off the process-loss ladder deliberately. A never-started run spent no
+ * strike (nothing ran, nothing was produced), so gating it on the strike budget
+ * was the defect: `retryOrEscalateLostRun` reads `process_loss_retry_count` for
+ * its ceiling, `createHeartbeatRun` inherits that count down an orphan-retry
+ * lineage, and this arm never incremented it - so an inherited 2 turned every
+ * later never-start into a permanent dead end that filed one approval, guarded
+ * `NOT EXISTS` per member, and queued nothing ever again.
+ *
+ * Two rungs, in order:
+ *
+ * 1. **Hand the original wakeup back.** It already names the work, and it keeps
+ *    its own `source` - which decides whether the dependency gate and the no-work
+ *    backoff apply to it. Requires the payload to name a task, or the run to have
+ *    had none: `createSyntheticOnDemandWakeup` writes an empty payload, so
+ *    returning one of those to the queue produces a task-less nudge that
+ *    `activateAgent` answers by picking some other task by priority, or by
+ *    completing it as "nothing to do". That is not this run's work.
+ * 2. **Mint one replacement naming the task**, carrying the original's source so
+ *    a `mention` does not silently become a `timer` - the downgrade that put a
+ *    teammate's direct ask behind the dependency gate it was exempt from. This
+ *    rung is bounded, and unlike rung 1 it spends a strike, so the arm that reads
+ *    the ceiling is now the arm that fills it.
+ *
+ * Past the ceiling the work is abandoned: an approval is filed and the run says
+ * so. Rung 1 stays deliberately unbounded, as before - the wakeup is intact and
+ * the dispatcher owns it, each lap leaves a visible cancelled row and a queued
+ * agent in the task sidebar, and bounding it would need a counter carried on the
+ * wakeup itself.
+ */
+async function handBackNeverStartedWork(
+	db: Db,
+	run: {
+		id: string;
+		member_id: string;
+		team_id: string;
+		task_id: string | null;
+		wakeup_id: string | null;
+		process_loss_retry_count: number;
+	},
+): Promise<HandbackOutcome> {
+	const original = run.wakeup_id
+		? (
+				await db.query<{ source: WakeupSource; task_id: string | null }>(
+					`SELECT source, payload->>'task_id' AS task_id
+					 FROM agent_wakeup_requests WHERE id = $1`,
+					[run.wakeup_id],
+				)
+			).rows[0]
+		: undefined;
+
+	// Hand the original back whatever it names. An earlier revision gated this on
+	// the payload naming a task, to stop an "intent-less" synthetic wakeup coming
+	// back as a task-less nudge - but `createSyntheticOnDemandWakeup` is reachable
+	// only from the progress-update path, which passes no task, so that gate never
+	// fired for the rows it was written for. What it did catch was the ordinary
+	// heartbeat wakeup, whose payload names no task because `activateAgent` chooses
+	// one: those were left dangling in `claimed` for `healStaleRunState` to
+	// mislabel. A wakeup that names no task is not intent-less, it is "find work",
+	// and handing it back says exactly that.
+	if (run.wakeup_id) {
+		const settled = await settleWakeupForRun(db, run.wakeup_id, {
+			kind: 'handback',
+			reason: WakeupSkipReason.RunNeverStarted,
+		});
+		if (settled.kind === 'requeued') return 'requeued';
+	}
+
+	// No task to name means no replacement can be minted that points at this work,
+	// so the ladder ends here however many strikes are left. Said plainly rather
+	// than borrowed from the retry ceiling, which would tell a human this agent had
+	// failed three times when it may not have run at all.
+	if (!run.task_id) {
+		await fileLostRunApproval(
+			db,
+			{ runId: run.id, memberId: run.member_id, teamId: run.team_id, taskId: null },
+			undefined,
+			'A run could not be started and there was no task to retry it against. Manual intervention required.',
+		);
+		return 'abandoned';
+	}
+
+	if (run.process_loss_retry_count + 1 >= MAX_RETRIES) {
+		await fileLostRunApproval(db, {
+			runId: run.id,
+			memberId: run.member_id,
+			teamId: run.team_id,
+			taskId: run.task_id,
+		});
+		return 'abandoned';
+	}
+
+	// Spend the strike, then hand the replacement a lineage that INHERITS it.
+	// Those two halves must travel together or the ceiling above is unreachable:
+	// `previous_run_id` carries `inheritsLossBudget: false`, so a replacement named
+	// that way starts back at zero and the chain never climbs however many times it
+	// laps. `previous_failure.run_id` is the key `RUN_LINEAGE_SOURCES` gives the
+	// budget to, and it is now the honest one - this arm fills the counter it reads.
+	//
+	// The original defect was the mirror of that, not this: the arm read the
+	// ceiling while never incrementing it, so a count inherited from an unrelated
+	// process-loss chain dead-ended it permanently. Incrementing consistently fixes
+	// both, because the count now means one thing - how many attempts this work has
+	// had without producing a result.
+	await db.query(
+		'UPDATE heartbeat_runs SET process_loss_retry_count = process_loss_retry_count + 1 WHERE id = $1',
+		[run.id],
+	);
+	await createWakeup(db, run.member_id, run.team_id, original?.source ?? WakeupSource.Timer, {
+		reason: 'never_started_retry',
+		task_id: run.task_id,
+		retry_count: run.process_loss_retry_count + 1,
+		max_retries: MAX_RETRIES,
+		previous_failure: { run_id: run.id },
+	});
+	return 'replaced';
 }
 
 /**
@@ -288,7 +451,7 @@ export async function retryOrEscalateLostRun(
 	},
 	/** Log excerpt the caller has already read, to save reading it twice. */
 	knownLogTail?: string,
-): Promise<void> {
+): Promise<'retried' | 'escalated'> {
 	if (run.priorRetries + 1 < MAX_RETRIES) {
 		const failedRun = await db.query<{ exit_code: number | null }>(
 			`SELECT exit_code FROM heartbeat_runs WHERE id = $1`,
@@ -317,41 +480,64 @@ export async function retryOrEscalateLostRun(
 				log_tail: tailText.length > 0 ? tailText : null,
 			},
 		});
-	} else {
-		// One record per stuck agent, not one per ceiling. A partial unique index
-		// would be stronger, but this pass is serial in a single process and an
-		// index needs a migration for a guard that is not racing anything.
-		// The member id is bound twice on purpose: once as the uuid column and once
-		// as the text `payload->>` compares against. One parameter in both places
-		// leaves Postgres unable to deduce a single type for it.
-		await db.query(
-			`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
-			 SELECT $1, $2::approval_type, $3::uuid, $5::jsonb
-			 WHERE NOT EXISTS (
-			   SELECT 1 FROM approvals
-			   WHERE team_id = $1 AND type = $2::approval_type AND status = 'pending'
-			     AND payload->>'type' = 'agent_error'
-			     AND payload->>'member_id' = $4::text
-			 )`,
-			[
-				run.teamId,
-				ApprovalType.Strategy,
-				run.memberId,
-				run.memberId,
-				JSON.stringify({
-					type: 'agent_error',
-					member_id: run.memberId,
-					// Named so the approval can be read back to the run that produced
-					// it; without these the record said an agent had failed and gave a
-					// human nowhere to look.
-					run_id: run.runId,
-					task_id: run.taskId ?? null,
-					last_error: knownLogTail?.trim().slice(-ORPHAN_LOG_TAIL_CHARS) || null,
-					message: `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
-				}),
-			],
-		);
+		return 'retried';
 	}
+
+	await fileLostRunApproval(
+		db,
+		{ runId: run.runId, memberId: run.memberId, teamId: run.teamId, taskId: run.taskId },
+		knownLogTail,
+	);
+	return 'escalated';
+}
+
+/**
+ * Record that an agent needs a human, once per stuck agent rather than once per
+ * ceiling hit.
+ *
+ * Shared by both give-up paths - the process-loss ladder and the never-started
+ * one - so the two cannot drift in what they leave a human to find.
+ */
+async function fileLostRunApproval(
+	db: Db,
+	run: { runId: string; memberId: string; teamId: string; taskId?: string | null },
+	knownLogTail?: string,
+	/** Override for a give-up that is not the retry ceiling, so the record stays true. */
+	message = `Agent has failed ${MAX_RETRIES} consecutive times. Manual intervention required.`,
+): Promise<void> {
+	// One record per stuck agent, not one per ceiling. A partial unique index
+	// would be stronger, but this pass is serial in a single process and an
+	// index needs a migration for a guard that is not racing anything.
+	// The member id is bound twice on purpose: once as the uuid column and once
+	// as the text `payload->>` compares against. One parameter in both places
+	// leaves Postgres unable to deduce a single type for it.
+	await db.query(
+		`INSERT INTO approvals (team_id, type, requested_by_member_id, payload)
+		 SELECT $1, $2::approval_type, $3::uuid, $5::jsonb
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM approvals
+		   WHERE team_id = $1 AND type = $2::approval_type AND status = 'pending'
+		     AND payload->>'type' = 'agent_error'
+		     AND payload->>'member_id' = $4::text
+		 )`,
+		[
+			run.teamId,
+			ApprovalType.Strategy,
+			run.memberId,
+			run.memberId,
+			JSON.stringify({
+				type: 'agent_error',
+				member_id: run.memberId,
+				// Named so the approval can be read back to the run that produced
+				// it; without these the record said an agent had failed and gave a
+				// human nowhere to look.
+				run_id: run.runId,
+				task_id: run.taskId ?? null,
+				last_error: knownLogTail?.trim().slice(-ORPHAN_LOG_TAIL_CHARS) || null,
+				message,
+			}),
+		],
+	);
 }
 
 /**

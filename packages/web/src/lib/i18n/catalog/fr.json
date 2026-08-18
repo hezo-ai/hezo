@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} a promu cette tâche au niveau supérieur",
 	"comment.parentPromotedFrom": "{actor} a promu cette tâche au niveau supérieur (elle était sous {from})",
 	"comment.repoDesignated": "Dépôt {repo} défini comme dépôt désigné.",
+	"comment.runAbandoned": "L'exécution pour {agent} n'a pas pu démarrer et ne sera pas relancée automatiquement.",
 	"comment.runAgentFallback": "un agent",
 	"comment.runFailed": "L'exécution pour {agent} a échoué.",
 	"comment.runFailedWithError": "L'exécution pour {agent} a échoué : {error}",

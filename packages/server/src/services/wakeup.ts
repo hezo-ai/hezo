@@ -1,4 +1,10 @@
-import { HeartbeatRunStatus, WakeupSource, WakeupStatus } from '@hezo/shared';
+import {
+	HeartbeatRunStatus,
+	TERMINAL_WAKEUP_STATUSES,
+	type WakeupSkipReason,
+	WakeupSource,
+	WakeupStatus,
+} from '@hezo/shared';
 import type { Db } from '../db/database';
 import { trackBackground } from '../lib/background';
 import { logger } from '../logger';
@@ -218,6 +224,106 @@ export async function assignmentWakeupAlreadyServed(
 		[memberId, taskId, HeartbeatRunStatus.Succeeded, wakeupCreatedAt],
 	);
 	return served.rows.length > 0;
+}
+
+/**
+ * How a finished run wants its driving wakeup settled.
+ *
+ * A discriminated union rather than booleans: the four outcomes are mutually
+ * exclusive and `handback` is the only one carrying data, so a caller cannot
+ * spell "put it back" without saying why it is going back.
+ */
+export type SettlementIntent =
+	/** The work was not done and is owed. Put it back for the dispatcher. */
+	| { kind: 'handback'; reason: WakeupSkipReason }
+	/** The run did the work. */
+	| { kind: 'complete' }
+	/** The run tried and failed. Nothing here retries it. */
+	| { kind: 'fail' }
+	/** Nobody wants this work any more - the task was cancelled, or a human stopped the run. */
+	| { kind: 'withdraw' };
+
+/** What {@link settleWakeupForRun} actually did, so the caller can report it. */
+export type WakeupSettlement =
+	/** The original row went back to `queued` and still carries the work. */
+	| { kind: 'requeued' }
+	/** The row could not be handed back; nothing was settled and nothing carries the work. */
+	| { kind: 'handback_failed' }
+	/** The row reached a terminal status. */
+	| { kind: 'terminal'; status: WakeupStatus }
+	/** There was no wakeup to settle (a synthetic or manual run). */
+	| { kind: 'nothing_to_settle' };
+
+const SETTLEMENT_TERMINAL_STATUS: Record<
+	Exclude<SettlementIntent['kind'], 'handback'>,
+	WakeupStatus
+> = {
+	complete: WakeupStatus.Completed,
+	fail: WakeupStatus.Failed,
+	withdraw: WakeupStatus.Cancelled,
+};
+
+/**
+ * Settle the wakeup that drove a run, now that run has finished.
+ *
+ * The one home for the question "what happens to the work this run was woken
+ * for?". Both the completion path (`JobManager.onAgentComplete`) and the orphan
+ * sweeper reach it, and they used to answer it separately - which is how the
+ * sweeper's handback ended up with a `claimed` guard the completion path lacked,
+ * and how both ended up stamping `instance_at_capacity` on a handback that had
+ * nothing to do with capacity.
+ *
+ * The `claimed` guard on the handback arm is load-bearing and applies to every
+ * caller: another path may have settled this row already, and returning a
+ * completed one to the queue dispatches its work a second time. The caller is
+ * told when the guard bites (`handback_failed`) rather than being left to assume
+ * the work is safely queued - that assumption is exactly what let a stranded ask
+ * look identical to a served one.
+ */
+export async function settleWakeupForRun(
+	db: Db,
+	wakeupId: string | undefined | null,
+	intent: SettlementIntent,
+): Promise<WakeupSettlement> {
+	if (!wakeupId) return { kind: 'nothing_to_settle' };
+
+	if (intent.kind === 'handback') {
+		const res = await db.query<{ id: string }>(
+			`UPDATE agent_wakeup_requests
+			 SET status = $1::wakeup_status, claimed_at = NULL,
+			     last_skipped_at = now(), last_skipped_reason = $2
+			 WHERE id = $3 AND status = $4::wakeup_status
+			 RETURNING id`,
+			[WakeupStatus.Queued, intent.reason, wakeupId, WakeupStatus.Claimed],
+		);
+		return res.rows.length > 0 ? { kind: 'requeued' } : { kind: 'handback_failed' };
+	}
+
+	// Guarded the same way the handback arm is, and for the mirror reason. A
+	// wakeup that already reached a terminal status has had its outcome decided by
+	// whoever got there first, and that party knew more: `terminateHeartbeatRun`
+	// settles `cancelled` the moment a person presses Terminate, while the aborting
+	// run reaches `onAgentComplete` seconds later and would relabel it `failed` -
+	// the exact label the terminate path exists to avoid. Without this, the
+	// double-`onAgentComplete` on the runner's own catch path could also flip a
+	// wakeup that had just been handed back.
+	const status = SETTLEMENT_TERMINAL_STATUS[intent.kind];
+	const applied = await db.query<{ id: string }>(
+		`UPDATE agent_wakeup_requests
+		    SET status = $1::wakeup_status, completed_at = now()
+		  WHERE id = $2 AND status <> ALL($3::wakeup_status[])
+		 RETURNING id`,
+		[status, wakeupId, TERMINAL_WAKEUP_STATUSES],
+	);
+	if (applied.rows.length === 0) {
+		const current = await db.query<{ status: WakeupStatus }>(
+			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+			[wakeupId],
+		);
+		const standing = current.rows[0]?.status;
+		return standing ? { kind: 'terminal', status: standing } : { kind: 'nothing_to_settle' };
+	}
+	return { kind: 'terminal', status };
 }
 
 function mergePayloads(

@@ -299,6 +299,8 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | "May an uncredentialed hosted MCP reach a run?" | `probed_at IS NOT NULL AND probe_error IS NULL`, written only by `discoverConnectorMethods` (`services/connectors/method-discovery.ts`) and read through `SAAS_CREDENTIALED_SQL` (`services/connectors/connections.ts`) |
 | "Is this run failure worth another attempt?" | `classifyRunFailure` (`services/run-failure-classification.ts`) - unrecognised is permanent, and no row may name a backend |
 | Waking the assignee after an assignment write | `wakeAgentIfAssigned` (`services/wakeup.ts`) |
+| What happens to the work a finished run was woken for | `settleWakeupForRun` (`services/wakeup.ts`) - it reports `handback_failed`, so no caller may assume the work is queued |
+| "Is this cancelled run still owed, and can a human act on it?" | `heartbeat_runs.cancel_reason` read through `RUN_CANCEL_BEHAVIOUR` (`@hezo/shared`) - never the `error` prose |
 | "May this caller move this task's assignee?" | `assertNoBlockingRun` (`lib/reassign-guard.ts`) - not the one-run-per-task check, which is `isTaskBusyInDb` (`services/run-concurrency.ts`) |
 | Serialising async work per key, with or without a bound | `lib/keyed-lock.ts` - `withKeyedLock` for a scope, `acquireKeyedLock` when the wait needs a `signal`/`timeoutMs`. Each family owns its own `KeyedLockRegistry`; never a second mutex |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
