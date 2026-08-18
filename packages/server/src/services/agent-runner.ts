@@ -35,7 +35,6 @@ import {
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_SYSTEM_PROMPT_FILE,
-	type RunCancelReason,
 	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -4682,8 +4681,6 @@ async function updateHeartbeatRun(
 		exitCode: number;
 		durationMs: number;
 		error?: string;
-		/** Why a `cancelled` run was cancelled. Ignored for every other status. */
-		cancelReason?: RunCancelReason;
 		usage?: AgentRunUsage | null;
 		/**
 		 * Whether the persisted usage is a mid-run snapshot. `false` on a clean
@@ -4711,14 +4708,14 @@ async function updateHeartbeatRun(
 		     input_tokens = COALESCE($4, input_tokens),
 		     output_tokens = COALESCE($5, output_tokens),
 		     cost_cents = COALESCE($6, cost_cents),
-		     usage_partial = COALESCE($7, usage_partial),
-		     -- First writer wins, the opposite direction to the columns above. A
-		     -- cancel attribution says WHO stopped the run, and the first writer to
-		     -- reach the row is the one that knows: terminateHeartbeatRun backfills
-		     -- operator_terminated while the abort is still cascading, and the
-		     -- runner's own finalizer would otherwise overwrite it moments later
-		     -- with its own less specific verdict.
-		     cancel_reason = COALESCE(cancel_reason, $11)
+		     usage_partial = COALESCE($7, usage_partial)
+		     -- cancel_reason is deliberately absent from this SET list. A cancel
+		     -- attribution says WHO stopped the run, and this finalizer is never that
+		     -- party: terminateHeartbeatRun backfills operator_terminated while the
+		     -- abort is still cascading, and the orphan sweeper records its own
+		     -- through recordHandbackOutcome. Leaving the column out entirely is what
+		     -- makes their writes survive, rather than a COALESCE direction a later
+		     -- simplification could quietly reverse.
 		 WHERE id = $8
 		   AND status IN ($9::heartbeat_run_status, $10::heartbeat_run_status)
 		 RETURNING id`,
@@ -4733,7 +4730,6 @@ async function updateHeartbeatRun(
 			runId,
 			HeartbeatRunStatus.Queued,
 			HeartbeatRunStatus.Running,
-			update.cancelReason ?? null,
 		],
 	);
 	if (applied.rows.length > 0) {

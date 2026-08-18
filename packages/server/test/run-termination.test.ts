@@ -186,19 +186,14 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 		expect(backfilled.cancel_reason).toBe(RunCancelReason.OperatorTerminated);
 		expect(await getWakeupStatus(runId)).toBe(WakeupStatus.Cancelled);
 
-		// Now the runner finalizes it. `updateHeartbeatRun` writes
-		// `COALESCE(cancel_reason, $n)`, so the person's attribution survives - the
-		// opposite direction overwrote it with the runner's own vaguer verdict.
-		await db.query(
-			`UPDATE heartbeat_runs
-			    SET status = 'cancelled'::heartbeat_run_status,
-			        cancel_reason = COALESCE(cancel_reason, $2)
-			  WHERE id = $1`,
-			[runId, RunCancelReason.HandedBack],
-		);
-		expect((await getRunRow(runId)).cancel_reason).toBe(RunCancelReason.OperatorTerminated);
-
-		// And its wakeup settlement survives too: the terminal arm declines to
+		// The runner's own finalizer cannot undo that, and no test asserts it here
+		// on purpose: `updateHeartbeatRun` does not carry `cancel_reason` in its SET
+		// list at all, so the guarantee is structural rather than a COALESCE
+		// direction to pin. An earlier version of this test hand-wrote that COALESCE
+		// and asserted its own SQL preserved the value, under a comment crediting
+		// production - which passed just as happily with production mutated.
+		//
+		// Its wakeup settlement survives too: the terminal arm declines to
 		// relabel a wakeup that already reached a terminal status, so work somebody
 		// withdrew is not reported as work that failed.
 		await settleWakeupForRun(

@@ -17,6 +17,7 @@ interface TaskRow {
 	id: string;
 	identifier: string;
 	last_run_status: string | null;
+	last_run_cancel_reason?: string | null;
 	last_run_id?: string | null;
 	last_run_comment_id?: string | null;
 	has_active_run: boolean;
@@ -100,6 +101,24 @@ async function fetchDetail(taskId: string): Promise<TaskRow> {
 }
 
 describe('task last-run fields', () => {
+	it("projects the last run's cancel reason, which decides whether the thread offers Retry", async () => {
+		// `cancelled` covers a person stopping a run and the instance abandoning
+		// one; only the second still owes work, and the thread keeps that run's card
+		// unfolded with a Retry button on the strength of this field. Without the
+		// projection the component tests still pass - they stub the response - so
+		// dropping it ships green and silently disables the affordance.
+		const taskId = await createTask('Abandoned run');
+		const runId = await insertRun(taskId, 'cancelled', new Date());
+		await db.query('UPDATE heartbeat_runs SET cancel_reason = $1 WHERE id = $2', [
+			'abandoned',
+			runId,
+		]);
+
+		const detail = await fetchDetail(taskId);
+		expect(detail.last_run_status).toBe('cancelled');
+		expect(detail.last_run_cancel_reason).toBe('abandoned');
+	});
+
 	it('returns null when the task has no runs', async () => {
 		const taskId = await createTask('No runs');
 		const listRow = await fetchListRow(taskId);
