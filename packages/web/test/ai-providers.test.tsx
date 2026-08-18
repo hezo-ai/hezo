@@ -698,10 +698,34 @@ function stubProviderCatalog(ids: string[]): void {
 	}) as typeof fetch;
 }
 
-test('the default-model dropdown loads models dynamically on hover intent', async () => {
+async function storedDefaultModel(label: string): Promise<string | null> {
+	const { db } = getTestContext();
+	const res = await db.query<{ default_model: string | null }>(
+		`SELECT default_model FROM ai_provider_configs WHERE label = $1`,
+		[label],
+	);
+	return res.rows[0].default_model;
+}
+
+/**
+ * The picker's panel renders in a Radix portal, so its rows live on
+ * `document.body` rather than under the table. Returns the option labels in the
+ * order they are mounted, which is the order the operator reads them in.
+ */
+function openPickerOptions(): string[] {
+	return Array.from(
+		document.body.querySelectorAll(
+			'[data-testid^="default-model-"][data-testid$="-content"] button',
+		),
+	)
+		.map((b) => b.querySelector('span > span')?.textContent ?? '')
+		.filter(Boolean);
+}
+
+test('the default-model picker loads models dynamically on hover intent', async () => {
 	stubProviderCatalog(['claude-opus-4-8', 'claude-sonnet-4-6']);
 
-	const { findByRole } = await renderApp({
+	const { findByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {
 			await clearAiProviders();
@@ -715,26 +739,189 @@ test('the default-model dropdown loads models dynamically on hover intent', asyn
 	});
 
 	await findByRole('heading', { name: 'AI providers' });
-	const select = (await findByRole('combobox', {
-		name: 'Default model for anthropic-models',
-	})) as HTMLSelectElement;
+	const trigger = await findByRole('button', { name: 'Default model for anthropic-models' });
 
-	// A native <select> opens on the same click that focuses it, so the query is
-	// prefetched on pointer-enter — by the time the list opens, the fetched models
-	// are already mounted as options.
-	fireEvent.pointerEnter(select);
+	// Hovering is intent enough to prefetch, so the panel is populated by the time
+	// the click that opens it lands.
+	fireEvent.pointerEnter(trigger);
+	await user.click(trigger);
 
 	await waitFor(
 		() => {
-			const values = Array.from(select.querySelectorAll('option')).map((o) => o.value);
-			expect(values).toContain('claude-opus-4-8');
-			expect(values).toContain('claude-sonnet-4-6');
+			const labels = openPickerOptions();
+			expect(labels).toContain('claude-opus-4-8');
+			expect(labels).toContain('claude-sonnet-4-6');
 		},
 		{ timeout: 10_000 },
 	);
 });
 
-test('a subscription provider shows a CLI-default note instead of a model list', async () => {
+test('the default-model picker lists the catalog alphabetically under a pinned CLI default', async () => {
+	// Deliberately unsorted, and mixed-case, so provider order and casing are both
+	// ruled out as the thing producing the assertion below.
+	stubProviderCatalog(['zeta-model', 'alpha-model', 'Beta-model', 'gamma-9', 'gamma-10']);
+
+	const { findByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-models-sorted',
+				label: 'anthropic-sorted',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	const trigger = await findByRole('button', { name: 'Default model for anthropic-sorted' });
+	fireEvent.pointerEnter(trigger);
+	await user.click(trigger);
+
+	await waitFor(
+		() => {
+			expect(openPickerOptions()).toEqual([
+				// Both pins sit above the catalog rather than sorting into it: the
+				// fallback, then the model this config is actually running, which the
+				// stubbed catalog does not list.
+				'CLI default',
+				'claude-opus-5',
+				'alpha-model',
+				'Beta-model',
+				// numeric collation, so 9 precedes 10 rather than sorting digit by digit
+				'gamma-9',
+				'gamma-10',
+				'zeta-model',
+			]);
+		},
+		{ timeout: 10_000 },
+	);
+});
+
+test('typing in the default-model picker filters the catalog', async () => {
+	stubProviderCatalog(['claude-opus-4-8', 'claude-sonnet-4-6', 'gpt-5-codex']);
+
+	const { findByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-models-filter',
+				label: 'anthropic-filter',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	const trigger = await findByRole('button', { name: 'Default model for anthropic-filter' });
+	fireEvent.pointerEnter(trigger);
+	await user.click(trigger);
+
+	await waitFor(() => expect(openPickerOptions()).toContain('gpt-5-codex'), { timeout: 10_000 });
+
+	const search = document.body.querySelector(
+		'[data-testid^="default-model-"][data-testid$="-search"]',
+	) as HTMLInputElement;
+	await user.type(search, 'sonnet');
+
+	await waitFor(() => {
+		const labels = openPickerOptions();
+		expect(labels).toEqual(['claude-sonnet-4-6']);
+	});
+});
+
+test('picking a model in the default-model picker persists it', async () => {
+	stubProviderCatalog(['claude-opus-4-8', 'claude-sonnet-4-6']);
+
+	const { findByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-models-persist',
+				label: 'anthropic-persist',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	const trigger = await findByRole('button', { name: 'Default model for anthropic-persist' });
+	fireEvent.pointerEnter(trigger);
+	await user.click(trigger);
+
+	const option = await waitFor(
+		() => {
+			const el = document.body.querySelector(
+				'[data-testid^="default-model-"][data-testid$="-content"] [data-testid$="-option-claude-sonnet-4-6"]',
+			);
+			if (!el) throw new Error('option not mounted');
+			return el;
+		},
+		{ timeout: 10_000 },
+	);
+	await user.click(option);
+
+	// The row has no submit, so the pick itself is the write.
+	await waitFor(async () => {
+		expect(await storedDefaultModel('anthropic-persist')).toBe('claude-sonnet-4-6');
+	});
+});
+
+test('the Edit dialog carries the default model and saves it with the rest of the form', async () => {
+	stubProviderCatalog(['claude-opus-4-8', 'claude-sonnet-4-6']);
+
+	const { findByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			const res = await postProvider({
+				provider: 'anthropic',
+				api_key: 'sk-ant-edit-model',
+				label: 'anthropic-edit-model',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(await findByRole('button', { name: 'Edit anthropic-edit-model' }));
+
+	const dialog = await findByRole('dialog');
+	const trigger = await within(dialog).findByRole('button', {
+		name: 'Default model for anthropic-edit-model',
+	});
+	fireEvent.pointerEnter(trigger);
+	await user.click(trigger);
+
+	const option = await waitFor(
+		() => {
+			const el = document.body.querySelector(
+				'[data-testid="edit-default-model-option-claude-sonnet-4-6"]',
+			);
+			if (!el) throw new Error('option not mounted');
+			return el;
+		},
+		{ timeout: 10_000 },
+	);
+	await user.click(option);
+
+	// Unlike the row, the dialog is a form: nothing is written until Save.
+	const before = await storedDefaultModel('anthropic-edit-model');
+	expect(before).not.toBe('claude-sonnet-4-6');
+
+	await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+	await waitFor(async () => {
+		expect(await storedDefaultModel('anthropic-edit-model')).toBe('claude-sonnet-4-6');
+	});
+});
+
+test('a subscription provider shows a disabled CLI-default trigger instead of a model list', async () => {
 	// No catalog stub: subscription auth must not attempt the live listing at all,
 	// so a real fetch would be the bug this asserts against.
 	const { findByRole, findByText, queryByText } = await renderApp({
@@ -754,9 +941,70 @@ test('a subscription provider shows a CLI-default note instead of a model list',
 	await findByRole('heading', { name: 'AI providers' });
 	await findByText('anthropic-sub');
 
-	// The row degrades to a friendly note; no error is surfaced.
-	await findByText('CLI default (subscription)', undefined, { timeout: 10_000 });
+	// The row states the answer on the trigger itself and offers nothing to open;
+	// no error is surfaced.
+	const trigger = (await findByRole('button', {
+		name: 'Default model for anthropic-sub',
+	})) as HTMLButtonElement;
+	expect(trigger.textContent).toContain('CLI default (subscription)');
+	expect(trigger.disabled).toBe(true);
 	expect(queryByText('Failed to load models')).toBeNull();
+});
+
+test('adding a provider ends on a default-model step for the config it just created', async () => {
+	stubProviderCatalog(['claude-opus-4-8', 'claude-sonnet-4-6']);
+
+	const { findByRole, getByRole, user } = await renderApp({
+		initialPath: '/settings/ai-providers',
+		seed: async () => {
+			await clearAiProviders();
+			// One provider has to survive, or the app raises its no-provider gate
+			// instead of rendering settings at all.
+			const res = await postProvider({
+				provider: 'openai',
+				api_key: 'sk-openai-add-flow-incumbent',
+				label: 'openai-incumbent',
+			});
+			expect(res.status).toBe(201);
+		},
+	});
+
+	await findByRole('heading', { name: 'AI providers' });
+	await user.click(getByRole('button', { name: 'Add provider' }));
+
+	const dialog = await findByRole('dialog');
+	await user.click(await within(dialog).findByRole('button', { name: 'Anthropic' }));
+	await user.type(await within(dialog).findByLabelText('API key'), 'sk-ant-add-flow-model-step');
+	await user.click(within(dialog).getByRole('button', { name: 'Add provider' }));
+
+	// The credential is stored, and the dialog stays open on the model step rather
+	// than closing — the catalog is only listable once the config exists.
+	await within(dialog).findByText('Credential saved', undefined, { timeout: 10_000 });
+	const trigger = await within(dialog).findByRole('button', {
+		name: 'Default model for Anthropic',
+	});
+
+	fireEvent.pointerEnter(trigger);
+	await user.click(trigger);
+	const option = await waitFor(
+		() => {
+			const el = document.body.querySelector(
+				'[data-testid="add-default-model-option-claude-opus-4-8"]',
+			);
+			if (!el) throw new Error('option not mounted');
+			return el;
+		},
+		{ timeout: 10_000 },
+	);
+	await user.click(option);
+
+	await waitFor(async () => {
+		const { db } = getTestContext();
+		const res = await db.query<{ default_model: string | null }>(
+			`SELECT default_model FROM ai_provider_configs WHERE provider = 'anthropic'`,
+		);
+		expect(res.rows[0].default_model).toBe('claude-opus-4-8');
+	});
 });
 
 test('re-raises the gate after deleting the last provider', async () => {

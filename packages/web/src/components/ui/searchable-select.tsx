@@ -1,12 +1,19 @@
 import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronDown, Search } from 'lucide-react';
-import { type ReactNode, useMemo, useState } from 'react';
+import { Check, ChevronDown, Loader2, Search } from 'lucide-react';
+import { Fragment, type ReactNode, useMemo, useState } from 'react';
 
 export interface SearchableSelectOption {
 	value: string;
 	label: string;
 	/** Optional secondary line rendered under the label (also searchable). */
 	description?: string;
+	/**
+	 * Draw a divider above this option, unless it is the first one shown. Groups a
+	 * pinned head (a "no choice" fallback, a stored-but-absent value) off from the
+	 * body of the list without a second options array — and collapses on its own
+	 * once a filter makes the option the first row.
+	 */
+	separatorBefore?: boolean;
 }
 
 interface SearchableSelectProps {
@@ -36,6 +43,25 @@ interface SearchableSelectProps {
 	 * the keyboard behaviour and the checked-state rendering.
 	 */
 	searchable?: boolean;
+	/**
+	 * Show a spinner row under the options while the caller is still fetching
+	 * them. The options already known stay selectable, so a pinned head renders
+	 * immediately rather than the panel opening empty.
+	 */
+	loading?: boolean;
+	/** Text beside the loading spinner. Pass a translated string. */
+	loadingLabel?: string;
+	/**
+	 * Render a failure inside the panel rather than beside the trigger. A message
+	 * from an upstream service has no length ceiling, and next to the trigger it
+	 * widens whatever lays the trigger out - a table column, a form row.
+	 */
+	errorLabel?: string | null;
+	/**
+	 * Notified when the panel opens or closes. Lets a caller fetch its options
+	 * lazily on first open instead of on mount.
+	 */
+	onOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -57,6 +83,10 @@ export function SearchableSelect({
 	testId,
 	disabled = false,
 	searchable = true,
+	loading = false,
+	loadingLabel = 'Loading…',
+	errorLabel = null,
+	onOpenChange,
 }: SearchableSelectProps) {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState('');
@@ -84,6 +114,7 @@ export function SearchableSelect({
 			onOpenChange={(next) => {
 				setOpen(next);
 				if (!next) setQuery('');
+				onOpenChange?.(next);
 			}}
 		>
 			<Popover.Trigger asChild disabled={disabled}>
@@ -123,14 +154,17 @@ export function SearchableSelect({
 						</div>
 					)}
 					<div className="max-h-64 overflow-y-auto">
-						{filtered.length === 0 ? (
+						{filtered.length === 0 && !loading && (
 							<div className="px-2.5 py-2 text-[13px] text-text-2">{emptyLabel}</div>
-						) : (
-							filtered.map((opt) => {
-								const active = opt.value === value;
-								return (
+						)}
+						{filtered.map((opt, i) => {
+							const active = opt.value === value;
+							return (
+								<Fragment key={opt.value}>
+									{/* A divider above the first row would read as a stray rule, so the
+									    pinned head loses it once a filter promotes it to the top. */}
+									{opt.separatorBefore && i > 0 && <div className="mx-1.5 my-1 h-px bg-border" />}
 									<button
-										key={opt.value}
 										type="button"
 										onClick={() => handleSelect(opt.value)}
 										data-testid={testId ? `${testId}-option-${opt.value}` : undefined}
@@ -152,10 +186,26 @@ export function SearchableSelect({
 											)}
 										</span>
 									</button>
-								);
-							})
+								</Fragment>
+							);
+						})}
+						{loading && (
+							<div className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-text-2">
+								<Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-text-3" />
+								{loadingLabel}
+							</div>
 						)}
 					</div>
+					{/* Outside the scroll box: a failure stays on screen however far down the
+					    options the reader has scrolled. */}
+					{errorLabel && (
+						<div
+							data-testid={testId ? `${testId}-error` : undefined}
+							className="mt-1 border-t border-border px-2.5 pt-1.5 pb-1 text-[13px] text-danger break-words"
+						>
+							{errorLabel}
+						</div>
+					)}
 				</Popover.Content>
 			</Popover.Portal>
 		</Popover.Root>

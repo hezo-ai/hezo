@@ -19,6 +19,7 @@ import { logger } from '../logger';
 import { requireAdminEquivalent } from '../middleware/auth';
 import {
 	deleteAiProviderConfig,
+	getAiProviderConfig,
 	getAiProviderStatus,
 	getProviderConfigCredential,
 	listAiProviders,
@@ -272,7 +273,11 @@ aiProvidersRoutes.post('/ai-providers', async (c) => {
 			}
 		}
 
-		return ok(c, { id: configId }, 201);
+		// The created row, not just its id: the caller's next step is usually
+		// something keyed on the stored config (listing its model catalog), and a
+		// re-read to learn its label would race the write it just made.
+		const created = await getAiProviderConfig(db, configId);
+		return ok(c, created ?? { id: configId }, 201);
 	} catch (e) {
 		const message = e instanceof Error ? e.message : 'Failed to store AI provider config';
 		if (message.includes('unique') || message.includes('duplicate')) {
