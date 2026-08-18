@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { Check, ChevronRight, Loader2, Pencil, X } from 'lucide-react';
-import { useState } from 'react';
+import { type RefObject, useEffect, useRef, useState } from 'react';
 import { useAgentLookup } from '../../hooks/use-agent-lookup';
 import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
 import { formatDuration } from '../../lib/format-duration';
@@ -24,8 +24,39 @@ interface TaskHeaderProps {
 }
 
 /**
+ * True once the element behind `ref` has scrolled out of the top of the shell
+ * scroller - which, for the sentinel marking the breadcrumb's resting place,
+ * means the pinned breadcrumb is now covering content rather than sitting in
+ * the page flow.
+ *
+ * Reading the breadcrumb's own rect on every scroll event would force a layout
+ * flush per frame on a thread that runs to hundreds of comments, so this asks
+ * the question with one IntersectionObserver over a zero-height sentinel.
+ */
+function useScrolledPast(ref: RefObject<HTMLElement | null>): boolean {
+	const [scrolledPast, setScrolledPast] = useState(false);
+	useEffect(() => {
+		// The component-test harness stubs IntersectionObserver to a no-op, so the
+		// crumb keeps its resting look there; the browser spec covers the pinning.
+		if (typeof IntersectionObserver === 'undefined') return;
+		const el = ref.current;
+		if (!el) return;
+		// <main> is the scroll container - the window never scrolls (see __root.tsx).
+		const io = new IntersectionObserver(
+			([entry]) => setScrolledPast(entry ? !entry.isIntersecting : false),
+			{ root: document.querySelector('main') },
+		);
+		io.observe(el);
+		return () => io.disconnect();
+	}, [ref]);
+	return scrolledPast;
+}
+
+/**
  * Top-of-page header for a task: a breadcrumb of ancestor tasks ending in the
- * current identifier, then the title, an inline mono metadata row (status ·
+ * current identifier - pinned to the top of the shell scroller at `lg`+, so a
+ * long thread never leaves the reader without the task's identity or a way back
+ * to the list - then the title, an inline mono metadata row (status ·
  * priority · assignee) with a runs · duration · cost summary, the queued-wakeup
  * chip, and the description card. The title renames in place and the description
  * edits in place; both are recorded on the task thread as meta comments by the
@@ -52,11 +83,26 @@ export function TaskHeader({
 	const assigneeAgent = task.assignee_id ? agentsByMemberId.get(task.assignee_id) : undefined;
 	const { t } = useI18n();
 	const [editingDescription, setEditingDescription] = useState(false);
+	// Drives the pinned crumb's hairline: absent at rest so the page keeps its
+	// clean top edge, drawn once content is passing underneath.
+	const restingSentinelRef = useRef<HTMLDivElement>(null);
+	const pinned = useScrolledPast(restingSentinelRef);
 	return (
 		<>
+			{/* Marks where the breadcrumb rests. `-mb-px` keeps it out of the layout. */}
+			<div ref={restingSentinelRef} aria-hidden="true" className="h-px w-full -mb-px" />
+			{/* Desktop pins the crumb to the top of the scrolling <main>; below `lg` it
+			    scrolls away with the rest, where vertical space is the scarce thing.
+			    `top` clears the project banners stickied above it in the same scroller,
+			    reading the height ContainerStatusBanner publishes - the idiom the task
+			    meta rail already uses. z-10 stays under those banners (z-20 and up) and
+			    over the content column, which carries no z-index of its own. */}
 			<nav
 				aria-label="Breadcrumb"
-				className="mb-1 flex flex-wrap items-center gap-x-1 text-[13px] font-mono text-text-2"
+				data-pinned={pinned ? 'true' : 'false'}
+				className={`mb-1 flex flex-wrap items-center gap-x-1 text-[13px] font-mono text-text-2 lg:sticky lg:top-[var(--container-banner-h,0px)] lg:z-10 lg:-mt-3 lg:mb-0 lg:border-b lg:border-transparent lg:bg-bg lg:pt-3 lg:pb-2 lg:transition-[border-color,box-shadow] lg:duration-150 ${
+					pinned ? 'lg:border-border lg:shadow-xs' : ''
+				}`}
 				data-testid="task-breadcrumb"
 			>
 				<span className="flex items-center gap-x-1">
