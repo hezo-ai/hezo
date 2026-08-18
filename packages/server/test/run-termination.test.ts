@@ -3,6 +3,8 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
+import { terminateHeartbeatRun } from '../src/services/run-termination';
+import { settleWakeupForRun } from '../src/services/wakeup';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -157,6 +159,59 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 		);
 		expect(terminationComment).toBeTruthy();
 		expect(terminationComment?.content?.reason).toBe('Terminated by user');
+	});
+
+	it("a running run keeps the human's attribution once its abort cascades", async () => {
+		// The `wasLive` branch, which every other case here misses: `makeRun()`
+		// rows are not registered with the JobManager, so `cancelLiveRun` always
+		// returned false and this half was never executed. It is where the two
+		// races the change had to settle both live - the run is still in flight,
+		// and its own finalizer reaches the row and the wakeup moments later.
+		const runId = await makeRun('running');
+		const liveJobManager = {
+			cancelLiveRun: () => true,
+		} as unknown as Parameters<typeof terminateHeartbeatRun>[0]['jobManager'];
+
+		const result = await terminateHeartbeatRun(
+			{ db, wsManager: undefined, jobManager: liveJobManager },
+			runId,
+			'Terminated by user',
+			null,
+		);
+		expect(result.terminated).toBe(true);
+
+		// Backfilled while the abort is still cascading; the row stays `running`
+		// until the runner's own finalizer lands.
+		const backfilled = await getRunRow(runId);
+		expect(backfilled.cancel_reason).toBe(RunCancelReason.OperatorTerminated);
+		expect(await getWakeupStatus(runId)).toBe(WakeupStatus.Cancelled);
+
+		// Now the runner finalizes it. `updateHeartbeatRun` writes
+		// `COALESCE(cancel_reason, $n)`, so the person's attribution survives - the
+		// opposite direction overwrote it with the runner's own vaguer verdict.
+		await db.query(
+			`UPDATE heartbeat_runs
+			    SET status = 'cancelled'::heartbeat_run_status,
+			        cancel_reason = COALESCE(cancel_reason, $2)
+			  WHERE id = $1`,
+			[runId, RunCancelReason.HandedBack],
+		);
+		expect((await getRunRow(runId)).cancel_reason).toBe(RunCancelReason.OperatorTerminated);
+
+		// And its wakeup settlement survives too: the terminal arm declines to
+		// relabel a wakeup that already reached a terminal status, so work somebody
+		// withdrew is not reported as work that failed.
+		await settleWakeupForRun(
+			db,
+			(
+				await db.query<{ wakeup_id: string }>(
+					'SELECT wakeup_id FROM heartbeat_runs WHERE id = $1',
+					[runId],
+				)
+			).rows[0].wakeup_id,
+			{ kind: 'fail' },
+		);
+		expect(await getWakeupStatus(runId)).toBe(WakeupStatus.Cancelled);
 	});
 
 	it('returns 409 when the run is already terminal', async () => {
