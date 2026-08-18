@@ -25,6 +25,7 @@ import {
 	LOG_COMPACTION_RETENTION_MAX_DAYS,
 	LOG_COMPACTION_RETENTION_MIN_DAYS,
 } from '@hezo/shared';
+import { runtimeConfig } from '../config/runtime';
 import type { Db } from '../db/database';
 import {
 	readRunLogTail,
@@ -41,14 +42,6 @@ const log = logger.child('log-compaction');
 export const LOG_COMPACTION_ACTIVE_KEY = 'log_compaction:active';
 export const LOG_COMPACTION_LAST_KEY = 'log_compaction:last';
 
-/** Rows compacted per batch. Each run commits on its own - see compactRunLogsBatch. */
-const LOG_COMPACTION_BATCH = Number(process.env.HEZO_LOG_COMPACTION_BATCH ?? 50);
-/** Upper bound on rows a single cron tick processes before yielding to the next. */
-const LOG_COMPACTION_MAX_PER_TICK = Number(process.env.HEZO_LOG_COMPACTION_MAX_PER_TICK ?? 500);
-/** Trailing bytes of each old log kept (summary + outcome). Deploy-time tunable. */
-const PRESERVED_BYTES = Number(
-	process.env.HEZO_LOG_COMPACTION_PRESERVED_BYTES ?? LOG_COMPACTION_PRESERVED_TAIL_BYTES,
-);
 /**
  * A log is worth compacting once its stored (compressed) size crosses Postgres's
  * ~2KB TOAST threshold — below that the whole log fits in line and trimming it
@@ -126,7 +119,7 @@ export function computeCompactedLog(
 		originalLength?: number;
 	} = {},
 ): string {
-	const preserved = opts.preservedBytes ?? PRESERVED_BYTES;
+	const preserved = opts.preservedBytes ?? runtimeConfig().logCompaction.preservedBytes;
 	if ((opts.originalLength ?? logText.length) <= preserved) return logText;
 
 	// Keep the trailing `preserved` chars, then advance past the first partial
@@ -240,7 +233,7 @@ export async function compactRunLogsBatch(
 	db: Db,
 	opts: { olderThanDays: number; limit?: number },
 ): Promise<{ processed: number; bytesReclaimed: number }> {
-	const limit = opts.limit ?? LOG_COMPACTION_BATCH;
+	const limit = opts.limit ?? runtimeConfig().logCompaction.batch;
 	// Ids and sizes only. This used to select each candidate's full `log_text`,
 	// so one batch materialized up to 50 x 10 MB in a single result set purely to
 	// keep a 12 KB tail from each.
@@ -269,7 +262,7 @@ export async function compactRunLogsBatch(
 	// (a run's delete+insert), and a failure part-way leaves the remaining runs
 	// for the next pass rather than rolling back the work already done.
 	for (const row of rows.rows) {
-		const tail = await readRunLogTail(db, row.id, PRESERVED_BYTES);
+		const tail = await readRunLogTail(db, row.id, runtimeConfig().logCompaction.preservedBytes);
 		const compacted = computeCompactedLog(tail.text, {
 			invocationCommand: row.invocation_command,
 			originalLength: row.log_length,
@@ -376,7 +369,7 @@ export async function reclaimRunLogSpace(db: Db, backend: StorageBackend): Promi
 
 /**
  * One cron tick of the drain loop. No-op unless a pass is active. Processes up
- * to `LOG_COMPACTION_MAX_PER_TICK` rows this tick (updating the progress marker
+ * to `logCompaction.maxPerTick` rows this tick (updating the progress marker
  * after each batch), then yields — the next tick continues where it left off.
  * When a batch drains the backlog, reclaims space (recording the real on-disk
  * bytes freed) and clears the marker.
@@ -388,8 +381,8 @@ export async function runLogCompactionTick(
 	let state = await getActiveCompaction(db);
 	if (!state) return;
 
-	const batchSize = opts.batchSize ?? LOG_COMPACTION_BATCH;
-	const maxRunsPerTick = opts.maxRunsPerTick ?? LOG_COMPACTION_MAX_PER_TICK;
+	const batchSize = opts.batchSize ?? runtimeConfig().logCompaction.batch;
+	const maxRunsPerTick = opts.maxRunsPerTick ?? runtimeConfig().logCompaction.maxPerTick;
 	let processedThisTick = 0;
 
 	while (processedThisTick < maxRunsPerTick) {

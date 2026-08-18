@@ -12,7 +12,7 @@ import { checkHumanNameAvailable } from '../lib/agent-identity';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
-import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
+import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 import { authoredPromptError } from './prompt-style-guard';
 
 const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
@@ -85,10 +85,10 @@ export async function prepareHireProposal(
 	// makes the field required at its own boundary.
 	if (
 		input.heartbeat_interval_min !== undefined &&
-		input.heartbeat_interval_min < HEARTBEAT_INTERVAL_FLOOR_MIN
+		input.heartbeat_interval_min < heartbeatIntervalFloorMin()
 	) {
 		return {
-			error: `heartbeat_interval_min must be at least ${HEARTBEAT_INTERVAL_FLOOR_MIN} minutes`,
+			error: `heartbeat_interval_min must be at least ${heartbeatIntervalFloorMin()} minutes`,
 		};
 	}
 

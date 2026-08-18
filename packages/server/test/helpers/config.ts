@@ -1,3 +1,4 @@
+import { DEFAULT_CONFIG } from '../../src/config/types';
 import type { HezoConfig } from '../../src/startup';
 
 /**
@@ -16,18 +17,19 @@ import type { HezoConfig } from '../../src/startup';
 export function testHezoConfig(dataDir: string, overrides: Partial<HezoConfig> = {}): HezoConfig {
 	return Object.assign<HezoConfig, Partial<HezoConfig>>(
 		{
+			...DEFAULT_CONFIG,
 			port: 0,
 			dataDir,
-			webUrl: '',
-			reset: false,
 			open: false,
-			logLevel: 'info',
-			keepOldContainers: false,
-			autoInstallUpdates: false,
-			egressProxyAuth: true,
-			// Inert like the rest: the destination guard stays *on*, which is the
-			// production posture. A test that needs to reach a private target says so.
-			egressAllowPrivateTargets: false,
+			containers: { ...DEFAULT_CONFIG.containers, keepOld: false },
+			updates: { ...DEFAULT_CONFIG.updates, autoInstall: false },
+			egress: {
+				...DEFAULT_CONFIG.egress,
+				proxyAuth: true,
+				// Inert like the rest: the destination guard stays *on*, which is the
+				// production posture. A test that needs to reach a private target says so.
+				allowPrivateTargets: false,
+			},
 			telemetry: { enabled: false, endpoint: 'https://example.invalid/telemetry' },
 		},
 		overrides,

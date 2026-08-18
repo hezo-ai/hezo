@@ -218,7 +218,7 @@ describe('formatDockerPreflightMessage', () => {
 	it('offers the explicit override when discovery came up empty', () => {
 		const msg = formatDockerPreflightMessage(notRunning);
 		expect(msg).toContain('--docker-socket');
-		expect(msg).toContain('HEZO_DOCKER_SOCKET');
+		expect(msg).toContain('containers.dockerSocket');
 	});
 
 	it('explains an unsupported transport and how to point at a socket instead', () => {

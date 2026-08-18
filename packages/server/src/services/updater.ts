@@ -16,6 +16,7 @@ import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { UpdateState } from '@hezo/shared';
+import { runtimeConfig } from '../config/runtime';
 import { logger } from '../logger';
 import { HEZO_VERSION } from '../version';
 
@@ -91,7 +92,7 @@ export function isRunningInContainer(): boolean {
  * the image, not the binary, should be updated).
  */
 export function isAutoUpdateEnabled(): boolean {
-	if (process.env.HEZO_DISABLE_AUTO_UPDATE) return false;
+	if (runtimeConfig().updates.disabled) return false;
 	if (!isCompiledBinary()) return false;
 	if (isRunningInContainer()) return false;
 	return true;

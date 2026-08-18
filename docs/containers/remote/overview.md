@@ -155,8 +155,8 @@ it the same backend settings the server ran with:
 hezo uninstall --yes --sandbox-backend daytona --daytona-api-key "<key>"
 ```
 
-The environment variables work too (`HEZO_SANDBOX_BACKEND`, `HEZO_DAYTONA_API_KEY`,
-`HEZO_DAYTONA_API_URL`). Without them uninstall cleans up local Docker and leaves the
+The config file works too (`containers.backend`, `containers.daytona.apiKey`,
+`containers.daytona.apiUrl`, via `--config`). Without them uninstall cleans up local Docker and leaves the
 remote sandboxes running - and nothing else will remove them, because the sweep that reaps
 unreferenced sandboxes lives in the instance being deleted. If the provider cannot be
 reached, uninstall says so and still removes the data directory; remove the leftovers from

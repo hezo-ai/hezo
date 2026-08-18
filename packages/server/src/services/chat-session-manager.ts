@@ -22,6 +22,7 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
+import { runtimeConfig } from '../config/runtime';
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
@@ -92,8 +93,6 @@ const CHAT_WORKING_DIR = '/workspace';
  * happen. Failing fast with a message they can act on beats a longer silence.
  */
 const CHAT_CREDENTIAL_WAIT_MS = 60_000;
-/** How often to verify the live session's container is still healthy. */
-const HEALTH_INTERVAL_MS = Number(process.env.HEZO_CHAT_HEALTH_INTERVAL_MS ?? 10_000);
 
 const CHAT_GUIDE = `# Live Chat
 
@@ -468,7 +467,7 @@ export class ChatSessionManager {
 		if (this.healthTimer) return;
 		this.healthTimer = setInterval(() => {
 			trackBackground(this.checkHealth().catch((e) => log.error('health check failed', e)));
-		}, HEALTH_INTERVAL_MS);
+		}, runtimeConfig().chat.healthIntervalMs);
 	}
 
 	async stop(): Promise<void> {

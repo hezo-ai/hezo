@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { UpdateState } from '@hezo/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
+import { DEFAULT_CONFIG } from '../src/config/types';
 import {
 	applyStagedUpdate,
 	currentAssetName,
@@ -34,12 +36,10 @@ function setPlatform(platform: string): () => void {
 }
 
 describe('availability predicates', () => {
-	const savedDisable = process.env.HEZO_DISABLE_AUTO_UPDATE;
 	const savedWorker = process.env.HEZO_WORKER;
 
 	afterEach(() => {
-		if (savedDisable === undefined) delete process.env.HEZO_DISABLE_AUTO_UPDATE;
-		else process.env.HEZO_DISABLE_AUTO_UPDATE = savedDisable;
+		resetRuntimeConfig();
 		if (savedWorker === undefined) delete process.env.HEZO_WORKER;
 		else process.env.HEZO_WORKER = savedWorker;
 	});
@@ -54,22 +54,22 @@ describe('availability predicates', () => {
 		expect(isRunningInContainer()).toBe(existsSync('/.dockerenv'));
 	});
 
-	it('HEZO_DISABLE_AUTO_UPDATE force-disables the feature regardless of everything else', () => {
-		process.env.HEZO_DISABLE_AUTO_UPDATE = '1';
+	it('updates.disabled force-disables the feature regardless of everything else', () => {
+		setRuntimeConfig({ ...DEFAULT_CONFIG, updates: { ...DEFAULT_CONFIG.updates, disabled: true } });
 		process.env.HEZO_WORKER = '1';
 		expect(isAutoUpdateEnabled()).toBe(false);
 		expect(isSupervisedWorker()).toBe(false);
 	});
 
-	it('with no disable flag, availability under Node hinges only on the container check', () => {
-		delete process.env.HEZO_DISABLE_AUTO_UPDATE;
+	it('with updates enabled, availability under Node hinges only on the container check', () => {
+		resetRuntimeConfig();
 		// isCompiledBinary() is true under Node (above), so the container gate is
 		// the only remaining condition.
 		expect(isAutoUpdateEnabled()).toBe(!isRunningInContainer());
 	});
 
 	it('isSupervisedWorker requires HEZO_WORKER=1 on top of the feature gate', () => {
-		delete process.env.HEZO_DISABLE_AUTO_UPDATE;
+		resetRuntimeConfig();
 		delete process.env.HEZO_WORKER;
 		expect(isSupervisedWorker()).toBe(false);
 		process.env.HEZO_WORKER = '0';

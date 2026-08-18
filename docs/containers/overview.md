@@ -140,7 +140,7 @@ hezo --sandbox-backend daytona --daytona-api-key "<key>"
 ```
 
 ```sh
-HEZO_SANDBOX_BACKEND=daytona HEZO_DAYTONA_API_KEY=<key> hezo
+hezo --config /etc/hezo/hezo.config.cjs   # containers: { backend: 'daytona', daytona: { apiKey: '<key>' } }
 ```
 
 **This sets the service a brand-new instance starts on.** It is a convenience for
@@ -153,7 +153,7 @@ To change an instance once it has booted - stopped or running - use Settings ->
 Containers.
 
 The provider key is the one flag that stays live: passing `--daytona-api-key` (or
-`HEZO_DAYTONA_API_KEY`) at a later startup rotates or supplies the credential for the
+`containers.daytona.apiKey`) at a later startup rotates or supplies the credential for the
 backend already chosen - it never chooses a backend by itself. See
 [Restarting an instance on a managed service](#restarting-an-instance-on-a-managed-service).
 
@@ -172,13 +172,13 @@ If the connection then fails, Hezo records the reason in the server log and stay
 disconnected. It never falls back to local Docker, so container operations report that
 failure instead of running somewhere you did not choose.
 
-Passing `--daytona-api-key` (or `HEZO_DAYTONA_API_KEY`) at startup works on a locked
+Passing `--daytona-api-key` (or `containers.daytona.apiKey`) at startup works on a locked
 instance too. Hezo uses the key straight away for that run and saves it once you unlock,
 so later restarts no longer need it.
 
-See the [CLI reference](/docs/reference/cli#environment-variables) and the
-[Configuration reference](/docs/deployment/configuration) for the full list of flags and
-environment variables.
+See the [CLI reference](/docs/reference/cli#the-config-file) and the
+[Configuration reference](/docs/deployment/configuration) for the full list of settings and
+flags.
 
 ## How much can run at once
 

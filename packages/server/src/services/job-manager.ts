@@ -22,6 +22,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import { Cron } from 'cron-async';
+import { runtimeConfig } from '../config/runtime';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import type { DomainEventBus } from '../events/bus';
@@ -73,7 +74,7 @@ import {
 import type { ContainerEngine, ContainerProcessInfo } from './docker';
 import type { EgressProxy } from './egress';
 import { getDueGoals } from './goals';
-import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
+import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { refreshModelPins } from './model-pins';
 import { noWorkCooldownActive } from './no-work-backoff';
@@ -287,7 +288,6 @@ export interface JobManagerDeps {
 	requestUpdateRestart?: () => Promise<void>;
 }
 
-const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_000);
 /**
  * Deferrals released per wakeups tick by {@link JobManager.releaseSatisfiedDeferrals}.
  *
@@ -296,30 +296,21 @@ const COALESCING_WINDOW_MS = Number(process.env.HEZO_WAKEUP_COALESCING_MS ?? 2_0
  * statement. Comfortably above what a single repo setup can strand.
  */
 const DEFERRAL_RELEASE_LIMIT = 20;
-const WAKEUP_CRON = process.env.HEZO_WAKEUP_CRON ?? '*/5 * * * * *';
-const HEARTBEAT_CRON = process.env.HEZO_HEARTBEAT_CRON ?? '*/5 * * * * *';
-const INBOX_ARCHIVE_CRON = process.env.HEZO_INBOX_ARCHIVE_CRON ?? '0 0 3 * * *';
 // Daily model-pricing refresh from the pricepertoken.com catalog. Failures
 // log and leave the existing rows — the boot-time refresh / next tick retries.
-const PRICING_REFRESH_CRON = process.env.HEZO_PRICING_REFRESH_CRON ?? '0 0 2 * * *';
 // Daily re-read of each configured provider's model catalog, moving the pinned
 // default a NEW credential starts on. Existing configs are never touched. An
 // hour after the pricing refresh so a newly pinned model already has a rate row.
-const MODEL_PIN_REFRESH_CRON = process.env.HEZO_MODEL_PIN_REFRESH_CRON ?? '0 0 3 * * *';
 // Daily check for a newer release; when auto-update is enabled and one is found,
 // download+verify+stage it so an operator "Update & restart" is instant.
-const UPDATE_CHECK_CRON = process.env.HEZO_UPDATE_CHECK_CRON ?? '0 0 4 * * *';
 // Frequent because it is cheap (reads the local state file; no network) — it exists so a
 // deferred install (agent runs in flight at staging time) retries minutes later, not next day.
-const AUTO_INSTALL_CRON = process.env.HEZO_AUTO_INSTALL_CRON ?? '0 */5 * * * *';
 // Anonymous daily usage telemetry report — runs at 5am UTC, after the update
 // check, when telemetry is enabled (opt-out, default on).
-const TELEMETRY_CRON = process.env.HEZO_TELEMETRY_CRON ?? '0 0 5 * * *';
 // How often to re-evaluate budget-paused agents. Spend is summed over rolling
 // UTC windows, so a daily/weekly/monthly window rolling over silently frees an
 // agent's budget with no event — this sweep notices and lifts the reactive
 // pause so the heartbeat scheduler (which skips paused agents) resumes it.
-const BUDGET_RESUME_CRON = process.env.HEZO_BUDGET_RESUME_CRON ?? '*/30 * * * * *';
 // Re-refresh OAuth tokens on the clock, not only when an agent run happens to
 // make a proxied call. `refreshExpiringTokens` is otherwise reached ONLY from the
 // egress substitution path, so on an idle instance nothing renews a token and
@@ -329,7 +320,6 @@ const BUDGET_RESUME_CRON = process.env.HEZO_BUDGET_RESUME_CRON ?? '*/30 * * * * 
 // an hour, each candidate costs a provider round-trip, and the resolver's own
 // failure backoff already tops out at 15 minutes, so it - not this cadence - is
 // what bounds retries against a permanently dead connection.
-const CONNECTOR_HEALTH_CRON = process.env.HEZO_CONNECTOR_HEALTH_CRON ?? '0 */5 * * * *';
 /** Connections re-checked per tick — a bound, not a target; ordered soonest-to-
  *  expire, so the next tick continues where this one stopped. */
 const CONNECTOR_HEALTH_BATCH_LIMIT = 25;
@@ -354,7 +344,6 @@ const CONNECTOR_PROBE_INTERVAL_MS = 6 * 60 * 60_000;
 // (wakeups, heartbeats, container-sync) compound into sustained load that
 // slows page loads enough to time out browser/component specs. Both are env-
 // configurable so the E2E server can dial them down — see playwright.config.ts.
-const CONTAINER_SYNC_CRON = process.env.HEZO_CONTAINER_SYNC_CRON ?? '* * * * * *';
 
 /**
  * Idle-container reaper cadence: once a minute (offset to :15 to avoid the
@@ -362,7 +351,6 @@ const CONTAINER_SYNC_CRON = process.env.HEZO_CONTAINER_SYNC_CRON ?? '* * * * * *
  * window elapse" — changes on minute granularity, so a faster tick would only
  * burn queries. Env-overridable so E2E can dial it down.
  */
-const CONTAINER_IDLE_STOP_CRON = process.env.HEZO_CONTAINER_IDLE_STOP_CRON ?? '15 * * * * *';
 
 /** Containers stopped per idle-stop tick — a bound, not a target; the next
  * tick continues where this one stopped. */
@@ -372,7 +360,6 @@ const IDLE_STOP_BATCH_LIMIT = 10;
  * finishes what this one did not; the bound is there so a teardown that keeps
  * failing cannot turn every startup into a full engine sweep. */
 const ARCHIVED_RETIREMENT_SCAN_LIMIT = 25;
-const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * * * * *';
 
 /**
  * Orphaned-container sweep cadence: every 10 minutes. What it watches - a
@@ -382,35 +369,29 @@ const ORPHAN_DETECTION_CRON = process.env.HEZO_ORPHAN_DETECTION_CRON ?? '*/30 * 
  * orphan bills until somebody notices, which fails as a cost rather than as an
  * error and so needs a sweep rather than an alert.
  */
-const ORPHAN_CONTAINER_SWEEP_CRON =
-	process.env.HEZO_ORPHAN_CONTAINER_SWEEP_CRON ?? '45 */10 * * * *';
 // The reactive budget pauses, which the heartbeat scheduler must not wake (the
 // budget-resume sweep lifts them back to `idle` once the window rolls over).
 // Disabled agents are filtered separately via `admin_status`. Postgres array
 // literal for the `<> ALL(...)` / `= ANY(...)` enum-array params.
 const BUDGET_PAUSE_STATUSES_PG = `{${BUDGET_PAUSE_STATUSES.join(',')}}`;
-const INBOX_RETENTION_DAYS = Number(process.env.HEZO_INBOX_RETENTION_DAYS ?? 30);
 // Drain tick for agent run-log compaction. Cheap when idle (a single
 // `system_meta` read); only does work while a compaction pass is active, which
 // the operator starts from the DB panel. Frequent so a started pass makes
 // visible progress and resumes promptly after a restart.
-const LOG_COMPACTION_CRON = process.env.HEZO_LOG_COMPACTION_CRON ?? '*/10 * * * * *';
 
 // Database housekeeping: refresh planner statistics on the embedded backend and
 // sweep terminal scheduler bookkeeping. Nightly, off-peak - neither is urgent,
 // and both are cheap enough that the point is only to stop them never running.
 // Statistics drift on the scale of days, not seconds.
-const DB_MAINTENANCE_CRON = process.env.HEZO_DB_MAINTENANCE_CRON ?? '0 30 4 * * *';
 
 /** Rate limit on the "job is overrunning its interval" warning. */
 const SKIP_WARN_INTERVAL_MS = 60_000;
-// Lower bound on how often a heartbeat can fire (`HEARTBEAT_INTERVAL_FLOOR_MIN`,
+// Lower bound on how often a heartbeat can fire (`heartbeatIntervalFloorMin`,
 // from ./heartbeat-schedule) is shared with the agents API's computed
 // `next_heartbeat_at` so the UI countdown matches the cadence enforced here.
 // Quiet window after a run completes before that agent is eligible for another
 // heartbeat. Prevents back-to-back runs when the configured interval is shorter
 // than the run itself.
-const HEARTBEAT_POST_RUN_COOLDOWN_SEC = Number(process.env.HEZO_HEARTBEAT_COOLDOWN_SEC ?? 60);
 
 export class JobManager {
 	private cron: Cron;
@@ -668,88 +649,92 @@ export class JobManager {
 	start(): void {
 		if (this.started) return;
 		this.started = true;
+		// Read once here, not at module scope: this file is imported before
+		// `index.ts` publishes the resolved config, so a module-level read would
+		// capture the defaults and silently ignore the operator's file.
+		const { jobs } = runtimeConfig();
 		this.cron.createJob('wakeups', {
-			cron: WAKEUP_CRON,
+			cron: jobs.wakeupCron,
 			log: cronLog,
 			onTick: () => this.guarded('wakeups', () => this.processWakeups()),
 		});
 		this.cron.createJob('heartbeats', {
-			cron: HEARTBEAT_CRON,
+			cron: jobs.heartbeatCron,
 			log: cronLog,
 			onTick: () => this.guarded('heartbeats', () => this.processScheduledHeartbeats()),
 		});
 		this.cron.createJob('orphan-detection', {
-			cron: ORPHAN_DETECTION_CRON,
+			cron: jobs.orphanDetectionCron,
 			log: cronLog,
 			onTick: () => this.guarded('orphan-detection', () => this.detectOrphanedRuns()),
 		});
 		this.cron.createJob('container-sync', {
-			cron: CONTAINER_SYNC_CRON,
+			cron: jobs.containerSyncCron,
 			log: cronLog,
 			onTick: () => this.guarded('container-sync', () => this.syncContainerStatuses()),
 		});
 		this.cron.createJob('container-idle-stop', {
-			cron: CONTAINER_IDLE_STOP_CRON,
+			cron: jobs.containerIdleStopCron,
 			log: cronLog,
 			onTick: () => this.guarded('container-idle-stop', () => this.stopIdleContainers()),
 		});
 		this.cron.createJob('orphan-container-sweep', {
-			cron: ORPHAN_CONTAINER_SWEEP_CRON,
+			cron: jobs.orphanContainerSweepCron,
 			log: cronLog,
 			onTick: () => this.guarded('orphan-container-sweep', () => this.reapOrphanedContainers()),
 		});
 		this.cron.createJob('inbox-archive', {
-			cron: INBOX_ARCHIVE_CRON,
+			cron: jobs.inboxArchiveCron,
 			log: cronLog,
 			onTick: () => this.guarded('inbox-archive', () => this.archiveInboxItems()),
 		});
 		this.cron.createJob('log-compaction', {
-			cron: LOG_COMPACTION_CRON,
+			cron: runtimeConfig().logCompaction.cron,
 			log: cronLog,
 			onTick: () => this.guarded('log-compaction', () => this.compactRunLogs()),
 		});
 		this.cron.createJob('budget-resume', {
-			cron: BUDGET_RESUME_CRON,
+			cron: jobs.budgetResumeCron,
 			log: cronLog,
 			onTick: () => this.guarded('budget-resume', () => this.processBudgetResumes()),
 		});
 		this.cron.createJob('connector-health', {
-			cron: CONNECTOR_HEALTH_CRON,
+			cron: jobs.connectorHealthCron,
 			log: cronLog,
 			onTick: () => this.guarded('connector-health', () => this.sweepConnectorHealth()),
 		});
 		this.cron.createJob('db-maintenance', {
-			cron: DB_MAINTENANCE_CRON,
+			cron: jobs.dbMaintenanceCron,
 			log: cronLog,
 			onTick: () => this.guarded('db-maintenance', () => this.runDbMaintenance()),
 		});
 		this.cron.createJob('update-check', {
-			cron: UPDATE_CHECK_CRON,
+			cron: jobs.updateCheckCron,
 			log: cronLog,
 			onTick: () => this.guarded('update-check', () => this.checkForUpdate()),
 		});
 		if (this.deps.autoInstallUpdates && (this.deps.isSupervisedWorker ?? isSupervisedWorker)()) {
 			this.cron.createJob('auto-install-update', {
-				cron: AUTO_INSTALL_CRON,
+				cron: jobs.autoInstallCron,
 				log: cronLog,
 				onTick: () => this.guarded('auto-install-update', () => this.autoInstallStagedUpdate()),
 			});
 		}
 		if (this.deps.pricing) {
 			this.cron.createJob('pricing-refresh', {
-				cron: PRICING_REFRESH_CRON,
+				cron: jobs.pricingRefreshCron,
 				log: cronLog,
 				onTick: () => this.guarded('pricing-refresh', () => this.refreshPricing()),
 			});
 		}
 		this.cron.createJob('model-pin-refresh', {
-			cron: MODEL_PIN_REFRESH_CRON,
+			cron: jobs.modelPinRefreshCron,
 			log: cronLog,
 			onTick: () => this.guarded('model-pin-refresh', () => this.refreshModelPins()),
 		});
 		if (this.deps.telemetry?.enabled) {
 			this.cron.createJob('telemetry', {
-				cron: TELEMETRY_CRON,
+				cron: jobs.telemetryCron,
 				log: cronLog,
 				onTick: () => this.guarded('telemetry', () => this.runTelemetry()),
 			});
@@ -1820,7 +1805,9 @@ export class JobManager {
 	private async processWakeups(): Promise<void> {
 		const { db } = this.deps;
 		await this.releaseSatisfiedDeferrals();
-		const coalescingCutoff = new Date(Date.now() - COALESCING_WINDOW_MS).toISOString();
+		const coalescingCutoff = new Date(
+			Date.now() - runtimeConfig().jobs.wakeupCoalescingMs,
+		).toISOString();
 
 		const wakeups = await db.query<{
 			id: string;
@@ -2019,8 +2006,8 @@ export class JobManager {
 			[
 				AgentAdminStatus.Enabled,
 				BUDGET_PAUSE_STATUSES_PG,
-				HEARTBEAT_INTERVAL_FLOOR_MIN,
-				HEARTBEAT_POST_RUN_COOLDOWN_SEC,
+				heartbeatIntervalFloorMin(),
+				runtimeConfig().jobs.heartbeatCooldownSec,
 			],
 		);
 
@@ -3388,8 +3375,8 @@ export class JobManager {
 			[memberId],
 		);
 		const chainCooldownMin = Math.max(
-			agentRow.rows[0]?.heartbeat_interval_min ?? HEARTBEAT_INTERVAL_FLOOR_MIN,
-			HEARTBEAT_INTERVAL_FLOOR_MIN,
+			agentRow.rows[0]?.heartbeat_interval_min ?? heartbeatIntervalFloorMin(),
+			heartbeatIntervalFloorMin(),
 		);
 		const isInstanceAgent = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(agentSlug);
 		const params: unknown[] = [memberId];
@@ -3782,7 +3769,7 @@ export class JobManager {
 
 	private async archiveInboxItems(): Promise<void> {
 		const { archiveOldInboxItems } = await import('./inbox-archive');
-		const count = await archiveOldInboxItems(this.deps.db, INBOX_RETENTION_DAYS);
+		const count = await archiveOldInboxItems(this.deps.db, runtimeConfig().jobs.inboxRetentionDays);
 		if (count > 0) {
 			log.debug(`Archived ${count} inbox item(s)`);
 		}

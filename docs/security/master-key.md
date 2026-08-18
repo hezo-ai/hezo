@@ -45,8 +45,11 @@ to do it (see [Keep it off the server](#keep-it-off-the-server) below).
 The master key's protection comes entirely from where it *isn't*: it lives in memory only
 and is **never written to disk**, so the encrypted data directory is useless to anyone who
 copies it without the phrase. **Don't undo that by storing the key on the server yourself** -
-not in an env file (`/etc/hezo/hezo.env`), the systemd unit, a shell profile, a same-host
-secrets file, or a note in the repo. A copy of the phrase sitting next to the encrypted
+not in the config file (`/etc/hezo/hezo.config.cjs`), an env file, the systemd unit, a
+shell profile, a same-host secrets file, or a note in the repo. Hezo refuses a `masterKey`
+key in the config file for exactly this reason. Note that Bun also auto-loads a `.env` from
+the working directory, so a `HEZO_MASTER_KEY` line there is picked up like any other - the
+same rule applies. A copy of the phrase sitting next to the encrypted
 vault means a stolen disk image, a leaked backup, or anyone who can read the box can decrypt
 everything - exactly what encryption at rest is meant to prevent.
 

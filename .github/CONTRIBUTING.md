@@ -27,7 +27,7 @@ This starts the **Hezo Server** (port 3100) — the main application with the em
 PGlite database — and the **Vite dev server** for the web UI (port 5173). The production
 binary serves the UI itself from port 3100. In dev the server creates its database under
 `.hezo-dev/pgdata` in the repo root (gitignored), keeping local dev isolated from a
-production instance at `~/.hezo`. Override the location with `--data-dir` or `HEZO_DATA_DIR`.
+production instance at `~/.hezo`. Override the location with `--data-dir`, or `dataDir` in a `--config` file.
 
 ### Server CLI flags
 

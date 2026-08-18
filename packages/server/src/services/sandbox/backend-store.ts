@@ -136,7 +136,7 @@ export interface StartupBackendResolution {
  * this point would fire on every single boot: reading a stored provider key
  * would fail ("no API key is configured", for a key that is plainly on file),
  * and writing a flag-supplied one would fail outright ("the instance is
- * locked"). Between them they made `HEZO_DAYTONA_API_KEY` unusable in exactly
+ * locked"). Between them they made `containers.daytona.apiKey` unusable in exactly
  * the setup that needs it - an operator who put it in their launch env and
  * unlocks from the browser. So the vault write is opportunistic and the vault
  * read is allowed to defer; both are completed on unlock.
@@ -170,7 +170,7 @@ export async function resolveStartupBackend(
 	// not ask for, and had nothing to connect it to.
 	if (requested && stored && requested !== stored) {
 		log.warn(
-			`Ignoring --sandbox-backend / HEZO_SANDBOX_BACKEND=${requested}: this instance is set to ` +
+			`Ignoring --sandbox-backend / containers.backend=${requested}: this instance is set to ` +
 				`${stored}, and the stored setting wins so a stale launch script cannot undo a switch ` +
 				'made from the Containers page. Change it in Settings -> Containers.',
 		);
@@ -180,8 +180,8 @@ export async function resolveStartupBackend(
 		// a later switch is a real use, so this is a warning rather than an
 		// inference about what the operator meant.
 		log.warn(
-			'HEZO_DAYTONA_API_KEY is set but containers run on local Docker. The key selects no ' +
-				'backend on its own - add --sandbox-backend daytona / HEZO_SANDBOX_BACKEND=daytona to ' +
+			'A Daytona API key is set but containers run on local Docker. The key selects no ' +
+				'backend on its own - add --sandbox-backend daytona / containers.backend: "daytona" to ' +
 				'run on Daytona, or switch from Settings -> Containers. The key is saved either way.',
 		);
 	}

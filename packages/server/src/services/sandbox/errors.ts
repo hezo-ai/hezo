@@ -63,7 +63,7 @@ export class SandboxImageNotPullableError extends Error {
 				"reference, built into a Docker daemon's own image store and published to no registry, " +
 				'so a managed sandbox service has nothing to pull.\n' +
 				'Point this instance at a published image - ' +
-				'HEZO_AGENT_BASE_IMAGE=ghcr.io/hezo-ai/agent-base:<version-or-sha> - which applies to ' +
+				'containers.agentBaseImage: "ghcr.io/hezo-ai/agent-base:<version-or-sha>" - which applies to ' +
 				"every project, or set one project's base image on its Container settings. Running on " +
 				'the local Docker backend instead needs no image configuration.',
 		);

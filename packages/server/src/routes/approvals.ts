@@ -14,7 +14,7 @@ import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireTeamAccessForResource } from '../middleware/auth';
 import { resolveApproval } from '../services/approval-resolve';
-import { HEARTBEAT_INTERVAL_FLOOR_MIN } from '../services/heartbeat-schedule';
+import { heartbeatIntervalFloorMin } from '../services/heartbeat-schedule';
 import { buildHirePayloadPatch, type HirePayloadPatchInput } from '../services/hire-proposal';
 import { authoredPromptError } from '../services/prompt-style-guard';
 
@@ -241,12 +241,12 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	// reject it here as prepareHireProposal does on the create paths.
 	if (
 		body.heartbeat_interval_min !== undefined &&
-		body.heartbeat_interval_min < HEARTBEAT_INTERVAL_FLOOR_MIN
+		body.heartbeat_interval_min < heartbeatIntervalFloorMin()
 	) {
 		return err(
 			c,
 			'INVALID_REQUEST',
-			`heartbeat_interval_min must be at least ${HEARTBEAT_INTERVAL_FLOOR_MIN} minutes`,
+			`heartbeat_interval_min must be at least ${heartbeatIntervalFloorMin()} minutes`,
 			400,
 		);
 	}

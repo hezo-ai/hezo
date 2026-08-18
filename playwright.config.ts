@@ -1,11 +1,19 @@
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { defineConfig } from '@playwright/test';
 import { TEST_MNEMONIC } from './test/browser/constants';
 
 const SERVER_PORT = 3101;
 const WEB_PORT = 5174;
 const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
+// Cron cadences and telemetry for the spawned server. Absolute because the
+// server runs with cwd=packages/server, and passed as --config rather than env
+// because these are operator settings, not test-only switches. Resolved from
+// process.cwd() (Playwright is invoked from the repo root — AGENTS.md) rather
+// than import.meta: Playwright loads this config through a CJS pipeline, and any
+// `import.meta` in it flips the file to ESM, where the wrapper's `exports` is
+// undefined and the whole config fails to load.
+const E2E_CONFIG_FILE = resolve(process.cwd(), 'test/browser/hezo.e2e.config.cjs');
 
 // The master-key-gate spec owns its own backend lifecycle (boot, kill,
 // restart on :3102), so it gets a dedicated vite instance proxying there —
@@ -135,7 +143,7 @@ export default defineConfig({
 	],
 	webServer: [
 		{
-			command: `bun run src/index.ts -- --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --reset --no-open`,
+			command: `bun run src/index.ts -- --config ${E2E_CONFIG_FILE} --port ${SERVER_PORT} --data-dir ${TEST_DATA_DIR} --reset --no-open`,
 			cwd: './packages/server',
 			// `Bun.serve` opens the port before `startup()` finishes registering
 			// routes, so a port-only check races against route mounting and the
@@ -165,15 +173,6 @@ export default defineConfig({
 				// log in via the challenge dance instead of running setup. Env var
 				// rather than a flag: a 12-word phrase is hostile to shell quoting.
 				HEZO_MASTER_KEY: TEST_MNEMONIC,
-				HEZO_WAKEUP_COALESCING_MS: '100',
-				HEZO_WAKEUP_CRON: '* * * * * *',
-				HEZO_HEARTBEAT_CRON: '* * * * * *',
-				// Wakeups/heartbeats stay at 1Hz so agent-flow specs react promptly,
-				// but container-status reconciliation has no sub-second consumer here
-				// (fake docker sets status synchronously on create/start). Drop it from
-				// 1Hz to every 10s so it stops compounding CPU load on the 2-core runner
-				// — the largest cheap win against the page-load-timeout flakes.
-				HEZO_CONTAINER_SYNC_CRON: '*/10 * * * * *',
 				// Skip the team coherence-review enqueue path that Captain processes
 				// on every team / agent-roster mutation. The review touches multiple
 				// agents synthetically (~30-60s per team setup) and no e2e test asserts
@@ -190,9 +189,6 @@ export default defineConfig({
 				// That is a suite-wide layout change driven by a third party's release
 				// schedule, and it took the browser tier red on the day 0.39.0 landed.
 				HEZO_SKIP_UPDATE_CHECK: '1',
-				// Telemetry defaults on; a CI run crossing the daily cron window
-				// would fire a real outbound report. Tests never phone home.
-				HEZO_TELEMETRY_ENABLED: '0',
 			},
 		},
 		{

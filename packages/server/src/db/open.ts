@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { runtimeConfig } from '../config/runtime';
 import { redactDatabaseUrl, type StorageInfo } from '../lib/db-info';
 import { logger } from '../logger';
 import { openPersistentDb } from './client';
@@ -32,17 +33,10 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function parsePoolSize(raw: string | undefined): number | undefined {
-	if (!raw) return undefined;
-	const n = Number.parseInt(raw, 10);
-	if (Number.isNaN(n)) return undefined;
-	return Math.min(Math.max(n, 2), 100);
-}
-
 /**
  * The single startup entry for the storage layer: embedded PGlite when no URL
  * is configured (the default — zero change for existing installs), external
- * Postgres via `--database-url` / `HEZO_DATABASE_URL` otherwise. External
+ * Postgres via `--database-url` / the config file's `database.url` otherwise. External
  * failures throw `ExternalDbError` whose message carries operator guidance
  * and only ever the REDACTED form of the URL.
  */
@@ -72,13 +66,13 @@ export async function openDatabase(options: OpenDatabaseOptions): Promise<Opened
 	}
 	if (scheme !== 'postgres:' && scheme !== 'postgresql:') {
 		throw new ExternalDbError(
-			'HEZO_DATABASE_URL / --database-url must be a postgres:// or postgresql:// ' +
+			"--database-url / the config file's database.url must be a postgres:// or postgresql:// " +
 				'connection string (e.g. postgres://user:password@host:5432/hezo).',
 		);
 	}
 
 	const { PostgresDb } = await import('./drivers/postgres');
-	const max = parsePoolSize(process.env.HEZO_DATABASE_POOL_SIZE);
+	const max = runtimeConfig().database.poolSize;
 
 	let db: import('./drivers/postgres').PostgresDb | null = null;
 	let lastError: unknown;

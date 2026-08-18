@@ -19,7 +19,7 @@ tools into.
 - **Base URL:** your instance's address. Running locally with default settings that's
   `http://localhost:3100`; a deployed instance is its **HTTPS** URL - its own domain
   behind the TLS reverse proxy, not necessarily port 3100. (The port Hezo itself listens
-  on is set by `--port` / `HEZO_PORT`, default `3100`.)
+  on is set by `--port` / the config file's `port`, default `3100`.)
 - **Endpoint:** `POST <base-url>/mcp`
 - **Transport:** Streamable HTTP
 - **Authentication:** an `Authorization: Bearer <token>` header, where the token is a

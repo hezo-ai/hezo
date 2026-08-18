@@ -19,6 +19,7 @@ import { connect as netConnect, type Socket } from 'node:net';
 import { rootCertificates } from 'node:tls';
 import type { CA } from 'mockttp/dist/util/certificates';
 import { getCA } from 'mockttp/dist/util/certificates';
+import { runtimeConfig } from '../../config/runtime';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
 import { ref } from '../../lib/log-ref';
@@ -57,8 +58,8 @@ const log = logger.child('egress-proxy');
 /** When set, the proxy emits per-connection lifecycle traces (socket open/close/
  * error/timeout per leg, plus the host→dialed-port→owner of each CONNECT). Off by
  * default; the only reliable way to pin Bun's connection-accounting divergences,
- * which Node/vitest never reproduce. Enable in a real run with `HEZO_EGRESS_DEBUG=1`. */
-const EGRESS_DEBUG = !!process.env.HEZO_EGRESS_DEBUG;
+ * which Node/vitest never reproduce. Enable with `egress.debug` in the config file. */
+const egressDebug = (): boolean => runtimeConfig().egress.debug;
 
 /** Connection-management headers scoped to a single transport hop, which a proxy
  * must not relay to the upstream (RFC 7230 §6.1). `proxy-*` are dropped
@@ -418,10 +419,10 @@ class RunProxyInstance {
 		this.upstreamHttpAgent = new HttpAgent({ keepAlive: false });
 	}
 
-	/** Debug-gated lifecycle logging. Enable with `HEZO_EGRESS_DEBUG=1` to trace
+	/** Debug-gated lifecycle logging. Enable with `egress.debug` in the config file to trace
 	 * which connection leg dies and when. */
 	private dbg(msg: string, meta: Record<string, unknown> = {}): void {
-		if (!EGRESS_DEBUG) return;
+		if (!egressDebug()) return;
 		log.info(`[egress-dbg] ${msg}`, {
 			run: ref(this.cfg.scope.label, this.cfg.runId),
 			...meta,
@@ -438,7 +439,7 @@ class RunProxyInstance {
 		}
 		this.liveSockets.add(sock);
 		sock.once('close', () => this.liveSockets.delete(sock));
-		if (EGRESS_DEBUG) {
+		if (egressDebug()) {
 			const at = Date.now();
 			// An upstream socket is still connecting when its request first emits it,
 			// so its ports aren't populated yet; defer the open log to `connect` so it
@@ -657,7 +658,7 @@ class RunProxyInstance {
 			client.destroy();
 			return;
 		}
-		if (EGRESS_DEBUG) {
+		if (egressDebug()) {
 			// The cross-host cert leak (a host served another host's leaf cert) shows
 			// up here: the port about to be dialed must be owned by THIS host's server
 			// and no other. Log the owner(s) so a mis-route is caught red-handed.

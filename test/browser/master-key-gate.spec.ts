@@ -49,6 +49,10 @@ async function startGateServer(opts: { reset: boolean }): Promise<void> {
 		'run',
 		'src/index.ts',
 		'--',
+		// Same config the playwright.config.ts webServer uses; telemetry off so
+		// tests never phone home.
+		'--config',
+		resolve(process.cwd(), 'test/browser/hezo.e2e.config.cjs'),
 		'--port',
 		String(GATE_SERVER_PORT),
 		'--data-dir',
@@ -68,8 +72,6 @@ async function startGateServer(opts: { reset: boolean }): Promise<void> {
 			// No boot key — the whole point is exercising the in-browser setup.
 			// (Empty string reads as unset in the CLI's env resolution.)
 			HEZO_MASTER_KEY: '',
-			// Tests never phone home (matches the playwright.config.ts webServer).
-			HEZO_TELEMETRY_ENABLED: '0',
 			HEZO_SKIP_UPDATE_CHECK: '1',
 		},
 		stdio: 'ignore',

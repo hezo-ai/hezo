@@ -78,7 +78,7 @@ import {
 	restoreRevision,
 	upsertDocument,
 } from '../services/documents';
-import { HAS_ACTIONABLE_WORK_SQL, NEXT_HEARTBEAT_AT_SQL } from '../services/heartbeat-schedule';
+import { HAS_ACTIONABLE_WORK_SQL, nextHeartbeatAtSql } from '../services/heartbeat-schedule';
 import {
 	type HireProposalInput,
 	insertHireApproval,
@@ -113,7 +113,7 @@ const AGENT_BASE_COLUMNS = `m.id, m.team_id, m.display_name, m.created_at,
 	ma.touches_code,
 	ma.runtime_status, ma.admin_status, ma.last_heartbeat_at, ma.reports_to,
 	ma.mcp_servers, ma.model_override_provider, ma.model_override_model, ma.updated_at,
-	${NEXT_HEARTBEAT_AT_SQL} AS next_heartbeat_at,
+	${nextHeartbeatAtSql()} AS next_heartbeat_at,
 	${HAS_ACTIONABLE_WORK_SQL} AS has_actionable_work`;
 
 /**
