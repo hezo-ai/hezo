@@ -442,7 +442,7 @@ describe('Claude Code — user/result edge arms', () => {
 describe('Codex — thread.started + item edge arms', () => {
 	it('falls back to model=codex when thread.started carries no model', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Codex);
-		expect(feed(parser, [{ type: 'thread.started' }])).toBe('[session] model=codex tools=0\n');
+		expect(feed(parser, [{ type: 'thread.started' }])).toBe('[session] model=codex\n');
 	});
 
 	it('defaults turn.completed usage fields to zero when usage is absent', () => {
@@ -452,7 +452,7 @@ describe('Codex — thread.started + item edge arms', () => {
 		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
 	});
 
-	it('renders a command with output but no command string (cmd empty arm)', () => {
+	it('drops a command with output but no command string (cmd empty arm)', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Codex);
 		const out = feed(parser, [
 			{
@@ -460,16 +460,28 @@ describe('Codex — thread.started + item edge arms', () => {
 				item: { type: 'command_execution', output: 'just output', exit_code: 0 },
 			},
 		]);
-		// No [tool] shell(...) line since command was empty; only the result.
-		expect(out).toBe('[tool-result] just output\n');
+		// With no command there is no [tool] line for the result to belong to, and an
+		// orphan result would be paired with an unrelated call. The item is dropped.
+		expect(out).toBe('');
 	});
 
-	it('renders a command string with no output (output empty arm)', () => {
+	it('renders a command string with no output as a bare result label', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Codex);
 		const out = feed(parser, [
 			{ type: 'item.completed', item: { type: 'command_execution', command: 'true' } },
 		]);
-		expect(out).toBe('[tool] shell(true)\n');
+		expect(out).toBe('[tool] shell(true)\n[tool-result]\n');
+	});
+
+	it('marks a failed command_execution as an error even with a zero exit_code', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Codex);
+		const out = feed(parser, [
+			{
+				type: 'item.completed',
+				item: { type: 'command_execution', command: 'x', output: 'boom', status: 'failed' },
+			},
+		]);
+		expect(out).toBe('[tool] shell(x)\n[tool-error] boom\n');
 	});
 
 	it('treats a non-numeric exit_code as success (typeof number false arm)', () => {
@@ -496,7 +508,7 @@ describe('Codex — thread.started + item edge arms', () => {
 	it('falls back to tool name "tool" when a tool_call item has no name', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Codex);
 		const out = feed(parser, [{ type: 'item.completed', item: { type: 'tool_call' } }]);
-		expect(out).toBe('[tool] tool()\n');
+		expect(out).toBe('[tool] tool()\n[tool-result]\n');
 	});
 
 	it('renders agent_message via the text field directly', () => {
@@ -547,7 +559,7 @@ describe('Codex — thread.started + item edge arms', () => {
 describe('Gemini — message/tool/result edge arms', () => {
 	it('falls back to model=gemini when init has no model', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'init' }])).toBe('[session] model=gemini tools=0\n');
+		expect(feed(parser, [{ type: 'init' }])).toBe('[session] model=gemini\n');
 	});
 
 	it('reads message text from the text field when content is absent', () => {
@@ -974,7 +986,7 @@ describe('JSONL framing arms', () => {
 	it('flush() renders a buffered final event that had no trailing newline', () => {
 		const parser = createAgentStreamParser(AgentRuntime.Gemini);
 		parser.onStdout('{"type":"init","model":"g"}');
-		expect(parser.flush()).toBe('[session] model=g tools=0\n');
+		expect(parser.flush()).toBe('[session] model=g\n');
 	});
 
 	it('onStderr passes bytes through unchanged for a real runtime parser', () => {

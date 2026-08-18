@@ -345,6 +345,123 @@ describe('agent-stream-parser', () => {
 			expect(parser.onStdout(`${JSON.stringify(event)}\n`)).toBe('Hello world\n');
 		});
 
+		it('renders an mcp tool call as a call line and its result', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			// The shape Codex actually emits: the tool is named by server + tool, and the
+			// item carries its own outcome, so both lines come from the one event.
+			const event = {
+				type: 'item.completed',
+				item: {
+					type: 'mcp_tool_call',
+					server: 'hezo',
+					tool: 'get_skill',
+					arguments: { slug: 'deep-research' },
+					status: 'completed',
+					result: { content: [{ type: 'text', text: 'Skill body' }] },
+				},
+			};
+			const out = parser.onStdout(`${JSON.stringify(event)}\n`);
+			// mcp__<server>__<tool> is Claude Code's naming, so the log view renders both
+			// runtimes' MCP calls through the same display.
+			expect(out).toBe(
+				'[tool] mcp__hezo__get_skill(slug=deep-research)\n[tool-result] Skill body\n',
+			);
+		});
+
+		it('renders a failed mcp tool call as a tool-error', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			const event = {
+				type: 'item.completed',
+				item: {
+					type: 'mcp_tool_call',
+					server: 'hezo',
+					tool: 'read_project_doc',
+					arguments: { filename: 'missing.md' },
+					status: 'failed',
+					error: { message: 'document not found' },
+				},
+			};
+			const out = parser.onStdout(`${JSON.stringify(event)}\n`);
+			expect(out).toBe(
+				'[tool] mcp__hezo__read_project_doc(filename=missing.md)\n[tool-error] document not found\n',
+			);
+		});
+
+		it('resolves every tool call in a mixed run, in order', () => {
+			// The regression this guards: the client pairs results with calls FIFO and has
+			// no correlation id, so one call left without a result silently attaches the
+			// NEXT call's result to it and misreports every tool after it.
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			const mcp = (tool: string, text: string) => ({
+				type: 'item.completed',
+				item: {
+					type: 'mcp_tool_call',
+					server: 'hezo',
+					tool,
+					arguments: {},
+					status: 'completed',
+					result: { content: [{ type: 'text', text }] },
+				},
+			});
+			const shell = {
+				type: 'item.completed',
+				item: {
+					type: 'command_execution',
+					command: 'ls',
+					aggregated_output: 'file1',
+					exit_code: 0,
+				},
+			};
+			const out = [mcp('get_task', 'first'), shell, mcp('list_comments', 'second')]
+				.map((e) => parser.onStdout(`${JSON.stringify(e)}\n`))
+				.join('');
+			expect(out.split('\n').filter(Boolean)).toEqual([
+				'[tool] mcp__hezo__get_task()',
+				'[tool-result] first',
+				'[tool] shell(ls)',
+				'[tool-result] file1',
+				'[tool] mcp__hezo__list_comments()',
+				'[tool-result] second',
+			]);
+		});
+
+		it('omits a tool count it was never given', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			// Codex's thread.started carries only a thread id. A hardcoded `tools=0` here
+			// read as a measured zero in the log header.
+			const out = parser.onStdout(
+				`${JSON.stringify({ type: 'thread.started', thread_id: 't1' })}\n`,
+			);
+			expect(out).toBe('[session] model=codex\n');
+			expect(out).not.toContain('tools=');
+		});
+
+		it('prices from the run model when the stream names none', () => {
+			// Codex never names a model, so without the run-model floor every Codex run
+			// priced at $0.
+			const parser = createAgentStreamParser(AgentRuntime.Codex, price, 'codex-x');
+			const out = parser.onStdout(
+				`${JSON.stringify({ type: 'thread.started', thread_id: 't1' })}\n`,
+			);
+			expect(out).toBe('[session] model=codex-x\n');
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 1000, output_tokens: 100 },
+				})}\n`,
+			);
+			// 1000*0.00001 + 100*0.00003 = $0.013 → 1 cent.
+			expect(parser.getUsage()?.costCents).toBe(1);
+		});
+
+		it('lets a model named on the stream win over the run model', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex, price, 'stale-model');
+			const out = parser.onStdout(
+				`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`,
+			);
+			expect(out).toBe('[session] model=codex-x\n');
+		});
+
 		it('renders a command execution as a tool call and result', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Codex);
 			const event = {
@@ -511,7 +628,7 @@ describe('agent-stream-parser', () => {
 		it('renders the init event as a session line', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Gemini);
 			const out = parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-pro' })}\n`);
-			expect(out).toBe('[session] model=gemini-2.5-pro tools=0\n');
+			expect(out).toBe('[session] model=gemini-2.5-pro\n');
 		});
 	});
 

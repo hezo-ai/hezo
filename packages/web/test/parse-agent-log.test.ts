@@ -23,6 +23,37 @@ function makeLines(
 	);
 }
 
+test('renders a session header with no tool count', () => {
+	// Codex and Gemini never report how many tools they were given, so their session
+	// line omits `tools=` rather than claiming a measured zero.
+	const blocks = parseAgentLog(makeLines(['[session] model=gpt-5-codex']));
+	expect(blocks).toEqual([
+		{ type: 'session', id: expect.any(Number), model: 'gpt-5-codex', toolCount: null },
+	]);
+});
+
+test('gives each tool call in a mixed run its own result', () => {
+	// Results are paired with calls FIFO, with no correlation id. A call whose result
+	// line is missing does not just stay pending - it swallows the NEXT call's result
+	// and every tool after it reports somebody else's outcome. This is the shape a
+	// Codex run produces once each call carries its own result line.
+	const blocks = parseAgentLog(
+		makeLines([
+			'[tool] mcp__hezo__get_task(task_id=INV-125)',
+			'[tool-result] first',
+			'[tool] shell(ls)',
+			'[tool-result] file1',
+			'[tool] mcp__hezo__read_project_doc(filename=missing.md)',
+			'[tool-error] document not found',
+		]),
+	) as ToolBlock[];
+	expect(blocks.map((b) => [b.name, b.status, b.result])).toEqual([
+		['mcp__hezo__get_task', 'success', 'first'],
+		['shell', 'success', 'file1'],
+		['mcp__hezo__read_project_doc', 'error', 'document not found'],
+	]);
+});
+
 test('parses the session header', () => {
 	const blocks = parseAgentLog(makeLines(['[session] model=deepseek-v4-pro tools=115']));
 	expect(blocks).toEqual([

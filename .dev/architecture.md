@@ -2436,6 +2436,29 @@ because that branch coalesces consecutive lines into one markdown document, wher
 newline is a softbreak - so every runner line used to render as a clause appended to whatever
 the agent had last said.
 
+**A tool call and its result are paired by ORDER, not by id.** The persisted log is
+line-based text, so the structure the Formatted view renders is re-derived client-side:
+`parse-agent-log.ts` opens a `[tool]` line as a `pending` block and only flips it to
+success/error when a `[tool-result]`/`[tool-error]` line arrives, shifting a FIFO queue of
+pending calls. Claude Code's `tool_use_id` is on the wire but is deliberately not carried
+into the log - Claude emits N parallel calls then their N results in the same order, so
+order is sufficient. **The obligation that buys is on the parser: every `[tool]` line a
+runtime emits must be followed by its result line, and a runtime that learns a call's
+outcome in the same event emits both from that event.** A call left without one does not
+merely render pending forever - it stays queued and swallows the *next* call's result, so
+every tool after it reports somebody else's outcome. This is what the Codex `mcp_tool_call`
+branch got wrong: it rendered the call and dropped the `status`/`result`/`error` the item
+carried alongside it. A `command_execution` with no command string is dropped whole for the
+same reason - its result would have no call to belong to.
+
+**Only Claude Code reports a tool count.** Its `system`/`init` event lists the tools, so its
+session line carries `tools=N`. Codex's `thread.started` carries only a thread id and
+Gemini's `init` names no count, so their session lines omit the token entirely and the
+viewer hides the count rather than printing a zero nobody measured. Codex names no model
+anywhere in its stream either, so - exactly as for OpenCode - `createAgentStreamParser`
+seeds its parser with the run's own model as a pricing floor, without which every Codex run
+priced at $0. A model named on the stream still wins.
+
 The exec transport itself
 **retains nothing**: `execStart` with an `onChunk` callback forwards each frame and returns
 an empty `ExecResult`, because a run's raw stream-json output (every tool result in full)

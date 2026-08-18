@@ -113,8 +113,10 @@ export function createAgentStreamParser(
 	switch (runtime) {
 		case AgentRuntime.ClaudeCode:
 			return createClaudeCodeParser(price);
+		// Codex names no model in its stream (see `createCodexParser`), so like
+		// OpenCode it depends on the run's own model to price at all.
 		case AgentRuntime.Codex:
-			return createCodexParser(price);
+			return createCodexParser(price, runModel?.trim() || undefined);
 		case AgentRuntime.Gemini:
 			return createGeminiParser(price);
 		// OpenCode (`run --format json`) emits JSONL but with shapes that vary
@@ -275,7 +277,7 @@ export function createAgentChatParser(
 		case AgentRuntime.ClaudeCode:
 			return createClaudeChatParser(price);
 		case AgentRuntime.Codex:
-			return createCodexChatParser(price);
+			return createCodexChatParser(price, runModel?.trim() || undefined);
 		case AgentRuntime.Gemini:
 			return createGeminiChatParser(price);
 		case AgentRuntime.OpenCode:
@@ -335,14 +337,14 @@ function createClaudeChatParser(price: PriceModelFn): AgentChatParser {
 	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
 }
 
-function createCodexChatParser(price: PriceModelFn): AgentChatParser {
+function createCodexChatParser(price: PriceModelFn, runModel?: string): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
-	let modelId: string | undefined;
+	let modelId: string | undefined = runModel;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
 		const event = raw as CodexEvent;
 		const type = event.type ?? '';
 		if (type === 'thread.started') {
-			modelId = event.model ?? undefined;
+			if (event.model) modelId = event.model;
 			return [];
 		}
 		if (type === 'turn.completed' || type === 'turn.failed') {
@@ -370,7 +372,7 @@ function createCodexChatParser(price: PriceModelFn): AgentChatParser {
 			}
 			if (kind === 'command_execution') return [{ toolActivity: 'shell' }];
 			if (kind === 'mcp_tool_call' || kind === 'tool_call') {
-				return [{ toolActivity: item.name ?? 'tool' }];
+				return [{ toolActivity: item.tool ?? item.name ?? 'tool' }];
 			}
 		}
 		return [];
@@ -727,6 +729,16 @@ interface CodexUsage {
 	reasoning_output_tokens?: number;
 }
 
+/**
+ * One `item.completed` payload. Codex flattens the item's variant into the object,
+ * so `type` is the discriminant and the rest are that variant's own fields.
+ *
+ * An MCP tool call names its tool with `server` + `tool`, NOT `name` - there is no
+ * `name` field on that variant at all, so the `name` fallback below is only ever
+ * reached by the older `tool_call` spelling. It carries its own outcome too
+ * (`status`, `result`, `error`), which is what lets the call and its result be
+ * rendered from the same event.
+ */
 interface CodexItem {
 	type?: string;
 	item_type?: string;
@@ -737,8 +749,14 @@ interface CodexItem {
 	output?: string;
 	exit_code?: number;
 	name?: string;
+	server?: string;
+	tool?: string;
+	/** `in_progress` | `completed` | `failed`. */
+	status?: string;
 	arguments?: unknown;
 	args?: unknown;
+	result?: { content?: unknown; structured_content?: unknown } | null;
+	error?: { message?: string } | string | null;
 }
 
 interface CodexEvent {
@@ -750,19 +768,28 @@ interface CodexEvent {
 	error?: { message?: string } | string;
 }
 
-function createCodexParser(price: PriceModelFn): AgentStreamParser {
+/**
+ * @param runModel the model the run was launched with. Codex's `thread.started`
+ *   carries only a thread id - it names no model anywhere in the stream - so
+ *   without this every Codex run priced at $0. A model named in the stream still
+ *   wins; this is the floor, not an override.
+ */
+function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let turns = 0;
-	let modelId: string | undefined;
+	let modelId: string | undefined = runModel;
 	let finalMessage: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as CodexEvent;
 		const type = event.type ?? '';
 
+		// No `tools=` here: Codex never reports how many tools it was given, and a
+		// hardcoded zero renders as a confident "0 tools" in the log header. Omitting
+		// the token makes the client drop the count rather than print a wrong one.
 		if (type === 'thread.started') {
-			modelId = event.model ?? undefined;
-			return [`[session] model=${modelId ?? 'codex'} tools=0`];
+			if (event.model) modelId = event.model;
+			return [`[session] model=${modelId ?? 'codex'}`];
 		}
 
 		// A turn wraps one user→assistant exchange (tool calls included), so a
@@ -828,22 +855,39 @@ function renderCodexItem(item: CodexItem): string[] {
 	}
 
 	if (kind === 'command_execution') {
-		const out: string[] = [];
 		const cmd = (item.command ?? '').replace(/\s+/g, ' ').trim();
-		if (cmd) out.push(`[tool] shell(${cmd})`);
+		// No command means no `[tool]` line to own a result, and an orphan result line
+		// would be paired with somebody else's call. Drop the item instead.
+		if (!cmd) return [];
 		const output = (item.aggregated_output ?? item.output ?? '').replace(/\s+/g, ' ').trim();
-		if (output) {
-			const isError = typeof item.exit_code === 'number' && item.exit_code !== 0;
-			out.push(`${isError ? '[tool-error]' : '[tool-result]'} ${output}`);
-		}
-		return out;
+		const isError =
+			item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
+		return [`[tool] shell(${cmd})`, labelledResult(isError, output)];
 	}
 
 	if (kind === 'mcp_tool_call' || kind === 'tool_call') {
-		return [formatToolUse(item.name ?? 'tool', item.arguments ?? item.args)];
+		const failed = item.status === 'failed' || item.error != null;
+		const body = failed
+			? extractErrorMessage(item.error ?? undefined)
+			: extractToolResultText(item.result?.content);
+		return [
+			formatToolUse(codexToolName(item), item.arguments ?? item.args),
+			labelledResult(failed, body.replace(/\s+/g, ' ').trim()),
+		];
 	}
 
 	return [];
+}
+
+/**
+ * Name an MCP tool call the way Claude Code names one, so the client renders both
+ * through the same `mcp__<server>__<tool>` display. Codex splits the two halves
+ * across `server` and `tool`; the `name` fallback serves the older `tool_call`
+ * spelling, which carries neither.
+ */
+function codexToolName(item: CodexItem): string {
+	if (item.server && item.tool) return `mcp__${item.server}__${item.tool}`;
+	return item.tool ?? item.name ?? 'tool';
 }
 
 // ---------------------------------------------------------------------------
@@ -963,7 +1007,8 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 		flushText(out);
 
 		if (type === 'init') {
-			out.push(`[session] model=${event.model ?? 'gemini'} tools=0`);
+			// As with Codex, no `tools=`: the count was never reported, so don't invent one.
+			out.push(`[session] model=${event.model ?? 'gemini'}`);
 			return out;
 		}
 
@@ -1790,11 +1835,21 @@ function stringifyArg(value: unknown): string {
 }
 
 function formatToolResult(block: ClaudeContentBlock): string {
-	const label = block.is_error ? '[tool-error]' : '[tool-result]';
 	const body = extractToolResultText(block.content);
-	const collapsed = body.replace(/\s+/g, ' ').trim();
-	if (collapsed === '') return label;
-	return `${label} ${collapsed}`;
+	return labelledResult(block.is_error === true, body.replace(/\s+/g, ' ').trim());
+}
+
+/**
+ * A `[tool-result]`/`[tool-error]` line for an already-collapsed body.
+ *
+ * An empty body still emits the bare label. The client pairs a result with its call
+ * FIFO and has no correlation id, so a call whose result line is omitted stays
+ * pending forever AND leaves the queue misaligned - every later result is then
+ * attached to the wrong call. Emitting the label is what keeps that queue honest.
+ */
+function labelledResult(isError: boolean, collapsedBody: string): string {
+	const label = isError ? '[tool-error]' : '[tool-result]';
+	return collapsedBody === '' ? label : `${label} ${collapsedBody}`;
 }
 
 function extractToolResultText(content: unknown): string {
