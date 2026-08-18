@@ -41,9 +41,9 @@ export function probePort(port: number, host = '0.0.0.0'): Promise<PortProbeResu
 /**
  * Operator-actionable guidance when the configured port is already taken,
  * printed to the log right before the server exits. Mirrors the Docker
- * preflight: a one-line diagnosis, then the exact remedy — pick another port via
- * the `--port` flag or the `HEZO_PORT` env var (the two paths `parseConfig`
- * already supports).
+ * preflight: a one-line diagnosis, then the exact remedy - pick another port via
+ * the `--port` flag or the `port` config-file key (the two paths `resolveConfig`
+ * supports; the env var stopped being read in 0.50).
  */
 export function formatPortInUseMessage(port: number): string {
 	return [
@@ -52,6 +52,6 @@ export function formatPortInUseMessage(port: number): string {
 		'Free that port, or start Hezo on a different one:',
 		'',
 		`  hezo --port <port>        e.g. hezo --port ${port + 1}`,
-		'  HEZO_PORT=<port> hezo',
+		'  port: <port>              in the file you pass to hezo --config',
 	].join('\n');
 }

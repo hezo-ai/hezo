@@ -2,7 +2,7 @@
  * The storage abstraction every part of the server talks to. Two drivers
  * implement it: `PgliteDb` (embedded PGlite under `<dataDir>/pgdata`, the
  * default) and `PostgresDb` (an external Postgres reached via
- * `--database-url` / `HEZO_DATABASE_URL`). Application code must only ever
+ * `--database-url` / the `database.url` config-file key). Application code must only ever
  * depend on this interface — the concrete driver types appear solely in the
  * open/backup/migration plumbing under `src/db/`.
  */

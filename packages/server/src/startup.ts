@@ -176,7 +176,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 
 	if (config.telemetry?.enabled) {
 		log.info(
-			'Anonymous usage telemetry is enabled — aggregate counts only (no names, content, or costs). Disable with --disable-telemetry or HEZO_TELEMETRY_ENABLED=0.',
+			'Anonymous usage telemetry is enabled - aggregate counts only (no names, content, or costs). Disable with --disable-telemetry, or `telemetry: { enabled: false }` in your config file.',
 		);
 	}
 

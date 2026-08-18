@@ -7,6 +7,11 @@ import {
 } from '@hezo/shared';
 import { Command } from 'commander';
 import { loadConfigFile } from './config/load';
+import {
+	detectRemovedEnvVars,
+	formatRemovedEnvFatal,
+	type ResolvedDataLocation,
+} from './config/removed-env';
 import type { ConfigFile } from './config/schema';
 import { DEFAULT_CONFIG, type HezoConfig, resolveDataDir } from './config/types';
 import { createStreamProgressReporter, formatBytes } from './lib/progress';
@@ -38,15 +43,24 @@ interface SubcommandTargets {
 	assetStorageUrl?: string;
 }
 
-function resolveSubcommandTargets(opts: Record<string, unknown>): SubcommandTargets {
+function resolveSubcommandTargets(
+	opts: Record<string, unknown>,
+	env: NodeJS.ProcessEnv = process.env,
+): SubcommandTargets {
 	const file = readConfigFile(opts);
 	const flag = (value: unknown): string | undefined =>
 		typeof value === 'string' && value.length > 0 ? value : undefined;
-	return {
+	const targets: SubcommandTargets = {
 		dataDir: resolveDataDir(flag(opts.dataDir) ?? file.dataDir ?? DEFAULT_DATA_DIR),
 		databaseUrl: flag(opts.databaseUrl) ?? file.database?.url,
 		assetStorageUrl: flag(opts.assetStorageUrl) ?? file.assetStorage?.url,
 	};
+	assertNoRemovedDataLocationEnv(env, {
+		dataDir: targets.dataDir,
+		database: { url: targets.databaseUrl },
+		assetStorage: { url: targets.assetStorageUrl },
+	});
+	return targets;
 }
 
 /** The `--config` option text, identical on every command that accepts one. */
@@ -226,18 +240,18 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 		// `_migrations` bookkeeping. For embedded storage `openPersistentDb` happily
 		// creates an empty database on open, so without this guard the dump would
 		// crash with a bare `relation "_migrations" does not exist`. Fail with an
-		// actionable message instead — the usual cause is a `--data-dir` /
-		// `HEZO_DATA_DIR` that doesn't point at the running instance's data.
+		// actionable message instead - the usual cause is a `--data-dir` (or a
+		// config file's `dataDir`) that doesn't point at the running instance's data.
 		const probe = await db.query<{ reg: string | null }>(
 			`SELECT to_regclass('public._migrations')::text AS reg`,
 		);
 		if (probe.rows[0]?.reg == null) {
 			throw new Error(
 				`No Hezo database found at ${sourceLabel}: its migration bookkeeping (the _migrations ` +
-					`table) is missing, so there is nothing to back up. Check that --data-dir / ` +
-					`HEZO_DATA_DIR points at your instance's data directory (an external database is ` +
-					`selected with --database-url / HEZO_DATABASE_URL). A brand-new instance has no ` +
-					`database until the server has started at least once.`,
+					`table) is missing, so there is nothing to back up. Check that --data-dir (or the ` +
+					`\`dataDir\` key in the file you pass to --config) points at your instance's data ` +
+					`directory; an external database is selected with --database-url or \`database.url\`. ` +
+					`A brand-new instance has no database until the server has started at least once.`,
 			);
 		}
 		const { loadAllMigrations } = await import('./db/load-migrations.js');
@@ -807,7 +821,7 @@ export function resolveConfig(
 		return str('masterKey');
 	})();
 
-	return {
+	const config: HezoConfig = {
 		port,
 		dataDir: resolveDataDir(str('dataDir') ?? file.dataDir ?? DEFAULT_DATA_DIR),
 		webUrl: str('webUrl') ?? file.webUrl ?? d.webUrl,
@@ -867,4 +881,23 @@ export function resolveConfig(
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
 		configPath,
 	};
+
+	// Configuration env vars are no longer read. Refuse to start when an ignored
+	// one would have put the data somewhere other than where we are about to look:
+	// coming up on an empty database looks like a fresh install, not a fault.
+	assertNoRemovedDataLocationEnv(env, config);
+	return config;
+}
+
+/**
+ * Throw when a removed env var still selects where the data lives. Shared by the
+ * server and the backup/restore/uninstall subcommands, each of which would
+ * otherwise silently target a different tree than the operator configured.
+ */
+function assertNoRemovedDataLocationEnv(
+	env: NodeJS.ProcessEnv,
+	location: ResolvedDataLocation,
+): void {
+	const { fatal } = detectRemovedEnvVars(env, location);
+	if (fatal.length > 0) throw new Error(formatRemovedEnvFatal(fatal));
 }

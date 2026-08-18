@@ -70,7 +70,7 @@ export async function openAssetStorage(
 			throw new AssetStorageError(
 				`Cannot reach the configured asset storage at ${redacted}: ${detail}\n` +
 					'Check the endpoint, credentials, bucket name, and pathStyle/tls parameters in ' +
-					'--asset-storage-url / HEZO_ASSET_STORAGE_URL, and that the bucket exists. ' +
+					'--asset-storage-url or the `assetStorage.url` config-file key, and that the bucket exists. ' +
 					'Omit the option to store assets on the local filesystem.',
 				{ cause: err },
 			);

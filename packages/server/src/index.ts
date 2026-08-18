@@ -3,6 +3,7 @@ import { AuthType, WsClientAction } from '@hezo/shared';
 import { app } from './app';
 import { AssetStorageError } from './assets/errors';
 import { resolveConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
+import { detectRemovedEnvVars, formatRemovedEnvWarning } from './config/removed-env';
 import { setRuntimeConfig } from './config/runtime';
 import type { HezoConfig } from './config/types';
 import type { MasterKeyManager } from './crypto/master-key';
@@ -134,6 +135,14 @@ const config = ((): HezoConfig => {
 setRuntimeConfig(config);
 setLogLevel(config.logLevel);
 
+// The removed env vars that only revert a setting to its default: not worth
+// refusing to start over, but the operator has to be told they did nothing. The
+// fatal ones (the data-location trio) already threw inside `resolveConfig`.
+{
+	const { warnings } = detectRemovedEnvVars(process.env, config);
+	if (warnings.length > 0) log.warn(formatRemovedEnvWarning(warnings));
+}
+
 // Self-update supervisor. A compiled binary with auto-update enabled runs as a
 // thin supervisor that spawns the real server as a worker (HEZO_WORKER=1),
 // applies staged updates between restarts, and otherwise propagates the worker's
@@ -168,7 +177,7 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
 
 // Port preflight: Bun binds the port itself from the default export below, so an
 // already-taken port would otherwise surface as a bare `EADDRINUSE` crash. Probe
-// it first and exit with guidance pointing at `--port`/`HEZO_PORT`. Guarded so it
+// it first and exit with guidance pointing at `--port` / the `port` key. Guarded so it
 // runs only on a cold start, never on a `bun --hot` reload (where the dev server
 // keeps the port bound across reloads and a re-probe would falsely see a conflict).
 if (!globalThis.__hezoPortProbed) {

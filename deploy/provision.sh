@@ -31,10 +31,13 @@
 #                          verifying the certificate; for verified TLS use
 #                          sslmode=verify-full, adding &sslrootcert=/etc/hezo/db-ca.crt
 #                          when the provider signs with its own CA (most do).
-#                          Persisted into /etc/hezo/hezo.config.cjs on first provision; omit to
-#                          use the embedded database on the VM's disk (the default).
+#                          A provisioning-shell input, not a runtime variable: it is
+#                          persisted into /etc/hezo/hezo.config.cjs on first provision, and
+#                          the server reads it from there. Omit to use the embedded
+#                          database on the VM's disk (the default).
 #   HEZO_ASSET_STORAGE_URL S3-compatible object storage for asset files
-#                          (s3://KEY:SECRET@endpoint/bucket[/prefix]). Persisted into
+#                          (s3://KEY:SECRET@endpoint/bucket[/prefix]). A provisioning-shell
+#                          input, not a runtime variable: persisted into
 #                          /etc/hezo/hezo.config.cjs on first provision; omit for local disk.
 #   HEZO_DATABASE_POOL_SIZE  connection-pool size for the external database (2-100).
 #   HEZO_SWAP_SIZE         size of the swap file this script creates so low-RAM hosts
@@ -74,6 +77,36 @@ if [[ -f "${DEPLOY_ENV}" ]]; then
 fi
 
 log() { echo "[hezo-provision] $*"; }
+
+# ---------------------------------------------------------------------------
+# 1a. Migrate a pre-0.50 /etc/hezo/hezo.env
+#     Before 0.50 this script wrote an env file and wired it in with
+#     EnvironmentFile=. 0.50 reads a config file instead and ignores those
+#     variables entirely, so a host upgraded in place would fall back to the
+#     built-in defaults - an empty database that looks like a fresh install.
+#     Read the old file into this shell so the config file written below carries
+#     its settings; the shell environment still wins. The file itself is only
+#     renamed aside once the config file exists, so an interrupted run loses
+#     nothing.
+# ---------------------------------------------------------------------------
+LEGACY_ENV="/etc/hezo/hezo.env"
+LEGACY_ENV_CARRIED=""
+if [[ -f "${LEGACY_ENV}" && ! -f "${CONFIG_FILE}" ]]; then
+	while IFS='=' read -r key value; do
+		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
+		if [[ -z "${!key:-}" ]]; then
+			export "${key}=${value}"
+			LEGACY_ENV_CARRIED+=" ${key}"
+		fi
+	done <"${LEGACY_ENV}"
+	log "Found ${LEGACY_ENV} from a pre-0.50 install."
+	if [[ -n "${LEGACY_ENV_CARRIED}" ]]; then
+		log "Carrying into ${CONFIG_FILE}:${LEGACY_ENV_CARRIED}"
+	fi
+fi
+
+# An operator who moved the data dir keeps it. Everything below writes to this path.
+DATA_DIR="${HEZO_DATA_DIR:-${DATA_DIR}}"
 
 # ---------------------------------------------------------------------------
 # 1. Swap file — give low-RAM hosts a memory cushion so the install itself and
@@ -265,6 +298,13 @@ EOF
 		echo "	assetStorage: { url: '${HEZO_ASSET_STORAGE_URL}' }," >>"${CONFIG_FILE}"
 	fi
 	echo "};" >>"${CONFIG_FILE}"
+fi
+
+# Now that the settings live in the config file, take the old one out of the way:
+# nothing reads it any more, and leaving it invites a hand-edit that does nothing.
+if [[ -n "${LEGACY_ENV_CARRIED}" && -f "${CONFIG_FILE}" && -f "${LEGACY_ENV}" ]]; then
+	mv "${LEGACY_ENV}" "${LEGACY_ENV}.migrated"
+	log "Renamed ${LEGACY_ENV} to ${LEGACY_ENV}.migrated (no longer read)."
 fi
 
 # Persist optional settings the first-boot unit reads (domain override, swap size).

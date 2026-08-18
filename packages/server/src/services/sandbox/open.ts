@@ -38,7 +38,7 @@ export interface OpenSandboxBackendOptions {
 	backend?: string;
 	daytonaApiKey?: string;
 	daytonaApiUrl?: string;
-	/** `--docker-socket` / `HEZO_DOCKER_SOCKET`, when the operator pinned one. */
+	/** `--docker-socket` / the `containers.dockerSocket` config key, when the operator pinned one. */
 	dockerSocket?: string;
 	/** Test hook: overrides the preflight retry backoff. */
 	retryDelaysMs?: number[];

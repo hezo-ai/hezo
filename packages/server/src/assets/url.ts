@@ -1,7 +1,7 @@
 import { AssetStorageError } from './errors';
 
 /**
- * Parsed form of `--asset-storage-url` / `HEZO_ASSET_STORAGE_URL`:
+ * Parsed form of `--asset-storage-url` / the `assetStorage.url` config-file key:
  *
  *   s3://ACCESS_KEY_ID:SECRET_ACCESS_KEY@endpoint[:port]/bucket[/prefix]?region=…&pathStyle=…&tls=…
  *
