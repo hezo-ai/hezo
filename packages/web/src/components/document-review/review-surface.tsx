@@ -79,7 +79,9 @@ interface IconEntry {
 }
 
 const ICON_STACK_GAP = 28;
-const HOVER_BLOCK_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, li, pre, blockquote';
+// `td` makes a table row reviewable a cell at a time - the hover affordance a
+// CSV asset needs, and the one a markdown table never had.
+const HOVER_BLOCK_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, li, pre, blockquote, td';
 
 /**
  * The review-comment interaction surface shared by documents and text assets:

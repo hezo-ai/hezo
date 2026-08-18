@@ -629,7 +629,10 @@ task-sidebar panel, Documents tab view mode) via a rehype plugin
 (selection pill, hover-line ghost, margin icons, editor) is extracted into
 `ReviewSurface` (`packages/web/src/components/document-review/review-surface.tsx`), which
 the asset viewer reuses for text assets (markdown through the same rehype plugin, plain
-text through `PlainTextWithHighlights`). Those same three surfaces each carry
+text through `PlainTextWithHighlights`, a CSV through `CsvTable`). The three highlight
+painters share one resolver, `claimQuoteRanges`, and the two non-markdown ones share
+`ReviewTextSegments`; a CSV's stream is its cells concatenated in document order, which the
+table keeps byte-identical to the DOM by emitting no text of its own. Those same three surfaces each carry
 `DocumentDownloadMenu` (`packages/web/src/components/document-download-menu.tsx`) — a
 client-side save of the already-loaded content as Markdown (verbatim) or plain text
 (`markdownToPlainText`), no server round-trip; the two preview surfaces render it in the
@@ -714,8 +717,11 @@ chips all navigate there; raw view stays reachable via its "Open raw" toolbar bu
 (via `assetContentDisposition(contentType, forceDownload)`) regardless of the asset's default
 inline/attachment disposition. It
 is a split-pane page (`ResizableSplit`): the left pane renders the content per type
-(markdown with a rich preview + view-source toggle, plain text in a highlighted `<pre>`,
-images/SVG via `<img>`, HTML in the sandboxed iframe, everything else a metadata card)
+(markdown with a rich preview + view-source toggle, a `.csv` as a table behind the same
+toggle - detected by extension, since CSV is stored as `text/plain`, parsed by
+`packages/web/src/lib/csv.ts` and capped at `CSV_PREVIEW_ROW_LIMIT` rows - plain text in a
+highlighted `<pre>`, images/SVG via `<img>`, HTML in the sandboxed iframe, everything else a
+metadata card)
 and the thin right pane lists the asset's review comments (see `review_comments` above) —
 a resizable sticky column at `lg+`, a chevron-toggled slide-in drawer below (the task
 page's side-panel pattern). **Folders are implicit
