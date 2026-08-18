@@ -87,7 +87,7 @@ export interface DockerPreflightResult {
 }
 
 export interface DockerPreflightOptions {
-	/** `--docker-socket` / `HEZO_DOCKER_SOCKET`. */
+	/** `--docker-socket` / the config file's `containers.dockerSocket`. */
 	override?: string;
 	env?: NodeJS.ProcessEnv;
 	/** Injectable for tests; defaults to a real ping over the candidate's socket. */
@@ -137,11 +137,16 @@ export async function evaluateDockerPreflight(
  * Why a container runtime is mandatory, shared by every failure message: the
  * container is a security sandbox, not just a packaging convenience. Agents run
  * untrusted-ish code, so isolating them from the host is the whole point.
+ *
+ * Exported because the Windows install dialog gives the same answer to the same
+ * question, and an operator who reads it in two places should not get two
+ * different accounts of why Hezo refuses to start.
  */
-const SANDBOX_RATIONALE = [
-	"Hezo runs each project's AI agents inside isolated OS containers. That",
-	'sandbox is a security boundary: it keeps agents off your host so a buggy or',
-	"compromised agent can't reach your files, credentials, or wider network.",
+export const SANDBOX_RATIONALE = [
+	"Hezo runs each project's AI agents inside isolated OS containers. That sandbox",
+	'is a security boundary: it keeps agents off the rest of your system, so a buggy',
+	"or compromised agent can't reach your files, your credentials, or your wider",
+	'network.',
 ];
 
 /** How to start each supported runtime, printed when nothing answered. */
@@ -157,7 +162,7 @@ const START_INSTRUCTIONS = [
 const OVERRIDE_HINT = [
 	'Daemon listening on a socket Hezo did not check? Point it there:',
 	'',
-	'  hezo --docker-socket /path/to/docker.sock   (env: HEZO_DOCKER_SOCKET)',
+	'  hezo --docker-socket /path/to/docker.sock   (or containers.dockerSocket in your config file)',
 ];
 
 /**
@@ -217,7 +222,7 @@ export function formatDockerPreflightMessage(
 			'Hezo talks to the daemon over a Unix socket, so tcp://, npipe:// and ssh://',
 			'endpoints are not supported. Point it at the socket file instead:',
 			'',
-			'  hezo --docker-socket /path/to/docker.sock   (env: HEZO_DOCKER_SOCKET)',
+			'  hezo --docker-socket /path/to/docker.sock   (or containers.dockerSocket in your config file)',
 			'',
 			`More detail: ${CONTAINER_RUNTIMES_DOCS_URL}`,
 		].join('\n');

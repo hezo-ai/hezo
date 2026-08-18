@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runtimeConfig } from '../config/runtime';
 import { logger } from '../logger';
 import { IS_PACKAGED_BUILD } from '../version';
 import type { ContainerEngine } from './docker';
@@ -55,14 +56,12 @@ const LOCAL_IMAGES: Record<string, LocalImageSpec> = {
  *
  * Set it to the image CI published for the branch under test:
  *
- *   HEZO_AGENT_BASE_IMAGE=ghcr.io/hezo-ai/agent-base:<sha> bun run dev
+ *   containers.agentBaseImage: 'ghcr.io/hezo-ai/agent-base:<sha>'
  *
  * It applies on every backend, not just managed ones - on Docker it pulls that
  * exact image instead of building locally, which is the honest way to test
  * against what CI produced rather than against your working tree.
  */
-export const AGENT_BASE_IMAGE_OVERRIDE_ENV = 'HEZO_AGENT_BASE_IMAGE';
-
 /**
  * The published agent-base ref to fetch, or `null` when none should exist. Only a
  * compiled release binary (`IS_PACKAGED_BUILD`) uses the published image; dev
@@ -73,14 +72,14 @@ export const AGENT_BASE_IMAGE_OVERRIDE_ENV = 'HEZO_AGENT_BASE_IMAGE';
  * `packaged` param defaults to the module constant but is injectable so the logic
  * is unit-testable without env munging.
  *
- * {@link AGENT_BASE_IMAGE_OVERRIDE_ENV} wins over both, because the case it
+ * The `containers.agentBaseImage` override wins over both, because the case it
  * exists for is precisely the one where the build-type default is wrong.
  */
 export function publishedAgentBaseRef(
 	packaged: boolean = IS_PACKAGED_BUILD,
-	env: NodeJS.ProcessEnv = process.env,
+	overrideImage: string | undefined = runtimeConfig().containers.agentBaseImage,
 ): string | null {
-	const override = env[AGENT_BASE_IMAGE_OVERRIDE_ENV]?.trim();
+	const override = overrideImage?.trim();
 	if (override) return override;
 	return packaged ? `${AGENT_BASE_GHCR_REPO}:latest` : null;
 }

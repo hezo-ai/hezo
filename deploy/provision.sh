@@ -32,7 +32,7 @@
 #                          `none` means one is already installed and owns 80/443 - this
 #                          script then installs no Caddy, derives no sslip.io address,
 #                          and requires HEZO_DOMAIN_OVERRIDE (the name that proxy serves)
-#                          so HEZO_WEB_URL is correct. Point the existing proxy at
+#                          so the config's webUrl is correct. Point the existing proxy at
 #                          127.0.0.1:3100, passing Host, X-Forwarded-Proto and the
 #                          WebSocket upgrade headers. Use it on a control-panel host.
 #   HEZO_FIREWALL          which firewall this script configures: ufw (default) or none.
@@ -53,11 +53,11 @@
 #                          verifying the certificate; for verified TLS use
 #                          sslmode=verify-full, adding &sslrootcert=/etc/hezo/db-ca.crt
 #                          when the provider signs with its own CA (most do).
-#                          Persisted into /etc/hezo/hezo.env on first provision; omit to
+#                          Persisted into /etc/hezo/hezo.config.cjs on first provision; omit to
 #                          use the embedded database on the VM's disk (the default).
 #   HEZO_ASSET_STORAGE_URL S3-compatible object storage for asset files
 #                          (s3://KEY:SECRET@endpoint/bucket[/prefix]). Persisted into
-#                          /etc/hezo/hezo.env on first provision; omit for local disk.
+#                          /etc/hezo/hezo.config.cjs on first provision; omit for local disk.
 #   HEZO_DATABASE_POOL_SIZE  connection-pool size for the external database (2-100).
 #   HEZO_SWAP_SIZE         size of the swap file this script creates so low-RAM hosts
 #                          don't OOM (default 6G; accepts 6G / 6144M). Set 0 to disable.
@@ -78,7 +78,8 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 DATA_DIR="/var/lib/hezo"
-ENV_FILE="/etc/hezo/hezo.env"
+CONFIG_FILE="/etc/hezo/hezo.config.cjs"
+WEB_URL_FILE="/etc/hezo/web-url"
 DEPLOY_ENV="/etc/hezo/deploy.env"
 RELEASE_TAG="${HEZO_RELEASE_TAG:-latest}"
 
@@ -123,11 +124,12 @@ esac
 
 # With no Caddy there is no sslip.io derivation, so the domain the existing proxy
 # serves has to be supplied - Hezo builds absolute URLs (the OAuth callback an MCP
-# connection registers with its provider among them) from HEZO_WEB_URL, and a blank
+# connection registers with its provider among them) from the config's webUrl, and a blank
 # one fails later at connect time rather than here.
 if [[ "${PROXY}" == "none" && -z "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
 	echo "HEZO_PROXY=none needs HEZO_DOMAIN_OVERRIDE set to the domain your reverse proxy serves" >&2
-	echo "(it becomes HEZO_WEB_URL=https://<domain>). See deploy/xcloud/README.md." >&2
+	echo "(it lands in /etc/hezo/web-url, which the config reads as webUrl)." >&2
+	echo "See deploy/xcloud/README.md." >&2
 	exit 1
 fi
 
@@ -285,30 +287,52 @@ chmod +x /usr/local/bin/hezo
 # ---------------------------------------------------------------------------
 install -d -m 700 /etc/hezo
 install -d -m 755 "${DATA_DIR}"
-if [[ ! -f "${ENV_FILE}" ]]; then
-	install -m 600 /dev/null "${ENV_FILE}"
-	cat >"${ENV_FILE}" <<EOF
-HEZO_DATA_DIR=${DATA_DIR}
-# HEZO_WEB_URL is written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh),
-# or right below when an existing reverse proxy owns the address (HEZO_PROXY=none).
-# Do NOT put your master key in this file. Hezo keeps it in memory only and comes up locked
-# after each restart by design; unlock it from the browser gate. A copy of the key on disk
-# next to the encrypted data would let anyone who reads this box decrypt your vault.
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+	# Mode 600: this file can hold database and object-storage credentials.
+	install -m 600 /dev/null "${CONFIG_FILE}"
+	cat >"${CONFIG_FILE}" <<EOF
+// Hezo configuration. Edit and restart: systemctl restart hezo
+// Reference: https://hezo.ai/docs/deployment/configuration
+//
+// Do NOT put your master key in this file. Hezo keeps it in memory only and comes up
+// locked after each restart by design; unlock it from the browser gate. A copy of the
+// key on disk next to the encrypted data would let anyone who reads this box decrypt
+// your vault.
+const { existsSync, readFileSync } = require('node:fs');
+
+// Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh), or
+// by provision.sh itself when an existing reverse proxy already owns the address
+// (HEZO_PROXY=none), where there is nothing for first boot to derive.
+const webUrlFile = '${WEB_URL_FILE}';
+
+module.exports = {
+	dataDir: '${DATA_DIR}',
+	webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
 EOF
-	# With an existing proxy there is nothing to derive: the domain it serves was
-	# supplied up front, so write the URL now rather than deferring to first boot.
-	if [[ "${PROXY}" == "none" ]]; then
-		echo "HEZO_WEB_URL=https://${HEZO_DOMAIN_OVERRIDE}" >>"${ENV_FILE}"
-	fi
 	# Managed data hosting (optional): persist the database / asset-storage settings
-	# provided at provision time so the systemd unit picks them up. To wire them into
-	# an already-provisioned host, edit this file directly and restart hezo — see
+	# provided at provision time. To wire them into an already-provisioned host, edit
+	# this file directly and restart hezo — see
 	# docs/deployment/one-click.md § Using managed data hosting.
-	for key in HEZO_DATABASE_URL HEZO_ASSET_STORAGE_URL HEZO_DATABASE_POOL_SIZE; do
-		if [[ -n "${!key:-}" ]]; then
-			echo "${key}=${!key}" >>"${ENV_FILE}"
-		fi
-	done
+	if [[ -n "${HEZO_DATABASE_URL:-}" || -n "${HEZO_DATABASE_POOL_SIZE:-}" ]]; then
+		{
+			echo "	database: {"
+			[[ -n "${HEZO_DATABASE_URL:-}" ]] && echo "		url: '${HEZO_DATABASE_URL}',"
+			[[ -n "${HEZO_DATABASE_POOL_SIZE:-}" ]] && echo "		poolSize: ${HEZO_DATABASE_POOL_SIZE},"
+			echo "	},"
+		} >>"${CONFIG_FILE}"
+	fi
+	if [[ -n "${HEZO_ASSET_STORAGE_URL:-}" ]]; then
+		echo "	assetStorage: { url: '${HEZO_ASSET_STORAGE_URL}' }," >>"${CONFIG_FILE}"
+	fi
+	echo "};" >>"${CONFIG_FILE}"
+fi
+
+# With an existing proxy there is nothing for first boot to derive: the domain that
+# proxy serves was supplied up front, so write the URL now. Same file and the same
+# non-clobbering guard the first-boot unit uses, so neither overwrites the other or
+# an operator's edit.
+if [[ "${PROXY}" == "none" ]]; then
+	[[ -s "${WEB_URL_FILE}" ]] || echo "https://${HEZO_DOMAIN_OVERRIDE}" >"${WEB_URL_FILE}"
 fi
 
 # Persist the settings that must survive this run: the modes (read back by the block
@@ -378,14 +402,15 @@ fi
 # 6. First-boot unit: derive the public URL, wire it into Caddy + Hezo
 #    Installed in every mode - it also creates swap on the machine-image path -
 #    but under HEZO_PROXY=none there is no address to derive, so it stops after
-#    the swap step. provision.sh already wrote HEZO_WEB_URL from the domain the
+#    the swap step. provision.sh already wrote /etc/hezo/web-url from the domain the
 #    existing proxy serves.
 # ---------------------------------------------------------------------------
 cat >/usr/local/sbin/hezo-firstboot.sh <<'EOF'
 #!/usr/bin/env bash
 # Runs once, before Caddy and Hezo start. Derives the public HTTPS URL from the
 # host's public IP (via <ip>.sslip.io) unless HEZO_DOMAIN_OVERRIDE is set, then
-# writes it where Caddy and Hezo read it.
+# writes it where Caddy (/etc/caddy/hezo.env) and Hezo (/etc/hezo/web-url, read
+# by /etc/hezo/hezo.config.cjs) each pick it up.
 set -euo pipefail
 
 SENTINEL="/var/lib/hezo/.firstboot-done"
@@ -401,7 +426,7 @@ if [[ -x /usr/local/sbin/hezo-ensure-swap.sh ]]; then
 fi
 
 # An existing reverse proxy owns the address and its certificate; there is no Caddy
-# to point anywhere and HEZO_WEB_URL was written at provision time.
+# to point anywhere and /etc/hezo/web-url was written at provision time.
 if [[ "${HEZO_PROXY:-caddy}" == "none" ]]; then
 	install -d /var/lib/hezo
 	touch "${SENTINEL}"
@@ -423,7 +448,8 @@ else
 fi
 
 echo "HEZO_SITE_ADDRESS=${DOMAIN}" >/etc/caddy/hezo.env
-grep -q '^HEZO_WEB_URL=' /etc/hezo/hezo.env || echo "HEZO_WEB_URL=https://${DOMAIN}" >>/etc/hezo/hezo.env
+# The config file reads this path for `webUrl`; a .cjs object cannot be appended to.
+[[ -s /etc/hezo/web-url ]] || echo "https://${DOMAIN}" >/etc/hezo/web-url
 
 install -d /var/lib/hezo
 touch "${SENTINEL}"
@@ -460,8 +486,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hezo
-EnvironmentFile=/etc/hezo/hezo.env
+ExecStart=/usr/local/bin/hezo --config /etc/hezo/hezo.config.cjs
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
@@ -540,7 +565,7 @@ else
 	systemctl enable --now hezo
 	if [[ "${PROXY}" == "caddy" ]]; then
 		log "Done. Once DNS + certificate settle (a few seconds), open the URL from:"
-		log "  cat /etc/hezo/hezo.env    # HEZO_WEB_URL=https://<host>.sslip.io"
+		log "  cat /etc/hezo/hezo.config.cjs    # webUrl comes from /etc/hezo/web-url"
 	else
 		log "Done. Hezo is listening on port 3100."
 		log "Point your ${HEZO_DOMAIN_OVERRIDE} site at 127.0.0.1:3100, then open"

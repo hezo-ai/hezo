@@ -23,10 +23,11 @@ container runtime must be installed and running first - Hezo checks at startup a
 with install/start guidance if no daemon is reachable (see
 [Installation](/docs/getting-started/installation) and
 [Container runtimes](/docs/deployment/container-runtimes)). See the
-[Configuration reference](/docs/deployment/configuration) for the full table of flags and
-their environment-variable equivalents. The most common:
+[Configuration reference](/docs/deployment/configuration) for the full table of settings
+and their flags. The most common:
 
 ```sh
+hezo --config /etc/hezo/hezo.config.cjs   # load settings from a config file
 hezo --port 8080                 # listen on a different port
 hezo --data-dir /var/lib/hezo    # use a specific data directory
 hezo --database-url postgres://user:pass@host:5432/hezo   # use an external Postgres instead of the embedded database
@@ -43,21 +44,21 @@ hezo --disable-telemetry         # turn off the anonymous daily usage report (on
 ```
 
 By default the database is embedded and lives under the data directory. With
-`--database-url` (or `HEZO_DATABASE_URL`) Hezo runs against an external PostgreSQL 14+
-instead - see [Using an external Postgres](/docs/deployment/configuration) for
+`--database-url` (or `database.url` in the config file) Hezo runs against an external
+PostgreSQL 14+ instead - see [Using an external Postgres](/docs/deployment/configuration) for
 requirements (TLS, latency, pooling) and
 [TLS and sslmode](/docs/deployment/configuration#tls-and-sslmode) for what each `sslmode`
 protects against.
 
 Uploaded asset files live under the data directory by default. With
-`--asset-storage-url` (or `HEZO_ASSET_STORAGE_URL`) they live in any S3-compatible
-bucket instead - see
+`--asset-storage-url` (or `assetStorage.url` in the config file) they live in any
+S3-compatible bucket instead - see
 [Storing assets in S3-compatible object storage](/docs/deployment/configuration) for the
 URL format and how to move an existing instance.
 
 Agent containers run on the local Docker daemon by default. With `--sandbox-backend`
-(or `HEZO_SANDBOX_BACKEND`) they run on a managed sandbox service instead, and Docker
-is no longer a prerequisite - see [Containers](/docs/containers/overview) and
+(or `containers.backend` in the config file) they run on a managed sandbox service
+instead, and Docker is no longer a prerequisite - see [Containers](/docs/containers/overview) and
 [Running agent containers on a managed sandbox service](/docs/deployment/configuration).
 A managed backend Hezo cannot reach is fatal at startup: it reports the problem and
 exits rather than silently falling back to local Docker.
@@ -76,14 +77,16 @@ bind loopback only. See
 
 Hezo finds the runtime's socket by itself - `DOCKER_HOST`, then the current docker context,
 then the well-known path for each supported runtime - and names the one it used in the
-startup log. Set `--docker-socket` (or `HEZO_DOCKER_SOCKET`) only when the daemon listens
+startup log. Set `--docker-socket` (or `containers.dockerSocket`) only when the daemon listens
 somewhere none of those cover; Unix sockets only, so `tcp://` and `npipe://` endpoints are
 not supported. See [Container runtimes](/docs/deployment/container-runtimes).
 
 On a desktop machine Hezo opens the web app in your default browser once the server is
 ready. It skips this automatically in environments without a browser - CI, containers,
 SSH sessions, and headless Linux (no `DISPLAY`/`WAYLAND_DISPLAY`) - and logs where to
-point your browser instead. Use `--no-open` (or `HEZO_OPEN=0`) to turn it off.
+point your browser instead. Use `--no-open` (or `open: false`) to turn it off. The same
+flag governs the Windows dialog Hezo shows when no container runtime is installed
+([Container runtimes](/docs/deployment/container-runtimes)).
 
 ## Back up
 
@@ -98,16 +101,16 @@ uploaded asset file - as a **backup bundle** directory (default
 tree, and a `manifest.json`. The bundle restores onto either storage backend, which is
 how you move an instance's database and assets between local storage and hosted
 providers (external Postgres and an S3-compatible bucket). Point `--asset-storage-url`
-(or `HEZO_ASSET_STORAGE_URL`) at the source bucket when the instance already keeps its
+(or `assetStorage.url`) at the source bucket when the instance already keeps its
 assets in S3.
 
 - `--no-assets` - database only. Writes the single portable `.backup.gz` file (default
   `<data-dir>/backups/hezo-<timestamp>.backup.gz`) instead of a bundle.
 - `--no-database` - assets only. Writes a bundle with just the asset files.
 
-`--data-dir` (or `HEZO_DATA_DIR`) must point at the same data directory the instance
-runs with. The env var is read exactly as the server reads it, so a deployment that sets
-`HEZO_DATA_DIR` (systemd, Docker) needs no extra flag - omit `--data-dir` and the backup
+`--data-dir` (or `dataDir` in the `--config` file) must point at the same data directory
+the instance runs with. The file is read exactly as the server reads it, so a deployment
+that has one (systemd, Docker) needs only `--config` - omit `--data-dir` and the backup
 targets the running instance's embedded database. Pointing at a directory with no Hezo
 database is refused with a clear error rather than silently backing up an empty one.
 
@@ -136,7 +139,7 @@ The target database must be empty unless `--wipe` is passed. Restored asset blob
 verified by checksum against the database rows; `--strict-assets` fails if any blob has
 no matching row. `--no-assets` / `--no-database` restore only one half of a bundle.
 Backups taken by a newer Hezo are refused - upgrade first. Like `hezo backup`, restore
-reads `--data-dir` from `HEZO_DATA_DIR` when the flag is omitted.
+reads the data directory from the `--config` file when the flag is omitted.
 
 Restore prints its progress as it goes - a line per step, plus a live counter with a
 percentage and an estimated time remaining while it loads rows and copies asset files. In a
@@ -177,8 +180,8 @@ created. It does **not** remove the `hezo` binary itself.
 
 If the instance ran its containers on a **remote sandbox service**, pass the same backend
 settings the server used (`--sandbox-backend daytona` plus the API key, or the matching
-`HEZO_SANDBOX_BACKEND` / `HEZO_DAYTONA_API_KEY` / `HEZO_DAYTONA_API_URL` environment
-variables). Without them uninstall cleans up local Docker and leaves the remote sandboxes
+`containers.backend` / `containers.daytona.apiKey` / `containers.daytona.apiUrl` settings
+via `--config`). Without them uninstall cleans up local Docker and leaves the remote sandboxes
 running, and nothing else will remove them: the sweep that reaps unreferenced sandboxes
 lives in the instance you are deleting. If the provider cannot be reached, uninstall says
 so and still removes the data directory.
@@ -191,36 +194,57 @@ ACLs and deletes the tree cleanly.
 Stop the server first - uninstall **refuses while a server is running** against the data
 directory (removing it under a live server corrupts the database). Deletion is
 irreversible, so it requires an explicit `--yes`; without it, the command prints exactly
-what would be removed and deletes nothing. Like `hezo backup`, it reads `--data-dir` from
-`HEZO_DATA_DIR` when the flag is omitted. Back up anything you want to keep with
+what would be removed and deletes nothing. Like `hezo backup`, it accepts the same
+`--config` as the server, so a deployment with a config file needs no `--data-dir`. Back
+up anything you want to keep with
 `hezo backup` first - see [Backup & recovery](/docs/deployment/backup-and-recovery).
 
-## Environment variables
+## The config file
 
-Every flag above has an environment-variable equivalent, and a few settings are
-environment-variable only. **When both are present, the environment variable wins** -
-handy for baking defaults into a service definition while still overriding per run. The
-[Configuration reference](/docs/deployment/configuration#options) carries the complete
-table with defaults and descriptions; the ones most often set outside a shell are:
+Settings live in a CommonJS file you point at with `--config`:
 
-| Variable | Flag | What it sets |
-|---|---|---|
-| `HEZO_PORT` | `--port` | Port the server and web app listen on. |
-| `HEZO_DATA_DIR` | `--data-dir` | Where Hezo stores its database, encrypted secrets, and assets. |
-| `HEZO_DATABASE_URL` | `--database-url` | Connection string for an external Postgres. |
-| `HEZO_ASSET_STORAGE_URL` | `--asset-storage-url` | S3-compatible object storage for asset files. |
-| `HEZO_SANDBOX_BACKEND` | `--sandbox-backend` | Where agent containers run on a **new** instance: `docker` or `daytona`. Ignored once a service has been chosen in Settings -> Containers. See [Containers](/docs/containers/overview). |
-| `HEZO_DAYTONA_API_KEY` | `--daytona-api-key` | Daytona API key, required when the backend is `daytona`. Used only by Hezo to reach the provider; it never enters an agent container. See [Daytona](/docs/containers/remote/daytona). |
-| `HEZO_DAYTONA_API_URL` | `--daytona-api-url` | Daytona API base URL, for a regional or self-hosted endpoint. |
-| `HEZO_MASTER_KEY` | `--master-key` | The twelve-word master key, for a single non-interactive startup. Do not persist it to disk - see [Master key](/docs/security/master-key). |
-| `HEZO_WEB_URL` | `--web-url` | Public base URL, so account sign-ins redirect back correctly. |
-| `HEZO_LOG_LEVEL` | `--log-level` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
-| `HEZO_OPEN` | `--no-open` | Set to `0` to stop the web app opening in your browser on startup. |
-| `HEZO_TELEMETRY_ENABLED` | `--disable-telemetry` | Set to `0` to turn off the anonymous daily usage report. |
+```sh
+hezo --config /etc/hezo/hezo.config.cjs
+```
 
-The container variables are the ones that behave differently from the rest: they seed a
-**new** instance and are then superseded by the stored setting, because the container
-service is switchable while Hezo is running.
+```js
+// /etc/hezo/hezo.config.cjs
+module.exports = {
+  port: 3100,
+  dataDir: '/var/lib/hezo',
+  webUrl: 'https://hezo.example.com',
+  database: { url: 'postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=verify-full' },
+};
+```
+
+**A flag always wins over the file**, and anything neither sets falls back to the built-in
+default. There is no automatic search - without `--config` Hezo runs on defaults plus
+flags. An unknown or misspelled key is an error naming the key, not something quietly
+ignored. Give the file mode 600 if it carries a database, object-storage, or provider
+credential.
+
+The [Configuration reference](/docs/deployment/configuration#options) carries the complete
+table with defaults and descriptions. `hezo backup`, `hezo restore` and `hezo uninstall`
+accept the same `--config`, so they reach the same data directory and backends the server
+uses.
+
+The container settings behave differently from the rest: they seed a **new** instance and
+are then superseded by the stored setting, because the container service is switchable
+while Hezo is running.
+
+### The master key is never in the file
+
+`HEZO_MASTER_KEY` is the one setting still supplied through the environment, for a single
+non-interactive startup. Hezo rejects a `masterKey` key in the config file: the key is held
+in memory only, and a copy on disk beside the encrypted data would defeat encryption at
+rest. `--reset` is likewise a flag only - in a persistent file it would wipe the database
+on every restart.
+
+```sh
+HEZO_MASTER_KEY="your twelve word master key phrase here" hezo --config /etc/hezo/hezo.config.cjs
+```
+
+See [Master key & encryption](/docs/security/master-key).
 
 ## Info
 
@@ -231,7 +255,7 @@ hezo --version       # print the Hezo version and exit
 
 ## See also
 
-- [Configuration reference](/docs/deployment/configuration) - every flag and variable.
+- [Configuration reference](/docs/deployment/configuration) - every setting and flag.
 - [Containers](/docs/containers/overview) - where agent containers run, and switching service.
 - [MCP API reference](/docs/reference/mcp-api) - every tool the built-in MCP server exposes.
 - [Installation](/docs/getting-started/installation) - getting the binary.

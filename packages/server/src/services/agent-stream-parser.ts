@@ -113,8 +113,10 @@ export function createAgentStreamParser(
 	switch (runtime) {
 		case AgentRuntime.ClaudeCode:
 			return createClaudeCodeParser(price);
+		// Codex names no model in its stream (see `createCodexParser`), so like
+		// OpenCode it depends on the run's own model to price at all.
 		case AgentRuntime.Codex:
-			return createCodexParser(price);
+			return createCodexParser(price, runModel?.trim() || undefined);
 		case AgentRuntime.Gemini:
 			return createGeminiParser(price);
 		// OpenCode (`run --format json`) emits JSONL but with shapes that vary
@@ -275,7 +277,7 @@ export function createAgentChatParser(
 		case AgentRuntime.ClaudeCode:
 			return createClaudeChatParser(price);
 		case AgentRuntime.Codex:
-			return createCodexChatParser(price);
+			return createCodexChatParser(price, runModel?.trim() || undefined);
 		case AgentRuntime.Gemini:
 			return createGeminiChatParser(price);
 		case AgentRuntime.OpenCode:
@@ -335,14 +337,14 @@ function createClaudeChatParser(price: PriceModelFn): AgentChatParser {
 	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
 }
 
-function createCodexChatParser(price: PriceModelFn): AgentChatParser {
+function createCodexChatParser(price: PriceModelFn, runModel?: string): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
-	let modelId: string | undefined;
+	let modelId: string | undefined = runModel;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
 		const event = raw as CodexEvent;
 		const type = event.type ?? '';
 		if (type === 'thread.started') {
-			modelId = event.model ?? undefined;
+			if (event.model) modelId = event.model;
 			return [];
 		}
 		if (type === 'turn.completed' || type === 'turn.failed') {
@@ -370,7 +372,7 @@ function createCodexChatParser(price: PriceModelFn): AgentChatParser {
 			}
 			if (kind === 'command_execution') return [{ toolActivity: 'shell' }];
 			if (kind === 'mcp_tool_call' || kind === 'tool_call') {
-				return [{ toolActivity: item.name ?? 'tool' }];
+				return [{ toolActivity: item.tool ?? item.name ?? 'tool' }];
 			}
 		}
 		return [];
@@ -727,6 +729,16 @@ interface CodexUsage {
 	reasoning_output_tokens?: number;
 }
 
+/**
+ * One `item.completed` payload. Codex flattens the item's variant into the object,
+ * so `type` is the discriminant and the rest are that variant's own fields.
+ *
+ * An MCP tool call names its tool with `server` + `tool`, NOT `name` - there is no
+ * `name` field on that variant at all, so the `name` fallback below is only ever
+ * reached by the older `tool_call` spelling. It carries its own outcome too
+ * (`status`, `result`, `error`), which is what lets the call and its result be
+ * rendered from the same event.
+ */
 interface CodexItem {
 	type?: string;
 	item_type?: string;
@@ -737,8 +749,14 @@ interface CodexItem {
 	output?: string;
 	exit_code?: number;
 	name?: string;
+	server?: string;
+	tool?: string;
+	/** `in_progress` | `completed` | `failed`. */
+	status?: string;
 	arguments?: unknown;
 	args?: unknown;
+	result?: { content?: unknown; structured_content?: unknown } | null;
+	error?: { message?: string } | string | null;
 }
 
 interface CodexEvent {
@@ -750,19 +768,28 @@ interface CodexEvent {
 	error?: { message?: string } | string;
 }
 
-function createCodexParser(price: PriceModelFn): AgentStreamParser {
+/**
+ * @param runModel the model the run was launched with. Codex's `thread.started`
+ *   carries only a thread id - it names no model anywhere in the stream - so
+ *   without this every Codex run priced at $0. A model named in the stream still
+ *   wins; this is the floor, not an override.
+ */
+function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let turns = 0;
-	let modelId: string | undefined;
+	let modelId: string | undefined = runModel;
 	let finalMessage: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as CodexEvent;
 		const type = event.type ?? '';
 
+		// No `tools=` here: Codex never reports how many tools it was given, and a
+		// hardcoded zero renders as a confident "0 tools" in the log header. Omitting
+		// the token makes the client drop the count rather than print a wrong one.
 		if (type === 'thread.started') {
-			modelId = event.model ?? undefined;
-			return [`[session] model=${modelId ?? 'codex'} tools=0`];
+			if (event.model) modelId = event.model;
+			return [`[session] model=${modelId ?? 'codex'}`];
 		}
 
 		// A turn wraps one user→assistant exchange (tool calls included), so a
@@ -828,22 +855,39 @@ function renderCodexItem(item: CodexItem): string[] {
 	}
 
 	if (kind === 'command_execution') {
-		const out: string[] = [];
 		const cmd = (item.command ?? '').replace(/\s+/g, ' ').trim();
-		if (cmd) out.push(`[tool] shell(${cmd})`);
+		// No command means no `[tool]` line to own a result, and an orphan result line
+		// would be paired with somebody else's call. Drop the item instead.
+		if (!cmd) return [];
 		const output = (item.aggregated_output ?? item.output ?? '').replace(/\s+/g, ' ').trim();
-		if (output) {
-			const isError = typeof item.exit_code === 'number' && item.exit_code !== 0;
-			out.push(`${isError ? '[tool-error]' : '[tool-result]'} ${output}`);
-		}
-		return out;
+		const isError =
+			item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
+		return [`[tool] shell(${cmd})`, labelledResult(isError, output)];
 	}
 
 	if (kind === 'mcp_tool_call' || kind === 'tool_call') {
-		return [formatToolUse(item.name ?? 'tool', item.arguments ?? item.args)];
+		const failed = item.status === 'failed' || item.error != null;
+		const body = failed
+			? extractErrorMessage(item.error ?? undefined)
+			: extractToolResultText(item.result?.content);
+		return [
+			formatToolUse(codexToolName(item), item.arguments ?? item.args),
+			labelledResult(failed, body.replace(/\s+/g, ' ').trim()),
+		];
 	}
 
 	return [];
+}
+
+/**
+ * Name an MCP tool call the way Claude Code names one, so the client renders both
+ * through the same `mcp__<server>__<tool>` display. Codex splits the two halves
+ * across `server` and `tool`; the `name` fallback serves the older `tool_call`
+ * spelling, which carries neither.
+ */
+function codexToolName(item: CodexItem): string {
+	if (item.server && item.tool) return `mcp__${item.server}__${item.tool}`;
+	return item.tool ?? item.name ?? 'tool';
 }
 
 // ---------------------------------------------------------------------------
@@ -963,7 +1007,8 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 		flushText(out);
 
 		if (type === 'init') {
-			out.push(`[session] model=${event.model ?? 'gemini'} tools=0`);
+			// As with Codex, no `tools=`: the count was never reported, so don't invent one.
+			out.push(`[session] model=${event.model ?? 'gemini'}`);
 			return out;
 		}
 
@@ -1053,12 +1098,29 @@ function priceGeminiModels(stats: GeminiStats | undefined, price: PriceModelFn):
 // ---------------------------------------------------------------------------
 // Generic JSONL parser (OpenCode)
 //
-// This CLI emits JSONL whose event shapes vary by version and aren't fully
-// documented, so rather than guess a single rigid schema this parser probes a
-// broad set of conventional field names. It renders assistant text, tool
-// activity, thinking, and errors when recognizable, and captures token usage
-// from whatever terminal event carries it. Unknown events are dropped so the
-// log stays clean. Replace with a bespoke parser once a real run is captured.
+// This CLI emits JSONL whose event shapes have shifted across versions and
+// aren't fully documented, so rather than commit to one rigid schema this parser
+// probes a broad set of conventional field names. It renders assistant text,
+// tool activity, thinking, and errors when recognizable, and captures token
+// usage from whatever terminal event carries it. Unknown events are dropped so
+// the log stays clean.
+//
+// The shapes a current run actually emits, which the probes above are layered
+// on top of rather than replaced by:
+//
+//   tool_use    part.tool, part.state.{status,input,output,error}. Emitted ONCE
+//               per call, only when the call has finished - the JSON stream
+//               carries no pending/running tool states - so the call and its
+//               result are rendered together as a `[tool]` + `[tool-result]`
+//               pair, which is what pairs FIFO in `parse-agent-log.ts` and turns
+//               the viewer's status dot green.
+//   step_finish part.reason ('tool-calls' = more steps follow, 'stop' = last),
+//               part.tokens.{input,output,reasoning}, part.tokens.cache.{read,write}.
+//               OpenCode emits one per step, so only the terminal one renders a
+//               `[done]` line; every step's counts are still summed.
+//   text        part.text
+//   reasoning   part.text (reaches the stream only with `--thinking`)
+//   error       error.name, error.data.message
 // ---------------------------------------------------------------------------
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -1118,6 +1180,32 @@ function extractGenericTool(event: Record<string, unknown>, type: string): strin
 	const partName = part ? firstString(part, ['name', 'tool', 'tool_name']) : undefined;
 	if (looksToolish || name || partName) return name ?? partName ?? 'tool';
 	return null;
+}
+
+/**
+ * Render a tool call, with its result when the event carries one.
+ *
+ * OpenCode reports a tool only once it has finished, putting the arguments and
+ * the output together on `part.state`, so both lines are emitted here - the same
+ * shape Codex's `command_execution` arm produces. An event with no `part.state`
+ * (every other probe-matched shape) still renders the single `[tool]` line it
+ * always did, and its dot stays pending because nothing ever reports a result.
+ */
+function renderGenericTool(event: Record<string, unknown>, name: string): string[] {
+	const part = isRecord(event.part) ? event.part : undefined;
+	const state = part && isRecord(part.state) ? part.state : undefined;
+	const input = state?.input ?? event.input ?? event.arguments ?? event.args;
+	const out = [formatToolUse(name, input)];
+	if (!state) return out;
+
+	const failed = state.status === 'error' || Boolean(state.error);
+	const label = failed ? '[tool-error]' : '[tool-result]';
+	const body =
+		(failed ? extractErrorMessage(state.error as { message?: string } | string | undefined) : '') ||
+		extractToolResultText(state.output ?? state.result);
+	const collapsed = body.replace(/\s+/g, ' ').trim();
+	out.push(collapsed === '' ? label : `${label} ${collapsed}`);
+	return out;
 }
 
 /** One event's token counts, before they are folded into a run total. */
@@ -1211,11 +1299,21 @@ function createGenericJsonlParser(
 	let tokens: GenericTokenBuckets | null = null;
 	let modelId: string | undefined = fallbackModelId;
 	let finalMessage: string | null = null;
+	let doneEmitted = false;
+
+	// The running total rather than the terminal step's own counts: the line reads
+	// as what the whole run spent, which is what it is once several steps report.
+	const doneLine = (total: GenericTokenBuckets, status: string): string => {
+		doneEmitted = true;
+		const soFar = priceGenericUsage(total, price, modelId);
+		return `[done] ${status} tokens=${soFar.inputTokens}/${soFar.outputTokens}`;
+	};
 
 	const renderEvent = (raw: unknown): string[] => {
 		if (!isRecord(raw)) return [];
 		const event = raw;
 		const type = typeof event.type === 'string' ? event.type : '';
+		const part = isRecord(event.part) ? event.part : undefined;
 		const model = firstString(event, ['model']);
 		if (model) modelId = model;
 
@@ -1231,14 +1329,17 @@ function createGenericJsonlParser(
 		}
 
 		if (/reason|think/i.test(type)) {
-			const t = firstString(event, ['text', 'content', 'thinking']);
+			// Probed on the part as well as the root: OpenCode carries a reasoning
+			// block's text at `part.text`, so a root-only probe found nothing and
+			// dropped every thinking block the run produced.
+			const t =
+				firstString(event, ['text', 'content', 'thinking']) ??
+				(part ? firstString(part, ['text', 'content', 'thinking']) : undefined);
 			return t ? [formatThinking(t)] : [];
 		}
 
 		const toolName = extractGenericTool(event, type);
-		if (toolName) {
-			return [formatToolUse(toolName, event.input ?? event.arguments ?? event.args)];
-		}
+		if (toolName) return renderGenericTool(event, toolName);
 
 		const text = extractGenericText(event);
 		if (text) {
@@ -1247,20 +1348,42 @@ function createGenericJsonlParser(
 		}
 
 		if (captured && GENERIC_TERMINAL_RE.test(type)) {
-			// The running total rather than this step's own counts: the line reads as
-			// the run's cost so far, which is what it is once several steps report.
-			const soFar = priceGenericUsage(tokens ?? captured, price, modelId);
-			return [`[done] success tokens=${soFar.inputTokens}/${soFar.outputTokens}`];
+			// OpenCode emits a step_finish per step, and `reason` says which kind:
+			// `tool-calls` means the model is going round again, so rendering a
+			// `[done]` there put a run-summary banner between every pair of tool
+			// calls. Only a terminal step gets the line; the counts from every step
+			// are already folded into `tokens` above either way. An event that names
+			// no reason (an older shape, or a `result`/`turn.completed` event) is
+			// treated as terminal, which is what it was before this existed.
+			const reason = part
+				? firstString(part, ['reason', 'finish_reason', 'stop_reason'])
+				: undefined;
+			if (reason === 'tool-calls') return [];
+			return [doneLine(tokens ?? captured, reason === 'error' ? 'error' : 'success')];
 		}
 		return [];
 	};
 
-	return createJsonlParser(
+	const base = createJsonlParser(
 		renderEvent,
 		() => (tokens ? priceGenericUsage(tokens, price, modelId) : null),
 		() => null,
 		() => finalMessage,
 	);
+
+	return {
+		...base,
+		// OpenCode is documented to exit before emitting its final `step_finish`
+		// under some container setups (sst/opencode#26855, #31435). Now that the
+		// intermediate steps no longer render one, such a run would end with no
+		// `[done]` line at all - so the summary is written here from the totals the
+		// steps did report rather than being lost with the missing event.
+		flush(): string {
+			const tail = base.flush();
+			if (doneEmitted || !tokens) return tail;
+			return `${tail}${doneLine(tokens, 'success')}\n`;
+		},
+	};
 }
 
 function createGenericChatParser(
@@ -1790,11 +1913,21 @@ function stringifyArg(value: unknown): string {
 }
 
 function formatToolResult(block: ClaudeContentBlock): string {
-	const label = block.is_error ? '[tool-error]' : '[tool-result]';
 	const body = extractToolResultText(block.content);
-	const collapsed = body.replace(/\s+/g, ' ').trim();
-	if (collapsed === '') return label;
-	return `${label} ${collapsed}`;
+	return labelledResult(block.is_error === true, body.replace(/\s+/g, ' ').trim());
+}
+
+/**
+ * A `[tool-result]`/`[tool-error]` line for an already-collapsed body.
+ *
+ * An empty body still emits the bare label. The client pairs a result with its call
+ * FIFO and has no correlation id, so a call whose result line is omitted stays
+ * pending forever AND leaves the queue misaligned - every later result is then
+ * attached to the wrong call. Emitting the label is what keeps that queue honest.
+ */
+function labelledResult(isError: boolean, collapsedBody: string): string {
+	const label = isError ? '[tool-error]' : '[tool-result]';
+	return collapsedBody === '' ? label : `${label} ${collapsedBody}`;
 }
 
 function extractToolResultText(content: unknown): string {

@@ -3,8 +3,10 @@ import {
 	AiProvider,
 	claudeCodeModelArg,
 	opencodeModelArg,
+	opencodeModelKey,
 	PROVIDER_TO_RUNTIME,
 	providerDirectUpstreamHosts,
+	RUNTIME_STREAM_ARGS,
 } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 
@@ -47,6 +49,18 @@ describe('opencodeModelArg', () => {
 
 	it('returns the model unchanged for providers without an OpenCode key', () => {
 		expect(opencodeModelArg(AiProvider.Anthropic, 'claude-opus-4-6')).toBe('claude-opus-4-6');
+	});
+
+	it('opencodeModelKey takes the prefix back off for the config map', () => {
+		expect(opencodeModelKey(AiProvider.OpenRouter, 'openrouter/x-ai/grok')).toBe('x-ai/grok');
+		expect(opencodeModelKey(AiProvider.OpenRouter, 'x-ai/grok')).toBe('x-ai/grok');
+		expect(opencodeModelKey(AiProvider.Anthropic, 'claude-opus-4-6')).toBe('claude-opus-4-6');
+	});
+
+	it('asks OpenCode to stream the model reasoning it is now always told to do', () => {
+		// `--thinking` is what puts reasoning parts on the `--format json` stream;
+		// without it a run reasons invisibly and the log shows no thinking blocks.
+		expect(RUNTIME_STREAM_ARGS[AgentRuntime.OpenCode]).toEqual(['--format', 'json', '--thinking']);
 	});
 });
 

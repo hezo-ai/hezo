@@ -34,17 +34,19 @@ const program = new Command()
 	.allowExcessArguments()
 	.option('--reset', 'Reset the server database')
 	.option('--data-dir <path>', 'Data directory')
+	.option('--config <path>', 'Hezo config file, forwarded to the server')
 	.parse();
 
 const opts = program.opts();
 
 // Default to a project-local, gitignored dir (<repo>/.hezo-dev) so local dev
-// never shares the production database at ~/.hezo. An explicit --data-dir or
-// HEZO_DATA_DIR still wins (and is then already visible to the spawned server).
+// never shares the production database at ~/.hezo. An explicit --data-dir, or a
+// dataDir in the --config file, still wins (and is then already visible to the
+// spawned server, which receives the same flags).
 const { dataDir, usedDefault } = resolveDevDataDir(
 	resolve(ROOT, '.hezo-dev'),
 	opts.dataDir,
-	process.env,
+	opts.config,
 );
 
 if (opts.reset) {
@@ -67,9 +69,8 @@ const webPort = process.env.HEZO_WEB_PORT ?? '5173';
 // forward every flag through untouched.
 const hasWebUrl = forwardedArgs.some((a) => a === '--web-url' || a.startsWith('--web-url='));
 // Auto-open is the server's default, but dev is restarted constantly — spawning
-// a browser tab each time is noise. Suppress it by default; HEZO_OPEN=1 in the
-// inherited env still wins (the env var takes precedence over this flag), and we
-// don't double-pass if the caller already forwarded --no-open.
+// a browser tab each time is noise. Suppress it by default, unless the caller
+// already forwarded --no-open (we must not double-pass it).
 const hasNoOpen = forwardedArgs.includes('--no-open');
 const serverArgs: string[] = [
 	...(hasNoOpen ? [] : ['--no-open']),

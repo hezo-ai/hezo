@@ -83,20 +83,26 @@ command -v hezo                        # note the absolute path, e.g. /usr/local
 sudo mkdir -p /var/lib/hezo            # a stable data directory
 ```
 
-**2. Put non-secret settings in an env file.** Create an env file for the
-service - the data directory and, if the instance is reached via a URL beyond
-`localhost`, its HTTPS address:
+**2. Put the settings in a config file.** Create a config file for the service -
+the data directory and, if the instance is reached via a URL beyond `localhost`,
+its HTTPS address:
 
 ```sh
 sudo install -d -m 700 /etc/hezo
-sudo install -m 600 /dev/null /etc/hezo/hezo.env
+sudo install -m 600 /dev/null /etc/hezo/hezo.config.cjs
 ```
 
-```sh
-# /etc/hezo/hezo.env
-HEZO_DATA_DIR=/var/lib/hezo
-# HEZO_WEB_URL=https://hezo.example.com   # the HTTPS URL it's reached at (omit for localhost-only use)
+```js
+// /etc/hezo/hezo.config.cjs
+module.exports = {
+  dataDir: '/var/lib/hezo',
+  // webUrl: 'https://hezo.example.com',   // the HTTPS URL it's reached at (omit for localhost-only use)
+};
 ```
+
+Mode 600 because this file is where a database or object-storage URL would go, and
+those carry credentials. See the
+[Configuration reference](/docs/deployment/configuration) for every setting.
 
 > **Never put your master key in this file** (or anywhere else on the server).
 > The master key is deliberately kept in memory only - a copy on disk next to the
@@ -115,8 +121,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hezo
-EnvironmentFile=/etc/hezo/hezo.env
+ExecStart=/usr/local/bin/hezo --config /etc/hezo/hezo.config.cjs
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
@@ -264,13 +269,13 @@ aborted and recovered automatically, and connected browsers reconnect on their o
 
 Auto-update applies to the self-managed single binary. It is disabled when Hezo
 runs inside a container (update the image instead) and can be turned off with
-`HEZO_DISABLE_AUTO_UPDATE`. The daily check schedule is configurable via
-`HEZO_UPDATE_CHECK_CRON`. See [Configuration](/docs/deployment/configuration).
+`updates.disabled` in your config file. The daily check schedule is configurable via
+`jobs.updateCheckCron`. See [Configuration](/docs/deployment/configuration).
 
 ### Installing updates automatically
 
 For a hands-off server, start Hezo with `--auto-install-updates` (or
-`HEZO_AUTO_INSTALL_UPDATES=1`) and it installs staged updates by itself: once a
+`updates.autoInstall: true`) and it installs staged updates by itself: once a
 newer release has been downloaded and verified, Hezo waits until no agent runs
 are in flight and then performs the same graceful restart as the **Install &
 restart** button - no click needed. If agents are busy, the install is retried
@@ -286,7 +291,7 @@ Two things to know before enabling it:
   to avoid that (see [Master key & encryption](/docs/security/master-key)).
 - It only takes effect where in-app auto-update works at all: the self-managed
   single binary, not inside a container (update the image instead), and not
-  with `HEZO_DISABLE_AUTO_UPDATE` set.
+  with `updates.disabled` set.
 
 ### Updating manually
 

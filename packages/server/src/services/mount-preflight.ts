@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { runtimeConfig } from '../config/runtime';
 import { logger } from '../logger';
 import type { DockerClient } from './docker';
 import { getResolvedDockerSocket } from './docker-socket';
@@ -11,12 +12,6 @@ const log = logger.child('mount-preflight');
 
 /**
  * Operator opt-out for the boot-time bind-mount check. For a setup whose host
- * path sharing this probe can't model, or who doesn't want a throwaway container
- * booted each start. Never surfaced in the failure guidance - it suppresses the
- * diagnosis, it doesn't fix the underlying problem.
- */
-export const SKIP_MOUNT_CHECK_ENV = 'HEZO_SKIP_MOUNT_CHECK';
-
 /** Where the runtime-specific mount guidance lives. */
 export const CONTAINER_RUNTIMES_DOCS_URL = 'https://hezo.ai/docs/deployment/container-runtimes';
 
@@ -226,7 +221,7 @@ export async function checkContainerMounts(
 	deps: MountCheckDeps,
 ): Promise<MountOutcome | 'skipped'> {
 	const env = deps.env ?? process.env;
-	if (env.HEZO_SKIP_DOCKER || env[SKIP_MOUNT_CHECK_ENV]) return 'skipped';
+	if (env.HEZO_SKIP_DOCKER || runtimeConfig().containers.skipMountCheck) return 'skipped';
 
 	try {
 		const { image, preferPull } = resolveAgentBaseImage(MANAGED_AGENT_BASE_IMAGE);

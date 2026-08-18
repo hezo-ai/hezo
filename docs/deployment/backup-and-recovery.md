@@ -29,7 +29,7 @@ key separately and safely (see [Master key & encryption](/docs/security/master-k
 hezo backup                         # whole instance (database + assets) → a bundle directory; stop the server first
 hezo backup --output /safe/place/hezo-backup/   # choose where the bundle goes
 hezo backup --no-assets             # database only → a single .backup.gz file
-HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo backup   # back up a hosted instance, any time
+hezo backup --config /etc/hezo/hezo.config.cjs   # back up a hosted instance, any time
 ```
 
 `hezo backup` writes a **backup bundle** (default `<data-dir>/backups/hezo-<timestamp>/`)
@@ -54,18 +54,18 @@ versioning.
 
 ### Point the command at your data directory
 
-`hezo backup` resolves its data directory the **same way the server does** - `HEZO_DATA_DIR`
+`hezo backup` resolves its data directory the **same way the server does** - the `--config` file
 first, then `--data-dir`, then the default `~/.hezo`. This matters the moment your instance
 does **not** live at the default location.
 
 **If your server runs with a custom data directory, the backup command has to know about it
-too.** Run `hezo backup` in the same environment as the server (so `HEZO_DATA_DIR` is set),
+too.** Run `hezo backup` with the same `--config` the server uses,
 or pass `--data-dir /your/path` explicitly. Otherwise the command falls back to `~/.hezo` - a
 directory your instance never used - and backs up the wrong database instead of yours.
 
 - **systemd / Docker** (the env var is already set for the service): `hezo backup` needs no
   extra flag - run it with the unit's environment (an `EnvironmentFile` / `systemd-run`), or
-  `docker exec <container> hezo backup`, and the same `HEZO_DATA_DIR` resolves your database.
+  `docker exec <container> hezo backup --config <path>`, and the same file resolves your database.
 - **A custom dir passed only as a startup flag** (`hezo --data-dir /var/lib/hezo`): pass the
   **same** `--data-dir /var/lib/hezo` to `hezo backup` (there is no env var to inherit).
 
@@ -87,7 +87,7 @@ versioning/replication and take a `--no-assets` database backup.
 
 ```sh
 hezo restore <bundle-or-file>                              # into the embedded database + local assets
-HEZO_DATABASE_URL=postgres://… hezo restore <bundle>       # database into an external Postgres
+hezo restore <bundle> --database-url postgres://…         # database into an external Postgres
 hezo restore <bundle> --asset-storage-url "s3://…"         # assets into an S3-compatible bucket
 ```
 
@@ -131,17 +131,17 @@ is only ever read, so nothing is removed until you do it yourself.
 ```sh
 # Local → hosted (external Postgres + S3 bucket)
 hezo backup --output move/                               # server stopped
-HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo restore move/
-HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo   # start against the new backends
+hezo restore move/ --database-url postgres://… --asset-storage-url "s3://…"
+hezo --config /etc/hezo/hezo.config.cjs   # start against the new backends
 
 # Hosted → local
-HEZO_DATABASE_URL=postgres://… HEZO_ASSET_STORAGE_URL="s3://…" hezo backup --output back/
+hezo backup --config /etc/hezo/hezo.config.cjs --output back/
 hezo restore back/ --data-dir ~/.hezo
 hezo
 ```
 
 Migrate just one side by setting only that target on `restore` (e.g. only
-`HEZO_DATABASE_URL` to move the database while leaving assets where they are), or with
+`--database-url` to move the database while leaving assets where they are), or with
 `--no-assets` / `--no-database`. Your master key is unchanged by a move - the encrypted
 vault travels inside the backup.
 

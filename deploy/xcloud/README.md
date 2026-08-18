@@ -62,7 +62,7 @@ curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.
 one that installs Caddy and resets xCloud's firewall.
 
 `HEZO_DOMAIN_OVERRIDE` is required in this mode: with no Caddy there is nothing to derive
-an address from, and it is the only source of `HEZO_WEB_URL`. Hezo builds absolute URLs
+an address from, and it is the only source of the config's `webUrl`. Hezo builds absolute URLs
 from that value (the OAuth callback an MCP connection registers with its provider among
 them), so a wrong one fails later at connect time rather than during the install.
 

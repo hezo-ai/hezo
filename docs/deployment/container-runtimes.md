@@ -7,8 +7,8 @@ section: Deployment
 # Container runtimes
 
 Hezo runs every project's agents inside a container. That container is a **security
-boundary**, not a packaging convenience - it keeps agents off your host so a buggy or
-compromised agent can't reach your files, credentials, or wider network (see
+boundary**, not a packaging convenience - it keeps agents off the rest of your system, so a
+buggy or compromised agent can't reach your files, credentials, or wider network (see
 [Container isolation](/docs/security/container-isolation)).
 
 This page is about the default setup, where containers run on **your own machine**. If
@@ -42,11 +42,19 @@ experimental.
 (`npipe://`), which Hezo cannot connect to - it speaks the API over a Unix socket. Run Hezo
 inside WSL2, where Docker Desktop's WSL integration provides `/var/run/docker.sock`.
 
+If you start Hezo on Windows with **no container runtime installed at all**, it does not
+just print the guidance below and exit: launched from Explorer it owns its console window,
+which closes with the process, so you would never get to read it. Instead a dialog explains
+why a container runtime is required, and clicking **OK** opens
+[Docker Desktop in the Microsoft Store](https://apps.microsoft.com/detail/xp8cbj40xlbwkx).
+Install it, start it, then start Hezo again. `--no-open` (or `open: false`) suppresses the
+dialog along with the browser, and it never appears over SSH, in CI or in a container.
+
 ## How Hezo finds the daemon
 
 At startup Hezo works through these in order and uses the first socket that answers:
 
-1. `--docker-socket` / `HEZO_DOCKER_SOCKET`, if you set one.
+1. `--docker-socket` / `containers.dockerSocket`, if you set one.
 2. `DOCKER_HOST`, if it is set to a `unix://` socket.
 3. The **current docker context** (what `docker context show` reports), read from the
    docker CLI's own configuration. This is how a Colima or Rancher Desktop install is
@@ -70,7 +78,7 @@ When your daemon listens somewhere none of the above cover:
 ```sh
 hezo --docker-socket /path/to/docker.sock
 # or
-HEZO_DOCKER_SOCKET=/path/to/docker.sock hezo
+hezo --config /etc/hezo/hezo.config.cjs   # containers: { dockerSocket: '/path/to/docker.sock' }
 ```
 
 Hezo connects over a **Unix socket only**. `tcp://`, `npipe://` and `ssh://` endpoints are
@@ -103,7 +111,7 @@ For the other runtimes:
 Hezo checks this at boot by mounting a scratch directory into a throwaway container and
 writing to it. If the mount is missing or read-only it logs the fix above and keeps
 running, so you can correct the host configuration and restart without losing the web UI.
-To skip the check entirely, set `HEZO_SKIP_MOUNT_CHECK=1` - note that this only hides the
+To skip the check entirely, set `containers.skipMountCheck: true` - note that this only hides the
 diagnosis, it does not make the mount work.
 
 If you keep the data directory somewhere else (`--data-dir`), share that path instead.

@@ -345,6 +345,123 @@ describe('agent-stream-parser', () => {
 			expect(parser.onStdout(`${JSON.stringify(event)}\n`)).toBe('Hello world\n');
 		});
 
+		it('renders an mcp tool call as a call line and its result', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			// The shape Codex actually emits: the tool is named by server + tool, and the
+			// item carries its own outcome, so both lines come from the one event.
+			const event = {
+				type: 'item.completed',
+				item: {
+					type: 'mcp_tool_call',
+					server: 'hezo',
+					tool: 'get_skill',
+					arguments: { slug: 'deep-research' },
+					status: 'completed',
+					result: { content: [{ type: 'text', text: 'Skill body' }] },
+				},
+			};
+			const out = parser.onStdout(`${JSON.stringify(event)}\n`);
+			// mcp__<server>__<tool> is Claude Code's naming, so the log view renders both
+			// runtimes' MCP calls through the same display.
+			expect(out).toBe(
+				'[tool] mcp__hezo__get_skill(slug=deep-research)\n[tool-result] Skill body\n',
+			);
+		});
+
+		it('renders a failed mcp tool call as a tool-error', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			const event = {
+				type: 'item.completed',
+				item: {
+					type: 'mcp_tool_call',
+					server: 'hezo',
+					tool: 'read_project_doc',
+					arguments: { filename: 'missing.md' },
+					status: 'failed',
+					error: { message: 'document not found' },
+				},
+			};
+			const out = parser.onStdout(`${JSON.stringify(event)}\n`);
+			expect(out).toBe(
+				'[tool] mcp__hezo__read_project_doc(filename=missing.md)\n[tool-error] document not found\n',
+			);
+		});
+
+		it('resolves every tool call in a mixed run, in order', () => {
+			// The regression this guards: the client pairs results with calls FIFO and has
+			// no correlation id, so one call left without a result silently attaches the
+			// NEXT call's result to it and misreports every tool after it.
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			const mcp = (tool: string, text: string) => ({
+				type: 'item.completed',
+				item: {
+					type: 'mcp_tool_call',
+					server: 'hezo',
+					tool,
+					arguments: {},
+					status: 'completed',
+					result: { content: [{ type: 'text', text }] },
+				},
+			});
+			const shell = {
+				type: 'item.completed',
+				item: {
+					type: 'command_execution',
+					command: 'ls',
+					aggregated_output: 'file1',
+					exit_code: 0,
+				},
+			};
+			const out = [mcp('get_task', 'first'), shell, mcp('list_comments', 'second')]
+				.map((e) => parser.onStdout(`${JSON.stringify(e)}\n`))
+				.join('');
+			expect(out.split('\n').filter(Boolean)).toEqual([
+				'[tool] mcp__hezo__get_task()',
+				'[tool-result] first',
+				'[tool] shell(ls)',
+				'[tool-result] file1',
+				'[tool] mcp__hezo__list_comments()',
+				'[tool-result] second',
+			]);
+		});
+
+		it('omits a tool count it was never given', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			// Codex's thread.started carries only a thread id. A hardcoded `tools=0` here
+			// read as a measured zero in the log header.
+			const out = parser.onStdout(
+				`${JSON.stringify({ type: 'thread.started', thread_id: 't1' })}\n`,
+			);
+			expect(out).toBe('[session] model=codex\n');
+			expect(out).not.toContain('tools=');
+		});
+
+		it('prices from the run model when the stream names none', () => {
+			// Codex never names a model, so without the run-model floor every Codex run
+			// priced at $0.
+			const parser = createAgentStreamParser(AgentRuntime.Codex, price, 'codex-x');
+			const out = parser.onStdout(
+				`${JSON.stringify({ type: 'thread.started', thread_id: 't1' })}\n`,
+			);
+			expect(out).toBe('[session] model=codex-x\n');
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 1000, output_tokens: 100 },
+				})}\n`,
+			);
+			// 1000*0.00001 + 100*0.00003 = $0.013 → 1 cent.
+			expect(parser.getUsage()?.costCents).toBe(1);
+		});
+
+		it('lets a model named on the stream win over the run model', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex, price, 'stale-model');
+			const out = parser.onStdout(
+				`${JSON.stringify({ type: 'thread.started', model: 'codex-x' })}\n`,
+			);
+			expect(out).toBe('[session] model=codex-x\n');
+		});
+
 		it('renders a command execution as a tool call and result', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Codex);
 			const event = {
@@ -511,7 +628,7 @@ describe('agent-stream-parser', () => {
 		it('renders the init event as a session line', () => {
 			const parser = createAgentStreamParser(AgentRuntime.Gemini);
 			const out = parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-pro' })}\n`);
-			expect(out).toBe('[session] model=gemini-2.5-pro tools=0\n');
+			expect(out).toBe('[session] model=gemini-2.5-pro\n');
 		});
 	});
 
@@ -687,6 +804,108 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-flash' })}\n`);
 		for (const e of STEP_FINISHES) parser.onStdout(`${JSON.stringify(e)}\n`);
 		expect(parser.getUsage()?.costCents).toBeGreaterThan(0);
+	});
+
+	// A completed tool call as OpenCode reports it: one event per call, arriving
+	// only once the call has finished, with the arguments and the output together
+	// on `part.state`.
+	const toolUse = (over: Record<string, unknown> = {}) => ({
+		type: 'tool_use',
+		part: {
+			type: 'tool',
+			callID: 'call_1',
+			tool: 'hezo_list_comments',
+			state: {
+				status: 'completed',
+				input: { task_id: 'HEZO-12' },
+				output: 'comment 1\ncomment 2',
+				title: 'List comments',
+				...over,
+			},
+		},
+	});
+
+	it('renders a completed tool call and its result as a pair', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(`${JSON.stringify(toolUse())}\n`);
+		// The pair is what `parse-agent-log.ts` matches FIFO to turn the viewer's
+		// status dot green; a lone `[tool]` line leaves it pending forever.
+		expect(out).toBe(
+			'[tool] hezo_list_comments(task_id=HEZO-12)\n[tool-result] comment 1 comment 2\n',
+		);
+	});
+
+	it('renders a failed tool call as a tool-error carrying its message', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(
+			`${JSON.stringify(toolUse({ status: 'error', output: undefined, error: 'task not found' }))}\n`,
+		);
+		expect(out).toBe('[tool] hezo_list_comments(task_id=HEZO-12)\n[tool-error] task not found\n');
+	});
+
+	it('emits a bare tool-result label when the call produced no output', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(`${JSON.stringify(toolUse({ output: '' }))}\n`);
+		expect(out).toBe('[tool] hezo_list_comments(task_id=HEZO-12)\n[tool-result]\n');
+	});
+
+	it('still renders a lone tool line for an event carrying no state', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(
+			`${JSON.stringify({ type: 'tool_use', name: 'bash', input: { command: 'ls' } })}\n`,
+		);
+		expect(out).toBe('[tool] bash(command=ls)\n');
+	});
+
+	// OpenCode emits a step_finish per step. Only the last one is the run's
+	// summary; the intermediate ones used to render a full-width success banner
+	// between every pair of tool calls.
+	const stepFinish = (reason: string, input: number, output: number) => ({
+		type: 'step_finish',
+		part: { type: 'step-finish', reason, tokens: { input, output, cache: { read: 0, write: 0 } } },
+	});
+
+	it('renders one done line for the terminal step, not one per step', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('tool-calls', 100, 10))}\n`)).toBe('');
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('tool-calls', 200, 20))}\n`)).toBe('');
+		// The line carries the whole run's totals, so suppressing the intermediate
+		// steps must not have dropped their counts.
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('stop', 300, 30))}\n`)).toBe(
+			'[done] success tokens=600/60\n',
+		);
+		expect(parser.flush()).toBe('');
+	});
+
+	it('reports an error reason on the done line', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('error', 5, 1))}\n`)).toBe(
+			'[done] error tokens=5/1\n',
+		);
+	});
+
+	it('writes the done line on flush when the terminal step never arrived', () => {
+		// OpenCode is documented to exit before its final step_finish under some
+		// container setups; without this the run would show no summary at all.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('tool-calls', 100, 10))}\n`)).toBe('');
+		expect(parser.flush()).toBe('[done] success tokens=100/10\n');
+	});
+
+	it('writes no done line on flush when the run reported no usage at all', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		parser.onStdout(`${JSON.stringify({ type: 'message', text: 'hi' })}\n`);
+		expect(parser.flush()).toBe('');
+	});
+
+	it('renders a reasoning block whose text sits on the part', () => {
+		// `--thinking` puts these on the stream; a root-only probe found nothing
+		// and dropped every thinking block the run produced.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(
+			`${JSON.stringify({ type: 'reasoning', part: { type: 'reasoning', text: 'weighing it up' } })}\n`,
+		);
+		expect(out).toBe('[thinking] weighing it up\n');
 	});
 });
 

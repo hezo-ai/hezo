@@ -95,7 +95,8 @@
 | A `.dev/` guide added, renamed or removed | the link from its section here, the `.dev/` bullet under **Layout**, this table | **nothing - on you** |
 | A Bun workaround added or removed, or `BUN_VERSION` moved | its entry in `.dev/bun-issues.md` | **nothing - on you** |
 | A rule this file states | its guide in `.dev/`, if one covers that area - they must not disagree | **nothing - on you** |
-| CLI flag / subcommand / env var / port / default (`src/cli.ts`) | `docs/reference/cli.md`, `docs/deployment/configuration.md`, the CLI table in `packages/server/README.md`, any page showing the command | **nothing - on you** |
+| CLI flag / subcommand / config key / port / default (`src/cli.ts`, `src/config/`) | `docs/reference/cli.md`, `docs/deployment/configuration.md`, the CLI table in `packages/server/README.md`, any page showing the command | **nothing - on you** |
+| A new operator setting | its `config/types.ts` field + `DEFAULT_CONFIG` default, its `config/schema.ts` entry, and its row in `docs/deployment/configuration.md` | a missing type field is a compile error; **an unvalidated or undocumented key is on you** |
 | A sharded, renamed or newly-required CI job | its `*-complete` rollup, a shard-unique matrix artifact name, the `main` ruleset's required checks | **nothing - on you** |
 | A tool added to the container image | the toolset paragraph in `SHARED_INSTRUCTIONS` | **nothing - on you** |
 | A new AI provider (`AiProvider` + `PROVIDER_RUNTIME_ADAPTERS`) | `.dev/architecture.md`, the provider docs, `model_pricing` rows, and a decision on `claudeCodeProviderUsesCustomEndpoint` | **nothing** - an unpriced model silently records $0 |
@@ -302,6 +303,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
+| A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |
 | An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
 | Date formatting | `packages/web/src/lib/format-date.ts` |
 | Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |

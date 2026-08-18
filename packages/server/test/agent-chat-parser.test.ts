@@ -4,6 +4,7 @@ import {
 	type AgentChatTurnEvent,
 	createAgentChatParser,
 	createAgentStreamParser,
+	type PriceModelFn,
 } from '../src/services/agent-stream-parser';
 
 /**
@@ -15,6 +16,12 @@ import {
  */
 
 const line = (event: unknown) => `${JSON.stringify(event)}\n`;
+
+/** Prices `codex-x` only; every other model is unknown and costs nothing. */
+const price: PriceModelFn = (model, tokens) =>
+	model === 'codex-x'
+		? Math.round(((tokens.inputTokens ?? 0) * 0.00001 + (tokens.outputTokens ?? 0) * 0.00003) * 100)
+		: 0;
 
 /** Collect both onStdout + flush output for an array of event objects. */
 function feed(parser: ReturnType<typeof createAgentChatParser>, events: unknown[]) {
@@ -142,14 +149,27 @@ describe('agent-chat-parser — Codex', () => {
 		const parser = createAgentChatParser(AgentRuntime.Codex);
 		const events = feed(parser, [
 			{ type: 'item.completed', item: { type: 'command_execution', command: 'ls' } },
-			{ type: 'item.completed', item: { type: 'mcp_tool_call', name: 'search' } },
-			{ type: 'item.completed', item: { type: 'tool_call' } }, // no name → 'tool'
+			// Codex names an MCP tool with `tool`; `name` serves the older spelling.
+			{ type: 'item.completed', item: { type: 'mcp_tool_call', server: 'hezo', tool: 'get_task' } },
+			{ type: 'item.completed', item: { type: 'tool_call', name: 'search' } },
+			{ type: 'item.completed', item: { type: 'tool_call' } }, // neither → 'tool'
 		]);
 		expect(events).toEqual([
 			{ toolActivity: 'shell' },
+			{ toolActivity: 'get_task' },
 			{ toolActivity: 'search' },
 			{ toolActivity: 'tool' },
 		]);
+	});
+
+	it('prices a chat turn from the run model when the stream names none', () => {
+		const parser = createAgentChatParser(AgentRuntime.Codex, price, 'codex-x');
+		feed(parser, [
+			{ type: 'thread.started', thread_id: 't1' },
+			{ type: 'turn.completed', usage: { input_tokens: 1000, output_tokens: 100 } },
+		]);
+		// 1000*0.00001 + 100*0.00003 = $0.013 → 1 cent.
+		expect(parser.getUsage()?.costCents).toBe(1);
 	});
 
 	it('captures usage from turn.completed, folding reasoning into output', () => {

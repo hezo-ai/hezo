@@ -222,12 +222,14 @@ the credentials out of user data entirely, deploy without them and use the post-
 path instead.
 
 **Post-boot, or on an existing server** - the same two settings go into
-`/etc/hezo/hezo.env` (root-only, mode 600 - the file the systemd unit reads). SSH in
+`/etc/hezo/hezo.config.cjs` (root-only, mode 600 - the file the systemd unit reads). SSH in
 and:
 
 ```sh
-echo 'HEZO_DATABASE_URL=postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' | sudo tee -a /etc/hezo/hezo.env >/dev/null
-echo 'HEZO_ASSET_STORAGE_URL=s3://ACCESS_KEY:SECRET@endpoint/bucket' | sudo tee -a /etc/hezo/hezo.env >/dev/null
+sudo $EDITOR /etc/hezo/hezo.config.cjs
+# add, inside module.exports:
+#   database: { url: 'postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' },
+#   assetStorage: { url: 's3://ACCESS_KEY:SECRET@endpoint/bucket' },
 sudo systemctl restart hezo
 ```
 

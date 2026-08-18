@@ -34,7 +34,7 @@ runcmd:
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]
   # To use a managed database and/or object storage for assets, seed the URLs into
   # /etc/hezo/deploy.env (root-only, mode 600 — not /etc/environment: they carry credentials).
-  # provision.sh persists them into the service's env file. sslmode=require encrypts
+  # provision.sh persists them into the service's config file. sslmode=require encrypts
   # without verifying the certificate; for verified TLS use sslmode=verify-full plus
   # &sslrootcert=/etc/hezo/db-ca.crt when the provider signs with its own CA (most do).
   # - [ sh, -c, "install -d -m 700 /etc/hezo && install -m 600 /dev/null /etc/hezo/deploy.env" ]

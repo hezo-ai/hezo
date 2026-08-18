@@ -362,9 +362,17 @@ describe('tasks CRUD', () => {
 
 		const summary =
 			'## Requirements\n- Build auth module\n\n## Done\n- Set up project\n\n## Next\n- Implement login';
+		// Agent-only field, so the write goes through a run-scoped token.
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			task.id,
+		);
 		const patchRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: summary }),
 		});
 		expect(patchRes.status).toBe(200);
@@ -388,17 +396,25 @@ describe('tasks CRUD', () => {
 		});
 		const task = (await listRes.json()).data[0];
 
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			agentId,
+			teamId,
+			task.id,
+		);
+
 		// Set it first
 		await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: 'Some summary' }),
 		});
 
 		// Clear it
 		const clearRes = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: null }),
 		});
 		expect(clearRes.status).toBe(200);

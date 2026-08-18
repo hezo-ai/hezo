@@ -21,21 +21,25 @@ interface CollapsibleSummaryCardProps {
 	infoLabel: string;
 	infoTestId: string;
 	infoContent: string;
-	editorAriaLabel: string;
-	editorPlaceholder?: string;
 	value: string | null | undefined;
 	emptyText: string;
 	className: string;
 	projectId: string;
 	taskProjectSlug: string;
-	onSave: (value: string | null) => void;
+	/** Omit to render the card read-only: no Edit affordance and no editor. */
+	edit?: {
+		ariaLabel: string;
+		placeholder?: string;
+		onSave: (value: string | null) => void;
+	};
 }
 
 /**
  * One collapsible progress-summary/rules card. Collapsed by default — the
- * header (chevron toggle, label, info icon, Edit) stays visible while the body
- * hides. Clicking Edit auto-expands and enters edit mode, and the card stays
- * expanded after saving so the freshly-saved content is visible.
+ * header (chevron toggle, label, info icon, and Edit where the card is
+ * editable) stays visible while the body hides. Clicking Edit auto-expands and
+ * enters edit mode, and the card stays expanded after saving so the
+ * freshly-saved content is visible.
  */
 function CollapsibleSummaryCard({
 	testId,
@@ -44,14 +48,12 @@ function CollapsibleSummaryCard({
 	infoLabel,
 	infoTestId,
 	infoContent,
-	editorAriaLabel,
-	editorPlaceholder,
 	value,
 	emptyText,
 	className,
 	projectId,
 	taskProjectSlug,
-	onSave,
+	edit,
 }: CollapsibleSummaryCardProps) {
 	const [open, setOpen] = useState(false);
 	const [editing, setEditing] = useState(false);
@@ -76,7 +78,7 @@ function CollapsibleSummaryCard({
 					</button>
 					<InfoTooltip label={infoLabel} data-testid={infoTestId} content={infoContent} />
 				</div>
-				{!editing && (
+				{edit && !editing && (
 					<button
 						type="button"
 						onClick={() => {
@@ -91,14 +93,14 @@ function CollapsibleSummaryCard({
 			</div>
 			{open && (
 				<div className="mt-2">
-					{editing ? (
+					{edit && editing ? (
 						<MarkdownFieldEditor
-							ariaLabel={editorAriaLabel}
+							ariaLabel={edit.ariaLabel}
 							projectId={projectId}
 							projectSlug={taskProjectSlug}
 							value={value}
-							placeholder={editorPlaceholder}
-							onSave={onSave}
+							placeholder={edit.placeholder}
+							onSave={edit.onSave}
 							onClose={() => setEditing(false)}
 						/>
 					) : value ? (
@@ -116,9 +118,9 @@ function CollapsibleSummaryCard({
 
 /**
  * Renders the progress-summary and rules cards just below the task header.
- * Both are collapsible (collapsed by default) and edit inline against
- * `useUpdateTask`. Status changes do not run through here — `progress_summary`
- * and `rules` are plain text fields.
+ * Both are collapsible (collapsed by default). Rules edits inline against
+ * `useUpdateTask`; the progress summary is read-only here — agents own it and
+ * write it from inside a run, and the REST route rejects a human write.
  */
 export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: TaskSummaryProps) {
 	return (
@@ -129,14 +131,12 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 				label="Progress Summary"
 				infoLabel="About Progress Summary"
 				infoTestId="progress-summary-info"
-				infoContent="A running checkpoint of what's been done and what's left on this task. Automatically included in every agent run's prompt - alongside the description and rules - so work stays continuous across runs. Agents update it at natural milestones via the update_task tool."
-				editorAriaLabel="Progress Summary"
+				infoContent="A running checkpoint of what's been done and what's left on this task. Automatically included in every agent run's prompt - alongside the description and rules - so work stays continuous across runs. Agents own it and update it at natural milestones via the update_task tool, so it is not editable by hand."
 				value={task.progress_summary}
 				emptyText="No progress summary yet."
 				className="bg-surface-2 rounded-md p-3 mb-3 text-[13px] text-text-2 leading-relaxed"
 				projectId={projectId}
 				taskProjectSlug={taskProjectSlug}
-				onSave={(v) => updateTask.mutate({ progress_summary: v })}
 			/>
 
 			<CollapsibleSummaryCard
@@ -146,14 +146,16 @@ export function TaskSummary({ task, projectId, taskProjectSlug, updateTask }: Ta
 				infoLabel="About Rules"
 				infoTestId="rules-info"
 				infoContent="Approach constraints and required workflows for this task - e.g. 'run the full suite before pushing' or 'consult the architect before touching auth'. Automatically prepended to every agent run's task prompt. Agents can update via the update_task tool as they discover new rules."
-				editorAriaLabel="Rules"
-				editorPlaceholder="e.g., Consult the architect before making changes..."
 				value={task.rules}
 				emptyText="No rules set."
 				className="bg-surface-2 rounded-md p-3 mb-5 text-[13px] text-text-2 leading-relaxed border-l-2 border-info"
 				projectId={projectId}
 				taskProjectSlug={taskProjectSlug}
-				onSave={(v) => updateTask.mutate({ rules: v })}
+				edit={{
+					ariaLabel: 'Rules',
+					placeholder: 'e.g., Consult the architect before making changes...',
+					onSave: (v) => updateTask.mutate({ rules: v }),
+				}}
 			/>
 		</>
 	);

@@ -1,4 +1,4 @@
-import type { AiProvider } from '@hezo/shared';
+import type { AgentEffort, AiProvider } from '@hezo/shared';
 
 /**
  * Normalized MCP server descriptor passed by the agent runner. Per-runtime
@@ -138,6 +138,13 @@ export interface McpAdapterContext {
 	 * {@link judgeModelForProvider}). Absent/null falls back to the constant.
 	 */
 	runModel?: string | null;
+	/**
+	 * The run's resolved effort level. Only the OpenCode adapter reads it: OpenCode
+	 * has no CLI flag or env var for reasoning, so its effort is written as
+	 * `reasoning.effort` on the run's model inside the `opencode.json` this adapter
+	 * already emits. Absent leaves the reasoning block off entirely.
+	 */
+	effort?: AgentEffort;
 	/**
 	 * Whether this invocation gets the completeness Stop-hook judge. Absent or
 	 * true emits it, so every task run keeps it; false omits it on each of the

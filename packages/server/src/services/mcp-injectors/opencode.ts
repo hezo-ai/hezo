@@ -1,5 +1,8 @@
 import { join } from 'node:path';
+import { OPENCODE_PROVIDER_KEY, opencodeModelKey } from '@hezo/shared';
+import { OPENCODE_REASONING_EFFORT } from '../effort';
 import type {
+	McpAdapterContext,
 	McpHttpDescriptor,
 	McpInjection,
 	McpStdioDescriptor,
@@ -10,9 +13,13 @@ import type {
  * OpenCode runtime adapter.
  *
  * Writes a per-run `opencode.json` (pointed at via the `OPENCODE_CONFIG` env
- * var) carrying the MCP server block. Remote MCP servers use `type:"remote"`
- * with an inline `Authorization` header; local ones use `type:"local"` with a
- * command array.
+ * var) carrying the MCP server block and the run's reasoning effort. Remote MCP
+ * servers use `type:"remote"` with an inline `Authorization` header; local ones
+ * use `type:"local"` with a command array.
+ *
+ * This file is also where OpenCode's effort lands: the CLI has no reasoning flag
+ * or env var, so the level resolved for the run is written as `reasoning.effort`
+ * on the model the run was launched with. See {@link buildReasoningProviders}.
  *
  * Unlike the other runtimes, OpenCode has NO completeness Stop-hook judge: its
  * plugin API cannot block-and-continue the agent loop in headless `opencode
@@ -42,9 +49,24 @@ interface OpencodeLocalServer {
 
 type OpencodeServer = OpencodeRemoteServer | OpencodeLocalServer;
 
+/**
+ * A model entry in OpenCode's provider block. `options` is passed straight to the
+ * AI-SDK provider, so `reasoning` reaches OpenRouter's unified reasoning
+ * parameter. OpenCode merges this with its built-in models.dev catalog rather
+ * than replacing it, so naming one model here leaves every other model intact.
+ */
+interface OpencodeModel {
+	options: { reasoning: { effort: string } };
+}
+
+interface OpencodeProvider {
+	models: Record<string, OpencodeModel>;
+}
+
 interface OpencodeConfig {
 	$schema: string;
 	mcp?: Record<string, OpencodeServer>;
+	provider?: Record<string, OpencodeProvider>;
 	/**
 	 * OpenCode's tool gate. Unlike the other runtimes this is **top-level**, not a
 	 * key on the server entry (whose only switch is the whole-server `enabled`) —
@@ -75,6 +97,32 @@ function buildRemoteServer(d: McpHttpDescriptor): OpencodeRemoteServer {
 	};
 	if (Object.keys(headers).length > 0) server.headers = headers;
 	return server;
+}
+
+/**
+ * The `provider` block carrying the run's reasoning effort, or null when there is
+ * nothing to key it on.
+ *
+ * Keyed on the run's own model because OpenCode's `models` map has no wildcard:
+ * a guessed key configures a model the run is not using, which is worse than no
+ * block at all. So a run that pins no model (and takes whatever OpenCode's own
+ * default is) reasons at that model's default instead.
+ */
+function buildReasoningProviders(ctx: McpAdapterContext): Record<string, OpencodeProvider> | null {
+	const { provider, runModel, effort } = ctx;
+	if (!provider || !effort) return null;
+	const providerKey = OPENCODE_PROVIDER_KEY[provider];
+	const model = runModel?.trim();
+	if (!providerKey || !model) return null;
+	return {
+		[providerKey]: {
+			models: {
+				[opencodeModelKey(provider, model)]: {
+					options: { reasoning: { effort: OPENCODE_REASONING_EFFORT[effort] } },
+				},
+			},
+		},
+	};
 }
 
 function buildLocalServer(d: McpStdioDescriptor): OpencodeLocalServer {
@@ -121,6 +169,9 @@ export const opencodeAdapter: RuntimeMcpAdapter = {
 			}
 			if (Object.keys(tools).length > 0) config.tools = tools;
 		}
+
+		const providers = buildReasoningProviders(ctx);
+		if (providers) config.provider = providers;
 
 		const contents = `${JSON.stringify(config, null, 2)}\n`;
 		const configContainerPath = join(ctx.containerHomeDir, CONFIG_BASENAME);

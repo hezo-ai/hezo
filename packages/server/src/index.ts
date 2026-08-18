@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs';
 import { AuthType, WsClientAction } from '@hezo/shared';
 import { app } from './app';
 import { AssetStorageError } from './assets/errors';
-import { parseConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
+import { resolveConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
+import { setRuntimeConfig } from './config/runtime';
+import type { HezoConfig } from './config/types';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import type { Db } from './db/database';
@@ -12,6 +14,7 @@ import {
 	ExternalMigrationFailedError,
 	MigrationFailedError,
 } from './db/migrate-errors';
+import { promptDockerDesktopInstall } from './lib/docker-desktop-prompt';
 import { browserAvailable, openBrowser } from './lib/open-browser';
 import type { AuthInfo } from './lib/types';
 import { setupWorkerUnlockHandoff } from './lib/unlock-handoff';
@@ -23,7 +26,7 @@ import { setKeepOldContainers } from './services/containers';
 import { getSharedImageBuildTracker } from './services/image-build-tracker';
 import type { LogStreamBroker } from './services/log-stream-broker';
 import { formatPortInUseMessage, probePort } from './services/port-preflight';
-import { SandboxBackendError } from './services/sandbox/errors';
+import { DockerNotInstalledError, SandboxBackendError } from './services/sandbox/errors';
 import { isAutoUpdateEnabled } from './services/updater';
 import type { WebSocketManager, WsData, WsSocket } from './services/ws';
 import {
@@ -113,7 +116,22 @@ if (await runUninstall()) {
 	process.exit(0);
 }
 
-const config = parseConfig();
+// A bad config file or flag is operator error, not a crash: print what is wrong
+// and exit. Without this the throw reaches the uncaughtException handler and the
+// operator gets a stack trace through `/$bunfs/root/hezo` above the one line that
+// actually tells them which key to fix.
+const config = ((): HezoConfig => {
+	try {
+		return resolveConfig();
+	} catch (err) {
+		console.error(`\n${err instanceof Error ? err.message : String(err)}\n`);
+		process.exit(1);
+	}
+})();
+// Publish it before anything reads config back through `runtimeConfig()`. Service
+// modules were imported above (via `./app`), so they must read it lazily, not at
+// module scope — see config/runtime.ts.
+setRuntimeConfig(config);
 setLogLevel(config.logLevel);
 
 // Self-update supervisor. A compiled binary with auto-update enabled runs as a
@@ -127,7 +145,7 @@ if (!process.env.HEZO_WORKER && isAutoUpdateEnabled()) {
 	await runSupervisor(config.dataDir);
 }
 
-setKeepOldContainers(config.keepOldContainers);
+setKeepOldContainers(config.containers.keepOld);
 
 // Graceful shutdown on termination signals (the supervisor forwards these to the
 // worker). Close the runtime cleanly, then exit 0 so the supervisor sees a
@@ -296,6 +314,23 @@ void (async () => {
 				phase: getStartupProgress().phase,
 				version: HEZO_VERSION,
 			});
+			// One failure gets more than a printed message: no container runtime at
+			// all, on Windows. The binary is normally launched from Explorer there and
+			// owns its console window, so `process.exit(1)` closes the window the
+			// guidance was just printed to and the operator sees a flash of black and
+			// nothing else. Hold the exit open on a dialog that explains why a
+			// container runtime is required, and open the Store listing if they accept.
+			if (err instanceof DockerNotInstalledError) {
+				await promptDockerDesktopInstall({
+					platform: process.platform,
+					autoOpenEnabled: config.open,
+					desktopSession: browserAvailable({
+						platform: process.platform,
+						env: process.env,
+						hasDockerEnv: existsSync('/.dockerenv'),
+					}).available,
+				});
+			}
 			process.exit(1);
 		}
 		if (err instanceof PgDataCorruptError) {

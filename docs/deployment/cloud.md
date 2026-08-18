@@ -80,13 +80,16 @@ backups. Each backend is one setting, adoptable independently:
 3. **Set the URL(s) where your service definition reads its environment** - e.g. the
    `EnvironmentFile` of your systemd unit (see
    [Self-hosting](/docs/deployment/self-hosting)), kept root-only (mode 600) since the
-   URLs carry credentials. Prefer the environment variables over the CLI flags - flags
-   are visible in the process list:
+   URLs carry credentials. Prefer the config file over the CLI flags - flags are visible
+   in the process list - and give it mode 600:
 
-   ```sh
-   HEZO_DATABASE_URL="postgres://hezo:••••@db-host:5432/hezo?sslmode=verify-full" \
-   HEZO_ASSET_STORAGE_URL="s3://ACCESS_KEY:SECRET@endpoint/bucket" \
-     hezo --data-dir /var/lib/hezo
+   ```js
+   // /etc/hezo/hezo.config.cjs
+   module.exports = {
+     dataDir: '/var/lib/hezo',
+     database: { url: 'postgres://hezo:••••@db-host:5432/hezo?sslmode=verify-full' },
+     assetStorage: { url: 's3://ACCESS_KEY:SECRET@endpoint/bucket' },
+   };
    ```
 
    Most managed providers sign their database certificates with their own CA, so
