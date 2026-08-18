@@ -8,8 +8,12 @@ const WEB_PORT = 5174;
 const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
 // Cron cadences and telemetry for the spawned server. Absolute because the
 // server runs with cwd=packages/server, and passed as --config rather than env
-// because these are operator settings, not test-only switches.
-const E2E_CONFIG_FILE = resolve(import.meta.dirname, 'test/browser/hezo.e2e.config.cjs');
+// because these are operator settings, not test-only switches. Resolved from
+// process.cwd() (Playwright is invoked from the repo root — AGENTS.md) rather
+// than import.meta: Playwright loads this config through a CJS pipeline, and any
+// `import.meta` in it flips the file to ESM, where the wrapper's `exports` is
+// undefined and the whole config fails to load.
+const E2E_CONFIG_FILE = resolve(process.cwd(), 'test/browser/hezo.e2e.config.cjs');
 
 // The master-key-gate spec owns its own backend lifecycle (boot, kill,
 // restart on :3102), so it gets a dedicated vite instance proxying there —
