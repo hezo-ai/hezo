@@ -3,25 +3,19 @@ import { basename, dirname, join, relative } from 'node:path';
 import {
 	AGENT_RUNTIME_LABELS,
 	type AgentEffort,
-	AgentRuntime,
+	type AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
-	CLAUDE_CODE_QUIET_ENV,
 	CommentContentType,
 	ContainerStatus,
 	type CostTokens,
-	claudeCodeModelArg,
-	claudeCodeProviderUsesCustomEndpoint,
 	credentialSerializesRuns,
 	DEFAULT_THREAD_ROW_CATEGORIES,
 	effectiveRuntime,
 	formatContainerMetaLogLine,
-	GEMINI_RUNTIME_ENV,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
-	kimiModelContextSize,
 	MAX_SINGLE_ARG_BYTES,
-	opencodeModelArg,
 	PROVIDER_RUNTIME_ADAPTERS,
 	type PromptDelivery,
 	providerDirectUpstreamHosts,
@@ -99,7 +93,7 @@ import {
 import { acquireRunContainer, PoolCapacityError } from './containers';
 import type { ContainerEngine, ExecLogChunk } from './docker';
 import { getAgentSystemPrompt } from './documents';
-import { applyEffortToRuntime, type EffortRuntimeApplication, resolveEffort } from './effort';
+import { type EffortRuntimeApplication, resolveEffort } from './effort';
 import { buildEgressProxyEnv, type EgressProxy } from './egress';
 import {
 	clearPushErrors,
@@ -127,12 +121,6 @@ import {
 import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
-import {
-	buildMcpInjection,
-	HEZO_MCP_SERVER_NAME,
-	MCP_ADAPTERS,
-	type McpDescriptor,
-} from './mcp-injectors';
 import { retryOrEscalateLostRun, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
@@ -141,6 +129,14 @@ import { checkRepoCommitMerged } from './repo-github';
 import { ensureProjectRepos } from './repo-sync';
 import { CAPACITY_PARK_QUEUED_REASON, projectContainerMemoryGb } from './run-concurrency';
 import { classifyRunFailure, RunFailureClass } from './run-failure-classification';
+import {
+	applyEffortToRuntime,
+	buildMcpInjection,
+	HEZO_MCP_SERVER_NAME,
+	type McpDescriptor,
+	RUNTIME_ADAPTERS,
+	type RuntimeEnvContext,
+} from './runtime-adapters';
 import {
 	buildSubscriptionMount as buildSubscriptionMountImpl,
 	ensureRuntimeHomeDir,
@@ -311,64 +307,24 @@ export function buildProviderEnv(
 	// as anything diagnosable.
 	const runtime = effectiveRuntime(provider, credential.runtime);
 	const binding = runtime ? providerRuntimeBinding(provider, runtime) : null;
+	const adapter = runtime ? RUNTIME_ADAPTERS[runtime] : null;
+	const envCtx: RuntimeEnvContext = {
+		provider,
+		runModel: runModel?.trim() || null,
+		baseUrl: credential.baseUrl ?? null,
+	};
 	const out: string[] = [];
-	if (runtime === AgentRuntime.ClaudeCode) {
-		for (const [key, value] of Object.entries(CLAUDE_CODE_QUIET_ENV)) {
-			out.push(`${key}=${value}`);
-		}
+	// What this CLI needs regardless of provider, then the provider's own bag with
+	// the CLI given a say over each value, then whatever the credential itself
+	// implies. Which entries any of those are is the adapter's business - this
+	// function composes them and never asks which runtime it is building for.
+	for (const [key, value] of Object.entries(adapter?.constantEnv ?? {})) {
+		out.push(`${key}=${value}`);
 	}
-	if (runtime === AgentRuntime.Gemini) {
-		for (const [key, value] of Object.entries(GEMINI_RUNTIME_ENV)) {
-			out.push(`${key}=${value}`);
-		}
+	for (const [key, value] of Object.entries(binding?.staticEnv ?? {})) {
+		out.push(`${key}=${adapter?.staticEnvValue?.(key, value, envCtx) ?? value}`);
 	}
-	if (binding?.staticEnv) {
-		// For a third-party Anthropic-compatible provider (DeepSeek/Z.ai/Kimi), the
-		// Claude Code subagent default should track the run's own selected model
-		// rather than the hardcoded `CLAUDE_CODE_SUBAGENT_MODEL` constant — so a
-		// provider model upgrade (e.g. Kimi `kimi-k2.7-code` → `k3`) or a retired id
-		// needs no code change. The constant stays the fallback when the run pins no
-		// explicit model. (A newly selected model still needs a `model_pricing` row,
-		// or its runs price to $0 — see the pricing table.)
-		const trimmedModel = runModel?.trim();
-		const subagentOverride =
-			trimmedModel && claudeCodeProviderUsesCustomEndpoint(provider, runtime)
-				? claudeCodeModelArg(provider, trimmedModel)
-				: null;
-		// Kimi Code selects its model from `KIMI_MODEL_NAME`, not only from
-		// `--model`: that variable is what activates the shell-read `KIMI_MODEL_*`
-		// credential family in the first place, so it must always be set, and the
-		// run's selected model has to land there rather than only on the CLI flag.
-		// The staticEnv value (KIMI_DEFAULT_MODEL) stays the fallback when the run
-		// pins nothing.
-		const kimiModelOverride = trimmedModel && runtime === AgentRuntime.Kimi ? trimmedModel : null;
-		for (const [key, value] of Object.entries(binding.staticEnv)) {
-			if (subagentOverride && key === 'CLAUDE_CODE_SUBAGENT_MODEL') {
-				out.push(`${key}=${subagentOverride}`);
-			} else if (kimiModelOverride && key === 'KIMI_MODEL_NAME') {
-				out.push(`${key}=${kimiModelOverride}`);
-			} else if (kimiModelOverride && key === 'KIMI_MODEL_MAX_CONTEXT_SIZE') {
-				// Tracks the selected model rather than the pinned default: the window
-				// is a property of the model, and declaring the default's window for a
-				// smaller model makes the CLI compact too late and the endpoint refuse.
-				out.push(`${key}=${kimiModelContextSize(kimiModelOverride)}`);
-			} else {
-				out.push(`${key}=${value}`);
-			}
-		}
-	}
-	// Locally-hosted providers (Ollama, LM Studio) reach an endpoint that is
-	// per-install, so it cannot sit in `staticEnv` like the hosted third-party
-	// Anthropic-compatible providers above. It rides on the credential instead and
-	// is stamped here.
-	if (credential.baseUrl && runtime === AgentRuntime.ClaudeCode) {
-		out.push(`ANTHROPIC_BASE_URL=${credential.baseUrl}`);
-		// These runners authenticate (when they authenticate at all) from
-		// ANTHROPIC_AUTH_TOKEN. Claude Code prefers ANTHROPIC_API_KEY when both are
-		// present, so an inherited key from the host environment would silently win
-		// and get sent to the operator's local server. Blank it explicitly.
-		out.push('ANTHROPIC_API_KEY=');
-	}
+	out.push(...(adapter?.credentialEnv?.(envCtx) ?? []));
 	const varName = binding?.credentialEnvByAuthMethod[credential.authMethod];
 	if (varName) out.push(`${varName}=${credential.value}`);
 	return out;
@@ -490,12 +446,6 @@ export function assertPromptDeliverable(runtime: AgentRuntime, prompt: string): 
 	);
 }
 
-// Basename of the Grok `--debug-file`, written into the per-run home mount so it
-// is readable host-side after the run. Grok reports no token usage on stdout, so
-// the runner parses this file for cost, then scrubs it (it also contains the
-// XAI_API_KEY in plaintext). See `extractGrokUsageFromDebugLog`.
-export const GROK_DEBUG_BASENAME = 'debug.log';
-
 // Basename of Kimi Code's per-session wire log, written under
 // `$KIMI_CODE_HOME/sessions/<workspace>/<session>/agents/<agent>/`. Kimi Code's
 // `stream-json` stdout carries no token usage at all, so — as with Grok — cost is
@@ -534,38 +484,9 @@ export async function recoverOffStreamRunUsage(
 	onError: (msg: string) => void,
 ): Promise<AgentRunUsage | null> {
 	if (!files) return null;
-	if (runtimeType === AgentRuntime.Grok) {
-		try {
-			if (!(await files.exists(GROK_DEBUG_BASENAME))) return null;
-			return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME), priceFn);
-		} catch (e) {
-			onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
-			return null;
-		} finally {
-			await files.remove(GROK_DEBUG_BASENAME);
-		}
-	}
-	if (runtimeType === AgentRuntime.Kimi) {
-		const logPaths = await files.findByName(
-			'sessions',
-			KIMI_SESSION_LOG_BASENAME,
-			KIMI_SESSION_LOG_MAX_DEPTH,
-		);
-		if (logPaths.length === 0) return null;
-		try {
-			// The home dir is per-run, so in practice there is exactly one session.
-			// Concatenating tolerates a resumed or sub-agent session without
-			// double-counting: the extractor dedupes by record identity, not by file.
-			const contents = (await Promise.all(logPaths.map((p) => files.read(p)))).join('\n');
-			return extractKimiUsageFromSessionLog(contents, priceFn);
-		} catch (e) {
-			onError(`failed to read kimi session log for usage: ${(e as Error).message}`);
-			return null;
-		} finally {
-			for (const p of logPaths) await files.remove(p);
-		}
-	}
-	return null;
+	const recover = RUNTIME_ADAPTERS[runtimeType].recoverUsage;
+	if (!recover) return null;
+	return recover({ files, price: priceFn, onError });
 }
 
 // Deliver the prompt one of three ways, selected per runtime via the
@@ -722,7 +643,7 @@ export async function buildRuntimeInvocation(
 		containerId,
 	);
 
-	const adapter = MCP_ADAPTERS[runtimeType];
+	const adapter = RUNTIME_ADAPTERS[runtimeType];
 	const homeMount: RuntimeHomeMount | null = adapter.capabilities.requiresHomeDir
 		? await ensureRuntimeHomeDir(
 				provider,
@@ -884,28 +805,20 @@ export async function buildRuntimeInvocation(
 	}
 
 	const cliCommand = RUNTIME_COMMANDS[runtimeType];
-	let cliModel = modelOverride;
-	if (modelOverride) {
-		if (runtimeType === AgentRuntime.ClaudeCode) {
-			cliModel = claudeCodeModelArg(provider, modelOverride);
-		} else if (runtimeType === AgentRuntime.OpenCode) {
-			cliModel = opencodeModelArg(provider, modelOverride);
-		}
-	}
+	// A CLI that spells model ids its own way says so on its adapter; one that
+	// takes the stored id unchanged declares nothing and gets it unchanged.
+	const cliModel =
+		modelOverride && adapter.modelArg ? adapter.modelArg(provider, modelOverride) : modelOverride;
 	// A runtime that selects its model from the environment gets no flag: on Kimi
 	// Code `--model` looks the id up in a config table Hezo never writes, and the
 	// run dies before reaching the model at all.
 	const modelArgs =
 		cliModel && RUNTIME_MODEL_DELIVERY[runtimeType] === 'flag' ? ['--model', cliModel] : [];
 
-	// Grok reports no token usage on its stdout stream, so point it at a per-run
-	// debug log (inside the home mount, hence readable host-side) that the runner
-	// parses for cost after the run and then scrubs. Other runtimes report usage
-	// on the stream and need no such file.
-	const grokDebugArgs =
-		runtimeType === AgentRuntime.Grok && homeMount
-			? ['--debug-file', join(homeMount.containerDir, GROK_DEBUG_BASENAME)]
-			: [];
+	// Whatever this CLI needs that no shared table can express - a path into its own
+	// per-run home, typically. Most runtimes contribute nothing.
+	const adapterArgs =
+		adapter.extraArgs?.({ containerHomeDir: homeMount?.containerDir ?? null }) ?? [];
 
 	// A 'file'-delivery CLI opens the prompt itself, so the flag's VALUE belongs in
 	// the server-built argv rather than being appended by the exec wrapper. That is
@@ -920,7 +833,7 @@ export async function buildRuntimeInvocation(
 		...RUNTIME_HEADLESS_PREFIX_ARGS[runtimeType],
 		...mcpInjection.cliArgs,
 		...RUNTIME_STREAM_ARGS[runtimeType],
-		...grokDebugArgs,
+		...adapterArgs,
 		...RUNTIME_AUTO_APPROVE_ARGS[runtimeType],
 		...RUNTIME_DISALLOWED_TOOLS_ARGS[runtimeType],
 		...effortApplication.extraArgs,
@@ -1612,7 +1525,7 @@ export async function runAgent(
 	let connectorDescriptors: McpDescriptor[];
 	try {
 		connectorDescriptors = await loadConnectorDescriptors(deps.db, project.id);
-		const homePaths = MCP_ADAPTERS[runtimeType].capabilities.requiresHomeDir
+		const homePaths = RUNTIME_ADAPTERS[runtimeType].capabilities.requiresHomeDir
 			? {
 					hostHomeDir: getHostSubscriptionRootImpl(
 						provider,
@@ -2653,7 +2566,9 @@ export async function runAgent(
 			// though it exits 0 and may have written something earlier. Fail it so it
 			// surfaces and is retried rather than silently counting as done.
 			const backgroundWorkTerminated =
-				exitedClean && runtimeType === AgentRuntime.ClaudeCode && backgroundTermination.finish();
+				exitedClean &&
+				Boolean(RUNTIME_ADAPTERS[runtimeType].terminatesBackgroundWork) &&
+				backgroundTermination.finish();
 
 			const success =
 				exitedClean &&
@@ -2684,6 +2599,18 @@ export async function runAgent(
 			// otherwise lives only in the log; surface it on the run row so the board
 			// shows why the run failed instead of a bare "failed".
 			const terminalError = success ? null : parser.getTerminalError();
+			// The backstop that keeps a failed run from reporting nothing. Every cause
+			// above is conditional: two are gated on a clean exit, one on a signal, and
+			// the last on the runtime having reported something the parser recognises. A
+			// CLI that exits non-zero having said nothing intelligible - a rejected
+			// credential, an argument the CLI refused, a runtime whose parser extracts no
+			// terminal error - matches none of them, and without this the row carries a
+			// status and an exit code but no reason. It claims only what is certain: the
+			// exit code is the one fact such a run always leaves behind.
+			const unexplainedExitError =
+				!success && !exitedClean
+					? `agent CLI exited with code ${execOutcome.exitCode} without reporting a reason - see the log above for anything the CLI printed`
+					: undefined;
 			// Ordered by what the human has to act on. Stranded commits come first
 			// because they are the only one where the fix is time-sensitive: the work
 			// exists in exactly one container.
@@ -2712,6 +2639,7 @@ export async function runAgent(
 			else if (noOutputError) emit('stderr', `\n[runner] ${noOutputError}\n`);
 			else if (reportedNoWork && !producedOutput)
 				emit('stdout', `\n[runner] no work to do${noWorkReason ? ` — ${noWorkReason}` : ''}\n`);
+			else if (unexplainedExitError) emit('stderr', `\n[runner] ${unexplainedExitError}\n`);
 
 			await deps.logs.end(streamId);
 			await updateHeartbeatRun(
@@ -2727,6 +2655,7 @@ export async function runAgent(
 						signalError ??
 						terminalError ??
 						noOutputError ??
+						unexplainedExitError ??
 						undefined,
 					// Grok's usage comes from the debug log (runUsage); every other
 					// runtime reports it on the stream (parser.getUsage()).

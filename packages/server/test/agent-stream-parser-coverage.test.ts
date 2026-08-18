@@ -149,6 +149,29 @@ describe('gemini renderEvent branches', () => {
 		expect(out).toContain('[done] error tokens=0/0');
 	});
 
+	// Every runtime whose stream can name a failure must be able to put that
+	// reason on the run row; until these reported one, a non-zero exit here was
+	// recorded with no cause at all.
+	it('reports a Gemini stream error as the run terminal error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		expect(parser.getTerminalError()).toBeNull();
+		feed(parser, [{ type: 'error', error: { message: 'invalid api key' } }]);
+		expect(parser.getTerminalError()).toContain('AI provider authentication failed');
+	});
+
+	it('reports a Gemini terminal result error as the run terminal error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		feed(parser, [{ type: 'result', error: 'quota exceeded, payment required', stats: {} }]);
+		expect(parser.getTerminalError()).toContain('lack of credit/quota');
+	});
+
+	it('reports a Codex stream error as the run terminal error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Codex);
+		expect(parser.getTerminalError()).toBeNull();
+		feed(parser, [{ type: 'error', error: { message: 'unauthorized' } }]);
+		expect(parser.getTerminalError()).toContain('AI provider authentication failed');
+	});
+
 	it('prices multiple models, billing the cached subset at the cache-read rate', () => {
 		const seen: Array<{
 			model: string | undefined;

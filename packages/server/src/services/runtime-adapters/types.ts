@@ -1,4 +1,7 @@
-import type { AgentEffort, AiProvider } from '@hezo/shared';
+import type { AgentEffort, AiProvider, CostTokens } from '@hezo/shared';
+import type { AgentRunUsage } from '../agent-stream-parser';
+import type { EffortRuntimeApplication } from '../effort';
+import type { SandboxFiles } from '../sandbox/types';
 
 /**
  * Normalized MCP server descriptor passed by the agent runner. Per-runtime
@@ -187,7 +190,95 @@ export interface McpAdapterContext {
 	systemPrompt?: string | null;
 }
 
-export interface RuntimeMcpAdapter {
+/** What a runtime needs to compose this run's environment. */
+export interface RuntimeEnvContext {
+	/** The AI provider this run's credential belongs to. */
+	provider: AiProvider;
+	/** The run's resolved model, trimmed; null when the run pins none. */
+	runModel: string | null;
+	/** The credential's own endpoint, for a provider whose host is per-install. */
+	baseUrl: string | null;
+}
+
+/** What a runtime needs to contribute argv beyond the per-runtime arg tables. */
+export interface RuntimeArgsContext {
+	/** The per-run home directory as it appears inside the container, if mounted. */
+	containerHomeDir: string | null;
+}
+
+/** What a runtime needs to recover usage a CLI left on disk rather than on stdout. */
+export interface RuntimeUsageContext {
+	/** Reads and removals are scoped to the per-run home mount. */
+	files: SandboxFiles;
+	price: ((model: string | undefined, tokens: CostTokens) => number) | undefined;
+	onError: (msg: string) => void;
+}
+
+/**
+ * Everything Hezo knows about driving one coding CLI.
+ *
+ * The whole point of this seam is that **nothing outside it may name a runtime**.
+ * A CLI's flag spellings, env var names, model-id form, error envelope, the file
+ * it leaves usage in and how it behaves at exit are its own business; the runner
+ * asks the table and gets an answer for whichever runtime it holds. Every member
+ * below exists because that knowledge would otherwise be an `if` in generic code.
+ *
+ * The optional members are optional in the honest sense - most runtimes have
+ * nothing to say - and an absent one means "nothing extra", never "unsupported".
+ */
+export interface RuntimeAdapter {
 	readonly capabilities: McpAdapterCapabilities;
 	build(descriptors: readonly McpDescriptor[], ctx: McpAdapterContext): McpInjection;
+
+	/**
+	 * Env this CLI always needs, whatever provider drives it - quieting a banner,
+	 * lifting a built-in ceiling. Emitted before the provider's own static bag.
+	 */
+	readonly constantEnv?: Readonly<Record<string, string>>;
+
+	/**
+	 * Rewrite one entry of the provider binding's static env for this run.
+	 * Returning the value unchanged is the default; a runtime overrides where a
+	 * pinned constant should track the run's selected model instead.
+	 */
+	staticEnvValue?(key: string, value: string, ctx: RuntimeEnvContext): string;
+
+	/**
+	 * Env derived from the credential rather than from a table - an endpoint that
+	 * is per-install, and whatever else must be set alongside it.
+	 */
+	credentialEnv?(ctx: RuntimeEnvContext): readonly string[];
+
+	/**
+	 * Put a stored model id into the form this CLI's `--model` accepts. Absent
+	 * means the id is passed through as stored.
+	 */
+	modelArg?(provider: AiProvider, model: string): string;
+
+	/** Argv this CLI needs that no shared per-runtime table can express. */
+	extraArgs?(ctx: RuntimeArgsContext): readonly string[];
+
+	/**
+	 * How this CLI is asked to reason harder. Absent means it exposes no native
+	 * lever and is steered by the portable prompt directive alone, which is the
+	 * honest answer for a CLI whose flag is undocumented or unstable.
+	 */
+	applyEffort?(effort: AgentEffort): EffortRuntimeApplication;
+
+	/**
+	 * Recover token usage for a CLI that reports none on its stream, from a file
+	 * it leaves in the per-run home. The implementation is responsible for
+	 * scrubbing that file: they carry provider credentials in plaintext.
+	 *
+	 * Best-effort by contract - null means "no usage to report", which prices the
+	 * run at $0 rather than failing it.
+	 */
+	recoverUsage?(ctx: RuntimeUsageContext): Promise<AgentRunUsage | null>;
+
+	/**
+	 * True when this CLI can exit 0 having killed background work it had not
+	 * finished. Only such a runtime has its stream watched for that report, and
+	 * only there does a clean exit get second-guessed.
+	 */
+	readonly terminatesBackgroundWork?: boolean;
 }

@@ -1,12 +1,16 @@
 import { join } from 'node:path';
-import { OPENCODE_PROVIDER_KEY, opencodeModelKey } from '@hezo/shared';
-import { OPENCODE_REASONING_EFFORT } from '../effort';
+import {
+	AgentEffort,
+	OPENCODE_PROVIDER_KEY,
+	opencodeModelArg,
+	opencodeModelKey,
+} from '@hezo/shared';
 import type {
 	McpAdapterContext,
 	McpHttpDescriptor,
 	McpInjection,
 	McpStdioDescriptor,
-	RuntimeMcpAdapter,
+	RuntimeAdapter,
 } from './types';
 
 /**
@@ -136,12 +140,37 @@ function buildLocalServer(d: McpStdioDescriptor): OpencodeLocalServer {
 	return server;
 }
 
-export const opencodeAdapter: RuntimeMcpAdapter = {
+/**
+ * OpenCode's models are reached through OpenRouter, whose unified `reasoning`
+ * parameter takes `none|minimal|low|medium|high|xhigh|max`. Hezo's ladder is a
+ * subset spelled identically, so the mapping is 1:1 - and because `none` is never
+ * produced, every OpenCode run asks the model to reason.
+ *
+ * A model that cannot reason ignores the parameter: OpenRouter only rejects an
+ * unsupported one when the caller sets `require_parameters`, which nothing here
+ * does.
+ *
+ * This is written into the per-run `opencode.json` below rather than onto argv:
+ * `--variant` names a variant that must be declared in that same config first,
+ * and this adapter is the only place holding the model id the config is keyed on.
+ * So the runtime declares no `applyEffort` and is steered, on the prompt side, by
+ * the portable directive.
+ */
+const OPENCODE_REASONING_EFFORT: Record<AgentEffort, string> = {
+	[AgentEffort.Minimal]: 'minimal',
+	[AgentEffort.Low]: 'low',
+	[AgentEffort.Medium]: 'medium',
+	[AgentEffort.High]: 'high',
+	[AgentEffort.Max]: 'max',
+};
+
+export const opencodeAdapter: RuntimeAdapter = {
 	capabilities: {
 		transport: 'streamable-http',
 		bearerTokenStorage: 'inline',
 		requiresHomeDir: true,
 	},
+	modelArg: opencodeModelArg,
 	build(descriptors, ctx): McpInjection {
 		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {
 			throw new Error('opencode mcp adapter requires hostHomeDir and containerHomeDir');

@@ -1723,6 +1723,32 @@ line into the stream as they detect it. Stranded commits stay above all three: t
 only time-sensitive item, at the accepted cost that a run that committed and was then
 killed leaves the signal to the exit-code column.
 
+Beneath every one of them sits an unconditional backstop, and it is the rung that makes the
+run row's `error` non-nullable in practice. Each candidate above is conditional: two are
+gated on a clean exit, one on a signal, and the captured terminal error on the runtime
+having reported something the parser recognised. A CLI that exits non-zero having said
+nothing intelligible matched none of them, so the row kept `status='failed'`, a real
+`exit_code`, and a NULL reason - the board showed a bare "failed" and the log stopped at the
+`$` invocation echo. The backstop names the one fact such a run always carries, its exit
+code, and by doing so also repairs the `run_failed` task comment, which reads `run.error`
+and had nothing to print. It is deliberately last: it speaks only when nothing better can.
+
+Reaching that rung less often is a parser concern, not a runner one. `getTerminalError()`
+is what carries a runtime's own explanation onto the row, and a parser that returns null
+there sends every failure to the backstop. Claude Code, Grok and Kimi always reported one;
+Codex, Gemini and the generic (OpenCode) parser computed the text, rendered it to the log
+and threw it away, which is why a rejected provider credential on those runtimes surfaced as
+a bare exit code. All six now retain it, classified through `classifyRuntimeError` so a 401
+or 402 reads as an actionable sentence rather than the upstream's own wording.
+
+The messages themselves are nested inconsistently across runtimes, so `extractErrorMessage`
+probes three shapes: a bare string, a flat `{ message }`, and OpenCode's
+`{ name, data: { message, statusCode } }`. It folds the class name and HTTP status into the
+text it returns, because the status is frequently the only part a classifier can act on -
+OpenRouter answers a rejected key with `User not found.`, which names no auth problem at
+all. Nothing else on the error is read: that nested form also carries the whole upstream
+response header set, which must never reach a log line.
+
 **The tunnel is the only way a container reaches Hezo**, on every backend, with no gate and
 no second path. `RunEndpoints` always names container loopback, where the in-container
 client listens; `host.docker.internal` survives only for an operator-configured local model
@@ -3374,10 +3400,38 @@ sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has
 its per-run `opencode.json` (see below); `grok` steers effort through the portable prompt
 directive alone. It's also exposed as `HEZO_AGENT_EFFORT`.
 
-**Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, six
+**Per-runtime wiring** lives in the runtime adapters (`services/runtime-adapters/`, six
 adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
 servers, and wires the stop-hook.
+
+**This directory is the only place a runtime is named**, and that is the point of it. The
+run pipeline holds an `AgentRuntime` it never inspects: it asks `RUNTIME_ADAPTERS[runtime]`
+and gets an answer. Beyond the MCP artifacts each adapter also declares, all optional and
+absent for most runtimes:
+
+| Member | Answers | Declared by |
+|---|---|---|
+| `constantEnv` | env this CLI needs whatever provider drives it | Claude Code (telemetry off, background-wait ceiling lifted), Gemini (workspace trusted) |
+| `staticEnvValue` | rewrite one provider-table env value for this run | Claude Code (subagent tracks the run model on a third-party endpoint), Kimi (model name + its context window) |
+| `credentialEnv` | env implied by the credential rather than a table | Claude Code (a local provider's per-install endpoint, plus blanking the key it would otherwise prefer) |
+| `modelArg` | the form this CLI's `--model` accepts | Claude Code, OpenCode |
+| `extraArgs` | argv no shared table can express | Grok (`--debug-file` inside its own home) |
+| `recoverUsage` | usage for a CLI whose stream reports none | Grok, Kimi |
+| `applyEffort` | how this CLI is asked to reason harder | Claude Code, Codex, Gemini, Kimi |
+| `terminatesBackgroundWork` | can it exit 0 having killed unfinished work | Claude Code |
+
+An absent member means "nothing extra", never "unsupported" - the caller has a defined
+answer either way, so no call site needs to know which runtime it holds. The rule is
+enforced by a grep test in `runtime-adapters.test.ts`: a `=== AgentRuntime.X`, `!==` or
+`case` anywhere in `packages/*/src` outside this directory fails the suite, because a branch
+on a runtime compiles perfectly well and nothing else would catch it. The one allowed
+exception is `claudeCodeProviderUsesCustomEndpoint`, where naming the runtime *is* the
+question being asked rather than a branch in generic flow.
+
+The same rule covers AI providers, which have no per-provider module: their quirks live as
+rows in a per-provider table (`PROVIDER_RUNTIME_ADAPTERS`, `SUBSCRIPTION_VALIDATORS`,
+`PROVIDER_MODEL_READERS`, `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`) rather than as branches.
 
 **Prompt delivery** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE`) has three
 modes. `stdin` redirects the prompt file into the CLI — Claude Code, Codex, Gemini and
@@ -3422,7 +3476,7 @@ a hang regression is a timeout rather than a passing string match, an E2BIG regr
 asserted non-zero exit, and the two copies cannot drift.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
-TOML rendering for the Codex config lives in `mcp-injectors/toml.ts`. Kimi Code splits its
+TOML rendering for the Codex config lives in `runtime-adapters/toml.ts`. Kimi Code splits its
 configuration in two — MCP servers in `mcp.json`, the `[[hooks]]` Stop entry and
 `[permission.rules]` in `config.toml`, both under `$KIMI_CODE_HOME` — and is the only adapter
 whose per-server tool filter maps one-to-one onto the descriptor (`enabledTools` /
@@ -3463,6 +3517,15 @@ success banner between each pair of tool calls. Because OpenCode is documented t
 exit before its final `step_finish` (sst/opencode#26855, #31435), the parser writes that
 summary from `flush()` if no `[done]` was reached, rather than losing it with the event.
 
+**Two OpenCode flags exist for the failure path.** `--print-logs --log-level ERROR` puts the
+CLI's own diagnostics on **stderr**, leaving stdout pure JSON; the runner already relays
+stderr verbatim, so this needs no parser work and costs a healthy run almost nothing. It buys
+the provider and model behind a failure, which the JSON `error` event does not name and whose
+message is sometimes only `Unexpected server error`. The auto-approve flag is `--auto`: the
+table previously held Claude Code's `--dangerously-skip-permissions`, which OpenCode's parser
+accepts and ignores rather than rejecting, so the intent went unapplied for every run and
+would have become a hard failure the day OpenCode started refusing unknown arguments.
+
 **Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
 legitimately long agent/background work; every runtime is relaxed at its own config surface
 (no exact cross-runtime env analog exists for Claude Code's `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`).
@@ -3491,7 +3554,7 @@ resulting reasoning parts on the `--format json` stream for the log.
 **Kimi Code** (`mcp.json`) raises per-server `startupTimeoutMs`/`toolTimeoutMs` from its 30 s /
 60 s defaults; these are set per-server rather than through the global
 `KIMI_MCP_*_TIMEOUT_MS` env vars so one slow connector can't be masked by a blanket override.
-All values live as named constants in each `mcp-injectors/*.ts` adapter.
+All values live as named constants in each `runtime-adapters/*.ts` adapter.
 
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing

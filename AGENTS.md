@@ -269,6 +269,7 @@ Write the second occurrence as shared code, not a copy. These are decision rules
 - **Pick the home by reach.** Server *and* web, or a pure-logic test → `@hezo/shared`. Several server modules → `src/lib/` or `services/`. Several components → `packages/web/src/lib/` or `hooks/`. One consumer → keep it local until there is a second.
 - **Validation lives once and runs twice.** A rule the client checks for inline feedback and the server enforces for real is one exported function in `@hezo/shared`, called from both.
 - **Table over branch.** Behaviour varying by enum is a `Record<Enum, Descriptor>` read from, not a repeated `switch`: an unhandled value becomes a compile error and a new case becomes one row.
+- **A CLI's or model provider's own quirks live in that entity's adapter, never in generic code.** Event and error envelopes, flag spellings, env var names, usage recovery, auth delivery, model-id formatting: each belongs to that entity's adapter module or its row in the per-entity table. A shared helper or pipeline branch naming one CLI or provider is the defect — move the knowledge to the entity and have the generic path read it through the table. Same rule the container backends already follow (**Container backends** below), applied to runtimes and providers.
 - **Extend the existing seam before adding a parallel one** — check the seam registry below first. If the seam genuinely doesn't fit, **widen it** rather than routing around it. A second stack doing an existing stack's job is how a codebase ends up with two of everything.
 - **Preserve public signatures when changing internals** — keep a shared helper's exported shape and delegate inward.
 - **Generate what would otherwise be hand-synced**, and guard the remainder with a drift test.
@@ -314,6 +315,8 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | A migration test | `createDataPreservationHarness()` (`test/helpers/migrate.ts`) |
 | A component test | `renderApp()` + `seed*()` (`packages/web/test/helpers/`) |
 | A complete test double | `createStubDocker()` (`test/helpers/app.ts`) - never a hand-rolled partial |
+| A CLI runtime's own quirk (env, flags, model-id form, usage recovery, run-end behaviour) | that runtime's `services/runtime-adapters/<runtime>.ts`, its section in `agent-stream-parser.ts`, or its `RUNTIME_*` row (`@hezo/shared`) |
+| An AI provider's own quirk (endpoint, credential env, subscription blob, judge model) | that provider's `PROVIDER_RUNTIME_ADAPTERS` entry (`@hezo/shared`), or its row in the per-provider table that owns the behaviour |
 
 ## One mechanism, no silent fallbacks
 
@@ -563,7 +566,7 @@ A run legitimately parked on input it can't obtain itself — an `@admin` questi
 
 **The judge is for task runs only — the CEO chat passes `stopJudge: false`** (`buildRuntimeInvocation` → `McpAdapterContext`), and an adapter honouring it drops the hook and its judge script together. Every rule the judge carries is about abandoning task work, and it reads only the final message; a chat turn has no task, and its final message is the reply already delivered to the operator. **Do not add a judge to a new non-task execution path** on the assumption it can only help: it costs a round trip per turn and, on a block, a whole extra turn spent on a task that does not exist. What such a path can genuinely strand — a handoff in a comment it posted — belongs to the structural layers below, which do run for chat.
 
-Wiring lives in `services/mcp-injectors/<runtime>.ts`, specs in `JUDGE_SPECS`, the shared prompt body in `STOP_HOOK_RULES` (`stop-hook-prompt.ts`) — one body, so a rule change reaches every runtime. Where a runtime's native hook can run the judge itself the injector writes a prompt hook; otherwise it writes a helper script that calls the provider API. What you must know per runtime is only the constraint that bites:
+Wiring lives in `services/runtime-adapters/<runtime>.ts`, specs in `JUDGE_SPECS`, the shared prompt body in `STOP_HOOK_RULES` (`stop-hook-prompt.ts`) — one body, so a rule change reaches every runtime. Where a runtime's native hook can run the judge itself the injector writes a prompt hook; otherwise it writes a helper script that calls the provider API. What you must know per runtime is only the constraint that bites:
 
 | Runtime | Judge | Constraint |
 |---|---|---|

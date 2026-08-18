@@ -1,7 +1,9 @@
 import { join } from 'node:path';
+import { AgentEffort } from '@hezo/shared';
+import { GENERIC_PROMPT_DIRECTIVE } from '../effort';
 import { buildCodexJudgeScript } from '../stop-hook-prompt';
 import { bearerEnvVarName, escapeTomlBasicString, renderHttpBlock, renderStdioBlock } from './toml';
-import type { McpDescriptor, McpInjection, McpInjectionFile, RuntimeMcpAdapter } from './types';
+import type { McpDescriptor, McpInjection, McpInjectionFile, RuntimeAdapter } from './types';
 
 function renderStopHookBlock(judgeScriptContainerPath: string): string {
 	return [
@@ -41,7 +43,20 @@ function withServerTimeouts(serverBlock: string): string {
 	].join('\n');
 }
 
-export const codexAdapter: RuntimeMcpAdapter = {
+const CODEX_REASONING_EFFORT: Record<AgentEffort, string> = {
+	[AgentEffort.Minimal]: 'minimal',
+	[AgentEffort.Low]: 'low',
+	[AgentEffort.Medium]: 'medium',
+	[AgentEffort.High]: 'high',
+	[AgentEffort.Max]: 'high',
+};
+
+export const codexAdapter: RuntimeAdapter = {
+	applyEffort: (effort) => ({
+		extraArgs: ['-c', `model_reasoning_effort=${CODEX_REASONING_EFFORT[effort]}`],
+		extraEnv: [],
+		promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
+	}),
 	capabilities: {
 		transport: 'streamable-http',
 		bearerTokenStorage: 'env-var',

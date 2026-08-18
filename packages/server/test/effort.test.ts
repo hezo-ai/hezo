@@ -1,10 +1,7 @@
 import { AgentEffort, AgentRuntime, DEFAULT_EFFORT } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
-import {
-	applyEffortToRuntime,
-	parseEffortFromCommentBody,
-	resolveEffort,
-} from '../src/services/effort';
+import { parseEffortFromCommentBody, resolveEffort } from '../src/services/effort';
+import { applyEffortToRuntime } from '../src/services/runtime-adapters';
 
 describe('resolveEffort', () => {
 	it('prefers a valid wakeup override over the agent default', () => {

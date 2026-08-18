@@ -17,7 +17,7 @@ export type RunFailureClass = (typeof RunFailureClass)[keyof typeof RunFailureCl
  * The failures known to be worth retrying, keyed by `Error.name`.
  *
  * Keyed by name rather than by constructor for two reasons. The throwers live
- * under `sandbox/`, `egress/` and `mcp-injectors/`, and none of them may take a
+ * under `sandbox/`, `egress/` and `runtime-adapters/`, and none of them may take a
  * dependency on run-retry policy to be classified - the alternative inverts that
  * dependency at every throw site. And it keeps this module importing nothing, so
  * it can never close a cycle with `agent-runner` or `containers`.

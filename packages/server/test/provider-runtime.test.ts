@@ -6,6 +6,7 @@ import {
 	opencodeModelKey,
 	PROVIDER_TO_RUNTIME,
 	providerDirectUpstreamHosts,
+	RUNTIME_AUTO_APPROVE_ARGS,
 	RUNTIME_STREAM_ARGS,
 } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
@@ -60,7 +61,26 @@ describe('opencodeModelArg', () => {
 	it('asks OpenCode to stream the model reasoning it is now always told to do', () => {
 		// `--thinking` is what puts reasoning parts on the `--format json` stream;
 		// without it a run reasons invisibly and the log shows no thinking blocks.
-		expect(RUNTIME_STREAM_ARGS[AgentRuntime.OpenCode]).toEqual(['--format', 'json', '--thinking']);
+		// `--print-logs` sends the CLI's own diagnostics to stderr, which the runner
+		// relays verbatim, so a failure the JSON stream describes only generically
+		// still names its provider and model.
+		expect(RUNTIME_STREAM_ARGS[AgentRuntime.OpenCode]).toEqual([
+			'--format',
+			'json',
+			'--thinking',
+			'--print-logs',
+			'--log-level',
+			'ERROR',
+		]);
+	});
+
+	it('auto-approves OpenCode with the flag OpenCode actually has', () => {
+		// Not `--dangerously-skip-permissions`: that is Claude Code's spelling, and
+		// OpenCode accepts unknown flags silently, so the wrong one never applied.
+		expect(RUNTIME_AUTO_APPROVE_ARGS[AgentRuntime.OpenCode]).toEqual(['--auto']);
+		expect(RUNTIME_AUTO_APPROVE_ARGS[AgentRuntime.OpenCode]).not.toContain(
+			'--dangerously-skip-permissions',
+		);
 	});
 });
 

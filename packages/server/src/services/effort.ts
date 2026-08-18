@@ -67,53 +67,7 @@ export function parseEffortFromCommentBody(body: {
 	return null;
 }
 
-const CLAUDE_CODE_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
-	[AgentEffort.Minimal]: '',
-	[AgentEffort.Low]: 'think about this step by step.',
-	[AgentEffort.Medium]: 'think',
-	[AgentEffort.High]: 'think hard',
-	[AgentEffort.Max]: 'ultrathink',
-};
-
-const CODEX_REASONING_EFFORT: Record<AgentEffort, string> = {
-	[AgentEffort.Minimal]: 'minimal',
-	[AgentEffort.Low]: 'low',
-	[AgentEffort.Medium]: 'medium',
-	[AgentEffort.High]: 'high',
-	[AgentEffort.Max]: 'high',
-};
-
-// Kimi Code accepts `low|medium|high|xhigh|max`. It has no `minimal`, so the
-// lowest Hezo level maps to `low`; `max` maps straight through. `xhigh` is
-// deliberately unused — Hezo's ladder tops out at `max`, and reaching past
-// `high` for the `max` level would make the two indistinguishable.
-const KIMI_THINKING_EFFORT: Record<AgentEffort, string> = {
-	[AgentEffort.Minimal]: 'low',
-	[AgentEffort.Low]: 'low',
-	[AgentEffort.Medium]: 'medium',
-	[AgentEffort.High]: 'high',
-	[AgentEffort.Max]: 'max',
-};
-
-/**
- * OpenCode's models are reached through OpenRouter, whose unified `reasoning`
- * parameter takes `none|minimal|low|medium|high|xhigh|max`. Hezo's ladder is a
- * subset spelled identically, so the mapping is 1:1 - and because `none` is
- * never produced, every OpenCode run asks the model to reason.
- *
- * A model that cannot reason ignores the parameter: OpenRouter only rejects an
- * unsupported parameter when the caller sets `require_parameters`, which nothing
- * here does.
- */
-export const OPENCODE_REASONING_EFFORT: Record<AgentEffort, string> = {
-	[AgentEffort.Minimal]: 'minimal',
-	[AgentEffort.Low]: 'low',
-	[AgentEffort.Medium]: 'medium',
-	[AgentEffort.High]: 'high',
-	[AgentEffort.Max]: 'max',
-};
-
-const GENERIC_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
+export const GENERIC_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
 	[AgentEffort.Minimal]: '',
 	[AgentEffort.Low]: 'Think briefly before answering.',
 	[AgentEffort.Medium]: 'Reason carefully before answering.',
@@ -121,49 +75,3 @@ const GENERIC_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
 	[AgentEffort.Max]:
 		'Apply maximum reasoning effort: explore alternative approaches, validate assumptions, and only act once you are confident.',
 };
-
-export function applyEffortToRuntime(
-	runtime: AgentRuntime,
-	effort: AgentEffort,
-): EffortRuntimeApplication {
-	switch (runtime) {
-		case AgentRuntime.ClaudeCode:
-			return { extraArgs: [], extraEnv: [], promptDirective: CLAUDE_CODE_PROMPT_DIRECTIVE[effort] };
-		case AgentRuntime.Codex:
-			return {
-				extraArgs: ['-c', `model_reasoning_effort=${CODEX_REASONING_EFFORT[effort]}`],
-				extraEnv: [],
-				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
-			};
-		case AgentRuntime.Gemini:
-			return {
-				extraArgs: [],
-				extraEnv: [`GEMINI_REASONING_EFFORT=${effort}`],
-				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
-			};
-		// OpenCode's native knob is `reasoning.effort` on the run's model, written
-		// into the per-run `opencode.json` by its MCP injector (OPENCODE_REASONING_EFFORT
-		// above) — not a CLI flag, since `--variant` names a variant that has to be
-		// declared in that same config first. The injector is the only place holding
-		// the model id the config map is keyed on, so nothing lands in extraArgs here.
-		// The prompt directive rides along as it does for Codex and Kimi.
-		case AgentRuntime.OpenCode:
-			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
-		// Grok exposes `--reasoning-effort`, but its accepted values aren't
-		// documented/stable across the 0.2.x betas, so steer effort through the
-		// portable prompt directive alone.
-		case AgentRuntime.Grok:
-			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
-		// Kimi Code exposes a real, documented thinking-effort knob as an env var
-		// (part of the shell-read KIMI_MODEL_* family), so unlike OpenCode/Grok it
-		// gets a native lever rather than prompt-only steering. The prompt directive
-		// rides along too — it costs nothing and keeps behaviour consistent when a
-		// model ignores the knob.
-		case AgentRuntime.Kimi:
-			return {
-				extraArgs: [],
-				extraEnv: [`KIMI_MODEL_THINKING_EFFORT=${KIMI_THINKING_EFFORT[effort]}`],
-				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
-			};
-	}
-}

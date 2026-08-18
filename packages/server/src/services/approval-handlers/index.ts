@@ -6,7 +6,7 @@ import { strategyHandler } from './strategy';
 import type { ApprovalHandler } from './types';
 
 /**
- * Per-approval-type side-effect handler table, modelled on `MCP_ADAPTERS`.
+ * Per-approval-type side-effect handler table, modelled on `RUNTIME_ADAPTERS`.
  * `Partial` because not every approval type has a side effect — secret access,
  * plan review, deploy, and designated-repo requests are pure status flips with
  * nothing to materialise, so they have no entry and the dispatcher returns `[]`.

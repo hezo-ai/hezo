@@ -8,8 +8,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildMcpInjection,
 	HEZO_MCP_SERVER_NAME,
-	MCP_ADAPTERS,
-} from '../src/services/mcp-injectors';
+	RUNTIME_ADAPTERS,
+} from '../src/services/runtime-adapters';
 import {
 	TUNNEL_PORT_BASE,
 	TUNNEL_PORT_RANGE,
@@ -24,7 +24,7 @@ function injectionAt(runtime: AgentRuntime, mcpPort: number) {
 		mcp: mcpPort,
 		ssh: mcpPort + 1,
 	});
-	const requiresHome = MCP_ADAPTERS[runtime].capabilities.requiresHomeDir;
+	const requiresHome = RUNTIME_ADAPTERS[runtime].capabilities.requiresHomeDir;
 	return buildMcpInjection(
 		runtime,
 		[

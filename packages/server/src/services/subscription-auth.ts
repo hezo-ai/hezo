@@ -108,20 +108,26 @@ export function validateAnthropicOauthToken(raw: string): SubscriptionValidation
 	return { ok: true };
 }
 
+/**
+ * What each provider's subscription blob has to look like. A provider absent here
+ * has no subscription path at all, which is why the map is partial rather than
+ * total: most providers are api-key only, and that is an answer, not a gap.
+ */
+const SUBSCRIPTION_VALIDATORS: Partial<
+	Record<AiProvider, (raw: string) => SubscriptionValidation>
+> = {
+	[AiProvider.Anthropic]: validateAnthropicOauthToken,
+	[AiProvider.OpenAI]: validateCodexAuthJson,
+	[AiProvider.Google]: validateGeminiAuthJson,
+};
+
 export function validateSubscriptionBlob(
 	provider: AiProvider,
 	raw: string,
 ): SubscriptionValidation {
-	switch (provider) {
-		case AiProvider.Anthropic:
-			return validateAnthropicOauthToken(raw);
-		case AiProvider.OpenAI:
-			return validateCodexAuthJson(raw);
-		case AiProvider.Google:
-			return validateGeminiAuthJson(raw);
-		default:
-			return { ok: false, error: `${provider} does not support subscription auth` };
-	}
+	const validate = SUBSCRIPTION_VALIDATORS[provider];
+	if (!validate) return { ok: false, error: `${provider} does not support subscription auth` };
+	return validate(raw);
 }
 
 interface ParsedObject {

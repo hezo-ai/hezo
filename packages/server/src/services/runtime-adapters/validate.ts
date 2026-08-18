@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { createPlaceholderRegex, PLACEHOLDER_PROBE } from '../../lib/credential-placeholder';
-import type { McpInjection, RuntimeMcpAdapter } from './types';
+import type { McpInjection, RuntimeAdapter } from './types';
 
 /**
  * A rendered file with every secret placeholder removed.
@@ -26,7 +26,7 @@ function withoutSecretPlaceholders(contents: string): string {
  * producing a non-functional spawn. Run by both the agent runner and the
  * adapter unit tests so any contract drift trips CI.
  */
-export function validateInjection(adapter: RuntimeMcpAdapter, injection: McpInjection): void {
+export function validateInjection(adapter: RuntimeAdapter, injection: McpInjection): void {
 	for (const file of injection.files) {
 		if (!isAbsolute(file.hostPath)) {
 			throw new Error(`mcp injection file path must be absolute: ${file.hostPath}`);

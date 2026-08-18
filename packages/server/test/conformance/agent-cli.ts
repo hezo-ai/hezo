@@ -71,11 +71,7 @@ import {
 	RUNTIME_STREAM_ARGS,
 	RUNTIMES_WITH_ROTATING_CREDENTIAL,
 } from '@hezo/shared';
-import {
-	buildProviderEnv,
-	GROK_DEBUG_BASENAME,
-	recoverOffStreamRunUsage,
-} from '../../src/services/agent-runner';
+import { buildProviderEnv, recoverOffStreamRunUsage } from '../../src/services/agent-runner';
 import {
 	type AgentRunUsage,
 	createAgentStreamParser,
@@ -84,10 +80,11 @@ import type { AiProviderCredential } from '../../src/services/ai-provider-keys';
 import { type ContainerRunUser, chownToRunUser } from '../../src/services/container-user';
 import {
 	HEZO_MCP_SERVER_NAME,
-	MCP_ADAPTERS,
 	type McpDescriptor,
+	RUNTIME_ADAPTERS,
 	validateInjection,
-} from '../../src/services/mcp-injectors';
+} from '../../src/services/runtime-adapters';
+import { GROK_DEBUG_BASENAME } from '../../src/services/runtime-adapters/grok';
 import {
 	buildSubscriptionMount,
 	ensureRuntimeHomeDir,
@@ -583,7 +580,8 @@ function describeOneAgentCliRun(
 			// The home dir is handed the subscription mount, so the two share one
 			// directory rather than the CLI being pointed at a home that does not hold
 			// the credential it was just given.
-			const homeMount: RuntimeHomeMount | null = MCP_ADAPTERS[runtime].capabilities.requiresHomeDir
+			const homeMount: RuntimeHomeMount | null = RUNTIME_ADAPTERS[runtime].capabilities
+				.requiresHomeDir
 				? await ensureRuntimeHomeDir(
 						mp.provider,
 						runtime,
@@ -605,13 +603,13 @@ function describeOneAgentCliRun(
 					bearerToken: agentJwt,
 				},
 			];
-			const injection = MCP_ADAPTERS[runtime].build(descriptors, {
+			const injection = RUNTIME_ADAPTERS[runtime].build(descriptors, {
 				hostHomeDir: homeMount?.hostDir ?? null,
 				containerHomeDir: homeMount?.containerDir ?? null,
 				provider: mp.provider,
 				runModel: mp.model ?? null,
 			});
-			validateInjection(MCP_ADAPTERS[runtime], injection);
+			validateInjection(RUNTIME_ADAPTERS[runtime], injection);
 
 			mark('injection-built');
 			const runtimeFiles = subscriptionFiles(engine, containerId);

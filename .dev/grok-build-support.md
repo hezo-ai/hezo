@@ -224,7 +224,7 @@ confirmed against a real key. No open spike items remain.
 - `RUNTIME_PROMPT_DELIVERY[Grok] = 'file'` (`--prompt-file`, with the path in the
   server-built argv); effort mapping in `effort.ts` (map to `--reasoning-effort`).
 
-**2. MCP injector — new `packages/server/src/services/mcp-injectors/grok.ts`**
+**2. Runtime adapter — new `packages/server/src/services/runtime-adapters/grok.ts`**
 - Model on `claude-code.ts`: write Hezo's MCP descriptors as `[mcp_servers.*]`
   into `~/.grok/config.toml` (or a `--plugin-dir` bundle), inline bearer header,
   `[cli] auto_update=false`.
@@ -275,7 +275,7 @@ confirmed against a real key. No open spike items remain.
 - No MCP-tool/REST changes → `mcp-api.md` / `SKILL.md` / `llms.txt` untouched.
 
 **10. Tests**
-- `mcp-injectors.test.ts` (Grok writes the expected `config.toml`),
+- `runtime-adapters.test.ts` (Grok writes the expected `config.toml`),
   `provider-runtime.test.ts`, `runtime-resolver.test.ts`,
   `stop-hook-judge-registry.test.ts`, agent-runner + stream-parser tests, the
   web provider test.

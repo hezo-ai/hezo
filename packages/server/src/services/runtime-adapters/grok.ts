@@ -1,16 +1,12 @@
 import { join } from 'node:path';
+import { extractGrokUsageFromDebugLog } from '../agent-stream-parser';
 import {
 	buildDocWriteGuardHookBlock,
 	buildDocWriteGuardScript,
 	DOC_WRITE_GUARD_FILENAME,
 } from '../doc-write-guard';
 import { escapeTomlBasicString, safeName, TOML_KEY_RE, tomlArray } from './toml';
-import type {
-	McpHttpDescriptor,
-	McpInjection,
-	McpStdioDescriptor,
-	RuntimeMcpAdapter,
-} from './types';
+import type { McpHttpDescriptor, McpInjection, McpStdioDescriptor, RuntimeAdapter } from './types';
 
 /**
  * xAI Grok Build (`grok`) CLI runtime adapter.
@@ -96,11 +92,36 @@ function renderStdioServer(d: McpStdioDescriptor): string {
 	return blocks.join('\n\n');
 }
 
-export const grokAdapter: RuntimeMcpAdapter = {
+/**
+ * Basename of the Grok `--debug-file`, written into the per-run home mount so it
+ * is readable host-side after the run. Grok reports no token usage on stdout, so
+ * cost is recovered from this file and the file is then scrubbed - it also holds
+ * the XAI_API_KEY in plaintext.
+ */
+export const GROK_DEBUG_BASENAME = 'debug.log';
+
+export const grokAdapter: RuntimeAdapter = {
 	capabilities: {
 		transport: 'streamable-http',
 		bearerTokenStorage: 'inline',
 		requiresHomeDir: true,
+	},
+	extraArgs(ctx) {
+		// Without a home mount there is nowhere host-readable to put the log, and a
+		// path inside the container alone would be unreachable after teardown.
+		if (!ctx.containerHomeDir) return [];
+		return ['--debug-file', join(ctx.containerHomeDir, GROK_DEBUG_BASENAME)];
+	},
+	async recoverUsage({ files, price, onError }) {
+		try {
+			if (!(await files.exists(GROK_DEBUG_BASENAME))) return null;
+			return extractGrokUsageFromDebugLog(await files.read(GROK_DEBUG_BASENAME), price);
+		} catch (e) {
+			onError(`failed to read grok debug log for usage: ${(e as Error).message}`);
+			return null;
+		} finally {
+			await files.remove(GROK_DEBUG_BASENAME);
+		}
 	},
 	build(descriptors, ctx): McpInjection {
 		if (!ctx.hostHomeDir || !ctx.containerHomeDir) {

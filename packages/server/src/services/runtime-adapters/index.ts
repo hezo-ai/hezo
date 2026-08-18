@@ -1,19 +1,25 @@
-import { AgentRuntime } from '@hezo/shared';
+import { type AgentEffort, AgentRuntime } from '@hezo/shared';
+import { type EffortRuntimeApplication, GENERIC_PROMPT_DIRECTIVE } from '../effort';
 import { claudeCodeAdapter } from './claude-code';
 import { codexAdapter } from './codex';
 import { geminiAdapter } from './gemini';
 import { grokAdapter } from './grok';
 import { kimiAdapter } from './kimi';
 import { opencodeAdapter } from './opencode';
-import type { McpAdapterContext, McpDescriptor, McpInjection, RuntimeMcpAdapter } from './types';
+import type { McpAdapterContext, McpDescriptor, McpInjection, RuntimeAdapter } from './types';
 import { validateInjection } from './validate';
 
 /**
- * Per-runtime MCP adapter table. The `Record<AgentRuntime, ...>` typing means
- * adding a new runtime to the AgentRuntime enum without adding an adapter
- * here is a TypeScript error — every runtime we support gets MCP exposure.
+ * Per-runtime adapter table, and the only place a runtime is named.
+ *
+ * The `Record<AgentRuntime, ...>` typing means adding a runtime to the enum
+ * without adding an adapter here is a TypeScript error - a new CLI cannot be
+ * half-wired. Everything a runtime does differently from its peers hangs off a
+ * row in this table: MCP artifacts, env, argv, model-id form, usage recovery and
+ * exit behaviour. Code outside this directory asks the table; it does not ask
+ * which runtime it holds.
  */
-export const MCP_ADAPTERS: Record<AgentRuntime, RuntimeMcpAdapter> = {
+export const RUNTIME_ADAPTERS: Record<AgentRuntime, RuntimeAdapter> = {
 	[AgentRuntime.ClaudeCode]: claudeCodeAdapter,
 	[AgentRuntime.Codex]: codexAdapter,
 	[AgentRuntime.Gemini]: geminiAdapter,
@@ -34,12 +40,33 @@ export const MCP_ADAPTERS: Record<AgentRuntime, RuntimeMcpAdapter> = {
  * Everything it reads is host-side - the adapter table, the descriptor list, the
  * per-run home paths, the project's doc slugs - so it needs no container.
  */
+/**
+ * How hard this runtime is asked to reason.
+ *
+ * A runtime with no native lever declares none, and gets the portable prompt
+ * directive: OpenCode's effort is written into the `opencode.json` its own
+ * adapter emits rather than onto argv, and Grok's `--reasoning-effort` values are
+ * not stable across its betas. Both are steered by the directive alone.
+ */
+export function applyEffortToRuntime(
+	runtime: AgentRuntime,
+	effort: AgentEffort,
+): EffortRuntimeApplication {
+	return (
+		RUNTIME_ADAPTERS[runtime].applyEffort?.(effort) ?? {
+			extraArgs: [],
+			extraEnv: [],
+			promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
+		}
+	);
+}
+
 export function buildMcpInjection(
 	runtime: AgentRuntime,
 	descriptors: readonly McpDescriptor[],
 	ctx: McpAdapterContext,
 ): McpInjection {
-	const adapter = MCP_ADAPTERS[runtime];
+	const adapter = RUNTIME_ADAPTERS[runtime];
 	const injection = adapter.build(descriptors, ctx);
 	validateInjection(adapter, injection);
 	return injection;
@@ -53,7 +80,10 @@ export type {
 	McpInjection,
 	McpInjectionFile,
 	McpStdioDescriptor,
-	RuntimeMcpAdapter,
+	RuntimeAdapter,
+	RuntimeArgsContext,
+	RuntimeEnvContext,
+	RuntimeUsageContext,
 } from './types';
 export { HEZO_MCP_SERVER_NAME } from './types';
 export { validateInjection } from './validate';

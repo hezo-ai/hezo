@@ -66,7 +66,10 @@ export async function resolveRuntimeForTask(
 		const result = await db.query<{ provider: AiProvider; runtime: AgentRuntime | null }>(
 			`SELECT provider, runtime FROM ai_provider_configs
 			 WHERE status = $1 AND provider IN (${placeholders})
-			 ORDER BY is_default DESC, created_at ASC
+			 -- id breaks a tie: two credentials added in the same millisecond share a
+			 -- created_at, and without it which one is "oldest" is a coin flip that can
+			 -- land differently on two runs over identical data.
+			 ORDER BY is_default DESC, created_at ASC, id ASC
 			 LIMIT ${RUNTIME_CANDIDATE_SCAN_LIMIT}`,
 			[AiProviderStatus.Verified, ...candidates],
 		);
@@ -121,7 +124,7 @@ export async function resolveRuntimeForTask(
 	const providers = await db.query<{ provider: AiProvider; runtime: AgentRuntime | null }>(
 		`SELECT provider, runtime FROM ai_provider_configs
 		 WHERE status = $1 AND provider IN (${placeholders})
-		 ORDER BY created_at ASC
+		 ORDER BY created_at ASC, id ASC
 		 LIMIT 1`,
 		[AiProviderStatus.Verified, ...known],
 	);
