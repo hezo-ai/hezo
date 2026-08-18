@@ -1,4 +1,4 @@
-import { AgentRuntime, AiProvider } from '@hezo/shared';
+import { AgentEffort, AgentRuntime, AiProvider } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import { MCP_ADAPTERS, type McpDescriptor, validateInjection } from '../src/services/mcp-injectors';
 import type { McpInjectionFile } from '../src/services/mcp-injectors/types';
@@ -598,6 +598,98 @@ describe('opencode adapter', () => {
 		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
 		const config = JSON.parse(injection.files[0].contents) as { mcp?: unknown };
 		expect(config.mcp).toBeUndefined();
+	});
+
+	// OpenCode has no reasoning flag or env var, so the run's effort is written
+	// onto its model here. The map key is the UNQUALIFIED id: `--model` takes
+	// `openrouter/<id>`, the config map does not, and a config keyed on the
+	// qualified form silently configures nothing.
+	const reasoningOf = (ctx: Parameters<typeof adapter.build>[1]) =>
+		(
+			JSON.parse(adapter.build([HEZO_DESCRIPTOR], ctx).files[0].contents) as {
+				provider?: Record<string, { models: Record<string, { options: unknown }> }>;
+			}
+		).provider;
+
+	it('writes the run effort as reasoning.effort on the run model', () => {
+		expect(
+			reasoningOf({
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider: AiProvider.OpenRouter,
+				runModel: 'deepseek/deepseek-v3.2',
+				effort: AgentEffort.Max,
+			}),
+		).toEqual({
+			openrouter: {
+				models: { 'deepseek/deepseek-v3.2': { options: { reasoning: { effort: 'max' } } } },
+			},
+		});
+	});
+
+	it('strips the opencode provider prefix off an already-qualified model id', () => {
+		expect(
+			reasoningOf({
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider: AiProvider.OpenRouter,
+				runModel: 'openrouter/deepseek/deepseek-v3.2',
+				effort: AgentEffort.Medium,
+			}),
+		).toEqual({
+			openrouter: {
+				models: { 'deepseek/deepseek-v3.2': { options: { reasoning: { effort: 'medium' } } } },
+			},
+		});
+	});
+
+	it('never asks for no reasoning, even at the lowest effort', () => {
+		const provider = reasoningOf({
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+			provider: AiProvider.OpenRouter,
+			runModel: 'deepseek/deepseek-v3.2',
+			effort: AgentEffort.Minimal,
+		});
+		expect(provider?.openrouter.models['deepseek/deepseek-v3.2'].options).toEqual({
+			reasoning: { effort: 'minimal' },
+		});
+	});
+
+	it('omits the provider block when the run pins no model', () => {
+		// OpenCode's models map has no wildcard key, so there is nothing to key the
+		// block on — configuring a guessed model would target one the run is not using.
+		expect(
+			reasoningOf({
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider: AiProvider.OpenRouter,
+				effort: AgentEffort.High,
+			}),
+		).toBeUndefined();
+	});
+
+	it('omits the provider block for a provider OpenCode does not address', () => {
+		expect(
+			reasoningOf({
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider: AiProvider.Anthropic,
+				runModel: 'claude-sonnet-4-5',
+				effort: AgentEffort.High,
+			}),
+		).toBeUndefined();
+	});
+
+	it('omits the provider block when no effort was resolved', () => {
+		expect(
+			reasoningOf({
+				hostHomeDir: HOME,
+				containerHomeDir: HOME,
+				provider: AiProvider.OpenRouter,
+				runModel: 'deepseek/deepseek-v3.2',
+			}),
+		).toBeUndefined();
 	});
 
 	it('renders a local (stdio) MCP server with its command array and environment', () => {

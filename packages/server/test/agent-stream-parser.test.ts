@@ -805,6 +805,108 @@ describe('agent-stream-parser — generic (opencode)', () => {
 		for (const e of STEP_FINISHES) parser.onStdout(`${JSON.stringify(e)}\n`);
 		expect(parser.getUsage()?.costCents).toBeGreaterThan(0);
 	});
+
+	// A completed tool call as OpenCode reports it: one event per call, arriving
+	// only once the call has finished, with the arguments and the output together
+	// on `part.state`.
+	const toolUse = (over: Record<string, unknown> = {}) => ({
+		type: 'tool_use',
+		part: {
+			type: 'tool',
+			callID: 'call_1',
+			tool: 'hezo_list_comments',
+			state: {
+				status: 'completed',
+				input: { task_id: 'HEZO-12' },
+				output: 'comment 1\ncomment 2',
+				title: 'List comments',
+				...over,
+			},
+		},
+	});
+
+	it('renders a completed tool call and its result as a pair', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(`${JSON.stringify(toolUse())}\n`);
+		// The pair is what `parse-agent-log.ts` matches FIFO to turn the viewer's
+		// status dot green; a lone `[tool]` line leaves it pending forever.
+		expect(out).toBe(
+			'[tool] hezo_list_comments(task_id=HEZO-12)\n[tool-result] comment 1 comment 2\n',
+		);
+	});
+
+	it('renders a failed tool call as a tool-error carrying its message', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(
+			`${JSON.stringify(toolUse({ status: 'error', output: undefined, error: 'task not found' }))}\n`,
+		);
+		expect(out).toBe('[tool] hezo_list_comments(task_id=HEZO-12)\n[tool-error] task not found\n');
+	});
+
+	it('emits a bare tool-result label when the call produced no output', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(`${JSON.stringify(toolUse({ output: '' }))}\n`);
+		expect(out).toBe('[tool] hezo_list_comments(task_id=HEZO-12)\n[tool-result]\n');
+	});
+
+	it('still renders a lone tool line for an event carrying no state', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(
+			`${JSON.stringify({ type: 'tool_use', name: 'bash', input: { command: 'ls' } })}\n`,
+		);
+		expect(out).toBe('[tool] bash(command=ls)\n');
+	});
+
+	// OpenCode emits a step_finish per step. Only the last one is the run's
+	// summary; the intermediate ones used to render a full-width success banner
+	// between every pair of tool calls.
+	const stepFinish = (reason: string, input: number, output: number) => ({
+		type: 'step_finish',
+		part: { type: 'step-finish', reason, tokens: { input, output, cache: { read: 0, write: 0 } } },
+	});
+
+	it('renders one done line for the terminal step, not one per step', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('tool-calls', 100, 10))}\n`)).toBe('');
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('tool-calls', 200, 20))}\n`)).toBe('');
+		// The line carries the whole run's totals, so suppressing the intermediate
+		// steps must not have dropped their counts.
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('stop', 300, 30))}\n`)).toBe(
+			'[done] success tokens=600/60\n',
+		);
+		expect(parser.flush()).toBe('');
+	});
+
+	it('reports an error reason on the done line', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('error', 5, 1))}\n`)).toBe(
+			'[done] error tokens=5/1\n',
+		);
+	});
+
+	it('writes the done line on flush when the terminal step never arrived', () => {
+		// OpenCode is documented to exit before its final step_finish under some
+		// container setups; without this the run would show no summary at all.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		expect(parser.onStdout(`${JSON.stringify(stepFinish('tool-calls', 100, 10))}\n`)).toBe('');
+		expect(parser.flush()).toBe('[done] success tokens=100/10\n');
+	});
+
+	it('writes no done line on flush when the run reported no usage at all', () => {
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		parser.onStdout(`${JSON.stringify({ type: 'message', text: 'hi' })}\n`);
+		expect(parser.flush()).toBe('');
+	});
+
+	it('renders a reasoning block whose text sits on the part', () => {
+		// `--thinking` puts these on the stream; a root-only probe found nothing
+		// and dropped every thinking block the run produced.
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
+		const out = parser.onStdout(
+			`${JSON.stringify({ type: 'reasoning', part: { type: 'reasoning', text: 'weighing it up' } })}\n`,
+		);
+		expect(out).toBe('[thinking] weighing it up\n');
+	});
 });
 
 describe('getFinalAssistantMessage', () => {

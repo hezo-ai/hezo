@@ -1098,12 +1098,29 @@ function priceGeminiModels(stats: GeminiStats | undefined, price: PriceModelFn):
 // ---------------------------------------------------------------------------
 // Generic JSONL parser (OpenCode)
 //
-// This CLI emits JSONL whose event shapes vary by version and aren't fully
-// documented, so rather than guess a single rigid schema this parser probes a
-// broad set of conventional field names. It renders assistant text, tool
-// activity, thinking, and errors when recognizable, and captures token usage
-// from whatever terminal event carries it. Unknown events are dropped so the
-// log stays clean. Replace with a bespoke parser once a real run is captured.
+// This CLI emits JSONL whose event shapes have shifted across versions and
+// aren't fully documented, so rather than commit to one rigid schema this parser
+// probes a broad set of conventional field names. It renders assistant text,
+// tool activity, thinking, and errors when recognizable, and captures token
+// usage from whatever terminal event carries it. Unknown events are dropped so
+// the log stays clean.
+//
+// The shapes a current run actually emits, which the probes above are layered
+// on top of rather than replaced by:
+//
+//   tool_use    part.tool, part.state.{status,input,output,error}. Emitted ONCE
+//               per call, only when the call has finished - the JSON stream
+//               carries no pending/running tool states - so the call and its
+//               result are rendered together as a `[tool]` + `[tool-result]`
+//               pair, which is what pairs FIFO in `parse-agent-log.ts` and turns
+//               the viewer's status dot green.
+//   step_finish part.reason ('tool-calls' = more steps follow, 'stop' = last),
+//               part.tokens.{input,output,reasoning}, part.tokens.cache.{read,write}.
+//               OpenCode emits one per step, so only the terminal one renders a
+//               `[done]` line; every step's counts are still summed.
+//   text        part.text
+//   reasoning   part.text (reaches the stream only with `--thinking`)
+//   error       error.name, error.data.message
 // ---------------------------------------------------------------------------
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -1163,6 +1180,32 @@ function extractGenericTool(event: Record<string, unknown>, type: string): strin
 	const partName = part ? firstString(part, ['name', 'tool', 'tool_name']) : undefined;
 	if (looksToolish || name || partName) return name ?? partName ?? 'tool';
 	return null;
+}
+
+/**
+ * Render a tool call, with its result when the event carries one.
+ *
+ * OpenCode reports a tool only once it has finished, putting the arguments and
+ * the output together on `part.state`, so both lines are emitted here - the same
+ * shape Codex's `command_execution` arm produces. An event with no `part.state`
+ * (every other probe-matched shape) still renders the single `[tool]` line it
+ * always did, and its dot stays pending because nothing ever reports a result.
+ */
+function renderGenericTool(event: Record<string, unknown>, name: string): string[] {
+	const part = isRecord(event.part) ? event.part : undefined;
+	const state = part && isRecord(part.state) ? part.state : undefined;
+	const input = state?.input ?? event.input ?? event.arguments ?? event.args;
+	const out = [formatToolUse(name, input)];
+	if (!state) return out;
+
+	const failed = state.status === 'error' || Boolean(state.error);
+	const label = failed ? '[tool-error]' : '[tool-result]';
+	const body =
+		(failed ? extractErrorMessage(state.error as { message?: string } | string | undefined) : '') ||
+		extractToolResultText(state.output ?? state.result);
+	const collapsed = body.replace(/\s+/g, ' ').trim();
+	out.push(collapsed === '' ? label : `${label} ${collapsed}`);
+	return out;
 }
 
 /** One event's token counts, before they are folded into a run total. */
@@ -1256,11 +1299,21 @@ function createGenericJsonlParser(
 	let tokens: GenericTokenBuckets | null = null;
 	let modelId: string | undefined = fallbackModelId;
 	let finalMessage: string | null = null;
+	let doneEmitted = false;
+
+	// The running total rather than the terminal step's own counts: the line reads
+	// as what the whole run spent, which is what it is once several steps report.
+	const doneLine = (total: GenericTokenBuckets, status: string): string => {
+		doneEmitted = true;
+		const soFar = priceGenericUsage(total, price, modelId);
+		return `[done] ${status} tokens=${soFar.inputTokens}/${soFar.outputTokens}`;
+	};
 
 	const renderEvent = (raw: unknown): string[] => {
 		if (!isRecord(raw)) return [];
 		const event = raw;
 		const type = typeof event.type === 'string' ? event.type : '';
+		const part = isRecord(event.part) ? event.part : undefined;
 		const model = firstString(event, ['model']);
 		if (model) modelId = model;
 
@@ -1276,14 +1329,17 @@ function createGenericJsonlParser(
 		}
 
 		if (/reason|think/i.test(type)) {
-			const t = firstString(event, ['text', 'content', 'thinking']);
+			// Probed on the part as well as the root: OpenCode carries a reasoning
+			// block's text at `part.text`, so a root-only probe found nothing and
+			// dropped every thinking block the run produced.
+			const t =
+				firstString(event, ['text', 'content', 'thinking']) ??
+				(part ? firstString(part, ['text', 'content', 'thinking']) : undefined);
 			return t ? [formatThinking(t)] : [];
 		}
 
 		const toolName = extractGenericTool(event, type);
-		if (toolName) {
-			return [formatToolUse(toolName, event.input ?? event.arguments ?? event.args)];
-		}
+		if (toolName) return renderGenericTool(event, toolName);
 
 		const text = extractGenericText(event);
 		if (text) {
@@ -1292,20 +1348,42 @@ function createGenericJsonlParser(
 		}
 
 		if (captured && GENERIC_TERMINAL_RE.test(type)) {
-			// The running total rather than this step's own counts: the line reads as
-			// the run's cost so far, which is what it is once several steps report.
-			const soFar = priceGenericUsage(tokens ?? captured, price, modelId);
-			return [`[done] success tokens=${soFar.inputTokens}/${soFar.outputTokens}`];
+			// OpenCode emits a step_finish per step, and `reason` says which kind:
+			// `tool-calls` means the model is going round again, so rendering a
+			// `[done]` there put a run-summary banner between every pair of tool
+			// calls. Only a terminal step gets the line; the counts from every step
+			// are already folded into `tokens` above either way. An event that names
+			// no reason (an older shape, or a `result`/`turn.completed` event) is
+			// treated as terminal, which is what it was before this existed.
+			const reason = part
+				? firstString(part, ['reason', 'finish_reason', 'stop_reason'])
+				: undefined;
+			if (reason === 'tool-calls') return [];
+			return [doneLine(tokens ?? captured, reason === 'error' ? 'error' : 'success')];
 		}
 		return [];
 	};
 
-	return createJsonlParser(
+	const base = createJsonlParser(
 		renderEvent,
 		() => (tokens ? priceGenericUsage(tokens, price, modelId) : null),
 		() => null,
 		() => finalMessage,
 	);
+
+	return {
+		...base,
+		// OpenCode is documented to exit before emitting its final `step_finish`
+		// under some container setups (sst/opencode#26855, #31435). Now that the
+		// intermediate steps no longer render one, such a run would end with no
+		// `[done]` line at all - so the summary is written here from the totals the
+		// steps did report rather than being lost with the missing event.
+		flush(): string {
+			const tail = base.flush();
+			if (doneEmitted || !tokens) return tail;
+			return `${tail}${doneLine(tokens, 'success')}\n`;
+		},
+	};
 }
 
 function createGenericChatParser(

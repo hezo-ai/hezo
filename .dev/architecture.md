@@ -3357,8 +3357,9 @@ failed open.
 global `medium`. Each runtime maps it natively: `claude_code` appends
 `think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `gemini`
 sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has no
-`minimal`, which maps to `low`); `opencode`/`grok` steer effort through the portable prompt
-directive. It's also exposed as `HEZO_AGENT_EFFORT`.
+`minimal`, which maps to `low`); `opencode` writes `reasoning.effort` onto the run's model in
+its per-run `opencode.json` (see below); `grok` steers effort through the portable prompt
+directive alone. It's also exposed as `HEZO_AGENT_EFFORT`.
 
 **Per-runtime wiring** lives in the MCP injectors (`services/mcp-injectors/`, six
 adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each builds the
@@ -3435,6 +3436,20 @@ abutting with no separator, since deltas are appended raw. The handoff net posts
 verbatim, so an entire run's thinking went out as one comment. Anything that is not another
 `text` delta now ends the message.
 
+**OpenCode reports a tool only once, when it has finished.** Its `--format json` stream carries
+no pending/running tool states: one `tool_use` event per call, arriving at completion with the
+arguments and the output together on `part.state`. The parser therefore renders both lines from
+that single event - `[tool]` plus `[tool-result]`, or `[tool-error]` when `state.status` is
+`error` - which is what pairs FIFO in `parse-agent-log.ts` and turns the viewer's status dot
+green. Emitting only the call left every OpenCode tool row showing a grey pending dot forever,
+and reading the arguments off the event root rather than `part.state.input` rendered them all
+as `name()`. Its `step_finish` is likewise per step, distinguished by `part.reason`
+(`tool-calls` = more steps follow, `stop` = last), so only a terminal step renders a `[done]`
+line while every step's counts are still summed - one run summary rather than a full-width
+success banner between each pair of tool calls. Because OpenCode is documented to sometimes
+exit before its final `step_finish` (sst/opencode#26855, #31435), the parser writes that
+summary from `flush()` if no `[done]` was reached, rather than losing it with the event.
+
 **Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
 legitimately long agent/background work; every runtime is relaxed at its own config surface
 (no exact cross-runtime env analog exists for Claude Code's `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`).
@@ -3448,7 +3463,16 @@ built-in provider are silently ignored by Codex's vacant-only merge) and only dr
 reconnect/retry, not a kill, so they're left at default. **Gemini** (`settings.json`) sets
 `tools.shell.inactivityTimeout = 0` (disables the 5-min kill of a silent shell command) and a
 per-MCP-server `timeout`. **OpenCode** (`opencode.json`) raises the per-MCP-server `timeout`
-from its 5 s (!) default to 10 min; its bash tool has a non-configurable 10-min hard cap.
+from its 5 s (!) default to 10 min; its bash tool has a non-configurable 10-min hard cap. The
+same file carries the run's reasoning effort, since the CLI exposes no flag or env var for it:
+`provider.<key>.models.<id>.options.reasoning.effort`, keyed on the run's own model with the
+OpenCode provider prefix taken back off (`opencodeModelKey`). OpenCode merges that entry with
+its built-in models.dev catalog, and `options` passes straight to the AI-SDK provider, so the
+value reaches OpenRouter's unified reasoning parameter. Hezo's effort ladder maps onto it 1:1
+and never emits `none`, so every OpenCode run reasons; a run that pins no model gets no block
+at all, because the models map has no wildcard key and a guessed one would configure a model
+the run is not using. `RUNTIME_STREAM_ARGS` pairs it with `--thinking`, which is what puts the
+resulting reasoning parts on the `--format json` stream for the log.
 **Grok** (`config.toml`) raises `[toolset.bash].timeout_secs` and per-`[mcp_servers.*]`
 `startup_timeout_sec` (its bash already auto-backgrounds on timeout rather than killing).
 **Kimi Code** (`mcp.json`) raises per-server `startupTimeoutMs`/`toolTimeoutMs` from its 30 s /
