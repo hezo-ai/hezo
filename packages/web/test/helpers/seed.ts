@@ -115,6 +115,22 @@ export async function seedTask(
 	return task;
 }
 
+/**
+ * Set a task's agent-maintained progress summary directly. Agents write it from
+ * inside a run via `update_task`; the REST route rejects a human write, so there
+ * is no API path a test can use.
+ */
+export async function seedTaskProgress(task: SeededTask, summary: string): Promise<void> {
+	const { db } = getTestContext();
+	await db.query(
+		`UPDATE tasks
+		 SET progress_summary = $1,
+		     progress_summary_updated_at = now()
+		 WHERE id = $2`,
+		[summary, task.id],
+	);
+}
+
 export interface SeededGoal {
 	id: string;
 	title: string;

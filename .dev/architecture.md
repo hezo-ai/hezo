@@ -176,7 +176,12 @@ place a genuine per-repo write restriction is represented.
 
 **Tasks & threads.** `tasks` are Linear-style tickets with a frozen `identifier`
 (`<task_prefix>-<n>`, e.g. `IN-42`), a required `assignee_id → members.id`, `rules`, and
-an agent-maintained `progress_summary`. Numbering is atomic via `project_task_counters`.
+an agent-maintained `progress_summary`. `progress_summary` is agent-only on the write side:
+`PATCH /api/projects/:projectId/tasks/:taskId` 403s a non-agent caller carrying the field,
+and the web task view renders that card read-only. It is the agent's own account of its
+work, handed back to the next run in full, so a human rewrite would silently change what
+that run believes it did; humans redirect through a comment or `rules` instead.
+Numbering is atomic via `project_task_counters`.
 `task_dependencies` is the many-to-many blocking graph (`UNIQUE`, no self-blocks).
 `task_comments` is **polymorphic** over a `content_type` enum + `content` JSONB — `text`,
 `system` (timeline entries like `status_change`/`title_change`/`description_change`/`task_link`),

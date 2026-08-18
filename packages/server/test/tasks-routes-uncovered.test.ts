@@ -397,6 +397,8 @@ describe('GET /tasks/:taskId + resolve + latest-run', () => {
 });
 
 describe('PATCH /tasks/:taskId — field matrix', () => {
+	// `progress_summary` is absent here deliberately: it is agent-only, covered by
+	// the two tests below.
 	it('updates every writable field in one request', async () => {
 		const task = await createTask('Full patch target');
 		const res = await patchTask(task.id, {
@@ -405,7 +407,6 @@ describe('PATCH /tasks/:taskId — field matrix', () => {
 			status: 'in_progress',
 			priority: 'urgent',
 			labels: ['a', 'b'],
-			progress_summary: 'halfway there',
 			rules: 'be nice',
 			branch_name: 'feat/full-patch',
 			runtime_type: 'codex',
@@ -417,13 +418,22 @@ describe('PATCH /tasks/:taskId — field matrix', () => {
 		expect(data.status).toBe('in_progress');
 		expect(data.priority).toBe('urgent');
 		expect(data.labels).toEqual(['a', 'b']);
-		expect(data.progress_summary).toBe('halfway there');
 		expect(data.rules).toBe('be nice');
 		expect(data.branch_name).toBe('feat/full-patch');
 		expect(data.runtime_type).toBe('codex');
-		// Admin-set progress summary attributes to no member.
-		expect(data.progress_summary_updated_by).toBeNull();
-		expect(data.progress_summary_updated_at).not.toBeNull();
+	});
+
+	it('403s an admin-set progress_summary and writes nothing', async () => {
+		const task = await createTask('Human summary target');
+		const res = await patchTask(task.id, { progress_summary: 'admin wrote this' });
+		expect(res.status).toBe(403);
+		expect((await res.json()).error.message).toMatch(/maintained by agents/);
+		const row = await db.query<{ progress_summary: string | null; updated: string | null }>(
+			'SELECT progress_summary, progress_summary_updated_at AS updated FROM tasks WHERE id = $1',
+			[task.id],
+		);
+		expect(row.rows[0].progress_summary).toBeNull();
+		expect(row.rows[0].updated).toBeNull();
 	});
 
 	it('attributes an agent-set progress_summary to the agent', async () => {

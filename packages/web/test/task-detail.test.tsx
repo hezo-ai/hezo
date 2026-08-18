@@ -287,10 +287,11 @@ test('Progress Summary and Rules cards expose info icons with help text', async 
 
 	const progressCard = await findByTestId('pinned-progress-summary');
 	expect(progressCard.textContent).toContain('Progress Summary');
+	// Agent-owned: the card reads, so it carries no Edit affordance.
 	const progressEdit = Array.from(progressCard.querySelectorAll('button')).find(
 		(b) => b.textContent === 'Edit',
 	);
-	expect(progressEdit).toBeTruthy();
+	expect(progressEdit).toBeUndefined();
 
 	const rulesCard = await findByTestId('pinned-rules');
 	expect(rulesCard.textContent).toContain('Rules');
