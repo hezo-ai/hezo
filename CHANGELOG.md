@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.50.1 - 2026-08-18
+
+### Bug Fixes
+
+- **config:** refuse to start when a removed env var still selects the data dir ([#1000](https://github.com/hezo-ai/hezo/pull/1000))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.50.0...0.50.1
+
 ## 0.50.0 - 2026-08-18
 
 ### Breaking Changes
