@@ -110,7 +110,7 @@ itself.
 
 If an MCP server or a git remote your agents genuinely need lives on your local network,
 start Hezo with `--egress-allow-private-targets` (or
-`HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`) to lift the restriction.
+`egress.allowPrivateTargets`) to lift the restriction.
 
 ## How secrets get in
 

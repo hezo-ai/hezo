@@ -2,7 +2,9 @@ import { existsSync } from 'node:fs';
 import { AuthType, WsClientAction } from '@hezo/shared';
 import { app } from './app';
 import { AssetStorageError } from './assets/errors';
-import { parseConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
+import { resolveConfig, runBackup, runRestore, runUninstall, runVersion } from './cli';
+import { setRuntimeConfig } from './config/runtime';
+import type { HezoConfig } from './config/types';
 import type { MasterKeyManager } from './crypto/master-key';
 import { PgDataCorruptError } from './db/client';
 import type { Db } from './db/database';
@@ -114,7 +116,22 @@ if (await runUninstall()) {
 	process.exit(0);
 }
 
-const config = parseConfig();
+// A bad config file or flag is operator error, not a crash: print what is wrong
+// and exit. Without this the throw reaches the uncaughtException handler and the
+// operator gets a stack trace through `/$bunfs/root/hezo` above the one line that
+// actually tells them which key to fix.
+const config = ((): HezoConfig => {
+	try {
+		return resolveConfig();
+	} catch (err) {
+		console.error(`\n${err instanceof Error ? err.message : String(err)}\n`);
+		process.exit(1);
+	}
+})();
+// Publish it before anything reads config back through `runtimeConfig()`. Service
+// modules were imported above (via `./app`), so they must read it lazily, not at
+// module scope — see config/runtime.ts.
+setRuntimeConfig(config);
 setLogLevel(config.logLevel);
 
 // Self-update supervisor. A compiled binary with auto-update enabled runs as a
@@ -128,7 +145,7 @@ if (!process.env.HEZO_WORKER && isAutoUpdateEnabled()) {
 	await runSupervisor(config.dataDir);
 }
 
-setKeepOldContainers(config.keepOldContainers);
+setKeepOldContainers(config.containers.keepOld);
 
 // Graceful shutdown on termination signals (the supervisor forwards these to the
 // worker). Close the runtime cleanly, then exit 0 so the supervisor sees a

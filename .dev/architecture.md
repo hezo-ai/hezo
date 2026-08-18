@@ -48,7 +48,7 @@ manager (agents bring their own models and runtimes).
 |---|---|
 | Server | Hono (TypeScript) on the **Bun** runtime |
 | Binary | `bun build --compile` → one cross-platform executable |
-| Database | Behind the `Db` interface (`src/db/database.ts`): **PGlite** (embedded Postgres, in-process, persisted to `~/.hezo/pgdata`) by default, or **external Postgres 14+** via `--database-url`/`HEZO_DATABASE_URL` (node-postgres pool) |
+| Database | Behind the `Db` interface (`src/db/database.ts`): **PGlite** (embedded Postgres, in-process, persisted to `~/.hezo/pgdata`) by default, or **external Postgres 14+** via `--database-url`/`database.url` (node-postgres pool) |
 | Frontend | React 19 + TanStack Router + TanStack Query, Tailwind + Radix UI; bundled into the binary |
 | Realtime | WebSocket row-change events → client invalidates React Query keys |
 | Agent interface | MCP (Streamable HTTP) at `POST /mcp` via `@modelcontextprotocol/sdk` |
@@ -1270,7 +1270,7 @@ The client speaks the Engine API over a Unix socket (Bun `fetch({unix})` for one
 `node:http` `socketPath` for streams), so `tcp://`/`npipe://`/`ssh://` endpoints are
 structurally unsupported and are reported as such rather than silently ignored.
 `services/docker-socket.ts` resolves it, most-explicit first: `--docker-socket` /
-`HEZO_DOCKER_SOCKET` -> `DOCKER_HOST` -> the docker CLI's **current context** (read straight
+`containers.dockerSocket` -> `DOCKER_HOST` -> the docker CLI's **current context** (read straight
 from `${DOCKER_CONFIG:-~/.docker}/config.json` + `contexts/meta/<sha256(name)>/meta.json`,
 no subprocess, `DOCKER_CONTEXT` winning) -> the well-known path per supported runtime
 (`/var/run/docker.sock`, `~/.docker/run`, `~/.colima/<profile>`, `~/.rd`, `~/.orbstack/run`,
@@ -1324,14 +1324,14 @@ probe mounts a scratch dir from the data dir into a throwaway container, has it 
 host-written sentinel and write back, and checks host-side that the write landed: missing
 sentinel (or a write the host never sees) -> `not-mounted`, sentinel visible but write
 refused -> `read-only`. Logged at `error` with the runtime-specific fix but **non-fatal** -
-exiting would take down the UI the operator needs. Opt out with `HEZO_SKIP_MOUNT_CHECK`.
+exiting would take down the UI the operator needs. Opt out with `containers.skipMountCheck`.
 
 **A vault-backed credential defers the open to unlock, and only then.** The provider API
 key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
 an instance, which comes back **locked** after every restart, cannot read it at the moment
 the backend is chosen. Making that fatal meant a managed backend could not survive a
 restart at all: a stored key read back as "no API key is configured", and a
-`HEZO_DAYTONA_API_KEY` supplied at launch threw "the instance is locked" from
+`containers.daytona.apiKey` supplied at launch threw "the instance is locked" from
 `storeDaytonaApiKey`. Both aborted startup on every boot, and the only workaround was
 passing the master key on the command line — the one thing Hezo never asks an operator to
 persist.
@@ -3831,7 +3831,7 @@ surfaced as `Proxy CONNECT aborted` on every clone. The token rides the
 per-runtime change. This closes the gap where any process reaching the proxy port could drive
 substitution for another run; it does not weaken the red line — an unauthenticated caller only
 ever ships the *unsubstituted* placeholder, which fails upstream, never a real secret. Auth is
-on by default and can be disabled with `--no-egress-proxy-auth` / `HEZO_EGRESS_PROXY_AUTH=0`
+on by default and can be disabled with `--no-egress-proxy-auth` / `egress.proxyAuth: false`
 for a runtime whose HTTP client can't carry proxy credentials.
 
 **Egress MTU.** Containers reach the internet through the host's default-route interface via
@@ -3901,7 +3901,7 @@ so it should never arrive here, but `NO_PROXY` is a client-side convention and a
 that ignored it would otherwise lose its whole tool surface; the run already holds an
 agent JWT for exactly that endpoint, so this grants nothing new, and the port match keeps
 `host.docker.internal:5432` refused. Off-switch: `--egress-allow-private-targets` /
-`HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`, for an operator whose MCP server or git remote is
+`egress.allowPrivateTargets`, for an operator whose MCP server or git remote is
 genuinely on the LAN. The proxy's own MITM bridge dials loopback directly (`netConnect`),
 not through this path, so it is unaffected.
 
@@ -4903,6 +4903,53 @@ shorter than the image it writes), and the maskable variant had no safe zone at 
 
 ## 12. Build, release, migrations & upgrades
 
+### Configuration resolution
+
+Settings come from a **config file** named by `--config`, and from **CLI flags**. Precedence
+is **flag > file > built-in default**, resolved once by `resolveConfig` (`cli.ts`) into a
+`HezoConfig`. There is no implicit discovery: without `--config`, only defaults and flags
+apply. Environment variables are no longer a configuration mechanism - `HEZO_MASTER_KEY` is
+the single exception (below), and the remaining `HEZO_*` reads are test seams, dev directory
+overrides, container-injected run plumbing, or build/process topology (`HEZO_WORKER`,
+`HEZO_VERSION`).
+
+The file is CommonJS (`module.exports = { … }`), loaded with `createRequire` in
+`config/load.ts`. `createRequire` builds the resolver at runtime, so `bun build --compile`
+never sees a specifier it might try to resolve statically and inline into the binary - a
+plain `require(path)` or `import(path)` would be a bundler input. Because it is real
+JavaScript, the file can compute values at load time; the systemd deploy uses that to read
+its `webUrl` from a side file that `hezo-firstboot` writes, since a `.cjs` object cannot be
+appended to the way an `EnvironmentFile` line could.
+
+Validation is a `.strict()` zod schema (`config/schema.ts`) whose shape is a deep-`Partial`
+of `HezoConfig`, so the file, the type and `docs/deployment/configuration.md` cannot drift.
+Strictness is the point: a silently-ignored `dataDIr` is the specific failure mode a config
+file introduces over flags. Two keys are rejected **by name**, with their own message rather
+than a generic "unrecognized key":
+
+- **`masterKey`** - it must never be written to disk (§ *Never encourage storing the master
+  key on a system* in AGENTS.md). `HEZO_MASTER_KEY` remains the way to unlock a single
+  non-interactive startup: an env var rather than a flag, because a twelve-word phrase in
+  argv is visible in the process list.
+- **`reset`** - it renames the embedded `pgdata` aside, which is a one-off action. In a
+  persistent file it would wipe the database on **every** restart.
+
+**Reaching the resolved config.** `index.ts` publishes it with `setRuntimeConfig()` right
+after resolving, and everything else reads it back through `runtimeConfig()`
+(`config/runtime.ts`). The accessor exists because `index.ts` imports `./app` - and through
+it every service - *before* it resolves anything, so a module-level
+`const X = process.env.Y ?? default` would capture the default and silently ignore the
+operator's file. Read config inside the function that needs it, never into a module-level
+constant. Where a value was previously interpolated into a module-level string
+(`nextHeartbeatAtSql`, `heartbeatIntervalArgDescription`), that string became a function for
+the same reason. `runtimeConfig()` falls back to `DEFAULT_CONFIG` when nothing has been set,
+so a unit test that imports a service without booting the server needs no arrangement.
+
+`hezo backup`, `hezo restore` and `hezo uninstall` accept the same `--config` and share one
+resolver (`resolveSubcommandTargets`), replacing four near-duplicate pickers that had drifted
+- one of them let an empty value win where the others treated empty as unset.
+
+
 **Author-run generators.** Two build steps are **not** wired into `bun run build` or CI, because
 their output is committed and regenerating them requires a tool the ordinary build must not
 depend on: `build:marketplace` (recompiles `marketplace/teams/*.json`, also run by `bun run dev`)
@@ -5195,9 +5242,10 @@ body through `restoreLogicalBackupFromFile`, so a multi-GB backup is never decom
 the header and again for the load, and never held in memory. External startup migrations write a bare logical `.backup.gz` into `<dataDir>/backups/`
 automatically before applying (last 5 kept; a failed backup aborts the migration); the
 embedded path keeps its stronger copy-swap instead. The `hezo backup`/`hezo restore`
-subcommands resolve the data dir with the same precedence as the server (`HEZO_DATA_DIR` >
-`--data-dir` > `~/.hezo`, via `pickDataDir` in `cli.ts`), so a deployment that starts the
-server with `HEZO_DATA_DIR` set needs no extra flag; backup also refuses (with an actionable
+subcommands resolve the data dir with the same precedence as the server (`--data-dir` >
+the `--config` file's `dataDir` > `~/.hezo`, via `resolveSubcommandTargets` in `cli.ts`), so
+a deployment that starts the server with a config file needs only the same `--config`;
+backup also refuses (with an actionable
 message) if the target holds no `_migrations` bookkeeping. Embedded is single-process, so
 backup/restore against the embedded backend are gated by an **advisory instance lock**
 (`db/instance-lock.ts`): the running server writes its OS PID to `<dataDir>/hezo.lock`

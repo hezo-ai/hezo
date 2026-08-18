@@ -1,118 +1,63 @@
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
 	DEFAULT_DATA_DIR,
-	DEFAULT_PORT,
 	deriveAuthKeyPair,
 	deriveUnlockKey,
 	validateMnemonic,
 } from '@hezo/shared';
 import { Command } from 'commander';
+import { loadConfigFile } from './config/load';
+import type { ConfigFile } from './config/schema';
+import { DEFAULT_CONFIG, type HezoConfig, resolveDataDir } from './config/types';
 import { createStreamProgressReporter, formatBytes } from './lib/progress';
-import { DEFAULT_TELEMETRY_ENDPOINT } from './services/telemetry';
 import { HEZO_VERSION } from './version';
 
-export type LogLevelName = 'debug' | 'info' | 'warn' | 'error';
+export type { HezoConfig, LogLevelName } from './config/types';
 
-export interface HezoConfig {
-	port: number;
+/**
+ * Read the `--config <path>` option off an already-parsed command. Every
+ * command accepts it, and a command that was given none resolves from the
+ * built-in defaults alone.
+ */
+function readConfigFile(opts: Record<string, unknown>): ConfigFile {
+	const path = opts.config;
+	return typeof path === 'string' && path.length > 0 ? loadConfigFile(path) : {};
+}
+
+/**
+ * Resolve the settings the backup/restore/uninstall subcommands share, with the
+ * same flag > config file > default precedence the server uses.
+ *
+ * One resolver rather than a picker per setting: the four this replaced had
+ * drifted apart, and the one in `runUninstall` let an *empty* value win where
+ * the others treated empty as unset.
+ */
+interface SubcommandTargets {
 	dataDir: string;
-	/**
-	 * External Postgres connection string (`--database-url` / `HEZO_DATABASE_URL`).
-	 * Unset → the embedded PGlite database under `<dataDir>/pgdata`. The raw value
-	 * carries credentials: it must never be logged or exposed un-redacted (see
-	 * `redactDatabaseUrl` in `lib/db-info.ts`) and never passed into `buildApp`.
-	 */
 	databaseUrl?: string;
-	/**
-	 * S3-compatible asset storage URL (`--asset-storage-url` /
-	 * `HEZO_ASSET_STORAGE_URL`). Unset → asset blobs on the local filesystem
-	 * under `<dataDir>/assets`. The raw value carries credentials: it must never
-	 * be logged or exposed un-redacted (see `redactAssetStorageUrl` in
-	 * `lib/asset-storage-info.ts`) and never passed into `buildApp`.
-	 */
 	assetStorageUrl?: string;
-	/**
-	 * Where agent containers run (`--sandbox-backend` / `HEZO_SANDBOX_BACKEND`):
-	 * `docker` (default, the local daemon) or a managed sandbox service. Selecting
-	 * a managed backend Hezo cannot reach is **fatal at startup** - it never falls
-	 * back to local Docker, because an instance that silently degraded would look
-	 * healthy while running somewhere the operator did not choose.
-	 */
-	sandboxBackend?: string;
-	/**
-	 * Daytona API key (`--daytona-api-key` / `HEZO_DAYTONA_API_KEY`), required
-	 * when `sandboxBackend` is `daytona`. Used only by trusted server code to
-	 * reach the provider control plane - it is never placed in an agent
-	 * container, and never logged (see `redactSandboxApiUrl`).
-	 */
-	daytonaApiKey?: string;
-	/** Daytona API base URL, for a regional or self-hosted endpoint. */
-	daytonaApiUrl?: string;
-	masterKey?: { unlockKeyHex: string; publicKeyHex: string };
-	webUrl: string;
-	reset: boolean;
-	open: boolean;
-	logLevel: LogLevelName;
-	keepOldContainers: boolean;
-	/**
-	 * Install staged updates automatically (`--auto-install-updates` /
-	 * `HEZO_AUTO_INSTALL_UPDATES`). Once a newer release is downloaded and
-	 * verified, the server gracefully restarts onto it by itself instead of
-	 * waiting for a superuser's "Install & restart" — deferring while agent runs
-	 * are in flight. Only effective where the in-app update flow is available at
-	 * all (the self-managed compiled binary, not inside a container).
-	 */
-	autoInstallUpdates: boolean;
-	/**
-	 * Explicit path to the container runtime's Unix socket (`--docker-socket` /
-	 * `HEZO_DOCKER_SOCKET`). Unset by default, in which case the startup preflight
-	 * discovers it: `DOCKER_HOST`, then the docker CLI's current context, then the
-	 * well-known path for each supported runtime (Docker Engine/Desktop, Colima,
-	 * Rancher Desktop, OrbStack, Lima, rootless Docker). Set it only when the
-	 * daemon listens somewhere none of those cover.
-	 */
-	dockerSocket?: string;
-	/**
-	 * Require a per-run token on every request to the egress proxy. On by
-	 * default: each run's `HTTP(S)_PROXY` URL carries a random token that the
-	 * proxy checks (constant-time) before substituting any secret, so a
-	 * co-resident process that reaches the proxy address can't drive
-	 * substitution for another run. Disable only to unblock a runtime whose HTTP
-	 * client can't carry proxy credentials — the secret red line still holds
-	 * either way (an unauthenticated caller only ships unsubstituted
-	 * placeholders). `--no-egress-proxy-auth` / `HEZO_EGRESS_PROXY_AUTH=0`.
-	 */
-	egressProxyAuth: boolean;
-	/**
-	 * Permit proxied agent egress to loopback / link-local / private addresses.
-	 * Off by default: the egress proxy runs in the host's network namespace, so
-	 * without the guard an agent could tunnel to Hezo's own API, its database, or
-	 * any host-bound daemon. Enable only when an MCP server or git remote the
-	 * agents legitimately need lives on the LAN.
-	 * `--egress-allow-private-targets` / `HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`.
-	 */
-	egressAllowPrivateTargets: boolean;
-	/**
-	 * Anonymous daily usage telemetry. On by default (opt-out): once a day the
-	 * server POSTs aggregate counts (projects, tasks, tokens, AI-provider mix,
-	 * version) — no names, content, or costs — to `endpoint`, keyed by a random
-	 * per-install id. Disabled with `--disable-telemetry` / `HEZO_TELEMETRY_ENABLED=0`.
-	 */
-	telemetry: {
-		enabled: boolean;
-		endpoint: string;
+}
+
+function resolveSubcommandTargets(opts: Record<string, unknown>): SubcommandTargets {
+	const file = readConfigFile(opts);
+	const flag = (value: unknown): string | undefined =>
+		typeof value === 'string' && value.length > 0 ? value : undefined;
+	return {
+		dataDir: resolveDataDir(flag(opts.dataDir) ?? file.dataDir ?? DEFAULT_DATA_DIR),
+		databaseUrl: flag(opts.databaseUrl) ?? file.database?.url,
+		assetStorageUrl: flag(opts.assetStorageUrl) ?? file.assetStorage?.url,
 	};
 }
 
-function resolveDataDir(raw: string): string {
-	return raw.startsWith('~') ? resolve(homedir(), raw.slice(2)) : resolve(raw);
-}
+/** The `--config` option text, identical on every command that accepts one. */
+const CONFIG_OPTION_DESC =
+	'Path to a Hezo config file (a CommonJS module: module.exports = { … }). Settings in it are ' +
+	'overridden by any flag you also pass.';
 
 export interface DevDataDir {
 	dataDir: string;
 	/**
-	 * True only when neither HEZO_DATA_DIR nor --data-dir was set — `bun run dev`
+	 * True only when neither --data-dir nor a config file set one — `bun run dev`
 	 * must then forward the project-local default to the server it spawns, which
 	 * would otherwise fall back to the production default (~/.hezo).
 	 */
@@ -120,48 +65,24 @@ export interface DevDataDir {
 }
 
 /**
- * Resolve the data dir for `bun run dev`. Mirrors parseConfig's precedence
- * (env HEZO_DATA_DIR > --data-dir > default) but swaps the production default
+ * Resolve the data dir for `bun run dev`. Mirrors resolveConfig's precedence
+ * (--data-dir > config file > default) but swaps the production default
  * (~/.hezo) for a project-local dir so local dev never shares the production
- * database. Both env and CLI values flow through resolveDataDir, so a leading
- * `~` expands exactly as the server does. An empty env value is treated as
- * unset, matching parseConfig's `pick`.
+ * database.
  */
 export function resolveDevDataDir(
 	defaultDir: string,
 	cliDataDir: string | undefined,
-	env: NodeJS.ProcessEnv = process.env,
+	configPath?: string,
 ): DevDataDir {
-	const envValue = env.HEZO_DATA_DIR;
-	if (envValue !== undefined && envValue !== '') {
-		return { dataDir: resolveDataDir(envValue), usedDefault: false };
-	}
 	if (cliDataDir !== undefined && cliDataDir !== '') {
 		return { dataDir: resolveDataDir(cliDataDir), usedDefault: false };
 	}
+	const fromFile = configPath ? loadConfigFile(configPath).dataDir : undefined;
+	if (fromFile !== undefined && fromFile !== '') {
+		return { dataDir: resolveDataDir(fromFile), usedDefault: false };
+	}
 	return { dataDir: resolve(defaultDir), usedDefault: true };
-}
-
-function parsePort(raw: string): number {
-	const n = Number.parseInt(raw, 10);
-	if (Number.isNaN(n) || n < 1 || n > 65535) {
-		throw new Error(`Invalid port: ${raw}. Must be 1-65535.`);
-	}
-	return n;
-}
-
-function parseLogLevel(raw: string): LogLevelName {
-	const lower = raw.toLowerCase();
-	if (lower === 'debug' || lower === 'info' || lower === 'warn' || lower === 'error') {
-		return lower;
-	}
-	throw new Error(`Invalid log level: ${raw}. Must be debug | info | warn | error.`);
-}
-
-function parseBool(raw: string): boolean {
-	if (raw === '') return true;
-	const lower = raw.toLowerCase();
-	return lower !== '0' && lower !== 'false' && lower !== 'no' && lower !== 'off';
 }
 
 /**
@@ -195,48 +116,6 @@ export function runVersion(
 		return true;
 	}
 	return false;
-}
-
-/** Env wins over flag, mirroring parseConfig's `pick` for subcommands. */
-function pickDatabaseUrl(
-	cliValue: unknown,
-	env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-	const e = env.HEZO_DATABASE_URL;
-	if (e !== undefined && e !== '') return e;
-	if (typeof cliValue === 'string' && cliValue.length > 0) return cliValue;
-	return undefined;
-}
-
-/** As `pickDatabaseUrl`, for the asset-storage URL on the backup/restore subcommands. */
-function pickAssetStorageUrl(
-	cliValue: unknown,
-	env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-	const e = env.HEZO_ASSET_STORAGE_URL;
-	if (e !== undefined && e !== '') return e;
-	if (typeof cliValue === 'string' && cliValue.length > 0) return cliValue;
-	return undefined;
-}
-
-/**
- * Resolve the data directory for the backup/restore subcommands, honouring
- * `HEZO_DATA_DIR` (env wins over `--data-dir`, then the default) exactly as
- * `parseConfig` does for the server — and mirroring `pickDatabaseUrl` /
- * `pickAssetStorageUrl` in these same commands, which already read their env.
- *
- * Without this, a production instance started with `HEZO_DATA_DIR=/var/lib/hezo`
- * (a systemd/docker deployment that never passes `--data-dir`) would make
- * `hezo backup` fall back to the default `~/.hezo`; `openPersistentDb` then
- * silently creates a fresh, empty database there, and the dump crashes with a
- * bare `relation "_migrations" does not exist`. Reading the env var keeps the
- * subcommand pointed at the same embedded database the server uses.
- */
-function pickDataDir(cliValue: unknown, env: NodeJS.ProcessEnv = process.env): string {
-	const e = env.HEZO_DATA_DIR;
-	if (e !== undefined && e !== '') return resolveDataDir(e);
-	if (typeof cliValue === 'string' && cliValue.length > 0) return resolveDataDir(cliValue);
-	return resolveDataDir(DEFAULT_DATA_DIR);
 }
 
 /**
@@ -313,12 +192,10 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 			'--output <path>',
 			'Output path: a bundle directory (default <data-dir>/backups/hezo-<timestamp>), or a .backup.gz file with --no-assets',
 		)
-		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
-		.option('--database-url <url>', 'External Postgres connection string (env: HEZO_DATABASE_URL)')
-		.option(
-			'--asset-storage-url <url>',
-			'S3-compatible asset storage to read blobs from (env: HEZO_ASSET_STORAGE_URL)',
-		)
+		.option('--config <path>', CONFIG_OPTION_DESC)
+		.option('--data-dir <path>', `Data directory (default ${DEFAULT_DATA_DIR})`)
+		.option('--database-url <url>', 'External Postgres connection string')
+		.option('--asset-storage-url <url>', 'S3-compatible asset storage to read blobs from')
 		.option('--no-assets', 'Back up the database only — skip asset files')
 		.option('--no-database', 'Back up asset files only — skip the database')
 		.parse(argv.slice(3), { from: 'user' });
@@ -329,9 +206,7 @@ export async function runBackup(argv: string[] = process.argv): Promise<boolean>
 	if (!withAssets && !withDatabase) {
 		throw new Error('Nothing to back up: --no-assets and --no-database cannot be combined.');
 	}
-	const dataDir = pickDataDir(opts.dataDir);
-	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
-	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
+	const { dataDir, databaseUrl, assetStorageUrl } = resolveSubcommandTargets(opts);
 
 	// Embedded backend: never open a second cluster over a live server's files.
 	if (!databaseUrl) await assertNoLiveEmbeddedServer(dataDir, 'backup');
@@ -471,15 +346,10 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 			'Restore a backup: a "hezo backup" bundle (database + assets), or a logical .backup.gz',
 		)
 		.argument('<backup>', 'path to a backup bundle directory or file')
-		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
-		.option(
-			'--database-url <url>',
-			'External Postgres connection string to restore into (env: HEZO_DATABASE_URL)',
-		)
-		.option(
-			'--asset-storage-url <url>',
-			'S3-compatible asset storage to restore blobs into (env: HEZO_ASSET_STORAGE_URL)',
-		)
+		.option('--config <path>', CONFIG_OPTION_DESC)
+		.option('--data-dir <path>', `Data directory (default ${DEFAULT_DATA_DIR})`)
+		.option('--database-url <url>', 'External Postgres connection string to restore into')
+		.option('--asset-storage-url <url>', 'S3-compatible asset storage to restore blobs into')
 		.option('--wipe', 'Drop the existing schema in the target database before restoring')
 		.option('--no-assets', 'Restore the database only — skip asset files in a bundle')
 		.option('--no-database', 'Restore asset files only — skip the database in a bundle')
@@ -493,9 +363,7 @@ export async function runRestore(argv: string[] = process.argv): Promise<boolean
 
 	const opts = program.opts();
 	const backupPath = resolve(program.args[0]);
-	const dataDir = pickDataDir(opts.dataDir);
-	const databaseUrl = pickDatabaseUrl(opts.databaseUrl);
-	const assetStorageUrl = pickAssetStorageUrl(opts.assetStorageUrl);
+	const { dataDir, databaseUrl, assetStorageUrl } = resolveSubcommandTargets(opts);
 
 	// Embedded target: refuse to write over the files of a live server.
 	if (!databaseUrl) await assertNoLiveEmbeddedServer(dataDir, 'restore');
@@ -696,20 +564,24 @@ export async function runUninstall(
 		.description(
 			"Remove Hezo's data directory (all projects, the database, backups, settings) and the containers it created",
 		)
-		.option('--data-dir <path>', 'Data directory to remove (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
+		.option('--config <path>', CONFIG_OPTION_DESC)
+		.option('--data-dir <path>', `Data directory to remove (default ${DEFAULT_DATA_DIR})`)
 		.option('--yes', 'Confirm removal — required; without it nothing is deleted')
 		// The instance's own backend, so its containers are removed wherever they
 		// actually ran. Defaults to Docker, matching the server's default.
 		.option(
 			'--sandbox-backend <name>',
-			'Backend the instance ran containers on: docker (default) or daytona (env: HEZO_SANDBOX_BACKEND)',
+			'Backend the instance ran containers on: docker (default) or daytona',
 		)
-		.option('--daytona-api-key <key>', 'Daytona API key (env: HEZO_DAYTONA_API_KEY)')
-		.option('--daytona-api-url <url>', 'Daytona API base URL (env: HEZO_DAYTONA_API_URL)')
+		.option('--daytona-api-key <key>', 'Daytona API key')
+		.option('--daytona-api-url <url>', 'Daytona API base URL')
 		.parse(argv.slice(3), { from: 'user' });
 
 	const opts = program.opts();
-	const dataDir = pickDataDir(opts.dataDir);
+	const { dataDir } = resolveSubcommandTargets(opts);
+	// The instance's own backend, so its containers are removed wherever they
+	// actually ran — read from the same config file the server was started with.
+	const containers = readConfigFile(opts).containers;
 
 	const { existsSync } = await import('node:fs');
 	if (!existsSync(dataDir)) {
@@ -753,10 +625,10 @@ export async function runUninstall(
 	// fatal — Docker may already be stopped.
 	const removeContainers = deps.removeContainers ?? defaultRemoveProvisionedContainers;
 	const backendOpts: SandboxBackendOptions = {
-		backend: process.env.HEZO_SANDBOX_BACKEND ?? opts.sandboxBackend,
-		daytonaApiKey: process.env.HEZO_DAYTONA_API_KEY ?? opts.daytonaApiKey,
-		daytonaApiUrl: process.env.HEZO_DAYTONA_API_URL ?? opts.daytonaApiUrl,
-		dockerSocket: process.env.HEZO_DOCKER_SOCKET ?? opts.dockerSocket,
+		backend: opts.sandboxBackend ?? containers?.backend,
+		daytonaApiKey: opts.daytonaApiKey ?? containers?.daytona?.apiKey,
+		daytonaApiUrl: opts.daytonaApiUrl ?? containers?.daytona?.apiUrl,
+		dockerSocket: opts.dockerSocket ?? containers?.dockerSocket,
 	};
 	const managed = (backendOpts.backend ?? 'docker') !== 'docker';
 	try {
@@ -794,112 +666,131 @@ export async function runUninstall(
 }
 
 /**
- * Central configuration resolution. Each option can be set via either a CLI
- * flag or an env var; the env var takes precedence when both are present. The
- * defaults defined here are the final fallback. This is the only place where
- * config values are resolved — subsystems (logger level, container removal
- * gate, etc.) receive their slice and apply it locally at startup.
+ * Central configuration resolution: **CLI flag > config file > built-in default**.
+ *
+ * The flag wins because it is the more specific, more immediate instruction -
+ * you type it to override the file you already wrote. `--config` names the file;
+ * without it only defaults and flags apply.
+ *
+ * Two settings are deliberately unreachable from the file (`schema.ts` rejects
+ * them by name): `masterKey`, which must never be written to disk, and `reset`,
+ * which would wipe the database on every restart rather than once.
+ *
+ * This is the only place config values are resolved. Subsystems take their slice
+ * from the returned object, or read it back through `runtimeConfig()`.
  */
-export function parseConfig(
+export function resolveConfig(
 	argv: string[] = process.argv,
 	env: NodeJS.ProcessEnv = process.env,
 ): HezoConfig {
 	const program = new Command()
 		.name('hezo')
 		.description('Hezo server — self-hosted AI agent management platform')
-		.option('--port <port>', 'Server port (env: HEZO_PORT)', String(DEFAULT_PORT))
-		.option('--data-dir <path>', 'Data directory (env: HEZO_DATA_DIR)', DEFAULT_DATA_DIR)
+		.option('--config <path>', CONFIG_OPTION_DESC)
+		.option('--port <port>', `Server port (default ${DEFAULT_CONFIG.port})`)
+		.option('--data-dir <path>', `Data directory (default ${DEFAULT_DATA_DIR})`)
 		.option(
 			'--database-url <url>',
-			'External Postgres connection string (postgres://user:password@host:5432/db). Omit to use the embedded database under the data directory. (env: HEZO_DATABASE_URL)',
+			'External Postgres connection string (postgres://user:password@host:5432/db). Omit to use the embedded database under the data directory.',
 		)
 		.option(
 			'--asset-storage-url <url>',
-			'S3-compatible object storage for asset files (s3://ACCESS_KEY:SECRET@endpoint/bucket[/prefix]?region=…&pathStyle=…). Works with AWS S3, MinIO, R2, Spaces, B2, and any other S3-compatible store. Omit to store assets on the local filesystem under the data directory. (env: HEZO_ASSET_STORAGE_URL)',
+			'S3-compatible object storage for asset files (s3://ACCESS_KEY:SECRET@endpoint/bucket[/prefix]?region=…&pathStyle=…). Works with AWS S3, MinIO, R2, Spaces, B2, and any other S3-compatible store. Omit to store assets on the local filesystem under the data directory.',
 		)
 		.option(
 			'--sandbox-backend <name>',
-			'Where agent containers run: docker (default, the local daemon) or daytona (a managed sandbox service). Selecting a managed backend that cannot be reached is fatal at startup - Hezo never falls back to local Docker. (env: HEZO_SANDBOX_BACKEND)',
+			'Where agent containers run: docker (default, the local daemon) or daytona (a managed sandbox service). Selecting a managed backend that cannot be reached is fatal at startup - Hezo never falls back to local Docker.',
 		)
 		.option(
 			'--daytona-api-key <key>',
-			'Daytona API key, required when --sandbox-backend is daytona (env: HEZO_DAYTONA_API_KEY)',
+			'Daytona API key, required when --sandbox-backend is daytona',
 		)
 		.option(
 			'--daytona-api-url <url>',
-			'Daytona API base URL, for a regional or self-hosted endpoint. Defaults to the public API. (env: HEZO_DAYTONA_API_URL)',
+			'Daytona API base URL, for a regional or self-hosted endpoint. Defaults to the public API.',
 		)
 		.option(
 			'--master-key <phrase>',
-			'The 12-word master key phrase for setup/unlock (env: HEZO_MASTER_KEY)',
+			'The 12-word master key phrase for setup/unlock (env: HEZO_MASTER_KEY). Never accepted from the config file - the master key must not be written to disk.',
 		)
-		.option('--web-url <url>', 'Web UI base URL for redirects (env: HEZO_WEB_URL)', '')
-		.option('--reset', 'Reset database and start fresh (env: HEZO_RESET)')
-		.option('--no-open', 'Do not auto-open the browser on startup (env: HEZO_OPEN=0)')
+		.option('--web-url <url>', 'Web UI base URL for redirects')
 		.option(
-			'--log-level <level>',
-			'Log level: debug | info | warn | error (env: HEZO_LOG_LEVEL)',
-			'info',
+			'--reset',
+			'Reset the embedded database and start fresh. A flag only: it renames the existing pgdata aside on the one invocation you pass it, so it is never accepted from the config file.',
 		)
+		.option('--no-open', 'Do not auto-open the browser on startup')
+		.option('--log-level <level>', 'Log level: debug | info | warn | error')
 		.option(
 			'--keep-old-containers',
-			'Skip removal of old containers on rebuild/teardown/provision — useful for inspecting crashed containers via `docker logs` / `docker inspect`. Subsequent rebuilds will fail with a name conflict until the operator removes them manually. (env: HEZO_KEEP_OLD_CONTAINERS)',
+			'Skip removal of old containers on rebuild/teardown/provision — useful for inspecting crashed containers via `docker logs` / `docker inspect`. Subsequent rebuilds will fail with a name conflict until the operator removes them manually.',
 		)
 		.option(
 			'--docker-socket <path>',
-			"Path to the container runtime's Unix socket. By default Hezo finds it automatically: DOCKER_HOST, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set this only when the daemon listens somewhere none of those cover. Unix sockets only - tcp:// and npipe:// are not supported. (env: HEZO_DOCKER_SOCKET)",
+			"Path to the container runtime's Unix socket. By default Hezo finds it automatically: DOCKER_HOST, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set this only when the daemon listens somewhere none of those cover. Unix sockets only - tcp:// and npipe:// are not supported.",
 		)
 		.option(
 			'--no-egress-proxy-auth',
-			"Disable per-run egress proxy authentication. On by default: each run's HTTP(S)_PROXY URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client cannot send proxy credentials — the secret red line still holds (an unauthenticated caller only ships unsubstituted placeholders). (env: HEZO_EGRESS_PROXY_AUTH=0)",
+			"Disable per-run egress proxy authentication. On by default: each run's HTTP(S)_PROXY URL carries a token the proxy verifies before substituting secrets. Only disable to unblock a runtime whose HTTP client cannot send proxy credentials — the secret red line still holds (an unauthenticated caller only ships unsubstituted placeholders).",
 		)
 		.option(
 			'--egress-allow-private-targets',
-			"Allow agent egress through the proxy to reach loopback, link-local and private (RFC1918) addresses. Blocked by default: the proxy runs on the host, so without the guard an agent could tunnel to Hezo's own API, its database, or any host-bound daemon. Enable only when an MCP server or git remote your agents genuinely need lives on the LAN. (env: HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1)",
+			"Allow agent egress through the proxy to reach loopback, link-local and private (RFC1918) addresses. Blocked by default: the proxy runs on the host, so without the guard an agent could tunnel to Hezo's own API, its database, or any host-bound daemon. Enable only when an MCP server or git remote your agents genuinely need lives on the LAN.",
 		)
 		.option(
 			'--auto-install-updates',
-			'Install updates automatically: once a newer release is downloaded and verified, gracefully restart onto it without waiting for "Install & restart" in the web UI (in-flight agent runs delay the restart). Only takes effect where in-app auto-update is available — the self-managed binary, not inside a container. The instance comes back unlocked: the in-memory unlock key is handed to the relaunched process over IPC, never written to disk. (env: HEZO_AUTO_INSTALL_UPDATES)',
+			'Install updates automatically: once a newer release is downloaded and verified, gracefully restart onto it without waiting for "Install & restart" in the web UI (in-flight agent runs delay the restart). Only takes effect where in-app auto-update is available — the self-managed binary, not inside a container. The instance comes back unlocked: the in-memory unlock key is handed to the relaunched process over IPC, never written to disk.',
 		)
 		.option(
 			'--disable-telemetry',
-			'Disable anonymous daily usage telemetry (aggregate counts only — no names, content, or costs). On by default. (env: HEZO_TELEMETRY_ENABLED=0)',
+			'Disable anonymous daily usage telemetry (aggregate counts only — no names, content, or costs). On by default.',
 		)
 		.option(
 			'--telemetry-endpoint <url>',
-			`Override the telemetry collection endpoint (default ${DEFAULT_TELEMETRY_ENDPOINT}). (env: HEZO_TELEMETRY_ENDPOINT)`,
+			`Override the telemetry collection endpoint (default ${DEFAULT_CONFIG.telemetry.endpoint}).`,
 		)
 		.parse(argv);
 
 	const cli = program.opts();
+	const file = readConfigFile(cli);
+	const d = DEFAULT_CONFIG;
+	const configPath = typeof cli.config === 'string' && cli.config ? resolve(cli.config) : undefined;
 
-	// Env var > CLI value > default. For value-bearing options the CLI value
-	// is a string; for flags it's a boolean (commander sets `true` when the
-	// flag is present, `undefined` otherwise).
-	const pick = (envName: string, cliValue: unknown): string | undefined => {
-		const e = env[envName];
-		if (e !== undefined && e !== '') return e;
-		if (typeof cliValue === 'string' && cliValue.length > 0) return cliValue;
-		return undefined;
-	};
-	const pickBool = (envName: string, cliValue: unknown): boolean => {
-		const e = env[envName];
-		if (e !== undefined) return parseBool(e);
-		return cliValue === true;
-	};
-	// Like pickBool but defaults to ON. Commander's `--no-open` sets cli.open to
-	// false when passed and true otherwise, so the only way to disable via CLI is
-	// `--no-open`; the env var still wins when set.
-	const pickOpen = (envName: string, cliValue: unknown): boolean => {
-		const e = env[envName];
-		if (e !== undefined && e !== '') return parseBool(e);
-		return cliValue !== false;
-	};
+	// Commander cannot tell "flag absent" from "flag equals its default" on a
+	// negatable boolean (--no-open stores true when absent, false when passed), so
+	// every option asks the parser where its value came from instead of inspecting
+	// the value. That one test works for value options and booleans alike.
+	const passed = (key: string): boolean => program.getOptionValueSource(key) === 'cli';
+	const str = (key: string): string | undefined =>
+		passed(key) && typeof cli[key] === 'string' && cli[key].length > 0
+			? (cli[key] as string)
+			: undefined;
+	const bool = (key: string): boolean | undefined => (passed(key) ? cli[key] === true : undefined);
+	// --no-x flags: commander stores false on the positive key when passed.
+	const negatable = (key: string): boolean | undefined =>
+		passed(key) ? cli[key] !== false : undefined;
 
-	const masterKeyRaw = pick('HEZO_MASTER_KEY', cli.masterKey);
+	const port = ((): number => {
+		const raw = str('port');
+		if (raw === undefined) return file.port ?? d.port;
+		const n = Number.parseInt(raw, 10);
+		if (Number.isNaN(n) || n < 1 || n > 65535) {
+			throw new Error(`Invalid port: ${raw}. Must be 1-65535.`);
+		}
+		return n;
+	})();
 
-	const databaseUrl = pick('HEZO_DATABASE_URL', cli.databaseUrl);
-	const reset = pickBool('HEZO_RESET', cli.reset);
+	const logLevel = ((): HezoConfig['logLevel'] => {
+		const raw = str('logLevel');
+		if (raw === undefined) return file.logLevel ?? d.logLevel;
+		const lower = raw.toLowerCase();
+		if (lower === 'debug' || lower === 'info' || lower === 'warn' || lower === 'error') {
+			return lower;
+		}
+		throw new Error(`Invalid log level: ${raw}. Must be debug | info | warn | error.`);
+	})();
+
+	const databaseUrl = str('databaseUrl') ?? file.database?.url;
+	const reset = bool('reset') ?? false;
 	if (databaseUrl && reset) {
 		throw new Error(
 			'--reset applies to the embedded database only (it renames a corrupt pgdata aside). ' +
@@ -907,44 +798,73 @@ export function parseConfig(
 		);
 	}
 
-	// Telemetry defaults ON. The env var (when set) wins; otherwise the only way
-	// to disable via CLI is the explicit `--disable-telemetry` flag.
-	const telemetryEnabled = ((): boolean => {
-		const e = env.HEZO_TELEMETRY_ENABLED;
-		if (e !== undefined && e !== '') return parseBool(e);
-		return cli.disableTelemetry !== true;
+	const masterKeyRaw = ((): string | undefined => {
+		// The one setting the config file may not carry, so the env var stays the
+		// way to unlock a single non-interactive startup: a flag would put a
+		// twelve-word key in the process list.
+		const e = env.HEZO_MASTER_KEY;
+		if (e !== undefined && e !== '') return e;
+		return str('masterKey');
 	})();
 
 	return {
-		port: parsePort(pick('HEZO_PORT', cli.port) ?? String(DEFAULT_PORT)),
-		dataDir: resolveDataDir(pick('HEZO_DATA_DIR', cli.dataDir) ?? DEFAULT_DATA_DIR),
-		databaseUrl,
-		assetStorageUrl: pick('HEZO_ASSET_STORAGE_URL', cli.assetStorageUrl),
-		sandboxBackend: pick('HEZO_SANDBOX_BACKEND', cli.sandboxBackend),
-		daytonaApiKey: pick('HEZO_DAYTONA_API_KEY', cli.daytonaApiKey),
-		daytonaApiUrl: pick('HEZO_DAYTONA_API_URL', cli.daytonaApiUrl),
-		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
-		webUrl: pick('HEZO_WEB_URL', cli.webUrl) ?? '',
-		reset,
-		// Auto-open is on by default; headless detection at startup decides whether
-		// a browser actually launches. HEZO_OPEN=0 / --no-open disables it. With
-		// `--no-open` commander sets cli.open=false; absent, it defaults to true.
-		open: pickOpen('HEZO_OPEN', cli.open),
-		logLevel: parseLogLevel(pick('HEZO_LOG_LEVEL', cli.logLevel) ?? 'info'),
-		keepOldContainers: pickBool('HEZO_KEEP_OLD_CONTAINERS', cli.keepOldContainers),
-		autoInstallUpdates: pickBool('HEZO_AUTO_INSTALL_UPDATES', cli.autoInstallUpdates),
-		dockerSocket: pick('HEZO_DOCKER_SOCKET', cli.dockerSocket),
-		// Egress-proxy auth defaults ON. The env var (when set) wins; otherwise
-		// `--no-egress-proxy-auth` sets cli.egressProxyAuth=false, absent it is true.
-		egressProxyAuth: pickOpen('HEZO_EGRESS_PROXY_AUTH', cli.egressProxyAuth),
-		egressAllowPrivateTargets: pickBool(
-			'HEZO_EGRESS_ALLOW_PRIVATE_TARGETS',
-			cli.egressAllowPrivateTargets,
-		),
-		telemetry: {
-			enabled: telemetryEnabled,
-			endpoint:
-				pick('HEZO_TELEMETRY_ENDPOINT', cli.telemetryEndpoint) ?? DEFAULT_TELEMETRY_ENDPOINT,
+		port,
+		dataDir: resolveDataDir(str('dataDir') ?? file.dataDir ?? DEFAULT_DATA_DIR),
+		webUrl: str('webUrl') ?? file.webUrl ?? d.webUrl,
+		logLevel,
+		open: negatable('open') ?? file.open ?? d.open,
+
+		database: {
+			url: databaseUrl,
+			poolSize: file.database?.poolSize ?? d.database.poolSize,
 		},
+		assetStorage: { url: str('assetStorageUrl') ?? file.assetStorage?.url },
+		containers: {
+			backend: str('sandboxBackend') ?? file.containers?.backend,
+			dockerSocket: str('dockerSocket') ?? file.containers?.dockerSocket,
+			dockerRequestTimeoutMs:
+				file.containers?.dockerRequestTimeoutMs ?? d.containers.dockerRequestTimeoutMs,
+			keepOld: bool('keepOldContainers') ?? file.containers?.keepOld ?? d.containers.keepOld,
+			skipMountCheck: file.containers?.skipMountCheck ?? d.containers.skipMountCheck,
+			agentBaseImage: file.containers?.agentBaseImage,
+			daytona: {
+				apiKey: str('daytonaApiKey') ?? file.containers?.daytona?.apiKey,
+				apiUrl:
+					str('daytonaApiUrl') ?? file.containers?.daytona?.apiUrl ?? d.containers.daytona.apiUrl,
+			},
+		},
+		egress: {
+			proxyAuth: negatable('egressProxyAuth') ?? file.egress?.proxyAuth ?? d.egress.proxyAuth,
+			allowPrivateTargets:
+				bool('egressAllowPrivateTargets') ??
+				file.egress?.allowPrivateTargets ??
+				d.egress.allowPrivateTargets,
+			debug: file.egress?.debug ?? d.egress.debug,
+		},
+		telemetry: {
+			// The only CLI half is the positive `--disable-telemetry`, so a passed
+			// flag means off and everything else defers to the file, then the default.
+			enabled:
+				(passed('disableTelemetry') ? false : undefined) ??
+				file.telemetry?.enabled ??
+				d.telemetry.enabled,
+			endpoint: str('telemetryEndpoint') ?? file.telemetry?.endpoint ?? d.telemetry.endpoint,
+		},
+		updates: {
+			disabled: file.updates?.disabled ?? d.updates.disabled,
+			autoInstall: bool('autoInstallUpdates') ?? file.updates?.autoInstall ?? d.updates.autoInstall,
+		},
+		marketplace: {
+			ref: file.marketplace?.ref ?? d.marketplace.ref,
+			baseUrl: file.marketplace?.baseUrl ?? d.marketplace.baseUrl,
+		},
+		github: { oauthClientId: file.github?.oauthClientId ?? d.github.oauthClientId },
+		jobs: { ...d.jobs, ...file.jobs },
+		logCompaction: { ...d.logCompaction, ...file.logCompaction },
+		chat: { ...d.chat, ...file.chat },
+
+		reset,
+		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
+		configPath,
 	};
 }

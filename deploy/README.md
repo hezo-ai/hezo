@@ -38,7 +38,7 @@ real Let's Encrypt cert, no domain required), or a domain you supply via
 `HEZO_DATABASE_URL` (managed Postgres) and/or `HEZO_ASSET_STORAGE_URL`
 (S3-compatible bucket) into `/etc/hezo/deploy.env` before the script runs (the
 cloud-init has commented lines for it) and they're persisted into the service's
-env file — see `docs/deployment/one-click.md` § Using managed data hosting. It never sets the master key: that is generated in the
+config file at `/etc/hezo/hezo.config.cjs` - see `docs/deployment/one-click.md` § Using managed data hosting. It never sets the master key: that is generated in the
 browser on first run and shown once, so the deploy lands you at the setup gate and
 you finish there (master key → admin password → connect a model). Password auth
 makes exposing that URL safe.

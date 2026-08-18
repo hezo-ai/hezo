@@ -161,7 +161,7 @@ import {
 	insertGoalSuggestionComment,
 } from '../services/goal-suggestion';
 import { listGoals, recordGoalProgress } from '../services/goals';
-import { HEARTBEAT_INTERVAL_FLOOR_MIN } from '../services/heartbeat-schedule';
+import { heartbeatIntervalFloorMin } from '../services/heartbeat-schedule';
 import {
 	buildHirePayloadPatch,
 	type HirePayloadPatchInput,
@@ -1049,8 +1049,10 @@ const MAX_BATCH_AGENT_SYSTEM_PROMPTS = 50;
  * `docs/reference/mcp-api.md`, `/SKILL.md` and `llms.txt`, so it uses hyphens,
  * never em or en dashes.
  */
-const HEARTBEAT_INTERVAL_ARG_DESCRIPTION =
-	`How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum ${HEARTBEAT_INTERVAL_FLOOR_MIN}; a lower value is rejected. Typical choices: ${HEARTBEAT_INTERVAL_FLOOR_MIN} for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer.` as const;
+function heartbeatIntervalArgDescription(): string {
+	const floor = heartbeatIntervalFloorMin();
+	return `How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum ${floor}; a lower value is rejected. Typical choices: ${floor} for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer.`;
+}
 
 async function buildMcpCreateTaskCaller(
 	db: Db,
@@ -2366,9 +2368,9 @@ export function registerTools(
 			heartbeat_interval_min: z
 				.number()
 				.int()
-				.min(HEARTBEAT_INTERVAL_FLOOR_MIN)
+				.min(heartbeatIntervalFloorMin())
 				.optional()
-				.describe(`Updated heartbeat interval. ${HEARTBEAT_INTERVAL_ARG_DESCRIPTION}`),
+				.describe(`Updated heartbeat interval. ${heartbeatIntervalArgDescription()}`),
 			monthly_budget_cents: z.number().optional().describe('Updated monthly budget in cents'),
 			touches_code: z.boolean().optional().describe('Whether this agent reads/writes repo code'),
 		},
@@ -2474,8 +2476,8 @@ export function registerTools(
 			heartbeat_interval_min: z
 				.number()
 				.int()
-				.min(HEARTBEAT_INTERVAL_FLOOR_MIN)
-				.describe(HEARTBEAT_INTERVAL_ARG_DESCRIPTION),
+				.min(heartbeatIntervalFloorMin())
+				.describe(heartbeatIntervalArgDescription()),
 			daily_budget_cents: z.number().optional().describe('Daily budget in cents'),
 			weekly_budget_cents: z.number().optional().describe('Weekly budget in cents'),
 			monthly_budget_cents: z.number().optional().describe('Monthly budget in cents'),

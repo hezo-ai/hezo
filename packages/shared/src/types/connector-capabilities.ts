@@ -17,15 +17,14 @@ export type McpTransport = 'http' | 'sse' | 'stdio';
  * Microsoft). The device flow needs only a pre-registered *public* client_id —
  * no redirect URI, no client secret — so it works on any self-hosted origin.
  *
- * Endpoints are plain public URLs. `clientIdEnv` names the env var holding the
- * instance's client_id; `clientIdDefault` is an optional committed public dev
- * fallback used outside production. `baseUrlEnv`, when set, lets tests (and
+ * Endpoints are plain public URLs. `clientIdDefault` is the client_id used when
+ * the instance does not name its own via `github.oauthClientId` in the config
+ * file. `baseUrlEnv`, when set, lets tests (and
  * self-hosted GitHub Enterprise) redirect the endpoint origins.
  */
 export interface DeviceAuthConfig {
 	deviceCodeUrl: string;
 	tokenUrl: string;
-	clientIdEnv: string;
 	clientIdDefault?: string;
 	baseUrlEnv?: string;
 }
@@ -97,7 +96,6 @@ export const CONNECTOR_CAPABILITIES: Record<string, ConnectorCapability> = {
 		deviceAuth: {
 			deviceCodeUrl: 'https://github.com/login/device/code',
 			tokenUrl: 'https://github.com/login/oauth/access_token',
-			clientIdEnv: 'GITHUB_OAUTH_CLIENT_ID',
 			clientIdDefault: 'Ov23liauGSJTHUoWbslf',
 			baseUrlEnv: 'GITHUB_OAUTH_BASE_URL',
 		},

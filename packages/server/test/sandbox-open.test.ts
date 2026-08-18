@@ -69,7 +69,7 @@ describe('openSandboxBackend is fatal, never degraded', () => {
 		expect(err).toBeInstanceOf(SandboxBackendError);
 		// Names the flag AND its env var, since a deployment may set either.
 		expect(err.message).toContain('--daytona-api-key');
-		expect(err.message).toContain('HEZO_DAYTONA_API_KEY');
+		expect(err.message).toContain('containers.daytona.apiKey');
 	});
 
 	it('reports a missing key before making any network call', async () => {
@@ -222,7 +222,7 @@ describe('openSandboxBackend preflights Docker', () => {
 		vi.spyOn(DockerClient.prototype, 'ping').mockResolvedValue(false);
 		const err = await openSandboxBackend({ backend: 'docker', ...NO_RETRY }).catch((e) => e);
 		expect(err.message).toContain('--sandbox-backend');
-		expect(err.message).toContain('HEZO_SANDBOX_BACKEND');
+		expect(err.message).toContain('containers.backend');
 	});
 
 	it('never surfaces the test-only escape hatch to an operator', async () => {

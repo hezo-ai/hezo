@@ -4,6 +4,7 @@ import {
 	HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT,
 	TERMINAL_TASK_STATUSES,
 } from '@hezo/shared';
+import { runtimeConfig } from '../config/runtime';
 
 /**
  * Lower bound on how often a heartbeat can fire, regardless of an agent's
@@ -15,12 +16,10 @@ import {
  * displayed countdown matches the cadence the scheduler actually enforces.
  * Coerced NaN-safe because it is interpolated into SQL below.
  */
-const rawFloorMin = Number(
-	process.env.HEZO_HEARTBEAT_FLOOR_MIN ?? HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT,
-);
-export const HEARTBEAT_INTERVAL_FLOOR_MIN = Number.isFinite(rawFloorMin)
-	? rawFloorMin
-	: HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT;
+export function heartbeatIntervalFloorMin(): number {
+	const configured = runtimeConfig().jobs.heartbeatFloorMin;
+	return Number.isFinite(configured) ? configured : HEARTBEAT_INTERVAL_FLOOR_MIN_DEFAULT;
+}
 
 // Fixed enum values from `@hezo/shared` — safe to interpolate as a Postgres
 // array literal.
@@ -42,12 +41,14 @@ const TERMINAL_TASK_STATUSES_PG = `{${TERMINAL_TASK_STATUSES.join(',')}}`;
  * `member_agents AS ma`. The interpolated values are a coerced number and fixed
  * enum constants (no user input).
  */
-export const NEXT_HEARTBEAT_AT_SQL = `CASE
+export function nextHeartbeatAtSql(): string {
+	return `CASE
 	WHEN ma.admin_status <> '${AgentAdminStatus.Enabled}'::agent_admin_status THEN NULL
 	WHEN ma.runtime_status = ANY('${BUDGET_PAUSE_ARRAY_PG}'::agent_runtime_status[]) THEN NULL
 	WHEN ma.last_heartbeat_at IS NULL THEN now()
-	ELSE ma.last_heartbeat_at + (GREATEST(ma.heartbeat_interval_min, ${HEARTBEAT_INTERVAL_FLOOR_MIN}) || ' minutes')::interval
+	ELSE ma.last_heartbeat_at + (GREATEST(ma.heartbeat_interval_min, ${heartbeatIntervalFloorMin()}) || ' minutes')::interval
 END`;
+}
 
 /**
  * SQL boolean — does this agent have an actionable task *right now*? Mirrors the

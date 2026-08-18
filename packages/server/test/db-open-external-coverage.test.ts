@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
+import { DEFAULT_CONFIG } from '../src/config/types';
 import { PostgresDb } from '../src/db/drivers/postgres';
 import { ExternalDbError } from '../src/db/migrate-errors';
 import { openDatabase } from '../src/db/open';
@@ -40,17 +42,12 @@ function fakePostgresDb(opts?: {
 }
 
 describe('openDatabase (external Postgres path)', () => {
-	let prevPoolSize: string | undefined;
-
 	beforeEach(() => {
-		prevPoolSize = process.env.HEZO_DATABASE_POOL_SIZE;
-		delete process.env.HEZO_DATABASE_POOL_SIZE;
 		connectMock.mockReset();
 	});
 
 	afterEach(() => {
-		if (prevPoolSize === undefined) delete process.env.HEZO_DATABASE_POOL_SIZE;
-		else process.env.HEZO_DATABASE_POOL_SIZE = prevPoolSize;
+		resetRuntimeConfig();
 		vi.useRealTimers();
 		setLogLevel('warn');
 	});
@@ -90,26 +87,29 @@ describe('openDatabase (external Postgres path)', () => {
 		expect(opened.storage.display).not.toContain('hezo:sekretpw');
 		expect(opened.storage.display).toContain('db.internal:5432');
 		// No pool-size env → max undefined (driver default applies).
-		expect(connectMock).toHaveBeenCalledWith({ url: URL_WITH_SECRET, max: undefined });
+		expect(connectMock).toHaveBeenCalledWith({
+			url: URL_WITH_SECRET,
+			max: DEFAULT_CONFIG.database.poolSize,
+		});
 		// The preflight actually ran: version gate + gen_random_uuid smoke test.
 		expect(db.query).toHaveBeenCalledTimes(2);
 	});
 
-	it('parses and clamps HEZO_DATABASE_POOL_SIZE (2..100, non-numeric ignored)', async () => {
-		const cases: Array<[string, number | undefined]> = [
-			['5', 5],
-			['1', 2],
-			['500', 100],
-			['abc', undefined],
-		];
-		for (const [raw, expected] of cases) {
+	it('passes the configured database.poolSize through to the driver', async () => {
+		// The 2..100 band is enforced by the config schema now, which *rejects* an
+		// out-of-range value rather than silently clamping it - see
+		// config-file.test.ts. By the time openDatabase runs, the number is valid.
+		for (const poolSize of [2, 5, 100]) {
 			connectMock.mockReset();
 			connectMock.mockResolvedValue(fakePostgresDb());
-			process.env.HEZO_DATABASE_POOL_SIZE = raw;
+			setRuntimeConfig({
+				...DEFAULT_CONFIG,
+				database: { ...DEFAULT_CONFIG.database, poolSize },
+			});
 			await openDatabase({ dataDir: '/unused', databaseUrl: URL_WITH_SECRET });
-			expect(connectMock, `pool size ${raw}`).toHaveBeenCalledWith({
+			expect(connectMock, `pool size ${poolSize}`).toHaveBeenCalledWith({
 				url: URL_WITH_SECRET,
-				max: expected,
+				max: poolSize,
 			});
 		}
 	});

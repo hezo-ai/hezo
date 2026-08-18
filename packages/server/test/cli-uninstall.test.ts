@@ -38,19 +38,14 @@ function seedProjectTree(dataDir: string): string {
 	return projectDir;
 }
 
-let prevDataDir: string | undefined;
 let logSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
-	prevDataDir = process.env.HEZO_DATA_DIR;
-	delete process.env.HEZO_DATA_DIR;
 	logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
 afterEach(() => {
 	vi.restoreAllMocks();
-	if (prevDataDir === undefined) delete process.env.HEZO_DATA_DIR;
-	else process.env.HEZO_DATA_DIR = prevDataDir;
 	for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -123,12 +118,15 @@ describe('hezo uninstall subcommand', () => {
 		expect(existsSync(dataDir)).toBe(false);
 	});
 
-	it('reads HEZO_DATA_DIR when --data-dir is omitted', async () => {
+	it('reads the data dir from the --config file when --data-dir is omitted', async () => {
 		const dataDir = makeDataDir();
 		seedProjectTree(dataDir);
-		process.env.HEZO_DATA_DIR = dataDir;
+		const cfg = join(makeDataDir(), 'hezo.config.cjs');
+		writeFileSync(cfg, `module.exports = ${JSON.stringify({ dataDir })};`);
 
-		expect(await runUninstall(argv('uninstall', '--yes'), noContainers)).toBe(true);
+		expect(await runUninstall(argv('uninstall', '--yes', '--config', cfg), noContainers)).toBe(
+			true,
+		);
 		expect(existsSync(dataDir)).toBe(false);
 	});
 

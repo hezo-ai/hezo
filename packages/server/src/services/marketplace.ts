@@ -22,16 +22,13 @@ import {
 	toMarketplaceIndexEntry,
 } from '@hezo/shared';
 import { z } from 'zod';
+import { runtimeConfig } from '../config/runtime';
 import { logger } from '../logger';
 
 const log = logger.child('marketplace');
 
 /** The repo whose committed `marketplace/` a production instance fetches. */
 const REPO = 'hezo-ai/hezo';
-/** Git ref the marketplace is fetched from — `main` so updates flow independently of releases. */
-const REF = process.env.HEZO_MARKETPLACE_REF ?? 'main';
-/** Base URL override (tests / self-hosting); defaults to GitHub raw. */
-const BASE_URL = process.env.HEZO_MARKETPLACE_BASE_URL ?? 'https://raw.githubusercontent.com';
 const TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
 
@@ -165,9 +162,10 @@ async function fetchJson(url: string): Promise<unknown | null> {
 
 /** Fetch `marketplace/<path>` from GitHub raw, trying `main` then `master`. */
 async function fetchFromGitHub(path: string): Promise<unknown | null> {
-	const refs = REF === 'main' ? ['main', 'master'] : [REF];
+	const { ref: configuredRef, baseUrl } = runtimeConfig().marketplace;
+	const refs = configuredRef === 'main' ? ['main', 'master'] : [configuredRef];
 	for (const ref of refs) {
-		const body = await fetchJson(`${BASE_URL}/${REPO}/${ref}/marketplace/${path}`);
+		const body = await fetchJson(`${baseUrl}/${REPO}/${ref}/marketplace/${path}`);
 		if (body !== null) return body;
 	}
 	return null;

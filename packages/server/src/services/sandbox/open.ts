@@ -22,14 +22,14 @@ const CONNECT_RETRY_DELAYS_MS = [2000, 4000];
  * How an operator actually gets out of a bad credential, on either surface this
  * error reaches - the boot log and the Containers switch dialog.
  *
- * It used to end "drop --sandbox-backend / HEZO_SANDBOX_BACKEND to run
+ * It used to end "drop --sandbox-backend / containers.backend to run
  * containers on local Docker", which is **false**: the backend is a stored
  * setting that the flag only seeds, so removing the flag changes nothing on an
  * instance that has already chosen a provider. Following it leaves the operator
  * with the same failure and the belief that they are now on Docker.
  */
 const KEY_RECOVERY_HINT =
-	'Supply a working key with --daytona-api-key / HEZO_DAYTONA_API_KEY, or set one from ' +
+	'Supply a working key with --daytona-api-key / containers.daytona.apiKey, or set one from ' +
 	'Settings -> Containers. The key is used for this startup and saved once the instance ' +
 	'is unlocked.';
 
@@ -115,7 +115,7 @@ export async function openSandboxBackend(
 		() =>
 			`Cannot reach the configured Daytona API at ${redacted}.\n` +
 			'Check that the API key is valid and not expired, that it carries the sandbox ' +
-			'permission scopes, and that --daytona-api-url / HEZO_DAYTONA_API_URL points at the ' +
+			'permission scopes, and that --daytona-api-url / containers.daytona.apiUrl points at the ' +
 			`right region.\n${KEY_RECOVERY_HINT}`,
 		'Daytona',
 	);
@@ -160,7 +160,7 @@ async function dockerPreflightWithRetry(
 		}
 		const message =
 			`${formatDockerPreflightMessage({ ...result, status: result.status })}\n\n` +
-			'Alternatively, set --sandbox-backend / HEZO_SANDBOX_BACKEND to run containers ' +
+			'Alternatively, set --sandbox-backend / containers.backend to run containers ' +
 			'on a managed sandbox service instead of a local daemon.';
 		// Same message either way; the narrower type only tells the fatal-exit path
 		// that this is the one failure the operator may never get to read.
@@ -201,7 +201,7 @@ function resolveBackendName(raw?: string): SandboxBackend {
 	if (!isSandboxBackend(value)) {
 		throw new SandboxBackendError(
 			`Unknown sandbox backend "${raw}".\n` +
-				`Set --sandbox-backend / HEZO_SANDBOX_BACKEND to one of: ${SANDBOX_BACKENDS.join(', ')}.`,
+				`Set --sandbox-backend / containers.backend to one of: ${SANDBOX_BACKENDS.join(', ')}.`,
 		);
 	}
 	return value;

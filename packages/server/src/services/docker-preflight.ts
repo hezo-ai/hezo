@@ -87,7 +87,7 @@ export interface DockerPreflightResult {
 }
 
 export interface DockerPreflightOptions {
-	/** `--docker-socket` / `HEZO_DOCKER_SOCKET`. */
+	/** `--docker-socket` / the config file's `containers.dockerSocket`. */
 	override?: string;
 	env?: NodeJS.ProcessEnv;
 	/** Injectable for tests; defaults to a real ping over the candidate's socket. */
@@ -162,7 +162,7 @@ const START_INSTRUCTIONS = [
 const OVERRIDE_HINT = [
 	'Daemon listening on a socket Hezo did not check? Point it there:',
 	'',
-	'  hezo --docker-socket /path/to/docker.sock   (env: HEZO_DOCKER_SOCKET)',
+	'  hezo --docker-socket /path/to/docker.sock   (or containers.dockerSocket in your config file)',
 ];
 
 /**
@@ -222,7 +222,7 @@ export function formatDockerPreflightMessage(
 			'Hezo talks to the daemon over a Unix socket, so tcp://, npipe:// and ssh://',
 			'endpoints are not supported. Point it at the socket file instead:',
 			'',
-			'  hezo --docker-socket /path/to/docker.sock   (env: HEZO_DOCKER_SOCKET)',
+			'  hezo --docker-socket /path/to/docker.sock   (or containers.dockerSocket in your config file)',
 			'',
 			`More detail: ${CONTAINER_RUNTIMES_DOCS_URL}`,
 		].join('\n');

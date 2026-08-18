@@ -31,11 +31,11 @@
 #                          verifying the certificate; for verified TLS use
 #                          sslmode=verify-full, adding &sslrootcert=/etc/hezo/db-ca.crt
 #                          when the provider signs with its own CA (most do).
-#                          Persisted into /etc/hezo/hezo.env on first provision; omit to
+#                          Persisted into /etc/hezo/hezo.config.cjs on first provision; omit to
 #                          use the embedded database on the VM's disk (the default).
 #   HEZO_ASSET_STORAGE_URL S3-compatible object storage for asset files
 #                          (s3://KEY:SECRET@endpoint/bucket[/prefix]). Persisted into
-#                          /etc/hezo/hezo.env on first provision; omit for local disk.
+#                          /etc/hezo/hezo.config.cjs on first provision; omit for local disk.
 #   HEZO_DATABASE_POOL_SIZE  connection-pool size for the external database (2-100).
 #   HEZO_SWAP_SIZE         size of the swap file this script creates so low-RAM hosts
 #                          don't OOM (default 6G; accepts 6G / 6144M). Set 0 to disable.
@@ -56,7 +56,8 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 DATA_DIR="/var/lib/hezo"
-ENV_FILE="/etc/hezo/hezo.env"
+CONFIG_FILE="/etc/hezo/hezo.config.cjs"
+WEB_URL_FILE="/etc/hezo/web-url"
 DEPLOY_ENV="/etc/hezo/deploy.env"
 RELEASE_TAG="${HEZO_RELEASE_TAG:-latest}"
 
@@ -228,24 +229,42 @@ chmod +x /usr/local/bin/hezo
 # ---------------------------------------------------------------------------
 install -d -m 700 /etc/hezo
 install -d -m 755 "${DATA_DIR}"
-if [[ ! -f "${ENV_FILE}" ]]; then
-	install -m 600 /dev/null "${ENV_FILE}"
-	cat >"${ENV_FILE}" <<EOF
-HEZO_DATA_DIR=${DATA_DIR}
-# HEZO_WEB_URL is written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
-# Do NOT put your master key in this file. Hezo keeps it in memory only and comes up locked
-# after each restart by design; unlock it from the browser gate. A copy of the key on disk
-# next to the encrypted data would let anyone who reads this box decrypt your vault.
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+	# Mode 600: this file can hold database and object-storage credentials.
+	install -m 600 /dev/null "${CONFIG_FILE}"
+	cat >"${CONFIG_FILE}" <<EOF
+// Hezo configuration. Edit and restart: systemctl restart hezo
+// Reference: https://hezo.ai/docs/deployment/configuration
+//
+// Do NOT put your master key in this file. Hezo keeps it in memory only and comes up
+// locked after each restart by design; unlock it from the browser gate. A copy of the
+// key on disk next to the encrypted data would let anyone who reads this box decrypt
+// your vault.
+const { existsSync, readFileSync } = require('node:fs');
+
+// Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
+const webUrlFile = '${WEB_URL_FILE}';
+
+module.exports = {
+	dataDir: '${DATA_DIR}',
+	webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
 EOF
 	# Managed data hosting (optional): persist the database / asset-storage settings
-	# provided at provision time so the systemd unit picks them up. To wire them into
-	# an already-provisioned host, edit this file directly and restart hezo — see
+	# provided at provision time. To wire them into an already-provisioned host, edit
+	# this file directly and restart hezo — see
 	# docs/deployment/one-click.md § Using managed data hosting.
-	for key in HEZO_DATABASE_URL HEZO_ASSET_STORAGE_URL HEZO_DATABASE_POOL_SIZE; do
-		if [[ -n "${!key:-}" ]]; then
-			echo "${key}=${!key}" >>"${ENV_FILE}"
-		fi
-	done
+	if [[ -n "${HEZO_DATABASE_URL:-}" || -n "${HEZO_DATABASE_POOL_SIZE:-}" ]]; then
+		{
+			echo "	database: {"
+			[[ -n "${HEZO_DATABASE_URL:-}" ]] && echo "		url: '${HEZO_DATABASE_URL}',"
+			[[ -n "${HEZO_DATABASE_POOL_SIZE:-}" ]] && echo "		poolSize: ${HEZO_DATABASE_POOL_SIZE},"
+			echo "	},"
+		} >>"${CONFIG_FILE}"
+	fi
+	if [[ -n "${HEZO_ASSET_STORAGE_URL:-}" ]]; then
+		echo "	assetStorage: { url: '${HEZO_ASSET_STORAGE_URL}' }," >>"${CONFIG_FILE}"
+	fi
+	echo "};" >>"${CONFIG_FILE}"
 fi
 
 # Persist optional settings the first-boot unit reads (domain override, swap size).
@@ -301,7 +320,8 @@ cat >/usr/local/sbin/hezo-firstboot.sh <<'EOF'
 #!/usr/bin/env bash
 # Runs once, before Caddy and Hezo start. Derives the public HTTPS URL from the
 # host's public IP (via <ip>.sslip.io) unless HEZO_DOMAIN_OVERRIDE is set, then
-# writes it where Caddy and Hezo read it.
+# writes it where Caddy (/etc/caddy/hezo.env) and Hezo (/etc/hezo/web-url, read
+# by /etc/hezo/hezo.config.cjs) each pick it up.
 set -euo pipefail
 
 SENTINEL="/var/lib/hezo/.firstboot-done"
@@ -330,7 +350,8 @@ else
 fi
 
 echo "HEZO_SITE_ADDRESS=${DOMAIN}" >/etc/caddy/hezo.env
-grep -q '^HEZO_WEB_URL=' /etc/hezo/hezo.env || echo "HEZO_WEB_URL=https://${DOMAIN}" >>/etc/hezo/hezo.env
+# The config file reads this path for `webUrl`; a .cjs object cannot be appended to.
+[[ -s /etc/hezo/web-url ]] || echo "https://${DOMAIN}" >/etc/hezo/web-url
 
 install -d /var/lib/hezo
 touch "${SENTINEL}"
@@ -367,8 +388,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/hezo
-EnvironmentFile=/etc/hezo/hezo.env
+ExecStart=/usr/local/bin/hezo --config /etc/hezo/hezo.config.cjs
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
@@ -434,5 +454,5 @@ else
 	systemctl restart caddy
 	systemctl enable --now hezo
 	log "Done. Once DNS + certificate settle (a few seconds), open the URL from:"
-	log "  cat /etc/hezo/hezo.env    # HEZO_WEB_URL=https://<host>.sslip.io"
+	log "  cat /etc/hezo/hezo.config.cjs    # webUrl comes from /etc/hezo/web-url"
 fi

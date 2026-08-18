@@ -1,6 +1,6 @@
 import { WakeupSource } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { HEARTBEAT_INTERVAL_FLOOR_MIN } from './heartbeat-schedule';
+import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 
 /**
  * Wakeup sources the no-work backoff never suppresses.
@@ -89,7 +89,7 @@ export async function noWorkCooldownActive(
 		 ) AS cooldown
 		 FROM last_run lr
 		 JOIN member_agents ma ON ma.id = $1`,
-		[memberId, taskId, HEARTBEAT_INTERVAL_FLOOR_MIN],
+		[memberId, taskId, heartbeatIntervalFloorMin()],
 	);
 
 	return r.rows[0]?.cooldown === true;

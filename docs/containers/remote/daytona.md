@@ -32,11 +32,11 @@ app still loads, so you can paste a new key or switch back to local Docker.
 
 You can also set it at startup on a brand-new instance, with
 `--sandbox-backend daytona --daytona-api-key "<key>"` or the matching
-`HEZO_SANDBOX_BACKEND` and `HEZO_DAYTONA_API_KEY` environment variables. That only chooses
+`containers.backend` and `containers.daytona.apiKey` config settings. That only chooses
 what a fresh instance starts on; see
 [Setting the service at startup](/docs/containers/overview#setting-the-service-at-startup).
 
-`--daytona-api-url` (or `HEZO_DAYTONA_API_URL`) points Hezo at a regional or self-hosted
+`--daytona-api-url` (or `containers.daytona.apiUrl`) points Hezo at a regional or self-hosted
 Daytona endpoint instead of the public API.
 
 ## Limits

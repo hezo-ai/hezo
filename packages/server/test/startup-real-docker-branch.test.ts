@@ -2,6 +2,8 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
+import { DEFAULT_CONFIG } from '../src/config/types';
 import { waitForBackground } from '../src/lib/background';
 import { DockerClient } from '../src/services/docker';
 import { AGENT_BASE_CONTEXT_DIR } from '../src/services/docker-assets';
@@ -43,11 +45,13 @@ describe('startup real-Docker branch (no daemon required)', () => {
 		savedEnv.HEZO_SKIP_PRICING_REFRESH = process.env.HEZO_SKIP_PRICING_REFRESH;
 		savedEnv.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK =
 			process.env.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK;
-		savedEnv.HEZO_SKIP_MOUNT_CHECK = process.env.HEZO_SKIP_MOUNT_CHECK;
 		delete process.env.HEZO_SKIP_DOCKER;
 		process.env.HEZO_SKIP_PRICING_REFRESH = '1';
 		process.env.HEZO_SKIP_CONTAINER_CONNECTIVITY_CHECK = '1';
-		process.env.HEZO_SKIP_MOUNT_CHECK = '1';
+		setRuntimeConfig({
+			...DEFAULT_CONFIG,
+			containers: { ...DEFAULT_CONFIG.containers, skipMountCheck: true },
+		});
 		dataDir = mkdtempSync(join(tmpdir(), 'hezo-real-docker-'));
 	});
 

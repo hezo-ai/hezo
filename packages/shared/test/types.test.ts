@@ -32,7 +32,8 @@ describe('connector capabilities', () => {
 		expect(gh?.displayName).toBe('GitHub');
 		expect(gh?.allowedHosts).toContain('github.com');
 		expect(gh?.scopes).toContain('repo');
-		expect(gh?.deviceAuth?.clientIdEnv).toBe('GITHUB_OAUTH_CLIENT_ID');
+		expect(gh?.deviceAuth?.clientIdDefault).toBeTruthy();
+		expect(gh?.deviceAuth?.deviceCodeUrl).toBe('https://github.com/login/device/code');
 	});
 
 	it('returns undefined for an unknown connector', () => {

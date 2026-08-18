@@ -2,6 +2,8 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
+import { DEFAULT_CONFIG } from '../src/config/types';
 import type { DockerClient } from '../src/services/docker';
 import {
 	buildMountProbeScript,
@@ -11,7 +13,6 @@ import {
 	formatMountPreflightMessage,
 	type MountProbeResult,
 	parseMountProbeOutput,
-	SKIP_MOUNT_CHECK_ENV,
 } from '../src/services/mount-preflight';
 import { createStubDocker } from './helpers/app';
 
@@ -118,11 +119,13 @@ describe('formatMountPreflightMessage', () => {
 		}
 	});
 
-	it('never leaks the test-only escape hatches to users', () => {
+	it('never leaks the escape hatches to users', () => {
 		for (const outcome of ['read-only', 'not-mounted'] as const) {
 			const msg = formatMountPreflightMessage(outcome, { dataDir: DATA_DIR });
 			expect(msg).not.toContain('HEZO_SKIP_DOCKER');
-			expect(msg).not.toContain(SKIP_MOUNT_CHECK_ENV);
+			// The opt-out suppresses the diagnosis; it does not fix the mount, so the
+			// failure guidance must never offer it.
+			expect(msg).not.toContain('skipMountCheck');
 		}
 	});
 
@@ -164,15 +167,34 @@ describe('checkContainerMounts', () => {
 		}
 	});
 
-	it('skips under the fake-docker and opt-out env vars without probing', async () => {
-		for (const env of [{ HEZO_SKIP_DOCKER: '1' }, { [SKIP_MOUNT_CHECK_ENV]: '1' }]) {
+	it('skips under the fake-docker env var without probing', async () => {
+		let probed = false;
+		const outcome = await check(
+			async () => {
+				probed = true;
+				throw new Error('should not run');
+			},
+			{ HEZO_SKIP_DOCKER: '1' },
+		);
+		expect(outcome).toBe('skipped');
+		expect(probed).toBe(false);
+	});
+
+	it('skips under the containers.skipMountCheck config key without probing', async () => {
+		setRuntimeConfig({
+			...DEFAULT_CONFIG,
+			containers: { ...DEFAULT_CONFIG.containers, skipMountCheck: true },
+		});
+		try {
 			let probed = false;
 			const outcome = await check(async () => {
 				probed = true;
 				throw new Error('should not run');
-			}, env);
+			}, {});
 			expect(outcome).toBe('skipped');
 			expect(probed).toBe(false);
+		} finally {
+			resetRuntimeConfig();
 		}
 	});
 

@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { SandboxBackend } from '@hezo/shared';
 import { Logger } from '@hiddentao/logger';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
+import { DEFAULT_CONFIG } from '../src/config/types';
 import { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { DockerClient } from '../src/services/docker';
@@ -53,10 +55,12 @@ const locked = new MasterKeyManager();
  * assert. Documented opt-out rather than a mock, so the rest of the preparation
  * still runs.
  */
-const savedMountCheck = process.env.HEZO_SKIP_MOUNT_CHECK;
 
 beforeAll(async () => {
-	process.env.HEZO_SKIP_MOUNT_CHECK = '1';
+	setRuntimeConfig({
+		...DEFAULT_CONFIG,
+		containers: { ...DEFAULT_CONFIG.containers, skipMountCheck: true },
+	});
 	const ctx = await createTestApp();
 	db = ctx.db;
 	unlocked = ctx.masterKeyManager;
@@ -64,8 +68,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await safeClose(db);
-	if (savedMountCheck === undefined) delete process.env.HEZO_SKIP_MOUNT_CHECK;
-	else process.env.HEZO_SKIP_MOUNT_CHECK = savedMountCheck;
+	resetRuntimeConfig();
 });
 
 afterEach(async () => {
@@ -98,7 +101,7 @@ function captureWarnings(): () => string[] {
 
 describe('resolveStartupBackend on a locked instance', () => {
 	it('carries a launch-supplied key through instead of refusing to boot', async () => {
-		// The exact combination that broke: the operator has HEZO_DAYTONA_API_KEY in
+		// The exact combination that broke: the operator has a Daytona key in
 		// their launch env and unlocks from the browser. The vault write cannot
 		// happen yet, but the key is in hand, so the backend opens normally.
 		await setStoredSandboxBackend(db, SandboxBackend.Daytona);
@@ -150,7 +153,7 @@ describe('resolveStartupBackend on a locked instance', () => {
 		const resolved = await resolveStartupBackend(db, unlocked, { daytonaApiKey: 'dtn_x' });
 
 		expect(resolved.backend).toBe(SandboxBackend.Docker);
-		expect(warnings().join(' ')).toMatch(/HEZO_SANDBOX_BACKEND=daytona/);
+		expect(warnings().join(' ')).toMatch(/containers\.backend: "daytona"/);
 	});
 
 	it('says so when the launch flag disagrees with the stored setting', async () => {
@@ -174,7 +177,7 @@ describe('resolveStartupBackend on a locked instance', () => {
 
 		// Scoped to this module's two warnings rather than "nothing warned at all",
 		// which any unrelated background line would break.
-		expect(warnings().filter((w) => /sandbox-backend|HEZO_SANDBOX_BACKEND/i.test(w))).toEqual([]);
+		expect(warnings().filter((w) => /sandbox-backend|containers\.backend/i.test(w))).toEqual([]);
 	});
 
 	it('still writes the key through when the instance is already unlocked', async () => {

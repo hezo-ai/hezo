@@ -165,6 +165,14 @@ export interface StartupResult {
 export async function startup(config: HezoConfig): Promise<StartupResult> {
 	mkdirSync(config.dataDir, { recursive: true });
 	log.info(`Using data directory: ${config.dataDir}`);
+	// Name the file, or say plainly that there is none: `--config` has no implicit
+	// search, so an operator who wrote a config file and forgot the flag would
+	// otherwise see a silently default-configured server.
+	log.info(
+		config.configPath
+			? `Using config file: ${config.configPath}`
+			: 'No config file (--config not given); using defaults plus any flags',
+	);
 
 	if (config.telemetry?.enabled) {
 		log.info(
@@ -177,7 +185,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	setStartupPhase('database');
 	const opened = await openDatabase({
 		dataDir: config.dataDir,
-		databaseUrl: config.databaseUrl,
+		databaseUrl: config.database.url,
 		reset: config.reset,
 	});
 	let db = opened.db;
@@ -235,7 +243,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	setStartupPhase('asset-storage');
 	const { store: assetStore, info: assetStorageInfo } = await openAssetStorage({
 		dataDir: config.dataDir,
-		assetStorageUrl: config.assetStorageUrl,
+		assetStorageUrl: config.assetStorage.url,
 	});
 
 	// Runtime model pricing: load the table into memory (migrations bake in a
@@ -280,9 +288,9 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 	} else {
 		const { resolveStartupBackend } = await import('./services/sandbox/backend-store.js');
 		const resolved = await resolveStartupBackend(db, masterKeyManager, {
-			backend: config.sandboxBackend,
-			daytonaApiKey: config.daytonaApiKey,
-			daytonaApiUrl: config.daytonaApiUrl,
+			backend: config.containers.backend,
+			daytonaApiKey: config.containers.daytona.apiKey,
+			daytonaApiUrl: config.containers.daytona.apiUrl,
 		});
 		deferredBackend = resolved;
 		if (resolved.deferred) {
@@ -309,7 +317,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 				// An operator who pinned a socket did so because discovery does not
 				// reach their daemon; dropping it here would silently ignore the flag
 				// and send them round the discovery loop it exists to bypass.
-				dockerSocket: config.dockerSocket,
+				dockerSocket: config.containers.dockerSocket,
 			}));
 		}
 	}
@@ -359,8 +367,8 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		db,
 		masterKeyManager,
 		ca: egressCA,
-		authEnabled: config.egressProxyAuth,
-		allowPrivateTargets: config.egressAllowPrivateTargets,
+		authEnabled: config.egress.proxyAuth,
+		allowPrivateTargets: config.egress.allowPrivateTargets,
 		// Hezo's own MCP/asset endpoint as a container addresses it. Already in the
 		// run's NO_PROXY, so it should never reach the proxy — but NO_PROXY is a
 		// client-side convention, and a runtime that ignores it would otherwise have
@@ -396,7 +404,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		pricing,
 		storageBackend: storageInfo.backend,
 		telemetry: config.telemetry,
-		autoInstallUpdates: config.autoInstallUpdates,
+		autoInstallUpdates: config.updates.autoInstall,
 	});
 	const chatSessionManager = new ChatSessionManager({
 		db,

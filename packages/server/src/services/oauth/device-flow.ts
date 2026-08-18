@@ -1,4 +1,5 @@
 import type { DeviceAuthConfig } from '@hezo/shared';
+import { runtimeConfig } from '../../config/runtime';
 
 export type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
@@ -47,20 +48,18 @@ export interface ResolvedDeviceAuth {
 /**
  * Resolve a capability's static {@link DeviceAuthConfig} into concrete runtime
  * values: apply the optional base-URL origin override (tests / self-hosted
- * Enterprise) and pick the client_id from the env var, falling back to the
- * committed public dev client_id outside production. Throws when no client_id
- * is configured so the failure is explicit rather than a silent empty request.
+ * Enterprise) and take the client_id from `github.oauthClientId`, which defaults
+ * to the public app Hezo ships with. Throws when no client_id is configured so
+ * the failure is explicit rather than a silent empty request.
  */
 export function resolveDeviceAuth(cfg: DeviceAuthConfig): ResolvedDeviceAuth {
 	const baseOverride = cfg.baseUrlEnv ? process.env[cfg.baseUrlEnv] : undefined;
 	const applyBase = (url: string): string =>
 		baseOverride ? new URL(new URL(url).pathname, baseOverride).toString() : url;
 
-	const clientId =
-		process.env[cfg.clientIdEnv] ||
-		(process.env.NODE_ENV === 'production' ? '' : (cfg.clientIdDefault ?? ''));
+	const clientId = runtimeConfig().github.oauthClientId || (cfg.clientIdDefault ?? '');
 	if (!clientId) {
-		throw new Error(`no OAuth client_id configured (set ${cfg.clientIdEnv})`);
+		throw new Error('no OAuth client_id configured (set github.oauthClientId)');
 	}
 
 	return {

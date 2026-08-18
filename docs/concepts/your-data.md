@@ -25,7 +25,7 @@ for where the data directory lives and how to run Hezo unattended.
 
 If you'd rather run against a managed or self-run **PostgreSQL 14+** - for managed
 backups, more headroom, or your own operational tooling - point Hezo at it with
-`--database-url` / `HEZO_DATABASE_URL` (see
+`--database-url` / `database.url` (see
 [Using an external Postgres](/docs/deployment/configuration#using-an-external-postgres);
 for a cloud deployment there's a step-by-step in
 [Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)).
@@ -34,7 +34,7 @@ database rows move.
 
 Uploaded **asset files** work the same way: they live under `<data-dir>/assets/` by
 default, or in any **S3-compatible bucket** when you set `--asset-storage-url` /
-`HEZO_ASSET_STORAGE_URL` (see
+`assetStorage.url` (see
 [Storing assets in S3-compatible object storage](/docs/deployment/configuration)). With a
 bucket configured, asset bytes live only with your storage provider - stored as plain
 objects (enable the provider's server-side encryption if you want them encrypted at

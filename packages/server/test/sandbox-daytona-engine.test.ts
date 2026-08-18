@@ -985,7 +985,7 @@ describe('DaytonaEngine image reference', () => {
 		const err = await new DaytonaEngine(api)
 			.createContainer('hezo-p1', { ...CONFIG, Image: 'hezo/agent-base:latest' })
 			.catch((e) => e);
-		expect(err.message).toContain('HEZO_AGENT_BASE_IMAGE');
+		expect(err.message).toContain('containers.agentBaseImage');
 	});
 
 	it('accepts any published reference, including a project’s own', async () => {

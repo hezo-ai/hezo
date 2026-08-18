@@ -235,7 +235,7 @@ export function wellKnownDockerSockets(lookup: DockerSocketLookup): DockerSocket
 }
 
 export interface DockerSocketCandidatesOptions {
-	/** `--docker-socket` / `HEZO_DOCKER_SOCKET`. Wins over everything else. */
+	/** `--docker-socket` / the config file's `containers.dockerSocket`. Wins over everything else. */
 	override?: string;
 	env?: NodeJS.ProcessEnv;
 	home?: string;

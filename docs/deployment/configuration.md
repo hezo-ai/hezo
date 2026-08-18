@@ -6,45 +6,199 @@ section: Deployment
 
 # Configuration reference
 
-Most settings can be supplied as a **command-line flag** or an **environment variable**;
-a few are environment-variable only (shown with `-` in the **Flag** column below).
-When a setting supports both and both are present, the **environment variable wins** -
-handy for baking defaults into a service definition while still overriding per run.
+Hezo is configured with a **config file** you point at with `--config`, and with
+**command-line flags**. A flag always wins over the file, and anything neither sets falls
+back to the built-in default.
+
+```sh
+hezo --config /etc/hezo/hezo.config.cjs
+```
+
+There is no automatic search: without `--config`, Hezo runs on the defaults plus whatever
+flags you pass. The one setting that is never read from the file is the master key - see
+[The master key is not a config setting](#the-master-key-is-not-a-config-setting).
+
+## The config file
+
+The file is a CommonJS module that exports an object:
+
+```js
+// /etc/hezo/hezo.config.cjs
+module.exports = {
+  port: 3100,
+  dataDir: '/var/lib/hezo',
+  webUrl: 'https://hezo.example.com',
+
+  database: { url: 'postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=verify-full' },
+  assetStorage: { url: 's3://ACCESS_KEY:SECRET@endpoint/bucket' },
+};
+```
+
+Only name the settings you want to change; everything else keeps its default. Because it is
+real JavaScript, it can compute values at load time - reading a side file, or branching on
+the host name:
+
+```js
+const { existsSync, readFileSync } = require('node:fs');
+const webUrlFile = '/etc/hezo/web-url';
+
+module.exports = {
+  dataDir: '/var/lib/hezo',
+  webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
+};
+```
+
+A misspelled or unknown key is an **error naming the key**, not something quietly ignored,
+so a typo cannot leave you running a setting you thought you had changed.
+
+**Give the file mode 600 if it carries credentials.** `database.url`,
+`assetStorage.url` and `containers.daytona.apiKey` are secrets:
+
+```sh
+sudo install -d -m 700 /etc/hezo
+sudo install -m 600 /dev/null /etc/hezo/hezo.config.cjs
+```
 
 ## Options
 
-| Flag | Environment variable | Default | Description |
+Nested keys are written in dot form below: `database.url` means
+`{ database: { url: '...' } }`.
+
+### Core
+
+| Setting | Flag | Default | Description |
 |---|---|---|---|
-| `--port <port>` | `HEZO_PORT` | `3100` | Port the server and web app listen on (1-65535). |
-| `--data-dir <path>` | `HEZO_DATA_DIR` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. Still required with an external database or S3 asset storage - workspaces and keys live here. |
-| `--database-url <url>` | `HEZO_DATABASE_URL` | - | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Its `sslmode` follows standard libpq rules - see [TLS and sslmode](#tls-and-sslmode). Omit to use the embedded database under the data directory (the default). |
-| - | `HEZO_DATABASE_POOL_SIZE` | `10` | Connection-pool size for the external database (2-100). Ignored for the embedded database. |
-| `--asset-storage-url <url>` | `HEZO_ASSET_STORAGE_URL` | - | [S3-compatible object storage](#storing-assets-in-s3-compatible-object-storage) for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`). Omit to store assets on the local filesystem under the data directory (the default). |
-| `--sandbox-backend <name>` | `HEZO_SANDBOX_BACKEND` | `docker` | Where agent containers run on a **new** instance: `docker` (the local daemon) or `daytona` (a [managed sandbox service](#running-agent-containers-on-a-managed-sandbox-service)). Once set in Settings -> Containers, the stored choice wins and this is ignored. Selecting a managed backend Hezo cannot reach is fatal at startup - it never falls back to local Docker. |
-| `--daytona-api-key <key>` | `HEZO_DAYTONA_API_KEY` | - | Daytona API key. Required when `--sandbox-backend` is `daytona`. Used only by Hezo itself to reach the provider - it is never placed inside an agent container. |
-| `--daytona-api-url <url>` | `HEZO_DAYTONA_API_URL` | Daytona's public API | Daytona API base URL, for a regional or self-hosted endpoint. |
-| - | `HEZO_AGENT_BASE_IMAGE` | the release's published image | Container image every project's agents run in, overriding the default for this instance. Must be a reference the backend in use can pull, e.g. `ghcr.io/hezo-ai/agent-base:0.42.0`. Mainly for running a development server against a managed sandbox service, where the default is built into the local Docker daemon and a managed service has nothing to pull. A project that names its own base image keeps it. |
-| `--master-key <phrase>` | `HEZO_MASTER_KEY` | - | The twelve-word master key, to set up or unlock without the web gate. |
-| `--web-url <url>` | `HEZO_WEB_URL` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
-| `--reset` | `HEZO_RESET` | off | Start fresh with an empty **embedded** database (the existing `pgdata` is renamed aside, not deleted). Not applicable with `--database-url` - recreate an external database with your provider's tools. |
-| `--no-open` | `HEZO_OPEN` | on | Auto-open the web app in your browser on startup. On by default; automatically skipped in environments without a browser (CI, containers, SSH, headless Linux). Also governs the Windows dialog shown when no container runtime is installed. Pass `--no-open` or set `HEZO_OPEN=0` to disable. |
-| `--log-level <level>` | `HEZO_LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
-| `--keep-old-containers` | `HEZO_KEEP_OLD_CONTAINERS` | off | Keep old project containers instead of removing them - for debugging a crashed container. |
-| `--docker-socket <path>` | `HEZO_DOCKER_SOCKET` | auto | Path to the container runtime's Unix socket. By default Hezo finds it: `DOCKER_HOST`, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set it only when the daemon listens somewhere none of those cover. Unix sockets only - `tcp://` and `npipe://` are not supported. See [Container runtimes](/docs/deployment/container-runtimes). |
-| - | `DOCKER_HOST` | - | Standard Docker environment variable, honoured when it points at a `unix://` socket. Takes effect only if `--docker-socket` / `HEZO_DOCKER_SOCKET` is unset. |
-| - | `HEZO_SKIP_MOUNT_CHECK` | off | Skip the boot check that verifies agent containers get a writable view of the data directory. The check is a diagnosis, not a dependency - skipping it hides the warning, it does not make a read-only mount work. |
-| `--egress-allow-private-targets` | `HEZO_EGRESS_ALLOW_PRIVATE_TARGETS` | off | Allow agent egress through the proxy to reach loopback, link-local and private (RFC1918) addresses. Blocked by default: the proxy runs on the host, so without the guard an agent could tunnel to Hezo's own API, its database, or any host-bound daemon. The check is made on the address a hostname resolves to, not on the name. Enable only when an MCP server or git remote your agents genuinely need lives on your LAN. |
-| `--no-egress-proxy-auth` | `HEZO_EGRESS_PROXY_AUTH` | on | Per-run egress-proxy authentication. On by default: each run's `HTTP(S)_PROXY` URL carries a random token the proxy verifies before substituting any secret, so a process that reaches the proxy address can't drive substitution for another run. Only disable to unblock a runtime whose HTTP client can't send proxy credentials - the secret red line still holds either way (an unauthenticated caller only ships unsubstituted placeholders, which fail upstream). Pass `--no-egress-proxy-auth` or set `HEZO_EGRESS_PROXY_AUTH=0`. |
-| `--version` | - | - | Print the Hezo version and exit (also `hezo version`). |
-| `--disable-telemetry` | `HEZO_TELEMETRY_ENABLED` | on | Turn off the anonymous daily usage report (see [Anonymous usage telemetry](#anonymous-usage-telemetry)). On by default; pass `--disable-telemetry` or set `HEZO_TELEMETRY_ENABLED=0`. |
-| `--telemetry-endpoint <url>` | `HEZO_TELEMETRY_ENDPOINT` | `https://hezo.ai/api/telemetry` | Where the daily report is sent. Point it at your own collector to keep the data in-house. |
-| - | `HEZO_TELEMETRY_CRON` | `0 0 5 * * *` | Cron schedule (seconds-precision) for the daily telemetry report. |
-| - | `HEZO_DISABLE_AUTO_UPDATE` | off | Disable the in-app auto-update (release check, the background download, and the "Install & restart" banner). When disabled the banner instead links to the GitHub release page. |
-| - | `HEZO_UPDATE_CHECK_CRON` | `0 0 4 * * *` | Cron schedule (seconds-precision) for the daily check that downloads and stages a newer release. A running instance also stages as soon as it detects an update, so the banner's "Install & restart" is instant. |
-| `--auto-install-updates` | `HEZO_AUTO_INSTALL_UPDATES` | off | Install staged updates automatically: once a newer release is downloaded and verified, Hezo gracefully restarts onto it without waiting for "Install & restart" in the web UI. The restart is deferred while agent runs are in flight, and only happens where in-app auto-update is available at all (the self-managed binary - not inside a container). The instance comes back **unlocked**: the unlock key is handed to the new process in memory, never written to disk. See [Updating](/docs/deployment/self-hosting#updating). |
-| - | `HEZO_AUTO_INSTALL_CRON` | `0 */5 * * * *` | Cron schedule (seconds-precision) for the auto-install check that restarts onto a staged update once no agent runs are in flight. Only registered when auto-install is enabled. |
-| - | `HEZO_PRICING_REFRESH_CRON` | `0 0 2 * * *` | Cron schedule (seconds-precision) for the daily model-pricing refresh from [pricepertoken.com](https://pricepertoken.com). Pricing also refreshes at startup; a failed refresh keeps the existing rates. |
-| - | `HEZO_MODEL_PIN_REFRESH_CRON` | `0 0 3 * * *` | Cron schedule (seconds-precision) for the daily re-read of each connected provider's model catalog, which keeps the model a **newly added** connection starts on current. Connections you already have keep the model you chose. A provider Hezo cannot reach keeps its previous default. |
+| - | `--config <path>` | - | Path to the config file. Without it, only defaults and flags apply. |
+| `port` | `--port <port>` | `3100` | Port the server and web app listen on (1-65535). |
+| `dataDir` | `--data-dir <path>` | `~/.hezo/` | Where Hezo stores its database, encrypted secrets, and assets. Still required with an external database or S3 asset storage - workspaces and keys live here. |
+| `webUrl` | `--web-url <url>` | same origin | Public base URL, used so account sign-ins redirect back correctly. |
+| `logLevel` | `--log-level <level>` | `info` | Logging verbosity: `debug`, `info`, `warn`, or `error`. |
+| `open` | `--no-open` | on | Auto-open the web app in your browser on startup. Automatically skipped in environments without a browser (CI, containers, SSH, headless Linux). Also governs the Windows dialog shown when no container runtime is installed. |
+| - | `--reset` | off | Start fresh with an empty **embedded** database (the existing `pgdata` is renamed aside, not deleted). A flag only - see [Why `reset` is not a config setting](#why-reset-is-not-a-config-setting). Not applicable with an external database - recreate that with your provider's tools. |
+| - | `--version` | - | Print the Hezo version and exit (also `hezo version`). |
+
+### Database
+
+| Setting | Flag | Default | Description |
+|---|---|---|---|
+| `database.url` | `--database-url <url>` | - | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Its `sslmode` follows standard libpq rules - see [TLS and sslmode](#tls-and-sslmode). Omit to use the embedded database under the data directory (the default). |
+| `database.poolSize` | - | `10` | Connection-pool size for the external database (2-100). Ignored for the embedded database. |
+
+### Asset storage
+
+| Setting | Flag | Default | Description |
+|---|---|---|---|
+| `assetStorage.url` | `--asset-storage-url <url>` | - | [S3-compatible object storage](#storing-assets-in-s3-compatible-object-storage) for asset files (`s3://KEY:SECRET@endpoint/bucket[/prefix]`). Omit to store assets on the local filesystem under the data directory (the default). |
+
+### Containers
+
+| Setting | Flag | Default | Description |
+|---|---|---|---|
+| `containers.backend` | `--sandbox-backend <name>` | `docker` | Where agent containers run on a **new** instance: `docker` (the local daemon) or `daytona` (a [managed sandbox service](#running-agent-containers-on-a-managed-sandbox-service)). Once set in Settings -> Containers, the stored choice wins and this is ignored. Selecting a managed backend Hezo cannot reach is fatal at startup - it never falls back to local Docker. |
+| `containers.daytona.apiKey` | `--daytona-api-key <key>` | - | Daytona API key. Required when the backend is `daytona`. Used only by Hezo itself to reach the provider - it is never placed inside an agent container. |
+| `containers.daytona.apiUrl` | `--daytona-api-url <url>` | Daytona's public API | Daytona API base URL, for a regional or self-hosted endpoint. |
+| `containers.dockerSocket` | `--docker-socket <path>` | auto | Path to the container runtime's Unix socket. By default Hezo finds it: `DOCKER_HOST`, then the docker CLI's current context, then the well-known path for each supported runtime (Docker Engine/Desktop, Colima, Rancher Desktop, OrbStack, Lima, rootless Docker). Set it only when the daemon listens somewhere none of those cover. Unix sockets only - `tcp://` and `npipe://` are not supported. See [Container runtimes](/docs/deployment/container-runtimes). |
+| `containers.dockerRequestTimeoutMs` | - | `10000` | Ceiling on a single call to the Docker daemon, so a wedged one cannot stall the container-sync loop. Raise it for a slow host. |
+| `containers.keepOld` | `--keep-old-containers` | off | Keep old project containers instead of removing them - for debugging a crashed container. |
+| `containers.skipMountCheck` | - | off | Skip the boot check that verifies agent containers get a writable view of the data directory. The check is a diagnosis, not a dependency - skipping it hides the warning, it does not make a read-only mount work. |
+| `containers.agentBaseImage` | - | the release's published image | Container image every project's agents run in, overriding the default for this instance. Must be a reference the backend in use can pull, e.g. `ghcr.io/hezo-ai/agent-base:0.42.0`. Mainly for running a development server against a managed sandbox service, where the default is built into the local Docker daemon and a managed service has nothing to pull. A project that names its own base image keeps it. |
+| - | `DOCKER_HOST` (environment) | - | Standard Docker environment variable, honoured when it points at a `unix://` socket. Takes effect only if `containers.dockerSocket` / `--docker-socket` is unset. |
+
+### Egress
+
+| Setting | Flag | Default | Description |
+|---|---|---|---|
+| `egress.allowPrivateTargets` | `--egress-allow-private-targets` | off | Allow agent egress through the proxy to reach loopback, link-local and private (RFC1918) addresses. Blocked by default: the proxy runs on the host, so without the guard an agent could tunnel to Hezo's own API, its database, or any host-bound daemon. The check is made on the address a hostname resolves to, not on the name. Enable only when an MCP server or git remote your agents genuinely need lives on your LAN. |
+| `egress.proxyAuth` | `--no-egress-proxy-auth` | on | Per-run egress-proxy authentication. On by default: each run's `HTTP(S)_PROXY` URL carries a random token the proxy verifies before substituting any secret, so a process that reaches the proxy address can't drive substitution for another run. Only disable to unblock a runtime whose HTTP client can't send proxy credentials - the secret red line still holds either way (an unauthenticated caller only ships unsubstituted placeholders, which fail upstream). |
+| `egress.debug` | - | off | Per-connection proxy lifecycle tracing. Diagnostic only, and very noisy. |
+
+### Telemetry and updates
+
+| Setting | Flag | Default | Description |
+|---|---|---|---|
+| `telemetry.enabled` | `--disable-telemetry` | on | The anonymous daily usage report (see [Anonymous usage telemetry](#anonymous-usage-telemetry)). Pass `--disable-telemetry` or set `telemetry.enabled: false`. |
+| `telemetry.endpoint` | `--telemetry-endpoint <url>` | `https://hezo.ai/api/telemetry` | Where the daily report is sent. Point it at your own collector to keep the data in-house. |
+| `updates.disabled` | - | off | Disable the in-app auto-update (release check, the background download, and the "Install & restart" banner). When disabled the banner instead links to the GitHub release page. |
+| `updates.autoInstall` | `--auto-install-updates` | off | Install staged updates automatically: once a newer release is downloaded and verified, Hezo gracefully restarts onto it without waiting for "Install & restart" in the web UI. The restart is deferred while agent runs are in flight, and only happens where in-app auto-update is available at all (the self-managed binary - not inside a container). The instance comes back **unlocked**: the unlock key is handed to the new process in memory, never written to disk. See [Updating](/docs/deployment/self-hosting#updating). |
+
+### Marketplace and connectors
+
+| Setting | Flag | Default | Description |
+|---|---|---|---|
+| `marketplace.ref` | - | `main` | Git ref the [team marketplace](/docs/concepts/marketplace) is fetched from. Point it at a branch or tag to pin the catalog. |
+| `marketplace.baseUrl` | - | `https://raw.githubusercontent.com` | Base URL the marketplace is fetched from, for a fork or an internal mirror. |
+| `github.oauthClientId` | - | Hezo's public OAuth app | Client id for the GitHub connector's device flow. Register your own GitHub OAuth app and name it here to keep the authorization under your own organization's control. |
+
+### Background job schedules
+
+All schedules are **seconds-precision six-field** cron expressions
+(`second minute hour day month weekday`). The defaults suit a normal instance; change one
+only when you have a reason to.
+
+| Setting | Default | Description |
+|---|---|---|
+| `jobs.wakeupCron` | `*/5 * * * * *` | Delivery of queued agent wakeups. |
+| `jobs.heartbeatCron` | `*/5 * * * * *` | Scan for agents whose heartbeat interval is due. |
+| `jobs.wakeupCoalescingMs` | `2000` | Window in which repeated wakeups for one agent collapse into a single run. |
+| `jobs.heartbeatCooldownSec` | `60` | Quiet window after a run before that agent is heartbeat-eligible again. Prevents back-to-back runs when the configured interval is shorter than the run itself. |
+| `jobs.heartbeatFloorMin` | `60` | Lowest heartbeat cadence the scheduler honours, in minutes. Raising it clamps every agent up to it, and the web UI's cadence options will under-report the new floor. |
+| `jobs.containerSyncCron` | `* * * * * *` | Container status reconciliation. Every second keeps the dashboard snappy; slow it down on a CPU-starved host. |
+| `jobs.containerIdleStopCron` | `15 * * * * *` | Idle-container reaper. |
+| `jobs.orphanDetectionCron` | `*/30 * * * * *` | Detection of runs whose container disappeared. |
+| `jobs.orphanContainerSweepCron` | `45 */10 * * * *` | Removal of containers this instance created that no project points at any more. On a managed backend an orphan bills until it is swept. |
+| `jobs.connectorHealthCron` | `0 */5 * * * *` | OAuth token renewal and hosted-connector re-probing. |
+| `jobs.budgetResumeCron` | `*/30 * * * * *` | Re-evaluation of budget-paused agents, so a rolling window that has rolled over frees them. |
+| `jobs.inboxArchiveCron` | `0 0 3 * * *` | Inbox archiving sweep. |
+| `jobs.inboxRetentionDays` | `30` | How long archived inbox items are kept, in days. |
+| `jobs.pricingRefreshCron` | `0 0 2 * * *` | Daily model-pricing refresh from [pricepertoken.com](https://pricepertoken.com). Pricing also refreshes at startup; a failed refresh keeps the existing rates. |
+| `jobs.modelPinRefreshCron` | `0 0 3 * * *` | Daily re-read of each connected provider's model catalog, which keeps the model a **newly added** connection starts on current. Connections you already have keep the model you chose. A provider Hezo cannot reach keeps its previous default. |
+| `jobs.updateCheckCron` | `0 0 4 * * *` | Daily check that downloads and stages a newer release. A running instance also stages as soon as it detects an update, so the banner's "Install & restart" is instant. |
+| `jobs.autoInstallCron` | `0 */5 * * * *` | Auto-install check that restarts onto a staged update once no agent runs are in flight. Only registered when `updates.autoInstall` is on. |
+| `jobs.telemetryCron` | `0 0 5 * * *` | Daily telemetry report. |
+| `jobs.dbMaintenanceCron` | `0 30 4 * * *` | Planner-statistics refresh and scheduler bookkeeping sweep. |
+
+### Run-log compaction
+
+Compaction is started by an operator from the Storage settings page; these control how it
+drains once running. Nothing here starts a pass on its own.
+
+| Setting | Default | Description |
+|---|---|---|
+| `logCompaction.cron` | `*/10 * * * * *` | Drain tick. Cheap when idle - it only does work while a pass is active. |
+| `logCompaction.batch` | `50` | Runs compacted per batch. |
+| `logCompaction.maxPerTick` | `500` | Runs compacted per tick before yielding to the next. |
+| `logCompaction.preservedBytes` | `12288` | Trailing bytes of each old run's log kept - the slice holding the end-of-run summary and the token/cost line. Everything before it is discarded. |
+
+### Live chat
+
+| Setting | Default | Description |
+|---|---|---|
+| `chat.healthIntervalMs` | `10000` | How often a live chat session verifies its container is still healthy. |
+
+## The master key is not a config setting
+
+The master key is **never** read from the config file, and Hezo rejects a `masterKey` key
+with an error rather than accepting it. It is kept in memory only, which is what makes
+encryption at rest meaningful: a copy of the key on disk next to the encrypted data would
+let anyone who reads the host decrypt your vault.
+
+Hezo starts **locked** by design; you unlock it from the browser gate. To unlock a single
+non-interactive startup, pass the phrase to that one invocation with `HEZO_MASTER_KEY` (an
+environment variable rather than a flag, because flags are visible in the process list):
+
+```sh
+HEZO_MASTER_KEY="your twelve word master key phrase here" hezo --config /etc/hezo/hezo.config.cjs
+```
+
+Never persist it - not to a config file, an env file, a service definition, or a shell
+profile. See [Master key & encryption](/docs/security/master-key).
+
+## Why `reset` is not a config setting
+
+`--reset` renames the existing embedded `pgdata` aside and starts with an empty database.
+That is a one-off action, so it is a flag only and Hezo rejects a `reset` key in the config
+file: a persistent file carrying it would wipe your database on **every** restart rather
+than once.
 
 ## Examples
 
@@ -57,17 +211,23 @@ hezo --port 8080 --data-dir /var/lib/hezo
 Unlock a single startup non-interactively by passing the master key to that one
 invocation (Hezo normally starts **locked** and you unlock from the browser gate):
 
+```js
+// /etc/hezo/hezo.config.cjs
+module.exports = {
+  dataDir: '/var/lib/hezo',
+  webUrl: 'https://hezo.example.com',
+};
+```
+
 ```sh
 HEZO_MASTER_KEY="your twelve word master key phrase here" \
-HEZO_DATA_DIR=/var/lib/hezo \
-HEZO_WEB_URL=https://hezo.example.com \
-  hezo
+  hezo --config /etc/hezo/hezo.config.cjs
 ```
 
 Pass `HEZO_MASTER_KEY` inline like this only for a one-off launch - **never persist it**
-to an env file, a service definition, or anywhere on the host. The master key is kept in
-memory only so a copy of your disk can't decrypt your data; writing it to disk defeats
-that. See [Master key & encryption](/docs/security/master-key).
+to the config file, an env file, a service definition, or anywhere on the host. The master
+key is kept in memory only so a copy of your disk can't decrypt your data; writing it to
+disk defeats that. See [Master key & encryption](/docs/security/master-key).
 
 ## Using an external Postgres
 
@@ -79,9 +239,12 @@ directory - no external database to run. If you'd rather use a managed/hosted Po
 or, for the cloud-init deploy,
 [Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
 
-```sh
-HEZO_DATABASE_URL="postgres://hezo:••••@db.internal:5432/hezo?sslmode=verify-full" \
-  hezo --data-dir /var/lib/hezo
+```js
+// /etc/hezo/hezo.config.cjs
+module.exports = {
+  dataDir: '/var/lib/hezo',
+  database: { url: 'postgres://hezo:••••@db.internal:5432/hezo?sslmode=verify-full' },
+};
 ```
 
 On first start Hezo checks the server version, then creates its schema by applying its
@@ -104,8 +267,8 @@ Requirements and recommendations:
   (PgBouncer in transaction mode) break session-scoped advisory locks.
 - **One Hezo server per database.** Concurrent startups coordinate migrations safely,
   but running two live servers against one database is not supported.
-- The connection string carries credentials: prefer the environment variable over the
-  flag (flags are visible in the process list), and never commit it to a repo.
+- The connection string carries credentials: prefer the config file over the flag (flags
+  are visible in the process list), give the file mode 600, and never commit it to a repo.
 - `hezo backup` / `hezo restore` work against an external database too - including
   **moving an existing embedded instance to hosted Postgres** (and back). See
   [Backup & recovery](/docs/deployment/backup-and-recovery).
@@ -142,9 +305,16 @@ it - this is the recommended setup:
 ```sh
 # DigitalOcean: Databases → your cluster → Connection details → Download CA certificate
 sudo install -m 644 ca-certificate.crt /etc/hezo/db-ca.crt
+```
 
-HEZO_DATABASE_URL="postgres://hezo:••••@db-postgresql-lon1-12345-do-user-0.db.ondigitalocean.com:25060/hezo?sslmode=verify-full&sslrootcert=/etc/hezo/db-ca.crt" \
-  hezo --data-dir /var/lib/hezo
+```js
+// /etc/hezo/hezo.config.cjs
+module.exports = {
+  dataDir: '/var/lib/hezo',
+  database: {
+    url: 'postgres://hezo:••••@db-postgresql-lon1-12345-do-user-0.db.ondigitalocean.com:25060/hezo?sslmode=verify-full&sslrootcert=/etc/hezo/db-ca.crt',
+  },
+};
 ```
 
 The `PGSSLMODE` environment variable is honoured only when the connection string carries
@@ -160,9 +330,14 @@ stateless - point Hezo at any **S3-compatible** store (deployment walkthroughs:
 [Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)
 and [Using managed data hosting](/docs/deployment/one-click#using-managed-data-hosting)):
 
-```sh
-HEZO_ASSET_STORAGE_URL="s3://ACCESS_KEY:SECRET@s3.eu-west-1.amazonaws.com/my-bucket/hezo-assets?region=eu-west-1" \
-  hezo --data-dir /var/lib/hezo
+```js
+// /etc/hezo/hezo.config.cjs
+module.exports = {
+  dataDir: '/var/lib/hezo',
+  assetStorage: {
+    url: 's3://ACCESS_KEY:SECRET@s3.eu-west-1.amazonaws.com/my-bucket/hezo-assets?region=eu-west-1',
+  },
+};
 ```
 
 One URL carries the whole configuration:
@@ -194,8 +369,8 @@ Recommendations:
   encrypted at rest.
 - **One Hezo server per bucket/prefix.** Two live servers sharing a prefix is not
   supported (same posture as the database).
-- The URL carries credentials: prefer the environment variable over the flag (flags are
-  visible in the process list), and never commit it to a repo.
+- The URL carries credentials: prefer the config file over the flag (flags are visible in
+  the process list), give the file mode 600, and never commit it to a repo.
 
 ### Switching an existing instance
 
@@ -206,13 +381,13 @@ existing assets into a bucket:
 
 1. Stop the server.
 2. Back up the instance: `hezo backup --output move/`. If your data directory isn't the
-   default, point the command at it - `hezo backup` reads `HEZO_DATA_DIR` (so a deployment
-   that already sets it needs nothing extra), or pass `--data-dir`. This writes the
-   database and every asset file into `move/`.
+   default, point the command at it - `hezo backup` accepts the same `--config` as the
+   server (so a deployment that already has a config file needs only that), or pass
+   `--data-dir`. This writes the database and every asset file into `move/`.
 3. Restore into the bucket: `hezo restore move/ --asset-storage-url "s3://…"` - add
    `--database-url` as well if you're also moving to hosted Postgres. Restored blobs are
    checksum-verified against the database rows.
-4. Start the server with `HEZO_ASSET_STORAGE_URL` set.
+4. Start the server with `assetStorage.url` set in your config file.
 
 Moving back to local storage is the same, restoring without `--asset-storage-url`. The
 backup only reads the source, so your original assets stay in place until you remove them
@@ -227,14 +402,14 @@ while the server is stopped - `aws s3 sync /var/lib/hezo/assets/ s3://my-bucket/
 
 Every agent run executes inside a container. By default that container runs on the local
 Docker daemon, which is why a Docker-compatible runtime is a prerequisite for a normal
-install. `--sandbox-backend` (or `HEZO_SANDBOX_BACKEND`) starts a **brand-new** instance
-on a managed sandbox service instead, and Docker stops being required at all.
+install. `--sandbox-backend` (or `containers.backend`) starts a **brand-new** instance on
+a managed sandbox service instead, and Docker stops being required at all.
 
-The flags only choose what a brand-new instance starts on. The first startup records the
-choice, and from then on the stored setting wins: the flags are ignored on later startups
-- Hezo logs that it ignored them if they disagree - so restarting with different
-environment variables never switches an existing instance. Switching, in either
-direction, is done from Settings -> Containers at any time, no restart needed. See
+These only choose what a brand-new instance starts on. The first startup records the
+choice, and from then on the stored setting wins: the launch settings are ignored on later
+startups - Hezo logs that it ignored them if they disagree - so restarting with a different
+config file never switches an existing instance. Switching, in either direction, is done
+from Settings -> Containers at any time, no restart needed. See
 [Switching at any time](/docs/containers/overview#switching-at-any-time).
 
 [Remote containers](/docs/containers/remote/overview) covers what changes when you do:
@@ -248,16 +423,22 @@ Today the one managed backend is **Daytona**:
 hezo --sandbox-backend daytona --daytona-api-key "dtn_..."
 ```
 
-or, as environment variables:
+or, in the config file:
 
-```sh
-HEZO_SANDBOX_BACKEND=daytona
-HEZO_DAYTONA_API_KEY=dtn_...
-HEZO_DAYTONA_API_URL=https://app.daytona.io/api   # optional: a regional endpoint
+```js
+module.exports = {
+  containers: {
+    backend: 'daytona',
+    daytona: {
+      apiKey: 'dtn_...',
+      apiUrl: 'https://app.daytona.io/api', // optional: a regional endpoint
+    },
+  },
+};
 ```
 
-Add `--daytona-api-url` (or `HEZO_DAYTONA_API_URL`) only if you are pointed at a regional
-or self-hosted endpoint; it defaults to Daytona's public API.
+Set `apiUrl` (or `--daytona-api-url`) only if you are pointed at a regional or self-hosted
+endpoint; it defaults to Daytona's public API.
 
 The provider API key is stored **encrypted in the secrets vault** and read only by Hezo
 itself to drive the provider's control plane - it never enters an agent container.
@@ -278,9 +459,14 @@ Dockerfile in your working tree - which is what makes edits to it take effect on
 restart. A managed sandbox service cannot see that image; it pulls from a registry. So
 point the instance at a published image instead:
 
-```sh
-HEZO_AGENT_BASE_IMAGE=ghcr.io/hezo-ai/agent-base:0.42.0 \
-HEZO_SANDBOX_BACKEND=daytona HEZO_DAYTONA_API_KEY=dtn_... bun run dev
+```js
+module.exports = {
+  containers: {
+    backend: 'daytona',
+    agentBaseImage: 'ghcr.io/hezo-ai/agent-base:0.42.0',
+    daytona: { apiKey: 'dtn_...' },
+  },
+};
 ```
 
 That applies to every project. A project that names its own base image on its Container
@@ -329,16 +515,18 @@ small **anonymous** usage report once a day. It is **on by default** and easy to
 details; user identities; secrets; or any monetary/cost figure. Aggregated numbers from all
 opted-in installs are shown publicly at [hezo.ai/stats](https://hezo.ai/stats).
 
-**Turn it off** with the flag or the environment variable:
+**Turn it off** with the flag or the config file:
 
 ```sh
 hezo --disable-telemetry
-# or
-HEZO_TELEMETRY_ENABLED=0 hezo
+```
+
+```js
+module.exports = { telemetry: { enabled: false } };
 ```
 
 You can also keep the data in-house by pointing `--telemetry-endpoint` (or
-`HEZO_TELEMETRY_ENDPOINT`) at your own collector.
+`telemetry.endpoint`) at your own collector.
 
 ## See also
 

@@ -1,5 +1,7 @@
 import type { DeviceAuthConfig } from '@hezo/shared';
 import { afterEach, describe, expect, it } from 'vitest';
+import { resetRuntimeConfig, setRuntimeConfig } from '../src/config/runtime';
+import { DEFAULT_CONFIG } from '../src/config/types';
 import {
 	pollDeviceFlow,
 	resolveDeviceAuth,
@@ -9,27 +11,38 @@ import {
 const cfg: DeviceAuthConfig = {
 	deviceCodeUrl: 'https://github.com/login/device/code',
 	tokenUrl: 'https://github.com/login/oauth/access_token',
-	clientIdEnv: 'TEST_DEVICE_CLIENT_ID',
 	clientIdDefault: 'public-dev-id',
 	baseUrlEnv: 'TEST_DEVICE_BASE_URL',
 };
 
 afterEach(() => {
-	delete process.env.TEST_DEVICE_CLIENT_ID;
 	delete process.env.TEST_DEVICE_BASE_URL;
+	resetRuntimeConfig();
 });
 
+/** Publish a config naming its own OAuth client id, as a self-hoster would. */
+function withOauthClientId(oauthClientId: string): void {
+	setRuntimeConfig({ ...DEFAULT_CONFIG, github: { oauthClientId } });
+}
+
 describe('resolveDeviceAuth', () => {
-	it('falls back to the committed dev client_id outside production', () => {
+	it("uses the shipped app's client_id when the instance names none", () => {
+		// The default config carries the public app Hezo ships with, so an instance
+		// that never touches `github.oauthClientId` behaves as it always has.
 		const r = resolveDeviceAuth(cfg);
-		expect(r.clientId).toBe('public-dev-id');
+		expect(r.clientId).toBe(DEFAULT_CONFIG.github.oauthClientId);
 		expect(r.deviceCodeUrl).toBe('https://github.com/login/device/code');
 		expect(r.tokenUrl).toBe('https://github.com/login/oauth/access_token');
 	});
 
-	it('prefers the env client_id override', () => {
-		process.env.TEST_DEVICE_CLIENT_ID = 'env-id';
-		expect(resolveDeviceAuth(cfg).clientId).toBe('env-id');
+	it('prefers the configured github.oauthClientId', () => {
+		withOauthClientId('Iv1.selfhosted');
+		expect(resolveDeviceAuth(cfg).clientId).toBe('Iv1.selfhosted');
+	});
+
+	it("falls back to the capability's own default when the config names none", () => {
+		setRuntimeConfig({ ...DEFAULT_CONFIG, github: { oauthClientId: '' } });
+		expect(resolveDeviceAuth(cfg).clientId).toBe('public-dev-id');
 	});
 
 	it('rewrites endpoint origins when the base-url override is set', () => {
@@ -39,9 +52,10 @@ describe('resolveDeviceAuth', () => {
 		expect(r.tokenUrl).toBe('http://localhost:9999/login/oauth/access_token');
 	});
 
-	it('throws when no client_id is configured', () => {
+	it('throws when no client_id is configured anywhere', () => {
+		setRuntimeConfig({ ...DEFAULT_CONFIG, github: { oauthClientId: '' } });
 		expect(() => resolveDeviceAuth({ ...cfg, clientIdDefault: undefined })).toThrow(
-			/TEST_DEVICE_CLIENT_ID/,
+			/github\.oauthClientId/,
 		);
 	});
 });

@@ -59,6 +59,8 @@ export type {
 	ProcessEnvMarker,
 } from './sandbox/types';
 
+import { runtimeConfig } from '../config/runtime';
+
 /** Cap on a hijack response's header block - a daemon that never terminates them is broken, not slow. */
 const MAX_HIJACK_HEADER_BYTES = 64 * 1024;
 
@@ -67,15 +69,9 @@ const API_VERSION = 'v1.44';
 /**
  * Hard ceiling for docker daemon calls made by the cron-driven sync loop.
  * A wedged Unix-socket fetch would otherwise stall the container-sync iteration
- * indefinitely. Override via DOCKER_REQUEST_TIMEOUT_MS to widen for slow hosts.
+ * indefinitely. Override via `containers.dockerRequestTimeoutMs` to widen for slow hosts.
  */
-const DEFAULT_DOCKER_REQUEST_TIMEOUT_MS = 10_000;
-const DOCKER_REQUEST_TIMEOUT_MS = (() => {
-	const raw = process.env.DOCKER_REQUEST_TIMEOUT_MS;
-	if (!raw) return DEFAULT_DOCKER_REQUEST_TIMEOUT_MS;
-	const parsed = Number.parseInt(raw, 10);
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DOCKER_REQUEST_TIMEOUT_MS;
-})();
+const dockerRequestTimeoutMs = (): number => runtimeConfig().containers.dockerRequestTimeoutMs;
 
 /**
  * Upper bound on the run-process kill exec (`killRunProcesses`). The kill loop
@@ -609,7 +605,7 @@ export class DockerClient implements ContainerEngine {
 		);
 	}
 
-	async ping(timeoutMs: number = DOCKER_REQUEST_TIMEOUT_MS): Promise<boolean> {
+	async ping(timeoutMs: number = dockerRequestTimeoutMs()): Promise<boolean> {
 		try {
 			const res = await this.request('GET', '/_ping', undefined, AbortSignal.timeout(timeoutMs));
 			return res.ok;
@@ -758,7 +754,7 @@ export class DockerClient implements ContainerEngine {
 			'GET',
 			`/containers/${containerId}/json`,
 			undefined,
-			AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
+			AbortSignal.timeout(dockerRequestTimeoutMs()),
 		);
 		if (res.status === 404) {
 			await res.text();
@@ -825,7 +821,7 @@ export class DockerClient implements ContainerEngine {
 			'GET',
 			`/containers/${containerId}/stats?stream=false&one-shot=true`,
 			undefined,
-			AbortSignal.timeout(DOCKER_REQUEST_TIMEOUT_MS),
+			AbortSignal.timeout(dockerRequestTimeoutMs()),
 		);
 		if (res.status === 404) {
 			await res.text();
