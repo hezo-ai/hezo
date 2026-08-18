@@ -46,7 +46,7 @@ cached to go stale. Context reaches the agent in one of two ways:
 | Memory | Scope | How it reaches the agent | Kept current by |
 |---|---|---|---|
 | Rules | One task | In full, every run | You and agents |
-| Progress summary | One task | In full, every run | You and agents |
+| Progress summary | One task | In full, every run | Agents |
 | Comment thread | One task | Read by the agent at the start of a run | You and agents |
 | Project documents | One project | Manifest, full text on demand | You and agents |
 | Skills | Global or one project | Manifest, full text on demand | You and agents |

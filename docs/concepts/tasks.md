@@ -21,17 +21,19 @@ cleanly between runs and between agents.
   when you want agents to follow specific guidelines on a task - they're the right place
   for non-negotiables.
 - **Progress summary** - *where things stand*: a living checkpoint of what's been done
-  and what's left. Agents keep it up to date as they work, and you can edit it too. It
-  lets an agent returning to a task continue without re-reading the whole thread.
+  and what's left. It lets an agent returning to a task continue without re-reading the
+  whole thread. Agents own it: they write it as they work, and it is read-only for you -
+  it should say what the agent believes about its own work, not what you wish were true.
+  To change course, say so in a comment or in the rules.
 
 All three travel with the task as its **long-term memory**: at the start of every run the
 agent is handed the description, the rules, and the latest progress summary **in full**, so
 work carries cleanly from one run to the next even when a different agent picks the task
-up. You can edit the title, the description, the rules, and the summary yourself from the
-task view at any time, and so can the agents. Click the pencil next to the title to rename
-a task in place, or Edit on the Description card to write or rewrite its body; every one of
-those edits is recorded on the task's comment thread, so it is always clear what changed
-and who changed it. See [Documents & long-term memory](/docs/concepts/documents-and-memory)
+up. You can edit the title, the description, and the rules yourself from the task view at
+any time, and so can the agents; the progress summary is the one an agent writes and you
+read. Click the pencil next to the title to rename a task in place, or Edit on the
+Description card to write or rewrite its body; every one of those edits is recorded on the
+task's comment thread, so it is always clear what changed and who changed it. See [Documents & long-term memory](/docs/concepts/documents-and-memory)
 for how this fits the wider memory model.
 
 ## Comments and mentions

@@ -1,7 +1,7 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
-import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
+import { seedProject, seedTask, seedTaskProgress, seedWorkspace } from './helpers/seed';
 import { expandEventGroups } from './helpers/thread';
 
 async function lockTask(
@@ -136,7 +136,7 @@ test('task detail lists every agent running concurrently on a task', async () =>
 	expect(section.textContent).toContain(seeded.secondTitle);
 });
 
-test('can edit task rules and progress summary', async () => {
+test('can edit task rules', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
 	const { findByTestId, findByText, router, user } = await renderApp({
 		initialPath: '/',
@@ -167,30 +167,52 @@ test('can edit task rules and progress summary', async () => {
 	)!;
 	await user.click(rulesSaveBtn);
 	await findByText('Consult architect before changes');
+});
+
+test('the progress summary card is read-only - it reads, with no way to edit it', async () => {
+	const seeded = { projectSlug: '', taskId: '' };
+	const { findByTestId, router, user } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Summary Project' });
+			const task = await seedTask(ws, project, { title: 'Summary Test Task' });
+			await seedTaskProgress(task, 'Implementation started');
+			seeded.projectSlug = project.slug;
+			seeded.taskId = task.identifier.toLowerCase();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
 
 	const summarySection = await findByTestId('pinned-progress-summary');
-	const summaryEditBtn = Array.from(summarySection.querySelectorAll('button')).find(
-		(b) => b.textContent === 'Edit',
-	)!;
-	await user.click(summaryEditBtn);
+	expect(
+		Array.from(summarySection.querySelectorAll('button')).some((b) => b.textContent === 'Edit'),
+	).toBe(false);
 
-	const summaryTextarea = summarySection.querySelector('textarea') as HTMLTextAreaElement;
-	await user.type(summaryTextarea, 'Implementation started');
-	const summarySaveBtn = Array.from(summarySection.querySelectorAll('button')).find(
-		(b) => b.textContent === 'Save',
-	)!;
-	await user.click(summarySaveBtn);
-	await findByText('Implementation started');
+	// Expanding shows what the agent wrote, and still offers no editor.
+	await user.click(await findByTestId('progress-summary-toggle'));
+	const expanded = await findByTestId('pinned-progress-summary');
+	expect(expanded.textContent).toContain('Implementation started');
+	expect(expanded.querySelector('textarea')).toBe(null);
+	expect(
+		Array.from(expanded.querySelectorAll('button')).some((b) => b.textContent === 'Edit'),
+	).toBe(false);
 });
 
 test('task rules and progress summary render markdown formatting', async () => {
 	const seeded = { projectSlug: '', taskId: '' };
+	const summaryBody = '1. Scaffolded routes\n2. Wired up DB\n3. Added tests';
 	const { findByTestId, router, user } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Markdown Project' });
 			const task = await seedTask(ws, project, { title: 'Markdown Task' });
+			await seedTaskProgress(task, summaryBody);
 			seeded.projectSlug = project.slug;
 			seeded.taskId = task.identifier.toLowerCase();
 		},
@@ -203,7 +225,6 @@ test('task rules and progress summary render markdown formatting', async () => {
 
 	const rulesBody =
 		'Use **bold** guidance.\n\n- first bullet\n- second bullet\n\nRun `bun test` before merge.';
-	const summaryBody = '1. Scaffolded routes\n2. Wired up DB\n3. Added tests';
 
 	const pinnedRules = await findByTestId('pinned-rules');
 	const rulesEditBtn = Array.from(pinnedRules.querySelectorAll('button')).find(
@@ -228,18 +249,8 @@ test('task rules and progress summary render markdown formatting', async () => {
 	expect(Array.from(liEls).some((li) => li.textContent === 'first bullet')).toBe(true);
 	expect(Array.from(liEls).some((li) => li.textContent === 'second bullet')).toBe(true);
 
-	const pinnedSummary = await findByTestId('pinned-progress-summary');
-	const summaryEditBtn = Array.from(pinnedSummary.querySelectorAll('button')).find(
-		(b) => b.textContent === 'Edit',
-	)!;
-	await user.click(summaryEditBtn);
-	const summaryTa = pinnedSummary.querySelector('textarea') as HTMLTextAreaElement;
-	await user.type(summaryTa, summaryBody);
-	const summarySaveBtn = Array.from(pinnedSummary.querySelectorAll('button')).find(
-		(b) => b.textContent === 'Save',
-	)!;
-	await user.click(summarySaveBtn);
-
+	// The summary is agent-written, so it is seeded rather than typed in.
+	await user.click(await findByTestId('progress-summary-toggle'));
 	await new Promise((r) => setTimeout(r, 100));
 	const refreshedSummary = await findByTestId('pinned-progress-summary');
 	const olLis = refreshedSummary.querySelectorAll('ol li');

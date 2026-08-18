@@ -514,6 +514,19 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const scopeDenied = assertRunTaskScope(auth, taskId, body.status);
 	if (scopeDenied) return err(c, 'FORBIDDEN', scopeDenied, 403);
 
+	// The progress summary is the agent's own running checkpoint, written from
+	// inside a run via `update_task` and handed back to the next run in full. A
+	// human rewriting it silently changes what that run believes about its own
+	// work, so it is agent-only here; humans say what they want in a comment.
+	if (body.progress_summary !== undefined && auth.type !== AuthType.Agent) {
+		return err(
+			c,
+			'FORBIDDEN',
+			'The progress summary is maintained by agents and cannot be edited by hand',
+			403,
+		);
+	}
+
 	// `done` and `cancelled` are now the only terminal states; once a task is
 	// terminal only the admin can move it back to an active status (re-open).
 	if (
@@ -650,9 +663,9 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		params.push(body.progress_summary);
 		idx++;
 		sets.push('progress_summary_updated_at = now()');
-		const updatedBy = auth.type === AuthType.Agent ? auth.memberId : null;
+		// Only an agent reaches here — the guard above rejects every other caller.
 		sets.push(`progress_summary_updated_by = $${idx}`);
-		params.push(updatedBy);
+		params.push(auth.type === AuthType.Agent ? auth.memberId : null);
 		idx++;
 	}
 	if (body.rules !== undefined) {

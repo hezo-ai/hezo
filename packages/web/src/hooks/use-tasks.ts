@@ -200,7 +200,7 @@ interface UpdateTaskVars {
 	priority?: string;
 	assignee_id?: string | null;
 	labels?: string[];
-	progress_summary?: string | null;
+	// No `progress_summary`: agents own it, and the REST route rejects a human write.
 	rules?: string | null;
 	/** A task identifier or UUID to nest under; null promotes to top level. */
 	parent_task_id?: string | null;

@@ -1,6 +1,12 @@
 import { ApprovalType, TaskStatus } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, createTestProject, createTestTeam, instanceCoachId } from './helpers/app';
+import {
+	authHeader,
+	createTestProject,
+	createTestTeam,
+	instanceCoachId,
+	mintAgentToken,
+} from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 let ctx: ServerTestContext;
@@ -169,7 +175,7 @@ describe('task automation: Coach wakeup on Done', () => {
 });
 
 describe('task: progress_summary and rules', () => {
-	it('can update progress_summary with tracking fields', async () => {
+	it('an agent can update progress_summary, and the write is attributed to it', async () => {
 		const createRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
 			method: 'POST',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
@@ -181,15 +187,71 @@ describe('task: progress_summary and rules', () => {
 		});
 		const taskId = ((await createRes.json()) as any).data.id;
 
+		const { token: agentToken } = await mintAgentToken(
+			ctx.db,
+			ctx.masterKeyManager,
+			engineerAgentId,
+			teamId,
+			taskId,
+		);
 		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
-			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
 			body: JSON.stringify({ progress_summary: 'Completed API endpoints, working on tests' }),
 		});
 		expect(patchRes.status).toBe(200);
 		const updated = ((await patchRes.json()) as any).data;
 		expect(updated.progress_summary).toBe('Completed API endpoints, working on tests');
 		expect(updated.progress_summary_updated_at).toBeTruthy();
+		expect(updated.progress_summary_updated_by).toBe(engineerAgentId);
+	});
+
+	it('rejects a human writing progress_summary, leaving what the agent wrote intact', async () => {
+		const createRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				project_id: projectId,
+				title: 'Progress guard test',
+				assignee_id: engineerAgentId,
+			}),
+		});
+		const taskId = ((await createRes.json()) as any).data.id;
+
+		const { token: agentToken } = await mintAgentToken(
+			ctx.db,
+			ctx.masterKeyManager,
+			engineerAgentId,
+			teamId,
+			taskId,
+		);
+		await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ progress_summary: 'Agent checkpoint' }),
+		});
+
+		const patchRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ progress_summary: 'Human rewrite' }),
+		});
+		expect(patchRes.status).toBe(403);
+
+		// Rejected whole: a title alongside it does not slip through either.
+		const mixedRes = await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Renamed', progress_summary: 'Human rewrite' }),
+		});
+		expect(mixedRes.status).toBe(403);
+
+		const row = await ctx.db.query<{ progress_summary: string; title: string }>(
+			'SELECT progress_summary, title FROM tasks WHERE id = $1',
+			[taskId],
+		);
+		expect(row.rows[0].progress_summary).toBe('Agent checkpoint');
+		expect(row.rows[0].title).toBe('Progress guard test');
 	});
 
 	it('can update rules', async () => {
