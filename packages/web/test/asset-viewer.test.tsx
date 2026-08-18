@@ -337,3 +337,131 @@ test('switches the viewed asset via the header name search', async () => {
 		expect((await findByTestId('asset-viewer-breadcrumb')).textContent).toContain('bravo.md');
 	});
 });
+
+const CSV_CONTENT = [
+	'original_tweet_url,reply_text,priority',
+	'https://x.com/a/1,"Orchestration, memory, and handoffs.",high',
+	'https://x.com/b/2,Verification loops beat hovering.,low',
+].join('\n');
+
+test('a CSV asset renders as a table, with the raw file behind Source', async () => {
+	const { container, findByTestId, queryByTestId, user } = await setupViewer({
+		filename: 'x-replies.csv',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(CSV_CONTENT),
+		comments: [{ quote: 'Verification loops', comment: 'Lead with this one' }],
+	});
+
+	const table = await findByTestId('asset-csv-table');
+	expect(Array.from(table.querySelectorAll('th')).map((th) => th.textContent)).toEqual([
+		'original_tweet_url',
+		'reply_text',
+		'priority',
+	]);
+
+	// Quoting is resolved: the cell holds the field's value, commas and all, and
+	// the row is three cells rather than one run of raw text.
+	const firstRow = table.querySelectorAll('tbody tr')[0];
+	expect(Array.from(firstRow.querySelectorAll('td')).map((td) => td.textContent)).toEqual([
+		'https://x.com/a/1',
+		'Orchestration, memory, and handoffs.',
+		'high',
+	]);
+	expect(table.textContent).not.toContain('"Orchestration');
+	// The raw text view is not what the viewer opens on.
+	expect(queryByTestId('asset-viewer-source')).toBeNull();
+
+	// A seeded quote anchors inside its cell, exactly as it does in plain text.
+	await waitFor(() => {
+		const mark = container.querySelector('td mark[data-review-id]');
+		expect(mark?.textContent).toBe('Verification loops');
+	});
+
+	// Source shows the file as written, quoting included.
+	await user.click(await findByTestId('asset-viewer-source-tab'));
+	const source = await findByTestId('asset-viewer-source');
+	expect(source.textContent).toBe(CSV_CONTENT);
+	expect(queryByTestId('asset-csv-table')).toBeNull();
+});
+
+test('selecting inside a CSV cell anchors a comment to that cell text', async () => {
+	const { container, findByTestId, user } = await setupViewer({
+		filename: 'x-replies.csv',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(CSV_CONTENT),
+	});
+
+	await findByTestId('asset-csv-table');
+	const cell = Array.from(container.querySelectorAll('td')).find((td) =>
+		td.textContent?.includes('Orchestration'),
+	) as HTMLElement;
+	const textNode = cell.firstChild?.firstChild as Text;
+	const start = textNode.data.indexOf('memory');
+
+	const range = document.createRange();
+	range.setStart(textNode, start);
+	range.setEnd(textNode, start + 'memory'.length);
+	const selection = window.getSelection();
+	selection?.removeAllRanges();
+	selection?.addRange(range);
+	document.dispatchEvent(new Event('selectionchange'));
+
+	fireEvent.mouseDown(await findByTestId('review-selection-pill'));
+	await user.type(
+		(await findByTestId('review-editor-textarea')) as HTMLTextAreaElement,
+		'Say what is remembered',
+	);
+	await user.click(await findByTestId('review-editor-save'));
+
+	await waitFor(async () => {
+		const rows = await assetReviewRows();
+		expect(rows.length).toBe(1);
+		expect(rows[0].quote).toBe('memory');
+	});
+	// The saved anchor resolves back over the table's own text stream.
+	await waitFor(() => {
+		expect(container.querySelector('td mark[data-review-id]')?.textContent).toBe('memory');
+	});
+});
+
+test('hovering a CSV cell comments on that whole cell', async () => {
+	const { container, findByTestId, user } = await setupViewer({
+		filename: 'x-replies.csv',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(CSV_CONTENT),
+	});
+
+	await findByTestId('asset-csv-table');
+	const cell = Array.from(container.querySelectorAll('td')).find(
+		(td) => td.textContent === 'Verification loops beat hovering.',
+	) as HTMLElement;
+	fireEvent.mouseOver(cell);
+
+	await user.click(await findByTestId('review-line-ghost'));
+	const editor = await findByTestId('review-editor');
+	expect(editor.textContent).toContain('Verification loops beat hovering.');
+	await user.type(
+		(await findByTestId('review-editor-textarea')) as HTMLTextAreaElement,
+		'Cut the second sentence',
+	);
+	await user.click(await findByTestId('review-editor-save'));
+
+	await waitFor(async () => {
+		const rows = await assetReviewRows();
+		expect(rows.length).toBe(1);
+		expect(rows[0].quote).toBe('Verification loops beat hovering.');
+	});
+});
+
+test('a .csv with nothing to split into columns stays plain text', async () => {
+	const lines = 'first line of notes\nsecond line of notes';
+	const { findByTestId, queryByTestId } = await setupViewer({
+		filename: 'notes.csv',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(lines),
+	});
+
+	expect((await findByTestId('asset-plain-text')).textContent).toBe(lines);
+	expect(queryByTestId('asset-csv-table')).toBeNull();
+	expect(queryByTestId('asset-viewer-preview-tab')).toBeNull();
+});

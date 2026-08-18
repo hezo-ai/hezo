@@ -98,6 +98,45 @@ test('a markdown asset card shows a rendered-text thumbnail instead of a file gl
 	expect(thumb.querySelector('strong')?.textContent).toBe('markdown assets');
 });
 
+test('a CSV asset card shows a mini table thumbnail instead of a file glyph', async () => {
+	let ctx!: { projectSlug: string };
+	const csv = 'url,reply_text,priority\nhttps://x.com/a/1,"Ownership, not vibes.",high';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Replies' });
+			await seedAsset(ws, project, {
+				filename: 'x-replies.csv',
+				contentType: 'text/plain',
+				bytes: new TextEncoder().encode(csv),
+			});
+			ctx = { projectSlug: project.slug };
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/assets',
+		params: { projectId: ctx.projectSlug },
+	});
+
+	// The card media reads as a grid: real header cells, and a quoted value
+	// resolved into one cell rather than shown with its quotes.
+	const thumb = await findByTestId('asset-csv-thumbnail');
+	await waitFor(() =>
+		expect(Array.from(thumb.querySelectorAll('th')).map((th) => th.textContent)).toEqual([
+			'url',
+			'reply_text',
+			'priority',
+		]),
+	);
+	expect(Array.from(thumb.querySelectorAll('td')).map((td) => td.textContent)).toEqual([
+		'https://x.com/a/1',
+		'Ownership, not vibes.',
+		'high',
+	]);
+});
+
 test('an asset is archived first, then deleted from the Archived view', async () => {
 	let ctx!: { projectSlug: string };
 	const { findByText, findByTestId, getByRole, queryByText, user, router } = await renderApp({

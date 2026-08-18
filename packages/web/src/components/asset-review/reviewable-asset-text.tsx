@@ -1,13 +1,15 @@
 import { isMarkdownAssetMime, type ProjectAsset } from '@hezo/shared';
 import { Loader2 } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { AssetReviewComment } from '../../hooks/use-asset-review';
 import { useSignedUrlText } from '../../hooks/use-signed-url-text';
+import { CSV_PREVIEW_ROW_LIMIT, isCsvAssetPath, parseCsvPreview } from '../../lib/csv';
 import type { ReviewAnchor } from '../../lib/doc-review-selection';
 import type { ReviewAnnotation } from '../../lib/rehype-review-highlights';
 import { ReviewSurface } from '../document-review/review-surface';
 import { MarkdownProse } from '../markdown-prose';
 import { Button } from '../ui/button';
+import { CsvTable } from './csv-table';
 import { PlainTextWithHighlights } from './plain-text-highlights';
 
 type ViewMode = 'preview' | 'source';
@@ -15,6 +17,9 @@ type ViewMode = 'preview' | 'source';
 const TAB_BASE = 'px-2.5 py-1 rounded';
 const TAB_ACTIVE = 'bg-surface text-text-1 shadow-sm';
 const TAB_INACTIVE = 'text-text-2 hover:text-text-1';
+
+const NO_ROWS: string[][] = [];
+const NO_ANNOTATIONS: ReviewAnnotation[] = [];
 
 export interface AssetReviewControls {
 	comments: AssetReviewComment[] | undefined;
@@ -36,11 +41,14 @@ interface ReviewableAssetTextProps {
 }
 
 /**
- * A text asset (markdown or plain text) in the viewer's left pane, wrapped in
- * the shared `ReviewSurface` so selections and line hovers comment exactly as
- * they do on project docs. Markdown keeps the Preview / Source tabs the old
- * asset dialog had; anchors are computed over the Preview stream, so the
- * Source tab renders without review affordances.
+ * A text asset (markdown, CSV or plain text) in the viewer's left pane, wrapped
+ * in the shared `ReviewSurface` so selections and line hovers comment exactly as
+ * they do on project docs.
+ *
+ * Types with a richer reading than their raw bytes - markdown as prose, a CSV
+ * as a table - render that as the Preview tab and keep the raw file behind
+ * Source. Anchors are computed over the Preview stream, so the Source tab
+ * renders without review affordances.
  */
 export function ReviewableAssetText({
 	projectId,
@@ -51,6 +59,15 @@ export function ReviewableAssetText({
 	const isMarkdown = isMarkdownAssetMime(asset.content_type);
 	const [mode, setMode] = useState<ViewMode>('preview');
 	const { text, error, reload } = useSignedUrlText(asset.url);
+
+	// A `.csv` is stored as text/plain, so the table reading is chosen by
+	// filename. One that parses to a single column (or none) gains nothing from
+	// a table and stays plain text.
+	const csv = useMemo(
+		() => (isCsvAssetPath(asset.original_filename) && text !== null ? parseCsvPreview(text) : null),
+		[asset.original_filename, text],
+	);
+	const table = csv && csv.rows.length > 0 && csv.rows[0].length > 1 ? csv : null;
 
 	const renderMarkdown = useCallback(
 		(
@@ -69,6 +86,23 @@ export function ReviewableAssetText({
 			</MarkdownProse>
 		),
 		[projectId, text],
+	);
+
+	const rows = table?.rows ?? NO_ROWS;
+	const renderTable = useCallback(
+		(
+			annotations: ReviewAnnotation[],
+			onHighlightClick: (id: string) => void,
+			active: string | null,
+		) => (
+			<CsvTable
+				rows={rows}
+				annotations={annotations}
+				activeId={active}
+				onHighlightClick={onHighlightClick}
+			/>
+		),
+		[rows],
 	);
 
 	const renderPlainText = useCallback(
@@ -109,19 +143,9 @@ export function ReviewableAssetText({
 		);
 	}
 
+	const renderPreview = isMarkdown ? renderMarkdown : table ? renderTable : renderPlainText;
 	const surface = readOnly ? (
-		isMarkdown ? (
-			<MarkdownProse projectId={projectId} testId="asset-viewer-rendered">
-				{text}
-			</MarkdownProse>
-		) : (
-			<PlainTextWithHighlights
-				content={text}
-				annotations={[]}
-				activeId={null}
-				onHighlightClick={() => {}}
-			/>
-		)
+		renderPreview(NO_ANNOTATIONS, () => {}, null)
 	) : (
 		<ReviewSurface
 			comments={review.comments}
@@ -131,11 +155,12 @@ export function ReviewableAssetText({
 			onCreate={review.onCreate}
 			onUpdate={review.onUpdate}
 			onDelete={review.onDelete}
-			renderContent={isMarkdown ? renderMarkdown : renderPlainText}
+			renderContent={renderPreview}
 		/>
 	);
 
-	if (!isMarkdown) return surface;
+	// A file whose raw bytes already are the readable form needs no tabs.
+	if (!isMarkdown && !table) return surface;
 	return (
 		<div>
 			<div
@@ -165,7 +190,17 @@ export function ReviewableAssetText({
 				</button>
 			</div>
 			{mode === 'preview' ? (
-				surface
+				<>
+					{surface}
+					{/* Kept outside the review surface: text rendered inside it joins the
+					    stream anchors are measured over. */}
+					{table?.truncated && (
+						<p className="mt-2 text-[12px] text-text-3" data-testid="asset-csv-truncated">
+							Showing the first {CSV_PREVIEW_ROW_LIMIT} rows. Open Source or download the file for
+							the rest.
+						</p>
+					)}
+				</>
 			) : (
 				<pre
 					className="whitespace-pre-wrap break-words font-mono text-[12px] text-text-1"

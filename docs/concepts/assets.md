@@ -129,6 +129,10 @@ only on archived cards, so removing an asset for good is a deliberate two-step: 
 then delete it from the Archived view (with a confirmation, since attachments referencing it
 are removed too).
 
+Cards in the library preview what they hold rather than showing one glyph for everything: an
+image or an HTML page shows itself, markdown shows its rendered opening, and a CSV shows its
+first rows as a small table - so you can pick out the file you meant without opening each one.
+
 ## The asset viewer
 
 Clicking any asset opens it in the **asset viewer** - a split view with the file's content on
@@ -136,7 +140,8 @@ the left and its **review comments** on the right (on a phone the comments pane 
 behind an edge toggle, like the task page's side panel). Each type renders natively: an
 agent's **HTML** deliverable (a mockup, a dashboard, a report) renders live and clickable
 in a **sandbox**, isolated from your instance and your data, so viewing an agent's output is
-safe by default; **markdown** renders as formatted prose with a **view-source** toggle;
+safe by default; **markdown** renders as formatted prose with a **view-source** toggle; a
+**CSV** renders as a table, quoted cells resolved, with the raw file behind the same toggle;
 images and SVGs display scaled to fit; other types show a summary card. **Open raw** in the
 viewer's toolbar still opens the underlying file in its own tab whenever you want the
 unwrapped thing. A **dropdown** next to the breadcrumb opens a name search for jumping
@@ -145,7 +150,7 @@ straight to another asset without returning to the library.
 ## Reviewing assets
 
 Assets take **review comments**, the same feedback loop [documents](/docs/concepts/documents-and-memory)
-have. On a **text asset** (markdown, plain text) select any passage, or hover a line, to
+have. On a **text asset** (markdown, plain text, CSV) select any passage, or hover a line, to
 leave a comment anchored right there; it stays highlighted, with its note in the margin. On
 any other type (an image, an HTML mockup, a PDF) add comments from the review pane - each
 applies to the asset as a whole. Clicking a comment in the pane shows you where it lives in

@@ -53,7 +53,7 @@ interface TextRef {
 	start: number;
 }
 
-interface MatchRange {
+export interface MatchRange {
 	id: string;
 	start: number;
 	end: number;
@@ -111,12 +111,29 @@ export function findQuoteRange(
 }
 
 /**
+ * Resolve every annotation against `stream`, in ascending start order. Earlier
+ * annotations win an overlap and later ones are dropped (the creation UI
+ * already prevents overlaps); an unresolvable quote yields no range. Shared by
+ * every surface that paints highlights over a text stream - the rendered
+ * markdown tree here, a plain-text asset, a CSV table's cells.
+ */
+export function claimQuoteRanges(stream: string, annotations: ReviewAnnotation[]): MatchRange[] {
+	const claimed: MatchRange[] = [];
+	for (const ann of annotations) {
+		const range = findQuoteRange(stream, ann.quote, ann.occurrence);
+		if (!range) continue;
+		if (claimed.some((c) => range.start < c.end && c.start < range.end)) continue;
+		claimed.push({ id: ann.id, ...range });
+	}
+	claimed.sort((a, b) => a.start - b.start);
+	return claimed;
+}
+
+/**
  * Wrap every annotation's quote in `<mark data-review-id>` elements, splitting
  * text nodes at match boundaries (a quote spanning several text nodes yields
- * several marks sharing the id). Overlapping matches: earlier annotations win,
- * later ones are skipped (the creation UI already prevents overlaps). Returns
- * the ids that matched. Exported for direct unit tests; the plugin below is
- * the react-markdown entry point.
+ * several marks sharing the id). Returns the ids that matched. Exported for
+ * direct unit tests; the plugin below is the react-markdown entry point.
  */
 export function applyReviewHighlights(
 	tree: HastParent,
@@ -126,15 +143,8 @@ export function applyReviewHighlights(
 	collectTextRefs(tree, refs, { value: 0 });
 	const stream = refs.map((r) => r.node.value).join('');
 
-	const claimed: MatchRange[] = [];
-	for (const ann of annotations) {
-		const range = findQuoteRange(stream, ann.quote, ann.occurrence);
-		if (!range) continue;
-		if (claimed.some((c) => range.start < c.end && c.start < range.end)) continue;
-		claimed.push({ id: ann.id, ...range });
-	}
+	const claimed = claimQuoteRanges(stream, annotations);
 	if (claimed.length === 0) return new Set();
-	claimed.sort((a, b) => a.start - b.start);
 
 	// Group refs per parent and splice replacements from the last child first,
 	// so earlier refs' child indices stay valid while we mutate.

@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssetIcon, formatBytes } from '../../../components/asset-icon';
+import { CsvThumbnail } from '../../../components/csv-thumbnail';
 import { MarkdownThumbnail } from '../../../components/markdown-thumbnail';
 import { ArchivedBadge } from '../../../components/ui/archived-badge';
 import { Breadcrumb, type BreadcrumbSegment } from '../../../components/ui/breadcrumb';
@@ -62,6 +63,7 @@ import {
 	folderLeafName,
 	groupAssets,
 } from '../../../lib/asset-folders';
+import { isCsvAssetPath } from '../../../lib/csv';
 import { useI18n } from '../../../lib/i18n';
 
 interface AssetsSearch {
@@ -1054,6 +1056,7 @@ function AssetCard({
 	const isImage = asset.content_type.startsWith('image/');
 	const isHtml = asset.content_type === 'text/html';
 	const isMarkdown = isMarkdownAssetMime(asset.content_type);
+	const isCsv = isCsvAssetPath(asset.original_filename);
 	const isArchived = asset.archived_at != null;
 	const basename = assetBasename(asset.original_filename);
 	const thumbnail = isImage ? (
@@ -1067,6 +1070,8 @@ function AssetCard({
 		/>
 	) : isMarkdown ? (
 		<MarkdownThumbnail url={asset.url} contentType={asset.content_type} />
+	) : isCsv ? (
+		<CsvThumbnail url={asset.url} contentType={asset.content_type} byteSize={asset.byte_size} />
 	) : (
 		<AssetIcon contentType={asset.content_type} />
 	);
