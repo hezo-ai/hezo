@@ -170,6 +170,29 @@ describe('the operator-facing messages', () => {
 		expect(message).toContain('master-key setup page');
 	});
 
+	it('counts them when more than one is ignored, which is the managed-hosting case', () => {
+		// An instance on external Postgres plus object storage loses both at once,
+		// so the plural branch is the one those operators actually read.
+		const { fatal } = detectRemovedEnvVars(
+			{
+				HEZO_DATA_DIR: '/var/lib/hezo',
+				HEZO_DATABASE_URL: 'postgres://hezo:pw@db.example.com:5432/hezo',
+				HEZO_ASSET_STORAGE_URL: 's3://k:s@account.r2.cloudflarestorage.com/bucket',
+			},
+			at('/root/.hezo'),
+		);
+		const message = formatRemovedEnvFatal(fatal);
+		expect(message).toContain('3 environment variables are set');
+		for (const name of ['HEZO_DATA_DIR', 'HEZO_DATABASE_URL', 'HEZO_ASSET_STORAGE_URL']) {
+			expect(message, name).toContain(name);
+		}
+		// Neither credential survives into the message.
+		expect(message).not.toContain('pw@');
+		expect(message).not.toContain('k:s@');
+		// Both fall back to a built-in default rather than to another configured value.
+		expect(message).toContain('(the built-in default)');
+	});
+
 	it('lists each ignored setting once in the warning', () => {
 		const { warnings } = detectRemovedEnvVars(
 			{ HEZO_PORT: '8080', HEZO_TELEMETRY_ENABLED: '0' },
