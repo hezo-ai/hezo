@@ -1,4 +1,9 @@
-import { HeartbeatRunStatus, isQueuedRunReason, QueuedRunReason } from '@hezo/shared';
+import {
+	HeartbeatRunStatus,
+	isQueuedRunReason,
+	QueuedRunReason,
+	runCancelOffersRetry,
+} from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import { AlertTriangle, DoorOpen, Loader2, RotateCw } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
@@ -225,10 +230,18 @@ export function RunCommentBody({
 	// Offer a manual retry on a failed/timed-out run, but only on the latest run
 	// and only when nothing is already running or queued for this task — that's
 	// exactly what `retryableRunId` resolves to (null otherwise).
+	//
+	// A cancelled run qualifies too, but only for the one reason that leaves work
+	// owed with nothing carrying it. The rest are read off `RUN_CANCEL_BEHAVIOUR`
+	// rather than listed here, so a new reason is decided once: a Terminate is
+	// somebody choosing to stop, and a handback has already re-queued the work, so
+	// a button on either is at best dead and at worst a double dispatch.
 	const canRetry =
 		Boolean(taskId) &&
 		runId === retryableRunId &&
-		(status === HeartbeatRunStatus.Failed || status === HeartbeatRunStatus.TimedOut);
+		(status === HeartbeatRunStatus.Failed ||
+			status === HeartbeatRunStatus.TimedOut ||
+			(status === HeartbeatRunStatus.Cancelled && runCancelOffersRetry(run?.cancel_reason)));
 	const { lines } = useRunLogs(run?.project_id, runId, run?.log_text, isActive);
 	const createdTasks = run?.created_tasks ?? [];
 	const createdDocs = run?.created_docs ?? [];

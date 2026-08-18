@@ -165,6 +165,49 @@ export async function recordRunTerminated(
 	}
 }
 
+/**
+ * Say in the thread that a run was abandoned and nobody is carrying its work.
+ *
+ * Posted only when the handback fails - the one outcome where work is still owed
+ * and nothing is going to pick it up. A successful handback stays silent on
+ * purpose: the work re-runs, and a note per interruption would bury the thread
+ * on a loaded instance in events nobody has to read.
+ *
+ * Authored by the system, not by the agent, so `author_member_id` is null.
+ * The `run_id` is what gives the reader something to act on: it is the run whose
+ * card carries the Retry button.
+ */
+export async function recordRunAbandoned(
+	db: Db,
+	teamId: string,
+	taskId: string,
+	runId: string,
+	agentSlug: string | null,
+	wsManager: WebSocketManager | undefined,
+): Promise<void> {
+	const r = await db.query<Record<string, unknown>>(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
+		 VALUES ($1, NULL, $2::comment_content_type, $3::jsonb)
+		 RETURNING *, (SELECT project_id FROM tasks WHERE id = $1) AS project_id`,
+		[
+			taskId,
+			CommentContentType.System,
+			JSON.stringify({
+				kind: 'run_abandoned',
+				run_id: runId,
+				agent_slug: agentSlug,
+				// The `text` fallback every system comment carries, for a reader on a
+				// surface with no dedicated renderer (the MCP thread read, an older
+				// client). The web renders the localized sentence instead.
+				text: 'A run could not be started and will not be retried automatically.',
+			}),
+		],
+	);
+	if (r.rows[0] && wsManager) {
+		broadcastRowChange(wsManager, wsRoom.team(teamId), 'task_comments', 'INSERT', r.rows[0]);
+	}
+}
+
 export async function recordWakeupCancelled(
 	db: Db,
 	teamId: string,

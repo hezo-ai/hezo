@@ -567,3 +567,80 @@ export const QUEUED_RUN_REASONS = [
 export function isQueuedRunReason(value: unknown): value is QueuedRunReason {
 	return typeof value === 'string' && (QUEUED_RUN_REASONS as readonly string[]).includes(value);
 }
+
+/**
+ * Why a run ended up `cancelled`.
+ *
+ * `cancelled` covers two opposite events. Two of these are somebody deciding to
+ * stop: an operator pressing Terminate, or a task being cancelled or re-opened
+ * so its pending work is moot. The other two are the instance giving up on its
+ * own, and only one of those leaves work owed with nothing carrying it.
+ */
+export const RunCancelReason = {
+	/** A person pressed Terminate on this run. */
+	OperatorTerminated: 'operator_terminated',
+	/** Nobody wants the work any more: the task was cancelled, or a re-open made a review moot. */
+	WorkWithdrawn: 'work_withdrawn',
+	/** The instance gave up waiting and put the work back on the queue. */
+	HandedBack: 'handed_back',
+	/** The instance gave up and could not put the work back. Needs a human. */
+	Abandoned: 'abandoned',
+} as const;
+export type RunCancelReason = (typeof RunCancelReason)[keyof typeof RunCancelReason];
+
+export const RUN_CANCEL_REASONS = [
+	RunCancelReason.OperatorTerminated,
+	RunCancelReason.WorkWithdrawn,
+	RunCancelReason.HandedBack,
+	RunCancelReason.Abandoned,
+] as const;
+
+/**
+ * What each cancel means for the reader, as a table rather than a branch: a new
+ * reason is a row here and a compile error at every consumer until it is filled
+ * in, instead of four call sites quietly falling through to a default.
+ *
+ * `offerRetry` is false for `handed_back` on purpose. The work is already queued
+ * there, so a Retry button would be dead UI at best and a double dispatch at
+ * worst; `abandoned` is the only cancel where a person still has something to do.
+ */
+export const RUN_CANCEL_BEHAVIOUR: Record<
+	RunCancelReason,
+	{
+		/** The work this run was woken for has still not been done. */
+		workStillOwed: boolean;
+		/** Nothing is carrying that work, so offer the reader a way to run it again. */
+		offerRetry: boolean;
+	}
+> = {
+	[RunCancelReason.OperatorTerminated]: { workStillOwed: false, offerRetry: false },
+	[RunCancelReason.WorkWithdrawn]: { workStillOwed: false, offerRetry: false },
+	[RunCancelReason.HandedBack]: { workStillOwed: true, offerRetry: false },
+	[RunCancelReason.Abandoned]: { workStillOwed: true, offerRetry: true },
+};
+
+/**
+ * Whether a stored `cancel_reason` is one this build knows what to do with.
+ *
+ * Guarding rather than indexing straight into the table matters across a
+ * version skew: a reason written by a newer server reads as unknown here and
+ * falls through to "no Retry", which is the safe answer, instead of indexing to
+ * `undefined` and throwing in the middle of a render.
+ */
+export function isRunCancelReason(value: unknown): value is RunCancelReason {
+	return typeof value === 'string' && (RUN_CANCEL_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * Whether a cancelled run should offer the reader a way to run it again.
+ *
+ * The guard plus the table lookup, in one place, because both surfaces that ask
+ * (the run card's own button and the thread's fold rule) must agree - a fold
+ * that opens on a row with no button, or a button on a folded row, is worse than
+ * either answer alone. An unknown or absent reason is false: an older cancel
+ * carries no attribution, and inventing an affordance for it would re-dispatch
+ * work somebody may have deliberately stopped.
+ */
+export function runCancelOffersRetry(reason: string | null | undefined): boolean {
+	return isRunCancelReason(reason) && RUN_CANCEL_BEHAVIOUR[reason].offerRetry;
+}

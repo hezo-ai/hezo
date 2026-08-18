@@ -234,6 +234,24 @@ describe('container-idle-stop', () => {
 		expect(stops).toContain(CONTAINER_ID);
 	});
 
+	it('a never-started requeue DOES hold the container, unlike a capacity skip', async () => {
+		// The two look alike and are opposite. A capacity-skipped wakeup waits on
+		// the very reclaim this scan feeds, so counting it busy deadlocks it. A
+		// wakeup handed back because its run never started is ready to dispatch on
+		// the next tick, so reclaiming its container is pulling the floor out from
+		// under work that is about to run. Stamping the handback
+		// `instance_at_capacity` - which it used to - put it on the wrong side of
+		// this line.
+		await db.query(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload, last_skipped_at, last_skipped_reason)
+			 VALUES ($1, $2, 'mention'::wakeup_source, 'queued'::wakeup_status,
+			         jsonb_build_object('task_id', $3::text), now(), 'run_never_started')`,
+			[agentId, teamId, taskId],
+		);
+		const { stops } = await runIdlePass();
+		expect(stops).toEqual([]);
+	});
+
 	it('a chat session with recent activity holds the container; a stale one does not', async () => {
 		const conversation = await db.query<{ id: string }>(
 			`INSERT INTO chat_conversations (member_id, team_id, project_id, title)

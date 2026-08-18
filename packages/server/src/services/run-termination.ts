@@ -2,6 +2,7 @@ import {
 	AgentAdminStatus,
 	COACH_AGENT_SLUG,
 	HeartbeatRunStatus,
+	RunCancelReason,
 	WakeupStatus,
 	wsRoom,
 } from '@hezo/shared';
@@ -9,6 +10,7 @@ import type { Db } from '../db/database';
 import { broadcastRowChange } from '../lib/broadcast';
 import type { JobManager } from './job-manager';
 import { recordRunTerminated } from './task-events';
+import { settleWakeupForRun } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 export interface TerminateRunDeps {
@@ -27,6 +29,13 @@ export async function terminateHeartbeatRun(
 	runId: string,
 	reason: string,
 	actorMemberId: string | null,
+	/**
+	 * Who decided to stop, in the reader's terms. Both values mean the work is no
+	 * longer owed, so neither offers a Retry - they differ only in what a person
+	 * is told. Defaults to the operator case because that is what the Terminate
+	 * route is; the task-level sweeps pass `WorkWithdrawn`.
+	 */
+	cancelReason: RunCancelReason = RunCancelReason.OperatorTerminated,
 ): Promise<TerminateResult> {
 	const { db, wsManager, jobManager } = deps;
 
@@ -36,8 +45,9 @@ export async function terminateHeartbeatRun(
 		task_id: string | null;
 		member_id: string;
 		project_id: string | null;
+		wakeup_id: string | null;
 	}>(
-		`SELECT hr.status, hr.team_id, hr.task_id, hr.member_id,
+		`SELECT hr.status, hr.team_id, hr.task_id, hr.member_id, hr.wakeup_id,
 		        (SELECT t.project_id FROM tasks t WHERE t.id = hr.task_id) AS project_id
 		   FROM heartbeat_runs hr WHERE hr.id = $1`,
 		[runId],
@@ -53,11 +63,14 @@ export async function terminateHeartbeatRun(
 	if (wasLive) {
 		// finalizeAbort() inside runAgent will write status=cancelled, finished_at,
 		// exit_code=-1 once the abort cascades. Backfill the reason now without
-		// racing that write — its UPDATE uses COALESCE on error.
-		await db.query('UPDATE heartbeat_runs SET error = COALESCE(error, $1) WHERE id = $2', [
-			reason,
-			runId,
-		]);
+		// racing that write — its UPDATE uses COALESCE on error, and on
+		// cancel_reason, which finalizeAbort never sets.
+		await db.query(
+			`UPDATE heartbeat_runs
+			    SET error = COALESCE(error, $1), cancel_reason = COALESCE(cancel_reason, $3)
+			  WHERE id = $2`,
+			[reason, runId, cancelReason],
+		);
 	} else {
 		// Queued (not yet dispatched) — finalize directly.
 		await db.query(
@@ -66,7 +79,8 @@ export async function terminateHeartbeatRun(
 			        started_at = COALESCE(started_at, now()),
 			        finished_at = now(),
 			        exit_code = COALESCE(exit_code, -1),
-			        error = COALESCE(error, $2)
+			        error = COALESCE(error, $2),
+			        cancel_reason = COALESCE(cancel_reason, $6)
 			  WHERE id = $3
 			    AND status IN ($4::heartbeat_run_status, $5::heartbeat_run_status)`,
 			[
@@ -75,6 +89,7 @@ export async function terminateHeartbeatRun(
 				runId,
 				HeartbeatRunStatus.Queued,
 				HeartbeatRunStatus.Running,
+				cancelReason,
 			],
 		);
 		broadcastRowChange(wsManager, wsRoom.team(row.team_id), 'heartbeat_runs', 'UPDATE', {
@@ -86,6 +101,14 @@ export async function terminateHeartbeatRun(
 			status: HeartbeatRunStatus.Cancelled,
 		});
 	}
+
+	// Settle the driving wakeup here rather than leaving it `claimed` for
+	// `healStaleRunState` to pick up 120s later and record as `failed`. Both are
+	// the wrong label for work somebody withdrew, and for those two minutes the
+	// still-claimed row also suppresses `chainNextTaskWakeup` for this task.
+	// `withdraw`, not `handback`: every caller of this function is a decision that
+	// the work is no longer wanted.
+	await settleWakeupForRun(db, row.wakeup_id, { kind: 'withdraw' });
 
 	if (row.task_id) {
 		// The run-terminated note is a secondary system comment; API-key
@@ -168,7 +191,13 @@ export async function cancelCoachWorkForTask(
 		[taskId, coachId, HeartbeatRunStatus.Queued, HeartbeatRunStatus.Running],
 	);
 	for (const row of runs.rows) {
-		await terminateHeartbeatRun(deps, row.id, 'Task re-opened', actorMemberId);
+		await terminateHeartbeatRun(
+			deps,
+			row.id,
+			'Task re-opened',
+			actorMemberId,
+			RunCancelReason.WorkWithdrawn,
+		);
 	}
 }
 
@@ -186,7 +215,13 @@ export async function terminateRunsForTask(
 	);
 	let count = 0;
 	for (const row of rows.rows) {
-		const result = await terminateHeartbeatRun(deps, row.id, reason, actorMemberId);
+		const result = await terminateHeartbeatRun(
+			deps,
+			row.id,
+			reason,
+			actorMemberId,
+			RunCancelReason.WorkWithdrawn,
+		);
 		if (result.terminated) count++;
 	}
 	return count;

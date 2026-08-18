@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} promoveu esta tarefa para o nível principal",
 	"comment.parentPromotedFrom": "{actor} promoveu esta tarefa para o nível principal (estava sob {from})",
 	"comment.repoDesignated": "Repositório {repo} definido como repositório designado.",
+	"comment.runAbandoned": "A execução de {agent} não pôde ser iniciada e não será repetida automaticamente.",
 	"comment.runAgentFallback": "um agente",
 	"comment.runFailed": "A execução de {agent} falhou.",
 	"comment.runFailedWithError": "A execução de {agent} falhou: {error}",

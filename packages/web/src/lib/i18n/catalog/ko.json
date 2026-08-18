@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} 님이 이 작업을 최상위로 올렸어요",
 	"comment.parentPromotedFrom": "{actor} 님이 이 작업을 최상위로 올렸어요 ({from} 하위였어요)",
 	"comment.repoDesignated": "저장소 {repo}이(가) 지정 저장소로 설정되었어요.",
+	"comment.runAbandoned": "{agent} 실행을 시작하지 못했어요. 자동으로 다시 시도하지 않아요.",
 	"comment.runAgentFallback": "에이전트",
 	"comment.runFailed": "{agent} 실행이 실패했어요.",
 	"comment.runFailedWithError": "{agent} 실행이 실패했어요: {error}",

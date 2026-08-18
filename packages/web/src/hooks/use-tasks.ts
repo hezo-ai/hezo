@@ -9,7 +9,13 @@ import { toast } from './use-toast';
 
 export interface QueuedWakeup {
 	/** `project_at_capacity` is the pre-rename legacy value, kept for the upgrade window. */
-	reason: 'task_busy' | 'instance_at_capacity' | 'project_at_capacity' | 'agent_running';
+	reason:
+		| 'task_busy'
+		| 'instance_at_capacity'
+		| 'project_at_capacity'
+		| 'agent_running'
+		| 'credential_busy'
+		| 'run_never_started';
 	since: string;
 	blocker_task_id: string | null;
 	blocker_identifier: string | null;
@@ -66,6 +72,8 @@ export interface Task {
 	 */
 	admin_action_pending: boolean;
 	last_run_status: 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | null;
+	/** Why the last run was cancelled, when it was. See `RunCancelReason`. */
+	last_run_cancel_reason: string | null;
 	/** Capped server-side; the run detail read serves the whole value. */
 	last_run_error: string | null;
 	/** Id of the last completed run — the target of a manual retry. */

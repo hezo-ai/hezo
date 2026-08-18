@@ -69,9 +69,11 @@ function runResponse(
 	teamId: string,
 	taskRowId: string,
 	status: string,
+	cancelReason: string | null = null,
 ): Record<string, unknown> {
 	const failed = status === 'failed' || status === 'timed_out';
 	return {
+		cancel_reason: cancelReason,
 		id: runId,
 		member_id: agent.id,
 		team_id: teamId,
@@ -223,6 +225,86 @@ test('failed run-entry comment shows Retry and retries that run on click', async
 	await waitFor(() => {
 		expect(retryCalls).toEqual([FAILED_RUN_ID]);
 	});
+});
+
+test('a run the instance abandoned offers Retry, because nothing is carrying its work', async () => {
+	// `cancelled` covers a person stopping a run and the instance giving up on
+	// one. Only the second can leave work owed with nothing to pick it up, and
+	// only that one is worth a button. The status alone cannot tell them apart,
+	// which is why `cancel_reason` exists.
+	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const retryCalls: string[] = [];
+
+	const { findByTestId, user, router } = await setup({
+		seeded,
+		retryCalls,
+		comments: ({ task, agent }) => [
+			runComment('c1', task.id, FAILED_RUN_ID, agent, '2026-05-20T11:30:00Z'),
+		],
+		runs: ({ task, agent, teamId }) => ({
+			[FAILED_RUN_ID]: runResponse(FAILED_RUN_ID, agent, teamId, task.id, 'cancelled', 'abandoned'),
+		}),
+		taskOverride: {
+			last_run_status: 'cancelled',
+			last_run_cancel_reason: 'abandoned',
+			last_run_id: FAILED_RUN_ID,
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	const retryButton = (await findByTestId('retry-failed-run', undefined, {
+		timeout: 20_000,
+	})) as HTMLButtonElement;
+	await waitFor(() => expect(retryButton.disabled).toBe(false), { timeout: 20_000 });
+	await user.click(retryButton);
+	await waitFor(() => {
+		expect(retryCalls).toEqual([FAILED_RUN_ID]);
+	});
+});
+
+test('a run somebody terminated offers no Retry', async () => {
+	// The other half of the same distinction. Re-dispatching work a person
+	// deliberately stopped is worse than showing them nothing.
+	const seeded: Seeded = { projectSlug: '', taskId: '', agentSlug: '' };
+	const retryCalls: string[] = [];
+
+	const { findByText, queryByTestId, router, user } = await setup({
+		seeded,
+		retryCalls,
+		comments: ({ task, agent }) => [
+			runComment('c1', task.id, FAILED_RUN_ID, agent, '2026-05-20T11:30:00Z'),
+		],
+		runs: ({ task, agent, teamId }) => ({
+			[FAILED_RUN_ID]: runResponse(
+				FAILED_RUN_ID,
+				agent,
+				teamId,
+				task.id,
+				'cancelled',
+				'operator_terminated',
+			),
+		}),
+		taskOverride: {
+			last_run_status: 'cancelled',
+			last_run_cancel_reason: 'operator_terminated',
+			last_run_id: FAILED_RUN_ID,
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks/$taskId',
+		params: { projectId: seeded.projectSlug, taskId: seeded.taskId },
+	});
+
+	// Wait for the thread itself before asserting on an absence, or the assertion
+	// passes simply because nothing has rendered yet.
+	await findByText('Run Retry Task', undefined, { timeout: 20_000 });
+	await expandEventGroups(user);
+	expect(queryByTestId('retry-failed-run')).toBeNull();
 });
 
 test('failed run-entry comment hides Retry once a later run supersedes it', async () => {

@@ -1,3 +1,4 @@
+import { RunCancelReason, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -40,12 +41,23 @@ async function makeRun(status: 'queued' | 'running' | 'succeeded'): Promise<stri
 	return r.rows[0].id;
 }
 
-async function getRunRow(runId: string): Promise<{ status: string; error: string | null }> {
-	const r = await db.query<{ status: string; error: string | null }>(
-		'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+async function getRunRow(
+	runId: string,
+): Promise<{ status: string; error: string | null; cancel_reason: string | null }> {
+	const r = await db.query<{ status: string; error: string | null; cancel_reason: string | null }>(
+		'SELECT status, error, cancel_reason FROM heartbeat_runs WHERE id = $1',
 		[runId],
 	);
 	return r.rows[0];
+}
+
+async function getWakeupStatus(runId: string): Promise<string | undefined> {
+	const r = await db.query<{ status: string }>(
+		`SELECT w.status FROM agent_wakeup_requests w
+		 JOIN heartbeat_runs hr ON hr.wakeup_id = w.id WHERE hr.id = $1`,
+		[runId],
+	);
+	return r.rows[0]?.status;
 }
 
 interface SysCommentRow {
@@ -129,6 +141,15 @@ describe('POST /heartbeat-runs/:runId/terminate', () => {
 		const row = await getRunRow(runId);
 		expect(row.status).toBe('cancelled');
 		expect(row.error).toBe('Terminated by user');
+		// A person chose to stop this, so no Retry is offered and the work is not
+		// owed. Recording it structurally is what keeps that decision out of the
+		// error prose every reader would otherwise have to parse.
+		expect(row.cancel_reason).toBe(RunCancelReason.OperatorTerminated);
+
+		// Settled here rather than left `claimed` for healStaleRunState to record
+		// as `failed` two minutes later. Both were the wrong label for withdrawn
+		// work, and a still-claimed row suppresses chainNextTaskWakeup meanwhile.
+		expect(await getWakeupStatus(runId)).toBe(WakeupStatus.Cancelled);
 
 		const sysComments = await getSystemComments(taskId);
 		const terminationComment = sysComments.find(
@@ -189,6 +210,10 @@ describe('PATCH /tasks status → Cancelled', () => {
 		const row = await getRunRow(runId);
 		expect(row.status).toBe('cancelled');
 		expect(row.error).toBe('Task cancelled');
+		// Withdrawn, not operator-terminated: nobody stopped this run, the work it
+		// was doing stopped being wanted. Both mean no Retry, and they differ only
+		// in what a reader is told.
+		expect(row.cancel_reason).toBe(RunCancelReason.WorkWithdrawn);
 
 		const sysComments = await getSystemComments(taskId);
 		const terminationComment = sysComments.find(

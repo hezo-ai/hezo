@@ -912,6 +912,19 @@ export const WakeupSkipReason = {
 	 * on new input. See `services/no-work-backoff.ts`.
 	 */
 	NoWorkCooldown: 'no_work_cooldown',
+	/**
+	 * Another run still held the rotating provider credential when this one gave
+	 * up waiting. Distinct from `InstanceAtCapacity` because the two waits clear
+	 * on different clocks: capacity frees when the idle pass reclaims a container,
+	 * this frees only when a whole other run finishes.
+	 */
+	CredentialBusy: 'credential_busy',
+	/**
+	 * A queued run's host-side driver vanished before the agent launched, so the
+	 * work was handed back. Not a capacity wait: nothing is being waited on, and
+	 * the dispatcher should pick this up on its next tick.
+	 */
+	RunNeverStarted: 'run_never_started',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
 

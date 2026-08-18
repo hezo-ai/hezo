@@ -98,6 +98,8 @@ import {
 	assignmentWakeupAlreadyServed,
 	createProgressUpdateWakeup,
 	createWakeup,
+	type SettlementIntent,
+	settleWakeupForRun,
 } from './wakeup';
 import type { WebSocketManager } from './ws';
 
@@ -3084,37 +3086,42 @@ export class JobManager {
 	 * Settle a wakeup now its run has finished, and say whether the caller should
 	 * stop.
 	 *
-	 * A run that never started because the instance was at its container-memory
-	 * budget is **not** a failure - the dispatcher's own gate tests for exactly
-	 * that state, and a moment later it may not hold. So the wakeup goes back to
-	 * `queued` the same way the dispatcher's transient branch does, and `true`
-	 * stops the caller before the failure ping and the next-task chain, neither of
-	 * which should fire for a scheduling race. Every other outcome is terminal.
+	 * A run that handed its work back - the instance was at its container-memory
+	 * budget, or another run still held the rotating provider credential - is
+	 * **not** a failure. The dispatcher's own gates test for exactly those states,
+	 * and a moment later they may not hold. So the wakeup goes back to `queued`
+	 * and `true` stops the caller before the failure ping and the next-task chain,
+	 * neither of which should fire for a scheduling race. Every other outcome is
+	 * terminal.
+	 *
+	 * A thin mapping over the shared seam (`services/wakeup.ts`): this method owns
+	 * the `RunResult` vocabulary, `settleWakeupForRun` owns the writes. Keeping the
+	 * mapping here is what lets both this path and the orphan sweeper share one
+	 * handback, rather than each maintaining its own.
 	 */
 	private async settleWakeupForRun(
 		wakeupId: string | undefined,
-		result: { success: boolean; requeued?: boolean },
+		result: { success: boolean; requeued?: boolean; requeueReason?: WakeupSkipReason },
 	): Promise<boolean> {
-		const { db } = this.deps;
-		if (result.requeued) {
-			if (wakeupId) {
-				await db.query(
-					`UPDATE agent_wakeup_requests
-					 SET status = $1::wakeup_status, claimed_at = NULL,
-					     last_skipped_at = now(), last_skipped_reason = $2
-					 WHERE id = $3`,
-					[WakeupStatus.Queued, WakeupSkipReason.InstanceAtCapacity, wakeupId],
-				);
-			}
-			return true;
-		}
-		if (wakeupId) {
-			await db.query(
-				`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,
-				[result.success ? WakeupStatus.Completed : WakeupStatus.Failed, wakeupId],
+		const intent: SettlementIntent = result.requeued
+			? // The runner names the wait it gave up on; capacity is only the default
+				// for a caller that predates the distinction.
+				{ kind: 'handback', reason: result.requeueReason ?? WakeupSkipReason.InstanceAtCapacity }
+			: result.success
+				? { kind: 'complete' }
+				: { kind: 'fail' };
+		const settled = await settleWakeupForRun(this.deps.db, wakeupId, intent);
+		if (settled.kind === 'handback_failed') {
+			// Another path settled the row first, so the work is not on the queue and
+			// this caller must not behave as though it were. Falling through to the
+			// failure path is the honest outcome: the run produced nothing and nothing
+			// is carrying its work.
+			log.warn(
+				`Wakeup ${wakeupId} could not be handed back (already settled) - reporting the run as failed instead`,
 			);
+			return false;
 		}
-		return false;
+		return settled.kind === 'requeued';
 	}
 
 	/**

@@ -105,6 +105,7 @@
 	"comment.parentPromoted": "{actor} がこのタスクを最上位に移動しました",
 	"comment.parentPromotedFrom": "{actor} がこのタスクを最上位に移動しました（{from} の下にありました）",
 	"comment.repoDesignated": "リポジトリ {repo} が指定リポジトリに設定されました。",
+	"comment.runAbandoned": "{agent} の実行を開始できませんでした。自動では再試行されません。",
 	"comment.runAgentFallback": "エージェント",
 	"comment.runFailed": "{agent} の実行が失敗しました。",
 	"comment.runFailedWithError": "{agent} の実行が失敗しました: {error}",

@@ -328,6 +328,9 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
               'queued_reason', ar.queued_reason
             ) ELSE NULL END AS active_run,
             lr.status AS last_run_status,
+            -- The thread folds a finished run open when there is something to act
+            -- on, which for a cancelled run depends on why it was cancelled.
+            lr.cancel_reason AS last_run_cancel_reason,
             left(lr.error, ${LAST_RUN_ERROR_MAX_CHARS}) AS last_run_error,
             lr.run_id AS last_run_id,
             lr.comment_id AS last_run_comment_id,
@@ -361,7 +364,7 @@ tasksRoutes.get('/projects/:projectId/tasks/:taskId', async (c) => {
        LIMIT 1
      ) qw ON true
      LEFT JOIN LATERAL (
-       SELECT hr.id AS run_id, hr.status, hr.error, hrc.id AS comment_id,
+       SELECT hr.id AS run_id, hr.status, hr.error, hr.cancel_reason, hrc.id AS comment_id,
               hrc.public_id AS comment_public_id
        FROM heartbeat_runs hr
        LEFT JOIN task_comments hrc

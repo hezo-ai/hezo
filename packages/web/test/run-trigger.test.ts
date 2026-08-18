@@ -22,6 +22,7 @@ function run(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 		project_name: 'Web App',
 		status: 'succeeded',
 		queued_reason: null,
+		cancel_reason: null,
 		created_at: '2024-01-01T00:00:00.000Z',
 		started_at: null,
 		finished_at: null,

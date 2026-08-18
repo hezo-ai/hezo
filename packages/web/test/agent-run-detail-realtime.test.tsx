@@ -37,6 +37,7 @@ function makeRun(overrides: Partial<HeartbeatRun>): HeartbeatRun {
 		project_name: 'Demo',
 		status: 'queued',
 		queued_reason: null,
+		cancel_reason: null,
 		created_at: '2024-01-01T00:00:00.000Z',
 		started_at: null,
 		finished_at: null,
@@ -125,7 +126,9 @@ test('a run going terminal server-side reaches the open detail page without a re
 		project_slug: seeded.projectSlug,
 		status: 'cancelled',
 		finished_at: '2024-01-01T00:05:00.000Z',
-		error: 'Never started: no host process was driving this run.',
+		error:
+			'Never started: this run was queued but never began, so no work was done. ' +
+			'The work is back in the queue and will be picked up automatically.',
 	});
 	invalidateQueriesForRowChange(queryClient, seeded.projectSlug, 'heartbeat_runs', {
 		id: 'run-1',
@@ -136,6 +139,9 @@ test('a run going terminal server-side reaches the open detail page without a re
 	});
 
 	await findByText(/Never started/, undefined, { timeout: 20_000 });
+	// The outcome clause is the half a reader acts on, and it is only true because
+	// the sweeper now writes it after settling the work rather than before.
+	await findByText(/back in the queue/, undefined, { timeout: 20_000 });
 });
 
 test('the back link returns to the filtered view the reader came from', async () => {
