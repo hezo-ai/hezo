@@ -719,3 +719,38 @@ test('a handoff warning renders as its own meta row, wrapping rather than as a b
 	// Never mistaken for the CEO speaking.
 	expect(queryByTestId('chat-converted-task-link')).toBeNull();
 });
+
+test('a connector refusal renders as the same warning row, keyed by its own kind', async () => {
+	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+
+	const warning =
+		'connector "ibkr" refused this run\'s request (HTTP 401) although its credential was sent. ' +
+		'Hezo is re-checking it.';
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'complete',
+			content: 'Checking the portfolio.',
+			created_at: now(),
+		},
+		{
+			id: 's1',
+			role: 'system',
+			channel: 'web',
+			status: 'complete',
+			content: warning,
+			created_at: now(),
+			system_kind: 'connector_refused',
+		},
+	]);
+
+	expect(await findByText(warning)).toBeTruthy();
+	const row = document.querySelector('[data-system-kind="connector_refused"]');
+	expect(row).toBeTruthy();
+	expect(row?.getAttribute('data-role')).toBe('system');
+	expect(queryByTestId('chat-converted-task-link')).toBeNull();
+});

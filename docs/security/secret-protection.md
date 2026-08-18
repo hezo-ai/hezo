@@ -98,7 +98,9 @@ except as a live substitution into the outbound request.
 Diagnostics deliberately record the **placeholder** rather than the value. If a request
 fails to reach its upstream, the log line names the host and the path with
 `__HEZO_SECRET_<NAME>__` still in it - enough to debug the failure, inert if the log is
-ever shared.
+ever shared. The same holds for the warning a run's log gets when a connector refuses it:
+it names the connector, the HTTP status and whether a credential was sent, never the
+credential.
 
 ## Where agents can reach
 

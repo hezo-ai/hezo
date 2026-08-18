@@ -311,6 +311,34 @@ describe('codex adapter', () => {
 		expect(config?.contents).not.toContain('bearer_token_env_var');
 	});
 
+	it("carries a hosted connector's placeholder header under http_headers, the key Codex reads", () => {
+		// Connector auth never travels as `bearerToken` - `loadConnectorDescriptors`
+		// emits it as a header - so this is the shape every OAuth / API-key
+		// connector takes through this adapter. Under any other key Codex drops it
+		// silently and the server 401s inside the container.
+		const injection = adapter.build(
+			[
+				HEZO_DESCRIPTOR,
+				{
+					kind: 'http',
+					name: 'ibkr',
+					url: 'https://api.example.com/v1/mcp',
+					headers: { Authorization: 'Bearer __HEZO_SECRET_MCP_IBKR__' },
+				},
+			],
+			{ hostHomeDir: HOME, containerHomeDir: HOME },
+		);
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		if (!config) throw new Error('config.toml not emitted');
+		expect(config.contents).toContain('[mcp_servers.ibkr]');
+		expect(config.contents).toContain(
+			'http_headers = { Authorization = "Bearer __HEZO_SECRET_MCP_IBKR__" }',
+		);
+		expect(config.contents).not.toMatch(/^headers = /m);
+		// Only the hezo server carries a bearer token; the connector adds no env entry.
+		expect(injection.envEntries).toEqual([`HEZO_MCP_BEARER_TOKEN_HEZO=${TOKEN}`]);
+	});
+
 	it('handles multiple descriptors with distinct env var names per server', () => {
 		const injection = adapter.build(
 			[

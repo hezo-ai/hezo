@@ -397,7 +397,9 @@ assignment wakeup carries the target team). In-flight work is aborted first
 `interrupted`), the task is created, and then — atomically — a `system`-role
 `chat_messages` row naming the task is inserted and the row gets
 `converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`. The system row
-carries `system_kind = 'converted_task'` (`chat_messages.system_kind`, migration 058): which
+carries `system_kind = 'converted_task'` (`chat_messages.system_kind`, migration 058; the
+CHECK list is widened by 067 for `connector_refused`, the chat's twin of a task run's connector
+refusal warning): which
 marker a system row is has to be a property of the **message**, since the chatbox would otherwise
 choose by the thread's `converted_task_id` and render a handoff warning written before the
 conversion as the converted-task link. Converted
@@ -3560,7 +3562,13 @@ a hang regression is a timeout rather than a passing string match, an E2BIG regr
 asserted non-zero exit, and the two copies cannot drift.
 Grok writes its MCP servers into a per-run `config.toml` (`$GROK_HOME`, relocated via
 `RUNTIME_HOME_LAYOUTS`) with inline bearer headers, plus `[cli] auto_update=false`; shared
-TOML rendering for the Codex config lives in `runtime-adapters/toml.ts`. Kimi Code splits its
+TOML rendering for the Codex config lives in `runtime-adapters/toml.ts`, where a hosted
+server's static headers — the only way a connector's `__HEZO_SECRET_*__` placeholder travels —
+go under `http_headers`, the one static-header key Codex reads (its bearer goes by
+`bearer_token_env_var`). Codex ignores an unrecognised key silently, so a header rendered under
+any other name never leaves the container and the server 401s at handshake with nothing else
+changing; the live conformance suite injects a static-header entry beside the bearer one to
+pin every adapter's key. Kimi Code splits its
 configuration in two — MCP servers in `mcp.json`, the `[[hooks]]` Stop entry and
 `[permission.rules]` in `config.toml`, both under `$KIMI_CODE_HOME` — and is the only adapter
 whose per-server tool filter maps one-to-one onto the descriptor (`enabledTools` /
@@ -4138,6 +4146,27 @@ removed because it flooded the project Activity feed with per-request noise. The
 usage stats are gone, and any `egress_request` rows left in older databases are filtered out
 of the activity-log reads (`routes/audit-log.ts`) rather than deleted.
 
+**One structural signal, not an audit.** The proxy is the only thing that sees both a run's
+request to a hosted connector and the upstream's answer, so it reports one thing:
+`RunProxyScope.onConnectorRejection`, fired when a request aimed at a connector (host:port
+from `loadMcpHostBindings`, attributed to a connector by `connectorForPath`) is answered
+401/403 by the upstream, could not have its placeholder substituted (`unknown_secret`,
+`secret_not_allowed_for_host`, a locked vault), or never reached an upstream at all
+(`onUnreachable`, only when no response headers were sent and the run is not tearing down).
+The event carries the connector, the status, the reason and whether the request carried a
+placeholder before substitution — never a value — and fires once per connector and credential
+shape per run (`reportedRejections`; the chat resets it per turn since its proxy spans a
+session). The proxy's own answers (`mcp_method_not_enabled`, `target_not_allowed`,
+`body_too_large`, `dns_failed`) are not the connector's and are not reported. What the callers
+do with it: `reportConnectorRunRejection` (`services/connectors/run-rejection.ts`), the caller
+supplying only a sink for its two sentences (a task run's `[runner] WARNING:` line then a
+`[runner]` verdict line; a chat's two `system_kind = 'connector_refused'` rows) —
+`describeConnectorRejection` is the immediate sentence, and `recheckRejectedConnector` runs
+`discoverConnectorMethods(…, 'run')` so the connector's recorded health comes from Hezo's own
+probe rather than the run's word, broadcasts the row so an open Connectors page refetches, and
+returns the verdict sentence. A credentialed connector whose request carried no placeholder is
+the runtime dropping a configured header, logged at error server-side as well.
+
 **Bun & topology notes.** The proxy runs on Bun, whose TLS stack forces a
 **one-listening-`https.Server`-per-host** topology bridged from the CONNECT socket over an
 **explicitly-allocated** loopback port (never read back from `server.address()`, which
@@ -4352,9 +4381,10 @@ health is the token sweep's business; a placeholder-header one is included on th
 that header, because the proxy substitutes it at request time and no server-side probe can
 reproduce that.
 
-**The enforcement leg is deliberately wider than the injection leg.** `loadMcpHostRestrictions`
+**The enforcement leg is deliberately wider than the injection leg.** `loadMcpHostBindings`
 reads `loadConnectorsInScope` - every non-revoked connector in scope, gate or no gate - rather
-than the injected set. An operator who restricted a connector's methods restricted the
+than the injected set, and binds every hosted connector (for attributing a refusal) while
+carrying a `restriction` only for the ones with an allowlist. An operator who restricted a connector's methods restricted the
 *server*, and an agent can reach a URL it read off a `list_connectors` row without ever being
 handed a descriptor for it, so withholding the descriptor must not also withhold the rule.
 
@@ -4393,13 +4423,16 @@ deadline, which is survivable for two operator-initiated callers and fatal on a 
 fallback is skipped on 401/403 and after a completed Streamable-HTTP handshake: the same URL
 gives the same answer, and asking twice only doubles what a refusing provider receives.
 
-**Probing happens at three moments.** At registration, awaited, by `add_connector`, `POST
+**Probing happens at four moments.** At registration, awaited, by `add_connector`, `POST
 /api/projects/:projectId/connectors` and the admin `POST /api/connectors`, which return
 `{ reachable, probe, note }` alongside the row (`describeProbeVerdict`). Backgrounded by
 `POST /api/projects/:projectId/connectors/ensure`, whose response is one step of an OAuth flow
-the user just clicked and whose callback re-runs discovery anyway. And on the sweep below. All
-three `DO UPDATE SET` clauses that can re-point a connector also reset `probed_at` /
-`probe_error`, or a row proven public at one URL would stay "proven" at another.
+the user just clicked and whose callback re-runs discovery anyway. On the sweep below. And
+after a run's request to the connector was refused (trigger `run`, from
+`recheckRejectedConnector` in `run-rejection.ts`) — the one moment that reaches a credentialed
+connector on no timer at all, since the sweep skips those. All three `DO UPDATE SET` clauses
+that can re-point a connector also reset `probed_at` / `probe_error`, or a row proven public at
+one URL would stay "proven" at another.
 
 **MCP connections** (`mcp_connections`, see § 3 scoping). `kind='saas'` carries
 `{ url, headers, apiKey? }`. Connector auth is **always emitted as a `__HEZO_SECRET_*__`
@@ -4586,10 +4619,11 @@ config keys can drift:
   every run on that runtime. `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` records which runtimes can
   hide tools.
 - **The egress proxy is the enforcement leg** — runtime-independent, and the only thing
-  restricting Codex and Grok at all. `allocateRunProxy` resolves the run's restricted
-  connectors once into a `host:port → allowlist` map (`loadMcpHostRestrictions`); an
-  unrestricted run gets an empty map and takes no new path. In `forward`, a request to a
-  mapped host has its body inspected by the pure `shouldBlockMcpRequest`
+  restricting Codex and Grok at all. `allocateRunProxy` resolves the run's hosted connectors
+  once into a `host:port → binding` map (`loadMcpHostBindings`), whose `restriction` half is
+  the allowlist to enforce; an unrestricted run has no `restriction` anywhere and takes no
+  inspection path. In `forward`, a request to a
+  restricted host has its body inspected by the pure `shouldBlockMcpRequest`
   (`egress/mcp-method-guard.ts`) and a `tools/call` naming a disabled method is rejected
   `403 mcp_method_not_enabled` before it leaves the host. Only `tools/call` is inspected —
   `initialize`/`tools/list`/notifications pass through, since a listing that still

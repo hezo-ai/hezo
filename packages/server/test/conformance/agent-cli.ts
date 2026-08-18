@@ -154,6 +154,19 @@ function probePrompt(_runtime: AgentRuntime): string {
 const PROMPT_FILE = 'live-cli-prompt.txt';
 
 /**
+ * A second MCP server entry pointed at the same Hezo `/mcp`, authenticated by a
+ * static `Authorization` header rather than `bearerToken` - the shape every
+ * hosted connector takes through the adapters (`loadConnectorDescriptors` emits
+ * connector auth as a header, never as a bearer token). The marker header lets
+ * the host tell this entry's requests from the bearer-token entry's, since both
+ * land on the same URL. Proven at the handshake, so no model is involved and no
+ * extra sandbox is paid for.
+ */
+const STATIC_HEADERS_SERVER_NAME = 'hezo_static_headers';
+const STATIC_HEADERS_MARKER = 'x-hezo-conformance';
+const STATIC_HEADERS_MARKER_VALUE = 'static-headers';
+
+/**
  * Which runtimes state, in their own event stream, whether each configured MCP
  * server connected.
  *
@@ -434,6 +447,14 @@ function describeOneAgentCliRun(
 		 * anything else changing.
 		 */
 		const mcpAnswers: string[] = [];
+		/**
+		 * `<method>=<status>` for requests that arrived carrying the static-headers
+		 * marker, i.e. through the connector-shaped server entry. A runtime that
+		 * renders static headers under a key its CLI does not read produces an
+		 * `initialize` here with no `Authorization` at all - answered 401, or never
+		 * arriving - which is what a hosted connector's 401 inside a run looks like.
+		 */
+		const staticHeaderAnswers: string[] = [];
 		/** Set if the tunnel died on its own at any point during the run. */
 		let tunnelDeath: string | null = null;
 		/** Set for a subscription credential the runtime materialises as a file. */
@@ -501,7 +522,12 @@ function describeOneAgentCliRun(
 				},
 				onResponse: (req: ObservedRequest, status: number) => {
 					if (!req.url.startsWith('/mcp')) return;
-					for (const m of jsonRpcMethods(req.body)) mcpAnswers.push(`${m}=${status}`);
+					const viaStaticHeaders =
+						req.headers.get(STATIC_HEADERS_MARKER) === STATIC_HEADERS_MARKER_VALUE;
+					for (const m of jsonRpcMethods(req.body)) {
+						mcpAnswers.push(`${m}=${status}`);
+						if (viaStaticHeaders) staticHeaderAnswers.push(`${m}=${status}`);
+					}
 				},
 			});
 
@@ -595,21 +621,41 @@ function describeOneAgentCliRun(
 					)
 				: null;
 
-			const descriptors: McpDescriptor[] = [
-				{
-					kind: 'http',
-					name: HEZO_MCP_SERVER_NAME,
-					url: `${tunnel.endpoints.hezoBaseUrl}/mcp`,
-					bearerToken: agentJwt,
+			const hezoDescriptor: McpDescriptor = {
+				kind: 'http',
+				name: HEZO_MCP_SERVER_NAME,
+				url: `${tunnel.endpoints.hezoBaseUrl}/mcp`,
+				bearerToken: agentJwt,
+			};
+			// A production connector's static header carries a `__HEZO_SECRET_*__`
+			// placeholder that the egress proxy substitutes on the way out; this run
+			// has no proxy, so the header must carry the real token to be served at
+			// all. That is the one shape `validateInjection` forbids for an env-var
+			// bearer adapter (a token inlined in a file), so the production shape is
+			// validated on its own and the connector-shaped entry is added after.
+			const staticHeadersDescriptor: McpDescriptor = {
+				kind: 'http',
+				name: STATIC_HEADERS_SERVER_NAME,
+				url: `${tunnel.endpoints.hezoBaseUrl}/mcp`,
+				headers: {
+					Authorization: `Bearer ${agentJwt}`,
+					[STATIC_HEADERS_MARKER]: STATIC_HEADERS_MARKER_VALUE,
 				},
-			];
-			const injection = RUNTIME_ADAPTERS[runtime].build(descriptors, {
+			};
+			const buildCtx = {
 				hostHomeDir: homeMount?.hostDir ?? null,
 				containerHomeDir: homeMount?.containerDir ?? null,
 				provider: mp.provider,
 				runModel: mp.model ?? null,
-			});
-			validateInjection(RUNTIME_ADAPTERS[runtime], injection);
+			};
+			validateInjection(
+				RUNTIME_ADAPTERS[runtime],
+				RUNTIME_ADAPTERS[runtime].build([hezoDescriptor], buildCtx),
+			);
+			const injection = RUNTIME_ADAPTERS[runtime].build(
+				[hezoDescriptor, staticHeadersDescriptor],
+				buildCtx,
+			);
 
 			mark('injection-built');
 			const runtimeFiles = subscriptionFiles(engine, containerId);
@@ -867,6 +913,22 @@ function describeOneAgentCliRun(
 			expect(`${HEZO_PROBE_TOOL} answered: ${statuses.join(', ') || '(never)'}`).toMatch(
 				/\b2\d\d\b/,
 			);
+		});
+
+		it("carries a hosted MCP server's static headers to the wire", () => {
+			// The connector-shaped entry authenticates by a static header alone, the
+			// way every OAuth / API-key connector does. Its `initialize` must reach
+			// Hezo *with* that header, i.e. be served rather than refused - which
+			// pins each adapter's static-header key to the one its CLI actually
+			// reads. A key the CLI ignores drops the header without any error and
+			// the entry 401s at handshake inside the container, exactly what a
+			// broken connector looks like from a run.
+			const statuses = staticHeaderAnswers
+				.filter((a) => a.startsWith('initialize='))
+				.map((a) => a.slice(a.lastIndexOf('=') + 1));
+			expect(
+				`${STATIC_HEADERS_SERVER_NAME} initialize answered: ${statuses.join(', ') || '(never)'}`,
+			).toMatch(/\b2\d\d\b/);
 		});
 
 		if (!RUNTIME_REPORTS_MCP_STATUS[runtime]) {

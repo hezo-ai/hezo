@@ -51,7 +51,10 @@ export function bearerEnvVarName(descriptorName: string): string {
  * Render an `[mcp_servers.<name>]` block for an HTTP MCP server, the shape the
  * Codex CLI expects. Bearer tokens are referenced by env-var name
  * (`bearer_token_env_var`) rather than inlined; the caller exports the matching
- * `HEZO_MCP_BEARER_TOKEN_*` env entry.
+ * `HEZO_MCP_BEARER_TOKEN_*` env entry. Static headers - which is how a hosted
+ * connector's `__HEZO_SECRET_*__` placeholder travels - go under `http_headers`,
+ * the only static-header key Codex reads; it silently ignores any other key, so
+ * a header rendered elsewhere never leaves the container.
  */
 export function renderHttpBlock(d: McpHttpDescriptor): string {
 	const key = safeName(d.name);
@@ -64,7 +67,7 @@ export function renderHttpBlock(d: McpHttpDescriptor): string {
 		lines.push(`bearer_token_env_var = ${escapeTomlBasicString(bearerEnvVarName(d.name))}`);
 	}
 	if (d.headers && Object.keys(d.headers).length > 0) {
-		lines.push(`headers = ${tomlInlineTable(d.headers)}`);
+		lines.push(`http_headers = ${tomlInlineTable(d.headers)}`);
 	}
 	return lines.join('\n');
 }

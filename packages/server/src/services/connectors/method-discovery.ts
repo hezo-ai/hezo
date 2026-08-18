@@ -360,11 +360,12 @@ export async function discoverConnectorMethods(
 	 * What prompted this attempt, which decides how loudly a failure is logged.
 	 * `manual` means an operator pressed refresh and is waiting on an answer, so a
 	 * failure is worth a warning. Everything else fires on Hezo's own schedule -
-	 * after an activation, at registration, or on the health sweep - where a
-	 * failure is ordinary, already visible on the connector card, and logs at
-	 * debug.
+	 * after an activation, at registration, on the health sweep, or after an
+	 * agent run's request to the connector was refused (`run`) - where a failure
+	 * is ordinary, already visible on the connector card or in the run's log, and
+	 * logs at debug.
 	 */
-	trigger: 'connect' | 'create' | 'sweep' | 'manual' = 'manual',
+	trigger: 'connect' | 'create' | 'sweep' | 'manual' | 'run' = 'manual',
 ): Promise<MethodDiscoveryResult> {
 	const found = await deps.db.query<DiscoveryRow>(
 		`SELECT id, name, kind::text AS kind, config, oauth_connection_id, api_key_secret_id,

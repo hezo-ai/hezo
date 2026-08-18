@@ -26,8 +26,10 @@ import { ref } from '../../lib/log-ref';
 import { closeServerWithDeadline } from '../../lib/net';
 import { logger } from '../../logger';
 import {
-	loadMcpHostRestrictions,
-	type McpHostRestriction,
+	connectorForPath,
+	loadMcpHostBindings,
+	type McpHostBinding,
+	type McpHostConnector,
 	mcpRestrictionKey,
 } from '../connectors/connections';
 import type { HezoCA } from './ca';
@@ -157,12 +159,41 @@ export interface EgressProxyDeps {
 	selfEndpoint?: SelfEndpoint;
 }
 
+/**
+ * A hosted connector refused, or could not be given, a request this run made to
+ * it. Reported once per run per connector and credential shape - the fact the
+ * run saw, for the caller to turn into a notice and a re-check. Never carries a
+ * header value.
+ */
+export interface ConnectorRunRejection {
+	connectorId: string;
+	connectorName: string;
+	/** From the binding at allocation: a run would send a credential for this connector. */
+	credentialed: boolean;
+	kind: 'upstream_rejected' | 'substitution_failed' | 'upstream_unreachable';
+	/** Upstream 401/403, or 0 when the upstream never answered. */
+	status: number;
+	/** `http_401`, a substitution-failure code, or an errno such as `ECONNREFUSED`. */
+	reason: string;
+	/** Operator-readable detail (the substitution failure message / socket error). */
+	detail?: string;
+	/** The request carried a `__HEZO_SECRET_*__` placeholder in URL or headers before substitution. */
+	credentialSent: boolean;
+}
+
 export interface RunProxyScope {
 	teamId: string;
 	agentId: string;
 	projectId?: string | null;
 	/** Human-friendly label (agentSlug/taskIdentifier) for run-scoped logs. */
 	label?: string | null;
+	/**
+	 * Told, once per connector and credential shape, when a hosted connector in
+	 * this run's scope refused a request or could not be sent its credential.
+	 * Invoked synchronously on the proxy's request path, so it must return fast
+	 * and never throw; the proxy guards against the latter anyway.
+	 */
+	onConnectorRejection?: (event: ConnectorRunRejection) => void;
 }
 
 export interface AllocatedRunProxy {
@@ -243,11 +274,14 @@ export class EgressProxy {
 		// here propagates rather than starting a run whose method restrictions
 		// can't be enforced — the query hits the same DB the proxy needs for
 		// secrets anyway, so a failure is not something to paper over.
-		const mcpRestrictions = await loadMcpHostRestrictions(this.deps.db, scope.projectId);
-		if (mcpRestrictions.size > 0) {
+		const mcpBindings = await loadMcpHostBindings(this.deps.db, scope.projectId);
+		const restrictedHosts = [...mcpBindings]
+			.filter(([, binding]) => binding.restriction !== null)
+			.map(([key]) => key);
+		if (restrictedHosts.length > 0) {
 			log.debug('egress proxy enforcing mcp method allowlists', {
 				run: ref(scope.label, runId),
-				hosts: [...mcpRestrictions.keys()],
+				hosts: restrictedHosts,
 			});
 		}
 		const reserved: number[] = [];
@@ -268,7 +302,7 @@ export class EgressProxy {
 					getMintCa: () => this.getMintCa(),
 					upstreamTrustedCAs: this.deps.extraUpstreamTrustedCAs,
 					hostPortAllocator: this.hostPortAllocator,
-					mcpRestrictions,
+					mcpBindings,
 					allowPrivateTargets: this.allowPrivateTargets,
 					selfEndpoint: this.selfEndpoint,
 				});
@@ -322,6 +356,16 @@ export class EgressProxy {
 			await this.releaseRunProxy(runId);
 		}
 	}
+
+	/**
+	 * Forget which connector refusals this run's proxy has already reported, so
+	 * the next one is reported again. For a caller whose proxy outlives the unit
+	 * of work it reports on - the CEO chat allocates once per session and runs
+	 * many turns through it.
+	 */
+	resetConnectorRejections(runId: string): void {
+		this.runs.get(runId)?.resetConnectorRejections();
+	}
 }
 
 interface RunProxyConfig {
@@ -336,11 +380,13 @@ interface RunProxyConfig {
 	getMintCa: () => Promise<CA>;
 	upstreamTrustedCAs?: string | string[];
 	hostPortAllocator: PortAllocator;
-	/** Host → method allowlist for this run's *restricted* connectors only.
-	 * Empty for the overwhelmingly common unrestricted run, which then takes no
-	 * inspection path at all. Resolved once at allocation: the allowlist is an
-	 * operator setting, not something that should change under a live run. */
-	mcpRestrictions: Map<string, McpHostRestriction>;
+	/** Host:port → the hosted connectors there and, where one restricts its
+	 * methods, the allowlist to enforce. Non-empty whenever a hosted connector is
+	 * in scope, but the body-inspection path keys on `restriction` alone, so the
+	 * overwhelmingly common unrestricted run still takes no inspection path.
+	 * Resolved once at allocation: an operator setting, not something that
+	 * should change under a live run. */
+	mcpBindings: Map<string, McpHostBinding>;
 	/** When true, skip the private/loopback destination guard (`net-guard.ts`). */
 	allowPrivateTargets: boolean;
 	/** Hezo's own endpoint, exempt from that guard. */
@@ -374,6 +420,9 @@ class RunProxyInstance {
 	private readonly hostServers = new Map<string, HostServer>();
 	private readonly pendingHostServers = new Map<string, Promise<HostServer>>();
 	private closed = false;
+	/** Connector refusals already reported for this run, keyed by connector id,
+	 * kind and credential shape - once is a signal, every retry is noise. */
+	private readonly reportedRejections = new Set<string>();
 	/** Every socket this run has accepted or bridged (front CONNECT sockets,
 	 * per-host loopback sockets, and the loopback client legs), tracked so close
 	 * can sever them directly. Bun's `closeAllConnections()` does not reach
@@ -892,8 +941,21 @@ class RunProxyInstance {
 		// inspected, which needs a larger cap than substitution and must also cover
 		// request shapes substitution skips (no Content-Length, oversized). Null for
 		// every other host, which keeps the untouched path untouched.
-		const restriction = this.cfg.mcpRestrictions.get(mcpRestrictionKey(host, port)) ?? null;
+		const binding = this.cfg.mcpBindings.get(mcpRestrictionKey(host, port)) ?? null;
+		const restriction = binding?.restriction ?? null;
 		const inspectForMcp = restriction !== null && mayCarryJsonRpc(method, headers);
+		// The connector this request is aimed at, if the host backs one, so a
+		// refusal the upstream answers can be reported against it. Null for every
+		// other host: no observer, no new code on the common path.
+		const connector = binding ? connectorForPath(binding, path) : null;
+		if (binding && !connector) {
+			log.debug('egress request on a connector host matched no connector path', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				host,
+				port,
+			});
+		}
+		const observer = connector ? this.connectorObserver(connector, probeInUrlOrHeaders) : undefined;
 
 		// Read the body ONCE, at whichever cap applies. Both gates want the same
 		// bytes and the stream can only be consumed once, so the read is shared and
@@ -960,6 +1022,15 @@ class RunProxyInstance {
 				});
 			} catch (e) {
 				if ((e as Error).name === 'MasterKeyLocked') {
+					if (connector) {
+						this.reportRejection(connector, {
+							kind: 'substitution_failed',
+							status: 0,
+							reason: 'secrets_unavailable',
+							detail: 'Master key is locked.',
+							credentialSent: true,
+						});
+					}
 					respondEarly(res, 503, 'secrets_unavailable', 'Master key is locked.');
 					req.resume();
 					return;
@@ -979,6 +1050,15 @@ class RunProxyInstance {
 			);
 			if (result.failure) {
 				const fail = describeFailure(result.failure);
+				if (connector) {
+					this.reportRejection(connector, {
+						kind: 'substitution_failed',
+						status: 0,
+						reason: fail.code,
+						detail: fail.message,
+						credentialSent: probeInUrlOrHeaders || probeInBody,
+					});
+				}
 				respondEarly(res, fail.statusCode, fail.code, fail.message);
 				req.resume();
 				return;
@@ -1017,6 +1097,7 @@ class RunProxyInstance {
 					outBody,
 					res,
 					path,
+					observer,
 				);
 			} else {
 				this.pipeUpstream(
@@ -1030,6 +1111,7 @@ class RunProxyInstance {
 					req,
 					res,
 					path,
+					observer,
 				);
 			}
 			return;
@@ -1038,9 +1120,33 @@ class RunProxyInstance {
 		// No placeholder anywhere. A buffered (eligible) body must be forwarded from
 		// the buffer — its stream is already consumed; otherwise stream as usual.
 		if (bufferedBody !== null) {
-			this.forwardBuffered(isSSL, host, dialHost, port, method, path, headers, bufferedBody, res);
+			this.forwardBuffered(
+				isSSL,
+				host,
+				dialHost,
+				port,
+				method,
+				path,
+				headers,
+				bufferedBody,
+				res,
+				path,
+				observer,
+			);
 		} else {
-			this.pipeUpstream(isSSL, host, dialHost, port, method, path, headers, req, res);
+			this.pipeUpstream(
+				isSSL,
+				host,
+				dialHost,
+				port,
+				method,
+				path,
+				headers,
+				req,
+				res,
+				path,
+				observer,
+			);
 		}
 	}
 
@@ -1055,6 +1161,7 @@ class RunProxyInstance {
 		req: IncomingMessage,
 		res: ServerResponse,
 		logPath: string = path,
+		observer?: UpstreamObserver,
 	): void {
 		const requestFn = isSSL ? httpsRequest : httpRequest;
 		const upstream = requestFn(
@@ -1073,14 +1180,16 @@ class RunProxyInstance {
 					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
+				observer?.onResponse(upstreamRes.statusCode ?? 502);
 				res.writeHead(upstreamRes.statusCode ?? 502, relayedResponseHeaders(upstreamRes.headers));
 				upstreamRes.pipe(res);
 			},
 		);
 		this.trackUpstream(upstream);
-		upstream.on('error', (err) =>
-			this.onForwardError(res, err, { host, port, method, path: logPath }),
-		);
+		upstream.on('error', (err) => {
+			if (observer && !res.headersSent && !this.closed) observer.onUnreachable(err);
+			this.onForwardError(res, err, { host, port, method, path: logPath });
+		});
 		req.pipe(upstream);
 	}
 
@@ -1099,6 +1208,7 @@ class RunProxyInstance {
 		body: Buffer,
 		res: ServerResponse,
 		logPath: string = path,
+		observer?: UpstreamObserver,
 	): void {
 		const outHeaders: Record<string, string | string[] | undefined> = { ...headers };
 		outHeaders['content-length'] = String(body.byteLength);
@@ -1125,15 +1235,95 @@ class RunProxyInstance {
 					: { agent: this.upstreamHttpAgent }),
 			},
 			(upstreamRes) => {
+				observer?.onResponse(upstreamRes.statusCode ?? 502);
 				res.writeHead(upstreamRes.statusCode ?? 502, relayedResponseHeaders(upstreamRes.headers));
 				upstreamRes.pipe(res);
 			},
 		);
 		this.trackUpstream(upstream);
-		upstream.on('error', (err) =>
-			this.onForwardError(res, err, { host, port, method, path: logPath }),
-		);
+		upstream.on('error', (err) => {
+			if (observer && !res.headersSent && !this.closed) observer.onUnreachable(err);
+			this.onForwardError(res, err, { host, port, method, path: logPath });
+		});
 		upstream.end(body);
+	}
+
+	/**
+	 * What to watch on a request aimed at a hosted connector: an upstream 401 /
+	 * 403 is the connector refusing the run, and an upstream that never answers
+	 * is the connector being unreachable. Anything else - including every
+	 * response the proxy itself writes - is not the connector's doing and is
+	 * not reported.
+	 */
+	private connectorObserver(
+		connector: McpHostConnector,
+		credentialSent: boolean,
+	): UpstreamObserver {
+		return {
+			onResponse: (status) => {
+				if (status !== 401 && status !== 403) return;
+				this.reportRejection(connector, {
+					kind: 'upstream_rejected',
+					status,
+					reason: `http_${status}`,
+					credentialSent,
+				});
+			},
+			onUnreachable: (err) => {
+				this.reportRejection(connector, {
+					kind: 'upstream_unreachable',
+					status: 0,
+					reason: err.code ?? err.message,
+					detail: err.message,
+					credentialSent,
+				});
+			},
+		};
+	}
+
+	/**
+	 * Hand a connector refusal to the run's caller, once per connector, kind and
+	 * credential shape. Each combination carries its own diagnosis (a refused
+	 * credential versus a request that never carried one, a refusal versus an
+	 * upstream that never answered), so each is worth one report; a retry of any
+	 * is not. Nothing here may throw into the request path, and nothing logged
+	 * carries a header value.
+	 */
+	private reportRejection(
+		connector: McpHostConnector,
+		rejection: Omit<ConnectorRunRejection, 'connectorId' | 'connectorName' | 'credentialed'>,
+	): void {
+		const report = this.cfg.scope.onConnectorRejection;
+		if (!report || this.closed) return;
+		const key = `${connector.id}:${rejection.kind}:${rejection.credentialSent ? 1 : 0}`;
+		if (this.reportedRejections.has(key)) return;
+		this.reportedRejections.add(key);
+		log.info('egress: hosted connector refused a run request', {
+			run: ref(this.cfg.scope.label, this.cfg.runId),
+			connector: connector.name,
+			kind: rejection.kind,
+			status: rejection.status,
+			reason: rejection.reason,
+			credential_sent: rejection.credentialSent,
+		});
+		try {
+			report({
+				connectorId: connector.id,
+				connectorName: connector.name,
+				credentialed: connector.credentialed,
+				...rejection,
+			});
+		} catch (e) {
+			log.warn('connector rejection callback threw', {
+				run: ref(this.cfg.scope.label, this.cfg.runId),
+				error: (e as Error).message,
+			});
+		}
+	}
+
+	/** See {@link EgressProxy.resetConnectorRejections}. */
+	resetConnectorRejections(): void {
+		this.reportedRejections.clear();
 	}
 
 	/** A connection to the real upstream failed (refused, DNS, timeout, TLS).
@@ -1215,6 +1405,13 @@ interface UpstreamTarget {
 	port: number;
 	method: string;
 	path: string;
+}
+
+/** What a forwarder tells the connector observer about the upstream's answer. */
+interface UpstreamObserver {
+	onResponse(status: number): void;
+	/** The upstream never answered: connect, DNS, TLS. Not called for a stream that died mid-flight. */
+	onUnreachable(err: NodeJS.ErrnoException): void;
 }
 
 /** Resolve the upstream host, port, and request path. For TLS the host is the

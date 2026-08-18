@@ -157,6 +157,12 @@ export interface ConnectorRow {
 	probed_at: string | null;
 	/** Why that probe failed; null when it completed the MCP handshake. */
 	probe_error: string | null;
+	/**
+	 * A run would send a credential for this connector - it satisfies
+	 * {@link SAAS_CREDENTIALED_SQL}, computed by the same expression the run gate
+	 * reads so the two can never disagree. Meaningful for hosted rows only.
+	 */
+	credentialed: boolean;
 }
 
 /**
@@ -234,7 +240,8 @@ async function selectConnectorsInScope(
 		        install_status::text AS install_status, install_error,
 		        enabled_methods, discovered_methods,
 		        created_at::text, updated_at::text,
-		        probed_at::text AS probed_at, probe_error::text AS probe_error
+		        probed_at::text AS probed_at, probe_error::text AS probe_error,
+		        ${SAAS_CREDENTIALED_SQL} AS credentialed
 		 FROM mcp_connections
 		 WHERE revoked_at IS NULL
 		   ${gate}
@@ -255,6 +262,33 @@ export interface McpHostRestriction {
 	enabled: ReadonlySet<string>;
 }
 
+/** One hosted connector's identity on a bound host:port, as the egress proxy needs it. */
+export interface McpHostConnector {
+	id: string;
+	name: string;
+	/** The connector URL's pathname, normalised: no trailing slash except the bare root. */
+	pathname: string;
+	/** A run would send a credential for this connector (see `ConnectorRow.credentialed`). */
+	credentialed: boolean;
+}
+
+/**
+ * Everything the egress proxy knows about one upstream host:port that backs a
+ * hosted connector in a run's scope.
+ *
+ * `restriction` is the enforcement half and is present only when at least one
+ * connector here restricts its methods - the proxy's body-inspection path keys
+ * on that alone, so an unrestricted connector adds an entry here without
+ * putting its requests on any new path. `connectors` is the attribution half,
+ * so a refusal the upstream answers can be reported against the connector it
+ * belongs to.
+ */
+export interface McpHostBinding {
+	/** Every hosted connector in scope whose URL is on this host:port, longest pathname first. */
+	connectors: McpHostConnector[];
+	restriction: McpHostRestriction | null;
+}
+
 /**
  * The key both sides of the restriction lookup agree on: lowercased hostname
  * plus the *effective* port, with the scheme default applied.
@@ -271,48 +305,90 @@ export function mcpRestrictionKey(hostname: string, port: number): string {
 	return `${hostname.toLowerCase()}:${port}`;
 }
 
+/** A pathname with its trailing slash removed, the bare root staying `/`. */
+function normalizeMcpPathname(pathname: string): string {
+	const trimmed = pathname.replace(/\/+$/, '');
+	return trimmed.length > 0 ? trimmed : '/';
+}
+
 /**
- * Build the host → allowlist map the egress proxy enforces for one run.
- *
- * Only **restricted** connectors are included, so a run with no restricted
- * connector gets an empty map and the proxy takes no new code path at all.
+ * Build the host:port → binding map the egress proxy consults for one run:
+ * every hosted connector in scope, with the method allowlist to enforce where
+ * one exists.
  *
  * A host:port serving two connectors — the same provider connected twice, or a
- * project connector shadowing a global one — collapses to one entry, and the
- * enabled sets are **unioned**. The proxy cannot tell which connector a request
- * belongs to (same host, same credential shape), so the alternative would be
- * blocking a method one of the two connectors legitimately enables.
+ * project connector shadowing a global one — collapses to one entry. Their
+ * enabled sets are **unioned**: the proxy cannot tell which connector a request
+ * belongs to by credential shape alone, so the alternative would be blocking a
+ * method one of the two connectors legitimately enables. Attribution of a
+ * refusal goes by URL path instead ({@link connectorForPath}).
  */
-export async function loadMcpHostRestrictions(
+export async function loadMcpHostBindings(
 	db: Db,
 	projectId?: string | null,
-): Promise<Map<string, McpHostRestriction>> {
+): Promise<Map<string, McpHostBinding>> {
 	const rows = await loadConnectorsInScope(db, projectId);
-	const map = new Map<string, McpHostRestriction>();
+	const map = new Map<string, McpHostBinding>();
 	for (const row of rows) {
 		if (row.kind !== ConnectorTransport.Saas) continue;
-		if (row.enabled_methods === null) continue;
 		const url = (row.config as SaasConnectorConfig)?.url;
 		if (!url) continue;
 		let key: string;
+		let pathname: string;
 		try {
 			const parsed = new URL(url);
 			const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
 			key = mcpRestrictionKey(parsed.hostname, port);
+			pathname = normalizeMcpPathname(parsed.pathname);
 		} catch {
 			continue;
 		}
-		const existing = map.get(key);
-		if (existing) {
-			map.set(key, {
-				connectorName: existing.connectorName,
-				enabled: new Set([...existing.enabled, ...row.enabled_methods]),
-			});
-		} else {
-			map.set(key, { connectorName: row.name, enabled: new Set(row.enabled_methods) });
+		const binding = map.get(key) ?? { connectors: [], restriction: null };
+		binding.connectors.push({
+			id: row.id,
+			name: row.name,
+			pathname,
+			credentialed: row.credentialed,
+		});
+		if (row.enabled_methods !== null) {
+			binding.restriction = binding.restriction
+				? {
+						connectorName: binding.restriction.connectorName,
+						enabled: new Set([...binding.restriction.enabled, ...row.enabled_methods]),
+					}
+				: { connectorName: row.name, enabled: new Set(row.enabled_methods) };
 		}
+		map.set(key, binding);
+	}
+	for (const binding of map.values()) {
+		binding.connectors.sort((a, b) => b.pathname.length - a.pathname.length);
 	}
 	return map;
+}
+
+/**
+ * The connector a request on a bound host:port is aimed at: the one whose URL
+ * pathname is the longest segment-prefix of the request path (query ignored;
+ * a connector at `/` matches everything). Segment-wise, so `/mcp` never claims
+ * `/mcpx`. Null when no connector's path covers the request.
+ *
+ * Prefix rather than equality because a legacy-SSE server hands its client a
+ * server-chosen POST path beside the configured one, and a Streamable-HTTP
+ * client may append to it; the handshake itself always lands on the
+ * configured path.
+ */
+export function connectorForPath(
+	binding: McpHostBinding,
+	requestPath: string,
+): McpHostConnector | null {
+	const q = requestPath.indexOf('?');
+	const path = normalizeMcpPathname(q === -1 ? requestPath : requestPath.slice(0, q));
+	for (const connector of binding.connectors) {
+		const prefix = connector.pathname;
+		if (prefix === '/') return connector;
+		if (path === prefix || path.startsWith(`${prefix}/`)) return connector;
+	}
+	return null;
 }
 
 /**

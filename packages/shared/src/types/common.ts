@@ -1244,6 +1244,12 @@ export const ChatSystemMessageKind = {
 	 * by the chat's no-wake exit check.
 	 */
 	HandoffNotDelivered: 'handoff_not_delivered',
+	/**
+	 * A hosted connector refused a request a turn of the session made, or could
+	 * not be sent its credential. Two rows per refusal: what the turn saw, then
+	 * what Hezo's own re-check of the connector found.
+	 */
+	ConnectorRefused: 'connector_refused',
 } as const;
 export type ChatSystemMessageKind =
 	(typeof ChatSystemMessageKind)[keyof typeof ChatSystemMessageKind];

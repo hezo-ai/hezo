@@ -6,6 +6,7 @@ export {
 } from './port-allocator';
 export {
 	type AllocatedRunProxy,
+	type ConnectorRunRejection,
 	EgressProxy,
 	type EgressProxyDeps,
 	EgressProxyUnavailableError,

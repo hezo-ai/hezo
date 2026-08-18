@@ -317,6 +317,8 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | "Who did this run notify without writing a comment?" | `created_by_run_id` on `agent_wakeup_requests` |
 | Which rows of a task thread a reader wants | `packages/shared/src/task-thread.ts`, SQL via `lib/comment-filters.ts` |
 | "May an uncredentialed hosted MCP reach a run?" | `probed_at IS NOT NULL AND probe_error IS NULL`, written only by `discoverConnectorMethods` (`services/connectors/method-discovery.ts`) and read through `SAAS_CREDENTIALED_SQL` (`services/connectors/connections.ts`) |
+| Which hosted connector a run's egress request is aimed at, and its allowlist | `loadMcpHostBindings` / `connectorForPath` (`services/connectors/connections.ts`) - the proxy inspects bodies only where `restriction` is set |
+| "A hosted connector refused a run's request - what do the run and the operator hear?" | `RunProxyScope.onConnectorRejection` (`services/egress/proxy.ts`) fires it; `reportConnectorRunRejection` (`services/connectors/run-rejection.ts`) turns it into the two sentences and the re-probe, the caller supplying only where they go - never a direct write to `auth_error` / `probe_error` |
 | "Is this run failure worth another attempt?" | `classifyRunFailure` (`services/run-failure-classification.ts`) - unrecognised is permanent, and no row may name a backend |
 | Waking the assignee after an assignment write | `wakeAgentIfAssigned` (`services/wakeup.ts`) |
 | What happens to the work a finished run was woken for | `settleWakeupForRun` (`services/wakeup.ts`) - it reports `handback_failed`, so no caller may assume the work is queued |

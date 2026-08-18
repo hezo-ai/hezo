@@ -276,7 +276,7 @@ expired the authorization behind it, or an administrator there revoked it. Nothi
 side changed, so the only way you would otherwise find out is by noticing that an agent's
 output had quietly got worse.
 
-Hezo surfaces it three ways instead:
+Hezo surfaces it four ways instead:
 
 - A **banner at the top of every page in the project** naming what broke, linking straight
   to the connector.
@@ -284,6 +284,17 @@ Hezo surfaces it three ways instead:
   provider's explanation underneath and a **Reconnect** button beside it.
 - Agents see the connector as `degraded` rather than `active`, and are instructed to raise
   it with you rather than work around it silently.
+- **The run that hit it says so.** When a connector refuses a request an agent run makes to
+  it, or Hezo cannot supply the run's credential for it, the run's log gets a
+  `[runner] WARNING:` line naming the connector, the HTTP status and whether the request
+  carried a credential - and Hezo immediately re-checks the connector itself, then writes a
+  second line with what it found. In a CEO chat the same two sentences appear as warning rows
+  in the thread. That re-check is the same probe as the connector's **Refresh** button, so a
+  dead credential lights the banner and the badge at that moment rather than at the next
+  timed check, and a public server that has started demanding a credential is held back from
+  later runs until you connect one. If the line says the request carried no credential
+  although one is configured, the agent runtime is not sending it - that is a Hezo defect,
+  not something reconnecting fixes; please report it with the runtime named in the line.
 
 Press **Reconnect** and complete the provider's authorization exactly as you did the first
 time. The connector is repaired in place - you keep its method allowlist, its credential

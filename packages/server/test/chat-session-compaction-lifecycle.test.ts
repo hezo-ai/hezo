@@ -494,7 +494,7 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 	}
 
 	function fakeEgress() {
-		const calls = { allocated: [] as string[], released: [] as string[] };
+		const calls = { allocated: [] as string[], released: [] as string[], reset: [] as string[] };
 		const proxy = {
 			allocateRunProxy: async (runId: string) => {
 				calls.allocated.push(runId);
@@ -502,6 +502,9 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			},
 			releaseRunProxy: async (runId: string) => {
 				calls.released.push(runId);
+			},
+			resetConnectorRejections: (runId: string) => {
+				calls.reset.push(runId);
 			},
 		};
 		return { calls, proxy };
