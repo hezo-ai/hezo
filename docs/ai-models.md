@@ -32,6 +32,11 @@ Kimi, DeepSeek, and Z.ai run through Claude Code against their Anthropic-compati
 endpoints; OpenRouter runs through the **OpenCode** CLI; and Ollama and LM Studio run
 through Claude Code against your own machine.
 
+Every runtime is asked to reason, at the effort level the agent is configured for. On
+OpenRouter through OpenCode that reasoning is always on: the run asks the model to think at
+its own effort level rather than answering straight away, and the thinking shows in the run
+log alongside the tool calls. A model that cannot reason simply ignores the request.
+
 Where the Runtime column lists more than one, you choose which one that credential runs on.
 The first is the default, and you never have to pick: adding a key without touching the
 setting runs it on the default.

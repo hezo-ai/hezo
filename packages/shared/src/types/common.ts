@@ -2051,6 +2051,20 @@ export function opencodeModelArg(provider: AiProvider, model: string): string {
 }
 
 /**
+ * The key a model is addressed by inside an `opencode.json` `provider.<key>.models`
+ * map - the same id `opencodeModelArg` qualifies, with the provider prefix taken
+ * back off. The two directions live together because they are one fact read twice:
+ * `--model` wants `openrouter/deepseek/deepseek-v4-pro`, the config map wants
+ * `deepseek/deepseek-v4-pro`, and a config keyed on the qualified form silently
+ * configures nothing.
+ */
+export function opencodeModelKey(provider: AiProvider, model: string): string {
+	const key = OPENCODE_PROVIDER_KEY[provider];
+	if (!key) return model;
+	return model.startsWith(`${key}/`) ? model.slice(key.length + 1) : model;
+}
+
+/**
  * Every CLI a provider can be driven by, DEFAULT FIRST. The order is the
  * contract the picker renders in, so the first entry is always the one
  * preselected for a credential that stores no explicit choice.
@@ -2484,8 +2498,13 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.Codex]: ['--json'],
 	[AgentRuntime.Gemini]: ['--output-format', 'stream-json'],
 	// OpenCode `run --format json` emits raw JSON events whose terminal event
-	// carries token usage.
-	[AgentRuntime.OpenCode]: ['--format', 'json'],
+	// carries token usage. `--thinking` puts the model's reasoning parts on that
+	// stream too, so the run log shows them (the parser renders them as
+	// `[thinking]`); without it a run reasons invisibly. The CLI is installed
+	// unpinned in the agent image, so an upstream rename of this flag would fail
+	// every OpenCode run on an unknown argument - check it first if OpenCode runs
+	// start dying at exec.
+	[AgentRuntime.OpenCode]: ['--format', 'json', '--thinking'],
 	// Grok's `streaming-json` emits thought/text/end events. Unlike the others
 	// its stream carries NO token usage — cost is recovered post-run from the
 	// `--debug-file` tracing spans (added per-run in the runner). See

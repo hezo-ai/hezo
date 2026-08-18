@@ -22,8 +22,11 @@
  *   - `gemini`: the `GEMINI_REASONING_EFFORT` env var.
  *   - `kimi`: the `KIMI_MODEL_THINKING_EFFORT` env var. Kimi Code accepts
  *     `low|medium|high|xhigh|max`; it has no `minimal`, which maps to `low`.
- *   - `opencode` / `grok`: no stable native knob, so effort is steered through
- *     the prompt directive alone.
+ *   - `opencode`: `reasoning.effort` on the run's model in the per-run
+ *     `opencode.json` (written by that runtime's MCP injector, which is the only
+ *     place holding the model id the config map is keyed on).
+ *   - `grok`: no stable native knob, so effort is steered through the prompt
+ *     directive alone.
  */
 
 import {
@@ -92,6 +95,24 @@ const KIMI_THINKING_EFFORT: Record<AgentEffort, string> = {
 	[AgentEffort.Max]: 'max',
 };
 
+/**
+ * OpenCode's models are reached through OpenRouter, whose unified `reasoning`
+ * parameter takes `none|minimal|low|medium|high|xhigh|max`. Hezo's ladder is a
+ * subset spelled identically, so the mapping is 1:1 - and because `none` is
+ * never produced, every OpenCode run asks the model to reason.
+ *
+ * A model that cannot reason ignores the parameter: OpenRouter only rejects an
+ * unsupported parameter when the caller sets `require_parameters`, which nothing
+ * here does.
+ */
+export const OPENCODE_REASONING_EFFORT: Record<AgentEffort, string> = {
+	[AgentEffort.Minimal]: 'minimal',
+	[AgentEffort.Low]: 'low',
+	[AgentEffort.Medium]: 'medium',
+	[AgentEffort.High]: 'high',
+	[AgentEffort.Max]: 'max',
+};
+
 const GENERIC_PROMPT_DIRECTIVE: Record<AgentEffort, string> = {
 	[AgentEffort.Minimal]: '',
 	[AgentEffort.Low]: 'Think briefly before answering.',
@@ -120,14 +141,17 @@ export function applyEffortToRuntime(
 				extraEnv: [`GEMINI_REASONING_EFFORT=${effort}`],
 				promptDirective: GENERIC_PROMPT_DIRECTIVE[effort],
 			};
-		// OpenCode (`--variant`) exposes model-dependent reasoning knobs whose
-		// accepted values aren't stable across versions, so steer effort through the
-		// prompt directive — the portable lever every runtime honors.
+		// OpenCode's native knob is `reasoning.effort` on the run's model, written
+		// into the per-run `opencode.json` by its MCP injector (OPENCODE_REASONING_EFFORT
+		// above) — not a CLI flag, since `--variant` names a variant that has to be
+		// declared in that same config first. The injector is the only place holding
+		// the model id the config map is keyed on, so nothing lands in extraArgs here.
+		// The prompt directive rides along as it does for Codex and Kimi.
 		case AgentRuntime.OpenCode:
 			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
 		// Grok exposes `--reasoning-effort`, but its accepted values aren't
 		// documented/stable across the 0.2.x betas, so steer effort through the
-		// portable prompt directive like OpenCode.
+		// portable prompt directive alone.
 		case AgentRuntime.Grok:
 			return { extraArgs: [], extraEnv: [], promptDirective: GENERIC_PROMPT_DIRECTIVE[effort] };
 		// Kimi Code exposes a real, documented thinking-effort knob as an env var

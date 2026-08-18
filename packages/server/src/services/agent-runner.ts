@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import {
 	AGENT_RUNTIME_LABELS,
+	type AgentEffort,
 	AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
@@ -424,7 +425,7 @@ export interface RunContext {
 	runtimeType: AgentRuntime;
 	/** How the runtime receives {@link taskPrompt} - see RUNTIME_PROMPT_DELIVERY. */
 	promptDelivery: PromptDelivery;
-	effort: string;
+	effort: AgentEffort;
 	effortApplication: EffortRuntimeApplication;
 	agentJwt: string;
 	subscriptionMount: SubscriptionMount | null;
@@ -639,7 +640,7 @@ export interface RuntimeInvocationInput {
 	 * instead of the prompt body. Callers that inline it in the prompt pass null.
 	 */
 	systemPrompt?: string | null;
-	effort: string;
+	effort: AgentEffort;
 	effortApplication: EffortRuntimeApplication;
 	modelOverride: string | null;
 	sshSocketContainerPath: string | null;
@@ -763,6 +764,7 @@ export async function buildRuntimeInvocation(
 		containerHomeDir: homeMount?.containerDir ?? null,
 		provider,
 		runModel: modelOverride,
+		effort,
 		projectDocSlugs,
 		stopJudge,
 		systemPrompt,

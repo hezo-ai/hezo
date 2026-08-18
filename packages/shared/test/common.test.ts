@@ -33,6 +33,7 @@ import {
 	normalizeAssetFolder,
 	normalizeAssetPath,
 	opencodeModelArg,
+	opencodeModelKey,
 	parseProviderModels,
 	providerDirectUpstreamHosts,
 	qualifiedMcpToolName,
@@ -354,6 +355,18 @@ describe('provider helpers', () => {
 		);
 		expect(opencodeModelArg(AiProvider.OpenRouter, 'openrouter/x')).toBe('openrouter/x');
 		expect(opencodeModelArg(AiProvider.Anthropic, 'claude-opus-4')).toBe('claude-opus-4');
+	});
+
+	it('opencodeModelKey is the inverse of opencodeModelArg', () => {
+		// `--model` wants the qualified id, the `provider.<key>.models` map wants the
+		// bare one; a config keyed on the qualified form configures nothing.
+		for (const model of ['anthropic/claude', 'openrouter/anthropic/claude']) {
+			expect(opencodeModelKey(AiProvider.OpenRouter, model)).toBe('anthropic/claude');
+			expect(
+				opencodeModelArg(AiProvider.OpenRouter, opencodeModelKey(AiProvider.OpenRouter, model)),
+			).toBe('openrouter/anthropic/claude');
+		}
+		expect(opencodeModelKey(AiProvider.Anthropic, 'claude-opus-4')).toBe('claude-opus-4');
 	});
 
 	it('claudeCodeProviderUsesCustomEndpoint is true only for the third-party Claude Code providers', () => {
