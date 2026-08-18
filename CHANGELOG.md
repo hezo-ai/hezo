@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.50.0 - 2026-08-18
+
+### Breaking Changes
+
+- configure the hezo binary with a .cjs config file instead of env vars ([#995](https://github.com/hezo-ai/hezo/pull/995))
+
+### Features
+
+- **web:** searchable default-model picker on the AI providers page ([#997](https://github.com/hezo-ai/hezo/pull/997))
+- configure the hezo binary with a .cjs config file instead of env vars ([#995](https://github.com/hezo-ai/hezo/pull/995))
+- **opencode:** pair tool results, one run summary, always-on reasoning ([#993](https://github.com/hezo-ai/hezo/pull/993))
+- **tasks:** pin the task breadcrumb to the top on desktop ([#994](https://github.com/hezo-ai/hezo/pull/994))
+- **tasks:** make the progress summary agent-owned and read-only for humans ([#991](https://github.com/hezo-ai/hezo/pull/991))
+
+### Bug Fixes
+
+- **runs:** stop a cancelled run silently dropping the work it was woken for ([#996](https://github.com/hezo-ai/hezo/pull/996))
+- **runs:** say why a run failed instead of leaving the reason blank ([#998](https://github.com/hezo-ai/hezo/pull/998))
+- **runs:** resolve Codex tool calls in the run log instead of leaving them pending ([#992](https://github.com/hezo-ai/hezo/pull/992))
+- **startup:** explain the missing container runtime on Windows before exiting ([#989](https://github.com/hezo-ai/hezo/pull/989))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.49.0...0.50.0
+
 ## 0.49.0 - 2026-08-17
 
 ### Features
