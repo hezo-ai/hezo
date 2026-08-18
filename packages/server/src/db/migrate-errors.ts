@@ -45,7 +45,7 @@ export class MigrationFailedError extends Error {
 }
 
 /**
- * The external database (`--database-url` / `HEZO_DATABASE_URL`) could not be
+ * The external database (`--database-url` / the `database.url` config-file key) could not be
  * used: unreachable, incompatible version, failed preflight, or an invalid
  * connection string. Messages must carry operator guidance and NEVER the raw
  * connection string (credentials) — pass pre-redacted text only.

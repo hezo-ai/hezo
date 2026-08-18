@@ -55,11 +55,14 @@ describe('probePort', () => {
 });
 
 describe('formatPortInUseMessage', () => {
-	it('names the taken port and points at both --port and HEZO_PORT', () => {
+	it('names the taken port and points at both --port and the config key', () => {
 		const msg = formatPortInUseMessage(3100);
 		expect(msg).toContain('3100');
 		expect(msg).toContain('--port');
-		expect(msg).toContain('HEZO_PORT');
+		expect(msg).toContain('--config');
+		// The env var stopped being read in 0.50; suggesting it would send the
+		// operator somewhere that does nothing.
+		expect(msg).not.toContain('HEZO_PORT');
 	});
 
 	it('suggests a concrete alternative port', () => {

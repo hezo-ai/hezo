@@ -5137,6 +5137,26 @@ than a generic "unrecognized key":
 - **`reset`** - it renames the embedded `pgdata` aside, which is a one-off action. In a
   persistent file it would wipe the database on **every** restart.
 
+**Refusing an upgrade that would look like a fresh install.** The env vars 0.50 stopped
+reading were removed with no shim and no warning, so an instance whose supervisor still
+exported them fell back to the built-in defaults. For `HEZO_DATA_DIR` that meant opening an
+empty database under `~/.hezo` and presenting the master-key setup page, with the real data
+untouched a directory away and nothing in the logs to say so. `config/removed-env.ts` closes
+that: `REMOVED_ENV_VARS` is an explicit table (never a `HEZO_*` prefix scan, which would
+catch the seams that survive) mapping each removed name to the key that replaced it.
+`detectRemovedEnvVars` splits them by severity. The three that select *where the data lives*
+- `HEZO_DATA_DIR`, `HEZO_DATABASE_URL`, `HEZO_ASSET_STORAGE_URL` - throw out of
+`resolveConfig`, which `index.ts` already renders as a one-line operator message and exit 1;
+the rest warn once at startup. A fatal one is raised only when its value **differs** from
+what the resolved config uses, compared after `resolveDataDir` normalisation, so an operator
+who migrated to `--config` but left `EnvironmentFile=` in place is not blocked by an export
+that agrees with them. The same check runs in `resolveSubcommandTargets`, so `hezo backup`
+cannot dump the wrong tree either. Values that can carry credentials are redacted through
+the same `redactDatabaseUrl` / `redactAssetStorageUrl` helpers the Storage settings page
+uses. `deploy/provision.sh` handles the other half: it reads a pre-0.50 `/etc/hezo/hezo.env`
+into the config file it generates and renames the old file to `hezo.env.migrated`, because
+the in-app updater swaps the binary and never touches a unit file.
+
 **Reaching the resolved config.** `index.ts` publishes it with `setRuntimeConfig()` right
 after resolving, and everything else reads it back through `runtimeConfig()`
 (`config/runtime.ts`). The accessor exists because `index.ts` imports `./app` - and through

@@ -162,7 +162,7 @@ storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-s
 
 **At provision time** - uncomment the `/etc/hezo/deploy.env` lines in the
 [snippet above](#deploy-it) and fill in your URLs before you paste it. The installer
-persists them into the service's environment file and Hezo uses the managed backends
+persists them into `/etc/hezo/hezo.config.cjs` and Hezo uses the managed backends
 from its very first boot. One caveat: on most providers, anything in the user-data
 field stays readable later via the instance's metadata service - if you'd rather keep
 the credentials out of user data entirely, deploy without them and use the post-boot

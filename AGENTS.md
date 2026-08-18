@@ -92,6 +92,7 @@
 | Container backend behaviour | `SANDBOX_AGENT_ENVIRONMENTS`, that provider's `docs/containers/remote/` page, the Containers settings UI | compile error, **new backend only** |
 | A `ContainerEngine` method added or its contract changed | every adapter, the conformance suite, `.dev/adding-a-container-backend.md` | compile error for the method, **nothing for the contract** |
 | Architecture (data model, run pipeline, providers, egress, SSH/git, OAuth, auth, build) | `.dev/architecture.md` | the `Docs-Checked:` trailer |
+| A config mechanism, data location or startup path an existing instance carries across a restart | a check that fails loudly on the old form, plus every deployment artifact in `deploy/` still writing it | the `Upgrade-Checked:` trailer |
 | A `.dev/` guide added, renamed or removed | the link from its section here, the `.dev/` bullet under **Layout**, this table | **nothing - on you** |
 | A Bun workaround added or removed, or `BUN_VERSION` moved | its entry in `.dev/bun-issues.md` | **nothing - on you** |
 | A rule this file states | its guide in `.dev/`, if one covers that area - they must not disagree | **nothing - on you** |
@@ -106,7 +107,7 @@
 
 **Verify, don't assume.** Generated surfaces have drift tests (`{mcp-reference,llms-txt,docs-bundle}.test.ts`); hand-written prose has one guard, `docs-terminology.test.ts`, checking punctuation only. Nothing checks whether prose is *true* — re-read the pages describing what you changed and confirm every concrete claim still matches the code.
 
-**Two husky hooks run on every commit.** `.husky/pre-commit`: `bunx biome check --diagnostic-level=error .`, `bun run typecheck`, `bun run build`. `.husky/commit-msg`: `bunx commitlint --edit`, `scripts/check-docs-ack.ts`, `scripts/check-translations-ack.ts`, `scripts/check-prompts-ack.ts`, `scripts/check-docs-links.ts`, `scripts/check-prompt-style.ts`.
+**Two husky hooks run on every commit.** `.husky/pre-commit`: `bunx biome check --diagnostic-level=error .`, `bun run typecheck`, `bun run build`. `.husky/commit-msg`: `bunx commitlint --edit`, `scripts/check-docs-ack.ts`, `scripts/check-translations-ack.ts`, `scripts/check-prompts-ack.ts`, `scripts/check-upgrade-ack.ts`, `scripts/check-docs-links.ts`, `scripts/check-prompt-style.ts`.
 
 **`check-docs-links.ts` fails a commit staging any `docs/**/*.md` on a broken link.** Internal links (docs-to-docs incl. `#anchors`, relative paths, `github.com/hezo-ai/hezo/{blob,raw,tree}/main/<path>`) are checked across the whole tree - a rename or delete breaks *other* files' links. External URLs are probed for staged files only (7-day success cache in `.git/`); a definitive 404/410 blocks, network-shaped failures (403 bot walls, timeouts, DNS) only warn, so an offline commit passes. Fix the link, never bypass; `docs-links.test.ts` re-runs the internal check in CI.
 
@@ -145,6 +146,25 @@ There is no per-team internal project. The only `is_internal` project is **HQ**,
 Project-teams get a Captain plus the roster's worker roles; rosters never include CEO/Coach. `POST /api/projects` (superuser) creates the team, project, planning task and initial CEO coherence task. The roster comes from the seeded Blank `team_templates` row or, with a `marketplace_slug`, straight from the marketplace catalog.
 
 **Cross-team execution:** CEO/Coach are HQ members acting inside other teams' projects. A run is scoped to the **task's project team** (JWT, `HEZO_TEAM_ID`, MCP, skills, git, container) while the agent's system prompt loads from its **home** team (HQ). Auth validates the `heartbeat_runs` row, not team membership.
+
+## Production upgrades
+
+Real instances upgrade in place: they keep their data directory, their config file, their service definition and their database, and only the binary changes. **A change to how Hezo is configured, where it keeps its data, or how it starts is a change to those instances, not just to this repo.** No test can see it - every suite builds a fresh instance from the code under test, so a self-consistent change passes green while breaking every instance that upgrades onto it. Migrations are one instance of this rule; the section below is the rest of it.
+
+- **A mechanism you remove or rename must fail loudly on its old form, never fall back to a default.** An instance that silently reverts to a built-in default comes up healthy and empty, which reads as a fresh install rather than a fault. Detect the old form and refuse to start, naming what was ignored and what replaces it - `REMOVED_ENV_VARS` / `detectRemovedEnvVars` (`config/removed-env.ts`) is the worked example.
+- **Ship the migration, do not document it.** Where a deployment artifact this repo owns still writes the old form - `deploy/provision.sh`, the systemd unit, an on-disk layout - the change that breaks it also translates it, in the same commit.
+- **The in-app updater replaces the binary and nothing else.** It never edits a unit file, a config file or an argv, and the supervisor relaunches with the argv it already had. A change needing any of those changed cannot assume the operator did it.
+- **A `BREAKING CHANGE:` note is not a migration.** It reaches whoever reads the changelog; it does nothing for the instance that auto-updated overnight.
+
+**`Upgrade-Checked:` is enforced at commit time.** Any commit staging a surface an existing instance carries across a restart (`packages/server/src/config/`, `packages/server/src/db/`, `packages/*/migrations/`, `cli.ts`, `index.ts`, `startup.ts`, `supervisor.ts`, `services/updater.ts`, `deploy/`, `docker/`) is rejected without an `Upgrade-Checked:` trailer recording what an instance running the previous release does when it restarts onto this one. Bare values under 10 characters are rejected:
+
+```
+Upgrade-Checked: the old key is still read and warns; an instance that never writes a config file is unaffected
+Upgrade-Checked: migration 072 backfills the column for existing rows; provision.sh rewrites the unit for hosts installed before it
+Upgrade-Checked: reads nothing written by a previous release; an upgrading instance starts identically to a fresh one
+```
+
+The trailer must be true. **Never bypass the hook with `--no-verify`.** Same exemptions as `Docs-Checked:`. The bearing list is deliberately narrower than the doc-bearing one - a trailer demanded of every commit is a trailer nobody reads. Classification is tested in `upgrade-ack-hook.test.ts`; a new upgrade-bearing path goes into `UPGRADE_BEARING_PATTERNS` in the same change.
 
 ## Database migrations
 
@@ -303,6 +323,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | "Is this cancelled run still owed, and can a human act on it?" | `heartbeat_runs.cancel_reason` read through `RUN_CANCEL_BEHAVIOUR` (`@hezo/shared`) - never the `error` prose |
 | "May this caller move this task's assignee?" | `assertNoBlockingRun` (`lib/reassign-guard.ts`) - not the one-run-per-task check, which is `isTaskBusyInDb` (`services/run-concurrency.ts`) |
 | Serialising async work per key, with or without a bound | `lib/keyed-lock.ts` - `withKeyedLock` for a scope, `acquireKeyedLock` when the wait needs a `signal`/`timeoutMs`. Each family owns its own `KeyedLockRegistry`; never a second mutex |
+| "Did this release stop reading something an instance still sets?" | `REMOVED_ENV_VARS` / `detectRemovedEnvVars` (`config/removed-env.ts`) |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |

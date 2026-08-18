@@ -140,7 +140,7 @@ export interface EgressProxyDeps {
 	 * relies on the runtime's system CA bundle. */
 	extraUpstreamTrustedCAs?: string | string[];
 	/** Require a per-run bearer token on every proxied request/CONNECT.
-	 * Defaults to `true`. Set `false` (via `HEZO_EGRESS_PROXY_AUTH=0`) only to
+	 * Defaults to `true`. Set `false` (via `--no-egress-proxy-auth`) only to
 	 * unblock a runtime whose HTTP client can't carry proxy credentials — the
 	 * secret-substitution red line still holds either way, since an
 	 * unauthenticated caller only ever ships unsubstituted placeholders. */
@@ -149,7 +149,7 @@ export interface EgressProxyDeps {
 	 * Defaults to `false`: the proxy runs in the host's network namespace, so
 	 * without this an agent could reach Hezo's own API, its database, or any
 	 * host-bound daemon through the tunnel (see `net-guard.ts`). Set `true` (via
-	 * `--egress-allow-private-targets` / `HEZO_EGRESS_ALLOW_PRIVATE_TARGETS=1`)
+	 * `--egress-allow-private-targets` / the `egress.allowPrivateTargets` config key)
 	 * for an operator whose MCP server or git remote genuinely lives on the LAN. */
 	allowPrivateTargets?: boolean;
 	/** Hezo's own endpoint as a container reaches it, exempted from the
