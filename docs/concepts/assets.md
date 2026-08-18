@@ -129,6 +129,10 @@ only on archived cards, so removing an asset for good is a deliberate two-step: 
 then delete it from the Archived view (with a confirmation, since attachments referencing it
 are removed too).
 
+Cards in the library preview what they hold rather than showing one glyph for everything: an
+image or an HTML page shows itself, markdown shows its rendered opening, and a CSV shows its
+first rows as a small table - so you can pick out the file you meant without opening each one.
+
 ## The asset viewer
 
 Clicking any asset opens it in the **asset viewer** - a split view with the file's content on

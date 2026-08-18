@@ -721,7 +721,10 @@ is a split-pane page (`ResizableSplit`): the left pane renders the content per t
 toggle - detected by extension, since CSV is stored as `text/plain`, parsed by
 `packages/web/src/lib/csv.ts` and capped at `CSV_PREVIEW_ROW_LIMIT` rows - plain text in a
 highlighted `<pre>`, images/SVG via `<img>`, HTML in the sandboxed iframe, everything else a
-metadata card)
+metadata card). Grid cards preview the same content in miniature (`MarkdownThumbnail`,
+`CsvThumbnail`), each falling back to the type glyph; a card thumbnail fetches the whole
+body, so `CsvThumbnail` skips anything over its byte cap rather than pulling a dataset export
+down once per card
 and the thin right pane lists the asset's review comments (see `review_comments` above) —
 a resizable sticky column at `lg+`, a chevron-toggled slide-in drawer below (the task
 page's side-panel pattern). **Folders are implicit
