@@ -93,7 +93,7 @@ LEGACY_ENV="/etc/hezo/hezo.env"
 LEGACY_ENV_CARRIED=""
 if [[ -f "${LEGACY_ENV}" && ! -f "${CONFIG_FILE}" ]]; then
 	while IFS='=' read -r key value; do
-		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
+		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
 		if [[ -z "${!key:-}" ]]; then
 			export "${key}=${value}"
 			LEGACY_ENV_CARRIED+=" ${key}"
@@ -102,6 +102,14 @@ if [[ -f "${LEGACY_ENV}" && ! -f "${CONFIG_FILE}" ]]; then
 	log "Found ${LEGACY_ENV} from a pre-0.50 install."
 	if [[ -n "${LEGACY_ENV_CARRIED}" ]]; then
 		log "Carrying into ${CONFIG_FILE}:${LEGACY_ENV_CARRIED}"
+	fi
+	# The generated config reads its webUrl from the side file hezo-firstboot
+	# writes, and firstboot will not re-run here - its sentinel was set the day
+	# this host was provisioned. Seed the file from the old variable instead of
+	# special-casing the generator, so both paths keep one mechanism.
+	if [[ -n "${HEZO_WEB_URL:-}" && ! -s "${WEB_URL_FILE}" ]]; then
+		echo "${HEZO_WEB_URL}" >"${WEB_URL_FILE}"
+		log "Seeded ${WEB_URL_FILE} with ${HEZO_WEB_URL}"
 	fi
 fi
 
