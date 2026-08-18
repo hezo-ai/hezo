@@ -183,7 +183,10 @@ useful for spreading work across accounts, keeping a cheaper model on hand for r
 tasks and a frontier model for the hard ones, or simply having a fallback.
 
 When a key is stored it's checked against the provider and shown as **verified** (the
-Verify action re-checks it any time). Mark one provider as the **default** with the star:
+Verify action re-checks it any time), and Hezo then asks which model the connection should
+run. That question comes last because the list of models is read from the provider using the
+key you just gave it. Leave it on the CLI default if you'd rather not choose; either way you
+can change it later from the connection's row or its Edit panel. Mark one provider as the **default** with the star:
 that's the single global default every agent uses unless it has its own model override.
 
 Adding a connection does **not** make it the default - use the star for that. Once you do,
@@ -204,8 +207,8 @@ shows as **invalid** and agents on it stop running, because Hezo only picks up v
 credentials.
 
 Use the **pencil** at the end of the row to fix it in place. The Edit panel holds the
-connection's name, its credential, and - for the providers that offer more than one - the
-agent CLI it runs on. Paste the new key and save: Hezo checks it against the provider before
+connection's name, its credential, its default model, and - for the providers that offer more
+than one - the agent CLI it runs on. Paste the new key and save: Hezo checks it against the provider before
 storing it, and a key that passes clears the invalid state on the spot, so there's no
 separate Verify step and nothing else about the connection is lost. A key the provider
 rejects is refused, leaving the stored one exactly as it was.
@@ -223,7 +226,9 @@ the agent or any time afterward from its settings. See
 
 Wherever you pick a specific model - a provider's default model, or an agent's override -
 Hezo loads the list of choices **live from that provider**, so you always see the models
-your key can actually use. Providers you signed in to with a subscription instead of an API
+your key can actually use. The list is alphabetical and has a search box at the top, which
+matters on a provider like OpenRouter that offers several hundred: type any part of a model's
+name or its id to narrow it. Providers you signed in to with a subscription instead of an API
 key use the model their CLI selects, so there's no list to choose from there.
 
 ## How the starting model is chosen

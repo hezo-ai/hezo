@@ -259,13 +259,31 @@ export async function getProviderCredentialAndModel(
 	};
 }
 
+/**
+ * The public projection of a config row - everything but the encrypted
+ * credential. Shared by the list and single-row reads so a create's 201 body and
+ * a subsequent list can never disagree about a config's shape.
+ */
+const CONFIG_COLUMNS = `id, provider, auth_method, label, is_default, status, default_model, metadata, runtime, created_at::text`;
+
 export async function listAiProviders(db: Db): Promise<AiProviderConfig[]> {
 	const result = await db.query<AiProviderConfig>(
-		`SELECT id, provider, auth_method, label, is_default, status, default_model, metadata, runtime, created_at::text
+		`SELECT ${CONFIG_COLUMNS}
 		 FROM ai_provider_configs
 		 ORDER BY provider ASC, is_default DESC, created_at ASC`,
 	);
 	return result.rows;
+}
+
+export async function getAiProviderConfig(
+	db: Db,
+	configId: string,
+): Promise<AiProviderConfig | null> {
+	const result = await db.query<AiProviderConfig>(
+		`SELECT ${CONFIG_COLUMNS} FROM ai_provider_configs WHERE id = $1`,
+		[configId],
+	);
+	return result.rows[0] ?? null;
 }
 
 export interface AiProviderConfigUpdate {

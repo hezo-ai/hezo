@@ -11,7 +11,6 @@ import { Loader2, Pencil, Plus, ShieldCheck, Star, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import {
 	type AiProviderConfig,
-	useAiProviderModels,
 	useAiProviders,
 	useDeleteAiProvider,
 	useSetDefaultAiProvider,
@@ -22,6 +21,7 @@ import { toast } from '../hooks/use-toast';
 import { useI18n } from '../lib/i18n';
 import { AddAiProviderDialog } from './add-ai-provider-dialog';
 import { EditAiProviderDialog } from './edit-ai-provider-dialog';
+import { ModelPicker } from './model-picker';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { type Column, DataTable } from './ui/data-table';
@@ -133,7 +133,7 @@ export function AiProvidersSection() {
 		},
 		{
 			key: 'model',
-			header: 'Default model',
+			header: t('settings.provider.model.label'),
 			hideOnMobile: true,
 			render: (c) => <DefaultModelSelector config={c} />,
 		},
@@ -239,54 +239,28 @@ export function AiProvidersSection() {
 }
 
 function DefaultModelSelector({ config }: { config: AiProviderConfig }) {
-	// Subscription sign-in has no API key the provider catalog accepts — the CLI
-	// picks the model, so listing is skipped and only "CLI default" is offered.
-	const isSubscription = config.auth_method === AiAuthMethod.Subscription;
-	// Lazy fetch so the settings page doesn't fire a live catalog call per row on
-	// mount. A native <select> opens on the same click that focuses it, so `onFocus`
-	// alone leaves the first open empty; `onPointerEnter` prefetches on hover intent
-	// so the models have arrived by the time the dropdown opens.
-	const [open, setOpen] = useState(false);
-	const models = useAiProviderModels(config.id, { enabled: open && !isSubscription });
+	const { t } = useI18n();
 	const update = useUpdateAiProviderConfig(config.id);
 
-	async function handleChange(value: string) {
-		await update.mutateAsync({ default_model: value || null });
-	}
-
 	return (
-		<div className="flex items-center gap-2 text-[13px]">
-			<select
-				aria-label={`Default model for ${config.label}`}
-				value={config.default_model ?? ''}
-				onPointerEnter={() => setOpen(true)}
-				onFocus={() => setOpen(true)}
-				onChange={(e) => handleChange(e.target.value)}
-				className="rounded-md border border-border bg-surface-2 px-2 py-1 text-xs text-text-1 outline-none focus:border-border-strong"
-				disabled={update.isPending}
-			>
-				<option value="">CLI default</option>
-				{config.default_model && !models.data?.some((m) => m.id === config.default_model) && (
-					<option value={config.default_model}>{config.default_model}</option>
-				)}
-				{models.data?.map((m) => (
-					<option key={m.id} value={m.id}>
-						{m.label}
-					</option>
-				))}
-			</select>
-			{(models.isFetching || update.isPending) && (
-				<Loader2 className="w-3 h-3 animate-spin text-text-3" />
-			)}
-			{isSubscription ? (
-				<span className="text-text-3 text-xs">CLI default (subscription)</span>
-			) : (
-				models.error && (
-					<span className="text-danger text-xs">
-						{(models.error as { message?: string }).message || 'Failed to load models'}
-					</span>
-				)
-			)}
-		</div>
+		<ModelPicker
+			configId={config.id}
+			authMethod={config.auth_method}
+			value={config.default_model}
+			// Persisted on pick rather than behind a save: the row has no submit, and
+			// the failure surfaces as a toast with the previous value still rendered.
+			onChange={(next) => {
+				update.mutate(
+					{ default_model: next },
+					{
+						onError: (e) =>
+							toast.error(e instanceof Error ? e.message : t('settings.provider.model.saveFailed')),
+					},
+				);
+			}}
+			ariaLabel={t('settings.provider.model.ariaFor', { name: config.label })}
+			busy={update.isPending}
+			testId={`default-model-${config.id}`}
+		/>
 	);
 }

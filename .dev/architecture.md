@@ -3289,9 +3289,10 @@ from MITM. There is **no MCP twin** for these routes, the same deliberate call
 a browser.
 
 **Editing a config.** `PATCH /api/ai-providers/:configId` is the single write behind the
-settings Edit dialog and carries everything about a config except its default model: `label`,
-`runtime`, a replacement credential (`api_key`, with `auth_method` / `base_url` alongside),
-and `default_model` for the inline cell selector. Credential validation is shared with the
+settings Edit dialog and carries everything about a config: `label`, `runtime`, a replacement
+credential (`api_key`, with `auth_method` / `base_url` alongside), and `default_model`, which
+the Edit dialog and the inline cell selector both write (the cell writes on pick, the dialog
+on save). Credential validation is shared with the
 create route (`prepareProviderCredential` in `routes/ai-providers.ts`), so a replacement key
 faces the same format check, subscription-blob check and live pre-flight as a new one, and a
 rejected key leaves the stored one intact. All of it lands in one `UPDATE`, so there is no
@@ -3304,6 +3305,18 @@ by the Codex refresh-token write-back, which must not touch `status` or `metadat
 `is_default` flag — a single global default enforced by a partial-unique index
 (`ai_provider_configs_single_default`); the first config added to the instance auto-takes
 it, and `setDefaultAiProvider` moves it atomically.
+
+**Choosing the default model.** One component, `ModelPicker` (`packages/web/src/components/`),
+serves all three surfaces: the providers-table cell, the Edit dialog and the last step of the
+Add dialog. It owns the lazy catalog fetch (`GET /api/ai-providers/:configId/models`, enabled
+on hover intent or on panel open, never on mount - a settings page with several rows would
+otherwise fire a live provider call per row) and builds the option list: the CLI-default
+fallback pinned first, then a stored model the provider no longer lists, then the catalog.
+Ordering is not its decision - `useAiProviderModels` sorts through `sortModelsByLabel`, so the
+pricing-override suggestions get the same order from the same place. The catalog is only
+listable against a stored credential, which is why the Add dialog asks for the model *after*
+the create rather than in the credential form; `POST /api/ai-providers` returns the created
+row (not just its id) so that step has the config without re-reading it.
 
 `resolveRuntimeForTask` returns a `RuntimeResolution` — the runtime + provider, or a
 **reason** — and has three branches. A task's `runtime_type` pin filters by

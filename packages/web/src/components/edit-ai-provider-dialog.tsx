@@ -13,9 +13,9 @@ interface EditAiProviderDialogProps {
 
 /**
  * Settings "Edit provider" modal — the single home for everything about a stored
- * credential except its default model: the name, the credential itself, and the
- * CLI it runs on. Single-step, unlike {@link AddAiProviderDialog}, because the
- * provider is already known and cannot change.
+ * credential: the name, the credential itself, the CLI it runs on and its default
+ * model. Single-step, unlike {@link AddAiProviderDialog}, because the provider is
+ * already known and cannot change.
  */
 export function EditAiProviderDialog({ config, open, onOpenChange }: EditAiProviderDialogProps) {
 	const { t } = useI18n();

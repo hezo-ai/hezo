@@ -93,10 +93,26 @@ export function useVerifyAiProvider() {
 	});
 }
 
+/**
+ * Order a provider catalog for display. Providers return their models in
+ * whatever order their API pleases - OpenRouter alone serves several hundred -
+ * so every surface that lists them sorts here rather than at its own call site.
+ *
+ * `numeric` keeps "Gemini 3.5" ahead of "Gemini 3.7" instead of ordering the
+ * version digit by digit, and base sensitivity stops casing splitting one
+ * vendor's models across the list.
+ */
+export function sortModelsByLabel(models: AiProviderModel[]): AiProviderModel[] {
+	return [...models].sort((a, b) =>
+		a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }),
+	);
+}
+
 export function useAiProviderModels(configId: string, options: { enabled?: boolean } = {}) {
 	return useQuery({
 		queryKey: queryKeys.aiProviderModels(configId),
 		queryFn: () => api.get<AiProviderModel[]>(`/api/ai-providers/${configId}/models`),
+		select: sortModelsByLabel,
 		enabled: options.enabled ?? true,
 		staleTime: 5 * 60 * 1000,
 	});
@@ -130,7 +146,7 @@ export function useAllProviderModels(
 	}
 
 	return {
-		models: Array.from(byId.values()),
+		models: sortModelsByLabel(Array.from(byId.values())),
 		isLoading: results.some((r) => r.isLoading),
 	};
 }

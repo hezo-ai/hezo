@@ -17,6 +17,7 @@ import {
 import { useI18n } from '../lib/i18n';
 import { AgentCliPicker, providerHasCliChoice } from './agent-cli-picker';
 import { ApiKeyInstructions } from './api-key-instructions';
+import { ModelPicker } from './model-picker';
 import { SubscriptionLoginPanel } from './subscription-login-panel';
 import { SUBSCRIPTION_INSTRUCTIONS, SubscriptionInstructions } from './subscription-paste-form';
 import { Button } from './ui/button';
@@ -87,8 +88,12 @@ function storedBaseUrl(config: AiProviderConfig): string | null {
 
 interface ProviderConfigFormProps {
 	provider: AiProvider;
-	/** Called after the credential is successfully created or saved. */
-	onDone: () => void;
+	/**
+	 * Called after the credential is successfully created or saved. A create hands
+	 * back the stored config, so a caller can carry on with something that needs it
+	 * to exist - listing its model catalog, which is keyed by config id.
+	 */
+	onDone: (created?: AiProviderConfig) => void;
 	/** Called when the user cancels out of the form. */
 	onCancel: () => void;
 	/** Show an editable, auto-prefilled name field (settings flow). */
@@ -142,6 +147,9 @@ export function ProviderConfigForm({
 	// Only sent when the operator actually opened Advanced and picked something.
 	const [runtime, setRuntime] = useState<AgentRuntime | null>(editing?.runtime ?? null);
 	const [advancedOpen, setAdvancedOpen] = useState(false);
+	// Editing only: a new credential has no config id yet, so there is no catalog
+	// to list against. The add flow asks for the model in its own step afterwards.
+	const [defaultModel, setDefaultModel] = useState<string | null>(editing?.default_model ?? null);
 	// The guided sign-in panel is mounted only after an explicit click, because
 	// starting a flow creates a container.
 	const [signingIn, setSigningIn] = useState(false);
@@ -215,13 +223,15 @@ export function ProviderConfigForm({
 				await updateProvider.mutateAsync({
 					label: name.trim(),
 					runtime,
+					default_model: defaultModel,
 					// A blank credential means "keep the stored one" — sending it would ask
 					// the server to store an empty key.
 					...(rotating ? { api_key: credential, auth_method: authMethod } : {}),
 					...(isLocal ? { base_url: baseUrl.trim() } : {}),
 				});
+				onDone();
 			} else {
-				await createProvider.mutateAsync({
+				const created = await createProvider.mutateAsync({
 					provider,
 					api_key: credential,
 					label: showName ? name.trim() || undefined : undefined,
@@ -229,8 +239,8 @@ export function ProviderConfigForm({
 					...(isLocal ? { base_url: baseUrl.trim() } : {}),
 					...(runtime ? { runtime } : {}),
 				});
+				onDone(created);
 			}
-			onDone();
 		} catch (err) {
 			setError(
 				err instanceof Error
@@ -380,6 +390,22 @@ export function ProviderConfigForm({
 						</div>
 					)}
 					{!isLocal && apiKeyField}
+				</div>
+			)}
+
+			{editing && (
+				<div className="flex flex-col gap-1.5">
+					<span className="text-eyebrow text-text-2">{t('settings.provider.model.label')}</span>
+					<ModelPicker
+						configId={editing.id}
+						authMethod={authMethod}
+						value={defaultModel}
+						onChange={setDefaultModel}
+						ariaLabel={t('settings.provider.model.ariaFor', { name: editing.label })}
+						widthClassName="w-full"
+						testId="edit-default-model"
+					/>
+					<p className="text-[13px] text-text-3">{t('settings.provider.model.hint')}</p>
 				</div>
 			)}
 
