@@ -1103,7 +1103,14 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
 2. **CEO-assisted** — `POST /api/project-intakes`: opens a CEO-run intake conversation
    ticket in HQ (label `project-intake`) recording the form data and the admin's chosen
    team type as the CEO's **baseline suggestion**. **Nothing is created up front — no
-   team, no project, no approval.** The CEO scopes the work with the admin; when the
+   team, no project, no approval, and no run.** The route posts the CEO's greeting itself
+   and fans it out to the admin inbox with `fireAdminMention`; it queues **no** wakeup,
+   because the greeting already is the CEO's opening ask and a run started there would only
+   re-introduce and re-ask it. The CEO's first run is the `reply` wakeup raised when the
+   admin answers - `ProjectIntakeHomePanel` threads their message onto the last CEO comment
+   for exactly that reason. The inbox row also parks the ticket for `parkedOnAdminAsk`
+   (§ The parked-on-admin suppression), so an unanswered intake costs no heartbeat runs
+   either. The CEO scopes the work with the admin; when the
    admin approves in the thread (a plain reply — there is no inbox button), the CEO calls
    the `create_project` MCP tool, which runs the same `createProjectWithTeam` and closes
    the intake ticket. On this path the coherence/setup task does **not** auto-run: it is
@@ -2319,6 +2326,25 @@ in-progress flip and would report "changed" on the quietest run. Conversational 
 are exempt: each is somebody asking for something the last pass could not have served. A
 suppressed wakeup is marked `completed` with `last_skipped_reason = no_work_cooldown` -
 answered, not re-queued to ask again, and not left dangling in `claimed`.
+
+**The parked-on-admin suppression.** `noWorkCooldownActive` covers only the case where the
+agent *said* it had nothing to do. The commoner one is an agent that asked a human something
+and stopped - which the stop judge explicitly allows and `SHARED_INSTRUCTIONS` tells the agent
+not to re-engage, but which nothing stopped the *scheduler* dispatching onto. An unanswered
+`@admin` question therefore bought a full run every heartbeat until it was answered or the
+task closed. `parkedOnAdminAsk` (same module) applies the second verdict at the same point,
+suppressing when both hold: an ask still stands on the thread - a comment that raised an
+`admin_mentions` row, or an unanswered choice card (`chosen_option IS NULL`), spelled through
+`outstandingAdminAskExistsSql` in `lib/task-sort.ts` so migration 059's partial index still
+applies - and nobody but this agent has commented since. The agent's own later comments are
+excluded: chasing its own question is not an answer to it. Unlike the no-work backoff it is
+**unbounded in time**, because a question addressed to a person goes stale only when they
+answer; the same exempt sources carry every form that answer can take, and `on_demand` ("Run
+now") is the operator's override. Over-suppression is accepted: any `@admin` in a comment
+parks the task, including one inside a routine status update. It is marked `completed` with
+`last_skipped_reason = parked_on_admin`. Kept a sibling predicate rather than folded into the
+same query because migration 061's frozen comment names `noWorkCooldownActive` and that file,
+so neither can be renamed to cover both.
 
 **The container-start fan-out, and the loop it used to close.** `provisionContainer` ends by
 nudging the project's agents (`wakeAgentsWithPendingWork`) so work queued while the container

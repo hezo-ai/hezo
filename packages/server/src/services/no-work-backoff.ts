@@ -1,9 +1,10 @@
 import { WakeupSource } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { outstandingAdminAskExistsSql } from '../lib/task-sort';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 
 /**
- * Wakeup sources the no-work backoff never suppresses.
+ * Wakeup sources neither dispatch suppression in this module ever applies to.
  *
  * Each is somebody asking this agent for something it could not have served on
  * its last pass: a human or teammate addressing it, an operator pressing "Run
@@ -15,7 +16,7 @@ import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
  * everything the system raises on its own behalf, which is exactly what a
  * "nothing to do" verdict is about.
  */
-export const NO_WORK_BACKOFF_EXEMPT_SOURCES: ReadonlySet<string> = new Set([
+export const DISPATCH_SUPPRESSION_EXEMPT_SOURCES: ReadonlySet<string> = new Set([
 	WakeupSource.Mention,
 	WakeupSource.Comment,
 	WakeupSource.Reply,
@@ -66,7 +67,7 @@ export async function noWorkCooldownActive(
 	source: string,
 ): Promise<boolean> {
 	if (!taskId) return false;
-	if (NO_WORK_BACKOFF_EXEMPT_SOURCES.has(source)) return false;
+	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
 
 	const r = await db.query<{ cooldown: boolean }>(
 		`WITH last_run AS (
@@ -93,4 +94,75 @@ export async function noWorkCooldownActive(
 	);
 
 	return r.rows[0]?.cooldown === true;
+}
+
+/**
+ * Is this task parked on a human, with nothing said since?
+ *
+ * The mirror of the backoff above, for the other reason a dispatch bills a
+ * container to reach a conclusion the last run already reached: the agent asked
+ * the admin something it cannot answer itself and nobody has replied. The stop
+ * judge already treats that as a legitimate place to stop, and `SHARED_INSTRUCTIONS`
+ * already tells an agent not to re-engage a task sitting in someone else's court -
+ * but nothing stopped the *scheduler* dispatching onto it anyway, so an unanswered
+ * ask cost a full run every heartbeat until it was answered or the task was closed.
+ *
+ * Two conditions, both required:
+ *
+ * 1. An ask still stands on the thread - a comment that raised an admin-inbox row
+ *    (a literal `@admin`, a `request_credential`) or an unanswered choice card.
+ * 2. Nobody but this agent has spoken since that ask. Every change that could give
+ *    the agent something new - a human or teammate comment, a status flip, a
+ *    reassignment, an unblock - writes a `task_comments` row through
+ *    `services/task-events.ts`, so the one check covers all of them. The agent's own
+ *    later comments are excluded: chasing its own question is not an answer to it.
+ *
+ * Deliberately unbounded in time, unlike the no-work backoff. That one expires at
+ * the agent's own cadence because "nothing to do *yet*" goes stale; this one is a
+ * question addressed to a person, and it goes stale only when they answer. The
+ * exempt sources above carry every form that answer can take, so the reply that
+ * lifts this can never be blocked by it, and an operator can always force a pass
+ * with "Run now" (`on_demand`).
+ *
+ * Over-suppression is possible and accepted: any `@admin` in a comment parks the
+ * task, including one written inside a routine status update. The cost is a delayed
+ * heartbeat on a thread whose last word was a question to a human; the escape
+ * hatches above are one click and one reply.
+ *
+ * One round trip. Returns false for a task-less wakeup and for every exempt source.
+ *
+ * Kept as a sibling of {@link noWorkCooldownActive} rather than folded into its
+ * query: migration 061's frozen comment names that function and this file, so
+ * neither can be renamed to cover both, and one honest predicate each beats one
+ * whose name describes half of what it does. Dispatch is per-wakeup, not per-row,
+ * so the second round trip is affordable.
+ */
+export async function parkedOnAdminAsk(
+	db: Db,
+	memberId: string,
+	taskId: string | null | undefined,
+	source: string,
+): Promise<boolean> {
+	if (!taskId) return false;
+	if (DISPATCH_SUPPRESSION_EXEMPT_SOURCES.has(source)) return false;
+
+	// `newest_other` is a single backwards seek on idx_comments_task_created
+	// (task_id, created_at); the ask probe is then bounded to the comments after it,
+	// which on a parked task is the ask itself plus whatever the agent added.
+	const r = await db.query<{ parked: boolean }>(
+		`WITH newest_other AS (
+		   SELECT max(c.created_at) AS at
+		   FROM task_comments c
+		   WHERE c.task_id = $2 AND c.author_member_id IS DISTINCT FROM $1
+		 )
+		 SELECT EXISTS (
+		   SELECT 1 FROM task_comments ask CROSS JOIN newest_other n
+		   WHERE ask.task_id = $2
+		     AND (n.at IS NULL OR ask.created_at > n.at)
+		     AND ${outstandingAdminAskExistsSql('ask')}
+		 ) AS parked`,
+		[memberId, taskId],
+	);
+
+	return r.rows[0]?.parked === true;
 }

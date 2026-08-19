@@ -49,7 +49,8 @@ A starting team is just a convenient starting point - it's not a cage. The Blank
 designed to be grown into whatever the work needs; the App Team is a fully-staffed
 structure for building software, and the Social Media Marketing and Investment Portfolio
 teams are staffed for content and stock research respectively. Pick whichever is closest and adjust
-from there.
+from there. When none of them is obviously right for the work, start from Blank: an
+ill-fitting roster costs more to unpick than an empty one does to fill.
 
 ## Changing a team's structure while it runs
 

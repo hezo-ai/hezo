@@ -1,6 +1,6 @@
-import { DEFAULT_TEAM_ID } from '@hezo/shared';
+import { DEFAULT_TEAM_ID, WakeupSource } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { PROJECT_INTAKE_MARKER } from '../src/services/project-intake';
@@ -122,6 +122,73 @@ describe('project intake (CEO-assisted)', () => {
 		// Still nothing materialised — the team type is only a baseline suggestion.
 		expect(await countNonHqTeams()).toBe(0);
 		expect(await countApprovals()).toBe(0);
+	});
+
+	it('starts no CEO run, and reaches the admin through the inbox instead', async () => {
+		const res = await startIntake({
+			name: 'Translations Workflow',
+			description: 'we need a workflow for doing translations',
+		});
+		expect(res.status).toBe(201);
+		const intake = (await res.json()).data as IntakeResponse;
+
+		// The greeting already carries the CEO's opening ask, so a run fired now would
+		// only re-introduce and re-ask it - and would then keep re-running while the
+		// admin has still said nothing.
+		const wakeups = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM agent_wakeup_requests w
+			 WHERE w.payload->>'task_id' = $1`,
+			[intake.intake_task_id],
+		);
+		expect(wakeups.rows[0].count).toBe(0);
+
+		// The admin reach the run used to provide comes from the inbox row on the
+		// greeting, which carries no literal @admin of its own.
+		const mentions = await db.query<{ comment_id: string }>(
+			'SELECT comment_id FROM admin_mentions WHERE task_id = $1',
+			[intake.intake_task_id],
+		);
+		expect(mentions.rows.length).toBeGreaterThan(0);
+
+		const greeting = await db.query<{ id: string }>(
+			`SELECT id FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC LIMIT 1`,
+			[intake.intake_task_id],
+		);
+		expect(mentions.rows[0].comment_id).toBe(greeting.rows[0].id);
+	});
+
+	it('wakes the CEO once the admin replies to the greeting', async () => {
+		const res = await startIntake({ name: 'Reply Path', description: 'a project to scope' });
+		const intake = (await res.json()).data as IntakeResponse;
+
+		const greeting = await db.query<{ id: string }>(
+			`SELECT id FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC LIMIT 1`,
+			[intake.intake_task_id],
+		);
+
+		// The home panel threads the admin's message onto the last CEO comment, which
+		// is now the greeting. That reply is what starts the CEO's first run.
+		const posted = await app.request(
+			`/api/projects/${intake.project_slug}/tasks/${intake.intake_task_identifier}/comments`,
+			{
+				method: 'POST',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					content: 'It is a translations pipeline',
+					parent_comment_id: greeting.rows[0].id,
+				}),
+			},
+		);
+		expect(posted.status).toBe(201);
+
+		await vi.waitFor(async () => {
+			const wakeups = await db.query<{ source: string }>(
+				`SELECT source::text AS source FROM agent_wakeup_requests
+				 WHERE payload->>'task_id' = $1`,
+				[intake.intake_task_id],
+			);
+			expect(wakeups.rows.map((r) => r.source)).toContain(WakeupSource.Reply);
+		});
 	});
 
 	it('rejects missing name/description with 400 and creates nothing', async () => {

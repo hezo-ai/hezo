@@ -4,7 +4,6 @@ import {
 	PROJECT_INTAKE_LABEL,
 	TaskPriority,
 	TaskStatus,
-	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
@@ -13,9 +12,9 @@ import { recomputeDownstreamReadiness } from '../lib/dependencies';
 import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
+import { fireAdminMention } from './comment-wakeups';
 import { loadCoordinationContext } from './internal-intake';
 import { recordStatusChange } from './task-events';
-import { createWakeup } from './wakeup';
 import type { WebSocketManager } from './ws';
 
 const log = logger.child('project-intake');
@@ -108,7 +107,7 @@ ${input.description}
 ### Your task
 
 1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. Put an active \`@admin\` in any comment where you need them to answer — without it the question reaches no inbox and the task stalls.
-2. **Check team fit.** The admin's chosen team type above is your baseline. Call \`list_team_templates\` to review the local team types (Blank + saved), and — when the baseline is a marketplace team — \`get_marketplace_team\` to review its roster; recommend a different one if it fits the work better. The final call is the admin's.
+2. **Check team fit.** The admin's chosen team type above is your baseline. Call \`list_team_templates\` for the local team types (Blank + saved) and \`list_marketplace_teams\` for the ready-made ones, then \`get_marketplace_team\` to read a roster before you name it. **Recommend a ready-made team only when the project's deliverable is plainly that team's domain** - the App Team builds software, and is not the default for work that sounds technical. When no template fits, or you are unsure, recommend Blank plus a roster you write: it starts as a Captain alone, and you hire every other role into it once the shape is settled. The final call is the admin's.
 3. **Get the go-ahead.** Post a short summary of the agreed shape (name, description, team type), @-mention the admin, and ask them to confirm. A plain reply approving it is all you need — this is a normal conversation, not an inbox approval.
 4. **Create the project.** Once the admin approves in this thread, call \`create_project\` with the agreed \`name\`, \`description\`, and the chosen team source — \`template_id\`, \`source_team_id\`, or \`marketplace_slug\` — passing this task's id as \`intake_task_id\`. That creates the project and its team, opens the Captain's planning task, and closes this task automatically.
 5. **Set up the team, then start it.** \`create_project\` returns the new project's planning **and** setup task identifiers. Because you created this project, the setup task does **not** start on its own: open it (the returned \`setup_task_identifier\`) and rewrite its description with \`update_task\` to capture the concrete setup you agreed here — the exact roles to hire, any system-prompt rewrites, and the reporting structure — then call \`start_team_setup(project)\` to begin the setup run. If the admin decides not to proceed, close this task as cancelled with a brief note.`;
@@ -132,9 +131,8 @@ export async function createProjectIntake(
 		return null;
 	}
 
-	const { intakeTaskId, intakeTaskIdentifier, projectSlug } = await withTransaction(
-		db,
-		async () => {
+	const { intakeTaskId, intakeTaskIdentifier, projectSlug, greetingCommentId } =
+		await withTransaction(db, async () => {
 			const { number: taskNumber, identifier } = await allocateTaskIdentifier(db, ctx.hqProjectId);
 
 			const taskResult = await db.query<{ id: string; identifier: string; project_slug: string }>(
@@ -163,9 +161,10 @@ export async function createProjectIntake(
 			const intakeTaskIdentifier = taskResult.rows[0].identifier;
 			const projectSlug = taskResult.rows[0].project_slug;
 
-			await db.query(
+			const greeting = await db.query<{ id: string }>(
 				`INSERT INTO task_comments (task_id, author_member_id, content_type, content)
-			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)`,
+			 VALUES ($1, $2, $3::comment_content_type, $4::jsonb)
+			 RETURNING id`,
 				[
 					intakeTaskId,
 					ctx.ceoMemberId,
@@ -173,6 +172,7 @@ export async function createProjectIntake(
 					JSON.stringify({ text: buildGreetingText(input) }),
 				],
 			);
+			const greetingCommentId = greeting.rows[0].id;
 
 			if (input.initialProjectPlan) {
 				await db.query(
@@ -189,9 +189,8 @@ export async function createProjectIntake(
 				);
 			}
 
-			return { intakeTaskId, intakeTaskIdentifier, projectSlug };
-		},
-	);
+			return { intakeTaskId, intakeTaskIdentifier, projectSlug, greetingCommentId };
+		});
 
 	if (wsManager) {
 		const taskRow = await db.query<Record<string, unknown>>('SELECT * FROM tasks WHERE id = $1', [
@@ -202,12 +201,28 @@ export async function createProjectIntake(
 		}
 	}
 
+	// Deliberately no wakeup. The greeting above already *is* the CEO's opening ask,
+	// so a run started here has nothing to add: it re-introduces itself, re-asks what
+	// the greeting asked, and then re-runs on the heartbeat while the admin has still
+	// said nothing. The CEO's first run happens when the admin replies - the home
+	// panel threads their message onto the greeting, which raises a `reply` wakeup on
+	// its author.
+	//
+	// The admin reach that run used to provide comes from the inbox instead. The
+	// greeting carries no literal `@admin`, so fan it out directly. That row is also
+	// what `parkedOnAdminAsk` reads, so a scheduled heartbeat does not start a run
+	// against a thread nobody has answered yet.
 	try {
-		await createWakeup(db, ctx.ceoMemberId, ctx.hqTeamId, WakeupSource.Assignment, {
-			task_id: intakeTaskId,
+		await fireAdminMention({
+			db,
+			teamId: ctx.hqTeamId,
+			taskId: intakeTaskId,
+			commentId: greetingCommentId,
+			authorUserId: null,
+			wsManager,
 		});
 	} catch (e) {
-		log.error('Failed to wake CEO for project intake:', e);
+		log.error('Failed to raise the admin inbox row for project intake:', e);
 	}
 
 	return {

@@ -24,6 +24,7 @@ import {
 } from '../hooks/use-projects';
 import { useTeamTemplates } from '../hooks/use-team-templates';
 import {
+	blankTeamOption,
 	buildTeamOptions,
 	rankTeams,
 	SUGGEST_MIN_CHARS,
@@ -377,10 +378,13 @@ export function CreateProjectWithTeamDialog({
 	}
 
 	// Entry step: prompt until the description has signal, then up-to-2 ranked
-	// suggestions (falling back to the first team types when nothing matches).
+	// suggestions. When nothing clears the ranker's relevance floor, offer Blank
+	// rather than the first two catalog entries - a card under "Suggested teams" is
+	// read as a match, and the old fallback made whatever sorted first look like one.
 	const showPrompt = description.trim().length < SUGGEST_MIN_CHARS;
 	const ranked = rankTeams(`${name} ${description}`, options, 2);
-	const suggestions = ranked.length > 0 ? ranked : newOptions.slice(0, 2);
+	const blank = blankTeamOption(newOptions);
+	const suggestions = ranked.length > 0 ? ranked : blank ? [blank] : newOptions.slice(0, 2);
 
 	// All-teams step: the active tab's list, filtered by the search box.
 	const activeGroup = showTabs ? tab : 'new';
