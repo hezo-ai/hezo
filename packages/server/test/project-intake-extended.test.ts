@@ -59,13 +59,20 @@ describe('createProjectIntake (service)', () => {
 		// ticket description, so re-posting it as a comment is pure duplication.
 		expect(comments.rows[0].content.text).not.toContain('An app with a plan');
 
-		// An Assignment wakeup fired for the CEO.
+		// No wakeup fires. The greeting is the CEO's opening ask, so a run started
+		// here would only re-introduce and re-ask it; the admin's reply is what wakes
+		// the CEO. The inbox row is how the intake reaches them meanwhile.
 		const wakeup = await db.query<{ c: number }>(
-			`SELECT count(*)::int AS c FROM agent_wakeup_requests
-			 WHERE member_id = $1 AND source = 'assignment'::wakeup_source`,
+			`SELECT count(*)::int AS c FROM agent_wakeup_requests WHERE member_id = $1`,
 			[result!.ceoMemberId],
 		);
-		expect(wakeup.rows[0].c).toBeGreaterThan(0);
+		expect(wakeup.rows[0].c).toBe(0);
+
+		const mentions = await db.query<{ c: number }>(
+			'SELECT count(*)::int AS c FROM admin_mentions WHERE task_id = $1',
+			[result!.intakeTaskId],
+		);
+		expect(mentions.rows[0].c).toBeGreaterThan(0);
 	});
 
 	it('records a clone baseline line when a source team id is supplied', async () => {
