@@ -17,6 +17,7 @@ import {
 	AiAuthMethod,
 	AiProvider,
 	ContainerStatus,
+	setCredentialSerializationRulesForTest,
 	WakeupSkipReason,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
@@ -242,6 +243,18 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	await safeClose(db);
+});
+
+// No credential serialises its runs in production today; the whole mechanism is
+// kept wired for a future opt-in. Exercise it by making a Codex subscription
+// serialise for the duration of these tests, then restore the empty default.
+beforeAll(() => {
+	setCredentialSerializationRulesForTest([
+		{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+	]);
+});
+afterAll(() => {
+	setCredentialSerializationRulesForTest([]);
 });
 
 describe('runAgent credential wait', () => {

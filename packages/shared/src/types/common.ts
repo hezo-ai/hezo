@@ -2134,36 +2134,83 @@ export function providerHasGuidedSignIn(
 }
 
 /**
- * Runtimes whose CLI rotates a single-use refresh token in place.
+ * Runtimes whose CLI rewrites its own credential file in place during a run.
  *
- * The credential is rewritten mid-run and read back afterwards, so two runs
- * sharing one of these would invalidate each other's token. Runs on such a
- * credential therefore serialise: the second waits for the first to finish, not
- * merely to read the token.
+ * The value the CLI leaves on disk after it exits is the current one, so it is
+ * read back and persisted, or the stored credential falls a rotation behind and
+ * the next run fails to refresh. A property of the **CLI**, judged on the
+ * resolved runtime. Codex's ChatGPT auth rotates its refresh token this way.
  *
- * Lives here rather than beside the server's runtime-home table because both
- * sides need it: the server to take the lock, and the web to tell an operator
- * why a credential they are adding will only ever run one agent at a time. Two
- * copies would drift into a UI promising concurrency the runner does not give.
+ * This is a DIFFERENT question from whether runs must serialise
+ * ({@link credentialSerializesRuns}). Codex rewrites its file (true here) yet its
+ * runs are safe in parallel (measured: the refresh token tolerates concurrent
+ * reuse within a wide window), so the read-back is made concurrency-safe with a
+ * compare-and-set rather than by taking a whole-run lock. Keep them separate: a
+ * future CLI could rewrite its file without needing to serialise, or vice versa.
+ *
+ * Lives here rather than beside the server's runtime-home table because the web
+ * reads it too, so a single source can't drift from what the runner does.
  */
-export const RUNTIMES_WITH_ROTATING_CREDENTIAL: readonly AgentRuntime[] = [AgentRuntime.Codex];
+export const RUNTIMES_THAT_REWRITE_CREDENTIAL_FILE: readonly AgentRuntime[] = [AgentRuntime.Codex];
+
+/** Whether this runtime's CLI rewrites its credential file mid-run (read it back). */
+export function credentialFileRewrittenByCli(runtime: AgentRuntime | null | undefined): boolean {
+	return runtime != null && RUNTIMES_THAT_REWRITE_CREDENTIAL_FILE.includes(runtime);
+}
 
 /**
- * Whether runs on this credential have to queue behind one another.
+ * A rule selecting credentials whose runs must queue one at a time. An omitted
+ * field is a wildcard; a rule matches when every field it sets matches the
+ * credential's provider, resolved runtime and auth method.
+ */
+export interface CredentialSerializationRule {
+	provider?: AiProvider;
+	runtime?: AgentRuntime;
+	authMethod?: AiAuthMethod;
+}
+
+/**
+ * Credentials whose runs serialise. DELIBERATELY EMPTY - no credential currently
+ * needs it.
  *
- * Both halves matter. Rotation is a property of the **CLI**, so it is judged on
- * the resolved runtime rather than the provider's default. And it only bites a
- * **subscription**: the same provider's API key is not rewritten by anything, so
- * those runs go in parallel.
+ * Codex was measured to tolerate concurrent runs (its refresh token stays usable
+ * across a wide reuse window), so it does not opt in; its mid-run file rewrite is
+ * handled by the concurrency-safe read-back ({@link credentialFileRewrittenByCli})
+ * instead. The whole serialisation mechanism - the per-credential lock, the
+ * bounded wait, the queued-run reason, the chat "credential wait" notice, the
+ * provider-form warning - stays wired behind this table so a future CLI that
+ * genuinely cannot run twice at once opts in with one rule, e.g.
+ * `{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription }`.
+ */
+let credentialSerializationRules: readonly CredentialSerializationRule[] = [];
+
+/**
+ * Install serialisation rules. TEST-ONLY - exercises the dormant mechanism by
+ * making a chosen credential serialise. Restore to `[]` in an `afterEach`.
+ */
+export function setCredentialSerializationRulesForTest(
+	rules: readonly CredentialSerializationRule[],
+): void {
+	credentialSerializationRules = rules;
+}
+
+/**
+ * Whether runs on this credential have to queue behind one another. Judged on
+ * the resolved runtime (the CLI, not the provider default) and the auth method,
+ * against {@link credentialSerializationRules} - empty today, so always false.
  */
 export function credentialSerializesRuns(
 	provider: AiProvider,
 	storedRuntime: AgentRuntime | null | undefined,
 	authMethod: AiAuthMethod,
 ): boolean {
-	if (authMethod !== AiAuthMethod.Subscription) return false;
 	const runtime = effectiveRuntime(provider, storedRuntime);
-	return runtime !== null && RUNTIMES_WITH_ROTATING_CREDENTIAL.includes(runtime);
+	return credentialSerializationRules.some(
+		(rule) =>
+			(rule.provider === undefined || rule.provider === provider) &&
+			(rule.authMethod === undefined || rule.authMethod === authMethod) &&
+			(rule.runtime === undefined || rule.runtime === runtime),
+	);
 }
 
 export function providerRuntimeBinding(

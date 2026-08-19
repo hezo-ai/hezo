@@ -1,8 +1,18 @@
-import { DEFAULT_TEAM_SLUG } from '@hezo/shared';
+import {
+	AgentRuntime,
+	AiAuthMethod,
+	DEFAULT_TEAM_SLUG,
+	setCredentialSerializationRulesForTest,
+} from '@hezo/shared';
 import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
 import { fireEvent, waitFor, within } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
+
+// No credential serialises its runs by default; the two tests that assert the
+// "one agent at a time" UI opt a Codex subscription in through a rule, then this
+// restores the empty default so no other test sees a serialising credential.
+afterEach(() => setCredentialSerializationRulesForTest([]));
 
 interface ProviderListResponse {
 	data: Array<{ id: string }>;
@@ -1072,6 +1082,9 @@ test('Google subscription offers no sign-in button, because its CLI cannot be dr
  * "Paste credential manually" toggle.
  */
 test('the add form warns that a rotating subscription runs one agent at a time', async () => {
+	setCredentialSerializationRulesForTest([
+		{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+	]);
 	const { findByRole, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -1095,6 +1108,9 @@ test('the add form warns that a rotating subscription runs one agent at a time',
 });
 
 test('the providers list marks only the credential whose runs serialise', async () => {
+	setCredentialSerializationRulesForTest([
+		{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+	]);
 	const { findByText, container } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {

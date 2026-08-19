@@ -3,15 +3,15 @@ import {
 	AgentRuntime,
 	AiAuthMethod,
 	type AiProvider,
-	RUNTIMES_WITH_ROTATING_CREDENTIAL,
+	credentialFileRewrittenByCli,
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
 import {
 	type AiProviderCredential,
 	type AiProviderCredentialAndModel,
+	casUpdateAiProviderCredential,
 	readAiProviderCredentialValue,
-	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { type ContainerRunUser, chownToRunUser } from './container-user';
 import type { SandboxFiles } from './sandbox/files';
@@ -281,10 +281,13 @@ export async function buildSubscriptionMount(
 		authFileRelative,
 		containerDir,
 		envEntries: [`${layout.envVarName}=${containerDir}`],
-		// Only a subscription blob rotates. An api-key file is written from the
-		// stored key every run, so reading it back would persist a rotation that
-		// never happened over the operator's own credential.
-		rotates: RUNTIMES_WITH_ROTATING_CREDENTIAL.includes(runtime) && isSubscription,
+		// Only a subscription blob is read back. An api-key file is written from
+		// the stored key every run, so reading it back would persist a rotation
+		// that never happened over the operator's own credential. This tracks
+		// whether the CLI rewrites the file, NOT whether runs serialise - a Codex
+		// subscription rewrites its file yet runs in parallel (the read-back is
+		// compare-and-set rather than lock-guarded).
+		rotates: credentialFileRewrittenByCli(runtime) && isSubscription,
 	};
 }
 
@@ -391,18 +394,24 @@ export async function ensureRuntimeHomeDir(
 /**
  * Read a rotated subscription credential back out of the container and store it.
  *
- * The counterpart to {@link buildSubscriptionMount}, and the reason the
- * credential lock is held for a whole execution rather than for the write: the
- * CLI rewrites this file at a moment of its own choosing, so the value only
- * settles once the process has exited. Whoever runs a rotating credential owes
- * this call before releasing the lock - an execution that skips it leaves the
- * stored credential one rotation behind, and the next run fails to refresh.
+ * The counterpart to {@link buildSubscriptionMount}: the CLI rewrites this file
+ * at a moment of its own choosing, so the value only settles once the process
+ * has exited, and an execution that skips this leaves the stored credential one
+ * rotation behind. Called after every execution on a `rotates` mount.
+ *
+ * Runs are NOT serialised for this - a Codex subscription tolerates concurrent
+ * use - so two executions can each rotate the same starting token to a different
+ * valid successor. The write-back is therefore compare-and-set: it advances the
+ * store only from the value this execution started on, dropping its write when a
+ * peer already moved the store past it rather than replacing a fresh token with a
+ * sibling.
  *
  * Best-effort by design: a failed write-back must not fail the work that just
  * succeeded, so problems are reported through `onNotice` rather than thrown.
  *
- * Resolves to the value it stored, or null when nothing was written - so a
- * caller holding its own snapshot of the credential can move it along.
+ * Resolves to the value it stored, or null when nothing was written (unchanged,
+ * a tombstone, or a peer got there first) - so a caller holding its own snapshot
+ * of the credential can move it along.
  */
 export async function persistRotatedSubscriptionAuth(opts: {
 	db: Db;
@@ -433,13 +442,14 @@ export async function persistRotatedSubscriptionAuth(opts: {
 			opts.onNotice?.(`skipping rotated-auth write-back: ${check.error ?? 'invalid credential'}`);
 			return null;
 		}
-		await updateAiProviderCredential(
+		const wrote = await casUpdateAiProviderCredential(
 			opts.db,
 			opts.masterKeyManager,
 			opts.credential.configId,
+			opts.credential.value,
 			rotated,
 		);
-		return rotated;
+		return wrote ? rotated : null;
 	} catch (e) {
 		opts.onNotice?.(`failed to persist rotated subscription auth: ${(e as Error).message}`);
 		return null;

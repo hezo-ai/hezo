@@ -2429,8 +2429,9 @@ reader has to act on.
 repairs the *surroundings* (execution locks, agent `runtime_status`, claimed wakeups) but
 never the run row itself.
 
-**Capacity park.** The `queued` states that are *not* stranded are the two waits a run sits
-in on purpose: container capacity, and the rotating provider credential. When the pool
+**Capacity park.** The `queued` states that are *not* stranded are the waits a run sits in on
+purpose: container capacity, and — when a credential opts into serialising (dormant today) —
+the provider credential. When the pool
 ladder can only queue (`PoolCapacityError`), `runAgent`
 does not return: it stamps `queued_reason` (`CAPACITY_PARK_QUEUED_REASON`,
 `services/run-concurrency.ts`) and re-tries the ladder on a short poll, up to a ceiling of
@@ -2448,12 +2449,26 @@ consequences elsewhere: the idle-stop scan's busy set excludes a parked run
 scan feeds; and the run reads honestly while parked, the run comment and run detail page
 both rendering "Queued - waiting for container capacity" from `queued_reason`.
 
-**Credential wait.** The second such wait, and it is taken *before* the container. Some
-subscription credentials carry a single-use refresh token (Codex today, `rotates` in
-`RUNTIME_HOME_LAYOUTS`), so runs against one serialise on the credential row's id through
-`lib/keyed-lock`. The lock is held for the whole run, because the CLI rewrites the token
-file whenever it likes and the rotated value is read back during teardown - so a waiter
-queues behind a complete run, not behind a token read.
+**Credential wait — two separate properties.** A credential raises two independent
+questions, and collapsing them was a bug the measurements caught. **Does the CLI rewrite its
+credential file mid-run** (`credentialFileRewrittenByCli`, `@hezo/shared` — Codex, whose
+ChatGPT auth rotates its refresh token)? Then the value the CLI leaves is read back and
+stored. **Must its runs queue one at a time** (`credentialSerializesRuns`, reading
+`CREDENTIAL_SERIALIZATION_RULES`)? Codex proves these differ: it rewrites its file, yet
+concurrent runs are safe — its refresh token stays usable across a wide reuse window
+(measured), so the read-back is made concurrency-safe with a compare-and-set rather than by
+serialising whole runs.
+
+`CREDENTIAL_SERIALIZATION_RULES` **ships empty — no credential serialises today.** The whole
+serialisation mechanism below stays wired behind that table so a future CLI that genuinely
+cannot run twice at once opts in with one rule (`{provider?, runtime?, authMethod?}`,
+wildcarding omitted fields); it is exercised only through `setCredentialSerializationRulesForTest`.
+Everything from here to *The CEO chat* describes what happens **when a rule matches**.
+
+**When a credential serialises**, its runs queue on the credential row's id through
+`lib/keyed-lock`, taken *before* the container. The lock is held for the whole run, because
+the CLI rewrites the token file whenever it likes and the rotated value is read back during
+teardown - so a waiter queues behind a complete run, not behind a token read.
 
 Two properties follow from that, and both were learned the hard way. The wait is **bounded**
 and gives up through the same `finalizeRequeue`,
@@ -2493,37 +2508,30 @@ as a markdown link (`formatRunLink`, `@hezo/shared`), which the log viewer and t
 widget turn into a link to that run through `splitRunLinks` / `RunLinkedText`. The raw log
 and the database row read as-is. The chat, holding it, is `the CEO chat` with no link.
 
-**A waiter re-reads the credential once it holds the lock.** Both a run and a chat exec
-snapshot the credential value before they wait, and the holder they queue behind rotates the
-single-use token and stores the new one on its way out - so by the time the wait ends the
-snapshot can be a rotation behind, and mounting it means the first refresh fails against a
-consumed token. The runner re-reads the value (`readAiProviderCredentialValue`) after
-`acquireCredentialLock` resolves and before `buildRunContext` writes the mount; the chat,
-whose mount was written at session start, rewrites the mounted file from the store when the
-value moved (`refreshSubscriptionMount`, beside `buildSubscriptionMount`) and moves its own
-snapshot along, so `persistRotatedSubscriptionAuth` afterwards compares against what the exec
-actually ran on and the file is rewritten only when the value really changed.
+**The read-back is compare-and-set, and runs whether or not the credential serialises.** A
+file-rewriting CLI (Codex) rotates its token on any run, and two parallel runs can each
+rotate the same starting token to a different valid successor. So `persistRotatedSubscriptionAuth`
+(`services/runtime-home.ts`, beside the `buildSubscriptionMount` that put the file there)
+advances the store only from the value this execution started on, through
+`casUpdateAiProviderCredential` (`SELECT … FOR UPDATE`, decrypt-compare, write): a run that
+finished on a now-superseded token drops its write rather than moving the store back to a
+sibling. The chat, whose mount was written at session start, rewrites the mounted file from
+the store each turn when the value moved (`refreshSubscriptionMount`) and moves its own
+snapshot along, so the CAS compares against what the exec actually ran on. This keeps the
+stored token current as parallel runs rotate it, with no lock — which is why a Codex
+subscription needs no host-side pre-run refresh and no serialisation to stay alive.
 
-**The CEO chat takes the same lock**, per exec rather than per session: a chat turn drives
-the same coding CLI, so on a rotating credential it consumes and rewrites the same
-single-use token, and each of the three CLI execs a session makes (turn, compaction,
-titling) can rotate it. Per-exec because a session is long-lived and holding it for the
-session would starve task runs. Its wait is the run's own cap (`CREDENTIAL_WAIT_CAP_MS`) and
-it is taken with **priority**: a person is behind the exec, so it queues ahead of runs merely
-parked on the lock - they hold nothing and re-queue on their own deadline - and waits on the
-holder alone, never preempting it. Two things follow that made the shorter, plain-FIFO wait it
-used to have wrong. The reply turn tells the thread what it is waiting on the moment it starts
-waiting - a `credential_wait` system row naming the holder in the same words a waiting run's
-log uses, linked the same way - and the operator can stop the turn rather than wait; priority
-is also what keeps that notice true for the whole wait. And a turn that does give up records
-the same holder-naming reason on its message, which the widget shows in place of a generic
-failure (`WsChatMessageComplete.error`); titling and compaction, which retry on their own from
-the next message, log a busy credential as a warning rather than an error.
-`persistRotatedSubscriptionAuth` (`services/runtime-home.ts`, beside the
-`buildSubscriptionMount` that put the file there) is the shared write-back both paths owe
-before releasing - the chat had neither lock nor write-back, so a turn overlapping a run
-invalidated that run's token and dropped whatever the CLI left behind, leaving the stored
-credential a rotation behind.
+**The CEO chat runs the same read-back**, per exec: a chat turn drives the same coding CLI,
+so on a file-rewriting credential each of the three execs a session makes (turn, compaction,
+titling) can rotate it, and each syncs-then-reads-back the same way. **When the credential
+also serialises** (dormant today) the chat additionally takes the lock per exec — per-exec
+because a long-lived session holding it would starve task runs — with the run's own cap
+(`CREDENTIAL_WAIT_CAP_MS`) and **priority**: a person is behind the exec, so it queues ahead
+of runs merely parked on the lock and waits on the holder alone, never preempting it. The
+reply turn then posts a `credential_wait` row naming the holder the moment it starts waiting,
+the operator can stop the turn, and a turn that gives up records the same holder-naming reason
+on its message (`WsChatMessageComplete.error`); titling and compaction log a busy credential
+as a warning rather than an error.
 
 `queued_reason` is cleared when the row flips to `running`, so it describes a wait in
 progress rather than trailing onto the terminal row as though it were the outcome.

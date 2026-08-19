@@ -141,22 +141,14 @@ provider's sign-in page, use **Paste credential manually** instead and follow th
 the form shows. The Gemini CLI offers no sign-in Hezo can drive, so that is the only
 option there.
 
-Codex rotates its credential each time Hezo runs it. Two consequences follow.
+Codex refreshes its credential as it runs. Once Hezo holds a Codex subscription, avoid
+using the same login on your own machine - pick one or the other, or the two will fall out
+of step.
 
-Once Hezo holds a Codex subscription, avoid using the same login on your own machine -
-pick one or the other, or the two will fall out of step.
-
-And **runs on a Codex subscription go one at a time.** The credential is rewritten
-mid-run, so a second run using it would invalidate the first; Hezo queues them instead,
-and a waiting run shows as queued with its reason rather than as an error. Its log names
-the run it is waiting on, linked to that run's page, and says when the credential came
-free. The CEO chat takes its turn on the same credential: when a run holds it, the thread
-shows which run the reply is waiting on (the chat goes ahead of runs that are only queued,
-so it waits for that one run alone), and the reply arrives once it finishes - or you can
-stop the turn. Nothing is lost, but the agents on that credential take turns. To run more
-at once, add a second Codex subscription, or use an OpenAI API key - a key is not
-rewritten by anything, so runs on it go in parallel. Subscriptions for other providers are
-unaffected.
+**Runs on a Codex subscription go in parallel**, like every other provider. Codex's login
+token stays usable across concurrent runs, so Hezo runs as many at once as your containers
+allow and keeps the stored token current as they go. Nothing here limits how many agents
+share one Codex subscription.
 
 ## Where to get an API key
 

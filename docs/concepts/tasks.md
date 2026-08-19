@@ -109,12 +109,10 @@ alongside a badge for what that agent is doing on this task right now:
 
 - **Running** - the assignee is executing a run on the task at this moment.
 - **Queued** - a run has been created for the assignee but has not started yet. This is
-  normal while it waits its turn, most often behind another run sharing the same AI
-  provider credential. Hover the info icon to see the recorded reason. The task thread
-  shows the same wait on the agent's row, with an info icon that explains what it means
-  and whether it needs you: a credential wait clears on its own and can be widened with a
-  second subscription or an API key, and a capacity wait clears as soon as another run
-  gives its container back.
+  normal while it waits its turn for a container to free up when the instance is at its
+  limit. Hover the info icon to see the recorded reason. The task thread shows the same
+  wait on the agent's row, with an info icon that explains what it means: a capacity wait
+  clears as soon as another run gives its container back.
 - **Idle** - no run of the assignee's is in flight on this task.
 
 You cannot change the assignee while the task has a run in flight, whether that run is

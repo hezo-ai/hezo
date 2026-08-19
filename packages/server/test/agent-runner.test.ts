@@ -10,9 +10,10 @@ import {
 	KIMI_DEFAULT_MODEL,
 	kimiModelContextSize,
 	MAX_SINGLE_ARG_BYTES,
+	setCredentialSerializationRulesForTest,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
@@ -2828,6 +2829,16 @@ describe('runAgent', () => {
 	});
 
 	describe('codex ChatGPT-subscription auth', () => {
+		// Codex no longer serialises its runs by default; the queued-while-held test
+		// below exercises the still-wired mechanism through a rule. Harmless for the
+		// other tests here - a run with no contender just takes and drops its own lock.
+		beforeEach(() => {
+			setCredentialSerializationRulesForTest([
+				{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+			]);
+		});
+		afterEach(() => setCredentialSerializationRulesForTest([]));
+
 		const validAuthJson = JSON.stringify({
 			tokens: {
 				id_token: 'header.payload.sig',

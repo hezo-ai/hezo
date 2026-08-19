@@ -1,15 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+	AgentRuntime,
+	AiAuthMethod,
 	AuthType,
 	ChatMessageStatus,
 	ChatSessionStatus,
 	ChatSystemMessageKind,
 	DEFAULT_TEAM_ID,
+	setCredentialSerializationRulesForTest,
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { decrypt, encrypt } from '../src/crypto/encryption';
 import { signChatSessionJwt, verifyToken } from '../src/middleware/auth';
 import { acquireCredentialLock } from '../src/services/agent-runner';
@@ -910,7 +913,14 @@ describe('ChatSessionManager', () => {
 			await ctx.db.query('DELETE FROM chat_messages');
 			await ctx.db.query('DELETE FROM chat_sessions');
 			await ctx.db.query('DELETE FROM chat_conversations');
+			// Codex does not serialise by default any more; the lock/wait/notice tests
+			// below drive the still-wired mechanism through a rule. Rotation read-back
+			// runs regardless, so the read-back tests clear this to test the default.
+			setCredentialSerializationRulesForTest([
+				{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+			]);
 		});
+		afterEach(() => setCredentialSerializationRulesForTest([]));
 
 		test('holds the credential for the turn and stores what the CLI rotated into it', async () => {
 			const configId = await seedCodexSubscription();
@@ -1016,6 +1026,9 @@ describe('ChatSessionManager', () => {
 		});
 
 		test('writes a rotated credential back rather than dropping it', async () => {
+			// The read-back is independent of serialisation - a Codex turn rotates its
+			// token and stores it whether or not runs queue. Test the default (no rule).
+			setCredentialSerializationRulesForTest([]);
 			const configId = await seedCodexSubscription();
 			const key = ctx.masterKeyManager.getKey();
 			if (!key) throw new Error('master key unavailable');
