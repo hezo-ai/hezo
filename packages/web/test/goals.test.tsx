@@ -128,6 +128,34 @@ test('the dashboard progress-update footer renders runs as collapsible run cards
 	await findByTestId('run-comment-header', undefined, { timeout: 10_000 });
 });
 
+test('the progress-update runs header help button opens the explanation modal', async () => {
+	let projectSlug = '';
+	const { findByTestId, findByText, queryByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const project = await seedProject(ws, { name: 'Runs Help Demo' });
+			projectSlug = project.slug;
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/dashboard',
+		params: { projectId: projectSlug },
+	});
+
+	// The heading carries the explanation behind the question mark, not inline, and the
+	// section renders it whether or not the project has any runs yet.
+	const help = await findByTestId('progress-update-runs-help', undefined, { timeout: 10_000 });
+	expect(queryByText(/standalone Captain run/)).toBeNull();
+
+	await user.click(help);
+
+	await findByText('About progress update runs');
+	await findByText(/standalone Captain run, with no task attached/);
+	await findByText(/Run now starts one immediately/);
+});
+
 test('the Goals header help button opens the SMART guidance modal', async () => {
 	let projectSlug = '';
 	const { findByTestId, findByText, queryByText, user, router } = await renderApp({

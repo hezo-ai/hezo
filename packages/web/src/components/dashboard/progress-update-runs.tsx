@@ -12,6 +12,7 @@ import { InfiniteScrollSentinel } from '../infinite-scroll-sentinel';
 import { LazyMount } from '../lazy-mount';
 import { Button } from '../ui/button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
+import { HelpDialog } from '../ui/help-dialog';
 import { Tooltip } from '../ui/tooltip';
 
 /**
@@ -62,6 +63,24 @@ function QueuedProgressRunRow({ projectId, wakeupId }: { projectId: string; wake
 	);
 }
 
+/** The explanation behind the question-mark help affordance on the runs header. */
+function ProgressUpdateRunsHelp() {
+	const { t } = useI18n();
+	return (
+		<HelpDialog
+			title={t('progress.runs.help.title')}
+			triggerLabel={t('progress.runs.help.title')}
+			tooltip={t('progress.runs.help.title')}
+			data-testid="progress-update-runs-help"
+		>
+			<div className="flex flex-col gap-3 text-sm leading-relaxed text-text-2">
+				<p>{t('progress.runs.help.body')}</p>
+				<p>{t('progress.runs.help.schedule')}</p>
+			</div>
+		</HelpDialog>
+	);
+}
+
 export function ProgressUpdateRuns({ projectId }: { projectId: string }) {
 	const { t } = useI18n();
 	const { data: runPages, hasNextPage, isFetchingNextPage, fetchNextPage } = useGoalRuns(projectId);
@@ -81,9 +100,12 @@ export function ProgressUpdateRuns({ projectId }: { projectId: string }) {
 	return (
 		<section data-testid="progress-updates" className="mt-8">
 			<div className="mb-2 flex items-center justify-between gap-2 px-0.5">
-				<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3">
-					{t('progress.runs.heading')}
-				</h2>
+				<div className="flex items-center gap-1.5">
+					<h2 className="text-[11px] font-medium uppercase tracking-wider text-text-3">
+						{t('progress.runs.heading')}
+					</h2>
+					<ProgressUpdateRunsHelp />
+				</div>
 				<Button
 					variant="secondary"
 					size="sm"
