@@ -218,3 +218,68 @@ describe('lock bookkeeping', () => {
 		expect(reg.size).toBe(0);
 	});
 });
+
+describe('priority waiters', () => {
+	it('is granted before earlier plain waiters and after earlier priority waiters', async () => {
+		const reg = registry();
+		const release = await hold(reg, 'k', 'holder');
+		const order: string[] = [];
+		const wait = (owner: string, priority = false) =>
+			acquireKeyedLock(reg, 'k', { owner, priority, timeoutMs: 1_000 }).then((rel) => {
+				order.push(owner);
+				rel();
+			});
+		const all = [wait('plain-1'), wait('plain-2'), wait('prio-1', true), wait('prio-2', true)];
+
+		release();
+		await Promise.all(all);
+		expect(order).toEqual(['prio-1', 'prio-2', 'plain-1', 'plain-2']);
+	});
+
+	it('never preempts the holder', async () => {
+		const reg = registry();
+		const release = await hold(reg, 'k', 'holder');
+		let granted = false;
+		const waiting = acquireKeyedLock(reg, 'k', { priority: true, timeoutMs: 1_000 }).then((rel) => {
+			granted = true;
+			rel();
+		});
+		await new Promise((r) => setTimeout(r, 10));
+		expect(granted).toBe(false);
+		expect(currentOwner(reg, 'k')).toBe('holder');
+		release();
+		await waiting;
+		expect(granted).toBe(true);
+	});
+
+	it('leaves the queue cleanly when a priority waiter gives up', async () => {
+		const reg = registry();
+		const release = await hold(reg, 'k', 'holder');
+		const gaveUp = acquireKeyedLock(reg, 'k', { priority: true, timeoutMs: 5 }).catch((e) => e);
+		const plain = acquireKeyedLock(reg, 'k', { owner: 'plain', timeoutMs: 1_000 });
+		expect(await gaveUp).toBeInstanceOf(KeyedLockTimeoutError);
+		release();
+		(await plain)();
+		expect(reg.size).toBe(0);
+	});
+});
+
+describe('structured owners', () => {
+	interface Holder {
+		label: string;
+		runId: string;
+	}
+
+	it('reports the whole record to a waiter and its label in the timeout message', async () => {
+		const reg: KeyedLockRegistry<Holder> = new Map();
+		const holder = { label: 'growth-analyst/HM-336', runId: 'run-1' };
+		const release = await acquireKeyedLock(reg, 'k', { owner: holder });
+		expect(currentOwner(reg, 'k')).toEqual(holder);
+
+		const err = await acquireKeyedLock(reg, 'k', { timeoutMs: 5 }).catch((e) => e);
+		expect(err).toBeInstanceOf(KeyedLockTimeoutError);
+		expect((err as Error).message).toContain('held by growth-analyst/HM-336');
+		expect((err as Error).message).not.toContain('run-1');
+		release();
+	});
+});

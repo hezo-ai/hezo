@@ -12,6 +12,7 @@ import {
 	Copy,
 	ExternalLink,
 	History,
+	Hourglass,
 	ListPlus,
 	Loader2,
 	Lock,
@@ -57,15 +58,32 @@ import {
 } from '../file-attachments';
 import { HqContainerNotice } from '../hq-container-notice';
 import { MarkdownProse } from '../markdown-prose';
+import { RunLinkedText } from '../run-linked-text';
 import { CountOverlayBadge } from '../ui/count-overlay-badge';
 import { Tooltip } from '../ui/tooltip';
 import { ConvertToTaskDialog } from './convert-to-task-dialog';
 
-/** System-message kinds rendered as an amber warning row rather than a marker. */
-const WARNING_SYSTEM_KINDS: ReadonlySet<ChatSystemMessageKind> = new Set<ChatSystemMessageKind>([
-	ChatSystemMessageKind.HandoffNotDelivered,
-	ChatSystemMessageKind.ConnectorRefused,
-]);
+/**
+ * System-message kinds rendered as a full-sentence row rather than a marker,
+ * and how each row looks: a warning is amber, a notice is quiet. Any kind not
+ * listed here is the converted-task marker.
+ */
+const SYSTEM_ROW_STYLE: Partial<
+	Record<ChatSystemMessageKind, { icon: typeof TriangleAlert; className: string }>
+> = {
+	[ChatSystemMessageKind.HandoffNotDelivered]: {
+		icon: TriangleAlert,
+		className: 'bg-warning-soft text-warning-soft-fg',
+	},
+	[ChatSystemMessageKind.ConnectorRefused]: {
+		icon: TriangleAlert,
+		className: 'bg-warning-soft text-warning-soft-fg',
+	},
+	[ChatSystemMessageKind.CredentialWait]: {
+		icon: Hourglass,
+		className: 'bg-surface-2 text-text-3',
+	},
+};
 
 /**
  * Floating chat with the CEO, pinned bottom-right (on portrait mobile screens
@@ -1053,24 +1071,28 @@ function MessageBubble({
 	// thread: reading it off the conversation would make every system row in a
 	// converted thread render as the converted-task link.
 	//
-	// A warning carries a full sentence rather than a label, so unlike the
-	// converted marker it wraps instead of truncating — its whole point is naming
-	// the task and the teammate who was not notified, or the connector that
-	// refused the turn and what Hezo found when it re-checked.
-	if (
-		message.role === 'system' &&
-		message.system_kind &&
-		WARNING_SYSTEM_KINDS.has(message.system_kind)
-	) {
+	// A warning or notice carries a full sentence rather than a label, so unlike
+	// the converted marker it wraps instead of truncating — its whole point is
+	// naming the task and the teammate who was not notified, the connector that
+	// refused the turn and what Hezo found when it re-checked, or the run this
+	// turn is waiting on for its credential (linked, so the operator can go look).
+	const rowStyle =
+		message.role === 'system' && message.system_kind
+			? SYSTEM_ROW_STYLE[message.system_kind]
+			: undefined;
+	if (rowStyle) {
+		const Icon = rowStyle.icon;
 		return (
 			<div
-				className="flex items-start gap-2 rounded-md bg-warning-soft px-3 py-2 text-[11.5px] leading-relaxed text-warning-soft-fg"
+				className={`flex items-start gap-2 rounded-md px-3 py-2 text-[11.5px] leading-relaxed ${rowStyle.className}`}
 				data-testid="chat-message"
 				data-role="system"
 				data-system-kind={message.system_kind}
 			>
-				<TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-				<span className="min-w-0">{message.content}</span>
+				<Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+				<span className="min-w-0">
+					<RunLinkedText text={message.content} />
+				</span>
 			</div>
 		);
 	}
@@ -1125,7 +1147,11 @@ function MessageBubble({
 							{message.content}
 						</MarkdownProse>
 					) : failed ? (
-						<span className="text-[13px] leading-relaxed">Something went wrong.</span>
+						// The server's own reason where it recorded one - it names the run
+						// holding a busy credential, for instance - else the bare fact.
+						<span className="text-[13px] leading-relaxed" data-testid="chat-failure">
+							{message.error ? <RunLinkedText text={message.error} /> : 'Something went wrong.'}
+						</span>
 					) : null}
 					{interrupted && <div className="mt-1 text-[11px] italic text-text-3">(interrupted)</div>}
 				</div>

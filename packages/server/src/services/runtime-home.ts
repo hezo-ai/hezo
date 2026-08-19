@@ -10,8 +10,10 @@ import type { Db } from '../db/database';
 import {
 	type AiProviderCredential,
 	type AiProviderCredentialAndModel,
+	readAiProviderCredentialValue,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
+import { type ContainerRunUser, chownToRunUser } from './container-user';
 import type { SandboxFiles } from './sandbox/files';
 import type { ContainerEngine } from './sandbox/types';
 import { validateSubscriptionBlob } from './subscription-auth';
@@ -286,6 +288,47 @@ export async function buildSubscriptionMount(
 	};
 }
 
+/**
+ * Bring a mounted rotating credential up to date with the store before an
+ * execution uses it, and return the value the execution will run on.
+ *
+ * A waiter on the credential lock snapshots the credential before it waits, and
+ * the holder it waited on may have rotated the single-use token in the meantime
+ * - so by the time the waiter holds the lock, the file it mounted (or is about
+ * to mount) can be a rotation behind and the first refresh against it fails.
+ * Called only once the lock is held, so nothing can rotate it again between the
+ * read and the exec. Ownership is handed back to the run user because the write
+ * comes from the host side, exactly as the original mount write did.
+ *
+ * A mount that does not rotate has nothing to catch up on: its file is written
+ * from the store every run.
+ */
+export async function refreshSubscriptionMount(opts: {
+	db: Db;
+	masterKeyManager: MasterKeyManager;
+	engine: ContainerEngine;
+	containerId: string;
+	runUser: ContainerRunUser;
+	credential: AiProviderCredentialAndModel;
+	mount: SubscriptionMount | null | undefined;
+}): Promise<string> {
+	const { mount, credential } = opts;
+	if (!mount?.rotates) return credential.value;
+	const stored = await readAiProviderCredentialValue(
+		opts.db,
+		opts.masterKeyManager,
+		credential.configId,
+	);
+	if (stored === null || stored === credential.value) return credential.value;
+	await opts.engine
+		.files(opts.containerId, mount.containerDir)
+		.write(mount.authFileRelative, stored, { mode: 0o600, dirMode: SUBSCRIPTION_DIR_MODE });
+	await chownToRunUser(opts.engine, opts.containerId, opts.runUser, [
+		join(mount.containerDir, mount.authFileRelative),
+	]);
+	return stored;
+}
+
 export interface RuntimeHomeMount {
 	hostDir: string;
 	containerDir: string;
@@ -357,6 +400,9 @@ export async function ensureRuntimeHomeDir(
  *
  * Best-effort by design: a failed write-back must not fail the work that just
  * succeeded, so problems are reported through `onNotice` rather than thrown.
+ *
+ * Resolves to the value it stored, or null when nothing was written - so a
+ * caller holding its own snapshot of the credential can move it along.
  */
 export async function persistRotatedSubscriptionAuth(opts: {
 	db: Db;
@@ -367,17 +413,17 @@ export async function persistRotatedSubscriptionAuth(opts: {
 	credential: AiProviderCredentialAndModel;
 	mount: SubscriptionMount | null | undefined;
 	onNotice?: (text: string) => void;
-}): Promise<void> {
+}): Promise<string | null> {
 	const { mount } = opts;
-	if (!mount?.rotates) return;
+	if (!mount?.rotates) return null;
 	try {
 		// Through SandboxFiles: the *container* rewrote this file, so a backend
 		// whose container is not on this machine has to read it back through the
 		// provider's file API rather than off disk.
 		const mountFiles = opts.engine.files(opts.containerId, mount.containerDir);
-		if (!(await mountFiles.exists(mount.authFileRelative))) return;
+		if (!(await mountFiles.exists(mount.authFileRelative))) return null;
 		const rotated = await mountFiles.read(mount.authFileRelative);
-		if (!rotated || rotated === opts.credential.value) return;
+		if (!rotated || rotated === opts.credential.value) return null;
 		// The CLI rewrites this file on every run: a rotated credential on success,
 		// but an empty "tombstone" (blank tokens) when the refresh fails. Persisting
 		// a tombstone would wipe the stored credential, so only write back a value
@@ -385,7 +431,7 @@ export async function persistRotatedSubscriptionAuth(opts: {
 		const check = validateSubscriptionBlob(opts.provider, rotated);
 		if (!check.ok) {
 			opts.onNotice?.(`skipping rotated-auth write-back: ${check.error ?? 'invalid credential'}`);
-			return;
+			return null;
 		}
 		await updateAiProviderCredential(
 			opts.db,
@@ -393,7 +439,9 @@ export async function persistRotatedSubscriptionAuth(opts: {
 			opts.credential.configId,
 			rotated,
 		);
+		return rotated;
 	} catch (e) {
 		opts.onNotice?.(`failed to persist rotated subscription auth: ${(e as Error).message}`);
+		return null;
 	}
 }

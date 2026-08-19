@@ -473,22 +473,23 @@ export class JobManager {
 	}
 
 	/**
-	 * Abort the in-process runs one dead container was carrying.
+	 * Abort the in-process runs one dead container was carrying - and only those.
 	 *
-	 * The in-memory half of {@link failProjectRuns}, and scoped identically: the
-	 * named container's runs, plus runs that have not yet claimed one. Those
-	 * cannot be shown to be executing elsewhere, and the DB half fails them for
-	 * the same reason - the two have to agree or a run's row and its exec
-	 * disagree about whether it is alive.
+	 * The in-memory half of {@link failProjectRuns}. A live run whose container is
+	 * still null has not claimed one: it is parked on the credential lock or on
+	 * capacity, holding nothing, and its row is still `queued`. It cannot be on
+	 * the container that died, so it is left to finish its wait; the surplus-idle
+	 * pass retiring the project's spare container underneath such a waiter is the
+	 * intended memory behaviour, not a reason to end the run. The DB half only
+	 * touches `running` rows, which always carry their container by then, so the
+	 * two halves still describe the same set.
 	 */
 	cancelLiveRunsForContainer(
 		projectId: string,
 		containerId: string,
 		reason: ContainerExitReason,
 	): number {
-		const runs = this.getLiveRunsForProject(projectId).filter(
-			(r) => r.containerId === containerId || r.containerId === null,
-		);
+		const runs = this.getLiveRunsForProject(projectId).filter((r) => r.containerId === containerId);
 		for (const run of runs) {
 			this.cancelTask(run.taskKey, reason);
 			this.liveRuns.delete(run.runId);

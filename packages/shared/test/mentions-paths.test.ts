@@ -4,8 +4,10 @@ import {
 	assetPath,
 	commentPath,
 	GLOBAL_INBOX_PATH,
+	parseRunPath,
 	projectDocPath,
 	projectInboxPath,
+	runPath,
 	SKILLS_SETTINGS_PATH,
 	taskPath,
 } from '../src/mentions/paths';
@@ -32,6 +34,20 @@ describe('mention paths', () => {
 	it('builds agent and inbox paths', () => {
 		expect(agentPath('ops', 'captain')).toBe('/projects/ops/agents/captain');
 		expect(projectInboxPath('ops')).toBe('/projects/ops/inbox');
+	});
+
+	it('builds a run path and parses it back', () => {
+		const link = { projectSlug: 'hezo-marketing', agentSlug: 'growth-analyst', runId: 'run-1' };
+		const path = runPath(link);
+		expect(path).toBe('/projects/hezo-marketing/agents/growth-analyst/executions/run-1');
+		expect(parseRunPath(path)).toEqual(link);
+	});
+
+	it('parses no other path as a run', () => {
+		expect(parseRunPath('/projects/ops/agents/captain')).toBeNull();
+		expect(parseRunPath('/projects/ops/agents/captain/executions')).toBeNull();
+		expect(parseRunPath('/projects/ops/tasks/in-42')).toBeNull();
+		expect(parseRunPath('https://example.com/projects/ops/agents/a/executions/r')).toBeNull();
 	});
 
 	it('exposes static instance paths', () => {

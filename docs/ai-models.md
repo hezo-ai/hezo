@@ -148,10 +148,15 @@ pick one or the other, or the two will fall out of step.
 
 And **runs on a Codex subscription go one at a time.** The credential is rewritten
 mid-run, so a second run using it would invalidate the first; Hezo queues them instead,
-and a waiting run shows as queued with its reason rather than as an error. Nothing is
-lost, but the agents on that credential take turns. To run more at once, add a second
-Codex subscription, or use an OpenAI API key - a key is not rewritten by anything, so
-runs on it go in parallel. Subscriptions for other providers are unaffected.
+and a waiting run shows as queued with its reason rather than as an error. Its log names
+the run it is waiting on, linked to that run's page, and says when the credential came
+free. The CEO chat takes its turn on the same credential: when a run holds it, the thread
+shows which run the reply is waiting on (the chat goes ahead of runs that are only queued,
+so it waits for that one run alone), and the reply arrives once it finishes - or you can
+stop the turn. Nothing is lost, but the agents on that credential take turns. To run more
+at once, add a second Codex subscription, or use an OpenAI API key - a key is not
+rewritten by anything, so runs on it go in parallel. Subscriptions for other providers are
+unaffected.
 
 ## Where to get an API key
 

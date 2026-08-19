@@ -261,3 +261,35 @@ test('renders nothing meaningful for an empty line set (no blocks)', async () =>
 	expect(root).not.toBeNull();
 	expect(root?.children.length).toBe(0);
 });
+
+test('runner block: a line naming another run links it to that run in its own project', async () => {
+	const { container } = await renderLog({
+		lines: lines(
+			'[runner] Waiting for [growth-analyst/HM-336](/projects/hezo-marketing/agents/growth-analyst/executions/run-hm-336) to finish with this credential.',
+			'[runner] Credential free, starting the run.',
+		),
+	});
+	const block = container.querySelector('[data-testid="log-runner-block"]');
+	expect(block).not.toBeNull();
+	const link = block?.querySelector('[data-testid="run-link"]');
+	expect(link?.getAttribute('href')).toBe(
+		'/projects/hezo-marketing/agents/growth-analyst/executions/run-hm-336',
+	);
+	expect(link?.textContent).toBe('growth-analyst/HM-336');
+	// The sentence reads exactly as written around the link, and the plain line
+	// stays plain.
+	expect(block?.textContent).toContain(
+		'Waiting for growth-analyst/HM-336 to finish with this credential.',
+	);
+	expect(block?.textContent).toContain('Credential free, starting the run.');
+	expect(block?.querySelectorAll('[data-testid="run-link"]')).toHaveLength(1);
+});
+
+test('runner block: a markdown link to anything but a run stays verbatim text', async () => {
+	const { container } = await renderLog({
+		lines: lines('[runner] See [the docs](https://hezo.ai/docs) for details.'),
+	});
+	const block = container.querySelector('[data-testid="log-runner-block"]');
+	expect(block?.textContent).toBe('See [the docs](https://hezo.ai/docs) for details.');
+	expect(block?.querySelector('[data-testid="run-link"]')).toBeNull();
+});

@@ -35,6 +35,11 @@ import {
 	acquireCredentialLock,
 	assertPromptDeliverable,
 	buildRuntimeInvocation,
+	CREDENTIAL_WAIT_CAP_MS,
+	type CredentialLockHolder,
+	credentialLockHolder,
+	credentialWaitNotice,
+	describeCredentialHolder,
 	type EgressEnvDescriptor,
 	getContainerPromptPath,
 	getPromptRelPath,
@@ -70,7 +75,7 @@ import { getAgentSystemPrompt } from './documents';
 import type { EffortRuntimeApplication } from './effort';
 import type { ConnectorRunRejection } from './egress';
 import { applyEffortToRuntime } from './runtime-adapters';
-import { persistRotatedSubscriptionAuth } from './runtime-home';
+import { persistRotatedSubscriptionAuth, refreshSubscriptionMount } from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberChatReservation } from './sandbox/pool-db';
@@ -88,14 +93,24 @@ const log = logger.child('chat-session');
 const CHAT_WORKING_DIR = '/workspace';
 
 /**
- * How long a chat turn waits for a rotating provider credential before telling
- * the operator to try again.
- *
- * Shorter than a task run's ceiling on purpose: a run is re-queued and retried
- * for free, while a person is sitting in front of the chatbox watching nothing
- * happen. Failing fast with a message they can act on beats a longer silence.
+ * How the chat names itself as a credential holder. No link: a chat turn has no
+ * page of its own for a waiting run to point at.
  */
-const CHAT_CREDENTIAL_WAIT_MS = 60_000;
+const CHAT_CREDENTIAL_HOLDER: CredentialLockHolder = { label: 'the CEO chat', link: null };
+
+/**
+ * A chat exec gave up waiting for the provider credential. The message names
+ * the holder the way a run log does, so the operator can go and look at it.
+ */
+export class ChatCredentialBusyError extends Error {
+	constructor(holder: CredentialLockHolder | null) {
+		super(
+			`${holder ? describeCredentialHolder(holder) : 'Another execution'} is still using this provider credential; ` +
+				'this subscription runs one agent at a time.',
+		);
+		this.name = 'ChatCredentialBusyError';
+	}
+}
 
 const CHAT_GUIDE = `# Live Chat
 
@@ -1673,16 +1688,20 @@ export class ChatSessionManager {
 				}
 			};
 
-			await this.withCredentialLock(session, abort.signal, () =>
-				dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
-					cmd: execCmd,
-					env,
-					workingDir: CHAT_WORKING_DIR,
-					signal: abort.signal,
-					onChunk: (chunk) => {
-						if (chunk.stream === 'stdout') handle(parser.onStdout(chunk.text));
-					},
-				}),
+			await this.withCredentialLock(
+				session,
+				abort.signal,
+				() =>
+					dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
+						cmd: execCmd,
+						env,
+						workingDir: CHAT_WORKING_DIR,
+						signal: abort.signal,
+						onChunk: (chunk) => {
+							if (chunk.stream === 'stdout') handle(parser.onStdout(chunk.text));
+						},
+					}),
+				{ onWaiting: (holder) => this.postCredentialWait(ctx, holder) },
 			);
 			handle(parser.flush());
 			await finalize(ChatMessageStatus.Complete, parser.getUsage());
@@ -1695,7 +1714,11 @@ export class ChatSessionManager {
 				this.killAbandonedExec(session, execScopeId);
 				await finalize(ChatMessageStatus.Interrupted, null);
 			} else {
-				log.error('CEO chat turn failed', err);
+				// A credential still held elsewhere is the instance being busy, not
+				// the chat breaking; the operator reads the reason in the thread.
+				if (err instanceof ChatCredentialBusyError)
+					log.warn(`CEO chat turn gave up: ${err.message}`);
+				else log.error('CEO chat turn failed', err);
 				await finalize(ChatMessageStatus.Failed, null, (err as Error).message);
 			}
 		} finally {
@@ -1755,24 +1778,10 @@ export class ChatSessionManager {
 				comments: posted.rows,
 			});
 			for (const finding of findings) {
-				const content = formatNoWakeExitWarning(finding, 'This chat turn');
-				const messageId = await this.insertMessage({
-					conversationId: ctx.conversationId,
-					role: ChatMessageRole.System,
-					channel: ctx.channel,
-					status: ChatMessageStatus.Complete,
-					content,
-					systemKind: ChatSystemMessageKind.HandoffNotDelivered,
-					completed: true,
-				});
-				this.broadcastStart(
-					ctx.conversationId,
-					messageId,
-					ChatMessageRole.System,
-					ctx.channel,
-					content,
-					undefined,
+				await this.postSystemMessage(
+					ctx,
 					ChatSystemMessageKind.HandoffNotDelivered,
+					formatNoWakeExitWarning(finding, 'This chat turn'),
 				);
 			}
 		} catch (e) {
@@ -1838,25 +1847,51 @@ export class ChatSessionManager {
 			return;
 		}
 		for (const ctx of targets) {
-			const messageId = await this.insertMessage({
-				conversationId: ctx.conversationId,
-				role: ChatMessageRole.System,
-				channel: ctx.channel,
-				status: ChatMessageStatus.Complete,
-				content,
-				systemKind: ChatSystemMessageKind.ConnectorRefused,
-				completed: true,
-			});
-			this.broadcastStart(
-				ctx.conversationId,
-				messageId,
-				ChatMessageRole.System,
-				ctx.channel,
-				content,
-				undefined,
-				ChatSystemMessageKind.ConnectorRefused,
-			);
+			await this.postSystemMessage(ctx, ChatSystemMessageKind.ConnectorRefused, content);
 		}
+	}
+
+	/**
+	 * The turn is parked behind whoever holds the provider credential. Said in
+	 * the thread at once, in the words a waiting run's log uses, so the operator
+	 * knows what the silence is and where to look - and can stop the turn rather
+	 * than wait, if they would rather.
+	 */
+	private postCredentialWait(
+		ctx: ConversationContext,
+		holder: CredentialLockHolder,
+	): Promise<void> {
+		return this.postSystemMessage(
+			ctx,
+			ChatSystemMessageKind.CredentialWait,
+			credentialWaitNotice(holder),
+		);
+	}
+
+	/** A complete system row in one thread: stored, then announced to its open chatboxes. */
+	private async postSystemMessage(
+		ctx: ConversationContext,
+		kind: ChatSystemMessageKind,
+		content: string,
+	): Promise<void> {
+		const messageId = await this.insertMessage({
+			conversationId: ctx.conversationId,
+			role: ChatMessageRole.System,
+			channel: ctx.channel,
+			status: ChatMessageStatus.Complete,
+			content,
+			systemKind: kind,
+			completed: true,
+		});
+		this.broadcastStart(
+			ctx.conversationId,
+			messageId,
+			ChatMessageRole.System,
+			ctx.channel,
+			content,
+			undefined,
+			kind,
+		);
 	}
 
 	/**
@@ -1971,7 +2006,11 @@ export class ChatSessionManager {
 		try {
 			await run;
 		} catch (e) {
-			log.error('CEO chat compaction failed', e);
+			// Compaction retries on the next reply, so a credential held elsewhere is
+			// a delay to note, not a failure to alarm on.
+			if (e instanceof ChatCredentialBusyError)
+				log.warn(`CEO chat compaction deferred: ${e.message}`);
+			else log.error('CEO chat compaction failed', e);
 		} finally {
 			if (convo.compactionAbort === abort) convo.compactionAbort = null;
 			if (convo.compaction === run) convo.compaction = null;
@@ -2091,7 +2130,11 @@ export class ChatSessionManager {
 		const abort = new AbortController();
 		convo.titlingAbort = abort;
 		const run = this.runTitleGeneration(session, ctx.conversationId, abort).catch((e) => {
-			if (!abort.signal.aborted) log.error('CEO chat auto-title failed', e);
+			if (abort.signal.aborted) return;
+			// Titling is retried from the next message, so the same holds here.
+			if (e instanceof ChatCredentialBusyError)
+				log.warn(`CEO chat auto-title deferred: ${e.message}`);
+			else log.error('CEO chat auto-title failed', e);
 		});
 		convo.titling = run;
 		try {
@@ -2251,50 +2294,93 @@ export class ChatSessionManager {
 	 * was dropped, leaving the stored credential a rotation behind and the next
 	 * refresh failing. Silent credential corruption, on a live path.
 	 *
-	 * Bounded like every other wait on this lock, and reported rather than hung:
-	 * an operator sitting in front of the chatbox gets an error they can act on.
-	 * Non-rotating credentials skip all of it and run concurrently as before.
+	 * The wait is the run's own ceiling, taken with priority: a person is behind
+	 * this exec, so it queues ahead of runs merely parked on the lock (they hold
+	 * nothing and re-queue on their own deadline) and waits on the holder alone -
+	 * which is also what keeps `onWaiting`'s "waiting for X" true for the whole
+	 * wait. Non-rotating credentials skip all of it and run concurrently as before.
+	 *
+	 * Once the lock is held the mounted token is brought up to date with the
+	 * store, since the holder just waited on may have rotated it, and the value
+	 * this exec ran on is what the read-back afterwards is compared against.
 	 */
 	private async withCredentialLock<T>(
 		session: LiveSession,
 		signal: AbortSignal,
 		fn: () => Promise<T>,
+		opts: { onWaiting?: (holder: CredentialLockHolder) => Promise<void> } = {},
 	): Promise<T> {
-		const { provider, credential, runtimeType } = session.invocationInputs;
-		if (!credentialSerializesRuns(provider, runtimeType, credential.authMethod)) return fn();
+		const { provider, runtimeType } = session.invocationInputs;
+		const { configId, authMethod } = session.invocationInputs.credential;
+		if (!credentialSerializesRuns(provider, runtimeType, authMethod)) return fn();
 
+		const holder = credentialLockHolder(configId);
 		let release: (() => void) | null = null;
 		try {
-			release = await acquireCredentialLock(credential.configId, {
+			// Enqueued before the notice goes out, so "waiting" is already true when
+			// it is read - and a holder that finishes during the notice's own write
+			// hands the lock straight to this waiter rather than to whoever asked next.
+			const acquiring = acquireCredentialLock(configId, {
 				signal,
-				timeoutMs: CHAT_CREDENTIAL_WAIT_MS,
-				owner: `chat/${session.sessionId.slice(0, 8)}`,
+				// The same test-only override the runner honours for its waits.
+				timeoutMs: this.deps.capacityPark?.maxMs ?? CREDENTIAL_WAIT_CAP_MS,
+				owner: CHAT_CREDENTIAL_HOLDER,
+				priority: true,
 			});
+			if (holder && opts.onWaiting) {
+				// A courtesy, never a reason to abandon a wait that is already queued.
+				await opts.onWaiting(holder).catch((e: unknown) => {
+					log.warn('CEO chat could not post its credential-wait notice', e);
+				});
+			}
+			release = await acquiring;
 		} catch (e) {
 			if (e instanceof KeyedLockTimeoutError) {
-				throw new Error(
-					'Another agent run is still using this provider credential. ' +
-						'This subscription can only run one agent at a time - try again in a moment.',
-				);
+				throw new ChatCredentialBusyError(credentialLockHolder(configId) ?? holder);
 			}
 			throw e;
 		}
 		try {
+			const value = await refreshSubscriptionMount({
+				db: this.deps.db,
+				masterKeyManager: this.deps.masterKeyManager,
+				engine: this.deps.docker,
+				containerId: session.containerId,
+				runUser: session.runUser,
+				credential: session.invocationInputs.credential,
+				mount: session.subscriptionMount,
+			});
+			this.rememberCredentialValue(session, value);
 			return await fn();
 		} finally {
 			// Before the release, so the next holder reads what this exec left.
-			await persistRotatedSubscriptionAuth({
+			const rotated = await persistRotatedSubscriptionAuth({
 				db: this.deps.db,
 				masterKeyManager: this.deps.masterKeyManager,
 				engine: this.deps.docker,
 				containerId: session.containerId,
 				provider,
-				credential,
+				credential: session.invocationInputs.credential,
 				mount: session.subscriptionMount,
 				onNotice: (text: string) => log.warn(text, { session: session.sessionId }),
 			});
+			if (rotated !== null) this.rememberCredentialValue(session, rotated);
 			release();
 		}
+	}
+
+	/**
+	 * Keep the session's snapshot of the credential at the value the store holds,
+	 * so the next exec's comparison against the store starts from the truth and
+	 * rewrites the mounted file only when the value has really moved.
+	 */
+	private rememberCredentialValue(session: LiveSession, value: string): void {
+		const { credential } = session.invocationInputs;
+		if (credential.value === value) return;
+		session.invocationInputs = {
+			...session.invocationInputs,
+			credential: { ...credential, value },
+		};
 	}
 
 	/**
@@ -2519,6 +2605,7 @@ export class ChatSessionManager {
 			inputTokens: usage?.inputTokens ?? 0,
 			outputTokens: usage?.outputTokens ?? 0,
 			costCents: usage?.costCents ?? 0,
+			error: error ?? null,
 		});
 	}
 

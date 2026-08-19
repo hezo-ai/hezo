@@ -1250,6 +1250,12 @@ export const ChatSystemMessageKind = {
 	 * what Hezo's own re-check of the connector found.
 	 */
 	ConnectorRefused: 'connector_refused',
+	/**
+	 * The turn is parked until another execution finishes with the provider
+	 * credential it needs, on a subscription that runs one agent at a time. The
+	 * content names that execution and links to it when it is a task run.
+	 */
+	CredentialWait: 'credential_wait',
 } as const;
 export type ChatSystemMessageKind =
 	(typeof ChatSystemMessageKind)[keyof typeof ChatSystemMessageKind];

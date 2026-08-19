@@ -13,6 +13,7 @@ import {
 	DEFAULT_THREAD_ROW_CATEGORIES,
 	effectiveRuntime,
 	formatContainerMetaLogLine,
+	formatRunLink,
 	HeartbeatRunKind,
 	HeartbeatRunStatus,
 	MAX_SINGLE_ARG_BYTES,
@@ -30,6 +31,7 @@ import {
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_SYSTEM_PROMPT_FILE,
+	type RunLink,
 	repoNameFromIdentifier,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
@@ -74,6 +76,7 @@ import {
 import {
 	type AiProviderCredential,
 	getProviderCredentialAndModel,
+	readAiProviderCredentialValue,
 	updateAiProviderCredential,
 } from './ai-provider-keys';
 import { BackgroundTerminationDetector } from './background-termination';
@@ -357,7 +360,17 @@ export const getHostSubscriptionRoot = getHostSubscriptionRootImpl;
  * run - which is why the wait is bounded, and why it is taken before a container
  * rather than after.
  */
-const credentialLocks: KeyedLockRegistry = new Map();
+const credentialLocks: KeyedLockRegistry<CredentialLockHolder> = new Map();
+
+/**
+ * Who holds a rotating credential: a name for the sentence a waiter writes, and
+ * the run behind it when there is one, so that sentence can point at it. The
+ * CEO chat holds it too and has no run page, so it carries a name alone.
+ */
+export interface CredentialLockHolder {
+	label: string;
+	link: RunLink | null;
+}
 
 /**
  * Take the credential lock, resolving to the function that gives it back.
@@ -368,14 +381,28 @@ const credentialLocks: KeyedLockRegistry = new Map();
  */
 export function acquireCredentialLock(
 	configId: string,
-	opts: AcquireOptions = {},
+	opts: AcquireOptions<CredentialLockHolder> = {},
 ): Promise<() => void> {
 	return acquireKeyedLock(credentialLocks, configId, opts);
 }
 
-/** What holds this credential right now, for a waiter's run log. */
-export function credentialLockHolder(configId: string): string | null {
+/** What holds this credential right now, for a waiter to name. */
+export function credentialLockHolder(configId: string): CredentialLockHolder | null {
 	return currentOwner(credentialLocks, configId);
+}
+
+/**
+ * The holder as a waiter writes it: the run as a link to its page where there is
+ * one, else the bare label. The one place the wording of "who" is decided, so a
+ * run log and a chat notice name the holder identically.
+ */
+export function describeCredentialHolder(holder: CredentialLockHolder): string {
+	return holder.link ? formatRunLink(holder.label, holder.link) : holder.label;
+}
+
+/** The sentence a waiter writes - to its run log, or into a chat thread - while it queues. */
+export function credentialWaitNotice(holder: CredentialLockHolder): string {
+	return `Waiting for ${describeCredentialHolder(holder)} to finish with this credential.`;
 }
 
 export interface RunContext {
@@ -1169,7 +1196,13 @@ export const CAPACITY_PARK_MAX_MS = 3 * 60_000;
  * reservation bounded.
  */
 const CREDENTIAL_WAIT_MAX_FRACTION = 0.8;
-const CREDENTIAL_WAIT_CAP_MS = 15 * 60_000;
+/**
+ * Also the CEO chat's ceiling on the same lock: a chat turn queues ahead of every
+ * parked run and so waits on the holder alone, and the operator sees what it is
+ * waiting for and can stop the turn at any moment, so the run's cap is the right
+ * one there too.
+ */
+export const CREDENTIAL_WAIT_CAP_MS = 15 * 60_000;
 
 export function credentialWaitMaxMs(runTimeoutMin: number | null | undefined): number {
 	const budget = (runTimeoutMin ?? 0) * 60_000 * CREDENTIAL_WAIT_MAX_FRACTION;
@@ -1534,7 +1567,7 @@ export async function runAgent(
 		requiredRuntime = resolved.runtime;
 	}
 
-	const credential = await getProviderCredentialAndModel(
+	let credential = await getProviderCredentialAndModel(
 		deps.db,
 		deps.masterKeyManager,
 		provider,
@@ -1705,10 +1738,12 @@ export async function runAgent(
 		// meant every waiter pinned a container's memory for that entire wait, which
 		// the pool counts as used and cannot reclaim. Worse, the container went idle
 		// while its run waited, so the backend stopped it underneath and the run then
-		// failed on the first call it made. A waiter now holds nothing.
+		// failed on the first call it made. A waiter now holds nothing - and, holding
+		// nothing, it is not on any container a death can be attributed to (see
+		// `JobManager.cancelLiveRunsForContainer`).
 		const holder = credentialLockHolder(credential.configId);
 		if (holder) {
-			emit('stdout', `[runner] Waiting for ${holder} to finish with this credential.\n`);
+			emit('stdout', `[runner] ${credentialWaitNotice(holder)}\n`);
 		}
 		// Records the true wait so the run comment reads honestly while blocked.
 		await deps.db.query(
@@ -1732,13 +1767,25 @@ export async function runAgent(
 				// lets a test drive either wait to its deadline quickly.
 				timeoutMs:
 					deps.capacityPark?.maxMs ?? credentialWaitMaxMs(timeoutRow.rows[0]?.run_timeout_min),
-				owner: runLabel,
+				owner: {
+					label: runLabel,
+					// The run page resolves its agent by slug or id alike.
+					link: {
+						projectSlug: project.slug,
+						agentSlug: agent.slug ?? agent.id,
+						runId: heartbeatRunId,
+					},
+				},
 			});
 		} catch (e) {
 			if (runAbort.signal.aborted) return finalizeAbort();
 			if (e instanceof KeyedLockTimeoutError) {
+				// The label alone: this lands in the row's `error`, which the thread shows
+				// as a one-line summary where a link has no home. The log line above
+				// carries the link.
+				const stillHeldBy = credentialLockHolder(credential.configId);
 				return finalizeRequeue(
-					'Another run still holds this provider credential',
+					`${stillHeldBy?.label ?? 'Another run'} still holds this provider credential`,
 					WakeupSkipReason.CredentialBusy,
 				);
 			}
@@ -1750,6 +1797,17 @@ export async function runAgent(
 			);
 		}
 		if (holder) emit('stdout', '[runner] Credential free, starting the run.\n');
+		// The value read before the wait can be a rotation behind by now: the holder
+		// this run queued behind rewrites the single-use token and stores the new
+		// one on its way out. Read it again while holding the lock, so the mount
+		// this run writes and the read-back it compares against are both current.
+		const stored = await readAiProviderCredentialValue(
+			deps.db,
+			deps.masterKeyManager,
+			credential.configId,
+		);
+		if (stored !== null && stored !== credential.value)
+			credential = { ...credential, value: stored };
 	}
 
 	// Containers run on demand, and this run claims one **for itself**: the pool
@@ -2085,8 +2143,8 @@ export async function runAgent(
 			: undefined;
 		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride);
 
-		const persistRotatedAuth = () =>
-			persistRotatedSubscriptionAuth({
+		const persistRotatedAuth = async (): Promise<void> => {
+			await persistRotatedSubscriptionAuth({
 				db: deps.db,
 				masterKeyManager: deps.masterKeyManager,
 				engine: deps.docker,
@@ -2096,6 +2154,7 @@ export async function runAgent(
 				mount: context.subscriptionMount,
 				onNotice: (text: string) => emit('stderr', `[runner] ${text}\n`),
 			});
+		};
 
 		// Best-effort teardown of run-scoped artifacts. Each step is isolated so a
 		// failed or slow release can never block the run result from reaching the

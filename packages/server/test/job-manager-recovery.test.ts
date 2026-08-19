@@ -738,8 +738,8 @@ describe('JobManager recovery & maintenance', () => {
 				[projectId],
 			);
 			const run = await db.query<{ id: string }>(
-				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
+				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at, container_id)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), 'sync-box')
 				 RETURNING id`,
 				[teamId, agentId, taskId, HeartbeatRunStatus.Running],
 			);
@@ -775,6 +775,7 @@ describe('JobManager recovery & maintenance', () => {
 				taskKey: key,
 				containerId: null,
 			});
+			manager.attachLiveRunContainer(run.rows[0].id, 'sync-box');
 
 			await (manager as unknown as JmInternals).syncContainerStatuses();
 			await waitForBackground();
@@ -793,6 +794,93 @@ describe('JobManager recovery & maintenance', () => {
 			expect(project.rows[0].container_status).toBe(ContainerStatus.Stopped);
 
 			manager.shutdown();
+			await db.query(
+				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id = $1',
+				[projectId],
+			);
+		});
+
+		// The prod incident: a run parked on the credential lock (a live run with no
+		// container, row still queued) while the surplus-idle pass suspended the
+		// project's idle container. The sync tick that saw the stop must fail only
+		// what was on that container - which is nothing - and leave the waiter to
+		// finish its wait.
+		it('leaves a credential waiter queued when the project container it never claimed stops', async () => {
+			const { db } = ctx;
+			await db.query(
+				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id <> $1',
+				[projectId],
+			);
+			await db.query(
+				`UPDATE projects SET container_status = 'running'::container_status, container_id = 'idle-box'
+				 WHERE id = $1`,
+				[projectId],
+			);
+			const run = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, queued_reason)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, 'waiting for prior run on this credential')
+				 RETURNING id`,
+				[teamId, agentId, taskId, HeartbeatRunStatus.Queued],
+			);
+
+			const manager = createJobManager({
+				docker: createStubDocker({
+					inspectContainer: async (id: string) => ({
+						Id: id,
+						State: { Status: 'exited', Running: false, Pid: 0, ExitCode: 0 },
+						Config: { Image: 'stub' },
+					}),
+				}),
+			});
+			const key = `${agentId}:${projectId}`;
+			let aborted = false;
+			manager.launchTask(
+				key,
+				(signal) =>
+					new Promise<void>((resolve) => {
+						signal.addEventListener('abort', () => {
+							aborted = true;
+							resolve();
+						});
+					}),
+				60_000,
+			);
+			manager.registerLiveRun({
+				runId: run.rows[0].id,
+				memberId: agentId,
+				taskId,
+				projectId,
+				teamId,
+				taskKey: key,
+				containerId: null,
+			});
+
+			// No background drain before the assertions: the waiter is still live by
+			// design, and draining would wait on the thing under test not to have
+			// happened. The sync awaits its own DB writes.
+			await (manager as unknown as JmInternals).syncContainerStatuses();
+
+			expect(aborted).toBe(false);
+			expect(manager.getLiveRunIds().has(run.rows[0].id)).toBe(true);
+			const runRow = await db.query<{ status: string; queued_reason: string | null }>(
+				'SELECT status::text AS status, queued_reason FROM heartbeat_runs WHERE id = $1',
+				[run.rows[0].id],
+			);
+			expect(runRow.rows[0]).toEqual({
+				status: HeartbeatRunStatus.Queued,
+				queued_reason: 'waiting for prior run on this credential',
+			});
+			// The container itself is still recorded as having stopped.
+			const project = await db.query<{ container_status: string }>(
+				'SELECT container_status::text AS container_status FROM projects WHERE id = $1',
+				[projectId],
+			);
+			expect(project.rows[0].container_status).toBe(ContainerStatus.Stopped);
+
+			manager.cancelLiveRun(run.rows[0].id);
+			await waitForBackground();
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
 			await db.query(
 				'UPDATE projects SET container_status = NULL, container_id = NULL WHERE id = $1',
 				[projectId],

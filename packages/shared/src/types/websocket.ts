@@ -177,7 +177,7 @@ export interface WsChatMessageToolActivityMessage {
 	tool: string;
 }
 
-/** Terminal event for a CEO message: finalizes content, status, and usage. */
+/** Terminal event for a CEO message: finalizes content, status, usage, and why it failed if it did. */
 export interface WsChatMessageCompleteMessage {
 	type: WsMessageType.ChatMessageComplete;
 	conversationId: string;
@@ -187,6 +187,8 @@ export interface WsChatMessageCompleteMessage {
 	inputTokens: number;
 	outputTokens: number;
 	costCents: number;
+	/** Set on a failed message: the reason, in the words the server recorded. */
+	error: string | null;
 }
 
 /**

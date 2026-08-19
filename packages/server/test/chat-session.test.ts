@@ -4,14 +4,16 @@ import {
 	AuthType,
 	ChatMessageStatus,
 	ChatSessionStatus,
+	ChatSystemMessageKind,
 	DEFAULT_TEAM_ID,
+	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { decrypt, encrypt } from '../src/crypto/encryption';
 import { signChatSessionJwt, verifyToken } from '../src/middleware/auth';
 import { acquireCredentialLock } from '../src/services/agent-runner';
-import { ChatSessionManager } from '../src/services/chat-session-manager';
+import { type CeoSessionDeps, ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { getWorkspacePath } from '../src/services/workspace';
@@ -183,7 +185,11 @@ async function seedProviderAndContainer(ctx: ServerTestContext): Promise<string>
 	return proj.rows[0].id;
 }
 
-function makeManager(ctx: ServerTestContext, docker: ReturnType<typeof createStubDocker>) {
+function makeManager(
+	ctx: ServerTestContext,
+	docker: ReturnType<typeof createStubDocker>,
+	extra: Partial<CeoSessionDeps> = {},
+) {
 	const wsManager = new WebSocketManager();
 	const logs = new LogStreamBroker();
 	logs.setWsManager(wsManager);
@@ -195,6 +201,7 @@ function makeManager(ctx: ServerTestContext, docker: ReturnType<typeof createStu
 		dataDir: ctx.dataDir,
 		wsManager,
 		logs,
+		...extra,
 	});
 	return { manager, wsManager };
 }
@@ -1058,6 +1065,244 @@ describe('ChatSessionManager', () => {
 			);
 			expect(decrypt(stored.rows[0].encrypted_credential, key)).toBe(ROTATED);
 
+			await manager.stop();
+		});
+
+		/** The docker every reply-shaped test uses: one exec that says hello. */
+		function replyingDocker() {
+			return createStubDocker(
+				{
+					execCreate: async () => 'exec-codex-chat',
+					execStart: async (
+						_execId: string,
+						opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+					) => {
+						const onChunk = opts.onChunk ?? (() => undefined);
+						await onChunk({ stream: 'stdout', text: assistantText('Hello') });
+						await onChunk({ stream: 'stdout', text: resultEvent(10, 5, 0.01) });
+						return { stdout: '', stderr: '' };
+					},
+				},
+				{ db: ctx.db, dataDir: ctx.dataDir },
+			);
+		}
+
+		const HOLDER = {
+			label: 'growth-analyst/HM-336',
+			link: { projectSlug: 'hezo-marketing', agentSlug: 'growth-analyst', runId: 'run-hm-336' },
+		};
+		const HOLDER_TEXT =
+			'[growth-analyst/HM-336](/projects/hezo-marketing/agents/growth-analyst/executions/run-hm-336)';
+
+		test('tells the thread who holds the credential at once, then replies when it is free', async () => {
+			const configId = await seedCodexSubscription();
+			const release = await acquireCredentialLock(configId, { owner: HOLDER });
+			const { manager, wsManager } = makeManager(ctx, replyingDocker());
+			const { events } = captureCeoRoom(wsManager);
+
+			const { assistantMessageId, conversationId } = await manager.sendTurn({ text: 'Hello CEO' });
+			// The notice lands while the wait is still on - the same sentence a
+			// waiting run writes to its log, with the holder linked the same way.
+			await poll(async () => {
+				const r = await ctx.db.query<{ content: string }>(
+					`SELECT content FROM chat_messages WHERE conversation_id = $1 AND system_kind = $2`,
+					[conversationId, ChatSystemMessageKind.CredentialWait],
+				);
+				return r.rows.length === 1;
+			});
+			const notice = await ctx.db.query<{ content: string }>(
+				`SELECT content FROM chat_messages WHERE conversation_id = $1 AND system_kind = $2`,
+				[conversationId, ChatSystemMessageKind.CredentialWait],
+			);
+			expect(notice.rows[0].content).toBe(
+				`Waiting for ${HOLDER_TEXT} to finish with this credential.`,
+			);
+			expect(
+				events.some(
+					(e) =>
+						e.type === WsMessageType.ChatMessageStart &&
+						e.systemKind === ChatSystemMessageKind.CredentialWait,
+				),
+			).toBe(true);
+			const midWait = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			expect(midWait.rows[0].status).not.toBe(ChatMessageStatus.Complete);
+
+			release();
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					'SELECT status FROM chat_messages WHERE id = $1',
+					[assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+			await manager.stop();
+		});
+
+		test('goes ahead of runs merely parked on the credential', async () => {
+			const configId = await seedCodexSubscription();
+			const release = await acquireCredentialLock(configId, { owner: HOLDER });
+			// A task run parked behind the holder, exactly as the runner parks one.
+			const order: string[] = [];
+			const parkedRun = acquireCredentialLock(configId, {
+				owner: { label: 'ops/OP-1', link: null },
+				timeoutMs: 10_000,
+			}).then((rel) => {
+				order.push('run');
+				rel();
+			});
+			const docker = createStubDocker(
+				{
+					execCreate: async () => 'exec-codex-chat',
+					execStart: async (
+						_execId: string,
+						opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+					) => {
+						order.push('chat');
+						const onChunk = opts.onChunk ?? (() => undefined);
+						await onChunk({ stream: 'stdout', text: assistantText('Hello') });
+						await onChunk({ stream: 'stdout', text: resultEvent(10, 5, 0.01) });
+						return { stdout: '', stderr: '' };
+					},
+				},
+				{ db: ctx.db, dataDir: ctx.dataDir },
+			);
+			const { manager } = makeManager(ctx, docker);
+			const { assistantMessageId, conversationId } = await manager.sendTurn({ text: 'Hello CEO' });
+			await poll(async () => {
+				const r = await ctx.db.query(
+					`SELECT 1 FROM chat_messages WHERE conversation_id = $1 AND system_kind = $2`,
+					[conversationId, ChatSystemMessageKind.CredentialWait],
+				);
+				return r.rows.length === 1;
+			});
+
+			release();
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					'SELECT status FROM chat_messages WHERE id = $1',
+					[assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+			await parkedRun;
+			// Every chat exec (the session's own probe, the reply, the title) lands
+			// before the run that was queued first.
+			expect(order.at(-1)).toBe('run');
+			expect(order.filter((o) => o === 'chat').length).toBeGreaterThan(0);
+			await manager.stop();
+		});
+
+		test('fails the turn naming the holder when the wait runs out, and tells the widget why', async () => {
+			const configId = await seedCodexSubscription();
+			const release = await acquireCredentialLock(configId, { owner: HOLDER });
+			try {
+				const { manager, wsManager } = makeManager(ctx, replyingDocker(), {
+					capacityPark: { pollMs: 10, maxMs: 40 },
+				});
+				const { events } = captureCeoRoom(wsManager);
+				const { assistantMessageId } = await manager.sendTurn({ text: 'Hello CEO' });
+				await poll(async () => {
+					const r = await ctx.db.query<{ status: string }>(
+						'SELECT status FROM chat_messages WHERE id = $1',
+						[assistantMessageId],
+					);
+					return r.rows[0]?.status === ChatMessageStatus.Failed;
+				});
+				const row = await ctx.db.query<{ error: string | null }>(
+					'SELECT error FROM chat_messages WHERE id = $1',
+					[assistantMessageId],
+				);
+				expect(row.rows[0].error).toBe(
+					`${HOLDER_TEXT} is still using this provider credential; this subscription runs one agent at a time.`,
+				);
+				// The reason travels with the completion frame, so an open chatbox shows
+				// it rather than a generic failure.
+				const complete = events.find(
+					(e) => e.type === WsMessageType.ChatMessageComplete && e.messageId === assistantMessageId,
+				);
+				expect(complete?.status).toBe(ChatMessageStatus.Failed);
+				expect(complete?.error).toBe(row.rows[0].error);
+				await manager.stop();
+			} finally {
+				release();
+			}
+		});
+
+		test('runs on the credential the store holds once the lock is taken, not the one it mounted at start', async () => {
+			const configId = await seedCodexSubscription();
+			const key = ctx.masterKeyManager.getKey();
+			if (!key) throw new Error('master key unavailable');
+			const rotatedByRun = JSON.stringify({
+				tokens: {
+					id_token: 'header.payload.sig3',
+					access_token: 'header.payload.sig3',
+					refresh_token: 'rt-rotated-by-run',
+					account_id: 'acct-1',
+				},
+			});
+
+			let codexHome: string | null = null;
+			const seen: string[] = [];
+			const docker = createStubDocker(
+				{
+					execCreate: async (_id: string, config: { Env?: string[] }) => {
+						const entry = (config.Env ?? []).find((e) => e.startsWith('CODEX_HOME='));
+						if (entry) codexHome = entry.slice('CODEX_HOME='.length);
+						return 'exec-codex-fresh';
+					},
+					execStart: async (
+						_execId: string,
+						opts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> },
+					) => {
+						if (codexHome)
+							seen.push(await docker.files('hq-container', codexHome).read('auth.json'));
+						const onChunk = opts.onChunk ?? (() => undefined);
+						await onChunk({ stream: 'stdout', text: assistantText('Hello') });
+						await onChunk({ stream: 'stdout', text: resultEvent(10, 5, 0.01) });
+						return { stdout: '', stderr: '' };
+					},
+				},
+				{ db: ctx.db, dataDir: ctx.dataDir },
+			);
+			const { manager } = makeManager(ctx, docker);
+			const first = await manager.sendTurn({ text: 'First' });
+			// The reply and the auto-title both exec on this credential; wait for
+			// both, so nothing from this turn can read the file after the rotation.
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					'SELECT status FROM chat_messages WHERE id = $1',
+					[first.assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete && seen.length >= 2;
+			});
+			expect(seen).toEqual([ORIGINAL, ORIGINAL]);
+			const execsBefore = seen.length;
+
+			// A task run took the credential between turns and rotated it.
+			await ctx.db.query('UPDATE ai_provider_configs SET encrypted_credential = $2 WHERE id = $1', [
+				configId,
+				encrypt(rotatedByRun, key),
+			]);
+			const second = await manager.sendTurn({ text: 'Second' });
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					'SELECT status FROM chat_messages WHERE id = $1',
+					[second.assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+			const after = seen.slice(execsBefore);
+			expect(after.length).toBeGreaterThan(0);
+			expect(after.every((v) => v === rotatedByRun)).toBe(true);
+			// And nothing was written back over it: the file and the store agree.
+			const stored = await ctx.db.query<{ encrypted_credential: string }>(
+				'SELECT encrypted_credential FROM ai_provider_configs WHERE id = $1',
+				[configId],
+			);
+			expect(decrypt(stored.rows[0].encrypted_credential, key)).toBe(rotatedByRun);
 			await manager.stop();
 		});
 	});

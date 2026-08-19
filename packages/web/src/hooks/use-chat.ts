@@ -30,6 +30,8 @@ export interface ChatMessage {
 	attachments?: CommentAttachment[];
 	/** Set on a `system` row: which marker it is. Drives how the row renders. */
 	system_kind?: ChatSystemMessageKind | null;
+	/** Why a failed reply failed, in the server's words. */
+	error?: string | null;
 }
 
 interface ConversationData {
@@ -345,7 +347,7 @@ export function useChat(active: boolean, conversationId?: string) {
 			if (!forThisThread(m.conversationId)) return;
 			patch((messages) =>
 				messages.map((x) =>
-					x.id === m.messageId ? { ...x, content: m.content, status: m.status } : x,
+					x.id === m.messageId ? { ...x, content: m.content, status: m.status, error: m.error } : x,
 				),
 			);
 			setToolActivity((prev) => (prev?.messageId === m.messageId ? null : prev));

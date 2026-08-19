@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	formatContainerMetaLogLine,
 	formatGib,
+	formatRunLink,
 	parseContainerMetaLogLine,
 	poolDiskCeilingBytes,
+	splitRunLinks,
 } from '../src/constants';
 
 const gib = (n: number) => n * 1024 ** 3;
@@ -63,6 +65,49 @@ describe('the container meta log line', () => {
 		expect(parseContainerMetaLogLine('Starting the project container…')).toBeNull();
 		expect(parseContainerMetaLogLine('Cloning acme/web · 4 GB RAM')).toBeNull();
 		expect(parseContainerMetaLogLine('')).toBeNull();
+	});
+});
+
+/**
+ * A runner line or a chat notice names another run as a markdown link; the
+ * viewer splits the text around it. Same contract as the container line: the
+ * writer and the reader share one vocabulary and the round trip is the test.
+ */
+describe('run links in server-written text', () => {
+	const link = { projectSlug: 'hezo-marketing', agentSlug: 'growth-analyst', runId: 'run-1' };
+
+	it('writes the run as a markdown link that reads as-is in raw text', () => {
+		expect(formatRunLink('growth-analyst/HM-336', link)).toBe(
+			'[growth-analyst/HM-336](/projects/hezo-marketing/agents/growth-analyst/executions/run-1)',
+		);
+	});
+
+	it('splits the surrounding text from the linked run', () => {
+		const line = `Waiting for ${formatRunLink('growth-analyst/HM-336', link)} to finish with this credential.`;
+		expect(splitRunLinks(line)).toEqual([
+			{ text: 'Waiting for ' },
+			{ label: 'growth-analyst/HM-336', link },
+			{ text: ' to finish with this credential.' },
+		]);
+	});
+
+	it('leaves text with no run link, or a link to anything else, as one plain segment', () => {
+		expect(splitRunLinks('Credential free, starting the run.')).toEqual([
+			{ text: 'Credential free, starting the run.' },
+		]);
+		const other = 'See [the docs](https://hezo.ai/docs) and [a task](/projects/ops/tasks/in-42).';
+		expect(splitRunLinks(other)).toEqual([{ text: other }]);
+		expect(splitRunLinks('')).toEqual([]);
+	});
+
+	it('handles a link at either edge and more than one link', () => {
+		const a = formatRunLink('a/T-1', link);
+		const b = formatRunLink('b/T-2', { ...link, runId: 'run-2' });
+		expect(splitRunLinks(`${a} then ${b}`)).toEqual([
+			{ label: 'a/T-1', link },
+			{ text: ' then ' },
+			{ label: 'b/T-2', link: { ...link, runId: 'run-2' } },
+		]);
 	});
 });
 
