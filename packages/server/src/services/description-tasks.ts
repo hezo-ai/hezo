@@ -153,6 +153,18 @@ async function createLabeledInternalTask(
 	return taskId;
 }
 
+/**
+ * The one statement of how an agent reaches the admin from a generated task body.
+ *
+ * A comment that merely *says* it needs admin confirmation raises no
+ * `admin_mentions` row, so it reaches no inbox and the task waits on an answer
+ * nobody was asked for. Shared with the project-intake body rather than written
+ * twice, so the two cannot drift apart on the one instruction that decides
+ * whether a question is actually delivered.
+ */
+export const ACTIVE_ADMIN_MENTION_RULE =
+	'Put an active `@admin` in any comment where you need them to answer - without it the question reaches no inbox and the task stalls.';
+
 function buildTeamCoherenceReviewBody(
 	reason: TeamCoherenceReviewReason,
 	teamSlug: string,
@@ -181,6 +193,8 @@ ${coherenceChangeLine(reason, changeSummary)}`
 	return `${draftBanner}${heading}
 
 ${intro} — including whether every role's output gets verified by someone other than its author — then rewrite the descriptive blobs that other agents read so they stay accurate. Use \`team_id\` = \`${teamSlug}\` for the tool calls below.
+
+${ACTIVE_ADMIN_MENTION_RULE}
 
 **Steps**
 

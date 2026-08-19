@@ -13,6 +13,7 @@ import { terminalStatusParams, withTransaction } from '../lib/sql';
 import { allocateTaskIdentifier } from '../lib/task-identifier';
 import { logger } from '../logger';
 import { fireAdminMention } from './comment-wakeups';
+import { ACTIVE_ADMIN_MENTION_RULE } from './description-tasks';
 import { loadCoordinationContext } from './internal-intake';
 import { recordStatusChange } from './task-events';
 import type { WebSocketManager } from './ws';
@@ -106,7 +107,7 @@ ${input.description}
 
 ### Your task
 
-1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. Put an active \`@admin\` in any comment where you need them to answer — without it the question reaches no inbox and the task stalls.
+1. **Clarify scope.** Ask anything you need to understand the problem, the users, integrations, and constraints. ${ACTIVE_ADMIN_MENTION_RULE}
 2. **Check team fit.** The admin's chosen team type above is your baseline. Call \`list_team_templates\` for the local team types (Blank + saved) and \`list_marketplace_teams\` for the ready-made ones, then \`get_marketplace_team\` to read a roster before you name it. **Recommend a ready-made team only when the project's deliverable is plainly that team's domain** - the App Team builds software, and is not the default for work that sounds technical. When no template fits, or you are unsure, recommend Blank plus a roster you write: it starts as a Captain alone, and you hire every other role into it once the shape is settled. The final call is the admin's.
 3. **Get the go-ahead.** Post a short summary of the agreed shape (name, description, team type), @-mention the admin, and ask them to confirm. A plain reply approving it is all you need — this is a normal conversation, not an inbox approval.
 4. **Create the project.** Once the admin approves in this thread, call \`create_project\` with the agreed \`name\`, \`description\`, and the chosen team source — \`template_id\`, \`source_team_id\`, or \`marketplace_slug\` — passing this task's id as \`intake_task_id\`. That creates the project and its team, opens the Captain's planning task, and closes this task automatically.

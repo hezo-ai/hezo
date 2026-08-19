@@ -972,6 +972,10 @@ project.
   role, `reports_to`, hire, or enable/disable change on the established team — are enqueued to that
   team's own **Captain** (`enqueueTeamCoherenceReviewTask` picks the assignee by reason, falling
   back to the CEO for HQ, which has no Captain). Coalescing and the change-summary section are unchanged.
+  The generated body carries `ACTIVE_ADMIN_MENTION_RULE` (`services/description-tasks.ts`, shared with
+  the project-intake body): the pass asks the admin things - a removal to confirm, a heartbeat cadence
+  before a hire - and a comment that merely *says* it wants confirmation raises no `admin_mentions`
+  row, so it reaches no inbox and the setup waits on an answer nobody was asked for.
   **A newly created agent's work is gated on the review that onboarded it.** Every path that
   *creates* agents — the hire approval handler, both `routes/agents.ts` create/onboard paths,
   fresh-project provisioning, and both `team-template-apply` paths — goes through

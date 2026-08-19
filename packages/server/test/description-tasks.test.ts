@@ -2,7 +2,10 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { enqueueTeamCoherenceReviewTask } from '../src/services/description-tasks';
+import {
+	ACTIVE_ADMIN_MENTION_RULE,
+	enqueueTeamCoherenceReviewTask,
+} from '../src/services/description-tasks';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -132,6 +135,21 @@ describe('enqueueTeamCoherenceReviewTask', () => {
 		expect(body).toContain('set_agent_summary');
 		expect(body).toContain('set_agent_team_context');
 		expect(body).toContain('set_team_summary');
+	});
+
+	it('body tells the CEO to make any question to the admin an active @admin mention', async () => {
+		// A comment that merely says it wants admin confirmation raises no
+		// admin_mentions row, so the setup stalls on an answer nobody was asked for.
+		for (const reason of ['initial', 'agent_hired'] as const) {
+			const taskId = await enqueueTeamCoherenceReviewTask(db, teamId, reason);
+			const task = await db.query<{ description: string }>(
+				`SELECT description FROM tasks WHERE id = $1`,
+				[taskId],
+			);
+			expect(task.rows[0].description).toContain(ACTIVE_ADMIN_MENTION_RULE);
+			expect(task.rows[0].description).toContain('@admin');
+			await db.query(`UPDATE tasks SET status = 'done'::task_status WHERE id = $1`, [taskId]);
+		}
 	});
 
 	it('body requires a verification-coverage audit with concrete remediation tools', async () => {
