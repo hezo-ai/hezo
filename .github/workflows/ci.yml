@@ -12,6 +12,7 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -27,6 +28,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -366,9 +368,19 @@ jobs:
         run: |
           sudo grep -rlZ 'packages\.microsoft\.com' /etc/apt/sources.list.d/ 2>/dev/null \
             | sudo xargs -0 -r rm -f || true
-      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+      # apt-get update inside both steps below has hung for the full job cap on
+      # three separate runs: the runner's azure mirror went Ign, apt failed over
+      # to archive.ubuntu.com, and that fetch then dangled with no output and no
+      # timeout of its own. A healthy install-deps takes ~70s, so bound each step
+      # far below the job cap - a stalled mirror should cost 5 minutes and a
+      # named step timeout, not 25 minutes and an opaque job cancellation.
+      - name: Install Playwright browsers and system deps
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         run: bunx playwright install --with-deps chromium
-      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+      - name: Install Playwright system deps
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 5
         run: bunx playwright install-deps chromium
       - run: bun run test --browser --shard ${{ matrix.shard }}/3
       # Everything needed to diagnose a failure is in the artifact below, but
@@ -414,6 +426,7 @@ jobs:
     if: always()
     needs: test-backend
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-backend.result }}" = "success" ]'
 
@@ -421,6 +434,7 @@ jobs:
     if: always()
     needs: test-integration
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-integration.result }}" = "success" ]'
 
@@ -428,6 +442,7 @@ jobs:
     if: always()
     needs: test-shared
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-shared.result }}" = "success" ]'
 
@@ -435,6 +450,7 @@ jobs:
     if: always()
     needs: test-browser
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-browser.result }}" = "success" ]'
 
@@ -453,6 +469,7 @@ jobs:
     if: always()
     needs: [test-backend, test-integration, test-shared]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
