@@ -59,22 +59,23 @@ describe('UpdateRestartOverlay copy', () => {
 
 	// The immediate poll would hit `/api/status`; reject it so the overlay just
 	// renders (never reaches `window.location.reload`).
-	function renderOverlay(props: { autoUnlock: boolean }) {
+	function renderOverlay() {
 		vi.spyOn(global, 'fetch').mockRejectedValue(new Error('down'));
-		return render(<UpdateRestartOverlay targetVersion="0.2.0" fromVersion="0.1.0" {...props} />);
+		return render(<UpdateRestartOverlay fromVersion="0.1.0" />);
 	}
 
-	test('warns about the master key when the instance comes back locked', () => {
-		const { getByTestId } = renderOverlay({ autoUnlock: false });
-		const text = getByTestId('update-restart-overlay').textContent ?? '';
-		expect(text).toContain("you'll need your 12-word master key");
-		expect(text).not.toContain('no master key needed');
+	test('says only that the server is restarting', () => {
+		const { getByTestId } = renderOverlay();
+		expect(getByTestId('update-restart-overlay').textContent).toBe('Restarting…');
 	});
 
-	test('reassures instead of warning when the instance auto-unlocks', () => {
-		const { getByTestId } = renderOverlay({ autoUnlock: true });
+	// Nothing here is actionable while the server is down, and the confirm dialog
+	// already carried the version, the run consequence and the master-key warning.
+	test('repeats none of the confirm dialog', () => {
+		const { getByTestId } = renderOverlay();
 		const text = getByTestId('update-restart-overlay').textContent ?? '';
-		expect(text).toContain('no master key needed');
-		expect(text).not.toContain("you'll need your 12-word master key");
+		expect(text).not.toContain('master key');
+		expect(text).not.toContain('0.');
+		expect(text).not.toContain('agent runs');
 	});
 });
