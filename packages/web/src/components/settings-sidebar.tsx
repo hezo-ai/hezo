@@ -74,16 +74,18 @@ function isActive(itemTo: string, pathname: string): boolean {
 }
 
 /**
- * Group heading: a label for what follows, not a target. Two things keep it from
- * reading as another link in the same column - it is set as an eyebrow (smaller,
- * lighter and letter-spaced against the 13px items) and a hairline runs off it to
- * the menu's edge, which no link ever does. Spacing binds it to its own items:
- * open above the group, tight below the label.
+ * Group heading: a label for what follows, not a target. Three things keep it
+ * from reading as another link in the same column - it is set as an eyebrow
+ * (small, uppercase and letter-spaced against the 13px items), it is bolder and
+ * darker than anything it labels, and a hairline runs off it to the menu's edge,
+ * which no link ever does. `font-bold` overrides the eyebrow's own 500: the
+ * utility is declared earlier in the sheet, so the later class wins. Spacing
+ * binds the label to its own items: open above the group, tight below.
  */
 function GroupHeading({ label }: { label: string }) {
 	return (
 		<div className="flex items-center gap-2 px-3 pb-1.5">
-			<span className="text-eyebrow text-text-3">{label}</span>
+			<span className="text-eyebrow font-bold text-text-1">{label}</span>
 			<span className="h-px flex-1 bg-border" />
 		</div>
 	);
