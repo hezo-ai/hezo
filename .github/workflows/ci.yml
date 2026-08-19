@@ -381,6 +381,14 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v${{ needs.playwright-version.outputs.version }}-noble
       options: --ipc=host
+    # A `run:` step defaults to bash on a runner but to `sh` in this container,
+    # which silently turned the failure-context step below into `sh -e` and made
+    # it die on `shopt: not found` - exit 127 on top of the browser failure it
+    # existed to explain. Pin the job back to the host default so every step
+    # here, present and future, gets the shell it was written against.
+    defaults:
+      run:
+        shell: bash
     # Sharded across runners the same way the vitest tiers are: Playwright splits
     # its suite into thirds (`--shard <i>/3`), so wall time drops to roughly a
     # third versus the single-runner run. fail-fast off so one shard failing
