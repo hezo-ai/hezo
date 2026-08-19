@@ -53,6 +53,17 @@ test('sub-task header shows a breadcrumb link to its parent and navigates there'
 	expect(parentLink.textContent).toBe(seeded.parentIdentifier);
 	expect(parentLink.getAttribute('href')).toContain(seeded.parentIdentifier.toLowerCase());
 
+	// The task's own name rides in the crumb beside its identifier, and carries
+	// the untruncated text in `title` for the widths where it is cut short.
+	const crumbTitle = await findByTestId('task-breadcrumb-title');
+	expect(crumbTitle.textContent).toBe('Child Task');
+	expect(crumbTitle.getAttribute('title')).toBe('Child Task');
+
+	// A sub-task also renders the below-`sm` stand-in for the ancestor chain. The
+	// links themselves stay in the tree at every width (sr-only, never `hidden`),
+	// which is why both are present here - happy-dom runs no media queries.
+	expect(await findByTestId('task-breadcrumb-ancestors-collapsed')).toBeTruthy();
+
 	// Clicking it navigates to the parent task.
 	await user.click(parentLink);
 	await waitFor(() =>
@@ -81,8 +92,14 @@ test('top-level task header shows a Tasks crumb and its identifier with no ances
 
 	const breadcrumb = await findByTestId('task-breadcrumb');
 	expect(breadcrumb.textContent).toContain(seeded.identifier);
-	// No parent → no ancestor crumb, but the Tasks list crumb is always there.
+	// No parent → neither an ancestor crumb nor the ellipsis standing in for one,
+	// but the Tasks list crumb is always there.
 	expect(queryByTestId('task-breadcrumb-ancestor')).toBeNull();
+	expect(queryByTestId('task-breadcrumb-ancestors-collapsed')).toBeNull();
+
+	// The name is carried at rest too, not only once the crumb pins.
+	const crumbTitle = await findByTestId('task-breadcrumb-title');
+	expect(crumbTitle.textContent).toBe('Solo Task');
 	const tasksLink = await findByTestId('task-breadcrumb-tasks');
 	expect(tasksLink.getAttribute('href')).toContain(`/projects/${seeded.projectSlug}/tasks`);
 

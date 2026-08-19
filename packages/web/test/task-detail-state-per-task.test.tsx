@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { clickUntil, renderApp } from './helpers/render';
+import { clickUntil, renderApp, taskHeadingQuery } from './helpers/render';
 import { seedComment, seedDocument, seedProject, seedTask, seedWorkspace } from './helpers/seed';
 
 // The task-detail route serves every task on `/projects/$projectId/tasks/$taskId`
@@ -49,7 +49,7 @@ test('the doc preview panel does not follow the reader into another task', async
 		params: { projectId: ref.projectSlug, taskId: ref.secondTask },
 	});
 
-	await findByText('Remove non-portfolio stocks');
+	await findByText('Remove non-portfolio stocks', taskHeadingQuery);
 	expect(document.querySelector('[data-testid="preview-panel"]')).toBeNull();
 });
 
@@ -89,6 +89,6 @@ test('a reply target does not follow the reader into another task', async () => 
 
 	// A surviving target would post the next comment with a `parent_comment_id`
 	// pointing at a comment on the task the reader just left.
-	await findByText('Remove non-portfolio stocks');
+	await findByText('Remove non-portfolio stocks', taskHeadingQuery);
 	expect(document.querySelector('[data-testid="reply-indicator"]')).toBeNull();
 });

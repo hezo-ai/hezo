@@ -54,9 +54,10 @@ function useScrolledPast(ref: RefObject<HTMLElement | null>): boolean {
 
 /**
  * Top-of-page header for a task: a breadcrumb of ancestor tasks ending in the
- * current identifier - pinned to the top of the shell scroller at `lg`+, so a
- * long thread never leaves the reader without the task's identity or a way back
- * to the list - then the title, an inline mono metadata row (status ·
+ * current identifier and the task's own name - pinned to the top of the shell
+ * scroller at every breakpoint, so a long thread never leaves the reader without
+ * the task's identity or a way back to the list - then the title, an inline mono
+ * metadata row (status ·
  * priority · assignee) with a runs · duration · cost summary, the queued-wakeup
  * chip, and the description card. The title renames in place and the description
  * edits in place; both are recorded on the task thread as meta comments by the
@@ -91,21 +92,29 @@ export function TaskHeader({
 		<>
 			{/* Marks where the breadcrumb rests. `-mb-px` keeps it out of the layout. */}
 			<div ref={restingSentinelRef} aria-hidden="true" className="h-px w-full -mb-px" />
-			{/* Desktop pins the crumb to the top of the scrolling <main>; below `lg` it
-			    scrolls away with the rest, where vertical space is the scarce thing.
-			    `top` clears the project banners stickied above it in the same scroller,
-			    reading the height ContainerStatusBanner publishes - the idiom the task
-			    meta rail already uses. z-10 stays under those banners (z-20 and up) and
-			    over the content column, which carries no z-index of its own. */}
+			{/* Pinned to the top of the scrolling <main> at every breakpoint - the phone
+			    is where the title leaves the screen soonest, so it is the last place to
+			    drop the crumb. `top` clears the project banners stickied above it in the
+			    same scroller, reading the height ContainerStatusBanner publishes - the
+			    idiom the task meta rail already uses. z-10 stays under those banners
+			    (z-20 and up) and over the content column, which carries no z-index of
+			    its own. `-mt-3` cancels the `pt-3` that gives the pinned band its top
+			    breathing room, so the resting position is unmoved; the route wrapper
+			    always leaves at least that much above (py-4 at its narrowest).
+
+			    NO `flex-wrap`: the crumb is one line at every width, and only the task
+			    name gives way. Everything ahead of it is `shrink-0`, the name alone is
+			    `min-w-0 truncate`, so the browser cuts it to whatever the column is
+			    rather than pushing the row to two lines. */}
 			<nav
 				aria-label="Breadcrumb"
 				data-pinned={pinned ? 'true' : 'false'}
-				className={`mb-1 flex flex-wrap items-center gap-x-1 text-[13px] font-mono text-text-2 lg:sticky lg:top-[var(--container-banner-h,0px)] lg:z-10 lg:-mt-3 lg:mb-0 lg:border-b lg:border-transparent lg:bg-bg lg:pt-3 lg:pb-2 lg:transition-[border-color,box-shadow] lg:duration-150 ${
-					pinned ? 'lg:border-border lg:shadow-xs' : ''
+				className={`sticky top-[var(--container-banner-h,0px)] z-10 -mt-3 flex items-center gap-x-1 border-b border-transparent bg-bg pt-3 pb-2 text-[13px] font-mono text-text-2 transition-[border-color,box-shadow] duration-150 ${
+					pinned ? 'border-border shadow-xs' : ''
 				}`}
 				data-testid="task-breadcrumb"
 			>
-				<span className="flex items-center gap-x-1">
+				<span className="flex shrink-0 items-center gap-x-1">
 					<Link
 						to="/projects/$projectId/tasks"
 						params={{ projectId: taskProjectSlug }}
@@ -116,8 +125,25 @@ export function TaskHeader({
 					</Link>
 					<ChevronRight className="w-3 h-3 shrink-0 text-text-3" />
 				</span>
+				{/* Below `sm` the ancestor identifiers would spend the whole line, so they
+				    collapse to one ellipsis and the name keeps the room. The links stay in
+				    the accessibility tree (`sr-only`, not `hidden`), so a screen reader on
+				    a phone still gets the full path this stands in for. */}
+				{!!ancestors?.length && (
+					<span
+						aria-hidden="true"
+						className="flex shrink-0 items-center gap-x-1 sm:hidden"
+						data-testid="task-breadcrumb-ancestors-collapsed"
+					>
+						<span className="text-text-3">…</span>
+						<ChevronRight className="w-3 h-3 shrink-0 text-text-3" />
+					</span>
+				)}
 				{ancestors?.map((ancestor) => (
-					<span key={ancestor.id} className="flex items-center gap-x-1">
+					<span
+						key={ancestor.id}
+						className="sr-only items-center gap-x-1 sm:not-sr-only sm:flex sm:shrink-0"
+					>
 						<Link
 							to="/projects/$projectId/tasks/$taskId"
 							params={{ projectId: taskProjectSlug, taskId: ancestor.identifier.toLowerCase() }}
@@ -130,7 +156,24 @@ export function TaskHeader({
 						<ChevronRight className="w-3 h-3 shrink-0 text-text-3" />
 					</span>
 				))}
-				<span aria-current="page">{task.identifier}</span>
+				{/* Identifier and name are one crumb, so they sit inside a single
+				    `aria-current` - a reader hears "HM-246, Fix the flaky test", not two
+				    separate items. The name is sans against the mono identifiers because
+				    it is prose, not something you quote, and `title` keeps the full text
+				    reachable once it truncates. */}
+				<span aria-current="page" className="flex min-w-0 items-center gap-x-1">
+					<span className="shrink-0">{task.identifier}</span>
+					<span aria-hidden="true" className="shrink-0 text-text-3">
+						·
+					</span>
+					<span
+						className="min-w-0 truncate font-sans text-text-3"
+						title={task.title}
+						data-testid="task-breadcrumb-title"
+					>
+						{task.title}
+					</span>
+				</span>
 			</nav>
 			<TaskTitle task={task} updateTask={updateTask} />
 
