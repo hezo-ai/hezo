@@ -343,3 +343,16 @@ async function interactUntil(
 		{ timeout: options.timeout ?? 15_000 },
 	);
 }
+
+/**
+ * Scopes a text query to the task page's `<h1>`.
+ *
+ * A task's title renders twice on its own page: the heading, and the breadcrumb
+ * that carries the name beside the identifier. So a bare `findByText(title)`
+ * matches two elements and throws. Pass this as the query's options argument
+ * when the intent is "wait until the page for this task is up", which is what
+ * the heading means:
+ *
+ *     await findByText('Target task', taskHeadingQuery, { timeout: 10_000 });
+ */
+export const taskHeadingQuery = { selector: 'h1' } as const;

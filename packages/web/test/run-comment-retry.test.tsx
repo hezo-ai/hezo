@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { getTestContext, renderApp } from './helpers/render';
+import { getTestContext, renderApp, taskHeadingQuery } from './helpers/render';
 import { seedProject, seedTask, seedWorkspace } from './helpers/seed';
 import { expandEventGroups } from './helpers/thread';
 
@@ -302,7 +302,7 @@ test('a run somebody terminated offers no Retry', async () => {
 
 	// Wait for the thread itself before asserting on an absence, or the assertion
 	// passes simply because nothing has rendered yet.
-	await findByText('Run Retry Task', undefined, { timeout: 20_000 });
+	await findByText('Run Retry Task', taskHeadingQuery, { timeout: 20_000 });
 	await expandEventGroups(user);
 	expect(queryByTestId('retry-failed-run')).toBeNull();
 });

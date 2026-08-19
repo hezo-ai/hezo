@@ -1,6 +1,6 @@
 import { waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { getTestContext, renderApp } from './helpers/render';
+import { getTestContext, renderApp, taskHeadingQuery } from './helpers/render';
 import {
 	type SeededWorkspace,
 	seedComment,
@@ -84,7 +84,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	// view; this file is about the entries themselves.
 	await expandEventGroups(user);
 
-	await findByText('Target task', undefined, { timeout: 10_000 });
+	await findByText('Target task', taskHeadingQuery, { timeout: 10_000 });
 
 	// The status-change system comment should be present.
 	await waitFor(
@@ -148,7 +148,7 @@ test('status changes and cross-task mentions appear as system entries on the tim
 	// view; this file is about the entries themselves.
 	await expandEventGroups(user);
 
-	await findByText('Target task', undefined, { timeout: 10_000 });
+	await findByText('Target task', taskHeadingQuery, { timeout: 10_000 });
 	await waitFor(
 		async () => {
 			const items = await findAllByTestId('comment-item');
@@ -194,7 +194,7 @@ test('title renames appear as system entries on the timeline', async () => {
 	// view; this file is about the entries themselves.
 	await expandEventGroups(user);
 
-	await findByText('Renamed task', undefined, { timeout: 10_000 });
+	await findByText('Renamed task', taskHeadingQuery, { timeout: 10_000 });
 
 	await waitFor(
 		async () => {
