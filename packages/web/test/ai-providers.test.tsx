@@ -1,8 +1,18 @@
-import { DEFAULT_TEAM_SLUG } from '@hezo/shared';
+import {
+	AgentRuntime,
+	AiAuthMethod,
+	DEFAULT_TEAM_SLUG,
+	setCredentialSerializationRulesForTest,
+} from '@hezo/shared';
 import { queryClient as singletonQueryClient } from '@hezo/web/lib/query-client';
 import { fireEvent, waitFor, within } from '@testing-library/react';
-import { expect, test } from 'vitest';
+import { afterEach, expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
+
+// No credential serialises its runs by default; the two tests that assert the
+// "one agent at a time" UI opt a Codex subscription in through a rule, then this
+// restores the empty default so no other test sees a serialising credential.
+afterEach(() => setCredentialSerializationRulesForTest([]));
 
 interface ProviderListResponse {
 	data: Array<{ id: string }>;
@@ -302,37 +312,6 @@ test('offers Codex subscription paste flow for OpenAI', async () => {
 	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 	fireEvent.change(textarea, {
 		target: { value: JSON.stringify({ tokens: { refresh_token: 'rt-component-paste' } }) },
-	});
-	await user.click(getByRole('button', { name: 'Save' }));
-
-	await findByText('Subscription', undefined, { timeout: 15_000 });
-});
-
-test('offers Gemini subscription paste flow for Google', async () => {
-	const { container, findAllByText, findByRole, findByText, getByRole, user } = await renderApp({
-		initialPath: '/settings/ai-providers',
-		seed: async () => {
-			await clearAiProviders();
-		},
-	});
-
-	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
-
-	await user.click(getByRole('button', { name: 'Google' }));
-	await user.click(getByRole('button', { name: /Gemini subscription/i }));
-	const oauthHits = await findAllByText(/oauth_creds\.json/i);
-	expect(oauthHits.length).toBeGreaterThan(0);
-	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-	fireEvent.change(textarea, {
-		target: {
-			value: JSON.stringify({
-				access_token: 'ya29.test',
-				refresh_token: '1//0g-rt-component',
-				token_type: 'Bearer',
-				scope: 'https://www.googleapis.com/auth/generative-language',
-				expiry_date: 1745780000000,
-			}),
-		},
 	});
 	await user.click(getByRole('button', { name: 'Save' }));
 
@@ -1045,25 +1024,6 @@ test('OpenAI subscription leads with guided sign-in, keeping paste behind a disc
 	expect(queryByRole('button', { name: /Sign in with Codex/i })).not.toBeNull();
 });
 
-test('Google subscription offers no sign-in button, because its CLI cannot be driven', async () => {
-	const { container, findByRole, getByRole, queryByRole, user } = await renderApp({
-		initialPath: '/settings/ai-providers',
-		seed: async () => {
-			await clearAiProviders();
-		},
-	});
-
-	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
-	await user.click(getByRole('button', { name: 'Google' }));
-	await user.click(getByRole('button', { name: /Gemini subscription/i }));
-
-	// No button that would start something and hang, and no disclosure to open:
-	// the paste form is the whole branch.
-	expect(queryByRole('button', { name: /Sign in with/i })).toBeNull();
-	expect(queryByRole('button', { name: /Paste credential manually/i })).toBeNull();
-	expect(container.querySelector('textarea')).not.toBeNull();
-});
-
 /**
  * Codex rewrites its subscription credential mid-run, so the runner serialises
  * runs on it. That is a concurrency limit the operator is choosing when they
@@ -1072,6 +1032,9 @@ test('Google subscription offers no sign-in button, because its CLI cannot be dr
  * "Paste credential manually" toggle.
  */
 test('the add form warns that a rotating subscription runs one agent at a time', async () => {
+	setCredentialSerializationRulesForTest([
+		{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+	]);
 	const { findByRole, getByRole, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -1095,6 +1058,9 @@ test('the add form warns that a rotating subscription runs one agent at a time',
 });
 
 test('the providers list marks only the credential whose runs serialise', async () => {
+	setCredentialSerializationRulesForTest([
+		{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+	]);
 	const { findByText, container } = await renderApp({
 		initialPath: '/settings/ai-providers',
 		seed: async () => {

@@ -58,6 +58,7 @@ import {
 	AiAuthMethod,
 	CEO_AGENT_SLUG,
 	claudeCodeModelArg,
+	credentialFileRewrittenByCli,
 	opencodeModelArg,
 	PROVIDER_TO_RUNTIME,
 	providerSupportsRuntime,
@@ -69,7 +70,6 @@ import {
 	RUNTIME_MODEL_DELIVERY,
 	RUNTIME_PROMPT_DELIVERY,
 	RUNTIME_STREAM_ARGS,
-	RUNTIMES_WITH_ROTATING_CREDENTIAL,
 } from '@hezo/shared';
 import { buildProviderEnv, recoverOffStreamRunUsage } from '../../src/services/agent-runner';
 import {
@@ -181,7 +181,7 @@ const STATIC_HEADERS_MARKER_VALUE = 'static-headers';
 const RUNTIME_REPORTS_MCP_STATUS: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.ClaudeCode]: true,
 	[AgentRuntime.Codex]: false,
-	[AgentRuntime.Gemini]: false,
+	[AgentRuntime.Antigravity]: false,
 	[AgentRuntime.OpenCode]: false,
 	[AgentRuntime.Grok]: false,
 	[AgentRuntime.Kimi]: false,
@@ -259,7 +259,7 @@ function assertSupportedPairing(mp: LiveModelProvider, runtime: AgentRuntime): v
  */
 function warnIfCredentialRotates(mp: LiveModelProvider, runtime: AgentRuntime): void {
 	if ((mp.authMethod ?? AiAuthMethod.ApiKey) !== AiAuthMethod.Subscription) return;
-	if (!RUNTIMES_WITH_ROTATING_CREDENTIAL.includes(runtime)) return;
+	if (!credentialFileRewrittenByCli(runtime)) return;
 	console.warn(`[conformance] ${mp.name} on ${runtime}: ${SUBSCRIPTION_ROTATION_WARNING}.`);
 }
 

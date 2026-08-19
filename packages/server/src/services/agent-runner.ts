@@ -93,6 +93,7 @@ import type { ContainerLogStreamer } from './container-logs';
 import {
 	type ContainerRunUser,
 	chownToRunUser,
+	containerHomeDir,
 	ensureContainerDirReady,
 	resolveContainerRunUser,
 } from './container-user';
@@ -421,11 +422,17 @@ export interface RunContext {
 	subscriptionMount: SubscriptionMount | null;
 	/**
 	 * Per-run runtime config dir. Reuses the subscription mount when present;
-	 * otherwise a freshly created dir for runtimes that need one (Codex, Gemini)
-	 * even when authenticating with an API key. Null when the runtime takes its
-	 * MCP config via CLI flags (Claude Code).
+	 * otherwise a freshly created dir for runtimes that need one (Codex) even when
+	 * authenticating with an API key. Null when the runtime takes its MCP config
+	 * via CLI flags (Claude Code) or from the container home (Antigravity).
 	 */
 	homeMount: RuntimeHomeMount | null;
+	/**
+	 * Paths (relative to the container run-user's home) of home-rooted config
+	 * files carrying a per-run secret, scrubbed after the run (Antigravity's
+	 * mcp_config.json holds the agent JWT).
+	 */
+	homeConfigScrubPaths: string[];
 }
 
 const CONTAINER_PROMPT_DIR = '/workspace/.hezo/prompts';
@@ -567,6 +574,8 @@ export interface RuntimeInvocation {
 	execCmd: string[];
 	subscriptionMount: SubscriptionMount | null;
 	homeMount: RuntimeHomeMount | null;
+	/** Home-rooted config files carrying a per-run secret, to scrub after the run. */
+	homeConfigScrubPaths: string[];
 }
 
 export interface RuntimeInvocationInput {
@@ -750,6 +759,28 @@ export async function buildRuntimeInvocation(
 		});
 	}
 
+	// Config files a CLI reads only from its real `$HOME` (the Antigravity CLI's
+	// `~/.gemini`), written straight into the run user's home rather than a per-run
+	// dir. Safe because one run holds a container at a time; the per-run MCP config
+	// is scrubbed after the run (below). Chowned so the non-root run-user can read
+	// what the host wrote.
+	const homeConfigFiles = mcpInjection.homeConfigFiles ?? [];
+	const homeConfigScrubPaths: string[] = [];
+	if (homeConfigFiles.length > 0) {
+		const home = containerHomeDir(runUser);
+		const homeFiles = deps.docker.files(containerId, home);
+		const chownPaths: string[] = [];
+		for (const file of homeConfigFiles) {
+			await homeFiles.write(file.relativePath, file.contents, {
+				mode: file.mode,
+				dirMode: SUBSCRIPTION_DIR_MODE,
+			});
+			chownPaths.push(join(home, file.relativePath));
+			if (file.scrubAfterRun) homeConfigScrubPaths.push(file.relativePath);
+		}
+		await chownToRunUser(deps.docker, containerId, runUser, chownPaths);
+	}
+
 	const env: string[] = [
 		`HEZO_AGENT_TOKEN=${agentJwt}`,
 		`HEZO_AGENT_ID=${agentId}`,
@@ -878,7 +909,7 @@ export async function buildRuntimeInvocation(
 
 	const execCmd = wrapExecCmd(cmd, bridge);
 
-	return { env, cmd, execCmd, subscriptionMount, homeMount };
+	return { env, cmd, execCmd, subscriptionMount, homeMount, homeConfigScrubPaths };
 }
 
 async function buildRunContext(
@@ -1023,32 +1054,33 @@ async function buildRunContext(
 
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
-	const { env, cmd, execCmd, subscriptionMount, homeMount } = await buildRuntimeInvocation({
-		endpoints,
-		connectorDescriptors,
-		deps,
-		runTeamId,
-		projectId: project.id,
-		provider,
-		credential,
-		runtimeType,
-		agentJwt,
-		agentId: agent.id,
-		resourceId: heartbeatRunId,
-		containerId: project.container_id,
-		runUser,
-		promptContainerPath: promptFilePath,
-		systemPrompt: systemPromptToFile,
-		effort,
-		effortApplication,
-		modelOverride,
-		sshSocketContainerPath,
-		bridge,
-		egress,
-		extraEnv: task
-			? [`HEZO_TASK_ID=${task.id}`, `HEZO_TASK_IDENTIFIER=${task.identifier}`]
-			: ['HEZO_PROGRESS_UPDATE=1'],
-	});
+	const { env, cmd, execCmd, subscriptionMount, homeMount, homeConfigScrubPaths } =
+		await buildRuntimeInvocation({
+			endpoints,
+			connectorDescriptors,
+			deps,
+			runTeamId,
+			projectId: project.id,
+			provider,
+			credential,
+			runtimeType,
+			agentJwt,
+			agentId: agent.id,
+			resourceId: heartbeatRunId,
+			containerId: project.container_id,
+			runUser,
+			promptContainerPath: promptFilePath,
+			systemPrompt: systemPromptToFile,
+			effort,
+			effortApplication,
+			modelOverride,
+			sshSocketContainerPath,
+			bridge,
+			egress,
+			extraEnv: task
+				? [`HEZO_TASK_ID=${task.id}`, `HEZO_TASK_IDENTIFIER=${task.identifier}`]
+				: ['HEZO_PROGRESS_UPDATE=1'],
+		});
 
 	return {
 		cmd,
@@ -1063,6 +1095,7 @@ async function buildRunContext(
 		agentJwt,
 		subscriptionMount,
 		homeMount,
+		homeConfigScrubPaths,
 	};
 }
 
@@ -2174,6 +2207,15 @@ export async function runAgent(
 			await step('close-tunnel', () => tunnel?.close());
 			await step('persist-rotated-auth', persistRotatedAuth);
 			await step('remove-prompt', () => workspaceFiles.remove(promptRelPath));
+			// Home-rooted config files carrying a per-run secret (Antigravity's
+			// mcp_config.json holds the agent JWT): scrub them so the token does not
+			// sit in the pooled container's home between runs.
+			if (context.homeConfigScrubPaths.length > 0) {
+				await step('scrub-home-config', async () => {
+					const homeFiles = deps.docker.files(containerId, containerHomeDir(runUser));
+					for (const rel of context.homeConfigScrubPaths) await homeFiles.remove(rel);
+				});
+			}
 			// The tunnel's config, for the same reason as the prompt: a pooled
 			// container serves run after run, so one file per run accumulates there
 			// forever. It carries hostnames only - never a secret value - so this is

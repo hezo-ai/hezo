@@ -3,10 +3,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import {
+	casUpdateAiProviderCredential,
 	deleteAiProviderConfig,
 	getAiProviderStatus,
 	getProviderCredential,
 	listAiProviders,
+	readAiProviderCredentialValue,
 	setDefaultAiProvider,
 	storeAiProviderKey,
 } from '../src/services/ai-provider-keys';
@@ -232,5 +234,52 @@ describe('API key + OAuth coexistence for a single provider', () => {
 		await setDefaultAiProvider(db, apiKeyId);
 		const apiKeyDefault = await getProviderCredential(db, masterKeyManager, AiProvider.OpenAI);
 		expect(apiKeyDefault?.authMethod).toBe(AiAuthMethod.ApiKey);
+	});
+});
+
+describe('casUpdateAiProviderCredential', () => {
+	it('advances the credential only when the store still holds the expected value', async () => {
+		const configId = await storeAiProviderKey(
+			db,
+			masterKeyManager,
+			AiProvider.Google,
+			'token-v0',
+			AiAuthMethod.ApiKey,
+			'cas-google',
+		);
+
+		// Store holds v0, this run started on v0: the write lands.
+		const first = await casUpdateAiProviderCredential(
+			db,
+			masterKeyManager,
+			configId,
+			'token-v0',
+			'token-v1',
+		);
+		expect(first).toBe(true);
+		expect(await readAiProviderCredentialValue(db, masterKeyManager, configId)).toBe('token-v1');
+
+		// A second run that started on v0 finds the store already advanced to v1: it
+		// drops its write rather than moving the store back to a sibling of v0.
+		const stale = await casUpdateAiProviderCredential(
+			db,
+			masterKeyManager,
+			configId,
+			'token-v0',
+			'token-v1-sibling',
+		);
+		expect(stale).toBe(false);
+		expect(await readAiProviderCredentialValue(db, masterKeyManager, configId)).toBe('token-v1');
+	});
+
+	it('returns false for a missing config rather than throwing', async () => {
+		const missing = await casUpdateAiProviderCredential(
+			db,
+			masterKeyManager,
+			'00000000-0000-0000-0000-000000000000',
+			'whatever',
+			'next',
+		);
+		expect(missing).toBe(false);
 	});
 });

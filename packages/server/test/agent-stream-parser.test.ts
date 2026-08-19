@@ -496,21 +496,29 @@ describe('agent-stream-parser', () => {
 		});
 	});
 
-	describe('gemini', () => {
+	describe('antigravity', () => {
+		const init = (model: string) => `${JSON.stringify({ event: 'init', init: { model } })}\n`;
+		const result = (r: Record<string, unknown>) =>
+			`${JSON.stringify({ event: 'result', result: r })}\n`;
+
 		it('captures usage from the result event', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Gemini);
-			const event = {
-				type: 'result',
-				stats: {
-					models: {
-						'gemini-2.5-pro': {
-							tokens: { prompt: 24939, candidates: 20, thoughts: 154, total: 25113, cached: 21263 },
-						},
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			parser.onStdout(init('gemini-2.5-pro'));
+			const out = parser.onStdout(
+				result({
+					status: 'SUCCESS',
+					response: 'done',
+					// Buckets are disjoint: input_tokens excludes cache_read_tokens, and
+					// output_tokens already includes thinking_tokens.
+					usage: {
+						input_tokens: 24939,
+						output_tokens: 174,
+						thinking_tokens: 154,
+						cache_read_tokens: 21263,
+						total_tokens: 25113,
 					},
-				},
-			};
-			const out = parser.onStdout(`${JSON.stringify(event)}\n`);
-			// input = prompt; output = candidates + thoughts (cached is a subset of prompt).
+				}),
+			);
 			expect(out).toContain('[done] success tokens=24939/174');
 
 			const usage = parser.getUsage();
@@ -519,116 +527,72 @@ describe('agent-stream-parser', () => {
 			expect(usage?.costCents).toBe(0);
 		});
 
-		it('ignores a runtime-reported cost and prices the per-model table sum', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
+		it('takes only the result usage, ignoring per-step usage frames', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity, price);
+			parser.onStdout(init('gemini-2.5-pro'));
+			// A step_update carries its own (partial) usage; the parser must ignore it
+			// and read the terminal result, whose usage is the cumulative sum.
 			parser.onStdout(
-				`${JSON.stringify({
-					type: 'result',
-					total_cost_usd: 0.5,
-					stats: {
-						models: { 'gemini-2.5-pro': { tokens: { prompt: 1_000_000, candidates: 200_000 } } },
-					},
-				})}\n`,
+				`${JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response', usage: { input_tokens: 999, output_tokens: 999 } } })}\n`,
 			);
-			// The reported 0.5 USD is discarded; the per-model table sum prices the
-			// tokens: 1e6*0.00001 + 2e5*0.00003 = $16 → 1600 cents.
-			expect(parser.getUsage()?.costCents).toBe(1600);
-		});
-
-		it('sums usage across multiple models', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Gemini);
-			const event = {
-				type: 'result',
-				stats: {
-					models: {
-						'gemini-2.5-pro': { tokens: { prompt: 1000, candidates: 100, thoughts: 0 } },
-						'gemini-2.5-flash': { tokens: { prompt: 200, candidates: 50, thoughts: 10 } },
-					},
-				},
-			};
-			parser.onStdout(`${JSON.stringify(event)}\n`);
-			expect(parser.getUsage()).toEqual({ inputTokens: 1200, outputTokens: 160, costCents: 0 });
-		});
-
-		// The shape the CLI actually writes: `convertToStreamStats` flattens its
-		// internal token object into `*_tokens` names and drops the reasoning
-		// bucket entirely. Reading only the nested form found nothing here, so every
-		// Gemini run reported 0/0 and priced at $0.
-		it('captures usage from the flattened per-model stats the CLI emits', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
 			parser.onStdout(
-				`${JSON.stringify({
-					type: 'result',
-					stats: {
-						total_tokens: 94109,
-						input_tokens: 93507,
-						output_tokens: 22,
-						cached: 40586,
-						input: 52921,
-						models: {
-							'gemini-2.5-pro': {
-								total_tokens: 94109,
-								input_tokens: 93507,
-								output_tokens: 22,
-								cached: 40586,
-								input: 52921,
-							},
-						},
-					},
-				})}\n`,
+				result({
+					status: 'SUCCESS',
+					usage: { input_tokens: 1_000_000, output_tokens: 200_000, cache_read_tokens: 0 },
+				}),
+			);
+			// pro: 1e6*1e-5 + 2e5*3e-5 = 16 → 1600c. Not 999-derived.
+			expect(parser.getUsage()?.costCents).toBe(1600);
+			expect(parser.getUsage()?.inputTokens).toBe(1_000_000);
+		});
+
+		it('charges cache_read at the cache-read rate, disjoint from input', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity, price);
+			parser.onStdout(init('gemini-2.5-pro'));
+			parser.onStdout(
+				result({
+					status: 'SUCCESS',
+					usage: { input_tokens: 52921, output_tokens: 602, cache_read_tokens: 40586 },
+				}),
 			);
 			const usage = parser.getUsage();
-			expect(usage?.inputTokens).toBe(93507);
-			// The visible answer plus the reasoning the flat projection leaves as the
-			// residual between the total and the two counts it does state.
+			// No subtraction (unlike Codex): input_tokens is already the non-cached input.
+			expect(usage?.inputTokens).toBe(52921);
 			expect(usage?.outputTokens).toBe(602);
-			// Priced, not $0: (93507-40586) full-rate input + 40586 cache-read + 602 output.
 			expect(usage?.costCents).toBeGreaterThan(0);
 		});
 
-		it('joins the assistant chunks the CLI streams into one final message', () => {
-			// A `HEZO-LIVE-OK` reply arrives as `HEZO-LIVE-` then `OK`. Treating each
-			// `message` as complete left the final message as the last fragment, which
-			// the runner's handoff net would then post verbatim in place of the answer.
-			const parser = createAgentStreamParser(AgentRuntime.Gemini);
-			parser.onStdout(
-				`${JSON.stringify({ type: 'message', role: 'assistant', content: 'HEZO-LIVE-' })}\n`,
+		it('takes the final message from the result response', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			parser.onStdout(init('gemini-2.5-pro'));
+			const out = parser.onStdout(
+				result({ status: 'SUCCESS', response: 'HEZO-LIVE-OK\n', usage: {} }),
 			);
-			parser.onStdout(`${JSON.stringify({ type: 'message', role: 'assistant', content: 'OK' })}\n`);
-			const out = parser.onStdout(`${JSON.stringify({ type: 'result', stats: {} })}\n`);
 			expect(out).toContain('HEZO-LIVE-OK');
 			expect(parser.getFinalAssistantMessage()).toBe('HEZO-LIVE-OK');
 		});
 
-		it('recovers a final message still buffered when the stream just stops', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Gemini);
-			parser.onStdout(
-				`${JSON.stringify({ type: 'message', role: 'assistant', content: 'all done' })}\n`,
-			);
-			expect(parser.getFinalAssistantMessage()).toBe('all done');
-		});
-
-		it('renders an assistant message and skips the user echo', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Gemini);
-			expect(
-				parser.onStdout(`${JSON.stringify({ type: 'message', role: 'user', content: 'hi' })}\n`),
-			).toBe('');
-			// Assistant text is buffered until the run of chunks ends, so it renders
-			// as one line on the next event rather than one line per chunk.
+		it('renders nothing for step_update frames', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
 			expect(
 				parser.onStdout(
-					`${JSON.stringify({ type: 'message', role: 'assistant', content: 'Done.' })}\n`,
+					`${JSON.stringify({ event: 'step_update', step_update: { step_index: 0, state: 'DONE', step_type: 'user_input' } })}\n`,
 				),
 			).toBe('');
-			expect(parser.onStdout(`${JSON.stringify({ type: 'result', stats: {} })}\n`)).toContain(
-				'Done.',
+		});
+
+		it('marks an error result and renders a done-error line', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			parser.onStdout(init('gemini-2.5-pro'));
+			const out = parser.onStdout(
+				result({ status: 'ERROR', response: '', error: 'boom', usage: {} }),
 			);
+			expect(out).toContain('[done] error');
 		});
 
 		it('renders the init event as a session line', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Gemini);
-			const out = parser.onStdout(`${JSON.stringify({ type: 'init', model: 'gemini-2.5-pro' })}\n`);
-			expect(out).toBe('[session] model=gemini-2.5-pro\n');
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+			expect(parser.onStdout(init('gemini-2.5-pro'))).toBe('[session] model=gemini-2.5-pro\n');
 		});
 	});
 
@@ -652,24 +616,23 @@ describe('agent-stream-parser', () => {
 			expect(parser.getUsage()?.costCents).toBe(3);
 		});
 
-		it('prices a gemini run per model and sums', () => {
-			const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
+		it('prices an antigravity run at the init model rate', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Antigravity, price);
+			parser.onStdout(`${JSON.stringify({ event: 'init', init: { model: 'gemini-2.5-pro' } })}\n`);
 			parser.onStdout(
 				`${JSON.stringify({
-					type: 'result',
-					stats: {
-						models: {
-							'gemini-2.5-pro': { tokens: { prompt: 1_000_000, candidates: 200_000, thoughts: 0 } },
-							'gemini-2.5-flash': { tokens: { prompt: 200_000, candidates: 100_000, thoughts: 0 } },
-						},
+					event: 'result',
+					result: {
+						status: 'SUCCESS',
+						usage: { input_tokens: 1_000_000, output_tokens: 200_000, cache_read_tokens: 0 },
 					},
 				})}\n`,
 			);
 			const usage = parser.getUsage();
-			expect(usage?.inputTokens).toBe(1_200_000);
-			expect(usage?.outputTokens).toBe(300_000);
-			// pro: 1e6*1e-5 + 2e5*3e-5 = 16.0 → 1600c; flash: 2e5*5e-6 + 1e5*1e-5 = 2.0 → 200c
-			expect(usage?.costCents).toBe(1800);
+			expect(usage?.inputTokens).toBe(1_000_000);
+			expect(usage?.outputTokens).toBe(200_000);
+			// pro: 1e6*1e-5 + 2e5*3e-5 = 16.0 → 1600c
+			expect(usage?.costCents).toBe(1600);
 		});
 
 		it('records 0 cost for an unpriced model', () => {
@@ -1021,11 +984,11 @@ describe('getFinalAssistantMessage', () => {
 		expect(parser.getFinalAssistantMessage()).toBe('done — over to you @admin');
 	});
 
-	it('captures the Gemini final assistant message and ignores user turns', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		parser.onStdout(`${JSON.stringify({ type: 'message', role: 'user', content: 'ignored' })}\n`);
+	it('captures the Antigravity final assistant message from the result response', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		parser.onStdout(`${JSON.stringify({ event: 'init', init: { model: 'gemini-2.5-pro' } })}\n`);
 		parser.onStdout(
-			`${JSON.stringify({ type: 'message', role: 'assistant', content: 'ready for @admin review' })}\n`,
+			`${JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ready for @admin review', usage: {} } })}\n`,
 		);
 		expect(parser.getFinalAssistantMessage()).toBe('ready for @admin review');
 	});

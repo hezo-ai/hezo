@@ -9,11 +9,6 @@
  *   is single-use and rotates on every refresh; Hezo serialises runs against
  *   the same credential and persists the rotated value back.
  *
- * - **Gemini (Google)** — `~/.gemini/oauth_creds.json` containing the standard
- *   Google `Credentials` shape `{ access_token, refresh_token, token_type,
- *   scope, expiry_date }`. The refresh token is stable and reusable, so no
- *   rotation persistence is needed; we materialise the file fresh per run.
- *
  * Anthropic (Claude Code) subscription is the exception: it is **not** a pasted
  * JSON file but a single long-lived OAuth token from `claude setup-token`,
  * delivered via the CLAUDE_CODE_OAUTH_TOKEN env var rather than a file mount.
@@ -37,15 +32,6 @@ export interface CodexAuthBlob {
 	[key: string]: unknown;
 }
 
-export interface GeminiAuthBlob {
-	access_token?: string;
-	refresh_token: string;
-	token_type?: string;
-	scope?: string;
-	expiry_date?: number;
-	[key: string]: unknown;
-}
-
 export interface SubscriptionValidation {
 	ok: boolean;
 	error?: string;
@@ -66,22 +52,6 @@ export function validateCodexAuthJson(raw: string): SubscriptionValidation {
 			ok: false,
 			error:
 				'auth.json is missing tokens.refresh_token — log in again with `codex login` and re-copy the file',
-		};
-	}
-
-	return { ok: true };
-}
-
-export function validateGeminiAuthJson(raw: string): SubscriptionValidation {
-	const parsed = parseJsonObject(raw, 'oauth_creds.json');
-	if (!parsed.ok) return parsed;
-
-	const refresh = parsed.value.refresh_token;
-	if (typeof refresh !== 'string' || refresh.length === 0) {
-		return {
-			ok: false,
-			error:
-				'oauth_creds.json is missing refresh_token — sign in again with the Gemini CLI and re-copy the file',
 		};
 	}
 
@@ -118,7 +88,6 @@ const SUBSCRIPTION_VALIDATORS: Partial<
 > = {
 	[AiProvider.Anthropic]: validateAnthropicOauthToken,
 	[AiProvider.OpenAI]: validateCodexAuthJson,
-	[AiProvider.Google]: validateGeminiAuthJson,
 };
 
 export function validateSubscriptionBlob(

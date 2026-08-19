@@ -200,14 +200,6 @@ describe('AI providers subscription auth', () => {
 		},
 	});
 
-	const validGeminiBlob = JSON.stringify({
-		access_token: 'ya29.access',
-		refresh_token: '1//0g-rt-test',
-		token_type: 'Bearer',
-		scope: 'https://www.googleapis.com/auth/generative-language',
-		expiry_date: 1745780000000,
-	});
-
 	it('rejects subscription auth for deepseek (no subscription support)', async () => {
 		const res = await app.request('/api/ai-providers', {
 			method: 'POST',
@@ -268,19 +260,19 @@ describe('AI providers subscription auth', () => {
 		expect(body.error.code).toBe('INVALID_SUBSCRIPTION_BLOB');
 	});
 
-	it('rejects oauth_creds.json missing refresh_token for google', async () => {
+	it('rejects subscription auth for google - it is API-key only', async () => {
 		const res = await app.request('/api/ai-providers', {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				provider: 'google',
-				api_key: JSON.stringify({ access_token: 'ya29.x', token_type: 'Bearer' }),
+				api_key: JSON.stringify({ refresh_token: 'rt' }),
 				auth_method: 'subscription',
 			}),
 		});
 		expect(res.status).toBe(400);
 		const body = await res.json();
-		expect(body.error.code).toBe('INVALID_SUBSCRIPTION_BLOB');
+		expect(body.error.code).toBe('UNSUPPORTED_AUTH_METHOD');
 	});
 
 	it('stores a valid codex auth.json blob for openai', async () => {
@@ -301,28 +293,6 @@ describe('AI providers subscription auth', () => {
 		const body = await list.json();
 		const stored = (body.data as Array<{ provider: string; auth_method: string }>).find(
 			(r) => r.provider === 'openai',
-		);
-		expect(stored?.auth_method).toBe('subscription');
-	});
-
-	it('stores a valid gemini oauth_creds.json blob for google', async () => {
-		await db.query('DELETE FROM ai_provider_configs');
-		const res = await app.request('/api/ai-providers', {
-			method: 'POST',
-			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				provider: 'google',
-				api_key: validGeminiBlob,
-				auth_method: 'subscription',
-				label: 'gemini-personal',
-			}),
-		});
-		expect(res.status).toBe(201);
-
-		const list = await app.request('/api/ai-providers', { headers: authHeader(token) });
-		const body = await list.json();
-		const stored = (body.data as Array<{ provider: string; auth_method: string }>).find(
-			(r) => r.provider === 'google',
 		);
 		expect(stored?.auth_method).toBe('subscription');
 	});

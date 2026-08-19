@@ -141,12 +141,14 @@ afterAll(async () => {
 });
 
 describe('starting a sign-in', () => {
-	it('refuses a provider whose CLI has no driver, before creating a container', async () => {
+	it('refuses a provider with no subscription support, before creating a container', async () => {
+		// Google is API-key only now (Antigravity's consumer subscription is not yet
+		// deliverable into a run container), so a sign-in is refused up front.
 		const res = await post('/api/ai-providers/subscription-login/start', {
 			provider: AiProvider.Google,
 		});
 		expect(res.status).toBe(400);
-		expect((await res.json()).error.code).toBe('LOGIN_UNSUPPORTED');
+		expect((await res.json()).error.code).toBe('NO_SUBSCRIPTION');
 		// The cheap answer matters: the dialog asks on every open.
 		expect(liveContainers.size).toBe(0);
 	});

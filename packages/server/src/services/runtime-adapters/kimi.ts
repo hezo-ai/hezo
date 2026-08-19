@@ -69,7 +69,7 @@ type KimiServerEntry = KimiHttpEntry | KimiStdioEntry;
 // stdio server can take longer than 30s to come up, and plenty of Hezo MCP tools
 // legitimately run for minutes. Set per-server rather than via the global env
 // vars so one slow connector can't be masked by a blanket override, matching what
-// the Codex and Gemini adapters already do.
+// the Codex adapter already does.
 const MCP_STARTUP_TIMEOUT_MS = 120_000;
 const MCP_TOOL_TIMEOUT_MS = 1_800_000;
 
