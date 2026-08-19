@@ -325,7 +325,7 @@ journalctl -u hezo -n 200 --no-pager
 The most common cause on a small VPS is the host running out of memory: the log
 shows the worker exiting with **code 137** (the kernel killed it) with no error of
 Hezo's own. Give the host more RAM or add swap - the provisioning script sets up a
-4 GB swap file for this reason, and `swapon --show` tells you whether it is active.
+6 GB swap file for this reason, and `swapon --show` tells you whether it is active.
 
 ## Keeping the host patched
 
