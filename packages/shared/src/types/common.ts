@@ -920,6 +920,13 @@ export const WakeupSkipReason = {
 	 */
 	NoWorkCooldown: 'no_work_cooldown',
 	/**
+	 * An ask still stands on this task's thread - an `@admin` question, a credential
+	 * request, an unanswered choice card - and nobody but this agent has spoken
+	 * since. Lifts when a human or teammate replies, never on a clock. See
+	 * `parkedOnAdminAsk` in `services/no-work-backoff.ts`.
+	 */
+	ParkedOnAdmin: 'parked_on_admin',
+	/**
 	 * Another run still held the rotating provider credential when this one gave
 	 * up waiting. Distinct from `InstanceAtCapacity` because the two waits clear
 	 * on different clocks: capacity frees when the idle pass reclaims a container,

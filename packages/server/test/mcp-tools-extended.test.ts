@@ -1704,8 +1704,8 @@ describe('MCP marketplace tools', () => {
 		};
 		expect(result.error).toBeUndefined();
 		const slugs = (result.items ?? []).map((t) => t.slug);
-		expect(slugs).toContain('software-development');
-		const appTeam = (result.items ?? []).find((t) => t.slug === 'software-development');
+		expect(slugs).toContain('app-dev');
+		const appTeam = (result.items ?? []).find((t) => t.slug === 'app-dev');
 		expect(appTeam?.name).toBe('App Team');
 		expect(appTeam?.roster_count).toBe(10);
 		// Keywords are picker vocabulary, deliberately kept out of an agent's context.
@@ -1715,7 +1715,7 @@ describe('MCP marketplace tools', () => {
 	it('apply_marketplace_agent rejects a caller that is not the CEO', async () => {
 		const result = (await callToolAs(await captainToken(), 'apply_marketplace_agent', {
 			project: projectId,
-			slug: 'software-development',
+			slug: 'app-dev',
 			role: 'researcher',
 		})) as ToolResult;
 		expect(result.error).toContain('Only the CEO');
@@ -1733,7 +1733,7 @@ describe('MCP marketplace tools', () => {
 
 		const result = (await callToolAs(await ceoTokenFor(soloTeamId), 'apply_marketplace_agent', {
 			project: soloProjectSlug,
-			slug: 'software-development',
+			slug: 'app-dev',
 			role: 'security-engineer',
 		})) as ToolResult;
 		expect(result.error).toBeUndefined();
@@ -1754,7 +1754,7 @@ describe('MCP marketplace tools', () => {
 	it('apply_marketplace_agent errors on a role outside the roster', async () => {
 		const result = (await callToolAs(await ceoTokenFor(teamId), 'apply_marketplace_agent', {
 			project: projectId,
-			slug: 'software-development',
+			slug: 'app-dev',
 			role: 'captain',
 		})) as ToolResult;
 		expect(result.error).toContain('captain');

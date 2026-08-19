@@ -181,7 +181,7 @@ Kick off the initial team-coherence/setup run for a project you created via crea
 
 _Read-only._
 
-List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "App Team") live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
+List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the app-dev "App Team") live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns `limit` entries (default 50) plus `next_cursor`/`has_more`; when `has_more` is true, call again with `cursor` set to `next_cursor` until it is false.
 
 **Parameters:**
 
@@ -219,7 +219,7 @@ Fetch one marketplace team's full definition: its version, changelog, and every 
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `slug` | `string` | Yes | The marketplace team slug (e.g. "software-development"). |
+| `slug` | `string` | Yes | The marketplace team slug (e.g. "app-dev"). |
 
 **Returns:** The marketplace team’s `slug`, `name`, `version`, `changelog[]`, `captain` (`system_prompt`, `team_context`), and `roster[]` (each with `slug`, `title`, `reports_to_slug`, `role_description`, `summary`, `team_context`, `system_prompt`). Returns `{ error }` if the slug is unknown.
 
@@ -236,7 +236,7 @@ Add or update a marketplace team's roster on a project's team. CEO-only. Fetches
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `slug` | `string` | Yes | The marketplace team slug to add (e.g. "software-development"). |
+| `slug` | `string` | Yes | The marketplace team slug to add (e.g. "app-dev"). |
 | `refresh_existing` | `boolean` | No | When true, refresh roles the team already has to this team's current prompts/descriptions instead of skipping them. Default false. Use for a version update of the same team; prefer selective update_agent_system_prompt when roles carry customizations. |
 
 **Returns:** `{ added, refreshed, skipped, captain_updated, version }` - the roster slugs added, refreshed in place (with `refresh_existing`), and skipped. Provisions members directly (no approval flow). Returns `{ error }` if the slug is unknown.
@@ -254,7 +254,7 @@ Add ONE role from a marketplace team to a project's team. CEO-only. Use this whe
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
-| `slug` | `string` | Yes | The marketplace team slug the role comes from (e.g. "software-development"). |
+| `slug` | `string` | Yes | The marketplace team slug the role comes from (e.g. "app-dev"). |
 | `role` | `string` | Yes | The roster role slug to add (e.g. "security-engineer"), as listed by get_marketplace_team. The Captain is not a roster role and cannot be added this way. |
 
 **Returns:** `{ role, added, skipped, reports_to, reports_to_fell_back, version }` for the single role provisioned. `skipped` is true when the team already had that slug. `reports_to_fell_back` is true when the role’s own manager is not on this team, so the line was wired to the Captain as a placeholder. Returns `{ error }` if the team slug or role slug is unknown.

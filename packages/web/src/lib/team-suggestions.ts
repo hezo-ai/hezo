@@ -1,4 +1,9 @@
-import { extractTerms, type MarketplaceIndexEntry, uniqueTerms } from '@hezo/shared';
+import {
+	DEFAULT_TEAM_TEMPLATE_NAME,
+	extractTerms,
+	type MarketplaceIndexEntry,
+	uniqueTerms,
+} from '@hezo/shared';
 import type { TeamTemplate } from '../hooks/use-team-templates';
 
 /**
@@ -181,26 +186,58 @@ export function buildTeamOptions(
 }
 
 /**
+ * The weakest field a match may land in and still be worth suggesting.
+ *
+ * A team's `keywords` and its name are its own statement of what it is for; its
+ * description and long marketing summary mention half the vocabulary of every
+ * project brief. Scoring alone cannot separate those, because enough weak hits
+ * out-total one strong one — so the floor is on the *best* field a query term
+ * matched, not on the sum. Set at `name`, so authored keywords and the team name
+ * qualify and a blurb hit alone never does.
+ */
+export const MIN_SUGGEST_FIELD_WEIGHT: number = FIELD_WEIGHT.name;
+
+/**
  * Rank options by weighted term overlap with the query (the project name +
  * description). Each distinct query term scores the weight of the best field it
  * matches in — authored keywords beat name beats description beats summary — and
  * terms are matched as whole stemmed words, never as substrings, so "app" hits
  * "App Team" and not the "approval" buried in another team's blurb. Ties fall
- * back to the original order. Returns the top `limit` positively-scored options,
- * or `[]` when the query has no usable terms (the caller decides the empty-query
- * fallback).
+ * back to the original order.
+ *
+ * Only options clearing {@link MIN_SUGGEST_FIELD_WEIGHT} are returned: a suggestion
+ * is a claim that this team fits, and a team whose only connection to the brief is
+ * a word buried in its summary does not. Returns the top `limit` qualifying
+ * options, or `[]` when the query has no usable terms or nothing clears the floor —
+ * the caller decides that fallback (see {@link blankTeamOption}).
  */
 export function rankTeams(query: string, options: TeamOption[], limit = 2): TeamOption[] {
 	const terms = uniqueTerms(query);
 	if (terms.length === 0) return [];
 	return options
-		.map((option, index) => ({
-			option,
-			index,
-			score: terms.reduce((acc, term) => acc + (option.terms.get(term) ?? 0), 0),
-		}))
-		.filter((entry) => entry.score > 0)
+		.map((option, index) => {
+			let score = 0;
+			let bestWeight = 0;
+			for (const term of terms) {
+				const weight = option.terms.get(term) ?? 0;
+				score += weight;
+				if (weight > bestWeight) bestWeight = weight;
+			}
+			return { option, index, score, bestWeight };
+		})
+		.filter((entry) => entry.bestWeight >= MIN_SUGGEST_FIELD_WEIGHT)
 		.sort((a, b) => b.score - a.score || a.index - b.index)
 		.slice(0, limit)
 		.map((entry) => entry.option);
+}
+
+/**
+ * The Blank template, for the picker to offer when {@link rankTeams} matches
+ * nothing. Blank is the honest answer to "we have no idea what this is": a Captain
+ * and nothing else, with the roster hired once the work is understood. Showing the
+ * first two catalog entries instead — the old fallback — presents whatever happens
+ * to sort first as though it had been matched.
+ */
+export function blankTeamOption(options: TeamOption[]): TeamOption | undefined {
+	return options.find((o) => o.kind === 'template' && o.name === DEFAULT_TEAM_TEMPLATE_NAME);
 }

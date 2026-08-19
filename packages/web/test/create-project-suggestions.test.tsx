@@ -49,6 +49,32 @@ test('describing the project reveals ranked suggestions; picking one confirms it
 	await findByTestId('plan-with-ceo-submit');
 });
 
+test('a brief matching no team suggests Blank, not the first two catalog entries', async () => {
+	const { user, findByPlaceholderText, findByTestId } = await openDialogFromHome();
+
+	// The reported bug, verbatim. Nothing in any team's keywords or name says
+	// "translations" or "workflow", so the old `newOptions.slice(0, 2)` fallback
+	// offered Social Media Marketing and Investment Portfolio - whatever sorted
+	// first - under a heading that reads as "these match".
+	await user.type(await findByPlaceholderText('e.g. Marketing Site'), 'translations workflow');
+	await user.type(
+		await findByPlaceholderText(/What is this project/),
+		'we need a workflow for doing translations',
+	);
+
+	await waitFor(() =>
+		expect(screen.queryByText('Describe your project above to see suggested teams.')).toBeNull(),
+	);
+	await findByTestId('team-type-card-Blank', undefined, { timeout: 15_000 });
+
+	// And none of the marketplace teams are put forward as a match.
+	await waitFor(() => {
+		expect(screen.queryByTestId('marketplace-team-card-influencer')).toBeNull();
+		expect(screen.queryByTestId('marketplace-team-card-investment')).toBeNull();
+		expect(screen.queryByTestId('marketplace-team-card-app-dev')).toBeNull();
+	});
+});
+
 test('View all teams opens the tabbed catalog with search; Back preserves the entry fields', async () => {
 	const { user, findByPlaceholderText, findByTestId, ws } = await openDialogFromHome();
 

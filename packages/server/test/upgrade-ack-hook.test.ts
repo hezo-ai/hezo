@@ -36,7 +36,7 @@ describe('upgrade-bearing classification', () => {
 				'packages/server/src/services/agent-runner.ts',
 				'packages/web/src/routes/index.tsx',
 				'packages/shared/src/types/common.ts',
-				'agents/software-development/engineer.md',
+				'agents/app-dev/engineer.md',
 				'docs/deployment/configuration.md',
 				'packages/server/test/cli.test.ts',
 			]),

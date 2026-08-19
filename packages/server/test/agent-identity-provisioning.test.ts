@@ -51,7 +51,7 @@ describe('bundled identity reaches a provisioned team', () => {
 	it('provisions every marketplace role unnamed, with its gender and avatar', async () => {
 		const teamRes = await createTestTeam(db, {
 			name: 'Identity Whole Team Co',
-			marketplace_slug: 'software-development',
+			marketplace_slug: 'app-dev',
 		});
 		const teamId = (await teamRes.json()).data.id as string;
 
@@ -67,7 +67,10 @@ describe('bundled identity reaches a provisioned team', () => {
 		// With no name of its own, the server-side label is the role.
 		expect(engineer?.display_name).toBe('Engineer');
 		// The seed is keyed on the role, so no discarded first name survives in the
-		// data and the face is stable across provisionings.
+		// data and the face is stable across provisionings. It still reads
+		// `software-development:` after the slug was renamed to `app-dev`, and that is
+		// deliberate: the seed is an opaque identity token, and re-keying it would
+		// change every App Team face on newly-provisioned teams for no gain.
 		expect(engineer?.avatar_spec).toEqual({
 			seed: 'software-development:engineer',
 			gender: 'm',
@@ -89,7 +92,7 @@ describe('bundled identity reaches a provisioned team', () => {
 	it('gives the Captain a face but no human name', async () => {
 		const teamRes = await createTestTeam(db, {
 			name: 'Identity Captain Co',
-			marketplace_slug: 'software-development',
+			marketplace_slug: 'app-dev',
 		});
 		const teamId = (await teamRes.json()).data.id as string;
 
@@ -112,7 +115,7 @@ describe('bundled identity reaches a provisioned team', () => {
 	it('carries the identity when a single role is added on its own', async () => {
 		const teamRes = await createTestTeam(db, { name: 'Identity Single Role Co' });
 		const teamId = (await teamRes.json()).data.id as string;
-		const def = await getMarketplaceTeam('software-development');
+		const def = await getMarketplaceTeam('app-dev');
 		if (!def) throw new Error('missing def');
 
 		await applyMarketplaceRoleToTeam(db, teamId, def, 'ui-designer', {});
@@ -137,10 +140,10 @@ describe('bundled identity reaches a provisioned team', () => {
 	it('keeps a name the admin set when the team is updated underneath it', async () => {
 		const teamRes = await createTestTeam(db, {
 			name: 'Identity Refresh Co',
-			marketplace_slug: 'software-development',
+			marketplace_slug: 'app-dev',
 		});
 		const teamId = (await teamRes.json()).data.id as string;
-		const def = await getMarketplaceTeam('software-development');
+		const def = await getMarketplaceTeam('app-dev');
 		if (!def) throw new Error('missing def');
 
 		// The admin names their Engineer and picks a different face.

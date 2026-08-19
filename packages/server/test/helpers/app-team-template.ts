@@ -3,9 +3,9 @@ import { getMarketplaceTeam } from '../../src/services/marketplace';
 
 /**
  * TEST FIXTURE ONLY. Production no longer seeds the "App Team" team template — its
- * roster lives in the marketplace (`marketplace/teams/software-development.json`)
+ * roster lives in the marketplace (`marketplace/teams/app-dev.json`)
  * and is provisioned directly. But a large body of existing tests provisions a
- * full software-development team via `GET /api/team-templates` → find `App Team` →
+ * full App Team roster via `GET /api/team-templates` → find `App Team` →
  * `createTestTeam({ template_id })`. To keep that affordance without rewriting
  * every test, the harness materializes an equivalent `App Team` DB template from
  * the marketplace def: `agent_types` for each roster role, a non-builtin
@@ -14,10 +14,10 @@ import { getMarketplaceTeam } from '../../src/services/marketplace';
  * `seedBuiltins` in `createTestApp`.
  */
 export async function seedTestAppTeamTemplate(db: Db): Promise<void> {
-	const def = await getMarketplaceTeam('software-development');
+	const def = await getMarketplaceTeam('app-dev');
 	if (!def) {
 		throw new Error(
-			'seedTestAppTeamTemplate: marketplace "software-development" team not found — is HEZO_MARKETPLACE_DIR set and marketplace/teams built?',
+			'seedTestAppTeamTemplate: marketplace "app-dev" team not found — is HEZO_MARKETPLACE_DIR set and marketplace/teams built?',
 		);
 	}
 

@@ -21,7 +21,7 @@ describe('prompt-bearing classification', () => {
 	it('covers the four surfaces that carry agent-facing prose', () => {
 		expect(
 			promptBearingFiles([
-				'agents/software-development/engineer.md',
+				'agents/app-dev/engineer.md',
 				'agents/_partials/common/repo-work.md',
 				'skills/code-review.md',
 				'marketplace/teams/investment.json',
@@ -50,7 +50,7 @@ describe('prompt-bearing classification', () => {
 });
 
 describe('the Prompts-Checked trailer', () => {
-	const staged = ['agents/software-development/engineer.md'];
+	const staged = ['agents/app-dev/engineer.md'];
 
 	it('rejects a prompt commit with no trailer', () => {
 		const r = checkCommitMessage('refactor(prompts): tighten the engineer prompt', staged);
@@ -91,7 +91,7 @@ describe('the Prompts-Checked trailer', () => {
 
 describe('marketplace reach', () => {
 	it('treats team docs and partials as shipping to other repositories', () => {
-		expect(isMarketplaceReaching('agents/software-development/engineer.md')).toBe(true);
+		expect(isMarketplaceReaching('agents/app-dev/engineer.md')).toBe(true);
 		expect(isMarketplaceReaching('agents/_partials/common/code-quality-principles.md')).toBe(true);
 	});
 

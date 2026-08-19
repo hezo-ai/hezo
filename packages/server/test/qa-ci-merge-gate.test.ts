@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Guard: the QA Engineer is the pre-merge approval gate for the software-development
- * team. Its role doc MUST require the PR's CI to be green before it approves for
+ * Guard: the QA Engineer is the pre-merge approval gate for the App Team.
+ * Its role doc MUST require the PR's CI to be green before it approves for
  * merge, where "green" means every required check has **finished executing** and
  * concluded `success` — not that a still-running run merely hasn't failed yet, and
  * not a wave-through of a red check as an "environment"/"infrastructure"/"flake"
@@ -25,9 +25,9 @@ async function readRoleDoc(relPath: string): Promise<string> {
 	return (await readFile(join(AGENTS_DIR, relPath), 'utf-8')).toLowerCase();
 }
 
-describe('software-development team enforces a CI-green merge gate', () => {
+describe('App Team enforces a CI-green merge gate', () => {
 	it('QA role doc requires CI to be green before approving for merge', async () => {
-		const text = await readRoleDoc('software-development/qa-engineer.md');
+		const text = await readRoleDoc('app-dev/qa-engineer.md');
 
 		// CI-green is a stated precondition to approval/merge (workflow step + hard rule).
 		expect(text).toContain('ci is green');
@@ -40,7 +40,7 @@ describe('software-development team enforces a CI-green merge gate', () => {
 	});
 
 	it('requires all required checks to finish executing before approval (in-progress is not a pass)', async () => {
-		const text = await readRoleDoc('software-development/qa-engineer.md');
+		const text = await readRoleDoc('app-dev/qa-engineer.md');
 
 		// CI passes only when every required check has *finished executing* — not
 		// when a run merely hasn't failed yet, a sub-step passed, or a stage is
@@ -51,7 +51,7 @@ describe('software-development team enforces a CI-green merge gate', () => {
 	});
 
 	it('Engineer merge step is gated on CI being green and having finished', async () => {
-		const text = await readRoleDoc('software-development/engineer.md');
+		const text = await readRoleDoc('app-dev/engineer.md');
 
 		// The merge step must require green CI before merging, with no environmental exemption.
 		expect(text).toContain('required ci check');

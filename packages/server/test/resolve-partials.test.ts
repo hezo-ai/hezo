@@ -66,7 +66,7 @@ describe('loadAgentRoles integrates resolvePartials', () => {
 	it('seeds the binary Captain/instance prompts with the shared partials expanded', async () => {
 		// loadAgentRoles now only carries the roles that stay in the binary: the Blank
 		// Captain and the instance singletons (CEO/Coach). The specialist roster prompts
-		// (software-development/*) moved to the marketplace and are covered by the
+		// (app-dev/*) moved to the marketplace and are covered by the
 		// marketplace build test — see marketplace-build coverage.
 		const docs = await loadAgentRoles();
 

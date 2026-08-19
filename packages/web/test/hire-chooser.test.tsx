@@ -113,7 +113,7 @@ test('"Browse the marketplace" carries the project into the catalog', async () =
 	expect(banner.textContent).toContain('Storefront');
 
 	// And the project rides along to the team detail page.
-	const card = await findByTestId('marketplace-card-software-development');
+	const card = await findByTestId('marketplace-card-app-dev');
 	expect(card.getAttribute('href')).toContain(`forProject=${project.slug}`);
 });
 

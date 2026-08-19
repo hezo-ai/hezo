@@ -77,7 +77,7 @@ import { getDueGoals } from './goals';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { refreshModelPins } from './model-pins';
-import { noWorkCooldownActive } from './no-work-backoff';
+import { noWorkCooldownActive, parkedOnAdminAsk } from './no-work-backoff';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
@@ -2289,32 +2289,40 @@ export class JobManager {
 			task = tasks.rows[0];
 		}
 
-		// No-work backoff. Placed here, after task resolution, because it is the one
-		// point every wakeup source passes through holding a concrete task - both the
-		// payload-targeted wakeups and the ones that select a task above. A gate per
-		// source would have to be re-added to each new source; this cannot be missed.
+		// Dispatch suppressions. Placed here, after task resolution, because it is the
+		// one point every wakeup source passes through holding a concrete task - both
+		// the payload-targeted wakeups and the ones that select a task above. A gate
+		// per source would have to be re-added to each new source; this cannot be
+		// missed.
 		//
-		// Skipped rather than re-queued: the last run answered this exact question and
-		// nothing has changed since, so there is nothing to retry. New input lifts it
-		// immediately (see noWorkCooldownActive), and it expires on its own at the
-		// agent's configured cadence.
-		if (await noWorkCooldownActive(db, memberId, task.id, wakeupSource)) {
+		// Both ask the same question - would this run reach a conclusion the last one
+		// already reached? - and differ only in what makes it stale. The no-work
+		// backoff expires at the agent's own cadence; the parked-on-admin one expires
+		// when a person answers. Each is skipped rather than re-queued: there is
+		// nothing to retry, and the exempt sources in `no-work-backoff.ts` mean any
+		// real new input dispatches immediately.
+		const suppression = (await noWorkCooldownActive(db, memberId, task.id, wakeupSource))
+			? {
+					reason: WakeupSkipReason.NoWorkCooldown,
+					detail: `reported no work on ${ref(task.identifier, task.id)} within its heartbeat interval and nothing has changed since`,
+				}
+			: (await parkedOnAdminAsk(db, memberId, task.id, wakeupSource))
+				? {
+						reason: WakeupSkipReason.ParkedOnAdmin,
+						detail: `is waiting on an unanswered ask on ${ref(task.identifier, task.id)} and nobody has replied since`,
+					}
+				: null;
+		if (suppression) {
 			log.debug(
-				`Agent ${ref(agent.rows[0].slug, memberId)} reported no work on ${ref(task.identifier, task.id)} within its heartbeat interval and nothing has changed since — skipping wakeup`,
+				`Agent ${ref(agent.rows[0].slug, memberId)} ${suppression.detail} — skipping wakeup`,
 			);
-			await this.markWakeupSkipped(
-				wakeupId,
-				WakeupSkipReason.NoWorkCooldown,
-				task.id,
-				teamId,
-				null,
-			);
+			await this.markWakeupSkipped(wakeupId, suppression.reason, task.id, teamId, null);
 			// Completed, not left claimed: the wakeup was considered and answered -
 			// there is nothing to do - which is the same outcome as the "no actionable
 			// tasks" branch above, and it must not sit in `claimed` forever. Not
 			// re-queued either: retrying would re-ask a question already answered, and
 			// the next container start or scheduled heartbeat raises a fresh wakeup
-			// once the window has passed.
+			// once the window has passed (or, when parked, once someone replies).
 			if (wakeupId) {
 				await db.query(
 					`UPDATE agent_wakeup_requests SET status = $1::wakeup_status, completed_at = now() WHERE id = $2`,

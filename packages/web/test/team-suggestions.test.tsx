@@ -1,10 +1,12 @@
 import type { MarketplaceIndexEntry, TeamTemplateSource } from '@hezo/shared';
-import { stemTerm } from '@hezo/shared';
+import { DEFAULT_TEAM_TEMPLATE_NAME, stemTerm } from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import type { TeamTemplate, TeamTemplateAgentType } from '../src/hooks/use-team-templates';
 import {
+	blankTeamOption,
 	buildTeamOptions,
 	FIELD_WEIGHT,
+	MIN_SUGGEST_FIELD_WEIGHT,
 	rankTeams,
 	SUGGEST_MIN_CHARS,
 } from '../src/lib/team-suggestions';
@@ -240,9 +242,9 @@ describe('rankTeams', () => {
 	it('caps the result at the given limit', () => {
 		const many = buildTeamOptions(
 			[
-				mp({ slug: 'a', name: 'A', description: 'growth' }),
-				mp({ slug: 'b', name: 'B', description: 'growth' }),
-				mp({ slug: 'c', name: 'C', description: 'growth' }),
+				mp({ slug: 'a', name: 'A', keywords: ['growth'] }),
+				mp({ slug: 'b', name: 'B', keywords: ['growth'] }),
+				mp({ slug: 'c', name: 'C', keywords: ['growth'] }),
 			],
 			[],
 			[],
@@ -252,5 +254,71 @@ describe('rankTeams', () => {
 
 	it('exports a positive minimum-chars threshold', () => {
 		expect(SUGGEST_MIN_CHARS).toBeGreaterThan(0);
+	});
+
+	it('does not suggest a team whose only match is buried in its summary', () => {
+		// The reported bug: "translations workflow" reached Social Media Marketing and
+		// Investment Portfolio through their marketing blurbs, and both were rendered
+		// under "Suggested teams" as though they had been matched.
+		const teams = buildTeamOptions(
+			[
+				mp({
+					slug: 'social',
+					name: 'Social Media Marketing',
+					description: 'Grow your social reach',
+					summary: 'the Content Editor verifies each workflow before it is published',
+				}),
+				mp({
+					slug: 'inv',
+					name: 'Investment Portfolio',
+					description: 'Research-grade stock research',
+					summary: 'work flows through three quality gates in this workflow',
+				}),
+			],
+			[],
+			[],
+		);
+		expect(rankTeams('translations workflow', teams, 2)).toEqual([]);
+	});
+
+	it('still suggests on a keyword or name match, which is the team saying so itself', () => {
+		const teams = buildTeamOptions(
+			[
+				mp({ slug: 'app', name: 'App Team', keywords: ['website'], summary: 'workflow' }),
+				mp({ slug: 'social', name: 'Social Media Marketing', summary: 'workflow' }),
+			],
+			[],
+			[],
+		);
+		expect(rankTeams('a website workflow', teams, 2).map((o) => o.name)).toEqual(['App Team']);
+	});
+
+	it('holds the floor at the team-name weight', () => {
+		expect(MIN_SUGGEST_FIELD_WEIGHT).toBe(FIELD_WEIGHT.name);
+		expect(MIN_SUGGEST_FIELD_WEIGHT).toBeGreaterThan(FIELD_WEIGHT.description);
+	});
+});
+
+describe('blankTeamOption', () => {
+	it('finds the Blank template among the options', () => {
+		const options = buildTeamOptions(
+			[mp({ slug: 'app', name: 'App Team' })],
+			[tpl({ id: 'blank', name: DEFAULT_TEAM_TEMPLATE_NAME }), tpl({ id: 'other', name: 'Saved' })],
+			[],
+		);
+		const blank = blankTeamOption(options);
+		expect(blank?.name).toBe(DEFAULT_TEAM_TEMPLATE_NAME);
+		expect(blank?.kind).toBe('template');
+	});
+
+	it('returns undefined when no Blank template is in the catalog', () => {
+		expect(blankTeamOption(buildTeamOptions([mp({ slug: 'app', name: 'App Team' })], [], []))).toBe(
+			undefined,
+		);
+	});
+
+	it('never mistakes a marketplace team named Blank for the template', () => {
+		const options = buildTeamOptions([mp({ slug: 'b', name: DEFAULT_TEAM_TEMPLATE_NAME })], [], []);
+		expect(blankTeamOption(options)).toBe(undefined);
 	});
 });

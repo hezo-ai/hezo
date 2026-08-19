@@ -71,7 +71,7 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   budget/pricing math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/server`** imports from `shared` and embeds `web` at build time.
-- **`agents/`** holds role prose by team (`software-development/`, `blank/`), the two
+- **`agents/`** holds role prose by team (`app-dev/`, `blank/`), the two
   instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable `_partials/`.
   The build bakes only `blank/` + `_instance/` into `agents-bundle.json` (the DB seed reads
   them at startup); marketplace team dirs (those with a `team.json`) are compiled into
@@ -972,6 +972,10 @@ project.
   role, `reports_to`, hire, or enable/disable change on the established team — are enqueued to that
   team's own **Captain** (`enqueueTeamCoherenceReviewTask` picks the assignee by reason, falling
   back to the CEO for HQ, which has no Captain). Coalescing and the change-summary section are unchanged.
+  The generated body carries `ACTIVE_ADMIN_MENTION_RULE` (`services/description-tasks.ts`, shared with
+  the project-intake body): the pass asks the admin things - a removal to confirm, a heartbeat cadence
+  before a hire - and a comment that merely *says* it wants confirmation raises no `admin_mentions`
+  row, so it reaches no inbox and the setup waits on an answer nobody was asked for.
   **A newly created agent's work is gated on the review that onboarded it.** Every path that
   *creates* agents — the hire approval handler, both `routes/agents.ts` create/onboard paths,
   fresh-project provisioning, and both `team-template-apply` paths — goes through
@@ -1069,7 +1073,7 @@ rough running summary of those off-project conversations, since they live nowher
 chat window scrolls.
 
 **Project teams** are provisioned either from a DB team-type template (default **Blank** =
-Captain only) or directly from a **marketplace team** (`software-development` = Captain + 9
+Captain only) or directly from a **marketplace team** (`app-dev` = Captain + 9
 worker roles). Templates/marketplace teams never include the CEO/Coach. Roster prose lives
 in `agents/<template>/`, the instance roles in `agents/_instance/`, shared snippets in
 `agents/_partials/`; the default specialist rosters ship from the **marketplace** (below),
@@ -1103,7 +1107,14 @@ immediately; the CEO-assisted path leaves it **unassigned and un-woken**.
 2. **CEO-assisted** — `POST /api/project-intakes`: opens a CEO-run intake conversation
    ticket in HQ (label `project-intake`) recording the form data and the admin's chosen
    team type as the CEO's **baseline suggestion**. **Nothing is created up front — no
-   team, no project, no approval.** The CEO scopes the work with the admin; when the
+   team, no project, no approval, and no run.** The route posts the CEO's greeting itself
+   and fans it out to the admin inbox with `fireAdminMention`; it queues **no** wakeup,
+   because the greeting already is the CEO's opening ask and a run started there would only
+   re-introduce and re-ask it. The CEO's first run is the `reply` wakeup raised when the
+   admin answers - `ProjectIntakeHomePanel` threads their message onto the last CEO comment
+   for exactly that reason. The inbox row also parks the ticket for `parkedOnAdminAsk`
+   (§ The parked-on-admin suppression), so an unanswered intake costs no heartbeat runs
+   either. The CEO scopes the work with the admin; when the
    admin approves in the thread (a plain reply — there is no inbox button), the CEO calls
    the `create_project` MCP tool, which runs the same `createProjectWithTeam` and closes
    the intake ticket. On this path the coherence/setup task does **not** auto-run: it is
@@ -1225,7 +1236,7 @@ override. `marketplace/index.json` is the catalog listing.
   client-side; a user submits that file to the Hezo authors on GitHub, whose `build:marketplace`
   re-derives the hash/version/validation when it lands in the repo. Read-only, project-access
   gated. (Parallels a future `get_team_bundle` MCP tool if one is added.)
-- **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster),
+- **Shipped teams.** Three: **App Team** (`app-dev`, the full app-building roster),
   **Social Media Marketing** (`influencer` — brand-strategist, trend-researcher, content-writer,
   media-producer, content-editor, distribution-manager), and **Investment Portfolio**
   (`investment` — market-researcher, equity-analyst, catalyst-monitor, risk-verifier,
@@ -2319,6 +2330,25 @@ in-progress flip and would report "changed" on the quietest run. Conversational 
 are exempt: each is somebody asking for something the last pass could not have served. A
 suppressed wakeup is marked `completed` with `last_skipped_reason = no_work_cooldown` -
 answered, not re-queued to ask again, and not left dangling in `claimed`.
+
+**The parked-on-admin suppression.** `noWorkCooldownActive` covers only the case where the
+agent *said* it had nothing to do. The commoner one is an agent that asked a human something
+and stopped - which the stop judge explicitly allows and `SHARED_INSTRUCTIONS` tells the agent
+not to re-engage, but which nothing stopped the *scheduler* dispatching onto. An unanswered
+`@admin` question therefore bought a full run every heartbeat until it was answered or the
+task closed. `parkedOnAdminAsk` (same module) applies the second verdict at the same point,
+suppressing when both hold: an ask still stands on the thread - a comment that raised an
+`admin_mentions` row, or an unanswered choice card (`chosen_option IS NULL`), spelled through
+`outstandingAdminAskExistsSql` in `lib/task-sort.ts` so migration 059's partial index still
+applies - and nobody but this agent has commented since. The agent's own later comments are
+excluded: chasing its own question is not an answer to it. Unlike the no-work backoff it is
+**unbounded in time**, because a question addressed to a person goes stale only when they
+answer; the same exempt sources carry every form that answer can take, and `on_demand` ("Run
+now") is the operator's override. Over-suppression is accepted: any `@admin` in a comment
+parks the task, including one inside a routine status update. It is marked `completed` with
+`last_skipped_reason = parked_on_admin`. Kept a sibling predicate rather than folded into the
+same query because migration 061's frozen comment names `noWorkCooldownActive` and that file,
+so neither can be renamed to cover both.
 
 **The container-start fan-out, and the loop it used to close.** `provisionContainer` ends by
 nudging the project's agents (`wakeAgentsWithPendingWork`) so work queued while the container

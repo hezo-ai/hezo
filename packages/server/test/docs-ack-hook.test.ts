@@ -20,7 +20,7 @@ describe('docBearingFiles', () => {
 			'skills/debugging.md',
 			'docker/Dockerfile.agent-base',
 			'deploy/provision.sh',
-			'marketplace/teams/software-development.json',
+			'marketplace/teams/app-dev.json',
 			'scripts/test.ts',
 		];
 		expect(docBearingFiles(files)).toEqual(files);

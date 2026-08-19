@@ -11,9 +11,10 @@ it differs from the original plan below:
 
 - **Three marketplace teams** (each an `agents/<team>/team.json` manifest +
   role `.md` prompt bodies, compiled to committed `marketplace/teams/<slug>.json`
-  by `build:marketplace`): **App Team** (slug `software-development`, display
-  name renamed from "Startup" — a content change, no migration needed since
-  marketplace teams are never persisted as `team_templates` rows),
+  by `build:marketplace`): **App Team** (slug `app-dev`, renamed from
+  `software-development`; display name renamed from "Startup" — both content
+  changes, no migration needed since marketplace teams are never persisted as
+  `team_templates` rows),
   **Influencer Marketing** (slug `influencer`), and **Investment** (slug
   `investment`). Running instances pick them up from the live catalog without
   a binary upgrade.
@@ -120,6 +121,10 @@ wrinkle:
   `defaultTeamContextFor()` in `seed.ts` hard-code that path, the partials and
   a large test surface reference it, and it's not user-visible. Renaming the
   dir buys nothing.
+  - **Superseded.** The dir is now `agents/app-dev/`, renamed alongside the
+    slug. `seed.ts` no longer hard-codes a roster dir (the specialist rosters
+    moved to the marketplace, which resolves prompts by the manifest's own
+    directory), so the objection above no longer applies.
 - Tests: many server tests and the browser helpers provision by the literal
   template name (`test/browser/helpers.ts`, `run-trigger-reason.spec.ts`, a
   dozen-plus files under `packages/server/test/` — grep `'Startup'`). Introduce

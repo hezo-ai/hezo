@@ -13,7 +13,7 @@ describe('shipped role docs satisfy the required system-prompt variables', () =>
 	it('every team-template role doc contains all required vars', async () => {
 		const roles = await loadAgentRoles();
 		const hireable = Object.entries(roles).filter(
-			([path]) => path.startsWith('software-development/') || path.startsWith('blank/'),
+			([path]) => path.startsWith('app-dev/') || path.startsWith('blank/'),
 		);
 		expect(hireable.length).toBeGreaterThan(0);
 

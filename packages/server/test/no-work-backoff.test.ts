@@ -3,7 +3,7 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
-import { noWorkCooldownActive } from '../src/services/no-work-backoff';
+import { noWorkCooldownActive, parkedOnAdminAsk } from '../src/services/no-work-backoff';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -228,5 +228,111 @@ describe('noWorkCooldownActive', () => {
 		);
 
 		expect(await noWorkCooldownActive(db, agentId, taskId, WakeupSource.Automation)).toBe(false);
+	});
+});
+
+/**
+ * An agent-authored comment on the shared task, optionally raising the admin-inbox
+ * row that makes it an outstanding ask. Returns the comment id.
+ */
+async function insertAgentComment(opts: {
+	minutesAgo: number;
+	raisesAdminMention?: boolean;
+	contentType?: CommentContentType;
+	chosenOption?: string | null;
+}): Promise<string> {
+	const c = await db.query<{ id: string }>(
+		`INSERT INTO task_comments (task_id, author_member_id, content_type, content, created_at, chosen_option)
+		 VALUES ($1, $2, $3::comment_content_type, $4::jsonb, now() - ($5 || ' minutes')::interval, $6::jsonb)
+		 RETURNING id`,
+		[
+			taskId,
+			agentId,
+			opts.contentType ?? CommentContentType.Text,
+			JSON.stringify({ text: 'over to you @admin' }),
+			String(opts.minutesAgo),
+			opts.chosenOption === undefined || opts.chosenOption === null
+				? null
+				: JSON.stringify(opts.chosenOption),
+		],
+	);
+	const commentId = c.rows[0].id;
+	if (opts.raisesAdminMention) {
+		const user = await db.query<{ id: string }>('SELECT id FROM users LIMIT 1');
+		await db.query(
+			`INSERT INTO admin_mentions (team_id, task_id, comment_id, user_id)
+			 VALUES ($1, $2, $3, $4)`,
+			[teamId, taskId, commentId, user.rows[0].id],
+		);
+	}
+	return commentId;
+}
+
+describe('parkedOnAdminAsk', () => {
+	it('parks the task while an @admin ask stands unanswered', async () => {
+		await clearRuns();
+		await insertAgentComment({ minutesAgo: 10, raisesAdminMention: true });
+
+		// The exact leak: an intake whose last word is a question to a human, woken
+		// again every heartbeat to re-read a thread nobody has added to.
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+	});
+
+	it('lifts the moment anyone else speaks', async () => {
+		await clearRuns();
+		await insertAgentComment({ minutesAgo: 10, raisesAdminMention: true });
+		await insertComment(2, null);
+
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('stays parked when the agent is the only one who spoke since', async () => {
+		await clearRuns();
+		await insertAgentComment({ minutesAgo: 10, raisesAdminMention: true });
+		await insertAgentComment({ minutesAgo: 2 });
+
+		// Chasing its own question is not an answer to it.
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+	});
+
+	it('parks on an unanswered choice card, and lifts once it is answered', async () => {
+		await clearRuns();
+		const askId = await insertAgentComment({
+			minutesAgo: 10,
+			contentType: CommentContentType.CredentialRequest,
+		});
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(true);
+
+		await db.query(`UPDATE task_comments SET chosen_option = '"provided"'::jsonb WHERE id = $1`, [
+			askId,
+		]);
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('does not park a thread carrying no ask at all', async () => {
+		await clearRuns();
+		await insertAgentComment({ minutesAgo: 10 });
+
+		expect(await parkedOnAdminAsk(db, agentId, taskId, WakeupSource.Heartbeat)).toBe(false);
+	});
+
+	it('never suppresses a conversational source, so the answer always gets through', async () => {
+		await clearRuns();
+		await insertAgentComment({ minutesAgo: 1, raisesAdminMention: true });
+
+		for (const source of [
+			WakeupSource.Mention,
+			WakeupSource.Comment,
+			WakeupSource.Reply,
+			WakeupSource.OnDemand,
+			WakeupSource.CredentialProvided,
+			WakeupSource.AssetDeletionResolved,
+		]) {
+			expect(await parkedOnAdminAsk(db, agentId, taskId, source)).toBe(false);
+		}
+	});
+
+	it('returns false for a task-less wakeup', async () => {
+		expect(await parkedOnAdminAsk(db, agentId, null, WakeupSource.Heartbeat)).toBe(false);
 	});
 });

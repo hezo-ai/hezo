@@ -87,14 +87,15 @@ describe('createProjectIntake — baseline / plan branches', () => {
 		expect(task.rows[0].description).toContain('App Team');
 	});
 
-	it('broadcasts the new intake task when a wsManager is supplied', async () => {
+	it('broadcasts the new intake task and its admin-inbox row when a wsManager is supplied', async () => {
 		const wsManager = new WebSocketManager();
-		let broadcastTable: string | null = null;
-		// The room-broadcast path serializes the row; just confirm it runs without
-		// throwing and a task exists. Spy via the manager's broadcast method.
+		// Collect every table broadcast rather than keeping only the last: intake
+		// raises the admin-inbox row after the task, so a last-write-wins spy would
+		// assert on whichever broadcast happens to come last.
+		const broadcastTables: string[] = [];
 		const original = wsManager.broadcast.bind(wsManager);
 		wsManager.broadcast = ((room: string, msg: { table?: string }) => {
-			if (msg?.table) broadcastTable = msg.table;
+			if (msg?.table) broadcastTables.push(msg.table);
 			return original(room, msg as never);
 		}) as typeof wsManager.broadcast;
 
@@ -104,7 +105,9 @@ describe('createProjectIntake — baseline / plan branches', () => {
 			wsManager,
 		);
 		expect(result).not.toBeNull();
-		expect(broadcastTable).toBe('tasks');
+		expect(broadcastTables).toContain('tasks');
+		// The inbox row is how the intake reaches the admin now that no run is started.
+		expect(broadcastTables).toContain('admin_mentions');
 	});
 });
 

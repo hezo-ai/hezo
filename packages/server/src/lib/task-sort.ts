@@ -52,6 +52,28 @@ export function adminUnreadMentionExistsSql(alias: string, adminUserIdx: number)
 }
 
 /**
+ * "This one comment is an ask still standing on a human" - it raised an admin-inbox
+ * row, or it is a choice card nobody has answered (`chosen_option IS NULL`).
+ *
+ * Comment-scoped, where {@link adminActionPendingSql} is task-scoped: the dispatch
+ * suppression needs to know *which* comment carries the ask, so it can weigh that
+ * comment's place in the thread against the newest reply. Both spell the content
+ * types through `PENDING_ASK_CONTENT_TYPE_LIST` so migration 059's partial index
+ * applies to either caller.
+ *
+ * The inbox leg is deliberately not scoped to `read_at IS NULL`: an admin reading
+ * the notification is not an admin answering it, and a suppression keyed on the
+ * badge would lift while the question still stands.
+ */
+export function outstandingAdminAskExistsSql(commentAlias: string): string {
+	return `(
+    EXISTS (SELECT 1 FROM admin_mentions am WHERE am.comment_id = ${commentAlias}.id)
+    OR (${commentAlias}.chosen_option IS NULL
+        AND ${commentAlias}.content_type IN (${PENDING_ASK_CONTENT_TYPE_LIST}))
+  )`;
+}
+
+/**
  * "This task is waiting on the admin" - the task list's second ordering tier, and
  * a column on its rows. Two legs: an unread inbox row for the viewing admin (an
  * `@admin` ask, a credential request, an asset-deletion ask), or an ask comment
