@@ -6,14 +6,14 @@ import { getTestContext, renderApp } from './helpers/render';
 test('marketplace list renders the available teams', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/marketplace' });
 	await findByTestId('marketplace-page');
-	// The software-development team ("App Team") is served from the committed folder.
+	// The App Team (slug `app-dev`) is served from the committed folder.
 	await findByText('App Team');
-	await findByTestId('marketplace-card-software-development');
+	await findByTestId('marketplace-card-app-dev');
 });
 
 test('marketplace detail shows the roster, version, and changelog with breadcrumbs', async () => {
 	const { findByTestId, findByText, getAllByText } = await renderApp({
-		initialPath: '/marketplace/software-development',
+		initialPath: '/marketplace/app-dev',
 	});
 	await findByTestId('marketplace-detail');
 	// Breadcrumb back to the marketplace.
@@ -34,7 +34,7 @@ test('marketplace detail shows the roster, version, and changelog with breadcrum
 });
 
 test('the marketplace roster shows each role and its avatar, and ships no names', async () => {
-	const { findByTestId } = await renderApp({ initialPath: '/marketplace/software-development' });
+	const { findByTestId } = await renderApp({ initialPath: '/marketplace/app-dev' });
 	await findByTestId('marketplace-roster');
 
 	// No built-in team ships a human name, so every row is addressed by its role.
@@ -60,16 +60,14 @@ test('the marketplace roster shows each role and its avatar, and ships no names'
 
 test('Launch new project opens the standard create dialog preselected to the team', async () => {
 	const { findByTestId, user } = await renderApp({
-		initialPath: '/marketplace/software-development',
+		initialPath: '/marketplace/app-dev',
 	});
 	await user.click(await findByTestId('marketplace-launch'));
 
 	// The standard "New project" dialog opens (rendered into a portal on document.body)
 	// with the marketplace team card already selected.
 	await waitFor(() => {
-		const card = document.body.querySelector(
-			'[data-testid="marketplace-team-card-software-development"]',
-		);
+		const card = document.body.querySelector('[data-testid="marketplace-team-card-app-dev"]');
 		expect(card).toBeTruthy();
 		expect(card?.getAttribute('aria-pressed')).toBe('true');
 	});
@@ -91,7 +89,7 @@ test('arriving mid-hire preselects the project and defaults to picking roles', a
 	// the hire was started from.
 	await router.navigate({
 		to: '/marketplace/$slug',
-		params: { slug: 'software-development' },
+		params: { slug: 'app-dev' },
 		search: { forProject: projectSlug },
 	});
 	await findByTestId('marketplace-detail');
@@ -122,7 +120,7 @@ test('arriving mid-hire preselects the project and defaults to picking roles', a
 test('Add to a project can add the whole team or a chosen subset of roles', async () => {
 	let projectSlug = '';
 	const { findByTestId, findByText, user, ctx } = await renderApp({
-		initialPath: '/marketplace/software-development',
+		initialPath: '/marketplace/app-dev',
 		// A Blank team (Captain only), not seedWorkspace's 10-agent App Team: this
 		// test just needs one project to appear in the dialog's dropdown, and this
 		// file shares a shard with the asset suites, whose PGlite is already the

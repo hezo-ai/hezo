@@ -71,7 +71,7 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   budget/pricing math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/server`** imports from `shared` and embeds `web` at build time.
-- **`agents/`** holds role prose by team (`software-development/`, `blank/`), the two
+- **`agents/`** holds role prose by team (`app-dev/`, `blank/`), the two
   instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable `_partials/`.
   The build bakes only `blank/` + `_instance/` into `agents-bundle.json` (the DB seed reads
   them at startup); marketplace team dirs (those with a `team.json`) are compiled into
@@ -1069,7 +1069,7 @@ rough running summary of those off-project conversations, since they live nowher
 chat window scrolls.
 
 **Project teams** are provisioned either from a DB team-type template (default **Blank** =
-Captain only) or directly from a **marketplace team** (`software-development` = Captain + 9
+Captain only) or directly from a **marketplace team** (`app-dev` = Captain + 9
 worker roles). Templates/marketplace teams never include the CEO/Coach. Roster prose lives
 in `agents/<template>/`, the instance roles in `agents/_instance/`, shared snippets in
 `agents/_partials/`; the default specialist rosters ship from the **marketplace** (below),
@@ -1232,7 +1232,7 @@ override. `marketplace/index.json` is the catalog listing.
   client-side; a user submits that file to the Hezo authors on GitHub, whose `build:marketplace`
   re-derives the hash/version/validation when it lands in the repo. Read-only, project-access
   gated. (Parallels a future `get_team_bundle` MCP tool if one is added.)
-- **Shipped teams.** Three: **App Team** (`software-development`, the full app-building roster),
+- **Shipped teams.** Three: **App Team** (`app-dev`, the full app-building roster),
   **Social Media Marketing** (`influencer` — brand-strategist, trend-researcher, content-writer,
   media-producer, content-editor, distribution-manager), and **Investment Portfolio**
   (`investment` — market-researcher, equity-analyst, catalyst-monitor, risk-verifier,

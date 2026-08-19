@@ -25,7 +25,7 @@ describe('team bundle export', () => {
 		const teamRes = await createTestTeam(ctx.db, {
 			name: 'Ship It Co',
 			description: 'A team that builds and ships software',
-			marketplace_slug: 'software-development',
+			marketplace_slug: 'app-dev',
 		});
 		teamId = (await teamRes.json()).data.id;
 		projectSlug = (await (await createTestProject(ctx.db, teamId, { name: 'Work' })).json()).data

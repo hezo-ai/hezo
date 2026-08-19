@@ -20,21 +20,21 @@ afterEach(() => {
 
 describe('loadFilesystemAgentRoles', () => {
 	it('recursively walks a directory, keying each .md by its relative posix path', async () => {
-		mkdirSync(join(root, 'software-development'), { recursive: true });
+		mkdirSync(join(root, 'app-dev'), { recursive: true });
 		mkdirSync(join(root, 'blank'), { recursive: true });
-		writeFileSync(join(root, 'software-development', 'engineer.md'), '# Engineer');
-		writeFileSync(join(root, 'software-development', 'qa.md'), '# QA');
+		writeFileSync(join(root, 'app-dev', 'engineer.md'), '# Engineer');
+		writeFileSync(join(root, 'app-dev', 'qa.md'), '# QA');
 		writeFileSync(join(root, 'blank', 'captain.md'), '# Captain');
 		// Non-markdown files are ignored.
 		writeFileSync(join(root, 'README.txt'), 'ignore me');
 
 		const roles = await loadFilesystemAgentRoles(root);
 		expect(Object.keys(roles).sort()).toEqual([
+			'app-dev/engineer.md',
+			'app-dev/qa.md',
 			'blank/captain.md',
-			'software-development/engineer.md',
-			'software-development/qa.md',
 		]);
-		expect(roles['software-development/engineer.md']).toBe('# Engineer');
+		expect(roles['app-dev/engineer.md']).toBe('# Engineer');
 		expect(roles['blank/captain.md']).toBe('# Captain');
 	});
 

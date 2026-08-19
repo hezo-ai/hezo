@@ -27,8 +27,8 @@ afterAll(async () => {
 });
 
 describe('marketplace loader', () => {
-	it('reads the committed software-development team from the local folder', async () => {
-		const def = await getMarketplaceTeam('software-development');
+	it('reads the committed app-dev team from the local folder', async () => {
+		const def = await getMarketplaceTeam('app-dev');
 		expect(def).toBeTruthy();
 		expect(def?.name).toBe('App Team');
 		expect(def?.version).toBeGreaterThanOrEqual(1);
@@ -52,19 +52,19 @@ describe('GET /api/marketplace/teams', () => {
 		const res = await app.request('/api/marketplace/teams', { headers: authHeader(token) });
 		expect(res.status).toBe(200);
 		const data = (await res.json()).data as Array<Record<string, unknown>>;
-		const sd = data.find((t) => t.slug === 'software-development');
+		const sd = data.find((t) => t.slug === 'app-dev');
 		expect(sd).toBeDefined();
 		expect(sd?.name).toBe('App Team');
 		expect(sd?.roster_count).toBe(10);
 	});
 
 	it('returns a single team def', async () => {
-		const res = await app.request('/api/marketplace/teams/software-development', {
+		const res = await app.request('/api/marketplace/teams/app-dev', {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
 		const def = (await res.json()).data;
-		expect(def.slug).toBe('software-development');
+		expect(def.slug).toBe('app-dev');
 		expect(def.roster).toHaveLength(9);
 	});
 
@@ -82,7 +82,7 @@ describe('POST /api/projects with marketplace_slug', () => {
 			body: JSON.stringify({
 				name: 'Marketplace Launch Co',
 				description: 'Launched from the marketplace.',
-				marketplace_slug: 'software-development',
+				marketplace_slug: 'app-dev',
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -143,7 +143,7 @@ describe('POST /api/projects with marketplace_slug', () => {
 			body: JSON.stringify({
 				name: 'Conflict Co',
 				description: 'x',
-				marketplace_slug: 'software-development',
+				marketplace_slug: 'app-dev',
 				template_id: '00000000-0000-0000-0000-000000000000',
 			}),
 		});
@@ -168,7 +168,7 @@ describe('POST /api/project-intakes with marketplace_slug', () => {
 			body: JSON.stringify({
 				name: 'Intake Co',
 				description: 'Scope with the CEO.',
-				marketplace_slug: 'software-development',
+				marketplace_slug: 'app-dev',
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -179,7 +179,7 @@ describe('POST /api/project-intakes with marketplace_slug', () => {
 			[intake.intake_task_id],
 		);
 		expect(task.rows[0].description).toContain('marketplace_slug');
-		expect(task.rows[0].description).toContain('software-development');
+		expect(task.rows[0].description).toContain('app-dev');
 	});
 
 	it('404s on an unknown marketplace slug', async () => {
@@ -206,7 +206,7 @@ describe('POST /api/projects/:projectId/marketplace-team', () => {
 		const addRes = await app.request(`/api/projects/${projectSlug}/marketplace-team`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ slug: 'software-development' }),
+			body: JSON.stringify({ slug: 'app-dev' }),
 		});
 		expect(addRes.status).toBe(201);
 		const added = (await addRes.json()).data;
@@ -251,7 +251,7 @@ describe('POST /api/projects/:projectId/marketplace-team with a role subset', ()
 		return app.request(`/api/projects/${projectSlug}/marketplace-team`, {
 			method: 'POST',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ slug: 'software-development', ...body }),
+			body: JSON.stringify({ slug: 'app-dev', ...body }),
 		});
 	}
 
@@ -345,10 +345,10 @@ describe('applyMarketplaceTeamToTeam re-import (version update)', () => {
 	it('skips existing roles by default, but refreshes their prompts with refreshExisting', async () => {
 		const teamRes = await createTestTeam(db, {
 			name: 'Reimport Co',
-			marketplace_slug: 'software-development',
+			marketplace_slug: 'app-dev',
 		});
 		const teamId = (await teamRes.json()).data.id as string;
-		const def = await getMarketplaceTeam('software-development');
+		const def = await getMarketplaceTeam('app-dev');
 		if (!def) throw new Error('missing def');
 
 		// Simulate a locally-drifted engineer prompt.
@@ -413,7 +413,7 @@ describe('applyMarketplaceRoleToTeam (single role onto an existing team)', () =>
 
 	it('adds exactly one inline role and leaves the Captain untouched', async () => {
 		const teamId = await blankTeam('One Role Co');
-		const def = await getMarketplaceTeam('software-development');
+		const def = await getMarketplaceTeam('app-dev');
 		if (!def) throw new Error('missing def');
 
 		const before = await agentSlugs(teamId);
@@ -448,7 +448,7 @@ describe('applyMarketplaceRoleToTeam (single role onto an existing team)', () =>
 
 	it('wires the real manager when the role reports to someone already on the team', async () => {
 		const teamId = await blankTeam('Real Manager Co');
-		const def = await getMarketplaceTeam('software-development');
+		const def = await getMarketplaceTeam('app-dev');
 		if (!def) throw new Error('missing def');
 
 		// The engineer reports to the architect, so add the architect first.
@@ -466,7 +466,7 @@ describe('applyMarketplaceRoleToTeam (single role onto an existing team)', () =>
 
 	it('skips a slug the team already has instead of duplicating it', async () => {
 		const teamId = await blankTeam('Dup Role Co');
-		const def = await getMarketplaceTeam('software-development');
+		const def = await getMarketplaceTeam('app-dev');
 		if (!def) throw new Error('missing def');
 
 		await applyMarketplaceRoleToTeam(db, teamId, def, 'researcher');
@@ -483,7 +483,7 @@ describe('applyMarketplaceRoleToTeam (single role onto an existing team)', () =>
 
 	it('errors on a role that is not in the roster', async () => {
 		const teamId = await blankTeam('Unknown Role Co');
-		const def = await getMarketplaceTeam('software-development');
+		const def = await getMarketplaceTeam('app-dev');
 		if (!def) throw new Error('missing def');
 
 		const res = await applyMarketplaceRoleToTeam(db, teamId, def, 'captain');

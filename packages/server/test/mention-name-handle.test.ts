@@ -30,7 +30,7 @@ beforeAll(async () => {
 		body: JSON.stringify({
 			name: 'Mention Handles Co',
 			description: 'Build the app.',
-			marketplace_slug: 'software-development',
+			marketplace_slug: 'app-dev',
 		}),
 	});
 	const project = (await res.json()).data as { id: string; slug: string; team_id: string };

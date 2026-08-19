@@ -249,7 +249,7 @@ If none match, write a component test: form submissions, mutations, refetches, n
 
 ### Playwright environment
 
-Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). `bun run test [--browser]` builds the bundle once and serves it via `vite preview` (`HEZO_E2E_PREVIEW=1`); a raw `bunx playwright test` falls back to the Vite dev server, so one-off debugging needs no build. `authenticate(page)` bypasses the master-key gate when not testing auth. The `sharedWorkspace` fixture (`test/browser/fixtures.ts`) provisions one team per worker from the `software-development` slug, `createTeamLight` uses Blank when worker roles aren't needed, and tests create their own project via `createProjectAndClearPlanning` (`helpers.ts`). `HEZO_E2E_SKIP_COHERENCE_REVIEW=1` suppresses Captain's coherence run.
+Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). `bun run test [--browser]` builds the bundle once and serves it via `vite preview` (`HEZO_E2E_PREVIEW=1`); a raw `bunx playwright test` falls back to the Vite dev server, so one-off debugging needs no build. `authenticate(page)` bypasses the master-key gate when not testing auth. The `sharedWorkspace` fixture (`test/browser/fixtures.ts`) provisions one team per worker from the `app-dev` slug, `createTeamLight` uses Blank when worker roles aren't needed, and tests create their own project via `createProjectAndClearPlanning` (`helpers.ts`). `HEZO_E2E_SKIP_COHERENCE_REVIEW=1` suppresses Captain's coherence run.
 
 **Any test that starts the server via the CLI (`src/index.ts`) MUST pass `--no-open`** (or `HEZO_OPEN=0`) so the desktop browser auto-open never fires.
 

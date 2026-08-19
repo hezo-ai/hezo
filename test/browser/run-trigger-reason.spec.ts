@@ -38,7 +38,7 @@ async function createStartupProject(
 	return (await createProjectReadyForAgents(page, { id: '', slug: '' }, token, {
 		name,
 		description: 'Test project.',
-		marketplace_slug: 'software-development',
+		marketplace_slug: 'app-dev',
 	})) as unknown as ReadyProject;
 }
 

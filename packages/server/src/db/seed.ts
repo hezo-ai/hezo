@@ -161,7 +161,7 @@ export async function seedBuiltins(db: Db, roleDocs: Record<string, string>): Pr
 	);
 
 	// The former built-in "Startup" team template + its specialist roster now live
-	// in the marketplace (`marketplace/teams/software-development.json`), fetched at
+	// in the marketplace (`marketplace/teams/app-dev.json`), fetched at
 	// runtime and provisioned directly — never seeded as team_templates/agent_types
 	// rows. Only the **Blank** template stays seeded as the always-available
 	// bootstrap fallback (Captain-only, no network required).

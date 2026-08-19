@@ -410,7 +410,7 @@ type CreatedProject = {
  * single project. We provision both in one shot via `POST /api/projects` (which
  * stands up a fresh team, plus its project + planning task), then close the
  * planning task so it doesn't race agent runs. The full "App Team" roster now
- * comes from the marketplace (`software-development`); "Blank" is still a seeded
+ * comes from the marketplace (`app-dev`); "Blank" is still a seeded
  * template resolved by name.
  */
 async function createWorkspaceProject(
@@ -422,7 +422,7 @@ async function createWorkspaceProject(
 	const uid = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
 	const source =
 		opts.templateName === 'App Team'
-			? { marketplace_slug: 'software-development' }
+			? { marketplace_slug: 'app-dev' }
 			: { template_id: await getTemplateIdByName(page, token, opts.templateName) };
 	const res = await page.request.post('/api/projects', {
 		headers,
@@ -822,7 +822,7 @@ export async function mockMarketplaceCatalog(page: Page, count: number): Promise
 	// renders a roster instead of the fetch-failed state.
 	await page.route('**/api/marketplace/teams/catalog-fill-*', async (route) => {
 		const url = new URL(route.request().url());
-		const real = `${url.origin}/api/marketplace/teams/software-development`;
+		const real = `${url.origin}/api/marketplace/teams/app-dev`;
 		await route.fulfill({ response: await route.fetch({ url: real }) });
 	});
 }

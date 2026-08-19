@@ -778,7 +778,7 @@ export async function createTestTeam(
 		name: string;
 		description?: string;
 		template_id?: string;
-		/** Provision a full roster from a marketplace team def (e.g. 'software-development'). */
+		/** Provision a full roster from a marketplace team def (e.g. 'app-dev'). */
 		marketplace_slug?: string;
 		creatorUserId?: string;
 	},

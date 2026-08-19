@@ -93,7 +93,7 @@ test("a marketplace team's detail renders its fetched roster", async () => {
 	const { user, findByTestId } = await openCatalogFromHome();
 
 	await user.click(
-		await findByTestId('marketplace-team-card-software-development', undefined, {
+		await findByTestId('marketplace-team-card-app-dev', undefined, {
 			timeout: 15_000,
 		}),
 	);

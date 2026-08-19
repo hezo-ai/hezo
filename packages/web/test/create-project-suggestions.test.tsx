@@ -71,7 +71,7 @@ test('a brief matching no team suggests Blank, not the first two catalog entries
 	await waitFor(() => {
 		expect(screen.queryByTestId('marketplace-team-card-influencer')).toBeNull();
 		expect(screen.queryByTestId('marketplace-team-card-investment')).toBeNull();
-		expect(screen.queryByTestId('marketplace-team-card-software-development')).toBeNull();
+		expect(screen.queryByTestId('marketplace-team-card-app-dev')).toBeNull();
 	});
 });
 

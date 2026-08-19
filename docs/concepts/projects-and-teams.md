@@ -188,26 +188,26 @@ software-development roster - the team that builds your app. Its Captain asks yo
 scoping questions first (what to build, where it deploys, constraints) rather than
 assuming, and can suggest project goals for you to approve.
 
-- [Captain](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/captain.md) -
+- [Captain](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/captain.md) -
   leads the team, breaks the goal into tasks, and coordinates delivery.
-- [Architect](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/architect.md) -
+- [Architect](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/architect.md) -
   technical vision, specs, and architecture decisions; gates and schedules the deploy.
-- [Product Lead](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/product-lead.md) -
+- [Product Lead](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/product-lead.md) -
   owns scope and requirements; turns the brief (and any attached project plan) into the
   formal **PRD**.
-- [Engineer](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/engineer.md) -
+- [Engineer](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/engineer.md) -
   implementation, tests, and code.
-- [QA Engineer](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/qa-engineer.md) -
+- [QA Engineer](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/qa-engineer.md) -
   testing, code quality, and the final approval gate.
-- [Security Engineer](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/security-engineer.md) -
+- [Security Engineer](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/security-engineer.md) -
   security review, threat modelling, and vulnerability analysis.
-- [UI Designer](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/ui-designer.md) -
+- [UI Designer](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/ui-designer.md) -
   visual and interaction design, component architecture, and HTML mockups.
-- [DevOps Engineer](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/devops-engineer.md) -
+- [DevOps Engineer](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/devops-engineer.md) -
   infrastructure, CI/CD, and staging/production deployment.
-- [Marketing Lead](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/marketing-lead.md) -
+- [Marketing Lead](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/marketing-lead.md) -
   marketing strategy, content, public documentation, and launch.
-- [Researcher](https://github.com/hezo-ai/hezo/blob/main/agents/software-development/researcher.md) -
+- [Researcher](https://github.com/hezo-ai/hezo/blob/main/agents/app-dev/researcher.md) -
   competitive analysis, technical research, and feasibility studies.
 
 ### Social Media Marketing team

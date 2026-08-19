@@ -2785,7 +2785,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_team_templates',
-		`List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the software-development "App Team") live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
+		`List local team templates: the built-in Blank template plus any custom templates saved from existing teams. The default specialist rosters (e.g. the app-dev "App Team") live in the marketplace, not here. Use when recommending a team structure to hire. Paged: returns \`limit\` entries (default ${DEFAULT_LIST_LIMIT}) plus \`next_cursor\`/\`has_more\`; when \`has_more\` is true, call again with \`cursor\` set to \`next_cursor\` until it is false.`,
 		{ ...listPagingArgs() },
 		async (args, db) => {
 			const r = await db.query<{
@@ -2863,7 +2863,7 @@ export function registerTools(
 		'get_marketplace_team',
 		"Fetch one marketplace team's full definition: its version, changelog, and every role's title, reporting line, and CURRENT system prompt (including the Captain override). Callable by the CEO or a team Captain. Use it when adding/updating a team, to compare the marketplace's prompts to the agents you already have and decide what to refresh; and when hiring, to start a role from a proven marketplace prompt instead of writing one from scratch - find candidate teams with list_marketplace_teams first.",
 		{
-			slug: z.string().describe('The marketplace team slug (e.g. "software-development").'),
+			slug: z.string().describe('The marketplace team slug (e.g. "app-dev").'),
 		},
 		async (args, _db) => {
 			const slug = String(args.slug ?? '').trim();
@@ -2896,7 +2896,7 @@ export function registerTools(
 		"Add or update a marketplace team's roster on a project's team. CEO-only. Fetches the named marketplace team and provisions its members directly onto the project's existing team - a direct add, not an approval-gated hire proposal, so use it only for a team the admin already chose. Roles the team already has are SKIPPED by default; pass refresh_existing=true to instead refresh those roles' descriptions and system prompts to this team's current versions (use this when the project was created from an earlier version of THIS SAME team - it is a version update, not a duplicate add). refresh_existing overwrites prompts, so before using it on roles that may carry local customizations, read them (get_agent_system_prompt) and the new versions (get_marketplace_team) and refresh selectively with update_agent_system_prompt instead. After it returns, reconcile the merged roster. Returns the roles added, refreshed, and skipped.",
 		{
 			project: projectArg(),
-			slug: z.string().describe('The marketplace team slug to add (e.g. "software-development").'),
+			slug: z.string().describe('The marketplace team slug to add (e.g. "app-dev").'),
 			refresh_existing: z
 				.boolean()
 				.optional()
@@ -2946,9 +2946,7 @@ export function registerTools(
 		"Add ONE role from a marketplace team to a project's team. CEO-only. Use this when the admin wants a single role (e.g. just the security engineer) rather than a whole roster - it provisions that one member directly, a direct add rather than an approval-gated hire proposal, and leaves the rest of the roster, including the Captain, untouched. The team already having that slug is a no-op (skipped). The role's prompt was written for its home team, so AFTER this returns you MUST fit it to this project: rewrite its system prompt and team context (update_agent_system_prompt, set_agent_team_context) so every teammate and hand-off they name is an agent that actually exists here, set a real manager with set_agent_reports_to, and update the existing agents whose work now flows through it. When the role's own manager is not on this team the reporting line is wired to the Captain as a placeholder and reports_to_fell_back comes back true - re-point it. Returns whether the role was added or skipped, plus the reporting line applied.",
 		{
 			project: projectArg(),
-			slug: z
-				.string()
-				.describe('The marketplace team slug the role comes from (e.g. "software-development").'),
+			slug: z.string().describe('The marketplace team slug the role comes from (e.g. "app-dev").'),
 			role: z
 				.string()
 				.describe(
