@@ -1,6 +1,6 @@
 import { Link, useLocation } from '@tanstack/react-router';
 import { ChevronDown, LogOut } from 'lucide-react';
-import { Fragment, useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useMe } from '../hooks/use-me';
 import { logout } from '../lib/auth';
@@ -73,9 +73,26 @@ function isActive(itemTo: string, pathname: string): boolean {
 	return (pathname.replace(/\/$/, '') || '/settings') === itemTo;
 }
 
-/** Group heading: a label, not a target - quieter and smaller than its items. */
-const groupClass =
-	'px-3 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-text-3 first:pt-0';
+/**
+ * Group heading: a label for what follows, not a target. Three things keep it
+ * from reading as another link in the same column - it is set as an eyebrow
+ * (small, uppercase and letter-spaced against the 13px items), it is bolder and
+ * darker than anything it labels, and a hairline runs off it to the menu's edge,
+ * which no link ever does. `font-bold` overrides the eyebrow's own 500: the
+ * utility is declared earlier in the sheet, so the later class wins. Spacing
+ * binds the label to its own items: open above the group, tight below.
+ */
+function GroupHeading({ label }: { label: string }) {
+	return (
+		<div className="flex items-center gap-2 px-3 pb-1.5">
+			<span className="text-eyebrow font-bold text-text-1">{label}</span>
+			<span className="h-px flex-1 bg-border" />
+		</div>
+	);
+}
+
+/** Groups after the first are pushed apart; the rule alone is too quiet to separate them. */
+const groupClass = 'flex flex-col gap-0.5 mt-4 first:mt-0';
 
 function itemClass(active: boolean): string {
 	return `text-left text-[13px] px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
@@ -176,8 +193,8 @@ export function SettingsSidebar() {
 						/>
 						<nav className="absolute left-4 right-4 z-30 mt-1 flex flex-col gap-0.5 rounded-md border border-border bg-surface p-1 shadow-lg">
 							{groups.map((group) => (
-								<Fragment key={group.titleKey}>
-									<span className={groupClass}>{t(group.titleKey)}</span>
+								<div key={group.titleKey} className={groupClass}>
+									<GroupHeading label={t(group.titleKey)} />
 									{group.items.map((item) => (
 										<Link
 											key={item.to}
@@ -188,7 +205,7 @@ export function SettingsSidebar() {
 											{t(item.labelKey)}
 										</Link>
 									))}
-								</Fragment>
+								</div>
 							))}
 							<LogoutButton onClick={handleLogout} className="mt-3" />
 						</nav>
@@ -202,14 +219,14 @@ export function SettingsSidebar() {
 				data-testid="settings-nav-desktop"
 			>
 				{groups.map((group) => (
-					<Fragment key={group.titleKey}>
-						<span className={groupClass}>{t(group.titleKey)}</span>
+					<div key={group.titleKey} className={groupClass}>
+						<GroupHeading label={t(group.titleKey)} />
 						{group.items.map((item) => (
 							<Link key={item.to} to={item.to} className={itemClass(isActive(item.to, pathname))}>
 								{t(item.labelKey)}
 							</Link>
 						))}
-					</Fragment>
+					</div>
 				))}
 				<LogoutButton onClick={handleLogout} className="mt-4" />
 			</nav>

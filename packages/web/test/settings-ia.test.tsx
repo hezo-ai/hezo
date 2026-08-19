@@ -25,6 +25,21 @@ test('the settings menu is grouped, and each group heading precedes its items', 
 	expect(text.indexOf('Maintenance')).toBeLessThan(text.indexOf('Storage'));
 });
 
+test('a group heading is a label, not another link in the menu', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/settings' });
+	const nav = await findByTestId('settings-nav-desktop');
+
+	// The headings read as links only if they *are* reachable as one. Every
+	// interactive node in the menu is a nav item or the log-out button; a group
+	// title is neither, so it must not turn up among them.
+	const interactive = within(nav)
+		.getAllByRole('link')
+		.map((el) => el.textContent?.trim());
+	for (const heading of ['General', 'Agents', 'Integrations', 'Access', 'Maintenance']) {
+		expect(interactive, `${heading} is reachable as a link`).not.toContain(heading);
+	}
+});
+
 test('the retired pages are gone from the menu and their subjects live on', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/settings' });
 	const nav = await findByTestId('settings-nav-desktop');
