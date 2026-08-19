@@ -1099,7 +1099,9 @@ describe('runAgent lifecycle — subscription credential lock + rotation', () =>
 		});
 
 		// Hold the credential so the run has something real to wait behind.
-		const releaseCredential = await acquireCredentialLock(configId, { owner: 'prior-run' });
+		const releaseCredential = await acquireCredentialLock(configId, {
+			owner: { label: 'prior-run', link: null },
+		});
 
 		const runPromise = runAgent(
 			baseDeps(docker),

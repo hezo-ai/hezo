@@ -27,6 +27,29 @@ export function agentPath(projectSlug: string, agentSlug: string): string {
 	return `/projects/${projectSlug}/agents/${agentSlug}`;
 }
 
+/** Where one execution run of an agent is shown. */
+export interface RunLink {
+	projectSlug: string;
+	agentSlug: string;
+	runId: string;
+}
+
+export function runPath({ projectSlug, agentSlug, runId }: RunLink): string {
+	return `${agentPath(projectSlug, agentSlug)}/executions/${runId}`;
+}
+
+const RUN_PATH_RE = /^\/projects\/([^/\s]+)\/agents\/([^/\s]+)\/executions\/([^/\s?#]+)$/;
+
+/**
+ * The inverse of {@link runPath}: the run a path names, or null for any other
+ * path. Kept beside the builder so the two cannot drift.
+ */
+export function parseRunPath(path: string): RunLink | null {
+	const match = RUN_PATH_RE.exec(path);
+	if (!match) return null;
+	return { projectSlug: match[1], agentSlug: match[2], runId: match[3] };
+}
+
 export function projectInboxPath(projectSlug: string): string {
 	return `/projects/${projectSlug}/inbox`;
 }

@@ -325,6 +325,8 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | "Is this cancelled run still owed, and can a human act on it?" | `heartbeat_runs.cancel_reason` read through `RUN_CANCEL_BEHAVIOUR` (`@hezo/shared`) - never the `error` prose |
 | "May this caller move this task's assignee?" | `assertNoBlockingRun` (`lib/reassign-guard.ts`) - not the one-run-per-task check, which is `isTaskBusyInDb` (`services/run-concurrency.ts`) |
 | Serialising async work per key, with or without a bound | `lib/keyed-lock.ts` - `withKeyedLock` for a scope, `acquireKeyedLock` when the wait needs a `signal`/`timeoutMs`. Each family owns its own `KeyedLockRegistry`; never a second mutex |
+| "Who holds this rotating credential, and how do I name them?" | `credentialLockHolder` / `describeCredentialHolder` / `credentialWaitNotice` (`services/agent-runner.ts`) - a `CredentialLockHolder` record, rendered as a run link (`formatRunLink`, `@hezo/shared`) that `RunLinkedText` (web) turns into the link; never a bare label |
+| Text the server writes that names a run (a log line, a chat notice) | `formatRunLink` / `splitRunLinks` (`@hezo/shared`) on the way out, `RunLinkedText` (`packages/web/src/components/`) on the way in |
 | "Did this release stop reading something an instance still sets?" | `REMOVED_ENV_VARS` / `detectRemovedEnvVars` (`config/removed-env.ts`) |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
 | Paging (lists and large content) | `mcp/paging.ts` |

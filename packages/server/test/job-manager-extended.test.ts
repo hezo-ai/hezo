@@ -284,10 +284,10 @@ describe('JobManager — extended coverage', () => {
 			manager.shutdown();
 		});
 
-		it('cancelLiveRunsForContainer also cancels a run that has not claimed a container', () => {
-			// Nothing can show such a run to be executing elsewhere, and the DB half
-			// fails it for the same reason - leaving it registered would disagree
-			// with its own row.
+		it('cancelLiveRunsForContainer leaves a run that has not claimed a container alone', () => {
+			// Such a run is parked - on the credential lock or on capacity - and holds
+			// nothing, so no container's death is its death. Its row is still queued,
+			// which the DB half never touches, so the two halves keep agreeing.
 			const manager = createJobManager();
 			const key = `${agentId}:${projectId}`;
 			let aborted = false;
@@ -313,11 +313,12 @@ describe('JobManager — extended coverage', () => {
 			});
 
 			expect(manager.cancelLiveRunsForContainer(projectId, 'ctr-dead', 'container_stopped')).toBe(
-				1,
+				0,
 			);
-			expect(aborted).toBe(true);
-			expect(manager.getLiveRunIds()).toEqual(new Set());
+			expect(aborted).toBe(false);
+			expect(manager.getLiveRunIds()).toEqual(new Set(['r-unplaced']));
 
+			manager.cancelLiveRun('r-unplaced');
 			manager.shutdown();
 		});
 	});
@@ -811,24 +812,41 @@ describe('JobManager — extended coverage', () => {
 	});
 
 	describe('container transition handling', () => {
-		it('handleContainerTransition fails project runs and cancels live runs on running→error', async () => {
-			const manager = createJobManager();
-			const key = `${agentId}:${projectId}`;
-			let aborted = false;
+		type TransitionHandler = {
+			handleContainerTransition(t: {
+				projectId: string;
+				projectSlug: string;
+				teamId: string;
+				containerId: string;
+				oldStatus: string;
+				newStatus: string;
+			}): Promise<void>;
+		};
+
+		/** A live run whose driver resolves when aborted, reporting that it was. */
+		const launchAbortable = (manager: ReturnType<typeof createJobManager>, key: string) => {
+			const state = { aborted: false };
 			manager.launchTask(
 				key,
 				(signal) =>
 					new Promise<void>((resolve) => {
 						signal.addEventListener('abort', () => {
-							aborted = true;
+							state.aborted = true;
 							resolve();
 						});
 					}),
 				60_000,
 			);
+			return state;
+		};
+
+		it('handleContainerTransition fails project runs and cancels live runs on running→error', async () => {
+			const manager = createJobManager();
+			const key = `${agentId}:${projectId}`;
+			const driver = launchAbortable(manager, key);
 			const run = await db.query<{ id: string }>(
-				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at)
-				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now())
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, started_at, container_id)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, now(), 'ctr-dead')
 				 RETURNING id`,
 				[agentId, teamId, taskId, HeartbeatRunStatus.Running],
 			);
@@ -841,26 +859,18 @@ describe('JobManager — extended coverage', () => {
 				taskKey: key,
 				containerId: null,
 			});
+			manager.attachLiveRunContainer(run.rows[0].id, 'ctr-dead');
 
-			await (
-				manager as unknown as {
-					handleContainerTransition(t: {
-						projectId: string;
-						projectSlug: string;
-						teamId: string;
-						oldStatus: string;
-						newStatus: string;
-					}): Promise<void>;
-				}
-			).handleContainerTransition({
+			await (manager as unknown as TransitionHandler).handleContainerTransition({
 				projectId,
 				projectSlug,
 				teamId,
+				containerId: 'ctr-dead',
 				oldStatus: ContainerStatus.Running,
 				newStatus: ContainerStatus.Error,
 			});
 
-			expect(aborted).toBe(true);
+			expect(driver.aborted).toBe(true);
 			expect(manager.getLiveRunIds().has(run.rows[0].id)).toBe(false);
 			const r = await db.query<{ status: string }>(
 				'SELECT status FROM heartbeat_runs WHERE id = $1',
@@ -870,6 +880,54 @@ describe('JobManager — extended coverage', () => {
 
 			await waitForBackground();
 			manager.shutdown();
+		});
+
+		// The prod shape: a run parked on the credential lock holds no container,
+		// and the surplus-idle pass suspends the project's spare one underneath it.
+		// The stop is a transition on a container the run is not on, so the run
+		// keeps waiting.
+		it('leaves a live run that has claimed no container alone when a project container stops', async () => {
+			const manager = createJobManager();
+			const key = `${agentId}:${projectId}`;
+			const driver = launchAbortable(manager, key);
+			const run = await db.query<{ id: string }>(
+				`INSERT INTO heartbeat_runs (member_id, team_id, task_id, status, queued_reason)
+				 VALUES ($1, $2, $3, $4::heartbeat_run_status, 'waiting for prior run on this credential')
+				 RETURNING id`,
+				[agentId, teamId, taskId, HeartbeatRunStatus.Queued],
+			);
+			manager.registerLiveRun({
+				runId: run.rows[0].id,
+				memberId: agentId,
+				taskId,
+				projectId,
+				teamId,
+				taskKey: key,
+				containerId: null,
+			});
+
+			await (manager as unknown as TransitionHandler).handleContainerTransition({
+				projectId,
+				projectSlug,
+				teamId,
+				containerId: 'ctr-idle-sibling',
+				oldStatus: ContainerStatus.Running,
+				newStatus: ContainerStatus.Stopped,
+			});
+
+			expect(driver.aborted).toBe(false);
+			expect(manager.getLiveRunIds().has(run.rows[0].id)).toBe(true);
+			const r = await db.query<{ status: string; queued_reason: string | null }>(
+				'SELECT status, queued_reason FROM heartbeat_runs WHERE id = $1',
+				[run.rows[0].id],
+			);
+			expect(r.rows[0].status).toBe(HeartbeatRunStatus.Queued);
+			expect(r.rows[0].queued_reason).toBe('waiting for prior run on this credential');
+
+			manager.cancelLiveRun(run.rows[0].id);
+			await waitForBackground();
+			manager.shutdown();
+			await db.query('DELETE FROM heartbeat_runs WHERE id = $1', [run.rows[0].id]);
 		});
 
 		it('handleContainerTransition is a no-op for an unrelated transition (creating→running)', async () => {

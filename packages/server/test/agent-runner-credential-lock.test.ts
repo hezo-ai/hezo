@@ -11,6 +11,7 @@
 // So the two properties asserted here are: the wait is bounded and hands the
 // work back, and a waiter holds no container while it waits.
 
+import { readFileSync } from 'node:fs';
 import {
 	AgentRuntime,
 	AiAuthMethod,
@@ -22,9 +23,18 @@ import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
+import { runLogTextSql } from '../src/db/run-log-chunks';
 import type { Env } from '../src/lib/types';
-import { acquireCredentialLock, type RunnerDeps, runAgent } from '../src/services/agent-runner';
+import {
+	acquireCredentialLock,
+	type CredentialLockHolder,
+	credentialLockHolder,
+	type RunnerDeps,
+	runAgent,
+} from '../src/services/agent-runner';
+import { updateAiProviderCredential } from '../src/services/ai-provider-keys';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import { getHostSubscriptionRoot } from '../src/services/runtime-home';
 import type { ContainerEngine } from '../src/services/sandbox/types';
 import { safeClose } from './helpers';
 import {
@@ -60,16 +70,21 @@ const AUTH_JSON = JSON.stringify({
 let seq = 0;
 let execCount = 0;
 
-function stubDocker(): ContainerEngine {
+/** A run that starts, execs once and produces output; `hooks` observe the exec. */
+function stubDocker(
+	hooks: { onExecCreate?: (opts: { Env?: string[] }) => void; onExecStart?: () => void } = {},
+): ContainerEngine {
 	const base = createStubDocker(
 		{
 			createContainer: vi.fn(async () => ({ Id: `cred-cid-${seq++}`, Warnings: [] })),
 			startContainer: vi.fn(async () => {}),
-			execCreate: vi.fn(async () => {
+			execCreate: vi.fn(async (_id: string, opts: { Env?: string[] }) => {
 				execCount++;
+				hooks.onExecCreate?.(opts);
 				return 'exec-cred';
 			}),
 			execStart: vi.fn(async () => {
+				hooks.onExecStart?.();
 				await db.query(
 					`UPDATE heartbeat_runs SET produced_output = true WHERE member_id = $1 AND status = 'running'`,
 					[agentId],
@@ -136,6 +151,14 @@ async function makeTask(title: string) {
 		progress_summary: null,
 		runtime_type: AgentRuntime.Codex,
 	};
+}
+
+async function runLog(id: string): Promise<string> {
+	const r = await db.query<{ log_text: string }>(
+		`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+		[id],
+	);
+	return r.rows[0].log_text;
 }
 
 async function runRow(id: string) {
@@ -224,7 +247,9 @@ afterAll(async () => {
 describe('runAgent credential wait', () => {
 	it('holds no container while it waits behind another run', async () => {
 		const task = await makeTask('Waits without a container');
-		const release = await acquireCredentialLock(configId, { owner: 'prior-run' });
+		const release = await acquireCredentialLock(configId, {
+			owner: { label: 'prior-run', link: null },
+		});
 
 		const pending = runAgent(deps({ capacityPark: { pollMs: 10, maxMs: 20_000 } }), agent(), task, {
 			...project(),
@@ -254,7 +279,9 @@ describe('runAgent credential wait', () => {
 
 	it('gives the work back to the queue as cancelled once the wait ceiling passes', async () => {
 		const task = await makeTask('Waits then gives up');
-		const release = await acquireCredentialLock(configId, { owner: 'prior-run' });
+		const release = await acquireCredentialLock(configId, {
+			owner: { label: 'prior-run', link: null },
+		});
 		try {
 			const result = await runAgent(
 				deps({ capacityPark: { pollMs: 10, maxMs: 60 } }),
@@ -276,7 +303,11 @@ describe('runAgent credential wait', () => {
 
 			const row = await runRow(result.heartbeatRunId as string);
 			expect(row.status).toBe('cancelled');
-			expect(row.error).toContain('returning this run to the queue');
+			// Names who it was waiting on, in the label alone - the row's `error` is
+			// shown as a one-line summary, and the log line already carries the link.
+			expect(row.error).toBe(
+				'prior-run still holds this provider credential - returning this run to the queue.',
+			);
 			expect(row.container_id).toBeNull();
 			// And no attribution yet: whether the work is actually carried is not
 			// known until the caller settles the wakeup, so the row must not claim
@@ -290,7 +321,9 @@ describe('runAgent credential wait', () => {
 
 	it('leaves nothing the orphan pass would reap after giving up', async () => {
 		const task = await makeTask('Leaves nothing stranded');
-		const release = await acquireCredentialLock(configId, { owner: 'prior-run' });
+		const release = await acquireCredentialLock(configId, {
+			owner: { label: 'prior-run', link: null },
+		});
 		try {
 			await runAgent(deps({ capacityPark: { pollMs: 10, maxMs: 60 } }), agent(), task, project());
 		} finally {
@@ -306,7 +339,9 @@ describe('runAgent credential wait', () => {
 
 	it('finalizes as cancelled without executing when aborted during the wait', async () => {
 		const task = await makeTask('Aborted while waiting');
-		const release = await acquireCredentialLock(configId, { owner: 'prior-run' });
+		const release = await acquireCredentialLock(configId, {
+			owner: { label: 'prior-run', link: null },
+		});
 		const ac = new AbortController();
 		const before = execCount;
 
@@ -336,7 +371,9 @@ describe('runAgent credential wait', () => {
 	// and the agent executed in full against a row the UI reported as cancelled.
 	it('does not execute when its row was ended while it waited', async () => {
 		const task = await makeTask('Reaped while waiting');
-		const release = await acquireCredentialLock(configId, { owner: 'prior-run' });
+		const release = await acquireCredentialLock(configId, {
+			owner: { label: 'prior-run', link: null },
+		});
 		const before = execCount;
 
 		const pending = runAgent(
@@ -365,5 +402,114 @@ describe('runAgent credential wait', () => {
 		expect(row.status).toBe('cancelled');
 		expect(row.error).toContain('Orphaned');
 		expect(row.started_at).toBeNull();
+	});
+
+	it('names the run holding the credential in its log, as a link to that run', async () => {
+		const task = await makeTask('Names the holder');
+		const release = await acquireCredentialLock(configId, {
+			owner: {
+				label: 'growth-analyst/HM-336',
+				link: { projectSlug: 'hezo-marketing', agentSlug: 'growth-analyst', runId: 'run-hm-336' },
+			},
+		});
+		const pending = runAgent(deps({ capacityPark: { pollMs: 10, maxMs: 20_000 } }), agent(), task, {
+			...project(),
+		});
+		await waitForQueuedRow('waiting for prior run on this credential');
+		release();
+		const result = await pending;
+		expect(result.success).toBe(true);
+
+		const log = await runLog(result.heartbeatRunId as string);
+		// The label reads as the holder's name; the href is what the viewer turns
+		// into the link to the run's page in its own project.
+		expect(log).toContain(
+			'Waiting for [growth-analyst/HM-336](/projects/hezo-marketing/agents/growth-analyst/executions/run-hm-336) to finish with this credential.',
+		);
+		expect(log).toContain('Credential free, starting the run.');
+	});
+
+	it('names a holder that is not a run by its label alone', async () => {
+		const task = await makeTask('Names the chat');
+		const release = await acquireCredentialLock(configId, {
+			owner: { label: 'the CEO chat', link: null },
+		});
+		const pending = runAgent(deps({ capacityPark: { pollMs: 10, maxMs: 20_000 } }), agent(), task, {
+			...project(),
+		});
+		await waitForQueuedRow('waiting for prior run on this credential');
+		release();
+		const result = await pending;
+		expect(await runLog(result.heartbeatRunId as string)).toContain(
+			'Waiting for the CEO chat to finish with this credential.',
+		);
+	});
+
+	it('holds the credential under its own name and run, for later waiters to point at', async () => {
+		const task = await makeTask('Is a holder itself');
+		let holderDuringExec: CredentialLockHolder | null = null;
+		const docker = stubDocker({
+			onExecStart: () => {
+				holderDuringExec = credentialLockHolder(configId);
+			},
+		});
+
+		const result = await runAgent(deps({ docker }), agent(), task, project());
+		expect(result.success).toBe(true);
+		expect(holderDuringExec).toEqual({
+			label: `${agentSlug}/${task.identifier}`,
+			link: { projectSlug, agentSlug, runId: result.heartbeatRunId },
+		});
+		expect(credentialLockHolder(configId)).toBeNull();
+	});
+
+	it('starts on the credential stored while it waited, not on its pre-wait snapshot', async () => {
+		const task = await makeTask('Starts on the current token');
+		const rotatedByHolder = JSON.stringify({
+			tokens: {
+				id_token: 'header.payload.sig2',
+				access_token: 'header.payload.sig2',
+				refresh_token: 'rt-rotated-by-holder',
+				account_id: 'acct-1',
+			},
+		});
+		let mounted: string | null = null;
+		const docker = stubDocker({
+			onExecCreate: (opts) => {
+				const home = (opts.Env ?? []).find((e) => e.startsWith('CODEX_HOME='));
+				const runId = home?.slice('CODEX_HOME='.length).split('/').pop() ?? '';
+				const root = getHostSubscriptionRoot(
+					AiProvider.OpenAI,
+					AgentRuntime.Codex,
+					dataDir,
+					teamId,
+					projectId,
+					runId,
+				);
+				mounted = readFileSync(`${root}/auth.json`, 'utf8');
+			},
+		});
+
+		const release = await acquireCredentialLock(configId, {
+			owner: { label: 'prior-run', link: null },
+		});
+		const pending = runAgent(
+			deps({ docker, capacityPark: { pollMs: 10, maxMs: 20_000 } }),
+			agent(),
+			task,
+			project(),
+		);
+		await waitForQueuedRow('waiting for prior run on this credential');
+		// What the holder does on its way out: the single-use token it consumed is
+		// replaced in the store. A waiter that mounted its pre-wait snapshot would
+		// start on the consumed one.
+		await updateAiProviderCredential(db, masterKeyManager, configId, rotatedByHolder);
+		release();
+
+		const result = await pending;
+		expect(result.success).toBe(true);
+		expect(mounted).toBe(rotatedByHolder);
+
+		await updateAiProviderCredential(db, masterKeyManager, configId, AUTH_JSON);
 	});
 });

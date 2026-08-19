@@ -399,7 +399,8 @@ assignment wakeup carries the target team). In-flight work is aborted first
 `converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`. The system row
 carries `system_kind = 'converted_task'` (`chat_messages.system_kind`, migration 058; the
 CHECK list is widened by 067 for `connector_refused`, the chat's twin of a task run's connector
-refusal warning): which
+refusal warning, and by 068 for `credential_wait`, the twin of a waiting run's
+`[runner] Waiting for …` line): which
 marker a system row is has to be a property of the **message**, since the chatbox would otherwise
 choose by the thread's `converted_task_id` and render a handoff warning written before the
 conversion as the converted-task link. Converted
@@ -1927,13 +1928,24 @@ row) from *stopped* (suspend it) from *unanswerable* (change nothing).
 **A dead container ends the runs it was carrying, and no others.** `ContainerTransition` names
 the container, and both halves of the response are scoped to it: `failProjectRuns(…,
 containerId)` for the rows, and `JobManager.cancelLiveRunsForContainer` for the in-process
-execs. They must agree, or a run reads `failed` while its exec still streams; both therefore
-also take runs that have not yet claimed a container, which nothing can show to be executing
-elsewhere. Handling a container's death by *project* is the shared-fate blast radius the pool
-exists to remove, and it is not hypothetical - it is how an idle member being auto-stopped
-killed a run executing in a healthy sibling container. Two sources emit transitions in this
-one shape: `syncAllContainerStatuses` answers for the container `projects.container_id` names,
-and `reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
+execs. They must agree, or a run reads `failed` while its exec still streams. **A live run
+that has claimed no container is not on the dead one**, so the in-memory half leaves it
+alone: it is parked - on the credential lock or on capacity - holding nothing, and its row is
+still `queued`, which the DB half never touches (a `running` row always carries its
+container, stamped by `markHeartbeatRunRunning`; the DB half's `container_id IS NULL` arm
+exists for rows recorded before 049 and nothing else). The in-memory half used to take
+unclaimed runs too, on the reasoning that nothing could show them executing elsewhere - which
+is how the surplus-idle pass suspending a project's *spare* container killed the run that was
+only waiting for a credential in that project: on a managed backend the stop takes seconds,
+the status sync saw the engine say stopped while the row still said running, and the
+resulting transition swept the waiter in on the null arm. That sync-versus-graceful-stop
+race still produces a transition (a stopped container is a fact whoever stopped it), and it
+is harmless now for the reason above: nothing live is on an idle container. Handling a
+container's death by *project* is the shared-fate blast radius the pool exists to remove,
+and it is not hypothetical - it is how an idle member being auto-stopped killed a run
+executing in a healthy sibling container. Two sources emit transitions in this one shape:
+`syncAllContainerStatuses` answers for the container `projects.container_id` names, and
+`reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
 
 **The memory budget is instance-wide, so no project may sit on a share of it that it is not
 using.** Two mechanisms enforce that, and both exist because a container is pinned to its
@@ -2463,20 +2475,50 @@ or less (settable to 1), where a 180 s wait outlives a 60 s timer. And the cap i
 cosmetic - a dispatch with no spare container takes a `pendingContainerStarts` reservation
 *before* `launchTask` and holds it until the run settles, so every minute of this wait is a
 minute of instance memory budget charged for a container that has not been asked for. FIFO on the
-lock is the correct model; giving up early only randomises who goes next.
+lock is the correct model among runs; giving up early only randomises who goes next. The one
+exception is below, and it is not a run.
 
 And it is taken **before** the pool ladder is asked, because a waiter that already holds a
 container pins memory the pool counts as used and cannot reclaim, for the entire wait. That
 container then sits idle while its own run waits, long enough for a managed backend's idle
 timer to stop it underneath, so the run failed on the first call it made once it finally
-woke. A waiter now holds nothing.
+woke. A waiter now holds nothing - and, holding nothing, is on no container a death can be
+attributed to (§ *A dead container ends the runs it was carrying*).
+
+**The holder is a record, not a name.** The lock family's owner is a `CredentialLockHolder`
+- a label plus, for a task run, the `RunLink` to its page (project slug, agent slug, run id)
+- and `describeCredentialHolder` renders it once for every surface: a run's `[runner] Waiting
+for … to finish with this credential.` line and the CEO chat's notice both carry the holder
+as a markdown link (`formatRunLink`, `@hezo/shared`), which the log viewer and the chat
+widget turn into a link to that run through `splitRunLinks` / `RunLinkedText`. The raw log
+and the database row read as-is. The chat, holding it, is `the CEO chat` with no link.
+
+**A waiter re-reads the credential once it holds the lock.** Both a run and a chat exec
+snapshot the credential value before they wait, and the holder they queue behind rotates the
+single-use token and stores the new one on its way out - so by the time the wait ends the
+snapshot can be a rotation behind, and mounting it means the first refresh fails against a
+consumed token. The runner re-reads the value (`readAiProviderCredentialValue`) after
+`acquireCredentialLock` resolves and before `buildRunContext` writes the mount; the chat,
+whose mount was written at session start, rewrites the mounted file from the store when the
+value moved (`refreshSubscriptionMount`, beside `buildSubscriptionMount`) and moves its own
+snapshot along, so `persistRotatedSubscriptionAuth` afterwards compares against what the exec
+actually ran on and the file is rewritten only when the value really changed.
 
 **The CEO chat takes the same lock**, per exec rather than per session: a chat turn drives
 the same coding CLI, so on a rotating credential it consumes and rewrites the same
 single-use token, and each of the three CLI execs a session makes (turn, compaction,
 titling) can rotate it. Per-exec because a session is long-lived and holding it for the
-session would starve task runs. The bound is shorter than a run's and a timeout is
-reported to the operator rather than waited out, since someone is watching the chatbox.
+session would starve task runs. Its wait is the run's own cap (`CREDENTIAL_WAIT_CAP_MS`) and
+it is taken with **priority**: a person is behind the exec, so it queues ahead of runs merely
+parked on the lock - they hold nothing and re-queue on their own deadline - and waits on the
+holder alone, never preempting it. Two things follow that made the shorter, plain-FIFO wait it
+used to have wrong. The reply turn tells the thread what it is waiting on the moment it starts
+waiting - a `credential_wait` system row naming the holder in the same words a waiting run's
+log uses, linked the same way - and the operator can stop the turn rather than wait; priority
+is also what keeps that notice true for the whole wait. And a turn that does give up records
+the same holder-naming reason on its message, which the widget shows in place of a generic
+failure (`WsChatMessageComplete.error`); titling and compaction, which retry on their own from
+the next message, log a busy credential as a warning rather than an error.
 `persistRotatedSubscriptionAuth` (`services/runtime-home.ts`, beside the
 `buildSubscriptionMount` that put the file there) is the shared write-back both paths owe
 before releasing - the chat had neither lock nor write-back, so a turn overlapping a run

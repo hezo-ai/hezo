@@ -230,6 +230,27 @@ export async function updateAiProviderCredential(
 	return result.rows.length > 0;
 }
 
+/**
+ * The current decrypted value of one credential row, or null when the row is
+ * gone. For a caller that already chose its config and only needs to know
+ * whether the value moved since - a waiter that held a snapshot across a wait
+ * during which another execution may have rotated it.
+ */
+export async function readAiProviderCredentialValue(
+	db: Db,
+	masterKeyManager: MasterKeyManager,
+	configId: string,
+): Promise<string | null> {
+	const encryptionKey = masterKeyManager.getKey();
+	if (!encryptionKey) throw new Error('Master key not available');
+	const result = await db.query<{ encrypted_credential: string }>(
+		'SELECT encrypted_credential FROM ai_provider_configs WHERE id = $1',
+		[configId],
+	);
+	const row = result.rows[0];
+	return row ? decrypt(row.encrypted_credential, encryptionKey) : null;
+}
+
 export async function getProviderCredentialAndModel(
 	db: Db,
 	masterKeyManager: MasterKeyManager,

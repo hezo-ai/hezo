@@ -21,6 +21,7 @@ import { reflowEnumerations } from '../lib/reflow-thinking-lists';
 import { type CommentRefTask, remarkCommentRefs } from '../lib/remark-comment-refs';
 import { CommentRefLink } from './comment-ref-link';
 import { MarkdownProse } from './markdown-prose';
+import { RunLinkedText } from './run-linked-text';
 import { Badge } from './ui/badge';
 
 interface FormattedLogViewProps {
@@ -113,11 +114,12 @@ function SystemView({ block }: { block: SystemBlock }) {
 /**
  * Runner lines, styled like the system ones they sit beside.
  *
- * One element per line rather than a single joined `<pre>`, because the line
- * naming the run's container carries a link: its id goes to that container's
- * page, which is where the disk, memory, error and container log all are. Shown
- * truncated the same way the Containers list shows it, while the link and the
- * raw log both carry the full engine id.
+ * One element per line rather than a single joined `<pre>`, because some lines
+ * carry links: the one naming the run's container goes to that container's
+ * page, which is where the disk, memory, error and container log all are (its
+ * id shown truncated the same way the Containers list shows it, while the link
+ * and the raw log both carry the full engine id), and a line naming another run
+ * - the one this run queued behind for a credential - goes to that run's page.
  */
 function RunnerView({ block }: { block: RunnerBlock }) {
 	const color = block.stream === 'stderr' ? 'text-danger-soft-fg' : 'text-text-3';
@@ -139,7 +141,9 @@ function RunnerView({ block }: { block: RunnerBlock }) {
 							{line.container.details && CONTAINER_META_LOG_SEPARATOR + line.container.details}
 						</>
 					) : (
-						line.text
+						// A line naming another run - the credential wait names the run it
+						// queues behind - links it; every other line is verbatim.
+						<RunLinkedText text={line.text} />
 					)}
 				</div>
 			))}

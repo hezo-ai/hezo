@@ -2,20 +2,17 @@ import { ChatSystemMessageKind } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDataPreservationHarness, type DataPreservationHarness } from './helpers/migrate';
 
-const TARGET = '067_chat_system_kind_connector_refused.sql';
+const TARGET = '068_chat_system_kind_credential_wait.sql';
 
-// Seeds a chat thread at schema 066 carrying one row of each kind the CHECK
+// Seeds a chat thread at schema 067 carrying one row of each kind the CHECK
 // admitted before this migration, applies it, and asserts: every seeded row and
-// its kind survived, the new kind inserts, an unknown kind still fails, and
-// every kind this migration admits inserts. The enum-wide drift guard - every
-// value of the shared enum inserts - lives with the newest system-kind
-// migration's test, since a later migration widens the list again.
-describe('067_chat_system_kind_connector_refused migration', () => {
+// its kind survived, the new kind inserts, an unknown kind still fails, and -
+// the drift guard - every value of the shared enum inserts, so the enum and the
+// constraint cannot part ways without failing here.
+describe('068_chat_system_kind_credential_wait migration', () => {
 	let h: DataPreservationHarness;
 	let conversationId: string;
-	let convertedId: string;
-	let handoffId: string;
-	let plainId: string;
+	let seeded: string[];
 
 	beforeAll(async () => {
 		h = await createDataPreservationHarness();
@@ -49,13 +46,16 @@ describe('067_chat_system_kind_connector_refused migration', () => {
 			);
 			return r.rows[0].id;
 		};
-		plainId = await insert('assistant', 'here is the plan', null);
-		convertedId = await insert('system', 'Conversation converted to task HQ-4', 'converted_task');
-		handoffId = await insert(
-			'system',
-			'This chat turn named @dev without waking them',
-			'handoff_not_delivered',
-		);
+		seeded = [
+			await insert('assistant', 'here is the plan', null),
+			await insert('system', 'Conversation converted to task HQ-4', 'converted_task'),
+			await insert(
+				'system',
+				'This chat turn named @dev without waking them',
+				'handoff_not_delivered',
+			),
+			await insert('system', 'connector "ibkr" refused this run', 'connector_refused'),
+		];
 
 		await h.applyTarget(TARGET);
 	});
@@ -66,20 +66,21 @@ describe('067_chat_system_kind_connector_refused migration', () => {
 			`SELECT id, system_kind, content FROM chat_messages WHERE conversation_id = $1 ORDER BY created_at ASC`,
 			[conversationId],
 		);
-		expect(rows.rows.map((r) => r.id)).toEqual([plainId, convertedId, handoffId]);
+		expect(rows.rows.map((r) => r.id)).toEqual(seeded);
 		expect(rows.rows.map((r) => r.system_kind)).toEqual([
 			null,
 			'converted_task',
 			'handoff_not_delivered',
+			'connector_refused',
 		]);
-		expect(rows.rows[1].content).toBe('Conversation converted to task HQ-4');
+		expect(rows.rows[3].content).toBe('connector "ibkr" refused this run');
 	});
 
 	it('admits the new kind and still rejects an unknown one', async () => {
 		await expect(
 			h.db.query(
 				`INSERT INTO chat_messages (conversation_id, role, channel, status, content, system_kind)
-				 VALUES ($1, 'system', 'web', 'complete', 'connector "ibkr" refused this run', 'connector_refused')`,
+				 VALUES ($1, 'system', 'web', 'complete', 'Waiting for growth-analyst/HM-336 to finish with this credential.', 'credential_wait')`,
 				[conversationId],
 			),
 		).resolves.toBeDefined();
@@ -92,12 +93,8 @@ describe('067_chat_system_kind_connector_refused migration', () => {
 		).rejects.toThrow();
 	});
 
-	it('admits every kind it names', async () => {
-		for (const kind of [
-			ChatSystemMessageKind.ConvertedTask,
-			ChatSystemMessageKind.HandoffNotDelivered,
-			ChatSystemMessageKind.ConnectorRefused,
-		]) {
+	it('admits every kind the shared enum names', async () => {
+		for (const kind of Object.values(ChatSystemMessageKind)) {
 			await expect(
 				h.db.query(
 					`INSERT INTO chat_messages (conversation_id, role, channel, status, content, system_kind)

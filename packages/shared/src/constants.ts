@@ -1,3 +1,5 @@
+import { parseRunPath, type RunLink, runPath } from './mentions/paths.js';
+
 export const DEFAULT_PORT = 3100;
 export const DEFAULT_WEB_PORT = 5173;
 export const DEFAULT_DATA_DIR = '~/.hezo';
@@ -325,6 +327,44 @@ export function parseContainerMetaLogLine(
 		.split(CONTAINER_META_LOG_SEPARATOR);
 	if (!containerId || /\s/.test(containerId)) return null;
 	return { containerId, details: rest.join(CONTAINER_META_LOG_SEPARATOR) };
+}
+
+/**
+ * A run named inside a line of server-written text - a runner log line, a chat
+ * notice - as a markdown link to its page.
+ *
+ * Markdown rather than a private marker because it reads as-is wherever the
+ * text is shown raw (the raw log view, a copied line, the database row), and
+ * a viewer that wants a real link only has to recognise the one href shape
+ * {@link runPath} produces. The label is whatever the writer calls the run.
+ */
+export function formatRunLink(label: string, link: RunLink): string {
+	return `[${label}](${runPath(link)})`;
+}
+
+/** One piece of a line split by {@link splitRunLinks}: plain text, or a linked run. */
+export type RunLinkSegment = { text: string } | { label: string; link: RunLink };
+
+const MARKDOWN_LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+
+/**
+ * Split text into plain segments and the run links {@link formatRunLink} wrote
+ * into it. A markdown link whose href is not a run path stays plain text, so
+ * an agent's own `[text](url)` in a log line is never turned into a run link.
+ */
+export function splitRunLinks(text: string): RunLinkSegment[] {
+	const segments: RunLinkSegment[] = [];
+	let cursor = 0;
+	for (const match of text.matchAll(MARKDOWN_LINK_RE)) {
+		const link = parseRunPath(match[2]);
+		if (!link) continue;
+		const at = match.index ?? 0;
+		if (at > cursor) segments.push({ text: text.slice(cursor, at) });
+		segments.push({ label: match[1], link });
+		cursor = at + match[0].length;
+	}
+	if (cursor < text.length) segments.push({ text: text.slice(cursor) });
+	return segments;
 }
 
 /**

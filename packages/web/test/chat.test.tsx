@@ -754,3 +754,88 @@ test('a connector refusal renders as the same warning row, keyed by its own kind
 	expect(row?.getAttribute('data-role')).toBe('system');
 	expect(queryByTestId('chat-converted-task-link')).toBeNull();
 });
+
+test('a credential wait renders as a quiet notice with the holding run linked', async () => {
+	const { findByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+
+	seedConversation([
+		{
+			id: 's1',
+			role: 'system',
+			channel: 'web',
+			status: 'complete',
+			content:
+				'Waiting for [growth-analyst/HM-336](/projects/hezo-marketing/agents/growth-analyst/executions/run-hm-336) to finish with this credential.',
+			created_at: now(),
+			system_kind: 'credential_wait',
+		},
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'streaming',
+			content: '',
+			created_at: now(),
+		},
+	]);
+
+	const row = await vi.waitFor(() => {
+		const el = document.querySelector('[data-system-kind="credential_wait"]');
+		if (!el) throw new Error('no row yet');
+		return el;
+	});
+	expect(row.getAttribute('data-role')).toBe('system');
+	// The sentence reads as written, with the holder's name as the link.
+	expect(row.textContent).toBe('Waiting for growth-analyst/HM-336 to finish with this credential.');
+	const link = row.querySelector('[data-testid="run-link"]') as HTMLAnchorElement | null;
+	expect(link?.getAttribute('href')).toBe(
+		'/projects/hezo-marketing/agents/growth-analyst/executions/run-hm-336',
+	);
+	expect(link?.textContent).toBe('growth-analyst/HM-336');
+	// A notice, not a warning: no amber.
+	expect(row.className).not.toContain('bg-warning-soft');
+	expect(queryByTestId('chat-converted-task-link')).toBeNull();
+});
+
+test('a failed reply shows the reason the server recorded, not a generic message', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('chat-launcher')).click();
+	await findByTestId('chat-panel');
+
+	seedConversation([
+		{
+			id: 'a1',
+			role: 'assistant',
+			channel: 'web',
+			status: 'failed',
+			content: '',
+			created_at: now(),
+			error:
+				'[growth-analyst/HM-336](/projects/hezo-marketing/agents/growth-analyst/executions/run-hm-336) is still using this provider credential; this subscription runs one agent at a time.',
+		},
+		{
+			id: 'a2',
+			role: 'assistant',
+			channel: 'web',
+			status: 'failed',
+			content: '',
+			created_at: now(),
+		},
+	]);
+
+	const failures = await vi.waitFor(() => {
+		const els = document.querySelectorAll('[data-testid="chat-failure"]');
+		if (els.length !== 2) throw new Error('not rendered yet');
+		return els;
+	});
+	expect(failures[0].textContent).toBe(
+		'growth-analyst/HM-336 is still using this provider credential; this subscription runs one agent at a time.',
+	);
+	expect(failures[0].querySelector('[data-testid="run-link"]')?.getAttribute('href')).toBe(
+		'/projects/hezo-marketing/agents/growth-analyst/executions/run-hm-336',
+	);
+	// With no recorded reason the bare fact still shows.
+	expect(failures[1].textContent).toBe('Something went wrong.');
+});
