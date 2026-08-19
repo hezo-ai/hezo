@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.51.0 - 2026-08-19
+
+### Breaking Changes
+
+- **intake:** stop the CEO running before the admin replies, and rename the App Team slug to app-dev ([#1011](https://github.com/hezo-ai/hezo/pull/1011))
+
+### Features
+
+- parallel Codex subscription runs + Gemini→Antigravity runtime ([#1010](https://github.com/hezo-ai/hezo/pull/1010))
+- **web:** explain progress update runs behind a help dialog ([#1009](https://github.com/hezo-ai/hezo/pull/1009))
+- **tasks:** carry the task name in the pinned breadcrumb, on one line ([#1006](https://github.com/hezo-ai/hezo/pull/1006))
+- **web:** render CSV assets readably - table in the viewer, mini table on the card ([#1002](https://github.com/hezo-ai/hezo/pull/1002))
+
+### Bug Fixes
+
+- **intake:** stop the CEO running before the admin replies, and rename the App Team slug to app-dev ([#1011](https://github.com/hezo-ai/hezo/pull/1011))
+- **runs:** stop a container stop killing a run that only waits for its credential ([#1007](https://github.com/hezo-ai/hezo/pull/1007))
+- **web:** make settings group headings read as labels, not menu links ([#1005](https://github.com/hezo-ai/hezo/pull/1005))
+- **connectors:** send hosted MCP headers to Codex, and report a connector refusing a run ([#1003](https://github.com/hezo-ai/hezo/pull/1003))
+
+### Other
+
+- clean up two things #1012 left behind in test-browser ([#1013](https://github.com/hezo-ai/hezo/pull/1013))
+- run browser tests in Playwright's image instead of installing deps per run ([#1012](https://github.com/hezo-ai/hezo/pull/1012))
+- bound package-install time so a stalled apt can't burn the job cap ([#1008](https://github.com/hezo-ai/hezo/pull/1008))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.50.1...0.51.0
+
 ## 0.50.1 - 2026-08-18
 
 ### Bug Fixes
