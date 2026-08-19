@@ -78,6 +78,21 @@ setup screen; you take it from there.
 package_update: true
 packages:
   - curl
+# To use a managed database and/or object storage for assets, uncomment this
+# block and fill in the URLs. Remove either setting if you do not use it.
+# write_files:
+#   - path: /etc/hezo/hezo.config.cjs
+#     owner: root:root
+#     permissions: '0600'
+#     content: |
+#       const { existsSync, readFileSync } = require('node:fs');
+#       const webUrlFile = '/etc/hezo/web-url';
+#       module.exports = {
+#         dataDir: '/var/lib/hezo',
+#         webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
+#         database: { url: 'postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' },
+#         assetStorage: { url: 's3://ACCESS_KEY:SECRET@endpoint/bucket' },
+#       };
 runcmd:
   # To change the swap size (default 6G; set 0 to disable), uncomment and edit this
   # before the curl line runs:
@@ -85,14 +100,6 @@ runcmd:
   # To use your own domain instead of sslip.io, point an A record at this server, then
   # uncomment the next line and set your domain (do it before the curl line runs):
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]
-  # To use a managed database and/or object storage for assets, seed the URLs into
-  # /etc/hezo/deploy.env (root-only, mode 600 - not /etc/environment: they carry credentials).
-  # provision.sh persists them into the service's env file. sslmode=require encrypts
-  # without verifying the certificate; for verified TLS use sslmode=verify-full plus
-  # &sslrootcert=/etc/hezo/db-ca.crt when the provider signs with its own CA (most do).
-  # - [ sh, -c, "install -d -m 700 /etc/hezo && install -m 600 /dev/null /etc/hezo/deploy.env" ]
-  # - [ sh, -c, "echo 'HEZO_DATABASE_URL=postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' >> /etc/hezo/deploy.env" ]
-  # - [ sh, -c, "echo 'HEZO_ASSET_STORAGE_URL=s3://ACCESS_KEY:SECRET@endpoint/bucket' >> /etc/hezo/deploy.env" ]
   - [ sh, -c, "curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.sh -o /root/hezo-provision.sh" ]
   - [ sh, -c, "set -a; [ -f /etc/environment ] && . /etc/environment; set +a; bash /root/hezo-provision.sh" ]
 ```
@@ -159,10 +166,10 @@ storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-s
 
 ### 3. Wire it into the deploy
 
-**At provision time** - uncomment the `/etc/hezo/deploy.env` lines in the
-[snippet above](#deploy-it) and fill in your URLs before you paste it. The installer
-persists them into `/etc/hezo/hezo.config.cjs` and Hezo uses the managed backends
-from its very first boot. One caveat: on most providers, anything in the user-data
+**At provision time** - uncomment the `/etc/hezo/hezo.config.cjs` block in the
+[snippet above](#deploy-it), fill in your URLs, and remove either backend you do not use
+before you paste it. Hezo reads that file directly and uses the managed backends from
+its very first boot. One caveat: on most providers, anything in the user-data
 field stays readable later via the instance's metadata service - if you'd rather keep
 the credentials out of user data entirely, deploy without them and use the post-boot
 path instead.

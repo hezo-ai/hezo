@@ -35,7 +35,7 @@ runtime is needed here. See [Containers](/docs/containers/overview) for the trad
 The choice stays live after install: **Settings -> Containers** switches an existing
 instance between local and remote containers at any time
 ([Switching at any time](/docs/containers/overview#switching-at-any-time)) - the flag and
-environment variable only seed the first startup.
+matching `containers.backend` config-file setting only seed the first startup.
 
 ## Install the binary
 
