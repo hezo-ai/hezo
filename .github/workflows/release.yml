@@ -29,6 +29,10 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    # Must stay above the 3600s CI-wait deadline in "Verify CI passed for HEAD"
+    # below - that step deliberately blocks for up to an hour, so a tighter cap
+    # here would abort every release that waits on a normal CI run.
+    timeout-minutes: 75
     # Releases are only ever prepared from main.
     if: github.ref == 'refs/heads/main'
     steps:

@@ -12,6 +12,7 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -27,6 +28,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -357,18 +359,42 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
-      # Both Playwright install paths below run `apt-get update`, which fails
-      # hard (exit 100) if any pre-configured apt source 403s. The runner image
-      # ships Microsoft's azure-cli/prod repos, which Playwright doesn't need and
-      # which intermittently return 403 — taking the whole browser shard down.
-      # Drop those sources first so an unrelated repo outage can't fail the job.
-      - name: Remove unneeded Microsoft apt sources (avoid 403 flakes)
+      # Both Playwright install paths below run `apt-get update`, which has two
+      # distinct ways to take the whole browser shard down.
+      #
+      # It fails hard (exit 100) if any pre-configured apt source 403s. The
+      # runner image ships Microsoft's azure-cli/prod repos, which Playwright
+      # doesn't need and which intermittently return 403, so drop those sources.
+      #
+      # It also *hangs*. apt has no default fetch timeout, so when the runner's
+      # azure mirror goes Ign and apt falls back to archive.ubuntu.com, a
+      # fallback connection that stops sending simply dangles - observed at 24
+      # minutes on main, and again on the first run of the PR that added the
+      # step timeouts below. It is per-runner, not a global outage: sibling
+      # shards on the same commit installed fine. So bound the fetch, and apt
+      # abandons a dead mirror in 20s and moves to the next mirrorlist entry
+      # instead of burning the step's whole budget on one dangling socket.
+      - name: De-flake apt before Playwright installs deps
         run: |
           sudo grep -rlZ 'packages\.microsoft\.com' /etc/apt/sources.list.d/ 2>/dev/null \
             | sudo xargs -0 -r rm -f || true
-      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+          sudo tee /etc/apt/apt.conf.d/99-hezo-ci-fetch-timeouts >/dev/null <<'APTCONF'
+          Acquire::http::Timeout "20";
+          Acquire::https::Timeout "20";
+          APTCONF
+      # apt-get update inside both steps below has hung for the full job cap on
+      # three separate runs: the runner's azure mirror went Ign, apt failed over
+      # to archive.ubuntu.com, and that fetch then dangled with no output and no
+      # timeout of its own. A healthy install-deps takes ~70s, so bound each step
+      # far below the job cap - a stalled mirror should cost 5 minutes and a
+      # named step timeout, not 25 minutes and an opaque job cancellation.
+      - name: Install Playwright browsers and system deps
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 10
         run: bunx playwright install --with-deps chromium
-      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+      - name: Install Playwright system deps
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        timeout-minutes: 5
         run: bunx playwright install-deps chromium
       - run: bun run test --browser --shard ${{ matrix.shard }}/3
       # Everything needed to diagnose a failure is in the artifact below, but
@@ -414,6 +440,7 @@ jobs:
     if: always()
     needs: test-backend
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-backend.result }}" = "success" ]'
 
@@ -421,6 +448,7 @@ jobs:
     if: always()
     needs: test-integration
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-integration.result }}" = "success" ]'
 
@@ -428,6 +456,7 @@ jobs:
     if: always()
     needs: test-shared
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-shared.result }}" = "success" ]'
 
@@ -435,6 +464,7 @@ jobs:
     if: always()
     needs: test-browser
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-browser.result }}" = "success" ]'
 
@@ -453,6 +483,7 @@ jobs:
     if: always()
     needs: [test-backend, test-integration, test-shared]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2

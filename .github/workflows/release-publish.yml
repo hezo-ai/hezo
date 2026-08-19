@@ -89,6 +89,7 @@ jobs:
   # never point users at binaries whose provisioning pull would 404.
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: publish-agent-image
     if: >-
       github.event.pull_request.merged == true &&
@@ -145,6 +146,7 @@ jobs:
   # bucket.
   publish-cfn-template:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: publish
     if: >-
       github.event.pull_request.merged == true &&
@@ -187,6 +189,7 @@ jobs:
   # update-hezo-submodule.yml; this job only announces the tag.
   notify-website:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: publish
     if: >-
       github.event.pull_request.merged == true &&
