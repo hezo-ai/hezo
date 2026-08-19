@@ -231,6 +231,43 @@ export async function updateAiProviderCredential(
 }
 
 /**
+ * Advance a stored credential to `newValue` only if it still holds `expectedValue`.
+ *
+ * For a rotated-credential read-back taken without a whole-run lock: two runs
+ * sharing one credential can each rotate the same starting token to a different
+ * (still valid) successor. This moves the store forward only from the value the
+ * caller started on, so a run that finished on a now-superseded token drops its
+ * write instead of moving the store back to a sibling. The row is locked for the
+ * compare so two write-backs cannot both read the same "before". Returns whether
+ * it wrote. The ciphertext carries a random IV, so the compare is on the
+ * decrypted value, not the stored bytes.
+ */
+export async function casUpdateAiProviderCredential(
+	db: Db,
+	masterKeyManager: MasterKeyManager,
+	configId: string,
+	expectedValue: string,
+	newValue: string,
+): Promise<boolean> {
+	const encryptionKey = masterKeyManager.getKey();
+	if (!encryptionKey) throw new Error('Master key not available');
+	return withTransaction(db, async () => {
+		const current = await db.query<{ encrypted_credential: string }>(
+			'SELECT encrypted_credential FROM ai_provider_configs WHERE id = $1 FOR UPDATE',
+			[configId],
+		);
+		const row = current.rows[0];
+		if (!row) return false;
+		if (decrypt(row.encrypted_credential, encryptionKey) !== expectedValue) return false;
+		await db.query(
+			'UPDATE ai_provider_configs SET encrypted_credential = $1, updated_at = now() WHERE id = $2',
+			[encrypt(newValue, encryptionKey), configId],
+		);
+		return true;
+	});
+}
+
+/**
  * The current decrypted value of one credential row, or null when the row is
  * gone. For a caller that already chose its config and only needs to know
  * whether the value moved since - a waiter that held a snapshot across a wait

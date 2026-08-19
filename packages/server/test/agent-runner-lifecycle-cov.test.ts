@@ -12,11 +12,12 @@ import {
 	AiProvider,
 	ContainerStatus,
 	HeartbeatRunStatus,
+	setCredentialSerializationRulesForTest,
 	TaskStatus,
 	WakeupSource,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decrypt } from '../src/crypto/encryption';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
@@ -1044,6 +1045,12 @@ describe('runAgent lifecycle — aborts and timeout', () => {
 });
 
 describe('runAgent lifecycle — subscription credential lock + rotation', () => {
+	beforeEach(() =>
+		setCredentialSerializationRulesForTest([
+			{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+		]),
+	);
+	afterEach(() => setCredentialSerializationRulesForTest([]));
 	it('records the queued_reason while blocked, clears it once running, and persists a valid rotated auth blob', async () => {
 		const originalAuthJson = JSON.stringify({
 			tokens: {

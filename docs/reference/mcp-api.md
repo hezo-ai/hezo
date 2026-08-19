@@ -333,7 +333,7 @@ Create a new task. Use parent_task_id for sub-tasks - prefer this over a top-lev
 | `assignee_id` | `string` | No | Assignee member ID |
 | `assignee_slug` | `string` | No | Assignee agent slug (alternative to assignee_id) |
 | `parent_task_id` | `string` | No | Parent task to nest this under as a sub-task - a task identifier (e.g. "BE-2") or UUID. Sub-tasks can themselves have sub-tasks, and those one further level, but no deeper - depth is capped at 3. |
-| `runtime_type` | `string` | No | Pin this task to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default. |
+| `runtime_type` | `string` | No | Pin this task to a specific AI runtime (claude_code, codex, antigravity). Leave unset to use the instance default. |
 | `blocked_by_task_ids` | `string[]` | No | Task identifiers (e.g. ["BE-2", "BE-3"]) or UUIDs that must reach a terminal status before this task is started. The assignee will not be woken on this task until every blocker is satisfied. |
 | `goal_id` | `string` | No | UUID of the project goal this task advances. Links the task to the goal for traceability; it does not gate or change how the task runs. (Captain) set this when filing work to move a goal forward. |
 
@@ -378,7 +378,7 @@ Update a task. Agents can use this to change status, update progress, set rules,
 | `progress_summary` | `string` | No | Progress summary update |
 | `rules` | `string` | No | How-to-work-on guardrails for this task - approach constraints that shape execution (e.g. "run tests before committing", "consult the architect before auth changes"). Not a channel for passing project domain knowledge to other agents; put that in description instead. |
 | `branch_name` | `string` | No | Git branch name for this task |
-| `runtime_type` | `string` | No | Override the AI runtime for this task (claude_code, codex, gemini). Pass an empty string to clear. |
+| `runtime_type` | `string` | No | Override the AI runtime for this task (claude_code, codex, antigravity). Pass an empty string to clear. |
 | `parent_task_id` | `string` \| `null` | No | Move this task under a different parent - a task identifier (e.g. "BE-2") or UUID. Pass an empty string or null to promote it to a top-level task. Omit to leave the parent unchanged. The parent must be in the same project, cannot be the task itself or one of its own sub-tasks, and the whole sub-tree being moved must still fit within the depth cap of 3. An open task cannot be nested under a parent that is already done or cancelled. |
 
 **Returns:** The updated task row (may carry a `warning` string), `{ unchanged: true }` when no fields changed, `null` if not found, or `{ error }` on a validation failure.

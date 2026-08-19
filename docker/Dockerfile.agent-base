@@ -39,12 +39,20 @@ ENV PATH="/root/.local/bin:${PATH}"
 #                                       provider via their Anthropic-compatible
 #                                       endpoints)
 #   @openai/codex             → codex
-#   @google/gemini-cli        → gemini
 #   opencode-ai               → opencode
 RUN npm install -g @anthropic-ai/claude-code \
     && npm install -g @openai/codex \
-    && npm install -g @google/gemini-cli \
     && npm install -g opencode-ai
+
+# Google Antigravity CLI (`agy`) - drives the `google` provider (API-key only in
+# Hezo for now; Antigravity's consumer subscription can't yet be delivered into a
+# per-run container). A native binary from an
+# installer, not npm; its default install dir is $HOME/.local/bin (root's during
+# build), so install to the shared PATH like Grok so the non-root `node` run-user
+# can execute it. At run time agy reads its config from the run-user's own
+# `$HOME/.gemini`, written per run by the antigravity adapter.
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- -d /usr/local/bin \
+    && agy --version
 
 # Moonshot Kimi Code (`kimi`) — the `kimi` provider's native-CLI option, alongside
 # (not instead of) its default Claude Code path above. Pinned

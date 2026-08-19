@@ -10,9 +10,10 @@ import {
 	KIMI_DEFAULT_MODEL,
 	kimiModelContextSize,
 	MAX_SINGLE_ARG_BYTES,
+	setCredentialSerializationRulesForTest,
 } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { runLogTextSql } from '../src/db/run-log-chunks';
@@ -1769,7 +1770,7 @@ describe('runAgent', () => {
 			globalThis.fetch = originalFetch;
 		});
 
-		it('writes .gemini/settings.json for gemini runtime', async () => {
+		it('runs the antigravity runtime with no per-run home mount', async () => {
 			globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
 			await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'google'`);
 			await app.request('/api/ai-providers', {
@@ -1777,35 +1778,19 @@ describe('runAgent', () => {
 				headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					provider: 'google',
-					api_key: 'AIza-test-gemini-mcp',
-					label: 'google-gemini-mcp',
+					api_key: 'AIza-test-antigravity-mcp',
+					label: 'google-antigravity-mcp',
 				}),
 			});
 			globalThis.fetch = originalFetch;
 
 			let capturedCmd: string[] = [];
 			let capturedEnv: string[] = [];
-			let settingsPath: string | null = null;
-			let settingsContents: string | null = null;
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
 					capturedCmd = opts.Cmd;
 					capturedEnv = opts.Env;
-					const geminiHome = (opts.Env as string[]).find((e) => e.startsWith('GEMINI_CLI_HOME='));
-					if (geminiHome) {
-						const containerDir = geminiHome.slice('GEMINI_CLI_HOME='.length);
-						const runId = containerDir.split('/').pop()!;
-						settingsPath = `${getHostSubscriptionRoot(
-							AiProvider.Google,
-							AgentRuntime.Gemini,
-							testDataDir,
-							teamId,
-							projectId,
-							runId,
-						)}/.gemini/settings.json`;
-						settingsContents = readFileSync(settingsPath, 'utf8');
-					}
-					return 'exec-gemini-mcp';
+					return 'exec-antigravity-mcp';
 				},
 				execStart: async () => ({ stdout: '', stderr: '' }),
 				execInspect: async () => ({ ExitCode: 0, Running: false, Pid: 0 }),
@@ -1823,23 +1808,17 @@ describe('runAgent', () => {
 			const result = await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeTask(), runtime_type: 'gemini' as const },
+				{ ...makeTask(), runtime_type: 'antigravity' as const },
 				makeProject(),
 			);
 			expect(result.success).toBe(true);
 
+			// agy reads its config from the container HOME (written by the adapter as
+			// homeConfigFiles), so there is no per-run home env var and no config
+			// flag on argv. The mcp_config.json content is unit-tested on the adapter.
 			expect(capturedCmd).not.toContain('--mcp-config');
-			expect(capturedEnv.filter((e) => e.startsWith('GEMINI_CLI_HOME=')).length).toBe(1);
-
-			expect(settingsPath).not.toBeNull();
-			const parsed = JSON.parse(settingsContents!) as {
-				mcpServers: Record<string, { httpUrl: string; headers?: Record<string, string> }>;
-			};
-			expect(parsed.mcpServers.hezo.httpUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
-			expect(parsed.mcpServers.hezo.headers?.Authorization).toMatch(/^Bearer /);
-
-			// Cleanup removes the per-run dir.
-			expect(existsSync(settingsPath!)).toBe(false);
+			expect(capturedEnv.some((e) => e.startsWith('GEMINI_CLI_HOME='))).toBe(false);
+			expect(capturedEnv.some((e) => e.startsWith('HEZO_ANTIGRAVITY_CONFIG_DIR='))).toBe(false);
 		});
 
 		it('persists invocation_command with JWT redacted', async () => {
@@ -2424,7 +2403,7 @@ describe('runAgent', () => {
 			expect(capturedCmd).not.toContain('-p');
 		});
 
-		it('runs gemini headless with --yolo and no print/profile flag', async () => {
+		it('runs antigravity headless via agy with stdin stream-json delivery', async () => {
 			let capturedCmd: string[] = [];
 			const docker = createMockDocker({
 				execCreate: async (_id: string, opts: any) => {
@@ -2458,21 +2437,22 @@ describe('runAgent', () => {
 			await runAgent(
 				deps,
 				makeAgent(),
-				{ ...makeTask(), runtime_type: 'gemini' as const },
+				{ ...makeTask(), runtime_type: 'antigravity' as const },
 				makeProject(),
 			);
 
-			expect(capturedCmd).toContain('gemini');
-			expect(capturedCmd).toContain('--yolo');
-			// Gemini streams newline-delimited JSON via stream-json (live logs
-			// preserved) and reports per-model token usage in its result event.
+			expect(capturedCmd).toContain('agy');
+			// agy auto-approves via --dangerously-skip-permissions and reads the prompt
+			// from stdin (--input-format text), so no -p / exec / trailing `-`.
+			expect(capturedCmd).toContain('--dangerously-skip-permissions');
 			expect(capturedCmd).toContain('--output-format');
 			const fmtIdx = capturedCmd.indexOf('--output-format');
 			expect(capturedCmd[fmtIdx + 1]).toBe('stream-json');
+			expect(capturedCmd).toContain('--input-format');
 			expect(capturedCmd).not.toContain('-p');
 			expect(capturedCmd).not.toContain('exec');
-			const geminiIdx = capturedCmd.indexOf('gemini');
-			expect(capturedCmd.slice(geminiIdx + 1)).not.toContain('-');
+			const agyIdx = capturedCmd.indexOf('agy');
+			expect(capturedCmd.slice(agyIdx + 1)).not.toContain('-');
 		});
 
 		it('parses stream-json events and persists usage from result event', async () => {
@@ -2828,6 +2808,16 @@ describe('runAgent', () => {
 	});
 
 	describe('codex ChatGPT-subscription auth', () => {
+		// Codex no longer serialises its runs by default; the queued-while-held test
+		// below exercises the still-wired mechanism through a rule. Harmless for the
+		// other tests here - a run with no contender just takes and drops its own lock.
+		beforeEach(() => {
+			setCredentialSerializationRulesForTest([
+				{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+			]);
+		});
+		afterEach(() => setCredentialSerializationRulesForTest([]));
+
 		const validAuthJson = JSON.stringify({
 			tokens: {
 				id_token: 'header.payload.sig',
@@ -2919,7 +2909,7 @@ describe('runAgent', () => {
 					'pj',
 					'r1',
 					AiProvider.Google,
-					AgentRuntime.Gemini,
+					AgentRuntime.Antigravity,
 					{ value: 'AIza-x', authMethod: AiAuthMethod.ApiKey, baseUrl: null, runtime: null },
 					createStubDocker(),
 					'container-123',

@@ -1511,7 +1511,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Pin this task to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
+					'Pin this task to a specific AI runtime (claude_code, codex, antigravity). Leave unset to use the instance default.',
 				),
 			blocked_by_task_ids: z
 				.array(z.string())
@@ -1805,7 +1805,7 @@ export function registerTools(
 							.string()
 							.optional()
 							.describe(
-								'Pin this task to a specific AI runtime (claude_code, codex, gemini). Leave unset to use the instance default.',
+								'Pin this task to a specific AI runtime (claude_code, codex, antigravity). Leave unset to use the instance default.',
 							),
 						blocked_by_task_ids: z
 							.array(z.string())
@@ -1889,7 +1889,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'Override the AI runtime for this task (claude_code, codex, gemini). Pass an empty string to clear.',
+					'Override the AI runtime for this task (claude_code, codex, antigravity). Pass an empty string to clear.',
 				),
 			parent_task_id: z
 				.string()

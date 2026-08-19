@@ -145,7 +145,13 @@ describe('buildSubscriptionLoginCodeScript', () => {
 	});
 });
 
-describe('the generated script, under real sh', () => {
+// Linux-only: the login script launches its CLI through `util-linux script`
+// (`script -qec <cmd> /dev/null`), which is how it runs in the agent container.
+// macOS ships BSD `script`, which rejects `-c` ("illegal option -- c"), so on a
+// darwin dev box the wrapped CLI never runs and these time out - a false failure
+// for a script that is correct where it actually executes. CI is Linux, so the
+// coverage still runs there.
+describe.skipIf(process.platform !== 'linux')('the generated script, under real sh', () => {
 	/**
 	 * A stand-in for a vendor CLI: prints a challenge, then blocks reading a code
 	 * from stdin and writes a credential once it arrives. That sequence - print,

@@ -2284,25 +2284,28 @@ export class ChatSessionManager {
 	}
 
 	/**
-	 * Run one CLI exec holding this session's provider credential, and store back
-	 * whatever the CLI rotated into it.
+	 * Run one CLI exec holding this session's provider credential, keeping the
+	 * mounted token in step with the store and storing back whatever the CLI
+	 * rotated into it.
 	 *
-	 * A chat turn drives the same coding CLI a task run does, so on a rotating
-	 * subscription (Codex) it consumes and rewrites the single-use refresh token.
-	 * Without this the chat took no lock and kept no write-back: a turn overlapping
-	 * a task run invalidated that run's token, and the value the CLI left behind
-	 * was dropped, leaving the stored credential a rotation behind and the next
-	 * refresh failing. Silent credential corruption, on a live path.
+	 * Two separable concerns:
 	 *
-	 * The wait is the run's own ceiling, taken with priority: a person is behind
-	 * this exec, so it queues ahead of runs merely parked on the lock (they hold
-	 * nothing and re-queue on their own deadline) and waits on the holder alone -
-	 * which is also what keeps `onWaiting`'s "waiting for X" true for the whole
-	 * wait. Non-rotating credentials skip all of it and run concurrently as before.
+	 * 1. **Rotation handling (active for Codex).** A chat turn drives the same
+	 *    coding CLI a task run does, so on a rotating subscription it consumes and
+	 *    rewrites the single-use refresh token. Before the exec the mounted file is
+	 *    brought up to date with the store (a task run may have advanced it since
+	 *    this session mounted it); after the exec the value the CLI left is read
+	 *    back. The read-back is compare-and-set, so a chat turn and a task run can
+	 *    rotate the same credential in parallel without one clobbering the other -
+	 *    this is why no lock is needed for it.
 	 *
-	 * Once the lock is held the mounted token is brought up to date with the
-	 * store, since the holder just waited on may have rotated it, and the value
-	 * this exec ran on is what the read-back afterwards is compared against.
+	 * 2. **Serialisation (dormant).** If a credential opts into serialising its
+	 *    runs ({@link credentialSerializesRuns} - empty today), the whole exec is
+	 *    held under the per-credential lock, taken with priority and the run's own
+	 *    ceiling: a person is behind this exec, so it queues ahead of runs merely
+	 *    parked on the lock and waits on the holder alone, which keeps `onWaiting`'s
+	 *    "waiting for X" notice true for the whole wait. No credential does this
+	 *    now, so this branch is exercised only through a test rule.
 	 */
 	private async withCredentialLock<T>(
 		session: LiveSession,
@@ -2312,7 +2315,41 @@ export class ChatSessionManager {
 	): Promise<T> {
 		const { provider, runtimeType } = session.invocationInputs;
 		const { configId, authMethod } = session.invocationInputs.credential;
-		if (!credentialSerializesRuns(provider, runtimeType, authMethod)) return fn();
+
+		// Sync the mount from the store, run, then read the rotation back (CAS).
+		// No-op for a non-rotating mount. Independent of serialisation.
+		const withRotationHandling = async (): Promise<T> => {
+			if (!session.subscriptionMount?.rotates) return fn();
+			const value = await refreshSubscriptionMount({
+				db: this.deps.db,
+				masterKeyManager: this.deps.masterKeyManager,
+				engine: this.deps.docker,
+				containerId: session.containerId,
+				runUser: session.runUser,
+				credential: session.invocationInputs.credential,
+				mount: session.subscriptionMount,
+			});
+			this.rememberCredentialValue(session, value);
+			try {
+				return await fn();
+			} finally {
+				const rotated = await persistRotatedSubscriptionAuth({
+					db: this.deps.db,
+					masterKeyManager: this.deps.masterKeyManager,
+					engine: this.deps.docker,
+					containerId: session.containerId,
+					provider,
+					credential: session.invocationInputs.credential,
+					mount: session.subscriptionMount,
+					onNotice: (text: string) => log.warn(text, { session: session.sessionId }),
+				});
+				if (rotated !== null) this.rememberCredentialValue(session, rotated);
+			}
+		};
+
+		if (!credentialSerializesRuns(provider, runtimeType, authMethod)) {
+			return withRotationHandling();
+		}
 
 		const holder = credentialLockHolder(configId);
 		let release: (() => void) | null = null;
@@ -2341,30 +2378,10 @@ export class ChatSessionManager {
 			throw e;
 		}
 		try {
-			const value = await refreshSubscriptionMount({
-				db: this.deps.db,
-				masterKeyManager: this.deps.masterKeyManager,
-				engine: this.deps.docker,
-				containerId: session.containerId,
-				runUser: session.runUser,
-				credential: session.invocationInputs.credential,
-				mount: session.subscriptionMount,
-			});
-			this.rememberCredentialValue(session, value);
-			return await fn();
+			// Read-back runs before the release, so the next holder reads what this
+			// exec left.
+			return await withRotationHandling();
 		} finally {
-			// Before the release, so the next holder reads what this exec left.
-			const rotated = await persistRotatedSubscriptionAuth({
-				db: this.deps.db,
-				masterKeyManager: this.deps.masterKeyManager,
-				engine: this.deps.docker,
-				containerId: session.containerId,
-				provider,
-				credential: session.invocationInputs.credential,
-				mount: session.subscriptionMount,
-				onNotice: (text: string) => log.warn(text, { session: session.sessionId }),
-			});
-			if (rotated !== null) this.rememberCredentialValue(session, rotated);
 			release();
 		}
 	}

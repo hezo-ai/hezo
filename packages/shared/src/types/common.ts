@@ -4,7 +4,14 @@ export type MemberType = (typeof MemberType)[keyof typeof MemberType];
 export const AgentRuntime = {
 	ClaudeCode: 'claude_code',
 	Codex: 'codex',
-	Gemini: 'gemini',
+	// Google's Antigravity CLI (`agy`), the successor to the Gemini CLI, which
+	// Google retired for consumer accounts on 2026-06-18. Unlike the `kimi` label
+	// reuse below, `antigravity` is a genuinely new DB `agent_runtime` value and
+	// needs an ALTER TYPE (see the migration that adds it). The old `gemini` label
+	// stays in the DB enum (Postgres can't drop it) but no runtime maps to it any
+	// more; stored `gemini` rows resolve to the provider default via
+	// `effectiveRuntime`, and gemini-pinned tasks are nulled by that migration.
+	Antigravity: 'antigravity',
 	OpenCode: 'opencode',
 	Grok: 'grok',
 	// Moonshot's first-party Kimi Code CLI (`kimi`). The `kimi` label predates
@@ -1826,11 +1833,12 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENAI_API_KEY' },
 	},
 	[AiProvider.Google]: {
-		runtime: AgentRuntime.Gemini,
-		// The Gemini CLI authenticates the Gemini API from GEMINI_API_KEY; it does
-		// NOT treat a bare GOOGLE_API_KEY as an auth method (that needs
-		// GOOGLE_GENAI_USE_VERTEXAI), and errors "set an Auth method … or specify
-		// GEMINI_API_KEY". The in-container Stop-hook judge reads either name.
+		runtime: AgentRuntime.Antigravity,
+		// The Antigravity CLI (`agy`) authenticates the Gemini API from GEMINI_API_KEY
+		// when `~/.gemini/antigravity-cli/settings.json` carries `modelProvider:gemini`
+		// (both written by its adapter). API-key only in Hezo for now: Antigravity has
+		// a consumer subscription (Login with Google), but its keyring-only OAuth needs
+		// an interactive login Hezo cannot yet deliver into a per-run container.
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'GEMINI_API_KEY' },
 	},
 	[AiProvider.DeepSeek]: {
@@ -2141,36 +2149,83 @@ export function providerHasGuidedSignIn(
 }
 
 /**
- * Runtimes whose CLI rotates a single-use refresh token in place.
+ * Runtimes whose CLI rewrites its own credential file in place during a run.
  *
- * The credential is rewritten mid-run and read back afterwards, so two runs
- * sharing one of these would invalidate each other's token. Runs on such a
- * credential therefore serialise: the second waits for the first to finish, not
- * merely to read the token.
+ * The value the CLI leaves on disk after it exits is the current one, so it is
+ * read back and persisted, or the stored credential falls a rotation behind and
+ * the next run fails to refresh. A property of the **CLI**, judged on the
+ * resolved runtime. Codex's ChatGPT auth rotates its refresh token this way.
  *
- * Lives here rather than beside the server's runtime-home table because both
- * sides need it: the server to take the lock, and the web to tell an operator
- * why a credential they are adding will only ever run one agent at a time. Two
- * copies would drift into a UI promising concurrency the runner does not give.
+ * This is a DIFFERENT question from whether runs must serialise
+ * ({@link credentialSerializesRuns}). Codex rewrites its file (true here) yet its
+ * runs are safe in parallel (measured: the refresh token tolerates concurrent
+ * reuse within a wide window), so the read-back is made concurrency-safe with a
+ * compare-and-set rather than by taking a whole-run lock. Keep them separate: a
+ * future CLI could rewrite its file without needing to serialise, or vice versa.
+ *
+ * Lives here rather than beside the server's runtime-home table because the web
+ * reads it too, so a single source can't drift from what the runner does.
  */
-export const RUNTIMES_WITH_ROTATING_CREDENTIAL: readonly AgentRuntime[] = [AgentRuntime.Codex];
+export const RUNTIMES_THAT_REWRITE_CREDENTIAL_FILE: readonly AgentRuntime[] = [AgentRuntime.Codex];
+
+/** Whether this runtime's CLI rewrites its credential file mid-run (read it back). */
+export function credentialFileRewrittenByCli(runtime: AgentRuntime | null | undefined): boolean {
+	return runtime != null && RUNTIMES_THAT_REWRITE_CREDENTIAL_FILE.includes(runtime);
+}
 
 /**
- * Whether runs on this credential have to queue behind one another.
+ * A rule selecting credentials whose runs must queue one at a time. An omitted
+ * field is a wildcard; a rule matches when every field it sets matches the
+ * credential's provider, resolved runtime and auth method.
+ */
+export interface CredentialSerializationRule {
+	provider?: AiProvider;
+	runtime?: AgentRuntime;
+	authMethod?: AiAuthMethod;
+}
+
+/**
+ * Credentials whose runs serialise. DELIBERATELY EMPTY - no credential currently
+ * needs it.
  *
- * Both halves matter. Rotation is a property of the **CLI**, so it is judged on
- * the resolved runtime rather than the provider's default. And it only bites a
- * **subscription**: the same provider's API key is not rewritten by anything, so
- * those runs go in parallel.
+ * Codex was measured to tolerate concurrent runs (its refresh token stays usable
+ * across a wide reuse window), so it does not opt in; its mid-run file rewrite is
+ * handled by the concurrency-safe read-back ({@link credentialFileRewrittenByCli})
+ * instead. The whole serialisation mechanism - the per-credential lock, the
+ * bounded wait, the queued-run reason, the chat "credential wait" notice, the
+ * provider-form warning - stays wired behind this table so a future CLI that
+ * genuinely cannot run twice at once opts in with one rule, e.g.
+ * `{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription }`.
+ */
+let credentialSerializationRules: readonly CredentialSerializationRule[] = [];
+
+/**
+ * Install serialisation rules. TEST-ONLY - exercises the dormant mechanism by
+ * making a chosen credential serialise. Restore to `[]` in an `afterEach`.
+ */
+export function setCredentialSerializationRulesForTest(
+	rules: readonly CredentialSerializationRule[],
+): void {
+	credentialSerializationRules = rules;
+}
+
+/**
+ * Whether runs on this credential have to queue behind one another. Judged on
+ * the resolved runtime (the CLI, not the provider default) and the auth method,
+ * against {@link credentialSerializationRules} - empty today, so always false.
  */
 export function credentialSerializesRuns(
 	provider: AiProvider,
 	storedRuntime: AgentRuntime | null | undefined,
 	authMethod: AiAuthMethod,
 ): boolean {
-	if (authMethod !== AiAuthMethod.Subscription) return false;
 	const runtime = effectiveRuntime(provider, storedRuntime);
-	return runtime !== null && RUNTIMES_WITH_ROTATING_CREDENTIAL.includes(runtime);
+	return credentialSerializationRules.some(
+		(rule) =>
+			(rule.provider === undefined || rule.provider === provider) &&
+			(rule.authMethod === undefined || rule.authMethod === authMethod) &&
+			(rule.runtime === undefined || rule.runtime === runtime),
+	);
 }
 
 export function providerRuntimeBinding(
@@ -2227,7 +2282,7 @@ export const PROVIDERS_BY_RUNTIME: Record<AgentRuntime, readonly AiProvider[]> =
 export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.ClaudeCode]: 'claude',
 	[AgentRuntime.Codex]: 'codex',
-	[AgentRuntime.Gemini]: 'gemini',
+	[AgentRuntime.Antigravity]: 'agy',
 	[AgentRuntime.OpenCode]: 'opencode',
 	[AgentRuntime.Grok]: 'grok',
 	[AgentRuntime.Kimi]: 'kimi',
@@ -2242,7 +2297,7 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
 	[AgentRuntime.ClaudeCode]: 'Claude Code',
 	[AgentRuntime.Codex]: 'Codex',
-	[AgentRuntime.Gemini]: 'Gemini CLI',
+	[AgentRuntime.Antigravity]: 'Antigravity',
 	[AgentRuntime.OpenCode]: 'OpenCode',
 	[AgentRuntime.Grok]: 'Grok',
 	[AgentRuntime.Kimi]: 'Kimi Code',
@@ -2278,7 +2333,9 @@ export type PromptDelivery = 'stdin' | 'arg' | 'file';
 export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, PromptDelivery> = {
 	[AgentRuntime.ClaudeCode]: 'stdin',
 	[AgentRuntime.Codex]: 'stdin',
-	[AgentRuntime.Gemini]: 'stdin',
+	// `agy --input-format text` (in the stream args) reads the prompt from stdin,
+	// so the prompt is piped like Codex's, with no size-capped argv element.
+	[AgentRuntime.Antigravity]: 'stdin',
 	// `opencode run` reads stdin to EOF whenever it is not a TTY and uses it as
 	// the message when no positional is given (`resolveRunInput` in the CLI's
 	// `cmd/run.ts`), so it needs no flag at all - and unlike the positional form
@@ -2310,7 +2367,7 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, PromptDelivery> = {
 export const RUNTIME_SYSTEM_PROMPT_FILE: Record<AgentRuntime, string | null> = {
 	[AgentRuntime.ClaudeCode]: null,
 	[AgentRuntime.Codex]: null,
-	[AgentRuntime.Gemini]: null,
+	[AgentRuntime.Antigravity]: null,
 	[AgentRuntime.OpenCode]: null,
 	[AgentRuntime.Grok]: null,
 	[AgentRuntime.Kimi]: 'AGENTS.md',
@@ -2334,7 +2391,7 @@ export const RUNTIME_SYSTEM_PROMPT_FILE: Record<AgentRuntime, string | null> = {
 export const RUNTIME_MODEL_DELIVERY: Record<AgentRuntime, 'flag' | 'env'> = {
 	[AgentRuntime.ClaudeCode]: 'flag',
 	[AgentRuntime.Codex]: 'flag',
-	[AgentRuntime.Gemini]: 'flag',
+	[AgentRuntime.Antigravity]: 'flag',
 	[AgentRuntime.OpenCode]: 'flag',
 	[AgentRuntime.Grok]: 'flag',
 	[AgentRuntime.Kimi]: 'env',
@@ -2348,7 +2405,7 @@ export const RUNTIME_MODEL_DELIVERY: Record<AgentRuntime, 'flag' | 'env'> = {
 export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
-	[AgentRuntime.Gemini]: ['--yolo'],
+	[AgentRuntime.Antigravity]: ['--dangerously-skip-permissions'],
 	// OpenCode's own auto-approve flag, and NOT `--dangerously-skip-permissions`:
 	// that is Claude Code's spelling. OpenCode accepts unknown flags without
 	// complaint, so a wrong one here never applies and never announces itself -
@@ -2415,7 +2472,7 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 		'ScheduleWakeup',
 	],
 	[AgentRuntime.Codex]: [],
-	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Antigravity]: [],
 	[AgentRuntime.OpenCode]: [],
 	[AgentRuntime.Grok]: [],
 	[AgentRuntime.Kimi]: [],
@@ -2445,7 +2502,9 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.ClaudeCode]: true,
 	[AgentRuntime.Codex]: false,
-	[AgentRuntime.Gemini]: true,
+	// agy's mcp_config.json documents no per-server tool allowlist, so Hezo does
+	// not rely on one - its MCP server exposes exactly the tools it means to.
+	[AgentRuntime.Antigravity]: false,
 	[AgentRuntime.OpenCode]: true,
 	[AgentRuntime.Grok]: false,
 	[AgentRuntime.Kimi]: true,
@@ -2494,7 +2553,9 @@ export function displayToolName(tool: string): string {
 export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['--output-format', 'stream-json', '--verbose'],
 	[AgentRuntime.Codex]: ['--json'],
-	[AgentRuntime.Gemini]: ['--output-format', 'stream-json'],
+	// `--input-format text` makes agy read the prompt from stdin (stdin delivery);
+	// `--output-format stream-json` emits the `{event:...}` frames the parser reads.
+	[AgentRuntime.Antigravity]: ['--output-format', 'stream-json', '--input-format', 'text'],
 	// OpenCode `run --format json` emits raw JSON events whose terminal event
 	// carries token usage. `--thinking` puts the model's reasoning parts on that
 	// stream too, so the run log shows them (the parser renders them as
@@ -2537,7 +2598,7 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: [],
 	[AgentRuntime.Codex]: ['exec'],
-	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Antigravity]: [],
 	// `opencode run …` gates non-interactive execution behind the `run` subcommand.
 	[AgentRuntime.OpenCode]: ['run'],
 	// `grok` runs headless directly (the `--prompt-file` flag, added as a suffix arg).
@@ -2558,7 +2619,7 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['-p'],
 	[AgentRuntime.Codex]: ['-'],
-	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Antigravity]: [],
 	// OpenCode's `run` takes the prompt on stdin when the positional `message` is
 	// omitted, so nothing goes here.
 	[AgentRuntime.OpenCode]: [],
@@ -2627,8 +2688,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	},
 	[AiProvider.Google]: {
 		name: 'Google',
-		runtimeLabel: 'Gemini',
-		supportsSubscription: true,
+		runtimeLabel: 'Antigravity',
 		keyPlaceholder: 'AIza...',
 		verifyEndpoint: {
 			url: (apiKey) => `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,

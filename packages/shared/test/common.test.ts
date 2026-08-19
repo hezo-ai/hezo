@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
 	AgentEffort,
+	AgentRuntime,
 	AgentRuntimeStatus,
+	AiAuthMethod,
 	AiProvider,
 	ArchiveFilter,
 	assetBasename,
@@ -13,7 +15,9 @@ import {
 	CredentialKind,
 	claudeCodeModelArg,
 	claudeCodeProviderUsesCustomEndpoint,
+	credentialFileRewrittenByCli,
 	credentialKindRequiresAllowedHosts,
+	credentialSerializesRuns,
 	displayToolName,
 	extensionOf,
 	formatTaskStatus,
@@ -39,6 +43,7 @@ import {
 	qualifiedMcpToolName,
 	ReactionKind,
 	resolveAttachmentContentType,
+	setCredentialSerializationRulesForTest,
 	splitAssetPath,
 	TaskStatus,
 	taskUploadsFolder,
@@ -443,5 +448,53 @@ describe('displayToolName', () => {
 	it('leaves a malformed name alone rather than guessing', () => {
 		expect(displayToolName('mcp__hezo')).toBe('mcp__hezo');
 		expect(displayToolName('')).toBe('');
+	});
+});
+
+describe('credential serialisation vs file-rewrite (separate concerns)', () => {
+	it('serialises no credential by default - the rules table ships empty', () => {
+		expect(
+			credentialSerializesRuns(AiProvider.OpenAI, AgentRuntime.Codex, AiAuthMethod.Subscription),
+		).toBe(false);
+		expect(
+			credentialSerializesRuns(AiProvider.Anthropic, AgentRuntime.ClaudeCode, AiAuthMethod.ApiKey),
+		).toBe(false);
+	});
+
+	it('serialises exactly the credentials a rule matches, wildcarding omitted fields', () => {
+		try {
+			setCredentialSerializationRulesForTest([
+				{ runtime: AgentRuntime.Codex, authMethod: AiAuthMethod.Subscription },
+			]);
+			expect(
+				credentialSerializesRuns(AiProvider.OpenAI, AgentRuntime.Codex, AiAuthMethod.Subscription),
+			).toBe(true);
+			// Same runtime, different auth method: the rule's authMethod excludes it.
+			expect(
+				credentialSerializesRuns(AiProvider.OpenAI, AgentRuntime.Codex, AiAuthMethod.ApiKey),
+			).toBe(false);
+			// A provider-only rule wildcards runtime and auth method.
+			setCredentialSerializationRulesForTest([{ provider: AiProvider.OpenAI }]);
+			expect(
+				credentialSerializesRuns(AiProvider.OpenAI, AgentRuntime.Codex, AiAuthMethod.ApiKey),
+			).toBe(true);
+			expect(
+				credentialSerializesRuns(
+					AiProvider.Anthropic,
+					AgentRuntime.ClaudeCode,
+					AiAuthMethod.ApiKey,
+				),
+			).toBe(false);
+		} finally {
+			setCredentialSerializationRulesForTest([]);
+		}
+	});
+
+	it('tracks file rewrite on the CLI, independent of serialisation', () => {
+		// Codex rewrites its credential file (read it back) even though its runs are
+		// not serialised - the two questions are answered by different tables.
+		expect(credentialFileRewrittenByCli(AgentRuntime.Codex)).toBe(true);
+		expect(credentialFileRewrittenByCli(AgentRuntime.ClaudeCode)).toBe(false);
+		expect(credentialFileRewrittenByCli(null)).toBe(false);
 	});
 });

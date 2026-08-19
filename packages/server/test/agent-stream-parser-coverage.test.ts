@@ -121,47 +121,44 @@ describe('codex renderCodexItem branches', () => {
 	});
 });
 
-describe('gemini renderEvent branches', () => {
-	it('renders init, tool_use, tool_result (success/error/empty) and an error event', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'init', model: 'gemini-2.0' }])).toContain(
-			'[session] model=gemini-2.0',
-		);
-		expect(feed(parser, [{ type: 'tool_use', name: 'grep', args: { pattern: 'x' } }])).toContain(
-			'[tool] grep(',
-		);
-		expect(feed(parser, [{ type: 'tool_result', output: 'found it' }])).toContain(
-			'[tool-result] found it',
-		);
-		expect(feed(parser, [{ type: 'tool_result', is_error: true, output: 'boom' }])).toContain(
-			'[tool-error] boom',
-		);
-		// Empty body yields just the bare label.
-		expect(feed(parser, [{ type: 'tool_result', output: '' }]).trim()).toBe('[tool-result]');
-		expect(feed(parser, [{ type: 'error', error: { message: 'rate limited' } }])).toContain(
-			'rate limited',
-		);
+describe('antigravity renderEvent branches', () => {
+	const init = (model: string) => `${JSON.stringify({ event: 'init', init: { model } })}\n`;
+	const result = (r: Record<string, unknown>) =>
+		`${JSON.stringify({ event: 'result', result: r })}\n`;
+
+	it('renders init, ignores step_update, and reports a success result', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		expect(parser.onStdout(init('gemini-2.0'))).toContain('[session] model=gemini-2.0');
+		expect(
+			parser.onStdout(
+				`${JSON.stringify({ event: 'step_update', step_update: { step_index: 1, state: 'DONE', step_type: 'agent_response' } })}\n`,
+			),
+		).toBe('');
+		expect(parser.onStdout(result({ status: 'SUCCESS', usage: {} }))).toContain('[done] success');
 	});
 
-	it('reports an error status on the terminal result when an error is present', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		const out = feed(parser, [{ type: 'result', error: 'failed', stats: { models: {} } }]);
-		expect(out).toContain('[done] error tokens=0/0');
+	it('reports an error status on the terminal result when the status is ERROR', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		expect(parser.onStdout(result({ status: 'ERROR', usage: {} }))).toContain(
+			'[done] error tokens=0/0',
+		);
 	});
 
 	// Every runtime whose stream can name a failure must be able to put that
 	// reason on the run row; until these reported one, a non-zero exit here was
 	// recorded with no cause at all.
-	it('reports a Gemini stream error as the run terminal error', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+	it('reports an antigravity auth error as the run terminal error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
 		expect(parser.getTerminalError()).toBeNull();
-		feed(parser, [{ type: 'error', error: { message: 'invalid api key' } }]);
+		parser.onStdout(result({ status: 'ERROR', error: 'invalid api key', usage: {} }));
 		expect(parser.getTerminalError()).toContain('AI provider authentication failed');
 	});
 
-	it('reports a Gemini terminal result error as the run terminal error', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		feed(parser, [{ type: 'result', error: 'quota exceeded, payment required', stats: {} }]);
+	it('reports an antigravity quota error as the run terminal error', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		parser.onStdout(
+			result({ status: 'ERROR', error: 'quota exceeded, payment required', usage: {} }),
+		);
 		expect(parser.getTerminalError()).toContain('lack of credit/quota');
 	});
 
@@ -172,7 +169,7 @@ describe('gemini renderEvent branches', () => {
 		expect(parser.getTerminalError()).toContain('AI provider authentication failed');
 	});
 
-	it('prices multiple models, billing the cached subset at the cache-read rate', () => {
+	it('prices the run model with disjoint input/cache-read/output buckets', () => {
 		const seen: Array<{
 			model: string | undefined;
 			input: number;
@@ -188,25 +185,19 @@ describe('gemini renderEvent branches', () => {
 			});
 			return 5;
 		};
-		const parser = createAgentStreamParser(AgentRuntime.Gemini, price);
-		feed(parser, [
-			{
-				type: 'result',
-				stats: {
-					models: {
-						'gemini-pro': { tokens: { prompt: 100, cached: 40, candidates: 20, thoughts: 5 } },
-						'gemini-flash': { tokens: {} },
-						'no-tokens': {},
-					},
-				},
-			},
-		]);
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity, price);
+		parser.onStdout(init('gemini-pro'));
+		parser.onStdout(
+			result({
+				status: 'SUCCESS',
+				usage: { input_tokens: 60, cache_read_tokens: 40, output_tokens: 25 },
+			}),
+		);
 		const usage = parser.getUsage();
-		// prompt summed = 100; output = candidates+thoughts = 25; cost = 5+5+... per model with tokens.
-		expect(usage?.inputTokens).toBe(100);
+		expect(usage?.inputTokens).toBe(60);
 		expect(usage?.outputTokens).toBe(25);
-		const pro = seen.find((s) => s.model === 'gemini-pro');
-		expect(pro).toEqual({ model: 'gemini-pro', input: 60, cacheRead: 40, output: 25 });
+		// input_tokens is already the non-cached input, priced as-is; cache_read separate.
+		expect(seen).toEqual([{ model: 'gemini-pro', input: 60, cacheRead: 40, output: 25 }]);
 	});
 });
 

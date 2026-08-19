@@ -357,85 +357,85 @@ describe('codex adapter', () => {
 	});
 });
 
-describe('gemini adapter', () => {
-	const adapter = RUNTIME_ADAPTERS[AgentRuntime.Gemini];
+describe('antigravity adapter', () => {
+	const adapter = RUNTIME_ADAPTERS[AgentRuntime.Antigravity];
 
-	it('writes .gemini/settings.json at <home>/.gemini/settings.json with mode 0o600', () => {
+	function homeFile(injection: ReturnType<typeof adapter.build>, rel: string) {
+		return (injection.homeConfigFiles ?? []).find((f) => f.relativePath === rel);
+	}
+
+	it('writes its config into the container HOME (no per-run mount, no CLI args)', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
-			hostHomeDir: HOME,
-			containerHomeDir: HOME,
+			hostHomeDir: null,
+			containerHomeDir: null,
 		});
-
+		// agy reads only $HOME/.gemini, so nothing rides argv/env or the per-run
+		// subscription dir - the two config files go to the run-user's real home.
 		expect(injection.cliArgs).toEqual([]);
 		expect(injection.envEntries).toEqual([]);
-		// 2 files: .gemini/settings.json + stop-hook judge script
-		expect(injection.files.length).toBe(2);
-		const file = injection.files.find((f) => f.hostPath === `${HOME}/.gemini/settings.json`);
-		expect(file).toBeDefined();
-		if (!file) throw new Error('settings.json not emitted');
-		expect(file.mode).toBe(0o600);
+		expect(injection.files).toEqual([]);
+		expect(injection.homeConfigFiles?.length).toBe(2);
+	});
 
-		const parsed = JSON.parse(file.contents) as {
-			mcpServers: Record<string, { httpUrl: string; headers?: Record<string, string> }>;
-			hooks: { AfterAgent: Array<{ hooks: Array<{ type: string; command: string }> }> };
+	it('writes the modelProvider marker at .gemini/antigravity-cli/settings.json (0o600)', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: null,
+			containerHomeDir: null,
+		});
+		const settings = homeFile(injection, '.gemini/antigravity-cli/settings.json');
+		expect(settings).toBeDefined();
+		if (!settings) throw new Error('settings marker not emitted');
+		expect(settings.mode).toBe(0o600);
+		expect(settings.scrubAfterRun).toBeFalsy();
+		expect(JSON.parse(settings.contents)).toEqual({ modelProvider: 'gemini' });
+	});
+
+	it('writes the MCP server map at .gemini/config/mcp_config.json with serverUrl + bearer, scrubbed after', () => {
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: null,
+			containerHomeDir: null,
+		});
+		const mcp = homeFile(injection, '.gemini/config/mcp_config.json');
+		expect(mcp).toBeDefined();
+		if (!mcp) throw new Error('mcp_config.json not emitted');
+		expect(mcp.mode).toBe(0o600);
+		// Carries the per-run agent JWT, so it must be scrubbed after the run.
+		expect(mcp.scrubAfterRun).toBe(true);
+		const parsed = JSON.parse(mcp.contents) as {
+			mcpServers: Record<string, { serverUrl: string; headers?: Record<string, string> }>;
 		};
-		expect(parsed.mcpServers.hezo.httpUrl).toBe(URL);
+		// agy speaks streamable HTTP at `serverUrl` and sends the header from `headers`.
+		expect(parsed.mcpServers.hezo.serverUrl).toBe(URL);
 		expect(parsed.mcpServers.hezo.headers?.Authorization).toBe(`Bearer ${TOKEN}`);
-		expect(parsed.hooks.AfterAgent.length).toBe(1);
-		expect(parsed.hooks.AfterAgent[0].hooks[0].type).toBe('command');
-		expect(parsed.hooks.AfterAgent[0].hooks[0].command).toBe(`node ${HOME}/stop-hook-judge.mjs`);
 	});
 
-	it('disables the 5-min shell inactivity kill and sets a generous per-MCP timeout', () => {
+	it('emits an empty mcpServers map when there are no descriptors', () => {
+		const injection = adapter.build([], { hostHomeDir: null, containerHomeDir: null });
+		const mcp = homeFile(injection, '.gemini/config/mcp_config.json');
+		const parsed = JSON.parse(mcp?.contents ?? '{}') as { mcpServers: Record<string, unknown> };
+		expect(parsed.mcpServers).toEqual({});
+	});
+
+	it('maps the 5-level effort ladder onto agy’s three --effort values', () => {
+		const eff = (e: AgentEffort) => adapter.applyEffort?.(e)?.extraArgs;
+		expect(eff(AgentEffort.Minimal)).toEqual(['--effort', 'low']);
+		expect(eff(AgentEffort.Low)).toEqual(['--effort', 'low']);
+		expect(eff(AgentEffort.Medium)).toEqual(['--effort', 'medium']);
+		expect(eff(AgentEffort.High)).toEqual(['--effort', 'high']);
+		expect(eff(AgentEffort.Max)).toEqual(['--effort', 'high']);
+	});
+
+	it('ships no completeness judge (agy’s Stop hook does not fire headless)', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
-			hostHomeDir: HOME,
-			containerHomeDir: HOME,
+			hostHomeDir: null,
+			containerHomeDir: null,
 		});
-		const settings = injection.files.find((f) => f.hostPath === `${HOME}/.gemini/settings.json`);
-		if (!settings) throw new Error('settings.json not emitted');
-		const parsed = JSON.parse(settings.contents) as {
-			tools: { shell: { inactivityTimeout: number } };
-			mcpServers: Record<string, { timeout: number }>;
-		};
-		// 0 disables the kill of a long, silent `run_shell_command` (default 300s).
-		expect(parsed.tools.shell.inactivityTimeout).toBe(0);
-		expect(parsed.mcpServers.hezo.timeout).toBe(600_000);
-	});
-
-	it('throws when no host home dir is provided', () => {
-		expect(() =>
-			adapter.build([HEZO_DESCRIPTOR], { hostHomeDir: null, containerHomeDir: null }),
-		).toThrow(/hostHomeDir/);
-	});
-
-	it('still emits the AfterAgent hook + judge script even with an empty descriptor list', () => {
-		const injection = adapter.build([], { hostHomeDir: HOME, containerHomeDir: HOME });
-		expect(injection.cliArgs).toEqual([]);
-		expect(injection.envEntries).toEqual([]);
-		expect(injection.files.length).toBe(2);
-		const settings = injection.files.find((f) => f.hostPath === `${HOME}/.gemini/settings.json`);
-		const script = injection.files.find((f) => f.hostPath === `${HOME}/stop-hook-judge.mjs`);
-		const parsed = JSON.parse(settings?.contents ?? '{}') as {
-			hooks: { AfterAgent: Array<{ hooks: Array<{ command: string }> }> };
-			mcpServers?: Record<string, unknown>;
-		};
-		expect(parsed.hooks.AfterAgent[0].hooks[0].command).toBe(`node ${HOME}/stop-hook-judge.mjs`);
-		expect(parsed.mcpServers).toBeUndefined();
-		expect(script?.contents).toContain('quality gate');
-	});
-
-	it('writes the judge script at <home>/stop-hook-judge.mjs with mode 0o700 and Google AI call', () => {
-		const injection = adapter.build([HEZO_DESCRIPTOR], {
-			hostHomeDir: HOME,
-			containerHomeDir: HOME,
-		});
-		const script = injection.files.find((f) => f.hostPath === `${HOME}/stop-hook-judge.mjs`);
-		expect(script).toBeDefined();
-		if (!script) throw new Error('judge script not emitted');
-		expect(script.mode).toBe(0o700);
-		expect(script.contents).toContain('quality gate');
-		expect(script.contents).toContain('prompt_response');
-		expect(script.contents).toContain('generativelanguage.googleapis.com');
+		// No judge script anywhere - not in files, not in home config.
+		expect(injection.files).toEqual([]);
+		const anyJudge = (injection.homeConfigFiles ?? []).some((f) =>
+			f.contents.includes('quality gate'),
+		);
+		expect(anyJudge).toBe(false);
 	});
 });
 
@@ -1013,7 +1013,7 @@ describe('kimi adapter', () => {
 /**
  * A connector whose method allowlist withholds two of its four tools. The
  * descriptor carries both views of the restriction because the runtimes disagree
- * on shape — allowlist (Gemini, OpenCode) vs deny list (Claude Code).
+ * on shape — allowlist (OpenCode) vs deny list (Claude Code).
  */
 const RESTRICTED_DESCRIPTOR: McpDescriptor = {
 	kind: 'http',
@@ -1070,20 +1070,6 @@ describe('stopJudge: false omits the completeness judge', () => {
 		expect(config?.contents).toContain('[mcp_servers.hezo]');
 	});
 
-	it('gemini drops both the AfterAgent hook and the judge script', () => {
-		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Gemini];
-		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
-
-		const injection = adapter.build([HEZO_DESCRIPTOR], NO_JUDGE);
-		expect(fileNamed(injection, 'stop-hook-judge.mjs')).toBeUndefined();
-		const settings = JSON.parse(fileNamed(injection, 'settings.json')?.contents ?? '{}') as {
-			hooks: { AfterAgent?: unknown[] };
-			mcpServers?: Record<string, unknown>;
-		};
-		expect(settings.hooks.AfterAgent).toBeUndefined();
-		expect(settings.mcpServers?.hezo).toBeDefined();
-	});
-
 	it('kimi drops the Stop entry while keeping the permission rule the CLI needs', () => {
 		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Kimi];
 		expect(fileNamed(adapter.build([HEZO_DESCRIPTOR], HOMES), 'stop-hook-judge.mjs')).toBeDefined();
@@ -1096,12 +1082,7 @@ describe('stopJudge: false omits the completeness judge', () => {
 	});
 
 	it('is opt-in: an absent flag still emits the judge on every runtime that has one', () => {
-		for (const runtime of [
-			AgentRuntime.ClaudeCode,
-			AgentRuntime.Codex,
-			AgentRuntime.Gemini,
-			AgentRuntime.Kimi,
-		]) {
+		for (const runtime of [AgentRuntime.ClaudeCode, AgentRuntime.Codex, AgentRuntime.Kimi]) {
 			const injection = RUNTIME_ADAPTERS[runtime].build([HEZO_DESCRIPTOR], HOMES);
 			const emitsJudge =
 				injection.files.some((f) => f.hostPath.endsWith('stop-hook-judge.mjs')) ||
@@ -1139,24 +1120,6 @@ describe('per-connector MCP method filtering', () => {
 			// splices in from RUNTIME_DISALLOWED_TOOLS_ARGS.
 			const injection = adapter.build([RESTRICTED_DESCRIPTOR], HOMES);
 			expect(injection.cliArgs).not.toContain('--disallowedTools');
-		});
-	});
-
-	describe('gemini', () => {
-		const adapter = RUNTIME_ADAPTERS[AgentRuntime.Gemini];
-
-		it('emits includeTools as the per-server allowlist', () => {
-			const injection = adapter.build([HEZO_DESCRIPTOR, RESTRICTED_DESCRIPTOR], HOMES);
-			const settings = JSON.parse(injection.files[0].contents) as {
-				mcpServers: Record<string, { includeTools?: string[] }>;
-			};
-			expect(settings.mcpServers.linear.includeTools).toEqual(['get_issue', 'list_issues']);
-			expect(settings.mcpServers.hezo.includeTools).toBeUndefined();
-		});
-
-		it('never emits excludeTools (its precedence would decide the effective set)', () => {
-			const injection = adapter.build([RESTRICTED_DESCRIPTOR], HOMES);
-			expect(injection.files[0].contents).not.toContain('excludeTools');
 		});
 	});
 
@@ -1248,12 +1211,6 @@ describe('runtime adapter behaviour beyond MCP', () => {
 			expect(env.DISABLE_TELEMETRY).toBe('1');
 		});
 
-		it('trusts the workspace for Gemini so headless --yolo is not downgraded', () => {
-			expect(RUNTIME_ADAPTERS[AgentRuntime.Gemini].constantEnv?.GEMINI_CLI_TRUST_WORKSPACE).toBe(
-				'true',
-			);
-		});
-
 		it('gives every other runtime nothing, rather than an empty ceremony', () => {
 			for (const runtime of [AgentRuntime.Codex, AgentRuntime.OpenCode, AgentRuntime.Grok]) {
 				expect(RUNTIME_ADAPTERS[runtime].constantEnv, runtime).toBeUndefined();
@@ -1328,7 +1285,7 @@ describe('runtime adapter behaviour beyond MCP', () => {
 
 		it('leaves a runtime that takes the stored id undeclared', () => {
 			// Absent means "pass it through", which is what the runner then does.
-			for (const runtime of [AgentRuntime.Codex, AgentRuntime.Gemini, AgentRuntime.Grok]) {
+			for (const runtime of [AgentRuntime.Codex, AgentRuntime.Antigravity, AgentRuntime.Grok]) {
 				expect(RUNTIME_ADAPTERS[runtime].modelArg, runtime).toBeUndefined();
 			}
 		});

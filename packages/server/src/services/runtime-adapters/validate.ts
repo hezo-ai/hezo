@@ -39,6 +39,20 @@ export function validateInjection(adapter: RuntimeAdapter, injection: McpInjecti
 		}
 	}
 
+	// Home-rooted config files are written under the container run-user's home, so
+	// their path must be relative and must not escape it.
+	for (const file of injection.homeConfigFiles ?? []) {
+		if (isAbsolute(file.relativePath) || file.relativePath.split('/').includes('..')) {
+			throw new Error(`home config file path must be relative and contained: ${file.relativePath}`);
+		}
+		if (file.mode <= 0 || file.mode > 0o777) {
+			throw new Error(`home config file mode out of range: ${file.mode}`);
+		}
+		if (file.contents.length === 0) {
+			throw new Error(`home config file is empty: ${file.relativePath}`);
+		}
+	}
+
 	const seenEnvKeys = new Set<string>();
 	for (const entry of injection.envEntries) {
 		const eq = entry.indexOf('=');

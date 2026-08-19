@@ -7,7 +7,6 @@ on:
 
 env:
   BUN_VERSION: "1.3.11"
-  PLAYWRIGHT_VERSION: "1.59.0"
 
 jobs:
   lint:
@@ -332,9 +331,56 @@ jobs:
       - name: Bun-native S3 client test
         run: cd packages/server && bun test ./test/bun/asset-s3-client.bun.test.ts
 
+  # test-browser runs inside Playwright's own container image, and that tag must
+  # match the Playwright the lockfile resolves to: browsers live in a
+  # per-revision directory, so a mismatched image means "Executable doesn't
+  # exist". `container.image` cannot read the `env` context - only github,
+  # needs, strategy, matrix, vars and inputs - so the tag can't come from an
+  # env var. Derive it from bun.lock, the actual source of truth, and hand it
+  # over via `needs`. That leaves nothing hand-synced: bumping Playwright in
+  # the lockfile moves the image with it, with no second place to remember.
+  playwright-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: resolve
+        run: |
+          version="$(grep -o '"@playwright/test@[0-9][^"]*"' bun.lock | head -1 | sed 's/.*@//; s/"$//')"
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "::error::Could not read @playwright/test's version out of bun.lock (got '$version'). test-browser picks its container image from this."
+              exit 1
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "bun.lock resolves @playwright/test to $version"
+
   test-browser:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Runs inside Playwright's own image, which ships the browsers AND their
+    # system libraries pre-installed. That is the whole point: the previous
+    # setup installed them per run with `playwright install-deps`, which shells
+    # out to `apt-get update`, and the runner's azure mirror routinely goes Ign
+    # and leaves the archive.ubuntu.com fallback dangling with no output. apt
+    # has no default fetch timeout, so that hung for the full job cap - four
+    # separate runs, sometimes all three shards at once. It is a known, still
+    # open runner-image bug (actions/runner-images#11347), so the fix is to
+    # take apt out of this job entirely rather than keep tuning it. Doing that
+    # also drops the browser download and its 253 MB cache: nothing here now
+    # touches apt, cdn.playwright.dev or the cache service.
+    #
+    # Running as root is fine - Playwright always passes --no-sandbox and
+    # --disable-dev-shm-usage. --ipc=host is its documented flag for stopping
+    # Chromium running out of memory in a container.
+    needs: playwright-version
+    container:
+      image: mcr.microsoft.com/playwright:v${{ needs.playwright-version.outputs.version }}-noble
+      options: --ipc=host
     # Sharded across runners the same way the vitest tiers are: Playwright splits
     # its suite into thirds (`--shard <i>/3`), so wall time drops to roughly a
     # third versus the single-runner run. fail-fast off so one shard failing
@@ -345,57 +391,20 @@ jobs:
         shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
+      # Not oven-sh/setup-bun: it unpacks a zip via `unzip`, which this image
+      # does not carry. npm is present (the image installs yarn with it), and
+      # `npm install -g bun` is already how docker/Dockerfile.agent-base gets
+      # bun, so this reuses a path the repo already relies on.
+      - name: Install bun
+        timeout-minutes: 5
+        run: npm install -g bun@${{ env.BUN_VERSION }}
       - uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
-      - uses: actions/cache@v4
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
-      # Both Playwright install paths below run `apt-get update`, which has two
-      # distinct ways to take the whole browser shard down.
-      #
-      # It fails hard (exit 100) if any pre-configured apt source 403s. The
-      # runner image ships Microsoft's azure-cli/prod repos, which Playwright
-      # doesn't need and which intermittently return 403, so drop those sources.
-      #
-      # It also *hangs*. apt has no default fetch timeout, so when the runner's
-      # azure mirror goes Ign and apt falls back to archive.ubuntu.com, a
-      # fallback connection that stops sending simply dangles - observed at 24
-      # minutes on main, and again on the first run of the PR that added the
-      # step timeouts below. It is per-runner, not a global outage: sibling
-      # shards on the same commit installed fine. So bound the fetch, and apt
-      # abandons a dead mirror in 20s and moves to the next mirrorlist entry
-      # instead of burning the step's whole budget on one dangling socket.
-      - name: De-flake apt before Playwright installs deps
-        run: |
-          sudo grep -rlZ 'packages\.microsoft\.com' /etc/apt/sources.list.d/ 2>/dev/null \
-            | sudo xargs -0 -r rm -f || true
-          sudo tee /etc/apt/apt.conf.d/99-hezo-ci-fetch-timeouts >/dev/null <<'APTCONF'
-          Acquire::http::Timeout "20";
-          Acquire::https::Timeout "20";
-          APTCONF
-      # apt-get update inside both steps below has hung for the full job cap on
-      # three separate runs: the runner's azure mirror went Ign, apt failed over
-      # to archive.ubuntu.com, and that fetch then dangled with no output and no
-      # timeout of its own. A healthy install-deps takes ~70s, so bound each step
-      # far below the job cap - a stalled mirror should cost 5 minutes and a
-      # named step timeout, not 25 minutes and an opaque job cancellation.
-      - name: Install Playwright browsers and system deps
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 10
-        run: bunx playwright install --with-deps chromium
-      - name: Install Playwright system deps
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
         timeout-minutes: 5
-        run: bunx playwright install-deps chromium
       - run: bun run test --browser --shard ${{ matrix.shard }}/3
       # Everything needed to diagnose a failure is in the artifact below, but
       # reading it means downloading a zip — a slow loop for a browser failure

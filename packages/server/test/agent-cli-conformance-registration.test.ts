@@ -291,11 +291,8 @@ describe('liveModelProviders with subscription credentials', () => {
 		[AiProvider.OpenAI]: JSON.stringify({
 			tokens: { refresh_token: `rt-${'y'.repeat(20)}`, access_token: 'at', account_id: 'a' },
 		}),
-		[AiProvider.Google]: JSON.stringify({
-			refresh_token: 'rt',
-			access_token: 'at',
-			token_type: 'Bearer',
-		}),
+		// Google is API-key only in Hezo (Antigravity's subscription is not yet
+		// deliverable into a run container), so no Google subscription blob here.
 	};
 
 	function writeBlob(provider: AiProvider, contents: string): string {
@@ -338,7 +335,6 @@ describe('liveModelProviders with subscription credentials', () => {
 		// derivation excluded it, not because anyone listed it out.
 		expect(got.map((p) => `${p.provider}:${p.runtime}`).sort()).toEqual([
 			'anthropic:claude_code',
-			'google:gemini',
 			'openai:codex',
 		]);
 		expect(got.every((p) => p.authMethod === AiAuthMethod.Subscription)).toBe(true);
@@ -394,7 +390,7 @@ describe('liveModelProviders with subscription credentials', () => {
 	it('refuses an unreadable file rather than running without the credential', () => {
 		expect(() =>
 			withSubscription(
-				{ [liveProviderSubscriptionEnvVar(AiProvider.Google)]: '/nonexistent/creds.json' },
+				{ [liveProviderSubscriptionEnvVar(AiProvider.OpenAI)]: '/nonexistent/creds.json' },
 				() => liveModelProviders(),
 			),
 		).toThrow(/could not be read/);

@@ -210,7 +210,7 @@ describe('recoverOffStreamRunUsage', () => {
 			for (const runtime of [
 				AgentRuntime.ClaudeCode,
 				AgentRuntime.Codex,
-				AgentRuntime.Gemini,
+				AgentRuntime.Antigravity,
 				AgentRuntime.OpenCode,
 			]) {
 				expect(

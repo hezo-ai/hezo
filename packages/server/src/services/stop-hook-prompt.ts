@@ -5,22 +5,20 @@
  * returning `{"decision":"block","reason":"..."}` keeps the run looping
  * (even in headless `-p` mode) so the gate forces the agent to keep working
  * until its own judgment agrees the task is genuinely complete. Codex's
- * `Stop` and Gemini's `AfterAgent` hooks share the same block-and-loop
- * shape — only Claude Code supports the elegant `type: "prompt"` sub-LLM
- * call directly; Codex and Gemini support `type: "command"` only, so the
- * judge LLM call has to be made by a small Node script Hezo writes
- * alongside the hook config (`buildCodexJudgeScript`,
- * `buildGeminiJudgeScript`).
+ * `Stop` hook shares this block-and-loop shape — only Claude Code supports the
+ * elegant `type: "prompt"` sub-LLM call directly; Codex supports
+ * `type: "command"` only, so the judge LLM call has to be made by a small Node
+ * script Hezo writes alongside the hook config (`buildCodexJudgeScript`).
  *
  * The judge runs inside the container against the team's existing
  * provider credential. No server-side LLM client. The hook is on for every
- * runtime that exposes a turn-end hook — the one exception is OpenCode, whose
- * plugin API can't block-and-continue the agent loop in headless `opencode run`
- * (upstream sst/opencode#16626), so OpenCode runs with no completeness judge.
+ * runtime whose turn-end hook can block-and-continue in headless mode. OpenCode,
+ * Grok and Antigravity cannot (their hooks do not fire, or only warn, in headless
+ * mode), so those runtimes run with no completeness judge.
  * The judge model is chosen per provider so the
  * call resolves against the team's own upstream — see
  * CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER for the Claude Code runtimes and the
- * OpenAI/Google constants below. If a judge is genuinely unreachable
+ * OpenAI constant below. If a judge is genuinely unreachable
  * (subscription auth with no API key, or an upstream outage) the script
  * fails open — exits 0 with no output, which the runtimes treat as "allow"
  * — and the agent stops normally.
@@ -39,11 +37,6 @@ export const STOP_HOOK_JUDGE_MODEL_ANTHROPIC = 'claude-sonnet-4-6';
 export const STOP_HOOK_JUDGE_MODEL_DEEPSEEK = 'deepseek-v4-pro';
 export const STOP_HOOK_JUDGE_MODEL_ZAI = 'GLM-4.7';
 export const STOP_HOOK_JUDGE_MODEL_OPENAI = 'gpt-4o-mini';
-// Retiring a judge model is silent: the call 404s, the hook fails open, and
-// nothing about the run looks wrong. Check this id is still served when the
-// provider ships a generation - `gemini-1.5-flash` sat here long after Google
-// withdrew it.
-export const STOP_HOOK_JUDGE_MODEL_GOOGLE = 'gemini-3.5-flash-lite';
 // Shared by both ways of running Kimi. On the Claude Code runtime (against
 // Moonshot's Anthropic-compatible endpoint) the native `type:"prompt"` Stop hook
 // judges with it; on Moonshot's own CLI the command-script judge calls their
@@ -117,7 +110,7 @@ export function judgeModelForProvider(
  * the assistant's final message in its `last_assistant_message` field (alongside
  * `stop_hook_active`), and STOP_HOOK_PROMPT points the judge explicitly at that
  * field so a weaker judge model evaluates the message, not the surrounding
- * metadata. Codex and Gemini get the rules as the system prompt and the
+ * metadata. Codex gets the rules as the system prompt and the
  * assistant's final message as the user message (see the judge scripts).
  */
 export const STOP_HOOK_RULES = `You are a quality gate. The agent is about to stop working on a Hezo task. Review its final message and decide whether the work is truly complete.
@@ -277,7 +270,7 @@ export function buildClaudeCodeSettings(
 
 /**
  * Per-runtime parameters for the judge script that runs inside the agent
- * container. The script body is identical across Codex and Gemini — stdin
+ * container. The script body follows the Codex shape — stdin
  * read, JSON parse, fetch, verdict extraction, fail-open — only the input
  * field, API call, and response extraction differ.
  */
@@ -285,9 +278,7 @@ interface JudgeRuntimeSpec {
 	/**
 	 * The `decision` value the hook must emit to make THIS runtime keep the
 	 * agent working. Codex's `Stop` hook continues on `block` (the reason
-	 * becomes the continuation prompt); Gemini's `AfterAgent` hook continues on
-	 * `deny` (the reason becomes a correction prompt) and ignores `block`
-	 * outright. This is the runtime's wire value, distinct from the judge LLM's
+	 * becomes the continuation prompt). This is the runtime's wire value, distinct from the judge LLM's
 	 * own `block`/`allow` verdict.
 	 */
 	blockDecision: string;
@@ -297,7 +288,7 @@ interface JudgeRuntimeSpec {
 	 *
 	 * Kimi Code documents exit 2 as "intentional block", 0 as allow, and any other
 	 * non-zero as a script error that fails open — so returning 0 alongside a block
-	 * verdict would silently discard it. Left unset for Codex/Gemini, which read
+	 * verdict would silently discard it. Left unset for Codex, which reads
 	 * the decision off stdout and treat a non-zero exit as a broken hook.
 	 */
 	blockExitCode?: number;
@@ -579,25 +570,9 @@ const JUDGE_SPECS: Partial<Record<AgentRuntime, JudgeRuntimeSpec>> = {
 		model: STOP_HOOK_JUDGE_MODEL_OPENAI,
 		inputFields: ['last_assistant_message'],
 	}),
-	// Gemini `AfterAgent` hook → Google Generative AI, judging `prompt_response`.
-	[AgentRuntime.Gemini]: {
-		// AfterAgent forces a corrective retry on `deny` and ignores `block`.
-		blockDecision: 'deny',
-		apiKeyEnvVars: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
-		inputFields: ['prompt_response'],
-		model: STOP_HOOK_JUDGE_MODEL_GOOGLE,
-		fetchExpr: `fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(JUDGE_MODEL) + ':generateContent?key=' + encodeURIComponent(apiKey), {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-				contents: [{ role: 'user', parts: [{ text: "Agent's final response:\\n" + message }] }],
-				generationConfig: { responseMimeType: 'application/json', temperature: 0 },
-			}),
-			signal: AbortSignal.timeout(25_000),
-		})`,
-		extractTextExpr: `data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text`,
-	},
+	// No Antigravity (Google) entry: `agy`'s Stop hook does not fire in headless
+	// mode, so the runtime ships fail-open like Grok and OpenCode. JUDGE_SPECS is
+	// Partial, so a missing entry is the disabled state, not a compile error.
 	// Kimi Code `Stop` hook → Moonshot's OpenAI-compatible Chat Completions.
 	//
 	// Kimi's Stop hook is genuinely blockable (one of only three such events, with
@@ -650,13 +625,4 @@ export function buildJudgeScriptForRuntime(runtime: AgentRuntime): string | null
  */
 export function buildCodexJudgeScript(): string {
 	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Codex] as JudgeRuntimeSpec);
-}
-
-/**
- * Node script that runs inside the Gemini container as the `AfterAgent`
- * hook command. Reads the AfterAgent input JSON from stdin and asks the
- * Google Generative AI API to judge completeness on `prompt_response`.
- */
-export function buildGeminiJudgeScript(): string {
-	return buildJudgeScript(JUDGE_SPECS[AgentRuntime.Gemini] as JudgeRuntimeSpec);
 }

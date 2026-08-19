@@ -56,34 +56,9 @@ export const SUBSCRIPTION_INSTRUCTIONS: Partial<Record<AiProvider, ProviderInstr
 		),
 		placeholder: '{"tokens":{"refresh_token":"...","access_token":"...","id_token":"..."}}',
 	},
-	[AiProvider.Google]: {
-		title: 'How to get your Gemini subscription auth file',
-		steps: [
-			<>
-				Install the Gemini CLI on your local machine: <code>npm install -g @google/gemini-cli</code>
-				.
-			</>,
-			<>
-				Run <code>gemini</code> and choose <strong>Sign in with Google</strong>. A browser window
-				will open - sign in with the Google account whose Gemini access you want to use.
-			</>,
-			<>
-				Open <code>~/.gemini/oauth_creds.json</code> (macOS/Linux) or{' '}
-				<code>%USERPROFILE%\.gemini\oauth_creds.json</code> (Windows). On newer Gemini CLI versions
-				the credential may be stored in your OS keychain instead - sign out and back in with{' '}
-				<code>GEMINI_FORCE_FILE_STORAGE=true</code> set to force a plaintext file.
-			</>,
-			<>Copy the entire contents of that file and paste them into the box below.</>,
-		],
-		footer: (
-			<>
-				The refresh token in <code>oauth_creds.json</code> is reusable across runs. If you revoke
-				access in your Google account or sign out locally, re-paste a fresh file here.
-			</>
-		),
-		placeholder:
-			'{"access_token":"ya29....","refresh_token":"1//...","scope":"...","token_type":"Bearer","expiry_date":1234567890}',
-	},
+	// Google is API-key only in Hezo for now: Antigravity has a consumer
+	// subscription (Login with Google), but Hezo cannot yet deliver its
+	// keyring-only OAuth into a run container, so there is no paste flow for it.
 };
 
 /** The gray, provider-specific "how to get your subscription credential" box. */

@@ -153,8 +153,8 @@ describe('driver coverage', () => {
 		}
 	});
 
-	it('leaves Gemini on manual paste deliberately, having no scriptable sign-in', () => {
-		expect(SUBSCRIPTION_LOGIN_DRIVERS[AgentRuntime.Gemini]).toBeNull();
+	it('leaves Antigravity (Google) on manual paste - it has no scriptable sign-in', () => {
+		expect(SUBSCRIPTION_LOGIN_DRIVERS[AgentRuntime.Antigravity]).toBeNull();
 	});
 
 	/**
