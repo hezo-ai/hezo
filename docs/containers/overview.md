@@ -132,8 +132,7 @@ so no work that has been pushed is lost.
 
 ## Setting the service at startup
 
-The container service can also be set when Hezo starts, with a flag or an environment
-variable:
+The container service can also be set when Hezo starts, with a flag or a config file:
 
 ```sh
 hezo --sandbox-backend daytona --daytona-api-key "<key>"
@@ -146,9 +145,9 @@ hezo --config /etc/hezo/hezo.config.cjs   # containers: { backend: 'daytona', da
 **This sets the service a brand-new instance starts on.** It is a convenience for
 provisioning an instance non-interactively, not a second way to configure a running one.
 The first startup records the choice, and from then on the stored setting wins:
-restarting with a different flag or environment variable does not switch an existing
+restarting with a different flag or config-file setting does not switch an existing
 instance - Hezo logs that it ignored the flag and stays where it is, so a stale launch
-script or leftover environment variable can never flip the substrate under your agents.
+script or config file can never flip the substrate under your agents.
 To change an instance once it has booted - stopped or running - use Settings ->
 Containers.
 
