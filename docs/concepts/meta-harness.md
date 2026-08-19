@@ -7,7 +7,7 @@ section: Concepts
 # Meta-harness
 
 Every major model now ships its own agentic command-line tool - Anthropic has Claude
-Code, OpenAI has Codex, Google has the Gemini CLI, and there are more. Each *harness*
+Code, OpenAI has Codex, Google has Antigravity, and there are more. Each *harness*
 wraps a model in a loop that reads and writes files, runs commands, and uses tools. They
 are genuinely good and genuinely different: each has its own strengths, guardrails, and
 rough edges. Picking one means inheriting all of its tradeoffs; juggling several by hand
@@ -23,7 +23,7 @@ happened to use.
 
 Hezo's answer is to sit one level up: it is a **meta-harness**, a harness around the
 harnesses. It runs each model inside its **own first-party harness** - Claude drives Claude
-Code, GPT drives Codex, Gemini drives the Gemini CLI - so you keep each model's native
+Code, GPT drives Codex, Gemini drives Antigravity - so you keep each model's native
 tooling instead of a lowest-common-denominator wrapper. Then it wraps a **single, uniform
 platform layer** around all of them, so the harness an agent happens to run on becomes an
 implementation detail rather than something you manage.

@@ -77,7 +77,7 @@ export interface RuntimeHomeLayout {
 	/**
 	 * Path (relative to the per-run home dir) where the runtime CLI reads its
 	 * subscription credential file. Present only for runtimes whose subscription
-	 * credential is delivered as a file mount (Codex, Gemini). Omitted for
+	 * credential is delivered as a file mount (Codex). Omitted for
 	 * runtimes that need only a config home dir (the credential, if any, is
 	 * delivered via env var — e.g. Anthropic's CLAUDE_CODE_OAUTH_TOKEN). When
 	 * omitted, `buildSubscriptionMount` writes no file and returns null.
@@ -126,10 +126,16 @@ export const RUNTIME_HOME_LAYOUTS: Record<AgentRuntime, RuntimeHomeLayout> = {
 			`${JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: apiKey }, null, 2)}\n`,
 		envVarName: 'CODEX_HOME',
 	},
-	[AgentRuntime.Gemini]: {
-		dirPrefix: 'gemini',
-		authFileRelative: '.gemini/oauth_creds.json',
-		envVarName: 'GEMINI_CLI_HOME',
+	// The Antigravity CLI (`agy`) runs API-key only in Hezo and reads its config from the
+	// container's real `$HOME/.gemini`, written via the adapter's
+	// `homeConfigFiles` rather than a per-run mount (its capabilities set
+	// `requiresHomeDir: false`, so `ensureRuntimeHomeDir` is never called and
+	// these fields go unused). No `authFileRelative` - there is no subscription
+	// file - so `buildSubscriptionMount` returns null and this env var is never
+	// emitted; it is a Hezo-internal marker only.
+	[AgentRuntime.Antigravity]: {
+		dirPrefix: 'antigravity',
+		envVarName: 'HEZO_ANTIGRAVITY_CONFIG_DIR',
 	},
 	// Claude Code needs a per-run config dir so the runner can drop a settings.json
 	// with the Stop hook the agent CLI loads via `--settings`. The envVarName is a

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildClaudeCodeSettings,
 	buildCodexJudgeScript,
-	buildGeminiJudgeScript,
 	buildJudgeScriptForRuntime,
 	type ClaudeCodeSettings,
 	judgeModelForProvider,
@@ -25,7 +24,7 @@ function stopJudgeHook(settings: ClaudeCodeSettings) {
 }
 
 /**
- * A2 refactor: the Codex/Gemini judge scripts now come from a JUDGE_SPECS
+ * A2 refactor: the Codex judge script now comes from a JUDGE_SPECS
  * registry behind buildJudgeScriptForRuntime. These assert the registry path
  * produces byte-identical output to the original named builders (parity), and
  * that the runtime with no command-script judge resolves to null.
@@ -35,20 +34,17 @@ describe('stop-hook judge spec registry', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toBe(buildCodexJudgeScript());
 	});
 
-	it('Gemini runtime builds the same script as buildGeminiJudgeScript', () => {
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toBe(buildGeminiJudgeScript());
+	it('Antigravity has no command-script judge (agy ships fail-open)', () => {
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Antigravity)).toBeNull();
 	});
 
 	it('Claude Code has no command-script judge (uses the native prompt hook)', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.ClaudeCode)).toBeNull();
 	});
 
-	it('Codex and Gemini scripts target their respective upstreams', () => {
+	it('the Codex judge script targets its OpenAI upstream', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(
 			'api.openai.com/v1/chat/completions',
-		);
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(
-			'generativelanguage.googleapis.com',
 		);
 	});
 
@@ -149,7 +145,6 @@ describe('stop-hook rules require add_task_blocker for cross-task waits', () => 
 
 	it('every command-script judge embeds the same rule', () => {
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('add_task_blocker');
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('add_task_blocker');
 	});
 });
 
@@ -187,7 +182,6 @@ describe('stop-hook rules block announced-plan abandonment', () => {
 			'silent scope reduction',
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('silent scope reduction');
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('silent scope reduction');
 	});
 });
 
@@ -251,7 +245,7 @@ describe('stop-hook rules block handoffs left only in the final message', () => 
 			'delivered to NO ONE',
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('delivered to NO ONE');
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('delivered to NO ONE');
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('delivered to NO ONE');
 	});
 });
 
@@ -301,7 +295,7 @@ describe('stop-hook rules block closing while an inherited approval is still owe
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(
 			'approval requirement INHERITED from the thread',
 		);
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(
 			'approval requirement INHERITED from the thread',
 		);
 	});
@@ -310,22 +304,15 @@ describe('stop-hook rules block closing while an inherited approval is still owe
 /**
  * B2: each command-hook judge must emit the decision value that actually makes
  * ITS runtime continue the agent, and must not loop the agent indefinitely.
- * Codex's `Stop` hook continues on `block`; Gemini's `AfterAgent` hook continues
- * on `deny` and ignores `block`, so emitting `block` there is a silent no-op.
+ * Codex's `Stop` hook continues on `block`.
  */
 describe('stop-hook command judges emit the runtime-correct decision and guard the loop', () => {
 	it('Codex emits decision "block" (its Stop-hook continuation value)', () => {
 		expect(buildCodexJudgeScript()).toContain('decision: "block"');
 	});
 
-	it('Gemini emits decision "deny" (AfterAgent ignores "block")', () => {
-		const script = buildGeminiJudgeScript();
-		expect(script).toContain('decision: "deny"');
-		expect(script).not.toContain('decision: "block"');
-	});
-
 	it('both short-circuit once already continued (stop_hook_active) so the judge cannot loop', () => {
-		for (const script of [buildCodexJudgeScript(), buildGeminiJudgeScript()]) {
+		for (const script of [buildCodexJudgeScript()]) {
 			expect(script).toContain('stop_hook_active');
 		}
 	});
@@ -380,7 +367,7 @@ describe('stop-hook rules bless waiting on a pending admin approval', () => {
 			'create_hire_proposal',
 		);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('create_hire_proposal');
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain('create_hire_proposal');
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain('create_hire_proposal');
 	});
 });
 
@@ -409,7 +396,7 @@ describe('stop-hook rules block a reply left only in the final message', () => {
 		expect(STOP_HOOK_PROMPT).toContain(needle);
 		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(needle);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(needle);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
 	});
 });
 
@@ -446,6 +433,6 @@ describe('stop-hook rules block an unescalated broken integration', () => {
 		expect(STOP_HOOK_PROMPT).toContain(needle);
 		expect(stopJudgeHook(buildClaudeCodeSettings(AiProvider.Anthropic)).prompt).toContain(needle);
 		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
-		expect(buildJudgeScriptForRuntime(AgentRuntime.Gemini)).toContain(needle);
+		expect(buildJudgeScriptForRuntime(AgentRuntime.Codex)).toContain(needle);
 	});
 });

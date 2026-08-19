@@ -109,8 +109,7 @@ export const API_KEY_INSTRUCTIONS: Record<AiProvider, ProviderInstructionContent
 		footer: (
 			<>
 				AI Studio keys start on a free tier with strict rate limits - enable billing on the key's
-				Google Cloud project for sustained agent use. Have a Google AI Pro/Ultra plan? Use the{' '}
-				<strong>Gemini subscription</strong> option above instead.
+				Google Cloud project for sustained agent use.
 			</>
 		),
 	},

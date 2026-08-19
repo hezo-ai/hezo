@@ -3420,7 +3420,9 @@ per-run `auth.json` its subscription blob uses, in the `{auth_mode: "apikey", �
 `codex login --with-api-key` produces (`RUNTIME_HOME_LAYOUTS[codex].apiKeyAuthFile`). The mount
 reports `rotates: false` for a key, so the rotated-credential read-back never writes a
 key-derived file back over the operator's stored value. Subscription auth is supported by
-Anthropic, OpenAI, and Google (xAI is API-key only). A config's `status` is `verified` (the healthy default —
+Anthropic and OpenAI. Google and xAI are API-key only in Hezo - Antigravity has a consumer
+subscription (Login with Google) but its keyring-only OAuth cannot yet be delivered into a
+per-run container. A config's `status` is `verified` (the healthy default —
 the add flow live-verifies the key, the Verify action persists the result, and replacing the
 credential re-verifies it — each restoring `verified` on a key that had gone `invalid`),
 `invalid` (a verify was rejected), or `revoked` (a retired provider).

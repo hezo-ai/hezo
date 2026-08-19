@@ -16,7 +16,7 @@ and your agents run on the models you choose.
 |---|---|---|---|
 | **Anthropic** | Claude | Claude Code | API key or subscription |
 | **OpenAI** | ChatGPT / GPT | Codex | API key or subscription |
-| **Google** | Gemini | Gemini CLI | API key or subscription |
+| **Google** | Gemini | Antigravity | API key |
 | **xAI** | Grok | Grok Build | API key |
 | **Kimi** (Moonshot) | Kimi | Claude Code or Kimi Code | API key |
 | **DeepSeek** | DeepSeek | Claude Code | API key |
@@ -117,10 +117,11 @@ caching and token counting.
 
 ## API key or subscription
 
-Most providers accept either a plain **API key** or, where supported, a **subscription
-sign-in** (for example Claude Pro/Max, ChatGPT, or Gemini) - so you can put an
-existing plan to work instead of paying per token. You choose the method when you
-connect the provider.
+Most providers accept a plain **API key**, and Anthropic and OpenAI also accept a
+**subscription sign-in** (Claude Pro/Max, or ChatGPT) - so you can put an existing plan
+to work instead of paying per token. You choose the method when you connect the provider.
+Google is API-key only in Hezo for now: Antigravity has a consumer subscription (Login with Google),
+but Hezo cannot yet bring its keyring-only sign-in into a run container.
 
 ### Signing in to a subscription
 
@@ -136,10 +137,8 @@ link on any device - your phone is fine - sign in to that account, and enter the
 Your credential is created inside the sandbox and stored encrypted without passing
 through your browser, so you never copy an auth file around.
 
-For **Google (Gemini)**, and for any instance where the sandbox cannot reach the
-provider's sign-in page, use **Paste credential manually** instead and follow the steps
-the form shows. The Gemini CLI offers no sign-in Hezo can drive, so that is the only
-option there.
+For any instance where the sandbox cannot reach the provider's sign-in page, use **Paste
+credential manually** instead and follow the steps the form shows.
 
 Codex refreshes its credential as it runs. Once Hezo holds a Codex subscription, avoid
 using the same login on your own machine - pick one or the other, or the two will fall out
@@ -217,7 +216,7 @@ a connection or switch its CLI without re-pasting anything.
 
 By default the agents on a team share the team's model, but you can **override the model
 for any individual agent.** One agent can run on Claude while another on the same team
-runs on Gemini or DeepSeek - whatever fits its job. Set it when you hire
+runs on Antigravity or DeepSeek - whatever fits its job. Set it when you hire
 the agent or any time afterward from its settings. See
 [Hiring & customizing agents](/docs/concepts/hiring-and-agents).
 

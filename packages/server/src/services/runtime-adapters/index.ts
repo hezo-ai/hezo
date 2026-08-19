@@ -1,8 +1,8 @@
 import { type AgentEffort, AgentRuntime } from '@hezo/shared';
 import { type EffortRuntimeApplication, GENERIC_PROMPT_DIRECTIVE } from '../effort';
+import { antigravityAdapter } from './antigravity';
 import { claudeCodeAdapter } from './claude-code';
 import { codexAdapter } from './codex';
-import { geminiAdapter } from './gemini';
 import { grokAdapter } from './grok';
 import { kimiAdapter } from './kimi';
 import { opencodeAdapter } from './opencode';
@@ -22,7 +22,7 @@ import { validateInjection } from './validate';
 export const RUNTIME_ADAPTERS: Record<AgentRuntime, RuntimeAdapter> = {
 	[AgentRuntime.ClaudeCode]: claudeCodeAdapter,
 	[AgentRuntime.Codex]: codexAdapter,
-	[AgentRuntime.Gemini]: geminiAdapter,
+	[AgentRuntime.Antigravity]: antigravityAdapter,
 	[AgentRuntime.OpenCode]: opencodeAdapter,
 	[AgentRuntime.Grok]: grokAdapter,
 	[AgentRuntime.Kimi]: kimiAdapter,

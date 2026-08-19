@@ -181,7 +181,7 @@ const STATIC_HEADERS_MARKER_VALUE = 'static-headers';
 const RUNTIME_REPORTS_MCP_STATUS: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.ClaudeCode]: true,
 	[AgentRuntime.Codex]: false,
-	[AgentRuntime.Gemini]: false,
+	[AgentRuntime.Antigravity]: false,
 	[AgentRuntime.OpenCode]: false,
 	[AgentRuntime.Grok]: false,
 	[AgentRuntime.Kimi]: false,

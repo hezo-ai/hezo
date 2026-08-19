@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
 	validateAnthropicOauthToken,
 	validateCodexAuthJson,
-	validateGeminiAuthJson,
 	validateSubscriptionBlob,
 } from '../src/services/subscription-auth';
 
@@ -61,45 +60,6 @@ describe('validateCodexAuthJson', () => {
 	});
 });
 
-describe('validateGeminiAuthJson', () => {
-	it('rejects non-JSON input', () => {
-		const result = validateGeminiAuthJson('not-json');
-		expect(result.ok).toBe(false);
-		expect(result.error).toContain('valid JSON');
-	});
-
-	it('rejects JSON arrays', () => {
-		const result = validateGeminiAuthJson('[]');
-		expect(result.ok).toBe(false);
-		expect(result.error).toContain('JSON object');
-	});
-
-	it('rejects blobs without refresh_token', () => {
-		const result = validateGeminiAuthJson(
-			JSON.stringify({ access_token: 'ya29.x', token_type: 'Bearer' }),
-		);
-		expect(result.ok).toBe(false);
-		expect(result.error).toContain('refresh_token');
-	});
-
-	it('rejects empty refresh_token', () => {
-		const result = validateGeminiAuthJson(JSON.stringify({ refresh_token: '' }));
-		expect(result.ok).toBe(false);
-	});
-
-	it('accepts the standard Google Credentials shape', () => {
-		const blob = {
-			access_token: 'ya29.access',
-			refresh_token: '1//0g-rt',
-			token_type: 'Bearer',
-			scope: 'https://www.googleapis.com/auth/generative-language',
-			expiry_date: 1745780000000,
-		};
-		const result = validateGeminiAuthJson(JSON.stringify(blob));
-		expect(result.ok).toBe(true);
-	});
-});
-
 describe('validateAnthropicOauthToken', () => {
 	it('rejects an empty token', () => {
 		const result = validateAnthropicOauthToken('   ');
@@ -137,11 +97,13 @@ describe('validateSubscriptionBlob', () => {
 		expect(bad.ok).toBe(false);
 	});
 
-	it('dispatches Google to the gemini validator', () => {
-		const ok = validateSubscriptionBlob(AiProvider.Google, JSON.stringify({ refresh_token: 'rt' }));
-		expect(ok.ok).toBe(true);
-		const bad = validateSubscriptionBlob(AiProvider.Google, '{}');
-		expect(bad.ok).toBe(false);
+	it('reports that Google does not support subscription auth', () => {
+		const res = validateSubscriptionBlob(
+			AiProvider.Google,
+			JSON.stringify({ refresh_token: 'rt' }),
+		);
+		expect(res.ok).toBe(false);
+		expect(res.error).toMatch(/does not support subscription auth/);
 	});
 
 	it('rejects providers that have no subscription support (incl. Kimi)', () => {

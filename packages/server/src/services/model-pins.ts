@@ -13,7 +13,7 @@
  * behaviour change nobody asked for.
  *
  * **Why the catalog and not a constant.** A hardcoded id cannot notice its own
- * retirement. `gemini-1.5-flash` stayed pinned as the Stop-hook judge long after
+ * retirement. an unsupported judge model stayed pinned long after
  * Google withdrew it: the judge call 404'd on every run and the hook failed
  * open, with nothing in the run looking wrong. Reading the provider's own
  * catalog is the only thing that keeps a pin true.

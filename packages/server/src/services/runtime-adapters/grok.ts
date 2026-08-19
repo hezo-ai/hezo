@@ -19,7 +19,7 @@ import type { McpHttpDescriptor, McpInjection, McpStdioDescriptor, RuntimeAdapte
  * plus an optional `[mcp_servers.<name>.env]` sub-table. We also stamp
  * `[cli] auto_update = false` so the CLI never phones home for an update mid-run.
  *
- * Unlike the Claude Code / Codex / Gemini adapters, Grok gets NO completeness
+ * Unlike the Claude Code / Codex adapters, Grok gets NO completeness
  * Stop-hook judge: Grok's hooks advertise `blockingEvents: ["pre_tool_use"]`
  * only (confirmed from the CLI's ACP handshake), so its `Stop`/`SessionEnd`
  * hooks are passive and cannot block-and-continue the agent loop the way Hezo's

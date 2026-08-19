@@ -156,20 +156,11 @@ const CLAUDE_CODE_DRIVER: SubscriptionLoginDriver = {
 export const SUBSCRIPTION_LOGIN_DRIVERS: Record<AgentRuntime, SubscriptionLoginDriver | null> = {
 	[AgentRuntime.Codex]: CODEX_DRIVER,
 	[AgentRuntime.ClaudeCode]: CLAUDE_CODE_DRIVER,
-	/**
-	 * Gemini has no non-interactive sign-in to drive.
-	 *
-	 * It exposes no auth flag, boots straight into a full-screen TUI that
-	 * repaints continuously, and picks its auth method from a menu that only
-	 * arrow keys and Enter reach - so a driver would be synthesising keystrokes
-	 * against a redrawing screen, which breaks on any layout change. Google's own
-	 * headless guidance is to use `GOOGLE_API_KEY` or a service account instead.
-	 *
-	 * Google subscriptions therefore stay on manual paste until the CLI offers a
-	 * scriptable flow. Filling this in is one row, and nothing else changes.
-	 */
-	[AgentRuntime.Gemini]: null,
-	// Api-key only - no subscription auth to mint (see AI_PROVIDER_INFO).
+	// No subscription auth to mint here (see AI_PROVIDER_INFO). Antigravity has a
+	// consumer subscription (Login with Google), but its OAuth lands in the OS
+	// keyring behind an interactive login Hezo cannot drive into a per-run
+	// container, so Google is API-key only in Hezo for now.
+	[AgentRuntime.Antigravity]: null,
 	[AgentRuntime.OpenCode]: null,
 	[AgentRuntime.Grok]: null,
 	[AgentRuntime.Kimi]: null,

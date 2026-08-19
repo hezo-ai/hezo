@@ -4,7 +4,14 @@ export type MemberType = (typeof MemberType)[keyof typeof MemberType];
 export const AgentRuntime = {
 	ClaudeCode: 'claude_code',
 	Codex: 'codex',
-	Gemini: 'gemini',
+	// Google's Antigravity CLI (`agy`), the successor to the Gemini CLI, which
+	// Google retired for consumer accounts on 2026-06-18. Unlike the `kimi` label
+	// reuse below, `antigravity` is a genuinely new DB `agent_runtime` value and
+	// needs an ALTER TYPE (see the migration that adds it). The old `gemini` label
+	// stays in the DB enum (Postgres can't drop it) but no runtime maps to it any
+	// more; stored `gemini` rows resolve to the provider default via
+	// `effectiveRuntime`, and gemini-pinned tasks are nulled by that migration.
+	Antigravity: 'antigravity',
 	OpenCode: 'opencode',
 	Grok: 'grok',
 	// Moonshot's first-party Kimi Code CLI (`kimi`). The `kimi` label predates
@@ -1819,11 +1826,12 @@ export const PROVIDER_RUNTIME_ADAPTERS: Record<AiProvider, ProviderRuntimeAdapte
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'OPENAI_API_KEY' },
 	},
 	[AiProvider.Google]: {
-		runtime: AgentRuntime.Gemini,
-		// The Gemini CLI authenticates the Gemini API from GEMINI_API_KEY; it does
-		// NOT treat a bare GOOGLE_API_KEY as an auth method (that needs
-		// GOOGLE_GENAI_USE_VERTEXAI), and errors "set an Auth method … or specify
-		// GEMINI_API_KEY". The in-container Stop-hook judge reads either name.
+		runtime: AgentRuntime.Antigravity,
+		// The Antigravity CLI (`agy`) authenticates the Gemini API from GEMINI_API_KEY
+		// when `~/.gemini/antigravity-cli/settings.json` carries `modelProvider:gemini`
+		// (both written by its adapter). API-key only in Hezo for now: Antigravity has
+		// a consumer subscription (Login with Google), but its keyring-only OAuth needs
+		// an interactive login Hezo cannot yet deliver into a per-run container.
 		credentialEnvByAuthMethod: { [AiAuthMethod.ApiKey]: 'GEMINI_API_KEY' },
 	},
 	[AiProvider.DeepSeek]: {
@@ -2267,7 +2275,7 @@ export const PROVIDERS_BY_RUNTIME: Record<AgentRuntime, readonly AiProvider[]> =
 export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 	[AgentRuntime.ClaudeCode]: 'claude',
 	[AgentRuntime.Codex]: 'codex',
-	[AgentRuntime.Gemini]: 'gemini',
+	[AgentRuntime.Antigravity]: 'agy',
 	[AgentRuntime.OpenCode]: 'opencode',
 	[AgentRuntime.Grok]: 'grok',
 	[AgentRuntime.Kimi]: 'kimi',
@@ -2282,7 +2290,7 @@ export const RUNTIME_COMMANDS: Record<AgentRuntime, string> = {
 export const AGENT_RUNTIME_LABELS: Record<AgentRuntime, string> = {
 	[AgentRuntime.ClaudeCode]: 'Claude Code',
 	[AgentRuntime.Codex]: 'Codex',
-	[AgentRuntime.Gemini]: 'Gemini CLI',
+	[AgentRuntime.Antigravity]: 'Antigravity',
 	[AgentRuntime.OpenCode]: 'OpenCode',
 	[AgentRuntime.Grok]: 'Grok',
 	[AgentRuntime.Kimi]: 'Kimi Code',
@@ -2318,7 +2326,9 @@ export type PromptDelivery = 'stdin' | 'arg' | 'file';
 export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, PromptDelivery> = {
 	[AgentRuntime.ClaudeCode]: 'stdin',
 	[AgentRuntime.Codex]: 'stdin',
-	[AgentRuntime.Gemini]: 'stdin',
+	// `agy --input-format text` (in the stream args) reads the prompt from stdin,
+	// so the prompt is piped like Codex's, with no size-capped argv element.
+	[AgentRuntime.Antigravity]: 'stdin',
 	// `opencode run` reads stdin to EOF whenever it is not a TTY and uses it as
 	// the message when no positional is given (`resolveRunInput` in the CLI's
 	// `cmd/run.ts`), so it needs no flag at all - and unlike the positional form
@@ -2350,7 +2360,7 @@ export const RUNTIME_PROMPT_DELIVERY: Record<AgentRuntime, PromptDelivery> = {
 export const RUNTIME_SYSTEM_PROMPT_FILE: Record<AgentRuntime, string | null> = {
 	[AgentRuntime.ClaudeCode]: null,
 	[AgentRuntime.Codex]: null,
-	[AgentRuntime.Gemini]: null,
+	[AgentRuntime.Antigravity]: null,
 	[AgentRuntime.OpenCode]: null,
 	[AgentRuntime.Grok]: null,
 	[AgentRuntime.Kimi]: 'AGENTS.md',
@@ -2374,7 +2384,7 @@ export const RUNTIME_SYSTEM_PROMPT_FILE: Record<AgentRuntime, string | null> = {
 export const RUNTIME_MODEL_DELIVERY: Record<AgentRuntime, 'flag' | 'env'> = {
 	[AgentRuntime.ClaudeCode]: 'flag',
 	[AgentRuntime.Codex]: 'flag',
-	[AgentRuntime.Gemini]: 'flag',
+	[AgentRuntime.Antigravity]: 'flag',
 	[AgentRuntime.OpenCode]: 'flag',
 	[AgentRuntime.Grok]: 'flag',
 	[AgentRuntime.Kimi]: 'env',
@@ -2388,7 +2398,7 @@ export const RUNTIME_MODEL_DELIVERY: Record<AgentRuntime, 'flag' | 'env'> = {
 export const RUNTIME_AUTO_APPROVE_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['--dangerously-skip-permissions'],
 	[AgentRuntime.Codex]: ['--dangerously-bypass-approvals-and-sandbox'],
-	[AgentRuntime.Gemini]: ['--yolo'],
+	[AgentRuntime.Antigravity]: ['--dangerously-skip-permissions'],
 	// OpenCode's own auto-approve flag, and NOT `--dangerously-skip-permissions`:
 	// that is Claude Code's spelling. OpenCode accepts unknown flags without
 	// complaint, so a wrong one here never applies and never announces itself -
@@ -2455,7 +2465,7 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 		'ScheduleWakeup',
 	],
 	[AgentRuntime.Codex]: [],
-	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Antigravity]: [],
 	[AgentRuntime.OpenCode]: [],
 	[AgentRuntime.Grok]: [],
 	[AgentRuntime.Kimi]: [],
@@ -2485,7 +2495,9 @@ export const RUNTIME_DISALLOWED_TOOLS_ARGS: Record<AgentRuntime, readonly string
 export const RUNTIME_SUPPORTS_MCP_TOOL_FILTER: Record<AgentRuntime, boolean> = {
 	[AgentRuntime.ClaudeCode]: true,
 	[AgentRuntime.Codex]: false,
-	[AgentRuntime.Gemini]: true,
+	// agy's mcp_config.json documents no per-server tool allowlist, so Hezo does
+	// not rely on one - its MCP server exposes exactly the tools it means to.
+	[AgentRuntime.Antigravity]: false,
 	[AgentRuntime.OpenCode]: true,
 	[AgentRuntime.Grok]: false,
 	[AgentRuntime.Kimi]: true,
@@ -2534,7 +2546,9 @@ export function displayToolName(tool: string): string {
 export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['--output-format', 'stream-json', '--verbose'],
 	[AgentRuntime.Codex]: ['--json'],
-	[AgentRuntime.Gemini]: ['--output-format', 'stream-json'],
+	// `--input-format text` makes agy read the prompt from stdin (stdin delivery);
+	// `--output-format stream-json` emits the `{event:...}` frames the parser reads.
+	[AgentRuntime.Antigravity]: ['--output-format', 'stream-json', '--input-format', 'text'],
 	// OpenCode `run --format json` emits raw JSON events whose terminal event
 	// carries token usage. `--thinking` puts the model's reasoning parts on that
 	// stream too, so the run log shows them (the parser renders them as
@@ -2577,7 +2591,7 @@ export const RUNTIME_STREAM_ARGS: Record<AgentRuntime, readonly string[]> = {
 export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: [],
 	[AgentRuntime.Codex]: ['exec'],
-	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Antigravity]: [],
 	// `opencode run …` gates non-interactive execution behind the `run` subcommand.
 	[AgentRuntime.OpenCode]: ['run'],
 	// `grok` runs headless directly (the `--prompt-file` flag, added as a suffix arg).
@@ -2598,7 +2612,7 @@ export const RUNTIME_HEADLESS_PREFIX_ARGS: Record<AgentRuntime, readonly string[
 export const RUNTIME_HEADLESS_SUFFIX_ARGS: Record<AgentRuntime, readonly string[]> = {
 	[AgentRuntime.ClaudeCode]: ['-p'],
 	[AgentRuntime.Codex]: ['-'],
-	[AgentRuntime.Gemini]: [],
+	[AgentRuntime.Antigravity]: [],
 	// OpenCode's `run` takes the prompt on stdin when the positional `message` is
 	// omitted, so nothing goes here.
 	[AgentRuntime.OpenCode]: [],
@@ -2667,8 +2681,7 @@ export const AI_PROVIDER_INFO: Record<AiProvider, AiProviderInfo> = {
 	},
 	[AiProvider.Google]: {
 		name: 'Google',
-		runtimeLabel: 'Gemini',
-		supportsSubscription: true,
+		runtimeLabel: 'Antigravity',
 		keyPlaceholder: 'AIza...',
 		verifyEndpoint: {
 			url: (apiKey) => `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,

@@ -21,6 +21,11 @@ export interface ContainerRunUser {
 
 const ROOT: ContainerRunUser = { name: 'root', uid: 0, gid: 0 };
 
+/** The run user's HOME inside the container - where a CLI that reads `$HOME` looks. */
+export function containerHomeDir(runUser: ContainerRunUser): string {
+	return runUser.uid === 0 ? '/root' : `/home/${runUser.name}`;
+}
+
 // Resolved once per container (immutable for the container's lifetime) — the same
 // value is needed at provision, at run time, and on every CEO chat turn.
 const cache = new Map<string, ContainerRunUser>();

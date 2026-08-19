@@ -326,9 +326,9 @@ export function ProviderConfigForm({
 							{t('settings.provider.serializesRuns', { cli: info.runtimeLabel })}
 						</p>
 					)}
-					{/* Guided sign-in is offered only where a driver exists. Where it does
-					    not (Gemini today), the paste form is simply the whole branch -
-					    there is no button that would start something and hang. */}
+					{/* Guided sign-in is offered only where a driver exists. Where a
+					    subscription provider has no driver, the paste form is the whole
+					    branch - there is no button that would start something and hang. */}
 					{canGuidedSignIn && !pasteFallback ? (
 						<>
 							<div className="rounded-md border border-border bg-surface-2 px-3 py-2.5">

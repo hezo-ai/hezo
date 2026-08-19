@@ -44,7 +44,7 @@ interface McpDescriptorBase {
 	 * The same restriction expressed the other way round: the catalogued tools
 	 * this run may NOT use. Set only alongside `enabledTools`.
 	 *
-	 * Both views exist because the runtimes disagree on shape — Gemini and
+	 * Both views exist because the runtimes disagree on shape — Codex and
 	 * OpenCode take an allowlist, Claude Code's settings file only has a
 	 * `permissions.deny`. A deny list is strictly weaker: it can only name tools
 	 * we knew about when the connector's methods were last listed, so a tool the
@@ -107,8 +107,28 @@ export interface McpInjection {
 	cliArgs: readonly string[];
 	/** Extra "KEY=VALUE" entries to append to the container env. */
 	envEntries: readonly string[];
-	/** Files to write before spawning. */
+	/** Files to write before spawning, under the per-run subscription dir. */
 	files: readonly McpInjectionFile[];
+	/**
+	 * Config files that must live in the container run-user's real HOME, for a CLI
+	 * that reads only `$HOME` and offers no relocation flag or env var (the
+	 * Antigravity CLI reads `~/.gemini` alone). The runner writes these rooted at
+	 * the run user's home rather than the per-run dir, and scrubs any that carry a
+	 * per-run secret afterwards. Safe because one run holds a container at a time,
+	 * so the file is rewritten per run with no overlap.
+	 */
+	homeConfigFiles?: readonly HomeConfigFile[];
+}
+
+export interface HomeConfigFile {
+	/** Path relative to the container run-user's home dir (e.g. `.gemini/config/mcp_config.json`). */
+	relativePath: string;
+	/** File mode (octal). */
+	mode: number;
+	/** File contents to write verbatim. */
+	contents: string;
+	/** True when this file carries a per-run secret and must be scrubbed after the run. */
+	scrubAfterRun?: boolean;
 }
 
 export interface McpAdapterCapabilities {

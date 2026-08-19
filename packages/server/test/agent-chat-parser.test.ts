@@ -201,50 +201,46 @@ describe('agent-chat-parser — Codex', () => {
 	});
 });
 
-describe('agent-chat-parser — Gemini', () => {
-	it('renders assistant message content and skips the user echo', () => {
-		const parser = createAgentChatParser(AgentRuntime.Gemini);
+describe('agent-chat-parser — Antigravity', () => {
+	const init = (model: string) => ({ event: 'init', init: { model } });
+	const result = (r: Record<string, unknown>) => ({ event: 'result', result: r });
+
+	it('emits the result response as one text event', () => {
+		const parser = createAgentChatParser(AgentRuntime.Antigravity);
 		const events = feed(parser, [
-			{ type: 'message', role: 'user', content: 'the prompt' },
-			{ type: 'message', role: 'assistant', content: 'The answer.' },
+			init('gemini-2.5-pro'),
+			result({ status: 'SUCCESS', response: 'The answer.', usage: {} }),
 		]);
 		expect(events).toEqual([{ text: 'The answer.' }]);
 	});
 
-	it('falls back to the text field when content is absent', () => {
-		const parser = createAgentChatParser(AgentRuntime.Gemini);
-		const events = feed(parser, [{ type: 'message', text: 'from text field' }]);
-		expect(events).toEqual([{ text: 'from text field' }]);
+	it('drops a whitespace-only response', () => {
+		const parser = createAgentChatParser(AgentRuntime.Antigravity);
+		const events = feed(parser, [result({ status: 'SUCCESS', response: '   ', usage: {} })]);
+		expect(events).toEqual([]);
 	});
 
-	it('maps tool_use to a tool-activity hint', () => {
-		const parser = createAgentChatParser(AgentRuntime.Gemini);
+	it('renders nothing for a step_update', () => {
+		const parser = createAgentChatParser(AgentRuntime.Antigravity);
 		const events = feed(parser, [
-			{ type: 'tool_use', name: 'web_search' },
-			{ type: 'tool_use' }, // no name → 'tool'
-		]);
-		expect(events).toEqual([{ toolActivity: 'web_search' }, { toolActivity: 'tool' }]);
-	});
-
-	it('captures usage from the result event across models', () => {
-		const parser = createAgentChatParser(AgentRuntime.Gemini);
-		feed(parser, [
 			{
-				type: 'result',
-				stats: {
-					models: {
-						'gemini-2.5-pro': { tokens: { prompt: 1000, candidates: 100, thoughts: 20 } },
-					},
-				},
+				event: 'step_update',
+				step_update: { step_index: 0, state: 'DONE', step_type: 'agent_response' },
 			},
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 1000, outputTokens: 120, costCents: 0 });
+		expect(events).toEqual([]);
 	});
 
-	it('drops whitespace-only assistant messages', () => {
-		const parser = createAgentChatParser(AgentRuntime.Gemini);
-		const events = feed(parser, [{ type: 'message', role: 'assistant', content: '   ' }]);
-		expect(events).toEqual([]);
+	it('captures usage from the result event with disjoint buckets', () => {
+		const parser = createAgentChatParser(AgentRuntime.Antigravity);
+		feed(parser, [
+			init('gemini-2.5-pro'),
+			result({
+				status: 'SUCCESS',
+				usage: { input_tokens: 1000, output_tokens: 120, cache_read_tokens: 0 },
+			}),
+		]);
+		expect(parser.getUsage()).toEqual({ inputTokens: 1000, outputTokens: 120, costCents: 0 });
 	});
 });
 
@@ -320,32 +316,8 @@ describe('agent-stream-parser — remaining log branches', () => {
 		expect(parser.onStdout(line({ type: 'error' }))).toBe('');
 	});
 
-	it('Gemini renders a tool_result and a tool_error distinctly', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(parser.onStdout(line({ type: 'tool_result', output: 'all good' }))).toBe(
-			'[tool-result] all good\n',
-		);
-		expect(parser.onStdout(line({ type: 'tool_result', is_error: true, result: 'boom' }))).toBe(
-			'[tool-error] boom\n',
-		);
-	});
-
-	it('Gemini renders a bare tool_result label when the body is empty', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(parser.onStdout(line({ type: 'tool_result' }))).toBe('[tool-result]\n');
-	});
-
-	it('Gemini surfaces an error event as a plain line and marks the result error', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(parser.onStdout(line({ type: 'error', message: 'quota exceeded' }))).toBe(
-			'quota exceeded\n',
-		);
-		const done = parser.onStdout(line({ type: 'result', error: { message: 'x' }, stats: {} }));
-		expect(done).toBe('[done] error tokens=0/0\n');
-	});
-
 	it('renders a tool_use tool with object input the runner can preview', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = parser.onStdout(line({ type: 'tool_use', name: 'grep', args: { pattern: 'foo' } }));
 		expect(out).toContain('[tool] grep(');
 		expect(out).toContain('pattern=foo');

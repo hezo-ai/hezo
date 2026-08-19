@@ -100,11 +100,20 @@ describe('applyEffortToRuntime — Codex', () => {
 	});
 });
 
-describe('applyEffortToRuntime — Gemini', () => {
-	it('sets GEMINI_REASONING_EFFORT env var', () => {
-		const r = applyEffortToRuntime(AgentRuntime.Gemini, AgentEffort.High);
-		expect(r.extraEnv).toEqual(['GEMINI_REASONING_EFFORT=high']);
-		expect(r.extraArgs).toEqual([]);
+describe('applyEffortToRuntime — Antigravity', () => {
+	it('maps effort onto the --effort flag (low|medium|high)', () => {
+		const high = applyEffortToRuntime(AgentRuntime.Antigravity, AgentEffort.High);
+		expect(high.extraArgs).toEqual(['--effort', 'high']);
+		expect(high.extraEnv).toEqual([]);
+		// The ladder's ends fold inward: agy accepts only low|medium|high.
+		expect(applyEffortToRuntime(AgentRuntime.Antigravity, AgentEffort.Minimal).extraArgs).toEqual([
+			'--effort',
+			'low',
+		]);
+		expect(applyEffortToRuntime(AgentRuntime.Antigravity, AgentEffort.Max).extraArgs).toEqual([
+			'--effort',
+			'high',
+		]);
 	});
 });
 

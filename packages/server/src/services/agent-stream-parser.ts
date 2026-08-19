@@ -131,7 +131,7 @@ const STREAM_PARSER_FACTORIES: Record<
 > = {
 	[AgentRuntime.ClaudeCode]: (price) => createClaudeCodeParser(price),
 	[AgentRuntime.Codex]: (price, runModel) => createCodexParser(price, runModel),
-	[AgentRuntime.Gemini]: (price) => createGeminiParser(price),
+	[AgentRuntime.Antigravity]: (price, runModel) => createAntigravityParser(price, runModel),
 	// OpenCode emits JSONL whose shapes vary across versions and are not fully
 	// documented, so it gets the lenient generic parser: recognizable text and
 	// tool activity render, usage is taken from whatever terminal event carries
@@ -285,7 +285,7 @@ const CHAT_PARSER_FACTORIES: Record<
 > = {
 	[AgentRuntime.ClaudeCode]: (price) => createClaudeChatParser(price),
 	[AgentRuntime.Codex]: (price, runModel) => createCodexChatParser(price, runModel),
-	[AgentRuntime.Gemini]: (price) => createGeminiChatParser(price),
+	[AgentRuntime.Antigravity]: (price, runModel) => createAntigravityChatParser(price, runModel),
 	[AgentRuntime.OpenCode]: (price, runModel) => createGenericChatParser(price, runModel),
 	[AgentRuntime.Grok]: () => createGrokChatParser(),
 	[AgentRuntime.Kimi]: () => createKimiChatParser(),
@@ -381,24 +381,19 @@ function createCodexChatParser(price: PriceModelFn, runModel?: string): AgentCha
 	return { onStdout: reader.onStdout, flush: reader.flush, getUsage: () => usage };
 }
 
-function createGeminiChatParser(price: PriceModelFn): AgentChatParser {
+function createAntigravityChatParser(
+	price: PriceModelFn,
+	runModel: string | undefined,
+): AgentChatParser {
 	let usage: AgentRunUsage | null = null;
+	let model = runModel;
 	const render = (raw: unknown): AgentChatTurnEvent[] => {
-		const event = raw as GeminiEvent;
-		const type = event.type ?? '';
-		if (type === 'message') {
-			if (event.role === 'user') return [];
-			const text = event.content ?? event.text ?? '';
-			return text.trim() ? [{ text }] : [];
-		}
-		if (type === 'tool_use') return [{ toolActivity: event.name ?? 'tool' }];
-		if (type === 'result') {
-			const { input, output } = sumGeminiTokens(event.stats);
-			usage = {
-				inputTokens: input,
-				outputTokens: output,
-				costCents: priceGeminiModels(event.stats, price),
-			};
+		const event = raw as AntigravityEvent;
+		if (event.event === 'init' && event.init?.model) model = event.init.model;
+		if (event.event === 'result') {
+			usage = antigravityUsage(event.result?.usage, model, price);
+			const text = (event.result?.response ?? '').trim();
+			return text ? [{ text }] : [];
 		}
 		return [];
 	};
@@ -894,163 +889,87 @@ function codexToolName(item: CodexItem): string {
 }
 
 // ---------------------------------------------------------------------------
-// Gemini (`--output-format stream-json`)
+// Antigravity (`agy --output-format stream-json`)
 // ---------------------------------------------------------------------------
 
-interface GeminiTokens {
-	prompt?: number;
-	candidates?: number;
-	thoughts?: number;
-	total?: number;
-	cached?: number;
-	tool?: number;
-}
-
 /**
- * One model's counts, in either of the two shapes the CLI has emitted.
- *
- * `tokens` is the telemetry object's own field names. The stream-json writer
- * does not emit that object - it flattens it into the `*_tokens` names below,
- * and drops the reasoning bucket while doing so. Both are read because only the
- * flat one appears on the wire today and the nested one costs nothing to keep.
+ * agy's usage buckets are DISJOINT: `input_tokens` is the non-cached input and
+ * excludes `cache_read_tokens` (verified: a cache-hit record has
+ * input+output=total with cache_read counted separately), and `output_tokens`
+ * already includes `thinking_tokens`. So unlike Codex there is no cache to
+ * subtract out - each bucket is priced at its own rate.
  */
-interface GeminiModelStats {
-	tokens?: GeminiTokens;
-	total_tokens?: number;
+interface AntigravityUsage {
 	input_tokens?: number;
 	output_tokens?: number;
-	cached?: number;
+	thinking_tokens?: number;
+	cache_read_tokens?: number;
+	total_tokens?: number;
 }
 
-interface GeminiStats {
-	models?: Record<string, GeminiModelStats>;
+interface AntigravityEvent {
+	event?: string;
+	init?: { model?: string };
+	step_update?: { step_index?: number; state?: string; step_type?: string };
+	result?: { status?: string; response?: string; usage?: AntigravityUsage; error?: string };
 }
 
-/**
- * One model's counts, normalized to what a run is billed for.
- *
- * The flat projection carries no reasoning bucket, so it is recovered as the
- * residual the total leaves after the prompt and the visible answer. That
- * residual also absorbs tool-prompt tokens, which bill at the input rate - a
- * bounded over-attribution to output, against a guaranteed total loss of every
- * reasoning token if the residual is ignored, which for a thinking model is
- * most of what the run generated.
- */
-function geminiModelTokens(model: GeminiModelStats): {
-	prompt: number;
-	cached: number;
-	output: number;
-} {
-	const t = model.tokens;
-	if (t) {
-		return {
-			prompt: t.prompt ?? 0,
-			cached: t.cached ?? 0,
-			output: (t.candidates ?? 0) + (t.thoughts ?? 0),
-		};
-	}
-	const prompt = model.input_tokens ?? 0;
-	const visible = model.output_tokens ?? 0;
-	const total = model.total_tokens ?? 0;
+function antigravityUsage(
+	u: AntigravityUsage | undefined,
+	model: string | undefined,
+	price: PriceModelFn,
+): AgentRunUsage {
+	const input = u?.input_tokens ?? 0;
+	const cached = u?.cache_read_tokens ?? 0;
+	const output = u?.output_tokens ?? 0;
 	return {
-		prompt,
-		cached: model.cached ?? 0,
-		output: visible + Math.max(0, total - prompt - visible),
+		inputTokens: input,
+		outputTokens: output,
+		costCents: price(model, { inputTokens: input, cacheReadTokens: cached, outputTokens: output }),
 	};
 }
 
-interface GeminiEvent {
-	type?: string;
-	model?: string;
-	role?: string;
-	content?: string;
-	text?: string;
-	name?: string;
-	input?: unknown;
-	args?: unknown;
-	output?: unknown;
-	result?: unknown;
-	is_error?: boolean;
-	stats?: GeminiStats;
-	message?: string;
-	error?: { message?: string } | string;
-}
-
-function createGeminiParser(price: PriceModelFn): AgentStreamParser {
+function createAntigravityParser(
+	price: PriceModelFn,
+	runModel: string | undefined,
+): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let finalMessage: string | null = null;
 	let terminalError: string | null = null;
-	/**
-	 * Assistant text arrives as consecutive `message` events that are CHUNKS of
-	 * one answer, not whole answers - a reply of `HEZO-LIVE-OK` streams as
-	 * `HEZO-LIVE-` then `OK`. Treating each as complete left `getFinalAssistantMessage`
-	 * holding the last fragment, and the runner's handoff-delivery net posts that
-	 * value verbatim, so a stranded Gemini handoff was delivered as its final few
-	 * characters. Buffered and flushed on the next non-message event, the same way
-	 * the Grok parser handles its deltas.
-	 */
-	let textBuf = '';
-	const flushText = (out: string[]): void => {
-		const t = textBuf.trim();
-		textBuf = '';
-		if (!t) return;
-		finalMessage = t;
-		out.push(t);
-	};
+	// agy names its model in the `init` event; the run's own model is the fallback.
+	let model = runModel;
 
 	const renderEvent = (raw: unknown): string[] => {
-		const event = raw as GeminiEvent;
-		const type = event.type ?? '';
-
-		if (type === 'message' && event.role !== 'user') {
-			textBuf += event.content ?? event.text ?? '';
-			return [];
-		}
-
+		const event = raw as AntigravityEvent;
+		const kind = event.event ?? '';
 		const out: string[] = [];
-		flushText(out);
 
-		if (type === 'init') {
-			// As with Codex, no `tools=`: the count was never reported, so don't invent one.
-			out.push(`[session] model=${event.model ?? 'gemini'}`);
+		if (kind === 'init') {
+			if (event.init?.model) model = event.init.model;
+			out.push(`[session] model=${model ?? 'antigravity'}`);
 			return out;
 		}
 
-		if (type === 'message') return out;
+		// `step_update` frames carry per-step usage too, but the terminal `result`
+		// usage is their cumulative sum (verified), so they are ignored here to
+		// avoid double-counting, and render nothing - the response is in `result`.
+		if (kind === 'step_update') return out;
 
-		if (type === 'tool_use') {
-			out.push(formatToolUse(event.name ?? 'tool', event.input ?? event.args));
-			return out;
-		}
-
-		if (type === 'tool_result') {
-			const body = extractToolResultText(event.output ?? event.result)
-				.replace(/\s+/g, ' ')
-				.trim();
-			const label = event.is_error ? '[tool-error]' : '[tool-result]';
-			out.push(body ? `${label} ${body}` : label);
-			return out;
-		}
-
-		if (type === 'result') {
-			const { input, output } = sumGeminiTokens(event.stats);
-			const costCents = priceGeminiModels(event.stats, price);
-			usage = { inputTokens: input, outputTokens: output, costCents };
-			const status = event.error ? 'error' : 'success';
-			if (event.error) {
-				const msg = extractErrorMessage(event.error);
-				if (msg) terminalError = classifyRuntimeError(msg) ?? terminalError;
+		if (kind === 'result') {
+			const r = event.result ?? {};
+			usage = antigravityUsage(r.usage, model, price);
+			const resp = (r.response ?? '').trim();
+			if (resp) {
+				finalMessage = resp;
+				out.push(resp);
 			}
-			out.push(`[done] ${status} tokens=${input}/${output}`);
-			return out;
-		}
-
-		if (type === 'error') {
-			const msg = extractErrorMessage(event.error, event.message);
-			if (msg) {
-				terminalError = classifyRuntimeError(msg) ?? terminalError;
-				out.push(msg.replace(/\s+/g, ' ').trim());
+			const isError = r.status === 'ERROR';
+			if (isError && r.error) {
+				terminalError = classifyRuntimeError(r.error) ?? terminalError;
 			}
+			out.push(
+				`[done] ${isError ? 'error' : 'success'} tokens=${usage.inputTokens}/${usage.outputTokens}`,
+			);
 			return out;
 		}
 
@@ -1061,49 +980,8 @@ function createGeminiParser(price: PriceModelFn): AgentStreamParser {
 		renderEvent,
 		() => usage,
 		() => terminalError,
-		// Flushed here too: a run whose last event is an assistant chunk has text
-		// still buffered, and the final message is exactly what the handoff net
-		// would deliver.
-		() => {
-			const pending: string[] = [];
-			flushText(pending);
-			return finalMessage;
-		},
+		() => finalMessage,
 	);
-}
-
-/**
- * Sum token usage across every model Gemini reports. The prompt count is the
- * full input (the cached count is a subset of it, not additive); billed output
- * is the visible answer plus reasoning.
- */
-function sumGeminiTokens(stats: GeminiStats | undefined): { input: number; output: number } {
-	let input = 0;
-	let output = 0;
-	for (const model of Object.values(stats?.models ?? {})) {
-		const t = geminiModelTokens(model);
-		input += t.prompt;
-		output += t.output;
-	}
-	return { input, output };
-}
-
-/**
- * Price each model Gemini reports separately and sum the cents. The cached
- * count is a subset of the prompt billed at the cache-read rate; the rest of
- * the prompt is full-rate input.
- */
-function priceGeminiModels(stats: GeminiStats | undefined, price: PriceModelFn): number {
-	let cents = 0;
-	for (const [modelId, model] of Object.entries(stats?.models ?? {})) {
-		const t = geminiModelTokens(model);
-		cents += price(modelId, {
-			inputTokens: Math.max(0, t.prompt - t.cached),
-			cacheReadTokens: t.cached,
-			outputTokens: t.output,
-		});
-	}
-	return cents;
 }
 
 // ---------------------------------------------------------------------------

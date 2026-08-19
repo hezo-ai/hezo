@@ -318,37 +318,6 @@ test('offers Codex subscription paste flow for OpenAI', async () => {
 	await findByText('Subscription', undefined, { timeout: 15_000 });
 });
 
-test('offers Gemini subscription paste flow for Google', async () => {
-	const { container, findAllByText, findByRole, findByText, getByRole, user } = await renderApp({
-		initialPath: '/settings/ai-providers',
-		seed: async () => {
-			await clearAiProviders();
-		},
-	});
-
-	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
-
-	await user.click(getByRole('button', { name: 'Google' }));
-	await user.click(getByRole('button', { name: /Gemini subscription/i }));
-	const oauthHits = await findAllByText(/oauth_creds\.json/i);
-	expect(oauthHits.length).toBeGreaterThan(0);
-	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-	fireEvent.change(textarea, {
-		target: {
-			value: JSON.stringify({
-				access_token: 'ya29.test',
-				refresh_token: '1//0g-rt-component',
-				token_type: 'Bearer',
-				scope: 'https://www.googleapis.com/auth/generative-language',
-				expiry_date: 1745780000000,
-			}),
-		},
-	});
-	await user.click(getByRole('button', { name: 'Save' }));
-
-	await findByText('Subscription', undefined, { timeout: 15_000 });
-});
-
 test('lists API key + Subscription rows for a provider and flips the default', async () => {
 	const { findByRole, findByText, getByRole, queryAllByText, ctx } = await renderApp({
 		initialPath: '/settings/ai-providers',
@@ -1053,25 +1022,6 @@ test('OpenAI subscription leads with guided sign-in, keeping paste behind a disc
 	expect(container.querySelector('textarea')).not.toBeNull();
 	// Both paths stay reachable - the disclosure does not replace the button.
 	expect(queryByRole('button', { name: /Sign in with Codex/i })).not.toBeNull();
-});
-
-test('Google subscription offers no sign-in button, because its CLI cannot be driven', async () => {
-	const { container, findByRole, getByRole, queryByRole, user } = await renderApp({
-		initialPath: '/settings/ai-providers',
-		seed: async () => {
-			await clearAiProviders();
-		},
-	});
-
-	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
-	await user.click(getByRole('button', { name: 'Google' }));
-	await user.click(getByRole('button', { name: /Gemini subscription/i }));
-
-	// No button that would start something and hang, and no disclosure to open:
-	// the paste form is the whole branch.
-	expect(queryByRole('button', { name: /Sign in with/i })).toBeNull();
-	expect(queryByRole('button', { name: /Paste credential manually/i })).toBeNull();
-	expect(container.querySelector('textarea')).not.toBeNull();
 });
 
 /**

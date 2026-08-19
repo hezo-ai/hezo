@@ -253,7 +253,7 @@ describe('Claude Code — per-server MCP tool counts', () => {
 	it('reports null counts before any init event, and on a runtime that emits none', () => {
 		expect(createAgentStreamParser(AgentRuntime.ClaudeCode).getMcpToolCounts()).toBeNull();
 		expect(createAgentStreamParser(AgentRuntime.Codex).getMcpToolCounts()).toBeNull();
-		expect(createAgentStreamParser(AgentRuntime.Gemini).getMcpToolCounts()).toBeNull();
+		expect(createAgentStreamParser(AgentRuntime.Antigravity).getMcpToolCounts()).toBeNull();
 	});
 
 	it('warns when a server reports connected but contributed no tools', () => {
@@ -556,72 +556,60 @@ describe('Codex — thread.started + item edge arms', () => {
 // Gemini parser — fallback arms
 // ---------------------------------------------------------------------------
 
-describe('Gemini — message/tool/result edge arms', () => {
-	it('falls back to model=gemini when init has no model', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'init' }])).toBe('[session] model=gemini\n');
+describe('Antigravity — init/step/result edge arms', () => {
+	it('falls back to model=antigravity when init has no model', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		expect(feed(parser, [{ event: 'init', init: {} }])).toBe('[session] model=antigravity\n');
 	});
 
-	it('reads message text from the text field when content is absent', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		// Buffered until the chunk run ends, so the flush is what emits it.
-		expect(feed(parser, [{ type: 'message', text: 'via text' }, { type: 'result' }])).toContain(
-			'via text',
-		);
+	it('prices against the run model when there is no init event', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity, undefined, 'gemini-2.5-pro');
+		feed(parser, [
+			{
+				event: 'result',
+				result: { status: 'SUCCESS', usage: { input_tokens: 5, output_tokens: 5 } },
+			},
+		]);
+		expect(parser.getUsage()?.inputTokens).toBe(5);
 	});
 
-	it('drops a whitespace-only assistant message', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'message', content: '   ' }])).toBe('');
+	it('renders nothing for a step_update frame', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		expect(
+			feed(parser, [
+				{
+					event: 'step_update',
+					step_update: { step_index: 0, state: 'DONE', step_type: 'checkpoint' },
+				},
+			]),
+		).toBe('');
 	});
 
-	it('renders tool_use using the input field (not args)', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		const out = feed(parser, [{ type: 'tool_use', name: 'read', input: { path: '/x' } }]);
-		expect(out).toContain('[tool] read(');
-		expect(out).toContain('path=/x');
-	});
-
-	it('falls back to tool name "tool" when tool_use has no name', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'tool_use' }])).toBe('[tool] tool()\n');
-	});
-
-	it('reads tool_result body from result field when output is absent', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'tool_result', result: 'from result' }])).toBe(
-			'[tool-result] from result\n',
-		);
-	});
-
-	it('reports a success result with no stats (undefined stats arm)', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		const out = feed(parser, [{ type: 'result' }]);
+	it('reports a success result with no usage (0/0)', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		const out = feed(parser, [{ event: 'result', result: { status: 'SUCCESS' } }]);
 		expect(out).toBe('[done] success tokens=0/0\n');
 		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
 	});
 
-	it('drops an error event with no extractable message', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'error' }])).toBe('');
+	it('renders a done-error line for an error result', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		const out = feed(parser, [{ event: 'result', result: { status: 'ERROR', error: 'boom' } }]);
+		expect(out).toContain('[done] error');
 	});
 
-	it('ignores an unknown gemini event type', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		expect(feed(parser, [{ type: 'turn.delta' }])).toBe('');
-	});
-
-	it('skips a model entry that has no tokens object when summing', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		feed(parser, [
-			{
-				type: 'result',
-				stats: {
-					models: { 'with-tokens': { tokens: { prompt: 10, candidates: 3 } }, 'no-tokens': {} },
-				},
-			},
+	it('emits the result response as the final message', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		const out = feed(parser, [
+			{ event: 'result', result: { status: 'SUCCESS', response: 'the answer' } },
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 10, outputTokens: 3, costCents: 0 });
+		expect(out).toContain('the answer');
+		expect(parser.getFinalAssistantMessage()).toBe('the answer');
+	});
+
+	it('ignores an unknown event kind', () => {
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		expect(feed(parser, [{ event: 'whatever' }])).toBe('');
 	});
 });
 
@@ -808,30 +796,30 @@ describe('generic parser — usage/error/terminal arms', () => {
 
 describe('renderToolInput / stringifyArg arms', () => {
 	it('renders a scalar (non-object) tool input via String()', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ type: 'tool_use', name: 'echo', input: 42 }])).toBe('[tool] echo(42)\n');
 	});
 
 	it('renders a tool with null input as name()', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ type: 'tool_use', name: 'noargs', input: null }])).toBe(
 			'[tool] noargs()\n',
 		);
 	});
 
 	it('renders a tool with an empty-object input as name()', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		expect(feed(parser, [{ type: 'tool_use', name: 'empty', input: {} }])).toBe('[tool] empty()\n');
 	});
 
 	it('collapses whitespace in a string tool argument', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = feed(parser, [{ type: 'tool_use', name: 'run', input: { cmd: 'a\n\t  b' } }]);
 		expect(out).toBe('[tool] run(cmd=a b)\n');
 	});
 
 	it('JSON-stringifies a non-string tool argument value', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const out = feed(parser, [
 			{ type: 'tool_use', name: 'cfg', input: { flag: true, nums: [1, 2] } },
 		]);
@@ -840,7 +828,7 @@ describe('renderToolInput / stringifyArg arms', () => {
 	});
 
 	it('keeps a long per-argument value in full (no truncation, no ellipsis)', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
+		const parser = createAgentStreamParser(AgentRuntime.OpenCode);
 		const long = 'x'.repeat(2000);
 		const out = feed(parser, [{ type: 'tool_use', name: 'big', input: { v: long } }]);
 		// The whole value is recorded verbatim; nothing is clipped.
@@ -860,15 +848,6 @@ describe('full-length lines (no per-line cap — the whole run log is recorded)'
 			},
 		]);
 		const body = out.replace('[thinking] ', '').trimEnd();
-		expect(body).toBe(long);
-		expect(body).not.toContain('…');
-	});
-
-	it('keeps a long tool result in full without an ellipsis', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		const long = 'result-'.repeat(1000);
-		const out = feed(parser, [{ type: 'tool_result', output: long, is_error: false }]);
-		const body = out.replace('[tool-result] ', '').trimEnd();
 		expect(body).toBe(long);
 		expect(body).not.toContain('…');
 	});
@@ -984,8 +963,8 @@ describe('JSONL framing arms', () => {
 	});
 
 	it('flush() renders a buffered final event that had no trailing newline', () => {
-		const parser = createAgentStreamParser(AgentRuntime.Gemini);
-		parser.onStdout('{"type":"init","model":"g"}');
+		const parser = createAgentStreamParser(AgentRuntime.Antigravity);
+		parser.onStdout('{"event":"init","init":{"model":"g"}}');
 		expect(parser.flush()).toBe('[session] model=g\n');
 	});
 
@@ -1038,20 +1017,32 @@ describe('chat parser — remaining arms', () => {
 		expect(parser.onStdout(line({ type: 'item.completed' }))).toEqual([]);
 	});
 
-	it('Gemini chat skips a user message and drops empty assistant text', () => {
-		const parser = createAgentChatParser(AgentRuntime.Gemini);
-		expect(parser.onStdout(line({ type: 'message', role: 'user', content: 'hi' }))).toEqual([]);
-		expect(parser.onStdout(line({ type: 'message', content: '   ' }))).toEqual([]);
+	it('Antigravity chat drops an empty result response and step_updates', () => {
+		const parser = createAgentChatParser(AgentRuntime.Antigravity);
+		expect(
+			parser.onStdout(
+				line({ event: 'step_update', step_update: { step_index: 0, state: 'DONE' } }),
+			),
+		).toEqual([]);
+		expect(
+			parser.onStdout(
+				line({ event: 'result', result: { status: 'SUCCESS', response: '   ', usage: {} } }),
+			),
+		).toEqual([]);
 	});
 
-	it('Gemini chat falls back to tool label when tool_use has no name', () => {
-		const parser = createAgentChatParser(AgentRuntime.Gemini);
-		expect(parser.onStdout(line({ type: 'tool_use' }))).toEqual([{ toolActivity: 'tool' }]);
+	it('Antigravity chat emits the result response as one text event', () => {
+		const parser = createAgentChatParser(AgentRuntime.Antigravity);
+		expect(
+			parser.onStdout(
+				line({ event: 'result', result: { status: 'SUCCESS', response: 'hi there', usage: {} } }),
+			),
+		).toEqual([{ text: 'hi there' }]);
 	});
 
-	it('Gemini chat ignores an unknown event type', () => {
-		const parser = createAgentChatParser(AgentRuntime.Gemini);
-		expect(parser.onStdout(line({ type: 'whatever' }))).toEqual([]);
+	it('Antigravity chat ignores an unknown event kind', () => {
+		const parser = createAgentChatParser(AgentRuntime.Antigravity);
+		expect(parser.onStdout(line({ event: 'whatever' }))).toEqual([]);
 	});
 
 	it('generic chat records model and captures usage but yields no text', () => {
