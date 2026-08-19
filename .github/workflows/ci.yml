@@ -381,6 +381,14 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v${{ needs.playwright-version.outputs.version }}-noble
       options: --ipc=host
+    # A `run:` step defaults to bash on a runner but to `sh` in this container,
+    # which silently turned the failure-context step below into `sh -e` and made
+    # it die on `shopt: not found` - exit 127 on top of the browser failure it
+    # existed to explain. Pin the job back to the host default so every step
+    # here, present and future, gets the shell it was written against.
+    defaults:
+      run:
+        shell: bash
     # Sharded across runners the same way the vitest tiers are: Playwright splits
     # its suite into thirds (`--shard <i>/3`), so wall time drops to roughly a
     # third versus the single-runner run. fail-fast off so one shard failing
@@ -398,11 +406,14 @@ jobs:
       - name: Install bun
         timeout-minutes: 5
         run: npm install -g bun@${{ env.BUN_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
+      # Deliberately no bun cache here, unlike every other job. This image has
+      # no zstd, and the compression method is part of the cache *version*
+      # hash, so a gzip-compressing container can never match the zstd entries
+      # the host jobs write - it just maintains a second 136 MB copy of the
+      # same content under the same key. It does not even pay for itself:
+      # measured on run 32239850690, the save cost 18-22s per shard while a
+      # cold `bun install` here takes 3-4s. Restore this step only alongside a
+      # measurement showing install got slow enough to be worth caching.
       - run: bun install --frozen-lockfile
         timeout-minutes: 5
       - run: bun run test --browser --shard ${{ matrix.shard }}/3
