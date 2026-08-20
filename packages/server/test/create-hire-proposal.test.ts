@@ -13,7 +13,6 @@ import {
 	instanceCeoId,
 	mintAgentToken,
 } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: Db;
@@ -122,7 +121,7 @@ describe('MCP tool create_hire_proposal', () => {
 			heartbeat_interval_min: 720,
 			title: 'Data Scientist',
 			role_description: 'Owns the analytics models',
-			system_prompt: compliantPrompt('You are the Data Scientist. Build and maintain the models.'),
+			system_prompt: 'You are the Data Scientist. Build and maintain the models.',
 			monthly_budget_cents: 5000,
 		});
 
@@ -151,7 +150,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
 			heartbeat_interval_min: 720,
 			title: 'Support Engineer',
-			system_prompt: compliantPrompt('You handle support escalations.'),
+			system_prompt: 'You handle support escalations.',
 			task_id: taskId,
 		});
 		expect(result.error).toBeUndefined();
@@ -184,7 +183,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
 			heartbeat_interval_min: 720,
 			title: 'Field Engineer',
-			system_prompt: compliantPrompt('You handle on-site work.'),
+			system_prompt: 'You handle on-site work.',
 			task_id: identifier,
 		});
 		expect(result.error).toBeUndefined();
@@ -223,7 +222,7 @@ describe('MCP tool create_hire_proposal', () => {
 			heartbeat_interval_min: 720,
 			project: projectSlug,
 			title: 'Growth Lead',
-			system_prompt: compliantPrompt('You drive growth experiments.'),
+			system_prompt: 'You drive growth experiments.',
 		});
 		expect(result.error).toBeUndefined();
 		const row = await db.query<{ team_id: string }>('SELECT team_id FROM approvals WHERE id = $1', [
@@ -241,7 +240,7 @@ describe('MCP tool create_hire_proposal', () => {
 			heartbeat_interval_min: 720,
 			project: hq.rows[0].slug,
 			title: 'HQ Ops Analyst',
-			system_prompt: compliantPrompt('You support instance-wide operations.'),
+			system_prompt: 'You support instance-wide operations.',
 		});
 		expect(result.error).toBeUndefined();
 		const row = await db.query<{ team_id: string }>('SELECT team_id FROM approvals WHERE id = $1', [
@@ -255,7 +254,7 @@ describe('MCP tool create_hire_proposal', () => {
 		// omission. Rejected at the schema, before the handler runs.
 		const raw = await callToolRaw(await captainToken(), 'create_hire_proposal', {
 			title: 'Unpaced Role',
-			system_prompt: compliantPrompt('You are the Unpaced Role.'),
+			system_prompt: 'You are the Unpaced Role.',
 		});
 		expect(raw).toContain('heartbeat_interval_min');
 
@@ -271,7 +270,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const raw = await callToolRaw(await captainToken(), 'create_hire_proposal', {
 			heartbeat_interval_min: 30,
 			title: 'Twitchy Role',
-			system_prompt: compliantPrompt('You are the Twitchy Role.'),
+			system_prompt: 'You are the Twitchy Role.',
 		});
 		expect(raw).toContain('heartbeat_interval_min');
 	});
@@ -280,7 +279,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
 			heartbeat_interval_min: 90,
 			title: 'Paced Role',
-			system_prompt: compliantPrompt('You are the Paced Role.'),
+			system_prompt: 'You are the Paced Role.',
 		});
 		expect(result.error).toBeUndefined();
 		expect((result.payload as Record<string, unknown>).heartbeat_interval_min).toBe(90);
@@ -299,7 +298,7 @@ describe('MCP tool create_hire_proposal', () => {
 			heartbeat_interval_min: 720,
 			title: 'Release Manager',
 			role_description: 'Owns releases',
-			system_prompt: compliantPrompt('You are the Release Manager.'),
+			system_prompt: 'You are the Release Manager.',
 		});
 		expect(proposal.error).toBeUndefined();
 
@@ -335,7 +334,7 @@ describe('MCP tool create_hire_proposal', () => {
 		const proposal = await callTool(await captainToken(), 'create_hire_proposal', {
 			heartbeat_interval_min: 720,
 			title: 'Incident Commander',
-			system_prompt: compliantPrompt('You coordinate incident response.'),
+			system_prompt: 'You coordinate incident response.',
 			task_id: taskId,
 		});
 		expect(proposal.error).toBeUndefined();

@@ -45,9 +45,10 @@ describe('team bundle export', () => {
 		// description is present (given at creation); summary comes from the team row.
 		expect(bundle.description).toContain('software');
 
-		// Captain override carries the partial-resolved prompt with {{...}} intact
-		// (not a run-time-resolved prompt) plus its team context.
-		expect(bundle.captain.system_prompt).toContain('{{team_name}}');
+		// Captain override carries the stored role body (not a run-resolved prompt)
+		// plus its team context.
+		expect(bundle.captain.system_prompt).toContain('# Captain');
+		expect(bundle.captain.system_prompt).not.toContain('The team skills database holds');
 		expect(bundle.captain.team_context.length).toBeGreaterThan(0);
 
 		// Roster is every non-Captain role, never a reserved slug.
@@ -55,7 +56,8 @@ describe('team bundle export', () => {
 		for (const role of bundle.roster) {
 			expect(role.slug).not.toBe(CAPTAIN_AGENT_SLUG);
 			expect(RESERVED_ROSTER_SLUGS).not.toContain(role.slug);
-			expect(role.system_prompt).toContain('{{team_name}}');
+			expect(role.system_prompt.length).toBeGreaterThan(100);
+			expect(role.system_prompt).not.toContain('The team skills database holds');
 			// Every roster role reports to the Captain, another roster role, or the top.
 			if (role.reports_to_slug !== null) {
 				const known =
@@ -122,7 +124,7 @@ describe('team bundle export', () => {
 		const body = (await res.json()) as { data: MarketplaceTeamDef };
 		expect(body.data.name).toBe('Ship It Co');
 		expect(body.data.roster.length).toBeGreaterThan(0);
-		expect(body.data.captain.system_prompt).toContain('{{team_name}}');
+		expect(body.data.captain.system_prompt).toContain('# Captain');
 	});
 
 	it('rejects an unauthenticated request', async () => {

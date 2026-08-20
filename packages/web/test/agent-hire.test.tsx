@@ -1,4 +1,4 @@
-import { fireEvent, waitFor } from '@testing-library/react';
+import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
@@ -239,9 +239,9 @@ test('hire form reports-to dropdown defaults to Captain and posts the chosen man
 	});
 }, 60_000);
 
-test('template variable chips insert into system prompt', async () => {
+test('the {{ lookup inserts a substitution variable into the system prompt', async () => {
 	let ws!: SeededWorkspace;
-	const { findByRole, container, user, router } = await renderApp({
+	const { findByTestId, findByLabelText, findByText, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -253,17 +253,37 @@ test('template variable chips insert into system prompt', async () => {
 		params: { projectId: ws.internalSlug },
 	});
 
-	// Chips now carry a tooltip description in their accessible name, so match by
-	// the token substring rather than an exact name.
-	await user.click(await findByRole('button', { name: /\{\{team_name\}\}/ }));
-	await user.click(await findByRole('button', { name: /\{\{skills_context\}\}/ }));
+	const textarea = (await findByLabelText('System prompt')) as HTMLTextAreaElement;
+	// userEvent reads `{`/`}` as key syntax, so seed the trigger directly and let
+	// the change handler open the picker.
+	fireEvent.change(textarea, { target: { value: 'Aligned with {{team' } });
+	// Scoped to the picker: the reference strip above the field lists the same
+	// tokens, so an unscoped query matches twice.
+	const picker = await findByTestId('mention-picker');
+	await user.click(within(picker).getByText('{{team_name}}'));
 
-	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-	expect(textarea.value).toContain('{{team_name}}');
-	expect(textarea.value).toContain('{{skills_context}}');
+	expect(textarea.value).toBe('Aligned with {{team_name}}');
 });
 
-test('hire form blocks submit until all required vars are present', async () => {
+test('the prompt reference strip lists what Hezo adds', async () => {
+	let ws!: SeededWorkspace;
+	const { findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			ws = await seedWorkspace();
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/agents/hire',
+		params: { projectId: ws.internalSlug },
+	});
+
+	// Collapsed, the strip states the insertion affordance without being opened.
+	await findByText(/Type .* to place any of its/);
+});
+
+test('hire form gates submit on the heartbeat alone', async () => {
 	let ws!: SeededWorkspace;
 	const { findByLabelText, findByRole, findByText, container, user, router } = await renderApp({
 		initialPath: '/',
@@ -280,8 +300,8 @@ test('hire form blocks submit until all required vars are present', async () => 
 	const titleInput = (await findByLabelText('Role title')) as HTMLInputElement;
 	await user.type(titleInput, 'Gap Role');
 
-	// The heartbeat starts unpicked, so the button is gated on it even though the
-	// starter prompt is compliant. Choosing a cadence is what releases it.
+	// The heartbeat starts unpicked, and that is now the only thing gating submit:
+	// no substitution variable is required, so the prompt cannot block it.
 	const hireBtn = (await findByRole('button', { name: /hire agent/i })) as HTMLButtonElement;
 	expect(hireBtn.disabled).toBe(true);
 	const heartbeat = (await findByLabelText('Heartbeat')) as HTMLSelectElement;
@@ -289,22 +309,12 @@ test('hire form blocks submit until all required vars are present', async () => 
 	fireEvent.change(heartbeat, { target: { value: '720' } });
 	await waitFor(() => expect(hireBtn.disabled).toBe(false));
 
-	// Clear the prompt → all required vars missing → guidance flags them and the
-	// button disables.
+	// Emptying the prompt entirely leaves submit enabled - the resolver composes
+	// the agent's identity and live context around whatever body is saved.
 	const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
 	await user.clear(textarea);
-	await findByText(/missing required variable/i);
-	expect(hireBtn.disabled).toBe(true);
-
-	// Re-add a compliant prompt → button re-enables. Set the value directly:
-	// userEvent treats `{`/`}` as special key syntax, so typing the tokens is awkward.
-	fireEvent.change(textarea, {
-		target: {
-			value:
-				'Role. {{team_name}} {{reports_to}} {{skills_context}} {{project_docs_context}} {{team_preferences_context}}',
-		},
-	});
-	await waitFor(() => expect(hireBtn.disabled).toBe(false));
+	await waitFor(() => expect(textarea.value).toBe(''));
+	expect(hireBtn.disabled).toBe(false);
 });
 
 test('can hire agent with full fields', async () => {

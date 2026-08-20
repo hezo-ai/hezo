@@ -372,15 +372,16 @@ describe('update_agent_system_prompt authorization', () => {
 		expect(r.error).toContain('only the CEO, Coach, or Captain');
 	});
 
-	it('Captain updating with a prompt missing required vars is rejected', async () => {
+	it('Captain updating with a prompt naming no variables is accepted', async () => {
 		const t = await agentToken(captainId, teamId);
 		const r = await call(t, 'update_agent_system_prompt', {
 			project: projectSlug,
 			agent_id: 'engineer',
-			new_system_prompt: 'a prompt with no required vars',
+			new_system_prompt: 'a prompt with no template variables',
 			change_summary: 'y',
 		});
-		expect(typeof r.error).toBe('string');
+		expect(r.error).toBeUndefined();
+		expect(r.applied).toBe(true);
 	});
 
 	it('Captain updating a non-existent agent errors', async () => {

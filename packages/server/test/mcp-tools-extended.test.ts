@@ -15,7 +15,6 @@ import {
 	instanceCoachId,
 	mintAgentToken,
 } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 // These extend the coverage of packages/server/src/mcp/tools.ts beyond what
 // mcp-tools.test.ts / mcp.test.ts / mcp-project-scope.test.ts already exercise:
@@ -867,7 +866,7 @@ describe('MCP agent system prompt tools', () => {
 		const result = (await callToolAs(await captainToken(), 'update_agent_system_prompt', {
 			project: projectId,
 			agent_id: agentId,
-			new_system_prompt: compliantPrompt('You are the engineer. Updated by the Captain.'),
+			new_system_prompt: 'You are the engineer. Updated by the Captain.',
 			change_summary: 'coherence review',
 		})) as { applied?: boolean; document_id?: string; error?: string };
 		expect(result.error).toBeUndefined();
@@ -1034,7 +1033,7 @@ describe('MCP agent tools accept a slug or a member ID', () => {
 		const result = (await callToolAs(await captainToken(), 'update_agent_system_prompt', {
 			project: projectId,
 			agent_id: 'engineer',
-			new_system_prompt: compliantPrompt('You are the engineer. Updated by slug.'),
+			new_system_prompt: 'You are the engineer. Updated by slug.',
 			change_summary: 'slug round-trip',
 		})) as { applied?: boolean; error?: string };
 		expect(result.error).toBeUndefined();
@@ -1550,7 +1549,7 @@ describe('MCP create_hire_proposal / update_hire_proposal', () => {
 			project: projectId,
 			title: 'Data Scientist',
 			role_description: 'Owns analytics.',
-			system_prompt: compliantPrompt('You are the data scientist.'),
+			system_prompt: 'You are the data scientist.',
 		})) as { approval_id?: string; status?: string; error?: string };
 		expect(created.error).toBeUndefined();
 		expect(created.approval_id).toBeTruthy();
@@ -1703,7 +1702,7 @@ describe('MCP Coach can resolve update_agent_system_prompt cross-team', () => {
 		const result = (await callToolAs(coachToken, 'update_agent_system_prompt', {
 			project: projectId,
 			agent_id: agentId,
-			new_system_prompt: compliantPrompt('You are the engineer. Coach-tuned rules.'),
+			new_system_prompt: 'You are the engineer. Coach-tuned rules.',
 			change_summary: 'post-task learned rules',
 		})) as { applied?: boolean; error?: string };
 		expect(result.error).toBeUndefined();

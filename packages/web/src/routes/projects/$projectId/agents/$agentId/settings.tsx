@@ -9,6 +9,7 @@ import {
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
 	isNameOnlyRole,
+	SYSTEM_PROMPT_TEMPLATE_VARS,
 } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Power, PowerOff } from 'lucide-react';
@@ -18,6 +19,7 @@ import { agentDisplayName } from '../../../../../components/agent-identity-toolt
 import { BudgetWindowsEditor } from '../../../../../components/budget/budget-windows-editor';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
 import { RevisionsPanel } from '../../../../../components/revisions-panel';
+import { SystemPromptReference } from '../../../../../components/system-prompt-reference';
 import { getInitials } from '../../../../../components/ui/avatar';
 import { Button } from '../../../../../components/ui/button';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
@@ -201,6 +203,8 @@ function AgentSettingsPage() {
 						ariaLabel="System Prompt"
 						value={systemPrompt}
 						onChange={setSystemPrompt}
+						reference={<SystemPromptReference />}
+						variables={SYSTEM_PROMPT_TEMPLATE_VARS}
 						defaultMode={promptMode}
 						onModeChange={setPromptMode}
 						className="min-h-[160px] font-mono text-xs"

@@ -5,7 +5,6 @@ import {
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	isAgentEffort,
 	isReservedAgentSlug,
-	requiredSystemPromptVarsError,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { checkHumanNameAvailable } from '../lib/agent-identity';
@@ -99,11 +98,9 @@ export async function prepareHireProposal(
 	});
 	if (budgetError) return { error: budgetError };
 
-	// A supplied prompt must keep the required substitution variables so the
-	// agent always receives its identity + live skills/docs/preferences context.
-	// An omitted/empty prompt keeps the existing default behaviour.
-	const promptError = requiredSystemPromptVarsError(input.system_prompt ?? '');
-	if (input.system_prompt?.trim() && promptError) return { error: promptError };
+	// No substitution variable is required: the resolver composes the agent's
+	// identity and its live skills/docs/preferences context around whatever body
+	// is supplied. Style is still enforced.
 	const styleError = authoredPromptError(input.system_prompt ?? '');
 	if (input.system_prompt?.trim() && styleError) return { error: styleError };
 

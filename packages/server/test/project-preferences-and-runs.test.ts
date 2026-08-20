@@ -16,7 +16,6 @@ import {
 	instanceCoachId,
 	mintAgentToken,
 } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: Db;
@@ -224,7 +223,7 @@ describe('update_agent_system_prompt authorization', () => {
 		const res = (await callToolAs(ceoToken, 'update_agent_system_prompt', {
 			project: projectSlug,
 			agent_id: 'engineer',
-			new_system_prompt: compliantPrompt('You are the engineer. CEO-tuned rules.'),
+			new_system_prompt: 'You are the engineer. CEO-tuned rules.',
 			change_summary: 'coherence fix from CEO chat',
 		})) as { applied?: boolean; error?: string };
 		expect(res.error).toBeUndefined();
@@ -238,12 +237,12 @@ describe('update_agent_system_prompts (batch)', () => {
 			updates: [
 				{
 					agent_id: 'engineer',
-					new_system_prompt: compliantPrompt('Engineer, revised.'),
+					new_system_prompt: 'Engineer, revised.',
 					change_summary: 'tidy engineer',
 				},
 				{
 					agent_id: 'architect',
-					new_system_prompt: compliantPrompt('Architect, revised.'),
+					new_system_prompt: 'Architect, revised.',
 					change_summary: 'tidy architect',
 				},
 			],
@@ -262,7 +261,7 @@ describe('update_agent_system_prompts (batch)', () => {
 			updates: [
 				{
 					agent_id: 'engineer',
-					new_system_prompt: compliantPrompt('x'),
+					new_system_prompt: 'x',
 					change_summary: 'y',
 				},
 			],
@@ -270,18 +269,20 @@ describe('update_agent_system_prompts (batch)', () => {
 		expect(res.error).toMatch(/Access denied/i);
 	});
 
-	it('reports per-item errors (unknown agent, missing required vars) and applies the valid ones', async () => {
+	it('reports per-item errors (unknown agent, style violation) and applies the valid ones', async () => {
 		const res = (await callToolAs(captainToken, 'update_agent_system_prompts', {
 			updates: [
 				{
 					agent_id: 'engineer',
-					new_system_prompt: compliantPrompt('Engineer, ok.'),
+					new_system_prompt: 'Engineer, ok.',
 					change_summary: 'ok',
 				},
-				{ agent_id: 'nobody', new_system_prompt: compliantPrompt('x'), change_summary: 'y' },
+				{ agent_id: 'nobody', new_system_prompt: 'x', change_summary: 'y' },
 				{
+					// A backticked project-doc filename is a style error, which still
+					// rejects even though no substitution variable is required.
 					agent_id: 'architect',
-					new_system_prompt: 'no required substitution variables here',
+					new_system_prompt: 'You are the Architect. Read `spec.md` before you start.',
 					change_summary: 'bad',
 				},
 			],

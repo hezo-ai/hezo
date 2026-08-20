@@ -25,7 +25,9 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 		timeout: 15_000,
 	})) as HTMLTextAreaElement;
 	const original = promptTextarea.value;
-	expect(original).toContain('You are an Engineer at');
+	// The editor holds the stored role body; the identity line is composed at
+	// resolve time and shows in Preview, not here.
+	expect(original).toContain('# Engineer');
 
 	const updated = `${original}\n- New rule added by e2e test`;
 	fireEvent.change(promptTextarea, { target: { value: updated } });

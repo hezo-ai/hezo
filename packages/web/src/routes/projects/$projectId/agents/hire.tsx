@@ -12,7 +12,6 @@ import {
 	HireAgentForm,
 	type HireFormValues,
 	type ManagerOption,
-	missingRequiredVars,
 } from '../../../../components/hire-agent-form';
 import { Button } from '../../../../components/ui/button';
 import { type Agent, useAgents, useOnboardAgent } from '../../../../hooks/use-agents';
@@ -31,23 +30,20 @@ interface HireSearch {
 }
 
 /**
- * Default starter prompt for a new hire. It already contains every required
- * substitution variable so the form starts in a valid, editable state.
+ * Default starter prompt for a new hire: the shape of a role body, with no
+ * substitution variable. The resolver composes the agent's identity above it and
+ * its live skills/preferences/docs context below it, so scaffolding here would
+ * only suppress the block Hezo already supplies.
  */
-const STARTER_SYSTEM_PROMPT = `You are a new agent at {{team_name}}.
+const STARTER_SYSTEM_PROMPT = `Describe this agent's role and responsibilities here.
 
-You report to: {{reports_to}}.
+## Responsibilities
 
-Describe this agent's role and responsibilities here.
+-
 
-## Skills
-{{skills_context}}
+## Rules
 
-## Project documentation
-{{project_docs_context}}
-
-## Team preferences
-{{team_preferences_context}}`;
+-`;
 
 const emptyValues: HireFormValues = {
 	title: '',
@@ -187,10 +183,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 				<Button
 					type="submit"
 					disabled={
-						!values.title.trim() ||
-						heartbeatMinutes(values) === undefined ||
-						missingRequiredVars(values.systemPrompt).length > 0 ||
-						onboardAgent.isPending
+						!values.title.trim() || heartbeatMinutes(values) === undefined || onboardAgent.isPending
 					}
 				>
 					{onboardAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -220,7 +213,6 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 		[values, initial],
 	);
 	const busy = updateProposal.isPending || resolveApproval.isPending;
-	const promptInvalid = missingRequiredVars(values.systemPrompt).length > 0;
 
 	function backToAgents() {
 		navigate({ to: '/projects/$projectId/agents', params: { projectId } });
@@ -287,20 +279,11 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 				>
 					<X className="w-4 h-4" /> Deny
 				</Button>
-				<Button
-					type="button"
-					variant="secondary"
-					disabled={busy || !dirty || promptInvalid}
-					onClick={handleSave}
-				>
+				<Button type="button" variant="secondary" disabled={busy || !dirty} onClick={handleSave}>
 					{updateProposal.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 					Save changes
 				</Button>
-				<Button
-					type="button"
-					disabled={busy || !values.title.trim() || promptInvalid}
-					onClick={handleApprove}
-				>
+				<Button type="button" disabled={busy || !values.title.trim()} onClick={handleApprove}>
 					{resolveApproval.isPending ? (
 						<Loader2 className="w-4 h-4 animate-spin" />
 					) : (

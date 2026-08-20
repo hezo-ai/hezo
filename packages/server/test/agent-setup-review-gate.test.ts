@@ -5,7 +5,6 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: Db;
@@ -49,7 +48,7 @@ async function addAgent(project: string, title: string): Promise<string> {
 	const res = await app.request(`/api/projects/${project}/agents`, {
 		method: 'POST',
 		headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, system_prompt: compliantPrompt(`You are the ${title}.`) }),
+		body: JSON.stringify({ title, system_prompt: `You are the ${title}.` }),
 	});
 	expect(res.status).toBe(201);
 	return (await res.json()).data.id;

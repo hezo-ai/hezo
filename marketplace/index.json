@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 28,
+			"version": 29,
 			"roster_count": 10,
-			"latest_notes": "Removed the review task status. The Engineer hands off to QA with an active mention and records the holder in progress_summary; the exclusive test-runner slot now reads the comment thread and progress_summary instead of a status value."
+			"latest_notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 20,
+			"version": 21,
 			"roster_count": 7,
-			"latest_notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
+			"latest_notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 21,
+			"version": 22,
 			"roster_count": 6,
-			"latest_notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
+			"latest_notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		}
 	]
 }

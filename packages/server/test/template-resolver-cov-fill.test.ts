@@ -94,16 +94,19 @@ describe('placeholder substitution', () => {
 		expect(result).toContain('Boss:[]');
 	});
 
-	it('substitutes {{team_context}} inline for the agent and empty without one', async () => {
+	it('strips a retired {{team_context}} whether or not an agent is in scope', async () => {
 		await ctx.db.query(`UPDATE member_agents SET team_context = 'CTX MARKER 42' WHERE id = $1`, [
 			engineerId,
 		]);
+		// The org chart reaches the agent through the appended "Your Team" block on
+		// every run, so substituting the token here as well printed it twice.
 		const withAgent = await resolveSystemPrompt(ctx.db, 'TC: {{team_context}}', {
 			teamId,
 			agentId: engineerId,
 			mode: 'placeholders',
 		});
-		expect(withAgent).toContain('TC: CTX MARKER 42');
+		expect(withAgent).toContain('TC: ');
+		expect(withAgent).not.toContain('CTX MARKER 42');
 
 		const withoutAgent = await resolveSystemPrompt(ctx.db, 'TC:[{{team_context}}]', {
 			teamId,

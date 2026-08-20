@@ -1,27 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import {
-	findMissingRequiredSystemPromptVars,
-	REQUIRED_SYSTEM_PROMPT_VARS,
-	requiredSystemPromptVarsError,
+	IDENTITY_BLOCK_VARS,
+	LIVE_CONTEXT_BLOCK_VARS,
 	SYSTEM_PROMPT_TEMPLATE_VARS,
+	SYSTEM_PROMPT_VAR_TRIGGER,
 } from '../src/system-prompt-vars';
 
-/** A prompt that contains every required var. */
-const compliant = REQUIRED_SYSTEM_PROMPT_VARS.map((t) => `Use ${t} here.`).join('\n');
+const tokens = SYSTEM_PROMPT_TEMPLATE_VARS.map((v) => v.token);
 
 describe('SYSTEM_PROMPT_TEMPLATE_VARS', () => {
-	it('lists the five required vars and only them as required', () => {
-		expect(REQUIRED_SYSTEM_PROMPT_VARS).toEqual([
+	it('offers the six variables the resolver still substitutes', () => {
+		expect(tokens).toEqual([
 			'{{team_name}}',
 			'{{reports_to}}',
+			'{{current_date}}',
 			'{{skills_context}}',
-			'{{project_docs_context}}',
 			'{{team_preferences_context}}',
+			'{{project_docs_context}}',
 		]);
 	});
 
-	it('does not list the removed team_mission var', () => {
-		expect(SYSTEM_PROMPT_TEMPLATE_VARS.some((v) => v.token === '{{team_mission}}')).toBe(false);
+	it('drops the retired tokens', () => {
+		// team_context double-printed the appended "Your Team" block; the composed
+		// identity block writes the team description in directly. Neither is
+		// offered as something an author can place.
+		expect(tokens).not.toContain('{{team_context}}');
+		expect(tokens).not.toContain('{{team_description}}');
+		expect(tokens).not.toContain('{{team_mission}}');
 	});
 
 	it('gives every var a non-empty description', () => {
@@ -29,37 +34,34 @@ describe('SYSTEM_PROMPT_TEMPLATE_VARS', () => {
 			expect(v.description.length).toBeGreaterThan(0);
 		}
 	});
-});
 
-describe('findMissingRequiredSystemPromptVars', () => {
-	it('returns [] for a compliant prompt', () => {
-		expect(findMissingRequiredSystemPromptVars(compliant)).toEqual([]);
-	});
-
-	it('returns every missing required var in canonical order', () => {
-		expect(findMissingRequiredSystemPromptVars('You are an agent.')).toEqual([
-			...REQUIRED_SYSTEM_PROMPT_VARS,
-		]);
-	});
-
-	it('flags only the specific missing var', () => {
-		const withoutSkills = compliant.replace('{{skills_context}}', '(removed)');
-		expect(findMissingRequiredSystemPromptVars(withoutSkills)).toEqual(['{{skills_context}}']);
-	});
-
-	it('treats an empty prompt as missing everything', () => {
-		expect(findMissingRequiredSystemPromptVars('')).toEqual([...REQUIRED_SYSTEM_PROMPT_VARS]);
+	it('has no duplicate tokens', () => {
+		expect(new Set(tokens).size).toBe(tokens.length);
 	});
 });
 
-describe('requiredSystemPromptVarsError', () => {
-	it('returns null for a compliant prompt', () => {
-		expect(requiredSystemPromptVarsError(compliant)).toBeNull();
+describe('composed-block registries', () => {
+	it('names only offered tokens, so the lookup can reach every one', () => {
+		for (const token of [...IDENTITY_BLOCK_VARS, ...LIVE_CONTEXT_BLOCK_VARS]) {
+			expect(tokens).toContain(token);
+		}
 	});
 
-	it('names the missing vars in the message', () => {
-		const msg = requiredSystemPromptVarsError('You are an agent.');
-		expect(msg).toContain('{{team_name}}');
-		expect(msg).toContain('{{team_preferences_context}}');
+	it('keeps the two blocks disjoint', () => {
+		const overlap = IDENTITY_BLOCK_VARS.filter((t) => LIVE_CONTEXT_BLOCK_VARS.includes(t));
+		expect(overlap).toEqual([]);
+	});
+
+	it('covers every offered token between them', () => {
+		// A token in neither block would be offered by the lookup while nothing
+		// supplies it automatically - the gap this whole design closes.
+		expect([...IDENTITY_BLOCK_VARS, ...LIVE_CONTEXT_BLOCK_VARS].sort()).toEqual([...tokens].sort());
+	});
+});
+
+describe('SYSTEM_PROMPT_VAR_TRIGGER', () => {
+	it('is the opening of every token, so typing it matches them all', () => {
+		expect(SYSTEM_PROMPT_VAR_TRIGGER).toBe('{{');
+		for (const token of tokens) expect(token.startsWith(SYSTEM_PROMPT_VAR_TRIGGER)).toBe(true);
 	});
 });
