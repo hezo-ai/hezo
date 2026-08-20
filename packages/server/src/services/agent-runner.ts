@@ -43,7 +43,7 @@ import {
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { appendRunLogChunks, runLogLengthSql } from '../db/run-log-chunks';
+import { appendRunLogChunks, type RunUsageSnapshot, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { trackBackground } from '../lib/background';
@@ -183,6 +183,25 @@ import {
 	getWorktreesPath,
 } from './workspace';
 import type { WebSocketManager } from './ws';
+
+/**
+ * Flatten a parser usage record for the log-chunk writer.
+ *
+ * The DB layer takes flat columns and has no business learning `CostTokens`;
+ * the runner owns both shapes, so the adapter lives on this side of the seam.
+ * A runtime that reports no split writes NULLs, which the COALESCE in the
+ * statement leaves alone - so a later flush that does have them still lands.
+ */
+function toUsageSnapshot(usage: AgentRunUsage | null): RunUsageSnapshot | null {
+	if (!usage) return null;
+	return {
+		inputTokens: usage.inputTokens,
+		outputTokens: usage.outputTokens,
+		costCents: usage.costCents,
+		cacheReadTokens: usage.buckets?.cacheReadTokens ?? null,
+		cacheCreationTokens: usage.buckets?.cacheCreationTokens ?? null,
+	};
+}
 
 const log = logger.child('agent-runner');
 
@@ -1425,7 +1444,7 @@ export async function runAgent(
 			// usage must land all-or-nothing to stay exactly-once, and every
 			// transaction block serializes process-wide on both drivers.
 			if (delta.length === 0 && !currentUsage) return;
-			await appendRunLogChunks(deps.db, heartbeatRunId, delta, currentUsage);
+			await appendRunLogChunks(deps.db, heartbeatRunId, delta, toUsageSnapshot(currentUsage));
 		},
 	});
 
@@ -4768,6 +4787,8 @@ async function updateHeartbeatRun(
 		     input_tokens = COALESCE($4, input_tokens),
 		     output_tokens = COALESCE($5, output_tokens),
 		     cost_cents = COALESCE($6, cost_cents),
+		     cache_read_tokens = COALESCE($11, cache_read_tokens),
+		     cache_creation_tokens = COALESCE($12, cache_creation_tokens),
 		     usage_partial = COALESCE($7, usage_partial)
 		     -- cancel_reason is deliberately absent from this SET list. A cancel
 		     -- attribution says WHO stopped the run, and this finalizer is never that
@@ -4790,6 +4811,12 @@ async function updateHeartbeatRun(
 			runId,
 			HeartbeatRunStatus.Queued,
 			HeartbeatRunStatus.Running,
+			// $11/$12. Appended rather than slotted in beside the other usage binds
+			// so every existing placeholder keeps its number - renumbering a
+			// ten-parameter statement to insert two in the middle is how the wrong
+			// value lands in the wrong column.
+			update.usage?.buckets?.cacheReadTokens ?? null,
+			update.usage?.buckets?.cacheCreationTokens ?? null,
 		],
 	);
 	if (applied.rows.length > 0) {

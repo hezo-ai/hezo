@@ -26,11 +26,12 @@ required: Hezo builds and manages the container image itself.
 When the total container memory limit is left unset, Hezo sizes it from the machine it is
 running on:
 
-**(RAM + swap), less 1 GB always kept free for the operating system and Hezo itself, less
-one container's worth reserved for the assistant chat.**
+**(RAM + swap), less 1 GB always kept free for the operating system and Hezo itself.**
 
 Swap counts in full, because a container sits idle between runs rather than working
-continuously. The remainder is the budget all project containers share. A run whose
+continuously. That total is what all containers share, and one container's worth of it is
+held back for the assistant chat so it never waits behind a run. The Containers page shows
+the split, and the reservation applies whether the total was computed or you typed it in. A run whose
 container will not fit in what is left waits in the queue and starts as memory frees up;
 the assistant chat always starts. No project can hold a share of that budget it is not
 using - see [how the budget is shared](/docs/containers/overview#how-much-can-run-at-once).

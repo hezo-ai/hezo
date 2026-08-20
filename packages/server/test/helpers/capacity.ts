@@ -1,3 +1,4 @@
+import { chatContainerReservationGb } from '@hezo/shared';
 import type { Db } from '../../src/db/database';
 import {
 	deleteSystemMeta,
@@ -26,16 +27,23 @@ export async function seedRunningContainerProject(db: Db, slug: string): Promise
 }
 
 /**
- * Give the instance room for exactly `containers` default-sized containers.
+ * Give the instance room for exactly `containers` default-sized TASK containers.
  *
  * Capacity is a memory budget, not a count - a count could not bound memory once
  * a project may raise its own per-container cap. Tests still think in whole
  * containers, so the conversion lives here rather than at ten call sites, and
  * "room for N" keeps meaning the same thing it always did.
+ *
+ * The setting is the **total**, so the chat reservation is added on top of the N
+ * the caller asked for. Without it every caller silently lost a container: a
+ * budget of `1 * capGb` reserves the lot for the chat and admits no task run at
+ * all, so a test setting capacity to 1 and expecting a slot to free saw it stay
+ * blocked forever.
  */
 export async function setContainerCapacityForTest(db: Db, containers: number): Promise<void> {
 	const capGb = await getDefaultRamCapPerContainerGb(db);
-	await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, String(containers * capGb));
+	const totalGb = containers * capGb + chatContainerReservationGb(capGb);
+	await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, String(totalGb));
 }
 
 /** Remove the explicit budget — the host-memory-computed default applies again. */

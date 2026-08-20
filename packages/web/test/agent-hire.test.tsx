@@ -342,6 +342,9 @@ test('can hire agent with full fields', async () => {
 	const heartbeatSelect = (await findByLabelText('Heartbeat')) as HTMLSelectElement;
 	fireEvent.change(heartbeatSelect, { target: { value: '120' } });
 
+	// A new hire ships uncapped, so the monthly window starts disabled and renders
+	// no input at all - enabling it is what the admin does to set a figure.
+	await user.click(await findByLabelText('Enable monthly budget'));
 	const budgetInput = (await findByLabelText('Monthly budget')) as HTMLInputElement;
 	await user.clear(budgetInput);
 	await user.type(budgetInput, '50');

@@ -6,7 +6,11 @@
  * names.
  */
 
-import { DEFAULT_CONTAINER_DISK_GB, poolDiskCeilingBytes } from '@hezo/shared';
+import {
+	ContainerUptimeEndReason,
+	DEFAULT_CONTAINER_DISK_GB,
+	poolDiskCeilingBytes,
+} from '@hezo/shared';
 import type { Db } from '../../db/database';
 import {
 	type PoolCapacity,
@@ -15,6 +19,11 @@ import {
 	type PoolMemberState,
 	selectPoolMember,
 } from './pool';
+import {
+	closeUptimeInterval,
+	openUptimeInterval,
+	setUptimeIntervalChatReservation,
+} from './uptime-ledger';
 
 /**
  * Ceiling written for a member inserted without a stated disk size.
@@ -156,6 +165,13 @@ export async function upsertPoolMember(
 		     OR container_pool_members.memory_bytes IS DISTINCT FROM COALESCE($5, container_pool_members.memory_bytes)`,
 		[projectId, containerId, state, ceiling, memory],
 	);
+	// After the member write, never before: the ledger reads the container's
+	// shape, owner and chat pin straight off the row this just settled.
+	if (state === 'suspended') {
+		await closeUptimeInterval(db, containerId, ContainerUptimeEndReason.Stopped);
+	} else {
+		await openUptimeInterval(db, containerId);
+	}
 }
 
 /**
@@ -248,11 +264,25 @@ export async function releasePoolMember(
 	);
 }
 
-/** Record a member's engine state after a lifecycle call the pool did not initiate. */
+/**
+ * Record a member's engine state after a lifecycle call the pool did not initiate.
+ *
+ * Also moves the container's uptime interval, because this is the transition the
+ * ledger is *about*: `suspended` and `error` both mean the container is no longer
+ * running and no longer billing compute, and anything else means it is.
+ *
+ * `endReason` names *why* a stretch ended, which the state alone cannot say - the
+ * pool spells every not-running container `suspended` whether the idle sweep
+ * stopped it, it exited on its own, or another project's run evicted it to free
+ * budget memory. Only the last of those is a contention signal, so the reclaim
+ * path passes {@link ContainerUptimeEndReason.Suspended} and everything else
+ * takes the default.
+ */
 export async function setPoolMemberState(
 	db: Db,
 	containerId: string,
 	state: PoolMemberState | 'error',
+	endReason?: ContainerUptimeEndReason,
 ): Promise<void> {
 	await db.query(
 		`UPDATE container_pool_members
@@ -260,10 +290,32 @@ export async function setPoolMemberState(
 		  WHERE container_id = $1 AND state IS DISTINCT FROM $2::container_pool_state`,
 		[containerId, state],
 	);
+	if (state === 'suspended') {
+		await closeUptimeInterval(db, containerId, endReason ?? ContainerUptimeEndReason.Stopped);
+	} else if (state === 'error') {
+		// The pool has lost confidence that this container is up, so it stops
+		// billing on the pool's own evidence. `Reconciled` rather than `Stopped`:
+		// nobody asked for this stop, and the close time is when the fault was
+		// noticed rather than when the container actually went.
+		await closeUptimeInterval(db, containerId, endReason ?? ContainerUptimeEndReason.Reconciled);
+	} else {
+		// idle or busy - the container is up. A resume opens a NEW interval rather
+		// than reopening the closed one, which is what makes a suspend/resume cycle
+		// read as two billed stretches with a free gap between them.
+		await openUptimeInterval(db, containerId);
+	}
 }
 
-/** Drop a member once its container is gone. Best-effort: a missing row is fine. */
+/**
+ * Drop a member once its container is gone. Best-effort: a missing row is fine.
+ *
+ * The uptime interval closes **before** the member row goes, not after: the
+ * ledger row is already written and carries its own copy of the shape, but a
+ * close that ran after the delete would be closing an interval whose container
+ * the pool no longer describes, and the ordering is free to get right here.
+ */
 export async function removePoolMember(db: Db, containerId: string): Promise<void> {
+	await closeUptimeInterval(db, containerId, ContainerUptimeEndReason.Destroyed);
 	await db.query(`DELETE FROM container_pool_members WHERE container_id = $1`, [containerId]);
 }
 
@@ -627,6 +679,7 @@ export async function setPoolMemberChatReservation(
 		    AND reserved_for_chat IS DISTINCT FROM $2`,
 		[containerId, reserved],
 	);
+	await setUptimeIntervalChatReservation(db, containerId, reserved);
 }
 
 /**

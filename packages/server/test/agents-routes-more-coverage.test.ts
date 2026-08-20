@@ -679,7 +679,17 @@ describe('PATCH /agents/:agentId', () => {
 
 	it('validates the merged budget trio and accepts a coherent single-window change', async () => {
 		const agent = await createAgent('Budget Agent');
-		// Stored monthly is 3000; a daily above it is incoherent.
+		// Give it a monthly cap to be incoherent *with*. Agents now ship unlimited,
+		// and an unlimited window is disabled - it constrains nothing, so without
+		// this the trio below is coherent and there is nothing under test.
+		const cap = await ctx.app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: json(ctx.token),
+			body: JSON.stringify({ monthly_budget_cents: 3000 }),
+		});
+		expect(cap.status).toBe(200);
+
+		// Stored monthly is now 3000; a daily above it is incoherent.
 		const bad = await ctx.app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: json(ctx.token),

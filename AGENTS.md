@@ -90,6 +90,7 @@
 | A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
 | A new doc- or string-bearing path | `DOC_BEARING_PATTERNS` / `STRING_BEARING_PATTERNS` | its ack-hook test |
 | Container backend behaviour | `SANDBOX_AGENT_ENVIRONMENTS`, that provider's `docs/containers/remote/` page, the Containers settings UI | compile error, **new backend only** |
+| A pool-member state transition | its `container_uptime_entries` open or close - the ledger is written inside `pool-db.ts`, so a transition added elsewhere is billed nowhere | **nothing - on you** |
 | A `ContainerEngine` method added or its contract changed | every adapter, the conformance suite, `.dev/adding-a-container-backend.md` | compile error for the method, **nothing for the contract** |
 | Architecture (data model, run pipeline, providers, egress, SSH/git, OAuth, auth, build) | `.dev/architecture.md` | the `Docs-Checked:` trailer |
 | A config mechanism, data location or startup path an existing instance carries across a restart | a check that fails loudly on the old form, plus every deployment artifact in `deploy/` still writing it | the `Upgrade-Checked:` trailer |
@@ -311,6 +312,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | "Does this backend class need X?" | `SANDBOX_BACKEND_KIND` (`@hezo/shared`) |
 | An in-container script or its parser | `services/sandbox/proc-scripts.ts` - never an adapter |
 | What a container was provisioned with | `container_pool_members` (`memory_bytes`, `disk_ceiling_bytes`) - never re-read from the setting |
+| "How long was this container up, and what did it cost?" | `container_uptime_entries`, written only by `services/sandbox/uptime-ledger.ts` from inside `pool-db.ts`'s own state writes; read through `services/container-hours.ts`, never with a second copy of the clipping SQL |
 | A chat platform | `ChatChannelAdapter` (`services/chat-channels/`) |
 | A host-side call to a repo's git host, with that repo's own credential | `resolveRepoGitHub` (`services/repo-github.ts`) - returns a verdict, never an upstream body |
 | "Did this execution strand a handoff?" | `detectNoWakeExits` (`services/comment-wakeups.ts`) |
@@ -332,6 +334,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
 | A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |
+| "Did the deployer fix this setting, rather than the operator?" | `pinnedSetting` / `isPinned` (`lib/system-meta.ts`), which every pinnable getter routes through - never a direct `runtimeConfig().policy` read at a call site, and never a branch on `managedBy` |
 | An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
 | Date formatting | `packages/web/src/lib/format-date.ts` |
 | Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |

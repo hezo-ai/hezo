@@ -553,9 +553,29 @@ per-model token rates from a single source: the pricepertoken.com MCP catalog
 (`get_all_models` over raw JSON-RPC), fetched at boot and daily by the job manager and
 upserted as `source='pricepertoken'`; a migration bakes a catalog snapshot into the
 table so a fresh instance prices runs before its first fetch, and `source='manual'`
-operator overrides win at lookup. The catalog carries no cache rates, so cache
-reads/writes bill at the full input rate — recorded costs are a conservative upper
-bound (a manual override can set cache rates for exact billing). Budgets are **windowed and computed on
+operator overrides win at lookup. The catalog carries no cache rates, so they are
+**derived from each row's own input rate** via `CACHE_RATE_MULTIPLIERS`
+(`services/pricing/pricepertoken.ts`), keyed by the catalog's `author_name`:
+Anthropic reads at 0.1x input and writes at 1.25x (the default 5-minute TTL).
+Deriving rather than baking absolute figures keeps cache rates correct when a base
+price moves and covers models released after the table ships. An author with no
+known multipliers keeps NULL rates and still bills cache traffic at the full input
+rate - a conservative upper bound, and the honest answer until that provider's
+multipliers are verified.
+
+**The split behind a cost is persisted, not just priced.** Every parser normalizes its
+runtime's buckets to `CostTokens` before pricing, and `toRunUsage` (`agent-stream-parser.ts`)
+is the single place that turns those into an `AgentRunUsage`: it carries the buckets
+through on `usage.buckets` and derives `inputTokens` as their sum. Both halves land on
+`heartbeat_runs` - `cache_read_tokens` / `cache_creation_tokens` alongside the existing
+`input_tokens` - on the mid-run flush as well as at completion, so a run killed
+mid-flight keeps an auditable cost rather than a bare total. **Watch the two conventions:**
+`heartbeat_runs.input_tokens` and the `[done]` line carry the TOTAL including cache, while
+`CostTokens.inputTokens` is the UNCACHED remainder, because that is the portion billed at
+the full rate. Deriving the total in one helper is what made Antigravity's reporting
+consistent with the rest: its buckets are disjoint, so reporting its stated `input_tokens`
+had been excluding cache reads from both the column and the log line, alone among the
+runtimes. Budgets are **windowed and computed on
 demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
 `projects` (0 = unlimited; there is **no team budget**), and spend is summed from
 `cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed
@@ -574,6 +594,35 @@ completion), an operator-facing control, and a token backstop, because the local
 price to $0 and a cost-only ceiling would never fire there. Deliberately not built: the
 thread-read fixes removed the cause of the run that prompted the question, and a blunt
 ceiling would mostly fire on legitimately expensive work.
+
+**Container hours are metered separately from spend, and answer the other bill.**
+`container_uptime_entries` (migration 071) records **one row per running stretch**, not
+per container lifetime: a managed backend bills a started sandbox for vCPU + RAM + disk
+and a stopped one for reserved disk only, so a suspend/resume cycle is two rows with a
+free gap between them. Writes live inside `upsertPoolMember` / `setPoolMemberState` /
+`removePoolMember` (`services/sandbox/uptime-ledger.ts`, called from `pool-db.ts`), so the
+ledger cannot drift from the lifecycle it records - the same reasoning that puts the wake
+receipt inside `fireCommentWakeups`. The interval opens at the `creating` upsert rather
+than at ready, because on a managed backend the build is the longest phase of a cold start
+and bills like any other minute. `end_reason` separates an ordinary stop from a
+cross-project eviction (`ContainerUptimeEndReason.Suspended`, passed down from
+`executeRetirementPlan`), which is the only contention signal the series can show. A
+unique partial index on `(container_id) WHERE ended_at IS NULL` makes open and close
+idempotent on every path that reaches them.
+
+Reads (`services/container-hours.ts`) **clip each interval to each window** rather than
+attributing it to the bucket it started in - `agent-hours.ts` attributes by start, which
+is harmless for a run measured in minutes and wrong for a month boundary on a figure that
+gets invoiced. Overlapping intervals are summed, deliberately: two containers up for one
+hour is two container-hours. **The clip expression guards `alias.id IS NULL` and that guard
+is load-bearing on a LEFT JOIN** - without it `COALESCE(ended_at, now())` reads a missing
+row as still running and `GREATEST` swallows the NULL start, so a bucket in which nothing
+ran bills a full bucket of uptime. Enforcement is a monthly allowance
+(`monthly_container_hours` in `system_meta`, 0 = unlimited) read through
+`hoursQuotaExhausted` in `run-concurrency.ts`: it gates container **starts**, ahead of the
+memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
+project with a spare container is exempt from both. The cap read short-circuits before the
+ledger is scanned, so an instance with no cap pays nothing on the dispatch path.
 
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
@@ -2075,8 +2124,9 @@ container was built to a cap nobody set. A backend that cannot say leaves the me
 and it keeps being recycled - the right answer for a container nothing can size.
 
 **Capacity is a memory budget, and it reserves for the chat container up front.**
-`max_container_memory_gb` bounds the total memory *task run* containers may hold at once,
-summed from what each one actually asked for (`projects.memory_limit_gib`, else the
+`max_container_memory_gb` bounds the total memory **every** container may hold at once, and
+`taskContainerMemoryBudgetGb` takes one container's worth off it for the chat; what is left
+is what *task run* containers may hold, summed from what each one actually asked for (`projects.memory_limit_gib`, else the
 instance default). It replaced a container **count** (migration 050): a count bounds memory
 only while every container is the same size, and the per-project override exists precisely
 so they are not - one project raising its cap to 4 GB took one "slot" but twice the memory
@@ -2084,11 +2134,20 @@ of the 2 GB containers the host was sized for. There is deliberately no derived 
 count anywhere, not even for display: how many fit depends on the mix of their sizes.
 
 The CEO chat's container is **exempt** from the budget, because a queued task run is
-invisible and harmless while a queued chat turn is a person watching a spinner. On a host
-backend the machine still has to fit it, so `computeDefaultMaxContainerMemoryGb` subtracts
-`HOST_RESERVED_MEMORY_GB` (1) plus one container's worth for the chat. Reserving up front
-rather than subtracting when a session opens keeps task-run capacity a **stable** number -
-opening the chat never silently slows the fleet. The exemption is enforced on **both** sides:
+invisible and harmless while a queued chat turn is a person watching a spinner. Reserving up
+front rather than subtracting when a session opens keeps task-run capacity a **stable**
+number - opening the chat never silently slows the fleet.
+
+**The reservation is taken at the point of use, not baked into the default**, and that is
+the correction: `computeDefaultMaxContainerMemoryGb` used to subtract a container's worth
+itself, so only an *automatic* budget reserved. An operator who set the number by hand got
+no reservation at all, and a 12 GB budget with a 4 GB cap therefore admitted three task
+containers *and* a chat container - 16 GB consumed against a figure that said 12, which on a
+local Docker host is memory the machine actually has to find. Now the auto default returns
+the whole usable total (floored at `minTotalContainerMemoryGb`, two caps, so it can never
+compute a total that admits nothing) and `getActiveContainers` derives the task share from
+whatever the effective total is. Auto-computed instances land on exactly the capacity they
+had before; an explicitly-set one loses a container's worth, which is the point. The exemption is enforced on **both** sides:
 the budget reserves for it, and `getActiveContainers` excludes a `reserved_for_chat` member
 from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projects` row are
 two records of one container). Charging it in both places reserved the same memory twice,

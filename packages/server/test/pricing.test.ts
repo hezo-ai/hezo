@@ -87,8 +87,9 @@ describe('fetchPricePerTokenPricing', () => {
 				modelId: 'claude-opus-4.8',
 				inputPerToken: 5e-6,
 				outputPerToken: 2.5e-5,
-				cacheReadPerToken: null,
-				cacheCreationPerToken: null,
+				// Derived from the input rate: Anthropic reads at 0.1x, writes at 1.25x.
+				cacheReadPerToken: 5e-6 * 0.1,
+				cacheCreationPerToken: 5e-6 * 1.25,
 			},
 		]);
 

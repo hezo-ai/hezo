@@ -19,10 +19,10 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	await findByRole('heading', { name: 'Containers' });
 
 	// Unset → the effective value is the host-memory-computed default: 8 GiB less
-	// 1 GB for the system and one 2 GB container for the chat, which runs on top
-	// of the budget rather than inside it.
+	// 1 GB for the system. This is the TOTAL for every container; the chat's share
+	// comes out of it below rather than before it.
 	const maxInput = (await findByTestId('container-memory-budget-input')) as HTMLInputElement;
-	expect(maxInput.value).toBe('5');
+	expect(maxInput.value).toBe('7');
 	// The backend running the containers is named, with only its own caveats: the
 	// numbers a provider enforces are its own, and stating one provider's in the
 	// general prose would read as a property of every backend. It is named for what
@@ -34,12 +34,16 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	expect(backend.textContent).not.toContain('Daytona');
 
 	const formula = await findByTestId('container-memory-budget-formula');
-	expect(formula.textContent).toContain('= 5 GB');
-	// Both reserves are spelled out, not just applied, so the operator can see
+	expect(formula.textContent).toContain('= 7 GB');
+	// The system reserve is spelled out, not just applied, so the operator can see
 	// where the memory went - otherwise the arithmetic on screen does not add up
 	// and reads as a bug.
 	expect(formula.textContent).toContain('1 GB for the system');
-	expect(formula.textContent).toContain('2 GB for the assistant');
+	// The chat's share is its own line, because it applies to a hand-typed budget
+	// as much as to this computed one and so cannot live inside the formula.
+	const split = await findByTestId('container-memory-budget-split');
+	expect(split.textContent).toContain('5 GB for task runs');
+	expect(split.textContent).toContain('2 GB held back for the assistant');
 	expect(queryByTestId('container-memory-budget-reset')).toBeNull();
 
 	// An explicit value wins and offers a reset back to automatic.
@@ -57,10 +61,11 @@ test('concurrency settings page shows the computed default, saves, and resets to
 	expect(data.max_container_memory_gb_is_set).toBe(true);
 
 	await user.click(reset);
-	await waitFor(() => expect(maxInput.value).toBe('5'));
+	await waitFor(() => expect(maxInput.value).toBe('7'));
 	res = await apiBase('/api/instance-settings', { headers: auth });
 	data = (await res.json()).data;
-	expect(data.max_container_memory_gb).toBe(5);
+	expect(data.max_container_memory_gb).toBe(7);
+	expect(data.task_container_memory_gb).toBe(5);
 	expect(data.max_container_memory_gb_is_set).toBe(false);
 });
 
@@ -79,12 +84,15 @@ test('raising the ram cap lowers the automatic memory budget and persists', asyn
 	await user.click(await findByTestId('ram-cap-save'));
 	await waitFor(() => expect(ramInput.value).toBe('3'));
 
-	// The cap no longer divides anything - it is the chat's reserve, held back up
-	// front: 8 - 1 - 3 = 4. The rendered reserve is asserted too, so the number on
-	// screen and the arithmetic behind it cannot drift apart.
+	// The cap does not divide anything - it is the chat's reserve. So the TOTAL is
+	// fixed by host memory (8 - 1 = 7) while the TASK share moves with the cap
+	// (7 - 3 = 4). Both are asserted, so the numbers on screen and the arithmetic
+	// behind them cannot drift apart.
 	const formula = await findByTestId('container-memory-budget-formula');
-	await waitFor(() => expect(formula.textContent).toContain('= 4 GB'));
-	expect(formula.textContent).toContain('3 GB for the assistant');
+	await waitFor(() => expect(formula.textContent).toContain('= 7 GB'));
+	const split = await findByTestId('container-memory-budget-split');
+	await waitFor(() => expect(split.textContent).toContain('4 GB for task runs'));
+	expect(split.textContent).toContain('3 GB held back for the assistant');
 
 	const { apiBase, token } = getTestContext();
 	const res = await apiBase('/api/instance-settings', {
@@ -92,7 +100,8 @@ test('raising the ram cap lowers the automatic memory budget and persists', asyn
 	});
 	const data = (await res.json()).data;
 	expect(data.default_ram_cap_per_container_gb).toBe(3);
-	expect(data.max_container_memory_gb).toBe(4);
+	expect(data.max_container_memory_gb).toBe(7);
+	expect(data.task_container_memory_gb).toBe(4);
 });
 
 test('the service panel names the current service and offers the rest behind Change', async () => {

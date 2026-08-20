@@ -62,6 +62,10 @@
 	],
 	"changelog": [
 		{
+			"version": 22,
+			"notes": "Agents ship with no monthly spend cap. The old per-role figures were arbitrary, and until cache traffic was priced at real rates they bit several times sooner than they read - so a team could stop working for a reason its operator never set. Set a cap per agent if you want one."
+		},
+		{
 			"version": 20,
 			"notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
 		},
@@ -163,7 +167,7 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false
@@ -185,7 +189,7 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false
@@ -207,7 +211,7 @@
 			"default_effort": "medium",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false
@@ -229,7 +233,7 @@
 			"default_effort": "medium",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 4000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false
@@ -251,7 +255,7 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false
@@ -273,7 +277,7 @@
 			"default_effort": "medium",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 2000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false

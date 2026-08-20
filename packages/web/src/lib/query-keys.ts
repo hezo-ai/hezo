@@ -55,6 +55,7 @@ export const queryKeys = {
 	 * made the old UI able to describe only one container at a time.
 	 */
 	containers: () => ['instance', 'containers'],
+	containerHours: (bucket: string) => ['instance', 'container-hours', bucket],
 	container: (containerId: string) => ['instance', 'containers', containerId],
 	/** Instance-wide mention resolution (global CEO chat), keyed by sorted candidates. */
 	instanceMentionsResolve: (key: KeyParam) => ['instance', 'mentions', 'resolve', key],
@@ -364,6 +365,7 @@ export const queryKeys = {
 		budgetStatus: (slug: string) => ['projects', slug, 'budget-status'],
 		auditLog: (slug: string, filters: KeyParam) => ['projects', slug, 'audit-log', filters],
 		agentHours: (slug: string, bucket: string) => ['projects', slug, 'agent-hours', bucket],
+		containerHours: (slug: string, bucket: string) => ['projects', slug, 'container-hours', bucket],
 		githubOrgs: (slug: string) => ['projects', slug, 'github', 'orgs'],
 		githubRepos: (slug: string, owner: string | null, query: string) => [
 			'projects',

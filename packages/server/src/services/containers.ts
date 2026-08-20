@@ -7,6 +7,7 @@ import {
 	CONTAINER_RECLAIM_MIN_AGE_SEC,
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
 	ContainerStatus,
+	ContainerUptimeEndReason,
 	HeartbeatRunStatus,
 	TaskPriority,
 	TEST_CONTAINER_LABEL_KEY,
@@ -1153,7 +1154,10 @@ async function reclaimIdleCapacityForProject(
 							suspend: group.suspend.filter((id) => stillIdle.has(id)),
 							destroy: group.destroy.filter((id) => stillIdle.has(id)),
 						},
-						{ reason: `reclaimed for ${ref(requestingSlug, requestingProjectId)}` },
+						{
+							reason: `reclaimed for ${ref(requestingSlug, requestingProjectId)}`,
+							endReason: ContainerUptimeEndReason.Suspended,
+						},
 					);
 					if (retired > 0) reclaimedAny = true;
 				});
@@ -1760,6 +1764,14 @@ export async function stopContainerGracefully(
 	projectSlug: string,
 	teamId: string,
 	containerId: string,
+	/**
+	 * Why the container's billed stretch ended, for the uptime ledger. Defaults to
+	 * `stopped` - the ordinary case, where the container ended for its own reasons.
+	 * The cross-project reclaim passes `suspended`, which is what separates "this
+	 * project was done with it" from "another project's run took it", the one
+	 * contention signal the hours series can show.
+	 */
+	endReason?: ContainerUptimeEndReason,
 ): Promise<void> {
 	const { db, docker, wsManager } = deps;
 
@@ -1790,7 +1802,7 @@ export async function stopContainerGracefully(
 		// than at each caller is what stops the ladder from handing a run a
 		// container that is not up - the two representations of one container have
 		// to move together or the pool reads stale.
-		await setPoolMemberState(db, containerId, 'suspended');
+		await setPoolMemberState(db, containerId, 'suspended', endReason);
 		log.info(
 			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} stopped`,
 		);
@@ -2028,6 +2040,12 @@ export async function executeRetirementPlan(
 		reason: string;
 		/** Park a live assistant session before its container goes. Omitted where none can exist. */
 		parkSession?: (containerId: string) => Promise<void>;
+		/**
+		 * Why the suspended containers' billed stretches ended, for the uptime
+		 * ledger. The idle sweep omits it; the cross-project reclaim passes
+		 * `suspended` so its evictions are distinguishable from ordinary stops.
+		 */
+		endReason?: ContainerUptimeEndReason;
 	},
 ): Promise<number> {
 	const { db, docker } = deps;
@@ -2069,7 +2087,14 @@ export async function executeRetirementPlan(
 		log.info(
 			`project ${ref(project.slug, project.id)} ${opts.reason} — suspending container ${ref(project.slug, containerId.slice(0, 12))}`,
 		);
-		await stopContainerGracefully(deps, project.id, project.slug, project.team_id, containerId);
+		await stopContainerGracefully(
+			deps,
+			project.id,
+			project.slug,
+			project.team_id,
+			containerId,
+			opts.endReason,
+		);
 		retired++;
 	}
 	return retired;

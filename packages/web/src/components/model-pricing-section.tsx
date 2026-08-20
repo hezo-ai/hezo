@@ -203,11 +203,12 @@ export function ModelPricingSection() {
 							</p>
 							<p>
 								<span className="font-semibold text-text-1">
-									Costs are a conservative upper-bound estimate.
+									Cache traffic is priced separately.
 								</span>{' '}
-								The catalog carries no cache pricing, so cached reads and writes are billed at the
-								full input rate. Providers charge cache reads at a steep discount, so real bills are
-								usually lower than the recorded figures - never higher.
+								The catalog carries no cache rates, so Hezo derives them from each model's own input
+								rate - cache reads at a fraction of it, cache writes at a small premium. Where a
+								provider's multipliers are not yet known, cache traffic still bills at the full
+								input rate, which makes those figures an upper bound rather than an exact one.
 							</p>
 							<p>
 								A manual override wins over the catalog for its model and <em>can</em> set cache

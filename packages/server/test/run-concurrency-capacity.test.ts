@@ -8,7 +8,11 @@ import {
 } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
-import { MAX_CONTAINER_MEMORY_GB_KEY, setSystemMeta } from '../src/lib/system-meta';
+import {
+	MAX_CONTAINER_MEMORY_GB_KEY,
+	setMonthlyContainerHours,
+	setSystemMeta,
+} from '../src/lib/system-meta';
 import {
 	getActiveContainers,
 	isContainerCapacityBlockedInDb,
@@ -97,8 +101,9 @@ describe('container capacity', () => {
 
 	beforeEach(async () => {
 		db = await createTestDbWithMigrations();
-		// Room for exactly two default-sized (2 GB) containers.
-		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '4');
+		// 6 GB total: room for exactly two default-sized (2 GB) task containers,
+		// plus the 2 GB held back for the assistant chat.
+		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '6');
 	});
 	afterEach(() => db.close());
 
@@ -237,6 +242,23 @@ describe('container capacity', () => {
 		expect(await isContainerCapacityBlockedInDb(db, engine, legacy)).toBe(false);
 	});
 
+	it('admits one fewer task container than the total would fit, because chat is reserved', async () => {
+		// The whole of phase two, at the level an operator would notice. 8 GB total
+		// with a 2 GB cap looks like four containers and is three: the fourth cap is
+		// the assistant chat's, held back whether or not a session is open.
+		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '8');
+		const projects = [];
+		for (let i = 0; i < 3; i++) {
+			const p = await seedProject();
+			await addMember(p, `ctr-res-${i}`, { state: 'busy' });
+			projects.push(p);
+		}
+		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(6);
+
+		const fourth = await seedProject();
+		expect(await isContainerCapacityBlockedInDb(db, engine, fourth)).toBe(true);
+	});
+
 	it('blocks a project with nothing running once the cap is reached', async () => {
 		const a = await seedProject();
 		await addMember(a, 'ctr-1', { state: 'busy' });
@@ -286,6 +308,70 @@ describe('container capacity', () => {
 	 * project's idle containers wedge every other project on the instance: the
 	 * dispatch was skipped as `InstanceAtCapacity` and the reclaim rung never ran.
 	 */
+	/**
+	 * The monthly container-hours allowance, which answers a different question
+	 * from memory and clears on a different clock: reclaiming a neighbour's idle
+	 * container frees GB, never hours.
+	 */
+	describe('the container-hours allowance', () => {
+		/** `hours` of closed uptime already spent this calendar month. */
+		async function seedSpentHours(hours: number): Promise<void> {
+			await db.query(
+				`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+				 VALUES ('spent', date_trunc('month', now() AT TIME ZONE 'UTC'),
+				         date_trunc('month', now() AT TIME ZONE 'UTC') + ($1::int * interval '1 hour'),
+				         'docker')`,
+				[hours],
+			);
+		}
+
+		it('never trips while no cap is set, however many hours were spent', async () => {
+			await seedSpentHours(10_000);
+			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(false);
+		});
+
+		it('trips at the cap, not past it', async () => {
+			await setMonthlyContainerHours(db, 10);
+			await seedSpentHours(9);
+			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(false);
+			await db.query(`DELETE FROM container_uptime_entries`);
+			await seedSpentHours(10);
+			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(true);
+		});
+
+		it('blocks a dispatch that would start a container, with memory to spare', async () => {
+			// Nothing is running, so the memory gate would wave this straight through -
+			// which is the point: the two gates are independent.
+			const project = await seedProject();
+			await setMonthlyContainerHours(db, 10);
+			await seedSpentHours(10);
+			expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(true);
+		});
+
+		it('lets a project with a container already free serve the run anyway', async () => {
+			// A warm container starts nothing, so it spends no *new* hours - the ones
+			// it is spending are already on the meter either way. Blocking here would
+			// idle a container the instance is paying for regardless.
+			const project = await seedProject();
+			await addMember(project, 'ctr-warm');
+			await setMonthlyContainerHours(db, 10);
+			await seedSpentHours(10);
+			expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(false);
+		});
+
+		it('ignores hours spent in a previous month', async () => {
+			await setMonthlyContainerHours(db, 10);
+			await db.query(
+				`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+				 VALUES ('last-month',
+				         date_trunc('month', now() AT TIME ZONE 'UTC') - interval '20 hours',
+				         date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 hour',
+				         'docker')`,
+			);
+			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(false);
+		});
+	});
+
 	describe('reclaimable headroom', () => {
 		it('does not block a run that another project’s idle container can cover', async () => {
 			const hoarder = await seedProject();
@@ -361,9 +447,13 @@ describe('automatic budget source', () => {
 	});
 	afterEach(() => db.close());
 
+	// `budgetGb` is the TASK share: the configured total less one container's worth
+	// held back for the assistant chat. Asserted as an explicit subtraction rather
+	// than through the production helper, so a change that stopped reserving would
+	// fail here instead of agreeing with itself.
 	it('uses the flat default when the containers do not run on this host', async () => {
 		const { budgetGb } = await getActiveContainers(db, remoteEngine);
-		expect(budgetGb).toBe(DEFAULT_MAX_CONTAINER_MEMORY_GB);
+		expect(budgetGb).toBe(DEFAULT_MAX_CONTAINER_MEMORY_GB - DEFAULT_RAM_CAP_PER_CONTAINER_GB);
 	});
 
 	it('derives from host memory when they do', async () => {
@@ -371,13 +461,17 @@ describe('automatic budget source', () => {
 		const host = engine.containerHostMemory();
 		expect(host).not.toBeNull();
 		expect(budgetGb).toBe(
-			computeDefaultMaxContainerMemoryGb(host, DEFAULT_RAM_CAP_PER_CONTAINER_GB),
+			computeDefaultMaxContainerMemoryGb(host, DEFAULT_RAM_CAP_PER_CONTAINER_GB) -
+				DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 		);
 	});
 
-	it('an explicit setting wins on either backend', async () => {
+	it('reserves for the chat out of an explicit setting too, on either backend', async () => {
+		// The defect this phase fixes: only the automatic path used to reserve, so a
+		// hand-set 32 admitted 16 task containers *and* a chat one.
 		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '32');
-		expect((await getActiveContainers(db, remoteEngine)).budgetGb).toBe(32);
-		expect((await getActiveContainers(db, engine)).budgetGb).toBe(32);
+		const expected = 32 - DEFAULT_RAM_CAP_PER_CONTAINER_GB;
+		expect((await getActiveContainers(db, remoteEngine)).budgetGb).toBe(expected);
+		expect((await getActiveContainers(db, engine)).budgetGb).toBe(expected);
 	});
 });

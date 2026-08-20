@@ -3,6 +3,7 @@ import {
 	ApprovalType,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	DEFAULT_MONTHLY_BUDGET_CENTS,
 	isAgentEffort,
 	isReservedAgentSlug,
 } from '@hezo/shared';
@@ -13,8 +14,6 @@ import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 import { authoredPromptError } from './prompt-style-guard';
-
-const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
 
 /** Raw hire spec as supplied by the admin form or an agent tool. */
 export interface HireProposalInput {

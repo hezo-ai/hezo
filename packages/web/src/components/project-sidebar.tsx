@@ -189,9 +189,22 @@ export function ProjectSidebar({
 			label: t('nav.assets'),
 		},
 		...(isInternal
-			? // HQ has no Budget or Settings - Container stays at the top level, after
-				// Connectors and Skills, with Activity last as everywhere else.
-				[connectorsPage, skillsPage, containerPage, activityPage]
+			? // HQ has no Spend and no Settings, but it does hold the assistant chat's
+				// container - which is metered like any other - so its Budget entry goes
+				// straight to Hours. Container stays at the top level, after Connectors
+				// and Skills, with Activity last as everywhere else.
+				[
+					{
+						to: '/projects/$projectId/budget/hours' as const,
+						params: projectParams,
+						label: t('nav.budget'),
+						testId: 'project-sidebar-budget',
+					},
+					connectorsPage,
+					skillsPage,
+					containerPage,
+					activityPage,
+				]
 			: [
 					{
 						to: '/projects/$projectId/budget',

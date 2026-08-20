@@ -7,7 +7,7 @@ export function BudgetSection({ projectId }: { projectId: string }) {
 		<section>
 			<SectionHeader
 				title="Budget"
-				desc="Spending overview across agents. Token costs are computed at non-cached rates, so figures are a conservative upper-bound estimate."
+				desc="Spending overview across agents. Token costs are priced per model, with cache reads and writes at their own rates."
 			/>
 			{costs?.summary?.length === 0 ? (
 				<p className="text-[13px] text-text-3">No spend recorded.</p>

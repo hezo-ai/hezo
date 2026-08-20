@@ -113,7 +113,7 @@ test('the override form opens in a titled panel and closes via its close button'
 	expect(queryByTestId('in-place-form')).toBeNull();
 });
 
-test('the Model pricing help dialog explains table-only pricing and the conservative estimate', async () => {
+test('the Model pricing help dialog explains table-only pricing and how cache is rated', async () => {
 	const { findByTestId, findByText, queryByText, user } = await renderApp({
 		initialPath: '/settings/ai-providers',
 	});
@@ -127,11 +127,11 @@ test('the Model pricing help dialog explains table-only pricing and the conserva
 	await user.click(help);
 
 	// The modal states the model: the table prices every run (runtime-reported
-	// dollar figures are ignored), and the missing cache rates make recorded
-	// costs a conservative upper bound.
+	// dollar figures are ignored), and cache traffic is rated from each model's
+	// own input rate rather than billed at it.
 	await findByText('How run costs are calculated');
 	await findByText(/Every run is priced from this table/);
-	await findByText(/cached reads and writes are billed at/);
+	await findByText(/derives them from each model's own input\s+rate/);
 	// The old (wrong) precedence claim — runtime-reported cost wins — is gone.
 	expect(queryByText(/Reported by the run/)).toBeNull();
 });

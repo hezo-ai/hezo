@@ -287,6 +287,12 @@ describe('POST /projects/:projectId/costs', () => {
 	});
 
 	it('records over-budget spend (never a 402) and reactively pauses the agent', async () => {
+		// Give the engineer a window to blow. Agents ship uncapped now, and an
+		// unlimited window never trips - so without this there is no over-budget
+		// state for the spend below to reach.
+		await ctx.db.query(`UPDATE member_agents SET monthly_budget_cents = 3000 WHERE id = $1`, [
+			engineerId,
+		]);
 		const res = await ctx.app.request(`/api/projects/${projectSlug}/costs`, {
 			method: 'POST',
 			headers: jsonHeaders(),
