@@ -479,6 +479,33 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
 	});
 
+	it('hands back a shutdown that lands in the setup window', async () => {
+		// The fourth landing point: after the container is acquired and before the
+		// exec, where the credential lock, the tunnel and `buildRunContext` run. A
+		// throw there with the signal already aborted is the shape the drain makes
+		// at that moment, and it has its own branch because the exec catch is not
+		// reached from here at all.
+		const ac = new AbortController();
+		const deps = makeDeps({
+			openExecChannel: async () => {
+				ac.abort('server_shutdown');
+				throw new Error('tunnel torn down by shutdown');
+			},
+		});
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBe(true);
+		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+	});
+
 	it('still fails a bare pre-run abort rather than re-queueing it', async () => {
 		// A user cancel arriving in the same window is a decision to stop, not work
 		// owed - so the handback must be reasoned from the reason, not from the fact
