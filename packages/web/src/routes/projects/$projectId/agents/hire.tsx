@@ -12,7 +12,6 @@ import {
 	HireAgentForm,
 	type HireFormValues,
 	type ManagerOption,
-	missingRequiredVars,
 } from '../../../../components/hire-agent-form';
 import { Button } from '../../../../components/ui/button';
 import { type Agent, useAgents, useOnboardAgent } from '../../../../hooks/use-agents';
@@ -187,10 +186,7 @@ function CreateHireForm({ projectId }: { projectId: string }) {
 				<Button
 					type="submit"
 					disabled={
-						!values.title.trim() ||
-						heartbeatMinutes(values) === undefined ||
-						missingRequiredVars(values.systemPrompt).length > 0 ||
-						onboardAgent.isPending
+						!values.title.trim() || heartbeatMinutes(values) === undefined || onboardAgent.isPending
 					}
 				>
 					{onboardAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -220,7 +216,6 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 		[values, initial],
 	);
 	const busy = updateProposal.isPending || resolveApproval.isPending;
-	const promptInvalid = missingRequiredVars(values.systemPrompt).length > 0;
 
 	function backToAgents() {
 		navigate({ to: '/projects/$projectId/agents', params: { projectId } });
@@ -287,20 +282,11 @@ function EditHireProposal({ projectId, approval }: { projectId: string; approval
 				>
 					<X className="w-4 h-4" /> Deny
 				</Button>
-				<Button
-					type="button"
-					variant="secondary"
-					disabled={busy || !dirty || promptInvalid}
-					onClick={handleSave}
-				>
+				<Button type="button" variant="secondary" disabled={busy || !dirty} onClick={handleSave}>
 					{updateProposal.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 					Save changes
 				</Button>
-				<Button
-					type="button"
-					disabled={busy || !values.title.trim() || promptInvalid}
-					onClick={handleApprove}
-				>
+				<Button type="button" disabled={busy || !values.title.trim()} onClick={handleApprove}>
 					{resolveApproval.isPending ? (
 						<Loader2 className="w-4 h-4 animate-spin" />
 					) : (

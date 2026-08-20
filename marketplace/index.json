@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 27,
+			"version": 28,
 			"roster_count": 10,
-			"latest_notes": "Renamed the team slug from software-development to app-dev, matching the App Team name it has always shown."
+			"latest_notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		},
 		{
 			"slug": "influencer",
@@ -146,9 +146,9 @@
 				"design",
 				"analytics"
 			],
-			"version": 20,
+			"version": 21,
 			"roster_count": 7,
-			"latest_notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
+			"latest_notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		},
 		{
 			"slug": "investment",
@@ -217,9 +217,9 @@
 				"insider activity",
 				"price target"
 			],
-			"version": 21,
+			"version": 22,
 			"roster_count": 6,
-			"latest_notes": "Hiring now asks the admin for the new agent's heartbeat cadence instead of assuming one."
+			"latest_notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		}
 	]
 }

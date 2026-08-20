@@ -657,7 +657,7 @@ Revise the draft of a pending hire approval. Captain-only. Use this to expand or
 | `title` | `string` | No | Updated role title |
 | `human_name` | `string` | No | Updated human name for the new teammate, or an empty string to clear it |
 | `role_description` | `string` | No | Updated short role description |
-| `system_prompt` | `string` | No | Updated system prompt. If provided, it must keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the revision is rejected. |
+| `system_prompt` | `string` | No | Updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. |
 | `reports_to` | `string` | No | Updated manager - an existing agent's slug. Pass an empty string to clear the reporting line. |
 | `default_effort` | `string` | No | Updated default effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `integer` | No | Updated heartbeat interval. How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
@@ -682,7 +682,7 @@ File a new hire proposal. Callable by a team Captain (for its own team) or the C
 | `title` | `string` | Yes | Role title (the slug is derived from it) |
 | `human_name` | `string` | No | Optional human name for the new teammate (e.g. "Max"). Shown in place of the role and usable as a mention handle. Leave it out unless the admin asked for a name - an agent is normally addressed by its role. |
 | `role_description` | `string` | No | Short role description |
-| `system_prompt` | `string` | No | Full system prompt for the new agent. If provided, it MUST contain every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) or the proposal is rejected - these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs. |
+| `system_prompt` | `string` | No | Full system prompt for the new agent. Write the role itself; no substitution variable is required. Hezo composes the agent identity (team, description, manager) above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Author it in the style of the built-in role docs. |
 | `reports_to` | `string` | No | The manager this agent reports to - an existing agent's slug (e.g. "architect"). Sets the structural reporting line so work can be delegated to and from this agent. Must be an agent already on the team. |
 | `default_effort` | `string` | No | Default reasoning effort: minimal, low, medium, high, max |
 | `heartbeat_interval_min` | `integer` | Yes | How often this agent wakes to look for work, in minutes. Ask the admin for the cadence rather than assuming one - it drives both how fast the agent picks up work and how much it spends. Minimum 60; a lower value is rejected. Typical choices: 60 for a fast-moving role, 720 (12 hours) for a steady one, 1440 (daily) for an occasional reviewer. |
@@ -800,7 +800,7 @@ Apply a system prompt change for an agent. Callable by the Coach agent (for afte
 | --- | --- | --- | --- |
 | `project` | `string` | No | Project slug or ID. Omit to use the project your run is already in; instance agents (CEO/Coach) must name the project to act in. |
 | `agent_id` | `string` | Yes | Target agent - its slug (e.g. "engineer") or member ID |
-| `new_system_prompt` | `string` | Yes | The full updated system prompt. It MUST keep every required substitution variable ({{team_name}}, {{reports_to}}, {{skills_context}}, {{project_docs_context}}, {{team_preferences_context}}) - read the current prompt with get_agent_system_prompt(placeholders=false) first and preserve them, or the update is rejected. (The CEO and Coach are exempt.) |
+| `new_system_prompt` | `string` | Yes | The full updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Read the current prompt with get_agent_system_prompt(placeholders=false) first so the round-trip is safe. |
 | `change_summary` | `string` | Yes | Summary of what changed and why |
 
 **Returns:** `{ applied: true, document_id }`, or `{ error }` if denied or the agent is not in the team. A revision snapshot is stored so the admin can restore previous versions, and a team-coherence review is filed.

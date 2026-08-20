@@ -183,6 +183,10 @@
 		{
 			"version": 1,
 			"notes": "Initial marketplace release."
+		},
+		{
+			"version": 28,
+			"notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		}
 	],
 	"captain": {

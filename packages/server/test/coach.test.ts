@@ -13,7 +13,6 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: Db;
@@ -352,7 +351,7 @@ describe('Agent system-prompt access', () => {
 					arguments: {
 						project: projectId,
 						agent_id: architectId,
-						new_system_prompt: compliantPrompt('Captain coherence rewrite'),
+						new_system_prompt: 'Captain coherence rewrite',
 						change_summary: 'team coherence review',
 					},
 				},
@@ -379,13 +378,13 @@ describe('System prompt revision tracking', () => {
 		await app.request(`/api/projects/${projectSlug}/agents/${architectId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ system_prompt: compliantPrompt('Before manual edit') }),
+			body: JSON.stringify({ system_prompt: 'Before manual edit' }),
 		});
 
 		const res = await app.request(`/api/projects/${projectSlug}/agents/${architectId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ system_prompt: compliantPrompt('After manual edit by admin') }),
+			body: JSON.stringify({ system_prompt: 'After manual edit by admin' }),
 		});
 		expect(res.status).toBe(200);
 
@@ -408,17 +407,17 @@ describe('System prompt revision tracking', () => {
 		await app.request(`/api/projects/${projectSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ system_prompt: compliantPrompt('Version A') }),
+			body: JSON.stringify({ system_prompt: 'Version A' }),
 		});
 		await app.request(`/api/projects/${projectSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ system_prompt: compliantPrompt('Version B') }),
+			body: JSON.stringify({ system_prompt: 'Version B' }),
 		});
 		await app.request(`/api/projects/${projectSlug}/agents/${engineerId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ system_prompt: compliantPrompt('Version C') }),
+			body: JSON.stringify({ system_prompt: 'Version C' }),
 		});
 
 		const revisionsRes = await app.request(

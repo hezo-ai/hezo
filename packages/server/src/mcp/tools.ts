@@ -44,9 +44,7 @@ import {
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
-	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
-	requiredSystemPromptVarsError,
 	SEARCH_SCOPES,
 	summarizeMethodAccess,
 	TaskStatus,
@@ -2353,7 +2351,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					`Updated system prompt. If provided, it must keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) or the revision is rejected.`,
+					'Updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name.',
 				),
 			reports_to: z
 				.string()
@@ -2408,12 +2406,6 @@ export function registerTools(
 				return { error: 'Hire approval is already resolved' };
 			}
 
-			// A revised system prompt must keep the required substitution variables.
-			if (typeof args.system_prompt === 'string' && args.system_prompt.trim()) {
-				const promptError = requiredSystemPromptVarsError(args.system_prompt);
-				if (promptError) return { error: promptError };
-			}
-
 			// A revised manager must resolve to an agent on this team (empty clears it).
 			if (typeof args.reports_to === 'string' && args.reports_to.trim()) {
 				const raw = args.reports_to.trim();
@@ -2461,7 +2453,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					`Full system prompt for the new agent. If provided, it MUST contain every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) or the proposal is rejected - these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs.`,
+					'Full system prompt for the new agent. Write the role itself; no substitution variable is required. Hezo composes the agent identity (team, description, manager) above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Author it in the style of the built-in role docs.',
 				),
 			reports_to: z
 				.string()
@@ -4707,7 +4699,7 @@ export function registerTools(
 			new_system_prompt: z
 				.string()
 				.describe(
-					`The full updated system prompt. It MUST keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) - read the current prompt with get_agent_system_prompt(placeholders=false) first and preserve them, or the update is rejected. (The CEO and Coach are exempt.)`,
+					'The full updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Read the current prompt with get_agent_system_prompt(placeholders=false) first so the round-trip is safe.',
 				),
 			change_summary: z.string().describe('Summary of what changed and why'),
 		},
@@ -4735,15 +4727,7 @@ export function registerTools(
 			);
 			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this team' };
 
-			// A revised prompt must keep the required substitution variables.
-			// Instance singletons (CEO/Coach) are exempt — they have no in-team
-			// manager, so the {{reports_to}} requirement does not apply.
 			const targetSlug = agentCheck.rows[0].slug;
-			const isInstanceSingleton = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(targetSlug);
-			if (!isInstanceSingleton) {
-				const promptError = requiredSystemPromptVarsError(args.new_system_prompt as string);
-				if (promptError) return { error: promptError };
-			}
 			// The house register: mechanical violations reject, judgement calls come
 			// back as an advisory on the successful write (see prompt-style-guard).
 			const styleError = authoredPromptError(args.new_system_prompt as string);
@@ -4794,7 +4778,7 @@ export function registerTools(
 						new_system_prompt: z
 							.string()
 							.describe(
-								`Full updated prompt for this agent; MUST keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) unless the target is the CEO/Coach.`,
+								'Full updated prompt for this agent. No substitution variable is required; Hezo composes the identity and live-context blocks around it.',
 							),
 						change_summary: z.string().describe('Summary of what changed and why for this agent'),
 					}),
@@ -4845,14 +4829,6 @@ export function registerTools(
 					continue;
 				}
 				const slug = agentCheck.rows[0].slug;
-				const isInstanceSingleton = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(slug);
-				if (!isInstanceSingleton) {
-					const promptError = requiredSystemPromptVarsError(u.new_system_prompt);
-					if (promptError) {
-						results.push({ index: i, agent_id: u.agent_id, ok: false, error: promptError });
-						continue;
-					}
-				}
 				const styleError = authoredPromptError(u.new_system_prompt);
 				if (styleError) {
 					results.push({ index: i, agent_id: u.agent_id, ok: false, error: styleError });

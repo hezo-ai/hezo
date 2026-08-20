@@ -38,12 +38,13 @@ When you hire an agent you set:
   org chart, which is what lets work be delegated to and from the agent, so it's worth
   getting right (it defaults to the Captain). You can change it later from the agent's
   settings, and the Captain/CEO can also adjust reporting lines during a coherence review.
-- **System prompt** - the instructions that define how it works. Variable chips let you
-  insert substitution variables (e.g. `{{team_name}}`, `{{reports_to}}`,
-  `{{skills_context}}`) that are filled with live team and project context on every run, so
-  the prompt stays in sync as things change. Hover a chip (tap on mobile) to see what each
-  one means. A handful of variables are **required** and must stay in the prompt for it to
-  be accepted - the editor marks them and flags any that are missing.
+- **System prompt** - the instructions that define how it works. Write the role itself:
+  Hezo adds the agent's identity (its team, the team's description, its manager) above what
+  you write, and its live context (skills, team preferences, project docs, today's date)
+  below it, on every run. Nothing is required of your text, and the strip above the editor
+  lists every block Hezo adds. If you want one of those values at a specific point in your
+  own wording instead, type `{{` in the editor to insert it - Hezo then leaves its own copy
+  of that value out.
 - **Model** - which provider/model it runs on (defaults to the team's model; override
   per agent if you want).
 - **Heartbeat** - how often it wakes to look for work. There is no default: the cadence
@@ -81,10 +82,9 @@ review lands, remove the blocker from the task's page.
 
 Every agent's system prompt is editable from its settings at any time. Changes take
 effect on the agent's next run, so you can correct course - tighten scope, add a
-convention, change tone - without rebuilding anything. The required substitution variables
-must remain in the prompt; an edit that drops one is rejected so an agent never loses its
-identity or live context. (The global CEO and Coach are exempt - they have no
-manager.)
+convention, change tone - without rebuilding anything. An edit can never cost the agent its
+identity or live context: Hezo composes both around whatever you save. Switch to
+**Preview** to read the whole prompt as the agent receives it, with every value filled in.
 
 ## Reviewing an agent's runs
 

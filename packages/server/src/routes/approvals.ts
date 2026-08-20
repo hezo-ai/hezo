@@ -1,10 +1,4 @@
-import {
-	ApprovalStatus,
-	ApprovalType,
-	AuthType,
-	requiredSystemPromptVarsError,
-	wsRoom,
-} from '@hezo/shared';
+import { ApprovalStatus, ApprovalType, AuthType, wsRoom } from '@hezo/shared';
 import { Hono } from 'hono';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
@@ -218,10 +212,7 @@ approvalsRoutes.patch('/approvals/:approvalId', async (c) => {
 	}
 
 	const body = await c.req.json<HirePayloadPatchInput>();
-	// A revised system prompt must keep the required substitution variables.
 	if (body.system_prompt?.trim()) {
-		const promptError = requiredSystemPromptVarsError(body.system_prompt);
-		if (promptError) return err(c, 'INVALID_REQUEST', promptError, 400);
 		const styleError = authoredPromptError(body.system_prompt);
 		if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
 	}

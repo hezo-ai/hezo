@@ -2704,14 +2704,44 @@ irrecoverably behind is dropped and recovers through the existing reconnect-and-
 path instead of growing an unbounded send queue.
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`
-document, loaded from its **home** team) is resolved per run by
-`services/template-resolver.ts`: `{{…}}` placeholders are substituted with live DB values
-(`{{team_name}}`, `{{reports_to}}` — wired to the instance CEO for a Captain via
-`linkTeamCaptainToInstanceCeo` — `{{skills_context}}`, `{{project_docs_context}}`,
-`{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
-`{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
-Run Context / Repository / Project State / Teammates blocks, `SHARED_INSTRUCTIONS`, and the
-**Container Environment** block.
+document, loaded from its **home** team) holds the **role body alone**. `services/template-resolver.ts`
+composes the rest around it per run, in three stages.
+
+First it wraps the body, *before* any substitution runs, so the wrapper's own tokens go
+through the same single pass an authored one does:
+
+- **The identity block, prepended** (`buildIdentityBlock`). The agent's title, its team's
+  name, the team's description and its manager's display name — the only route the team
+  description has into a prompt at all. Its values are inlined rather than emitted as
+  tokens, since the block already holds the rows a second substitution pass would re-query.
+  Skipped **whole** when the body names `{{team_name}}` or `{{reports_to}}`: an author who
+  placed either wrote their own opening line, and a second one above it would contradict
+  it. Skipped for the instance singletons (CEO, Coach) too — they roam across every team,
+  so "the &lt;title&gt; at &lt;team&gt;" would name whichever team the run is scoped to and read as
+  their home.
+- **The live-context block, appended** (`buildLiveContextBlock`). `{{current_date}}`,
+  `{{skills_context}}`, `{{team_preferences_context}}`, `{{project_docs_context}}`, emitted
+  as tokens because the substitution pass owns the queries that build each manifest. Each
+  line is skipped **on its own** when the body already names it, so a body placing the
+  skills manifest mid-prose still gets the other three appended and never a second skills
+  manifest.
+
+Both add only what the template does not already carry, checked with the same literal
+`includes('{{token}}')` the substitution pass uses. That is what makes the change a pure
+superset: a prompt written before the composition existed resolves to exactly the bytes it
+always did.
+
+Second it substitutes every `{{…}}` with live DB values — `{{team_name}}`, `{{reports_to}}`
+(wired to the instance CEO for a Captain via `linkTeamCaptainToInstanceCeo`),
+`{{skills_context}}`, `{{project_docs_context}}`, `{{team_preferences_context}}`,
+`{{current_date}}`, `{{team_description}}`, and the CEO-only `{{projects_context}}`.
+Retired placeholders are stripped rather than substituted so they can never leak as literal
+text: `{{kb_context}}`, `{{requester_context}}`, and `{{team_context}}` — that last one
+because `buildTeamContextBlock` appends the org chart on every run whether or not a template
+asks, so substituting the token as well printed it twice.
+
+Third it appends the Run Context / Repository / Project State / Your Team / Teammates
+blocks, `SHARED_INSTRUCTIONS`, and the **Container Environment** block.
 
 That last one tells the agent which container service it is running on and what that
 service's network will carry, from `SANDBOX_AGENT_ENVIRONMENTS`
@@ -2730,15 +2760,15 @@ additional one its on-disk worktree path (`/worktrees/<task>/<repo>`, a sibling 
 directory), and directs agents to read connected repos from disk (`ls`/`Read`/`grep`) rather
 than fetch their files through the `github` MCP `get_file_contents` API — which is slower, costs
 tokens per file, and returns GitHub's default branch instead of the ref checked out for the run.
-Every surface that authors or edits a prompt — the hire proposal create/edit
-(`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`, and the
-`create_hire_proposal` / `update_agent_system_prompt` MCP tools — validates a supplied,
-non-empty prompt against `REQUIRED_SYSTEM_PROMPT_VARS` (`@hezo/shared` —
-`{{team_name}}`, `{{reports_to}}`, `{{skills_context}}`, `{{project_docs_context}}`,
-`{{team_preferences_context}}`) and rejects it (4xx / tool error) when one is missing, so an
-edited prompt can never silently drop the agent's identity or live context. The instance
-singletons (CEO/Coach) are exempt — they have no in-team manager. `{{team_context}}` is
-**not** required because the resolver auto-appends that block on every run regardless.
+**No substitution variable is required, on any authoring surface.** The hire proposal
+create/edit (`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`,
+and the `create_hire_proposal` / `update_agent_system_prompt` MCP tools each accept a body
+that names none, because the composition above supplies the agent's identity and live
+context whatever the body says. `SYSTEM_PROMPT_TEMPLATE_VARS` (`@hezo/shared`) is what
+remains: six optional tokens, described once for the web editor's reference strip, its `{{`
+insertion lookup, and the agent-facing tool docs. Placing one is only ever a way to put that
+value at a chosen point in the author's own prose, which suppresses the composed copy of it.
+Style is still enforced (`authoredPromptError`) on every one of those surfaces.
 
 **Who may edit prompts & the Custom Prompt.** `update_agent_system_prompt` (editing an existing
 agent's stored prompt) is authorized for the **Coach**, the team's **Captain**, and the **CEO**: the

@@ -33,12 +33,14 @@ describe('marketplace loader', () => {
 		expect(def?.name).toBe('App Team');
 		expect(def?.version).toBeGreaterThanOrEqual(1);
 		expect(def?.roster.length).toBe(9);
-		// Prompts are partial-resolved but keep the runtime placeholders.
+		// Prompts are partial-resolved but never run-resolved: the partial include
+		// is expanded, and the composed blocks are not in here at all.
 		const engineer = def?.roster.find((r) => r.slug === 'engineer');
-		expect(engineer?.system_prompt).toContain('{{team_name}}');
+		expect(engineer?.system_prompt).toContain('# Engineer');
 		expect(engineer?.system_prompt).not.toContain('{{> partials/');
+		expect(engineer?.system_prompt).not.toContain('{{skills_context}}');
 		// The captain override rides separately from the roster.
-		expect(def?.captain.system_prompt).toContain('You are the Captain of');
+		expect(def?.captain.system_prompt).toContain('# Captain');
 		expect(def?.roster.some((r) => r.slug === 'captain')).toBe(false);
 	});
 
@@ -374,7 +376,7 @@ describe('applyMarketplaceTeamToTeam re-import (version update)', () => {
 		expect(await engineerCount(teamId)).toBe(1);
 		const refreshed = await engineerPrompt(teamId);
 		expect(refreshed).not.toBe('STALE ENGINEER PROMPT');
-		expect(refreshed).toContain('You are an Engineer at');
+		expect(refreshed).toContain('# Engineer');
 	});
 });
 
@@ -440,7 +442,7 @@ describe('applyMarketplaceRoleToTeam (single role onto an existing team)', () =>
 		);
 		expect(row.rows[0].agent_type_id).toBeNull();
 		expect(row.rows[0].title).toBe('Security Engineer');
-		expect(await promptOf(teamId, 'security-engineer')).toContain('{{team_name}}');
+		expect(await promptOf(teamId, 'security-engineer')).toContain('# Security Engineer');
 
 		// The whole-team path applies the def's Captain override; this one must not.
 		expect(await promptOf(teamId, 'captain')).toBe(captainPromptBefore);

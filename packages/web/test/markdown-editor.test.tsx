@@ -119,18 +119,53 @@ test('isPreviewLoading shows a resolving placeholder instead of the body', async
 	expect(preview.querySelector('h1')).toBeNull();
 });
 
-test('chips insert their token into the value', async () => {
+test('typing the {{ trigger inserts a variable token, with no projectId needed', async () => {
 	const user = userEvent.setup({ delay: null });
-	const { getByRole, getByLabelText } = renderWithClient(
-		<Harness ariaLabel="Body" chips={[{ token: '{{team_name}}' }, { token: '{{agent_role}}' }]} />,
+	const { getByLabelText, findByTestId, getByText } = renderWithClient(
+		<Harness
+			ariaLabel="Body"
+			variables={[
+				{ token: '{{team_name}}', description: "The team's name." },
+				{ token: '{{skills_context}}', description: 'The skills manifest.' },
+			]}
+		/>,
 	);
 
-	await user.click(getByRole('button', { name: '{{team_name}}' }));
-	await user.click(getByRole('button', { name: '{{agent_role}}' }));
-
 	const textarea = getByLabelText('Body') as HTMLTextAreaElement;
-	expect(textarea.value).toContain('{{team_name}}');
-	expect(textarea.value).toContain('{{agent_role}}');
+	// The variable vocabulary is local, so the picker opens without a project.
+	await user.type(textarea, 'Follow {{team');
+	await findByTestId('mention-picker');
+	await user.click(getByText('{{team_name}}'));
+
+	expect(textarea.value).toBe('Follow {{team_name}}');
+	// No trailing space: a token has to be able to butt up against its suffix.
+	expect(textarea.value.endsWith('}}')).toBe(true);
+});
+
+test('the {{ trigger filters to the matching variables only', async () => {
+	const user = userEvent.setup({ delay: null });
+	const { getByLabelText, findByTestId, queryByText } = renderWithClient(
+		<Harness
+			ariaLabel="Body"
+			variables={[
+				{ token: '{{team_name}}', description: "The team's name." },
+				{ token: '{{skills_context}}', description: 'The skills manifest.' },
+			]}
+		/>,
+	);
+
+	await user.type(getByLabelText('Body'), '{{skills');
+	await findByTestId('mention-picker');
+	expect(queryByText('{{skills_context}}')).not.toBeNull();
+	expect(queryByText('{{team_name}}')).toBeNull();
+});
+
+test('without variables, {{ is ordinary text', async () => {
+	const user = userEvent.setup({ delay: null });
+	const { getByLabelText, queryByTestId } = renderWithClient(<Harness ariaLabel="Body" />);
+
+	await user.type(getByLabelText('Body'), '{{team');
+	expect(queryByTestId('mention-picker')).toBeNull();
 });
 
 test('without a projectId, typing @ opens no mention picker', async () => {

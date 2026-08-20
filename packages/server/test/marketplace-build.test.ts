@@ -196,10 +196,15 @@ describe('marketplace build helpers', () => {
 		expect(() => buildTeamDef(bad, promptFor, null)).toThrow(/reserved slug/);
 	});
 
-	it('rejects a prompt missing a required substitution variable', () => {
-		expect(() =>
-			buildTeamDef(manifest(), (role) => `# ${role}\nNo placeholders here.`, null),
-		).toThrow(/substitution variable/);
+	it('accepts a prompt with no substitution variables at all', () => {
+		// A marketplace prompt holds the role body; the resolver composes the
+		// identity and live-context blocks around it at run time.
+		const def = buildTeamDef(manifest(), (role) => `# ${role}\nNo placeholders here.`, null);
+		expect(def.captain.system_prompt).toContain('No placeholders here.');
+	});
+
+	it('still rejects a missing or empty prompt', () => {
+		expect(() => buildTeamDef(manifest(), () => '   ', null)).toThrow(/missing system prompt/);
 	});
 
 	it('reconcileVersionAndChangelog keeps version on unchanged hash', () => {

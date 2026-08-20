@@ -13,7 +13,6 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: Db;
@@ -104,7 +103,7 @@ describe('hire flow captures reports_to', () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
 			heartbeat_interval_min: 720,
 			title: 'Data Scientist',
-			system_prompt: compliantPrompt('You are the Data Scientist.'),
+			system_prompt: 'You are the Data Scientist.',
 			reports_to: 'architect',
 		});
 		expect(result.error).toBeUndefined();
@@ -126,7 +125,7 @@ describe('hire flow captures reports_to', () => {
 		const result = await callTool(await captainToken(), 'create_hire_proposal', {
 			heartbeat_interval_min: 720,
 			title: 'Lost Soul',
-			system_prompt: compliantPrompt('You are the Lost Soul.'),
+			system_prompt: 'You are the Lost Soul.',
 			reports_to: 'no-such-agent',
 		});
 		expect(result.error).toContain("no agent 'no-such-agent'");
@@ -138,7 +137,7 @@ describe('hire flow captures reports_to', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				title: 'Support Lead',
-				system_prompt: compliantPrompt('You are the Support Lead.'),
+				system_prompt: 'You are the Support Lead.',
 				reports_to: 'captain',
 			}),
 		});

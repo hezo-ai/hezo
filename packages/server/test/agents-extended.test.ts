@@ -5,7 +5,6 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: Db;
@@ -48,7 +47,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			body: JSON.stringify({
 				title: 'Data Engineer',
 				role_description: 'Builds and maintains data pipelines',
-				system_prompt: compliantPrompt('Draft prompt'),
+				system_prompt: 'Draft prompt',
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -97,7 +96,7 @@ describe('POST /teams/:teamId/agents/onboard', () => {
 			body: JSON.stringify({
 				title: 'Payments Engineer',
 				role_description: 'Owns payments integration',
-				system_prompt: compliantPrompt('Draft prompt'),
+				system_prompt: 'Draft prompt',
 				monthly_budget_cents: 7500,
 				heartbeat_interval_min: 90,
 			}),
@@ -295,16 +294,18 @@ describe('seeded agent system prompts', () => {
 			expect(prompt.length).toBeGreaterThan(100);
 		}
 
+		// The stored prompt is the role body: it identifies the role by its heading
+		// and rules, and carries none of the scaffolding the resolver composes.
 		const captain = agents.find((a) => a.slug === 'captain')!;
-		const ceoPrompt = await getPrompt(captain.id);
-		expect(ceoPrompt).toContain('You are the Captain of');
-		expect(ceoPrompt).toContain('{{team_name}}');
-		expect(ceoPrompt).toMatch(/##\s+Rules\b/);
+		const captainPrompt = await getPrompt(captain.id);
+		expect(captainPrompt).toContain('# Captain');
+		expect(captainPrompt).not.toContain('{{skills_context}}');
+		expect(captainPrompt).toMatch(/##\s+Rules\b/);
 
 		const engineer = agents.find((a) => a.slug === 'engineer')!;
 		const engineerPrompt = await getPrompt(engineer.id);
-		expect(engineerPrompt).toContain('You are an Engineer at');
-		expect(engineerPrompt).toContain('{{reports_to}}');
+		expect(engineerPrompt).toContain('# Engineer');
+		expect(engineerPrompt).not.toContain('{{project_docs_context}}');
 	});
 });
 
@@ -406,7 +407,7 @@ describe('PATCH /teams/:teamId/agents/:agentId (partial updates)', () => {
 		const res = await app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ system_prompt: compliantPrompt('New system prompt for Architect.') }),
+			body: JSON.stringify({ system_prompt: 'New system prompt for Architect.' }),
 		});
 		expect(res.status).toBe(200);
 

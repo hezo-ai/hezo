@@ -14,7 +14,6 @@ import {
 } from '../src/services/hire-proposal';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 /**
  * Branch-coverage companion for `services/hire-proposal.ts`. Drives every
@@ -77,12 +76,12 @@ describe('prepareHireProposal — rejection branches', () => {
 		expect(isError(r) && r.error).toMatch(/must be an integer ≥ 0/);
 	});
 
-	it('rejects a non-empty system_prompt missing required vars', async () => {
+	it('accepts a non-empty system_prompt with no substitution variables', async () => {
 		const r = await prepareHireProposal(db, teamId, {
 			title: 'Prompt Bot',
 			system_prompt: 'You are a bot with no substitution variables.',
 		});
-		expect(isError(r) && r.error).toMatch(/missing required substitution variable/);
+		expect(isError(r)).toBe(false);
 	});
 
 	it('rejects a reserved slug', async () => {
@@ -152,7 +151,7 @@ describe('prepareHireProposal — success branches', () => {
 		const r = await prepareHireProposal(db, teamId, {
 			title: 'Senior Bot',
 			role_description: 'does senior things',
-			system_prompt: compliantPrompt('You are a senior bot.'),
+			system_prompt: 'You are a senior bot.',
 			reports_to: CAPTAIN_AGENT_SLUG,
 			default_effort: 'high',
 			heartbeat_interval_min: 60,

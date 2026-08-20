@@ -13,7 +13,6 @@ import {
 	instanceCeoId,
 	mintAgentToken,
 } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 // Branch-coverage tests for packages/server/src/mcp/tools.ts (part B):
 // hire proposals, CEO project creation / team setup, approvals resolution,
@@ -153,7 +152,7 @@ describe('create_hire_proposal / update_hire_proposal', () => {
 			heartbeat_interval_min: 720,
 			title: 'Support Lead',
 			role_description: 'Runs support',
-			system_prompt: compliantPrompt('You are the Support Lead.'),
+			system_prompt: 'You are the Support Lead.',
 			reports_to: 'captain',
 			task_id: taskIdentifier,
 		});
@@ -198,13 +197,13 @@ describe('create_hire_proposal / update_hire_proposal', () => {
 		expect(r.error).toBe("reports_to: no agent 'nonexistent-agent' in this team");
 	});
 
-	it('update_hire_proposal rejects a prompt missing required variables', async () => {
+	it('update_hire_proposal accepts a prompt with no substitution variables', async () => {
 		const at = await agentToken(captainId, teamId, taskId);
 		const r = await call(at, 'update_hire_proposal', {
 			approval_id: approvalId,
-			system_prompt: 'A prompt without any required variables.',
+			system_prompt: 'A prompt without any substitution variables.',
 		});
-		expect(String(r.error)).toContain('missing required substitution variable');
+		expect(r.error).toBeUndefined();
 	});
 
 	it('update_hire_proposal with no fields errors', async () => {
@@ -287,7 +286,7 @@ describe('resolve_approval', () => {
 			heartbeat_interval_min: 720,
 			title: 'Docs Writer',
 			role_description: 'Writes docs',
-			system_prompt: compliantPrompt('You are the Docs Writer.'),
+			system_prompt: 'You are the Docs Writer.',
 			reports_to: 'captain',
 		});
 		expect(proposal.approval_id).toBeDefined();
@@ -468,11 +467,11 @@ describe('agent system prompts', () => {
 		expect(r.items[1].ok).toBe(false);
 	});
 
-	it('update_agent_system_prompt enforces caller, target, and variables', async () => {
+	it('update_agent_system_prompt enforces caller and target', async () => {
 		const eng = await agentToken(engineerId, teamId, taskId);
 		const denied = await call(eng, 'update_agent_system_prompt', {
 			agent_id: 'qa-engineer',
-			new_system_prompt: compliantPrompt('x'),
+			new_system_prompt: 'x',
 			change_summary: 'test',
 		});
 		expect(String(denied.error)).toContain('only the CEO, Coach, or Captain');
@@ -480,21 +479,22 @@ describe('agent system prompts', () => {
 		const cap = await agentToken(captainId, teamId, taskId);
 		const missingAgent = await call(cap, 'update_agent_system_prompt', {
 			agent_id: 'nobody',
-			new_system_prompt: compliantPrompt('x'),
+			new_system_prompt: 'x',
 			change_summary: 'test',
 		});
 		expect(missingAgent.error).toBe('Agent not found in this team');
 
-		const badPrompt = await call(cap, 'update_agent_system_prompt', {
+		// A body naming no variable is fine - the resolver composes the rest.
+		const bare = (await call(cap, 'update_agent_system_prompt', {
 			agent_id: 'engineer',
 			new_system_prompt: 'No variables here at all.',
 			change_summary: 'test',
-		});
-		expect(badPrompt.error).toBeDefined();
+		})) as { applied: boolean };
+		expect(bare.applied).toBe(true);
 
 		const ok = (await call(cap, 'update_agent_system_prompt', {
 			agent_id: 'engineer',
-			new_system_prompt: compliantPrompt('You are the revised Engineer.'),
+			new_system_prompt: 'You are the revised Engineer.',
 			change_summary: 'Rewrite for coverage.',
 		})) as { applied: boolean; document_id: string };
 		expect(ok.applied).toBe(true);

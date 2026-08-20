@@ -19,7 +19,6 @@ import {
 	createTestTeam,
 	mintAgentToken,
 } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 /**
  * Guard: every surface that accepts an authored prompt runs the house register.
@@ -119,7 +118,7 @@ describe('the authoring surfaces run the register', () => {
 	let architectId: string;
 
 	/** A prompt that keeps every required variable but breaks a mechanical rule. */
-	const backtickedDoc = compliantPrompt('You are an Architect. Read `spec.md` before you start.');
+	const backtickedDoc = 'You are an Architect. Read `spec.md` before you start.';
 
 	async function mcp(agentToken: string, name: string, args: Record<string, unknown>) {
 		const res = await app.request('/mcp', {
@@ -203,7 +202,7 @@ describe('the authoring surfaces run the register', () => {
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				title: 'Bare Ref Worker',
-				system_prompt: compliantPrompt('You are an Architect. Read spec.md before you start.'),
+				system_prompt: 'You are an Architect. Read spec.md before you start.',
 			}),
 		});
 		expect(res.status).toBe(201);

@@ -1,3 +1,4 @@
+import type { SystemPromptVar } from '@hezo/shared';
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type MentionSearchResult, useMentionSearch } from '../hooks/use-mentions';
 import { MentionPicker } from './mention-picker';
@@ -13,9 +14,20 @@ interface MentionTextareaProps extends TextareaProps {
 	/** Class override for the relative wrapper (e.g. `flex-1` so the textarea can
 	 *  grow to fill a flex column). Defaults to `relative`. */
 	containerClassName?: string;
+	/**
+	 * Substitution variables reachable from a `{{` trigger. Supplying them adds a
+	 * second vocabulary to the same picker rather than a parallel one: detection,
+	 * keyboard navigation, placement and blur are shared with `@`. Omit it and
+	 * `{{` is ordinary text.
+	 */
+	variables?: readonly SystemPromptVar[];
 }
 
 const TOKEN_RE = /@([a-z0-9][\w-]*)?$/i;
+/** `{{` needs no preceding-character guard - the digraph is distinctive enough. */
+const VAR_TOKEN_RE = /\{\{([a-z0-9_]*)$/i;
+
+type MentionTrigger = '@' | '{{';
 
 export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaProps>(
 	function MentionTextarea(
@@ -27,6 +39,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 			onKeyDown,
 			onBlur,
 			containerClassName = 'relative',
+			variables,
 			...rest
 		},
 		forwardedRef,
@@ -42,6 +55,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 			[forwardedRef],
 		);
 		const [open, setOpen] = useState(false);
+		const [trigger, setTrigger] = useState<MentionTrigger>('@');
 		const [query, setQuery] = useState('');
 		const [triggerStart, setTriggerStart] = useState<number | null>(null);
 		const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -53,13 +67,30 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 			return () => clearTimeout(id);
 		}, [query, open]);
 
-		const searchEnabled = Boolean(projectId) && open;
+		// The variable vocabulary is local, so a `{{` query must not reach the server.
+		const searchEnabled = Boolean(projectId) && open && trigger === '@';
 		const { data, isFetching } = useMentionSearch(projectId ?? '', debouncedQuery, {
 			projectSlug,
 			enabled: searchEnabled,
 		});
 
-		const results = useMemo<MentionSearchResult[]>(() => data ?? [], [data]);
+		const variableResults = useMemo<MentionSearchResult[]>(() => {
+			if (trigger !== '{{' || !variables) return [];
+			const q = query.toLowerCase();
+			return variables
+				.filter((v) => v.token.toLowerCase().includes(q))
+				.map((v) => ({
+					kind: 'variable' as const,
+					handle: v.token,
+					label: v.token,
+					sublabel: v.description,
+				}));
+		}, [trigger, variables, query]);
+
+		const results = useMemo<MentionSearchResult[]>(
+			() => (trigger === '{{' ? variableResults : (data ?? [])),
+			[trigger, variableResults, data],
+		);
 
 		useEffect(() => {
 			setHighlightedIndex(0);
@@ -69,27 +100,38 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 			if (highlightedIndex >= results.length) setHighlightedIndex(0);
 		}, [results, highlightedIndex]);
 
-		const detectTrigger = useCallback((nextValue: string, caret: number) => {
-			const upto = nextValue.slice(0, caret);
-			const match = TOKEN_RE.exec(upto);
-			if (!match) {
-				setOpen(false);
-				setTriggerStart(null);
-				setQuery('');
-				return;
-			}
-			const atIdx = match.index;
-			const beforeAt = atIdx === 0 ? '' : upto[atIdx - 1];
-			if (beforeAt && !/[\s([{>]/.test(beforeAt)) {
-				setOpen(false);
-				setTriggerStart(null);
-				setQuery('');
-				return;
-			}
-			setTriggerStart(atIdx);
-			setQuery(match[1] ?? '');
-			setOpen(true);
-		}, []);
+		const detectTrigger = useCallback(
+			(nextValue: string, caret: number) => {
+				const upto = nextValue.slice(0, caret);
+				const close = () => {
+					setOpen(false);
+					setTriggerStart(null);
+					setQuery('');
+				};
+
+				// `{{` is checked first: it cannot overlap an `@` run, and skipping the
+				// check when no variables were supplied leaves `{{` as ordinary text.
+				const varMatch = variables?.length ? VAR_TOKEN_RE.exec(upto) : null;
+				if (varMatch) {
+					setTrigger('{{');
+					setTriggerStart(varMatch.index);
+					setQuery(varMatch[1] ?? '');
+					setOpen(true);
+					return;
+				}
+
+				const match = TOKEN_RE.exec(upto);
+				if (!match) return close();
+				const atIdx = match.index;
+				const beforeAt = atIdx === 0 ? '' : upto[atIdx - 1];
+				if (beforeAt && !/[\s([{>]/.test(beforeAt)) return close();
+				setTrigger('@');
+				setTriggerStart(atIdx);
+				setQuery(match[1] ?? '');
+				setOpen(true);
+			},
+			[variables],
+		);
 
 		const handleChange = useCallback(
 			(e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -107,7 +149,14 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 				const caret = el.selectionStart ?? el.value.length;
 				const before = value.slice(0, triggerStart);
 				const after = value.slice(caret);
-				const insertion = result.kind === 'agent' ? `@${result.handle} ` : `${result.handle} `;
+				// A variable is dropped in bare: the trailing space every mention gets
+				// would break `{{team_name}}'s conventions`.
+				const insertion =
+					result.kind === 'variable'
+						? result.handle
+						: result.kind === 'agent'
+							? `@${result.handle} `
+							: `${result.handle} `;
 				const next = `${before}${insertion}${after}`;
 				const nextCaret = before.length + insertion.length;
 				const synthetic = {
@@ -203,15 +252,16 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 					onKeyDown={handleKeyDown}
 					onBlur={handleBlur}
 				/>
-				{open && projectId && (
+				{open && (trigger === '{{' ? Boolean(variables?.length) : Boolean(projectId)) && (
 					<MentionPicker
 						query={query}
 						results={results}
-						loading={isFetching}
+						loading={trigger === '@' && isFetching}
 						highlightedIndex={highlightedIndex}
 						onHoverIndex={setHighlightedIndex}
 						onSelect={handleSelect}
 						anchorRef={wrapperRef}
+						trigger={trigger}
 					/>
 				)}
 			</div>

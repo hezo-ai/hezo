@@ -1,6 +1,8 @@
 import {
 	HEZO_DOCS_URL,
-	REQUIRED_SYSTEM_PROMPT_VARS,
+	IDENTITY_BLOCK_VARS,
+	INSTANCE_AGENT_SLUGS,
+	LIVE_CONTEXT_BLOCK_VARS,
 	renderPromptStyleRules,
 	repoNameFromIdentifier,
 	SandboxBackend,
@@ -276,17 +278,90 @@ const SHARED_INSTRUCTIONS = `
  */
 export const SHARED_INSTRUCTIONS_TEXT = SHARED_INSTRUCTIONS;
 
-export const REQUIRED_PROMPT_VARS_PLACEHOLDER = '{{required_prompt_vars}}';
-
 /** Placeholder expanding to the machine-checked half of the writing register. */
 export const PROMPT_STYLE_RULES_PLACEHOLDER = '{{prompt_style_rules}}';
+
+/**
+ * The agent's opening line, prepended when the authored body states no identity
+ * of its own. Carries the team name, the team's description and the manager, so
+ * a prompt that names none of them still tells its agent who it is - and so the
+ * team description reaches an agent at all, which nothing else in the resolver
+ * does.
+ *
+ * Skipped whole rather than per value when the body names `{{team_name}}` or
+ * `{{reports_to}}`: an author who placed either wrote their own opening line,
+ * and a second one above it would contradict it. Skipped for the instance
+ * singletons (CEO, Coach) too - they roam across every team, so "the <title> at
+ * <team>" would name whichever team this run happens to be scoped to and read
+ * as their home.
+ *
+ * Values are inlined rather than emitted as tokens, and the block is prepended
+ * after the substitution pass rather than before it, so a `{{…}}` occurring
+ * inside a team description is left as the prose it is.
+ */
+async function buildIdentityBlock(db: Db, template: string, ctx: ResolveContext): Promise<string> {
+	if (IDENTITY_BLOCK_VARS.some((token) => template.includes(token))) return '';
+	if (!ctx.agentId) return '';
+
+	// Slug, title and manager together - the block needs all three or none.
+	const agent = await db.query<{ slug: string; title: string; manager_name: string | null }>(
+		`SELECT ma.slug, ma.title, mgr.display_name AS manager_name
+		 FROM member_agents ma
+		 LEFT JOIN members mgr ON mgr.id = ma.reports_to
+		 WHERE ma.id = $1`,
+		[ctx.agentId],
+	);
+	const row = agent.rows[0];
+	if (!row) return '';
+	if ((INSTANCE_AGENT_SLUGS as readonly string[]).includes(row.slug)) return '';
+	const title = row.title?.trim();
+	if (!title) return '';
+
+	const team = await db.query<{ name: string; description: string | null }>(
+		'SELECT name, description FROM teams WHERE id = $1',
+		[ctx.teamId],
+	);
+	const teamName = team.rows[0]?.name?.trim();
+	const description = team.rows[0]?.description?.trim();
+	const manager = row.manager_name?.trim();
+
+	const lines = [teamName ? `You are the ${title} at ${teamName}.` : `You are the ${title}.`];
+	if (description) lines.push('', description);
+	if (manager) lines.push('', `You report to: ${manager}.`);
+	return `${lines.join('\n')}\n\n`;
+}
+
+/**
+ * The live manifests every agent needs, appended when the authored body does not
+ * place them itself. Each line is independent: a body naming `{{skills_context}}`
+ * mid-prose still gets the preferences and docs manifests here, and never a
+ * second skills manifest.
+ *
+ * Emits tokens rather than values - the substitution pass below owns the queries
+ * that build each manifest.
+ */
+function buildLiveContextBlock(template: string): string {
+	const missing = LIVE_CONTEXT_BLOCK_VARS.filter((token) => !template.includes(token));
+	if (missing.length === 0) return '';
+	const lines = missing.map((token) =>
+		token === '{{current_date}}' ? 'Current date: {{current_date}}' : token,
+	);
+	return `\n\n---\n\n${lines.join('\n\n')}\n`;
+}
 
 export async function resolveSystemPrompt(
 	db: Db,
 	template: string,
 	ctx: ResolveContext,
 ): Promise<string> {
-	let resolved = template;
+	// The live-context block carries the same `{{…}}` tokens an authored body
+	// would, so it goes on before the pass below and needs no resolver of its own.
+	// The identity block is prepended *after* that pass instead (see below).
+	//
+	// Both add only what the template does not already carry, which is what keeps
+	// a prompt written before this existed resolving to exactly the bytes it
+	// always did.
+	let resolved = template + buildLiveContextBlock(template);
 
 	if (resolved.includes('{{current_date}}')) {
 		resolved = resolved.replace(/\{\{current_date\}\}/g, new Date().toISOString().slice(0, 10));
@@ -321,16 +396,11 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{reports_to\}\}/g, managerName);
 	}
 
+	// team_context retired: `buildTeamContextBlock` appends the org chart on every
+	// run whether or not a template asks for it, so substituting the token here as
+	// well printed it twice. Strip any leftover so it never leaks into a prompt.
 	if (resolved.includes('{{team_context}}')) {
-		let teamContext = '';
-		if (ctx.agentId) {
-			const result = await db.query<{ team_context: string }>(
-				'SELECT team_context FROM member_agents WHERE id = $1',
-				[ctx.agentId],
-			);
-			teamContext = result.rows[0]?.team_context ?? '';
-		}
-		resolved = resolved.replace(/\{\{team_context\}\}/g, teamContext);
+		resolved = resolved.replace(/\{\{team_context\}\}\n?/g, '');
 	}
 
 	// kb_context retired: the knowledge base merged into the skills database.
@@ -445,30 +515,6 @@ export async function resolveSystemPrompt(
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
-	// The one placeholder that expands *to* placeholders, and therefore the last
-	// one resolved.
-	//
-	// Several prompts have to tell an agent which substitution variables a system
-	// prompt it authors must contain - `create_hire_proposal` and
-	// `update_agent_system_prompt` reject one that drops any. Writing that list as
-	// prose meant writing `{{team_name}}` literally, which every branch above
-	// happily substituted: the CEO was told its required variables were the team's
-	// name, an empty string, and "No preferences set." - so every hire it filed
-	// was rejected for missing variables it had never been shown.
-	//
-	// Rendering it from `REQUIRED_SYSTEM_PROMPT_VARS` fixes both halves at once:
-	// the list can no longer be eaten, and it can no longer drift from what the
-	// validator actually enforces (it was hand-copied into four prompts). Position
-	// is load-bearing rather than incidental - every `{{…}}` replace above targets
-	// one specific literal and has already run, so the text inserted here is not
-	// re-scanned by anything. Keep it last.
-	if (resolved.includes(REQUIRED_PROMPT_VARS_PLACEHOLDER)) {
-		resolved = resolved.replaceAll(
-			REQUIRED_PROMPT_VARS_PLACEHOLDER,
-			REQUIRED_SYSTEM_PROMPT_VARS.map((v) => `\`${v}\``).join(', '),
-		);
-	}
-
 	// The writing register an authored prompt is held to, rendered from the same
 	// module the validator reads (`@hezo/shared` prompt-style). Hand-copying the
 	// list into a prompt is how it drifts from what the server actually enforces.
@@ -486,6 +532,12 @@ export async function resolveSystemPrompt(
 			: `Full Hezo product & API documentation: ${HEZO_DOCS_URL}`;
 		resolved = resolved.replace(HEZO_DOCS_MARKER, replacement);
 	}
+
+	// Prepended only now that substitution has run. The block holds values, not
+	// tokens - a team description reading "we document {{team_name}} for new
+	// joiners" is prose the admin wrote, and putting it in ahead of the pass would
+	// have the resolver substitute its own output.
+	resolved = (await buildIdentityBlock(db, template, ctx)) + resolved;
 
 	if (ctx.mode === 'placeholders') {
 		return resolved;

@@ -1,4 +1,3 @@
-import { REQUIRED_SYSTEM_PROMPT_VARS } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -241,42 +240,33 @@ describe('connector-recipes virtual skill: per-project read-only view', () => {
 });
 
 /**
- * The prompts have to *name* the substitution variables a hire proposal must
- * contain, and naming them used to mean writing `{{team_name}}` in prose - which
- * every substitution branch happily replaced. A real CEO run was therefore told
- * its required variables were the team's name, an empty string, and "No
- * preferences set.", while `create_hire_proposal` rejects a prompt missing the
- * real ones. Every hire it filed would have bounced.
+ * `{{required_prompt_vars}}` retired with the rule it existed to explain, but
+ * the guard it justified still matters: the resolver must not re-scan its own
+ * output, or a value containing `{{…}}` would be substituted a second time.
  */
-describe('the required-variable list survives resolution', () => {
-	it('renders the literal placeholders, not their values', async () => {
-		const result = await resolveSystemPrompt(
-			db,
-			'A new prompt must keep {{required_prompt_vars}} or it is rejected.',
-			{ teamId, projectId },
+describe('substitution does not re-scan its own output', () => {
+	it('leaves a token that arrived inside a substituted value alone', async () => {
+		// The team's description is written into the composed identity block. A
+		// description that mentions a token must survive verbatim.
+		await db.query('UPDATE teams SET description = $2 WHERE id = $1', [
+			teamId,
+			'We document {{team_name}} for new joiners.',
+		]);
+		const agent = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+			 WHERE m.team_id = $1 ORDER BY ma.slug LIMIT 1`,
+			[teamId],
 		);
-
-		for (const name of REQUIRED_SYSTEM_PROMPT_VARS) {
-			expect(result).toContain(name);
-		}
-	});
-
-	it('is not itself eaten by the variables it names', async () => {
-		// The list contains `{{team_name}}`, and the team is really called
-		// something - so a resolver that re-scanned its own output would replace it
-		// and reintroduce the bug in exactly the shape it had.
-		const result = await resolveSystemPrompt(db, 'Keep {{required_prompt_vars}}.', {
+		const result = await resolveSystemPrompt(db, 'Body with no variables.', {
 			teamId,
 			projectId,
+			agentId: agent.rows[0].id,
+			mode: 'preview',
 		});
-		expect(result).toContain('{{team_name}}');
-		// The exact shape of the bug: the team's real name appearing where the
-		// variable's *name* was meant to be.
-		expect(result).not.toContain('`Recipes Co`');
+		expect(result).toContain('We document {{team_name}} for new joiners.');
 	});
 
 	it('still substitutes a variable that is genuinely used', async () => {
-		// The guard above must not have turned substitution off for real uses.
 		const result = await resolveSystemPrompt(db, 'Team: {{team_name}}.', { teamId, projectId });
 		expect(result).not.toContain('{{team_name}}');
 	});
