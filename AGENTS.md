@@ -334,6 +334,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
 | A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |
+| "Did the deployer fix this setting, rather than the operator?" | `pinnedSetting` / `isPinned` (`lib/system-meta.ts`), which every pinnable getter routes through - never a direct `runtimeConfig().policy` read at a call site, and never a branch on `managedBy` |
 | An instance setting | `routes/instance-settings.ts` + the `system-meta` helpers |
 | Date formatting | `packages/web/src/lib/format-date.ts` |
 | Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |

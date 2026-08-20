@@ -15,6 +15,7 @@ import {
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { ManagedSetting } from '../../../components/settings/managed-setting';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
 import { Input } from '../../../components/ui/input';
@@ -348,7 +349,11 @@ function ContainerSettingsTab() {
 						reserved: HOST_RESERVED_MEMORY_GB,
 					}}
 				/>
-				{settings === undefined ? null : <ContainerMemoryBudgetForm settings={settings} />}
+				{settings === undefined ? null : (
+					<ManagedSetting pinned={settings.max_container_memory_gb_pinned}>
+						<ContainerMemoryBudgetForm settings={settings} />
+					</ManagedSetting>
+				)}
 			</section>
 
 			<section className="border border-border rounded-md p-4 bg-surface mb-4">
@@ -363,7 +368,11 @@ function ContainerSettingsTab() {
 						default: DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 					}}
 				/>
-				{settings === undefined ? null : <RamCapForm settings={settings} />}
+				{settings === undefined ? null : (
+					<ManagedSetting pinned={settings.default_ram_cap_per_container_gb_pinned}>
+						<RamCapForm settings={settings} />
+					</ManagedSetting>
+				)}
 			</section>
 
 			<section className="border border-border rounded-md p-4 bg-surface mb-4">
@@ -378,7 +387,11 @@ function ContainerSettingsTab() {
 						default: DEFAULT_CONTAINER_DISK_GB,
 					}}
 				/>
-				{settings === undefined ? null : <ContainerDiskForm settings={settings} />}
+				{settings === undefined ? null : (
+					<ManagedSetting pinned={settings.default_container_disk_gb_pinned}>
+						<ContainerDiskForm settings={settings} />
+					</ManagedSetting>
+				)}
 			</section>
 		</div>
 	);

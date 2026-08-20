@@ -1,7 +1,8 @@
 import { Link, useLocation } from '@tanstack/react-router';
-import { ChevronDown, LogOut } from 'lucide-react';
+import { ChevronDown, ExternalLink, LogOut } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
+import { useInstanceSettings } from '../hooks/use-instance-settings';
 import { useMe } from '../hooks/use-me';
 import { logout } from '../lib/auth';
 import { type MessageKey, useI18n } from '../lib/i18n';
@@ -133,6 +134,43 @@ function LogoutButton({ onClick, className }: { onClick: () => void; className?:
  *    solid background and backdrop so it never bleeds the content scrolling
  *    beneath it.
  */
+/**
+ * The one row that leaves Hezo: where a deployment fixed some settings, this is
+ * where an operator goes to change them.
+ *
+ * Rendered only when a policy carries a link - a group labelled after the
+ * deployer with nothing under it would be worse than no group. Core ships the
+ * row; the label and the destination are config, so nothing here names any
+ * particular deployment.
+ *
+ * Validated as `https:` at parse and again here: React does not reliably block a
+ * `javascript:` href, and the string is operator-authored. No query params and
+ * no token - the URL lands in access logs and in browser history, and a
+ * top-level navigation already carries whatever session the destination uses.
+ */
+function PolicyGroup() {
+	const { t } = useI18n();
+	const { data: settings } = useInstanceSettings();
+	const policy = settings?.policy;
+	if (!policy?.manage_url?.startsWith('https://')) return null;
+
+	return (
+		<div className={groupClass} data-testid="settings-policy-group">
+			<GroupHeading label={policy.managed_by} />
+			<a
+				href={policy.manage_url}
+				target="_blank"
+				rel="noopener noreferrer"
+				className={`${itemClass(false)} flex items-center gap-2`}
+				data-testid="settings-policy-link"
+			>
+				<span className="flex-1">{t('settings.managed.planAndLimits')}</span>
+				<ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+			</a>
+		</div>
+	);
+}
+
 export function SettingsSidebar() {
 	const { t } = useI18n();
 	const { data: me } = useMe();
@@ -207,6 +245,7 @@ export function SettingsSidebar() {
 									))}
 								</div>
 							))}
+							<PolicyGroup />
 							<LogoutButton onClick={handleLogout} className="mt-3" />
 						</nav>
 					</>
@@ -228,6 +267,7 @@ export function SettingsSidebar() {
 						))}
 					</div>
 				))}
+				<PolicyGroup />
 				<LogoutButton onClick={handleLogout} className="mt-4" />
 			</nav>
 		</>

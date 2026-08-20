@@ -15,6 +15,7 @@ import {
 	taskContainerMemoryBudgetGb,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { runtimeConfig } from '../config/runtime';
 import type { Db } from '../db/database';
 import { err, ok } from '../lib/response';
 import {
@@ -31,7 +32,9 @@ import {
 	getMaxContainerMemoryGbSetting,
 	INSTANCE_BASE_URL_KEY,
 	instanceLocaleIsConfigured,
+	isPinned,
 	normalizeBaseUrl,
+	type PinnableSetting,
 	setDefaultContainerDiskGb,
 	setDefaultRamCapPerContainerGb,
 	setDefaultTaskView,
@@ -88,8 +91,37 @@ async function instanceSettingsPayload(db: Db, engine: ContainerEngine) {
 		host_total_swap_bytes: hostMemory?.totalSwapBytes ?? null,
 		default_task_view: await getDefaultTaskView(db),
 		locale: await getInstanceLocale(db),
+		// Provenance, in the same spirit as `max_container_memory_gb_is_set` above:
+		// the page renders a locked control from these rather than inferring that a
+		// value it cannot change is somehow special.
+		max_container_memory_gb_pinned: isPinned('maxContainerMemoryGb'),
+		default_ram_cap_per_container_gb_pinned: isPinned('defaultRamCapPerContainerGb'),
+		default_container_disk_gb_pinned: isPinned('defaultContainerDiskGb'),
+		// Who fixed them and where to change them. Null when nothing is pinned,
+		// which is every self-hosted instance that has not opted in.
+		policy: policyBanner(),
 	};
 }
+
+/** The rendered half of the policy - a name and an optional link, never anything to branch on. */
+function policyBanner(): { managed_by: string; manage_url: string | null } | null {
+	const policy = runtimeConfig().policy;
+	if (!policy) return null;
+	return { managed_by: policy.managedBy, manage_url: policy.manageUrl ?? null };
+}
+
+/**
+ * The pinnable settings, by the PATCH field that writes each.
+ *
+ * A table rather than a check per field, so adding a pinnable setting is one row
+ * and a field with no entry is simply not pinnable - there is no third state to
+ * get wrong.
+ */
+const PINNED_BY_FIELD: Record<string, PinnableSetting> = {
+	max_container_memory_gb: 'maxContainerMemoryGb',
+	default_ram_cap_per_container_gb: 'defaultRamCapPerContainerGb',
+	default_container_disk_gb: 'defaultContainerDiskGb',
+};
 
 // Instance-wide settings. Readable by any authenticated principal (the same
 // openness as GET /api/ai-providers); writes are superuser-only.
@@ -209,6 +241,25 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 	] as const;
 	if (!knownFields.some((f) => f in body)) {
 		return err(c, 'INVALID_REQUEST', `one of ${knownFields.join(', ')} is required`, 400);
+	}
+
+	// **Refused, never silently ignored.** This is the actual enforcement rather
+	// than UI politeness: whoever runs this instance is still its superuser and
+	// can call the API directly, so a write that appeared to succeed and changed
+	// nothing would be the worst of both. 409 rather than 403 - the request is
+	// authorized, it conflicts with a decision made above this instance.
+	const policy = runtimeConfig().policy;
+	if (policy) {
+		for (const [field, key] of Object.entries(PINNED_BY_FIELD)) {
+			if (field in body && isPinned(key)) {
+				return err(
+					c,
+					'CONFLICT',
+					`${field} is set by ${policy.managedBy} and cannot be changed here.`,
+					409,
+				);
+			}
+		}
 	}
 
 	if ('max_chat_history_size' in body) {

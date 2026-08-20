@@ -31,6 +31,18 @@ export interface InstanceSettings {
 	host_total_swap_bytes: number | null;
 	/** Which view every task thread opens in on this instance. Admin-owned. */
 	default_task_view: TaskView;
+	/**
+	 * Settings this deployment fixed, so the page renders them locked rather than
+	 * offering an edit the server will refuse with a 409.
+	 */
+	max_container_memory_gb_pinned: boolean;
+	default_ram_cap_per_container_gb_pinned: boolean;
+	default_container_disk_gb_pinned: boolean;
+	/**
+	 * Who fixed them and where to change them, or null on an instance where
+	 * nothing is pinned - which is every ordinary self-hosted one.
+	 */
+	policy: { managed_by: string; manage_url: string | null } | null;
 }
 
 export type InstanceSettingsUpdate = Partial<{

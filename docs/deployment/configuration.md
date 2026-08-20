@@ -175,6 +175,46 @@ drains once running. Nothing here starts a pass on its own.
 |---|---|---|
 | `chat.healthIntervalMs` | `10000` | How often a live chat session verifies its container is still healthy. |
 
+### Settings fixed by the deployer
+
+Where someone other than the person using an instance decides its limits - a
+managed service, or an IT team that fixes them for a group - those settings can
+be **pinned** from the config file. A pinned setting is read from the config
+instead of from the database, renders locked in the UI with the name of whoever
+fixed it, and is refused with a `409` if changed through the API. Nothing is
+pinned unless you say so, so an ordinary instance is unaffected.
+
+| Setting | Default | Description |
+|---|---|---|
+| `policy.managedBy` | - | Who fixed these settings, as shown to the operator. Required when `policy` is set. |
+| `policy.manageUrl` | - | Where to change them. Must be `https:`. Omit it to lock the settings with no link. |
+| `policy.pinned.maxContainerMemoryGb` | - | Fixes the instance-wide container memory budget. |
+| `policy.pinned.defaultRamCapPerContainerGb` | - | Fixes the per-container RAM cap. |
+| `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. |
+| `policy.pinned.monthlyContainerHours` | - | Fixes the monthly container-hours allowance. `0` pins "no limit". |
+| `policyFile` | - | Path to a JSON file holding the `policy` block. The file wins over an inline block, and is re-read when it changes. |
+
+Each key under `pinned` is independent: pin the memory budget and leave disk to
+the operator if that is what you mean.
+
+```js
+module.exports = {
+  policy: {
+    managedBy: 'Acme Cloud',
+    manageUrl: 'https://acme.example/account/plan',
+    pinned: { maxContainerMemoryGb: 16, monthlyContainerHours: 100 },
+  },
+};
+```
+
+**Use `policyFile` when the limits change while the instance runs.** A plan change
+must not need a restart - a restart kills in-flight agent runs, and under an
+hours meter that is billed compute thrown away. Hezo watches the file and picks
+up a change on the next setting it reads, without restarting anything. Write it
+by renaming a temporary file into place (`policy.json.tmp`, then `rename`), which
+is atomic, so Hezo can never read a half-written file. If a read or a parse does
+fail, the previous limits stay in force rather than silently unpinning.
+
 ## The master key is not a config setting
 
 The master key is **never** read from the config file, and Hezo rejects a `masterKey` key

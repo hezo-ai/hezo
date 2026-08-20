@@ -98,6 +98,39 @@ const logCompactionSchema = z
 
 const chatSchema = z.object({ healthIntervalMs: positiveInt.optional() }).strict();
 
+/**
+ * The pinned-settings block. Also the shape of the standalone policy file, which
+ * is why it is exported: one schema for both, so a file the deployer writes and
+ * a block they inline are validated identically.
+ *
+ * `manageUrl` must be `https:`. Rejected at parse rather than at render because
+ * it is operator-authored - a typo should be loud at startup, not a dead link
+ * discovered by whoever clicks it. The renderer checks again anyway: React does
+ * not reliably block a `javascript:` href.
+ */
+export const policySchema = z
+	.object({
+		managedBy: z.string().trim().min(1),
+		manageUrl: z
+			.url()
+			.refine((value) => value.startsWith('https://'), {
+				message: 'manageUrl must be an https: URL',
+			})
+			.optional(),
+		pinned: z
+			.object({
+				maxContainerMemoryGb: positiveInt.optional(),
+				defaultRamCapPerContainerGb: positiveInt.optional(),
+				defaultContainerDiskGb: positiveInt.optional(),
+				// Zero is meaningful here and everywhere else a budget is: unlimited.
+				// A deployment can therefore pin "no hours limit" as deliberately as
+				// it pins a number.
+				monthlyContainerHours: z.int().min(0).optional(),
+			})
+			.strict(),
+	})
+	.strict();
+
 export const configFileSchema = z
 	.object({
 		port: z.int().min(1).max(65535).optional(),
@@ -117,6 +150,8 @@ export const configFileSchema = z
 		jobs: jobsSchema.optional(),
 		logCompaction: logCompactionSchema.optional(),
 		chat: chatSchema.optional(),
+		policy: policySchema.optional(),
+		policyFile: z.string().min(1).optional(),
 	})
 	.strict();
 
