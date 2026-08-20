@@ -1,9 +1,11 @@
 /**
- * Document download helpers. Project documents are stored as Markdown text, so
- * the two download formats are the Markdown source itself and a plain-text
- * rendering with the Markdown syntax stripped. These are pure functions (no DOM,
- * no browser APIs) so they live in the shared package and are unit-tested there;
- * the browser-side blob/anchor plumbing lives in the web package.
+ * Markdown-to-text helpers, and the document download shapes built on them.
+ * Project documents are stored as Markdown, so the two download formats are the
+ * Markdown source itself and a plain-text rendering with the syntax stripped;
+ * that same strip is what every preview line renders, so no surface shows a
+ * reader raw `**` or `##`. These are pure functions (no DOM, no browser APIs) so
+ * they live in the shared package and are unit-tested there; the browser-side
+ * blob/anchor plumbing lives in the web package.
  */
 
 export type DocDownloadFormat = 'markdown' | 'text';
@@ -41,9 +43,13 @@ function stripInlineMarkdown(line: string): string {
 	// `!` doesn't strand once the brackets are gone).
 	s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
 	s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
-	// Emphasis: bold/italic (** __ * _) and strikethrough (~~).
-	s = s.replace(/(\*\*|__)(.+?)\1/g, '$2');
-	s = s.replace(/(\*|_)(.+?)\1/g, '$2');
+	// Emphasis: bold/italic (** __ * _) and strikethrough (~~). A delimiter must
+	// hug its content, and an underscore one must not sit inside a word, so
+	// `snake_case_name` and `2 * 3 * 4` survive as written.
+	s = s.replace(/\*\*(\S(?:.*?\S)?)\*\*/g, '$1');
+	s = s.replace(/(?<!\w)__(\S(?:.*?\S)?)__(?!\w)/g, '$1');
+	s = s.replace(/\*([^*\s](?:[^*]*[^*\s])?)\*/g, '$1');
+	s = s.replace(/(?<!\w)_([^_\s](?:[^_]*[^_\s])?)_(?!\w)/g, '$1');
 	s = s.replace(/~~(.+?)~~/g, '$1');
 	// Inline code.
 	s = s.replace(/`([^`]+)`/g, '$1');
@@ -76,4 +82,14 @@ export function markdownToPlainText(markdown: string): string {
 		.join('\n')
 		.replace(/\n{3,}/g, '\n\n')
 		.trim();
+}
+
+/**
+ * Collapse a Markdown body to the one line of prose a preview row shows - an
+ * inbox snippet, a search result's lead. Strips the syntax, then folds every run
+ * of whitespace so a multi-line source reads as a single line. Truncation is the
+ * caller's, since each surface carries its own budget.
+ */
+export function markdownToPreviewText(markdown: string): string {
+	return markdownToPlainText(markdown).replace(/\s+/g, ' ').trim();
 }

@@ -17,7 +17,7 @@ import { Card } from '../ui/card';
 export function InProgressTasks({ projectId }: { projectId: string }) {
 	const { t } = useI18n();
 	const { data } = useTasks(projectId, {
-		status: `${TaskStatus.InProgress},${TaskStatus.Review}`,
+		status: TaskStatus.InProgress,
 		sort: 'updated_at:desc',
 		// One over the cap, so "there is more" is known without a second count query.
 		per_page: String(DASHBOARD_IN_PROGRESS_LIMIT + 1),

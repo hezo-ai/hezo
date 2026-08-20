@@ -16,7 +16,6 @@ describe('status-meta registry', () => {
 	test('task status colors match the previous per-status mapping', () => {
 		expect(taskStatusColor(TaskStatus.Backlog)).toBe('neutral');
 		expect(taskStatusColor(TaskStatus.InProgress)).toBe('warning');
-		expect(taskStatusColor(TaskStatus.Review)).toBe('purple');
 		expect(taskStatusColor(TaskStatus.Blocked)).toBe('danger');
 		expect(taskStatusColor(TaskStatus.Done)).toBe('success');
 		expect(taskStatusColor(TaskStatus.Cancelled)).toBe('neutral');

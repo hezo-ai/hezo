@@ -18,7 +18,7 @@ let memberId: string;
 // Task IDs created in setup so individual tests can reference them
 let taskBacklogLow: string;
 let taskBacklogHigh: string;
-let taskReviewMedium: string;
+let taskBacklogMedium: string;
 let taskInProgressUrgent: string;
 let taskDoneHigh: string;
 
@@ -114,10 +114,10 @@ beforeAll(async () => {
 		projectId,
 		'Authentication needs cleanup',
 	);
-	taskReviewMedium = await createTask(
+	taskBacklogMedium = await createTask(
 		'Add dark mode support',
 		'medium',
-		'review',
+		'backlog',
 		otherProjectId,
 		'Users requested dark theme',
 	);
@@ -250,11 +250,40 @@ describe('tasks list — status filter', () => {
 	});
 
 	it('filters using comma-separated multiple statuses', async () => {
-		const body = await listTeamTasks('status=review,in_progress');
+		const body = await listTeamTasks('status=backlog,in_progress');
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
-		expect(body.data.every((i: any) => ['review', 'in_progress'].includes(i.status))).toBe(true);
-		expect(body.data.some((i: any) => i.id === taskReviewMedium)).toBe(true);
+		expect(body.data.every((i: any) => ['backlog', 'in_progress'].includes(i.status))).toBe(true);
+		expect(body.data.some((i: any) => i.id === taskBacklogMedium)).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskInProgressUrgent)).toBe(true);
+	});
+
+	it('rejects a removed status with a 400 naming its replacement', async () => {
+		// Postgres would raise 22P02 on the ::task_status cast, which nothing
+		// classifies, so this used to escape as an opaque 500. An agent running a
+		// prompt provisioned before the removal needs the replacement to recover.
+		const res = await app.request(`/api/projects/${projectSlug}/tasks?status=review`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { code: string; message: string } };
+		expect(body.error.code).toBe('INVALID_REQUEST');
+		expect(body.error.message).toContain('"review" task status was removed');
+		expect(body.error.message).toContain('in_progress');
+	});
+
+	it('rejects an unknown status in a PATCH with a 400, not a 500', async () => {
+		const res = await app.request(
+			`/api/projects/${otherProjectSlug}/tasks/${taskInProgressUrgent}`,
+			{
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ status: 'bogus' }),
+			},
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { code: string; message: string } };
+		expect(body.error.message).toContain('Unknown task status "bogus"');
+		expect(body.error.message).toContain('backlog, in_progress, blocked, done, cancelled');
 	});
 
 	it('excludes tasks not matching the status filter', async () => {
@@ -297,7 +326,7 @@ describe('tasks list — project_id filter', () => {
 		expect(body.data.length).toBeGreaterThanOrEqual(1);
 		expect(body.data.every((i: any) => i.project_id === projectId)).toBe(true);
 		// Tasks from otherProjectId must not appear
-		expect(body.data.some((i: any) => i.id === taskReviewMedium)).toBe(false);
+		expect(body.data.some((i: any) => i.id === taskBacklogMedium)).toBe(false);
 		expect(body.data.some((i: any) => i.id === taskInProgressUrgent)).toBe(false);
 	});
 
@@ -309,7 +338,7 @@ describe('tasks list — project_id filter', () => {
 		const body = await res.json();
 		expect(body.data.length).toBeGreaterThanOrEqual(2);
 		expect(body.data.every((i: any) => i.project_id === otherProjectId)).toBe(true);
-		expect(body.data.some((i: any) => i.id === taskReviewMedium)).toBe(true);
+		expect(body.data.some((i: any) => i.id === taskBacklogMedium)).toBe(true);
 		expect(body.data.some((i: any) => i.id === taskInProgressUrgent)).toBe(true);
 	});
 

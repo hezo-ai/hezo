@@ -6,9 +6,8 @@ import type { AuthInfo } from './types';
  * `AuthInfo` as `auth.taskId`). An agent may freely update *other* tickets'
  * fields within a run — folding an @-mention into its own existing ticket's
  * description/progress_summary/rules, declaring blockers, creating sub-tasks —
- * and may set its OWN run-ticket to `in_progress` (e.g. the QA Engineer hands a
- * ticket back to the Engineer by setting the ticket-under-review, which IS the
- * run's task, back to `in_progress`). What it must NOT do is *start a different
+ * and may set its OWN run-ticket to `in_progress` (that is the ticket the run
+ * exists to work). What it must NOT do is *start a different
  * ticket* inside this run: flip some other ticket to `in_progress` and begin
  * executing it. That ticket gets its own run, with its own dependency /
  * capacity / busy checks in the wakeup dispatcher — doing it here misattributes

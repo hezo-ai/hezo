@@ -225,15 +225,36 @@ describe('MCP create_team', () => {
 describe('MCP list_tasks filters', () => {
 	it('filters by status (comma-separated list)', async () => {
 		const id = await createTask('Status filter target');
-		await db.query("UPDATE tasks SET status = 'review'::task_status WHERE id = $1", [id]);
+		await db.query("UPDATE tasks SET status = 'blocked'::task_status WHERE id = $1", [id]);
 		const rows = (
 			(await callTool('list_tasks', {
 				project: projectId,
-				status: 'review,blocked',
+				status: 'backlog,blocked',
 			})) as { items: Array<{ id: string; status: string }> }
 		).items;
 		expect(rows.some((r) => r.id === id)).toBe(true);
-		for (const row of rows) expect(['review', 'blocked']).toContain(row.status);
+		for (const row of rows) expect(['backlog', 'blocked']).toContain(row.status);
+	});
+
+	it('rejects a removed status by name, naming its replacement', async () => {
+		// A role prompt is copied into a documents row at provision time and never
+		// re-synced, so an agent on a project created before the removal still asks
+		// for `review`. It must get the replacement back, not an opaque failure.
+		const res = (await callTool('list_tasks', {
+			project: projectId,
+			status: 'review',
+		})) as { error?: string };
+		expect(res.error).toContain('"review" task status was removed');
+		expect(res.error).toContain('in_progress');
+	});
+
+	it('rejects an unknown status with the valid list', async () => {
+		const res = (await callTool('list_tasks', {
+			project: projectId,
+			status: 'bogus',
+		})) as { error?: string };
+		expect(res.error).toContain('Unknown task status "bogus"');
+		expect(res.error).toContain('backlog, in_progress, blocked, done, cancelled');
 	});
 
 	it('filters by assignee_slug', async () => {

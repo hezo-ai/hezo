@@ -40,13 +40,18 @@ import { Tooltip } from './ui/tooltip';
 const ALL_STATUSES = Object.values(TaskStatus) as string[];
 const TERMINAL_STATUS_SET = new Set<string>(TERMINAL_TASK_STATUSES);
 const DEFAULT_OPEN_STATUSES: string[] = ALL_STATUSES.filter((s) => !TERMINAL_STATUS_SET.has(s));
-/** Task statuses pinned in the top "In progress" section (also excluded from the main list). */
-const PINNED_TASK_STATUSES = [TaskStatus.InProgress, TaskStatus.Review] as const;
+/**
+ * Task statuses pinned in the top "In progress" section (also excluded from the
+ * main list). `blocked` belongs here rather than in the backlog: it is work
+ * already started that has hit something, so it needs the same visibility as the
+ * rest of the work in flight.
+ */
+const PINNED_TASK_STATUSES = [TaskStatus.InProgress, TaskStatus.Blocked] as const;
 const PINNED_STATUS_SET = new Set<string>(PINNED_TASK_STATUSES);
 const PINNED_STATUS_PARAM = PINNED_TASK_STATUSES.join(',');
-// The default selection shows open work (backlog/blocked; in_progress/review are
-// pinned in their own section) plus completed (`done`) tasks, which land in the
-// bottom "Done" section. `cancelled` stays hidden unless explicitly filtered in.
+// The default selection shows open work (backlog; in_progress/blocked are pinned
+// in their own section) plus completed (`done`) tasks, which land in the bottom
+// "Done" section. `cancelled` stays hidden unless explicitly filtered in.
 const DEFAULT_TODO_STATUSES: string[] = [
 	...DEFAULT_OPEN_STATUSES.filter((s) => !PINNED_STATUS_SET.has(s)),
 	TaskStatus.Done,
@@ -67,6 +72,20 @@ const sortLabels: Record<`${SortField}:${SortDir}`, string> = {
 	'updated_at:desc': 'Recently updated',
 	'updated_at:asc': 'Oldest updates',
 };
+
+/**
+ * Drop now-pinned statuses from a persisted selection - the main-list query must
+ * not fetch rows the pinned section renders, and the filter dropdown no longer
+ * offers them. A selection emptied by that filtering falls back to the defaults
+ * rather than reading as a deliberate "no statuses" choice; an already-empty one
+ * is that deliberate choice and is kept.
+ */
+function sanitizeTodoStatuses(values: string[] | undefined): string[] {
+	if (!values) return [...DEFAULT_TODO_STATUSES];
+	const kept = values.filter((s) => !PINNED_STATUS_SET.has(s));
+	if (kept.length === 0 && values.length > 0) return [...DEFAULT_TODO_STATUSES];
+	return kept;
+}
 
 function isDefaultTodoSelection(values: string[]): boolean {
 	if (values.length !== DEFAULT_TODO_STATUSES.length) return false;
@@ -192,8 +211,8 @@ export function TaskList({ projectId }: TaskListProps) {
 	const [stored] = useState(() => readStoredTaskFilters(projectId));
 	const [search, setSearch] = useState(stored?.search ?? '');
 	const [debouncedSearch, setDebouncedSearch] = useState((stored?.search ?? '').trim());
-	const [statusValues, setStatusValues] = useState<string[]>(
-		stored?.statusValues ?? [...DEFAULT_TODO_STATUSES],
+	const [statusValues, setStatusValues] = useState<string[]>(() =>
+		sanitizeTodoStatuses(stored?.statusValues),
 	);
 	const [ownerValues, setOwnerValues] = useState<string[]>(stored?.ownerValues ?? []);
 	const [sortField, setSortField] = useState<SortField>(stored?.sortField ?? 'work_order');
@@ -227,7 +246,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		const next = readStoredTaskFilters(projectId);
 		setSearch(next?.search ?? '');
 		setDebouncedSearch((next?.search ?? '').trim());
-		setStatusValues(next?.statusValues ?? [...DEFAULT_TODO_STATUSES]);
+		setStatusValues(sanitizeTodoStatuses(next?.statusValues));
 		setOwnerValues(next?.ownerValues ?? []);
 		setSortField(next?.sortField ?? 'work_order');
 		setSortDir(next?.sortDir ?? 'asc');
@@ -305,7 +324,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		[inProgressResult?.data],
 	);
 	// Split the filtered main list into "Backlog" (open work) and "Done" (terminal:
-	// done/closed/cancelled). Each group nests independently so a child whose parent
+	// done/cancelled). Each group nests independently so a child whose parent
 	// sits in the other group surfaces at the top level of its own section — the same
 	// way the In-progress / Backlog split already behaves across separate queries.
 	const { backlogTasks, doneTasks } = useMemo<{

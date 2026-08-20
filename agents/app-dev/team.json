@@ -81,6 +81,10 @@
 	],
 	"changelog": [
 		{
+			"version": 28,
+			"notes": "Removed the review task status. The Engineer hands off to QA with an active mention and records the holder in progress_summary; the exclusive test-runner slot now reads the comment thread and progress_summary instead of a status value."
+		},
+		{
 			"version": 27,
 			"notes": "Renamed the team slug from software-development to app-dev, matching the App Team name it has always shown."
 		},
@@ -185,7 +189,7 @@
 			"notes": "Initial marketplace release."
 		},
 		{
-			"version": 28,
+			"version": 29,
 			"notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		}
 	],

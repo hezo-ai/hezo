@@ -607,13 +607,13 @@ describe('MCP endpoint: tool call integration', () => {
 		expect(summary.error).toBeUndefined();
 
 		// A non-in_progress status change on another ticket is also allowed.
-		const review = await callUpdateTaskScoped(agentToken, {
+		const parked = await callUpdateTaskScoped(agentToken, {
 			project: projectId,
 			task_id: other.id,
-			status: 'review',
+			status: 'backlog',
 		});
-		expect(review.error).toBeUndefined();
-		expect(review.status).toBe('review');
+		expect(parked.error).toBeUndefined();
+		expect(parked.status).toBe('backlog');
 	});
 
 	it('update_task scope gate does not apply to board callers', async () => {

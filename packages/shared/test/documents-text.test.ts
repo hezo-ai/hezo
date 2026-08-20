@@ -3,6 +3,7 @@ import {
 	DOC_DOWNLOAD_MIME,
 	docDownloadFilename,
 	markdownToPlainText,
+	markdownToPreviewText,
 } from '../src/documents/text.js';
 
 describe('docDownloadFilename', () => {
@@ -73,5 +74,37 @@ describe('markdownToPlainText', () => {
 
 	it('drops horizontal rules', () => {
 		expect(markdownToPlainText('above\n\n---\n\nbelow')).toBe('above\n\nbelow');
+	});
+
+	it('leaves intraword underscores alone so identifiers survive', () => {
+		expect(markdownToPlainText('call create_comment then update_comment')).toBe(
+			'call create_comment then update_comment',
+		);
+		expect(markdownToPlainText('the column is agent__run__id')).toBe(
+			'the column is agent__run__id',
+		);
+	});
+
+	it('leaves an asterisk that hugs no content alone', () => {
+		expect(markdownToPlainText('2 * 3 * 4 = 24')).toBe('2 * 3 * 4 = 24');
+	});
+});
+
+describe('markdownToPreviewText', () => {
+	it('folds a multi-line body into one stripped line', () => {
+		const md = '**Captain review: PASS.**\n\nThe submission satisfies:\n\n- ZNTL uses the offering';
+		expect(markdownToPreviewText(md)).toBe(
+			'Captain review: PASS. The submission satisfies: • ZNTL uses the offering',
+		);
+	});
+
+	it('strips headings, links and inline code', () => {
+		expect(markdownToPreviewText('## Deploy\n\nSee [the doc](/x) and run `deploy`')).toBe(
+			'Deploy See the doc and run deploy',
+		);
+	});
+
+	it('returns an empty string for a body that is only markup', () => {
+		expect(markdownToPreviewText('\n\n---\n\n')).toBe('');
 	});
 });

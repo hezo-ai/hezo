@@ -2607,7 +2607,7 @@ export async function runAgent(
 								// TEAMMATE'S ACTIVE @-MENTION. That last case is the review-handoff one —
 								// a teammate @-mentions the reviewer, the reviewer does the whole review
 								// and ends the run with its verdict only in the final message, so the
-								// task sits in `review` with nobody woken. An agent's *reply* wake stays
+								// task sits open with nobody woken. An agent's *reply* wake stays
 								// excluded as the routine chatter it usually is.
 								//
 								// Admitting agent mentions is safe for a structural reason, not a

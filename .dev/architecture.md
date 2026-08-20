@@ -5179,7 +5179,11 @@ is the single home for how each kind is labelled across the three surfaces that 
 them. Read state is per user (`read_at`), and acting on the request clears it for everyone -
 `fulfill-credential` and `resolve-asset-deletion` both mark the comment's rows read, the
 same way resolving an approval retires it. Migration `057` backfilled rows for the
-credential requests that predate the fan-out.
+credential requests that predate the fan-out. Each row's `snippet` is the comment body run
+through `markdownToPreviewText` (`@hezo/shared`) and truncated - a preview line renders as
+plain text on all three surfaces, so a stripped body is the only form that reads as prose
+rather than source. `buildHighlightedSnippet` (search results) normalises through the same
+function, so one strip serves every preview line in the product.
 
 **Task list ordering: two tiers, then the chosen sort.** `buildTaskListOrderBy`
 (`lib/task-sort.ts`) prefixes every sort mode of `GET /api/projects/:projectId/tasks` with

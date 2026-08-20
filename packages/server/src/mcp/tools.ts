@@ -51,6 +51,7 @@ import {
 	TERMINAL_TASK_STATUSES,
 	THREAD_ROW_CATEGORIES,
 	type ThreadRowCategory,
+	taskStatusError,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -537,7 +538,7 @@ async function buildBacktickedEntityWarning(
  * Returns a warning when an agent posts an active mention (an ask) on a task
  * that is already terminal, or null otherwise. A done/cancelled task reads as
  * finished, so an ask parked on it is easy to miss — the correct move was to
- * ask before closing and keep the task in_progress/review while waiting.
+ * ask before closing and keep the task in_progress while waiting.
  * Best-effort and non-blocking, exactly like the builders above.
  */
 async function buildTerminalTaskAskWarning(
@@ -555,7 +556,7 @@ async function buildTerminalTaskAskWarning(
 	return (
 		`Note: this task is already ${status} (terminal). An ask posted on a closed task is easy ` +
 		`to miss - if you still need an answer or action, ask on an open task instead; next time ` +
-		`ask BEFORE closing and keep the task in_progress or review until the answer lands.`
+		`ask BEFORE closing and keep the task in_progress until the answer lands.`
 	);
 }
 
@@ -1393,7 +1394,11 @@ export function registerTools(
 			const params: unknown[] = [scope.projectId];
 			let idx = 2;
 			if (args.status) {
-				const statuses = (args.status as string).split(',');
+				const statuses = (args.status as string).split(',').map((v) => v.trim());
+				for (const status of statuses) {
+					const invalid = taskStatusError(status);
+					if (invalid) return { error: invalid };
+				}
 				const ph = statuses.map((_, i) => `$${idx + i}::task_status`).join(', ');
 				conditions.push(`i.status IN (${ph})`);
 				params.push(...statuses);
@@ -1858,7 +1863,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update a task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a task, set status to `done` - that is the final completed state and wakes Coach to review the task for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. A run on the task blocks a reassignment only when it belongs to some other agent - your own run never blocks you, so you can hand off a task you are running, and neither does a run belonging to the agent you are assigning to. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
+		'Update a task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a task, set status to `done` - that is the final completed state and wakes Coach to review the task for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. A run on the task blocks a reassignment only when it belongs to some other agent - your own run never blocks you, so you can hand off a task you are running, and neither does a run belonging to the agent you are assigning to. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1868,7 +1873,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a task `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
+					'New status (backlog, in_progress, blocked, done, cancelled). `done` = completed (final); marking a task `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z
@@ -1931,6 +1936,11 @@ export function registerTools(
 				const resolvedAssignee = await resolveAssigneeId(db, teamId, args.assignee_id);
 				if (!resolvedAssignee) return { error: `Assignee not found: ${args.assignee_id}` };
 				args.assignee_id = resolvedAssignee;
+			}
+
+			if (args.status !== undefined) {
+				const invalid = taskStatusError(args.status as string);
+				if (invalid) return { error: invalid };
 			}
 
 			// `done` and `cancelled` are the only terminal states; once a task is
