@@ -465,3 +465,129 @@ test('a .csv with nothing to split into columns stays plain text', async () => {
 	expect(queryByTestId('asset-csv-table')).toBeNull();
 	expect(queryByTestId('asset-viewer-preview-tab')).toBeNull();
 });
+
+test('URLs in a CSV cell render as links, bounded by the cell they sit in', async () => {
+	const content = [
+		'original_tweet_url,reply_text,contact',
+		'https://x.com/PenguinWeb3/status/2087206311586918767,"Ask about it (see www.hezo.ai/docs).",ops@hezo.ai',
+	].join('\n');
+	const { container, findByTestId } = await setupViewer({
+		filename: 'links.csv',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(content),
+	});
+
+	const table = await findByTestId('asset-csv-table');
+	const links = Array.from(table.querySelectorAll('a'));
+	expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+		[
+			'https://x.com/PenguinWeb3/status/2087206311586918767',
+			'https://x.com/PenguinWeb3/status/2087206311586918767',
+		],
+		// A bare www host gains a scheme; the trailing `).` stays outside the link.
+		['www.hezo.ai/docs', 'https://www.hezo.ai/docs'],
+		['ops@hezo.ai', 'mailto:ops@hezo.ai'],
+	]);
+	for (const a of links) {
+		expect(a.getAttribute('target')).toBe('_blank');
+		expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+	}
+
+	// The cells still read exactly as parsed - linking adds elements, never text.
+	const firstRow = table.querySelectorAll('tbody tr')[0];
+	expect(Array.from(firstRow.querySelectorAll('td')).map((td) => td.textContent)).toEqual([
+		'https://x.com/PenguinWeb3/status/2087206311586918767',
+		'Ask about it (see www.hezo.ai/docs).',
+		'ops@hezo.ai',
+	]);
+	// A header cell holds no URL, so the header row gains no links.
+	expect(container.querySelectorAll('th a').length).toBe(0);
+});
+
+test('a URL ending one CSV cell never runs into the next cell', async () => {
+	// The table anchors review quotes over a flat stream that concatenates cells
+	// with no separator ("…/a" + "high"), so links have to be found per cell.
+	const content = ['url,priority', 'https://x.com/a,high'].join('\n');
+	const { findByTestId } = await setupViewer({
+		filename: 'adjacent.csv',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(content),
+	});
+
+	const table = await findByTestId('asset-csv-table');
+	const links = Array.from(table.querySelectorAll('a'));
+	expect(links.length).toBe(1);
+	expect(links[0].textContent).toBe('https://x.com/a');
+	expect(links[0].getAttribute('href')).toBe('https://x.com/a');
+});
+
+test('a plain-text asset links its URLs and still anchors review quotes across them', async () => {
+	const txt = 'run failed, see https://ci.example.com/job/42 for the log\nsecond line';
+	const { container, findByTestId } = await setupViewer({
+		filename: 'run.txt',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(txt),
+		comments: [{ quote: 'see https://ci.example.com/job/42 for', comment: 'Link the run instead' }],
+	});
+
+	const pre = await findByTestId('asset-plain-text');
+	// The rendered text stream is byte-identical to the file, which is what keeps
+	// selection anchors resolvable.
+	expect(pre.textContent).toBe(txt);
+
+	const link = pre.querySelector('a') as HTMLAnchorElement;
+	expect(link.textContent).toBe('https://ci.example.com/job/42');
+	expect(link.getAttribute('href')).toBe('https://ci.example.com/job/42');
+
+	// The seeded quote spans the link, so the highlight wraps it rather than
+	// being displaced by it.
+	await waitFor(() => {
+		const marks = Array.from(container.querySelectorAll('mark[data-review-id]'));
+		expect(marks.map((m) => m.textContent).join('')).toBe('see https://ci.example.com/job/42 for');
+		expect(marks.some((m) => m.querySelector('a'))).toBe(true);
+	});
+});
+
+test('the Source tab leaves the raw file unlinked', async () => {
+	// Preview links per parsed cell; Source shows bytes nothing parsed. Linking
+	// there would run a URL into the delimiter after it - `https://x.com/a,high`
+	// rather than `https://x.com/a` - because a comma is a legal URL character
+	// and only the CSV parser knows this one separates fields.
+	const content = ['url,priority', 'https://x.com/a,high'].join('\n');
+	const { findByTestId, user } = await setupViewer({
+		filename: 'source-raw.csv',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(content),
+	});
+
+	expect((await findByTestId('asset-csv-table')).querySelectorAll('a').length).toBe(1);
+
+	await user.click(await findByTestId('asset-viewer-source-tab'));
+	const source = await findByTestId('asset-viewer-source');
+	expect(source.textContent).toBe(content);
+	expect(source.querySelectorAll('a').length).toBe(0);
+});
+
+test('a review highlight activates from the keyboard as well as the mouse', async () => {
+	const txt = 'first line of output\nsecond line with the flaky assertion\nthird line';
+	const { container, findByTestId, user } = await setupViewer({
+		filename: 'keyboard.txt',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(txt),
+		comments: [{ quote: 'flaky assertion', comment: 'This is the real bug' }],
+	});
+
+	let mark!: HTMLElement;
+	await waitFor(() => {
+		mark = container.querySelector('mark[data-review-id]') as HTMLElement;
+		expect(mark).not.toBeNull();
+	});
+
+	// The mark carries role="button" + tabIndex, so Enter and Space have to open
+	// its comment the same way a click does.
+	const row = await findByTestId('asset-review-row');
+	expect(row.getAttribute('data-active')).not.toBe('true');
+	mark.focus();
+	await user.keyboard('{Enter}');
+	await waitFor(() => expect(row.getAttribute('data-active')).toBe('true'));
+});

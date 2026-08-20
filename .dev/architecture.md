@@ -635,7 +635,14 @@ the asset viewer reuses for text assets (markdown through the same rehype plugin
 text through `PlainTextWithHighlights`, a CSV through `CsvTable`). The three highlight
 painters share one resolver, `claimQuoteRanges`, and the two non-markdown ones share
 `ReviewTextSegments`; a CSV's stream is its cells concatenated in document order, which the
-table keeps byte-identical to the DOM by emitting no text of its own. Those same three surfaces each carry
+table keeps byte-identical to the DOM by emitting no text of its own. Those two surfaces also
+**autolink**: `findLinkRanges` (`packages/web/src/lib/autolink.ts`) finds `http(s)://`, `www.`,
+`mailto:` and bare-email runs - and only those four, so no other scheme can be emitted from
+file content - and `segmentsForSlice` splits the stream on link and review boundaries together,
+so a quote overlapping a URL still resolves. Links are found **per CSV cell** and shifted into
+the stream afterwards, because the stream concatenates cells with no separator; the anchors
+carry only the segment's own text, so the DOM stream is unchanged and anchoring is unaffected.
+Markdown reaches the same reading through remark-gfm's autolink literals. Those same three surfaces each carry
 `DocumentDownloadMenu` (`packages/web/src/components/document-download-menu.tsx`) — a
 client-side save of the already-loaded content as Markdown (verbatim) or plain text
 (`markdownToPlainText`), no server round-trip; the two preview surfaces render it in the

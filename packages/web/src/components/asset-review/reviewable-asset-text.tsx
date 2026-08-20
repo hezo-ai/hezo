@@ -48,7 +48,7 @@ interface ReviewableAssetTextProps {
  * Types with a richer reading than their raw bytes - markdown as prose, a CSV
  * as a table - render that as the Preview tab and keep the raw file behind
  * Source. Anchors are computed over the Preview stream, so the Source tab
- * renders without review affordances.
+ * renders without review affordances, and without autolinking (see below).
  */
 export function ReviewableAssetText({
 	projectId,
@@ -202,6 +202,12 @@ export function ReviewableAssetText({
 					)}
 				</>
 			) : (
+				// Source stays raw, deliberately: it is the only surface here showing
+				// bytes that were never parsed. Autolinking a delimited file would run
+				// a URL straight into the delimiter after it - a raw CSV row linked
+				// `https://x.com/a,high` rather than `https://x.com/a`, because a
+				// comma is a legal URL character and only the parser knows this one
+				// separates fields. Preview links instead, per parsed cell.
 				<pre
 					className="whitespace-pre-wrap break-words font-mono text-[12px] text-text-1"
 					data-testid="asset-viewer-source"

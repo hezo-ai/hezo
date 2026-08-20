@@ -142,7 +142,9 @@ agent's **HTML** deliverable (a mockup, a dashboard, a report) renders live and 
 in a **sandbox**, isolated from your instance and your data, so viewing an agent's output is
 safe by default; **markdown** renders as formatted prose with a **view-source** toggle; a
 **CSV** renders as a table, quoted cells resolved, with the raw file behind the same toggle;
-images and SVGs display scaled to fit; other types show a summary card. **Open raw** in the
+images and SVGs display scaled to fit; other types show a summary card. In a **CSV** cell or a
+**plain-text** file, any web address, `www.` host or email address you can read is a link you
+can click - it opens in a new tab, so a column of URLs needs no copy-and-paste. **Open raw** in the
 viewer's toolbar still opens the underlying file in its own tab whenever you want the
 unwrapped thing. A **dropdown** next to the breadcrumb opens a name search for jumping
 straight to another asset without returning to the library.
