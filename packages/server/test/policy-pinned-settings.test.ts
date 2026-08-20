@@ -140,6 +140,34 @@ describe('PATCH /instance-settings', () => {
 	});
 });
 
+describe('PATCH /container-hours', () => {
+	it('refuses a pinned allowance, like every other pinned key', async () => {
+		// The allowance is the setting a compute-metered deployment is most likely
+		// to fix, and it has its own route - so it needs its own guard rather than
+		// inheriting the instance-settings one.
+		pin({ monthlyContainerHours: 100 }, 'Acme Cloud');
+		const res = await app.request('/api/container-hours', {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ monthly_hours: 500 }),
+		});
+		expect(res.status).toBe(409);
+		expect((await res.json()).error.message).toContain('Acme Cloud');
+	});
+
+	it('reports the pin on the read, so the control renders locked', async () => {
+		pin({ monthlyContainerHours: 100 }, 'Acme Cloud', 'https://example.com/plan');
+		const res = await app.request('/api/container-hours', { headers: authHeader(token) });
+		const data = (await res.json()).data as Record<string, unknown>;
+		expect(data.monthly_hours).toBe(100);
+		expect(data.monthly_hours_pinned).toBe(true);
+		expect(data.policy).toEqual({
+			managed_by: 'Acme Cloud',
+			manage_url: 'https://example.com/plan',
+		});
+	});
+});
+
 describe('GET /instance-settings', () => {
 	async function payload() {
 		const res = await app.request('/api/instance-settings', { headers: authHeader(token) });

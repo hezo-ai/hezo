@@ -12,6 +12,7 @@ import { formatDuration, hoursSpent, secondsToHours } from '../../lib/format-dur
 import { useI18n } from '../../lib/i18n';
 import { formatBucketLabel } from '../charts/chart-format';
 import { type SeriesCell, StackedSeriesChart } from '../charts/stacked-series-chart';
+import { ManagedSetting } from '../settings/managed-setting';
 import { BudgetBar } from '../ui/budget-bar';
 import { SectionHeader } from '../ui/section-header';
 import { SegmentedControl } from '../ui/segmented-control';
@@ -276,7 +277,11 @@ export function InstanceContainerHoursPanel() {
 			/>
 			{/* The cap gates container starts instance-wide, so it belongs to this
 			    scope alone - and only where an hour costs something. */}
-			{data?.metered && <MonthlyHoursCap monthlyHours={capHours} />}
+			{data?.metered && (
+				<ManagedSetting pinned={data.monthly_hours_pinned}>
+					<MonthlyHoursCap monthlyHours={capHours} />
+				</ManagedSetting>
+			)}
 			{data && !data.metered && (
 				<div className="flex items-start gap-2.5 rounded-lg border border-border bg-surface p-4 shadow-xs">
 					<Clock className="mt-0.5 h-4 w-4 shrink-0 text-text-3" aria-hidden />

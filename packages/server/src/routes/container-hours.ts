@@ -1,7 +1,8 @@
 import { HoursBucket, isHoursBucket, SANDBOX_BACKEND_KIND, SandboxBackend } from '@hezo/shared';
 import { Hono } from 'hono';
+import { runtimeConfig } from '../config/runtime';
 import { err, ok } from '../lib/response';
-import { getMonthlyContainerHours, setMonthlyContainerHours } from '../lib/system-meta';
+import { getMonthlyContainerHours, isPinned, setMonthlyContainerHours } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
 import {
@@ -12,6 +13,13 @@ import {
 import { getStoredSandboxBackend } from '../services/sandbox/backend-store';
 
 export const containerHoursRoutes = new Hono<Env>();
+
+/** The rendered half of the policy - a name and an optional link, never anything to branch on. */
+function policyBanner(): { managed_by: string; manage_url: string | null } | null {
+	const policy = runtimeConfig().policy;
+	if (!policy) return null;
+	return { managed_by: policy.managedBy, manage_url: policy.manageUrl ?? null };
+}
 
 /**
  * Container hours - what the instance's containers actually cost in uptime, as
@@ -81,6 +89,11 @@ containerHoursRoutes.get('/container-hours', async (c) => {
 		by_project: byProject,
 		totals,
 		monthly_hours: monthlyHours,
+		// Provenance, matching the instance-settings payload: the page renders a
+		// locked control from this rather than offering an edit the PATCH below
+		// will refuse.
+		monthly_hours_pinned: isPinned('monthlyContainerHours'),
+		policy: policyBanner(),
 		// What the *cap* is worth showing for. On a local daemon a container-hour
 		// costs nothing anyone bills, so the page renders the series as
 		// observability and leaves the cap controls out rather than inviting an
@@ -93,6 +106,19 @@ containerHoursRoutes.get('/container-hours', async (c) => {
 containerHoursRoutes.patch('/container-hours', async (c) => {
 	const denied = requireSuperuser(c);
 	if (denied) return denied;
+
+	// Refused, never silently ignored - the same rule the instance-settings PATCH
+	// applies, and for the same reason: a deployment's tenant is superuser on
+	// their own instance and can call this directly.
+	const policy = runtimeConfig().policy;
+	if (policy && isPinned('monthlyContainerHours')) {
+		return err(
+			c,
+			'CONFLICT',
+			`monthly_hours is set by ${policy.managedBy} and cannot be changed here.`,
+			409,
+		);
+	}
 
 	const body: { monthly_hours?: unknown } = await c.req
 		.json<{ monthly_hours?: unknown }>()

@@ -55,6 +55,10 @@ export interface InstanceContainerHours extends ProjectContainerHours {
 	 * resource nobody bills them for.
 	 */
 	metered: boolean;
+	/** Set when this deployment fixed the allowance, so the control renders locked. */
+	monthly_hours_pinned: boolean;
+	/** Who fixed it and where to change it, or null when nothing is pinned. */
+	policy: { managed_by: string; manage_url: string | null } | null;
 }
 
 /** One project's container hours. Serves the tiles and the chart from one request. */
