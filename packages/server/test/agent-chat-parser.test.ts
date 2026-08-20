@@ -80,7 +80,17 @@ describe('agent-chat-parser — Claude Code', () => {
 				},
 			},
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 150, outputTokens: 50, costCents: 24 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 150,
+			outputTokens: 50,
+			costCents: 24,
+			buckets: {
+				inputTokens: 100,
+				cacheCreationTokens: 20,
+				cacheReadTokens: 30,
+				outputTokens: 50,
+			},
+		});
 		expect(seen).toEqual([
 			{
 				model: 'claude-x',
@@ -99,13 +109,33 @@ describe('agent-chat-parser — Claude Code', () => {
 		feed(parser, [
 			{ type: 'result', total_cost_usd: 0.25, usage: { input_tokens: 100, output_tokens: 50 } },
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 100, outputTokens: 50, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 100,
+			outputTokens: 50,
+			costCents: 0,
+			buckets: {
+				inputTokens: 100,
+				cacheCreationTokens: 0,
+				cacheReadTokens: 0,
+				outputTokens: 50,
+			},
+		});
 	});
 
 	it('handles a result event with no usage object (defaults to zero)', () => {
 		const parser = createAgentChatParser(AgentRuntime.ClaudeCode);
 		feed(parser, [{ type: 'result' }]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 0, outputTokens: 0, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 0,
+			outputTokens: 0,
+			costCents: 0,
+			buckets: {
+				inputTokens: 0,
+				cacheCreationTokens: 0,
+				cacheReadTokens: 0,
+				outputTokens: 0,
+			},
+		});
 	});
 
 	it('reports null usage before any terminal event', () => {
@@ -181,13 +211,31 @@ describe('agent-chat-parser — Codex', () => {
 			},
 		]);
 		expect(events).toEqual([]); // terminal events yield no chat text
-		expect(parser.getUsage()).toEqual({ inputTokens: 500, outputTokens: 50, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 500,
+			outputTokens: 50,
+			costCents: 0,
+			buckets: {
+				inputTokens: 500,
+				cacheReadTokens: 0,
+				outputTokens: 50,
+			},
+		});
 	});
 
 	it('captures usage from turn.failed too', () => {
 		const parser = createAgentChatParser(AgentRuntime.Codex);
 		feed(parser, [{ type: 'turn.failed', usage: { input_tokens: 7, output_tokens: 3 } }]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 7, outputTokens: 3, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 7,
+			outputTokens: 3,
+			costCents: 0,
+			buckets: {
+				inputTokens: 7,
+				cacheReadTokens: 0,
+				outputTokens: 3,
+			},
+		});
 	});
 
 	it('drops empty agent messages and unknown item kinds', () => {
@@ -240,7 +288,16 @@ describe('agent-chat-parser — Antigravity', () => {
 				usage: { input_tokens: 1000, output_tokens: 120, cache_read_tokens: 0 },
 			}),
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 1000, outputTokens: 120, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 1000,
+			outputTokens: 120,
+			costCents: 0,
+			buckets: {
+				inputTokens: 1000,
+				cacheReadTokens: 0,
+				outputTokens: 120,
+			},
+		});
 	});
 });
 
@@ -261,7 +318,17 @@ describe('agent-chat-parser — generic (OpenCode)', () => {
 			{ type: 'init', model: 'opencode-model' },
 			{ type: 'result', usage: { input_tokens: 300, output_tokens: 60 } },
 		]);
-		expect(parser.getUsage()).toEqual({ inputTokens: 300, outputTokens: 60, costCents: 0 });
+		expect(parser.getUsage()).toEqual({
+			inputTokens: 300,
+			outputTokens: 60,
+			costCents: 0,
+			buckets: {
+				inputTokens: 300,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				outputTokens: 60,
+			},
+		});
 	});
 
 	it('drops non-object lines and unrecognized events', () => {

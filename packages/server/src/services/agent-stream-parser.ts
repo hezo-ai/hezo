@@ -21,9 +21,49 @@ import { AgentRuntime, type CostTokens } from '@hezo/shared';
 import { HEZO_MCP_SERVER_NAME } from './runtime-adapters/types';
 
 export interface AgentRunUsage {
+	/**
+	 * TOTAL input: uncached plus both cache buckets.
+	 *
+	 * This is the opposite convention to {@link CostTokens.inputTokens}, which is
+	 * the UNCACHED remainder because that is the portion billed at the full input
+	 * rate. Two meanings of one phrase is one too many already - do not add a
+	 * third. `heartbeat_runs.input_tokens` and the `[done] … tokens=<in>/<out>`
+	 * line both carry the total, so the uncached figure is this less `buckets`.
+	 */
 	inputTokens: number;
 	outputTokens: number;
 	costCents: number;
+	/**
+	 * The split the cost was computed from, or null where a runtime cannot say.
+	 *
+	 * Persisted so a recorded cost is auditable after the fact: a figure made of
+	 * cache reads at a tenth of the input rate and one made of fresh input are
+	 * very different runs, and collapsing them to a sum loses which it was.
+	 */
+	buckets: CostTokens | null;
+}
+
+/**
+ * Build a usage record from the buckets a runtime reported.
+ *
+ * One helper rather than nine object literals, because the field that is easy to
+ * get wrong is derived here once. Every runtime reports its buckets differently
+ * - some state the uncached remainder, some state a total the cache is already
+ * inside - but all of them normalize to `CostTokens` before pricing, so the
+ * total is that normalized form summed, every time.
+ */
+function toRunUsage(
+	price: PriceModelFn,
+	model: string | undefined,
+	buckets: CostTokens,
+): AgentRunUsage {
+	return {
+		inputTokens:
+			buckets.inputTokens + (buckets.cacheReadTokens ?? 0) + (buckets.cacheCreationTokens ?? 0),
+		outputTokens: buckets.outputTokens,
+		costCents: price(model, buckets),
+		buckets,
+	};
 }
 
 /**
@@ -320,16 +360,12 @@ function createClaudeChatParser(price: PriceModelFn): AgentChatParser {
 			const output = u.output_tokens ?? 0;
 			// Same policy as the run parser: the runtime's own dollar figure is
 			// ignored; cost comes from the pricing table over the token buckets.
-			usage = {
-				inputTokens: regularInput + cacheCreation + cacheRead,
+			usage = toRunUsage(price, modelId, {
+				inputTokens: regularInput,
+				cacheCreationTokens: cacheCreation,
+				cacheReadTokens: cacheRead,
 				outputTokens: output,
-				costCents: price(modelId, {
-					inputTokens: regularInput,
-					cacheCreationTokens: cacheCreation,
-					cacheReadTokens: cacheRead,
-					outputTokens: output,
-				}),
-			};
+			});
 		}
 		return out;
 	};
@@ -352,15 +388,11 @@ function createCodexChatParser(price: PriceModelFn, runModel?: string): AgentCha
 			const input = u.input_tokens ?? 0;
 			const cached = u.cached_input_tokens ?? 0;
 			const output = (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0);
-			usage = {
-				inputTokens: input,
+			usage = toRunUsage(price, modelId, {
+				inputTokens: Math.max(0, input - cached),
+				cacheReadTokens: cached,
 				outputTokens: output,
-				costCents: price(modelId, {
-					inputTokens: Math.max(0, input - cached),
-					cacheReadTokens: cached,
-					outputTokens: output,
-				}),
-			};
+			});
 			return [];
 		}
 		if (type === 'item.completed' && event.item) {
@@ -624,16 +656,12 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 				run.cacheCreation += mu.cache_creation_input_tokens ?? 0;
 				run.cacheRead += mu.cache_read_input_tokens ?? 0;
 				run.output += mu.output_tokens ?? 0;
-				usage = {
-					inputTokens: run.input + run.cacheCreation + run.cacheRead,
+				usage = toRunUsage(price, modelId, {
+					inputTokens: run.input,
+					cacheCreationTokens: run.cacheCreation,
+					cacheReadTokens: run.cacheRead,
 					outputTokens: run.output,
-					costCents: price(modelId, {
-						inputTokens: run.input,
-						cacheCreationTokens: run.cacheCreation,
-						cacheReadTokens: run.cacheRead,
-						outputTokens: run.output,
-					}),
-				};
+				});
 			}
 			const blocks = normalizeContent(event.message.content);
 			for (const block of blocks) {
@@ -684,13 +712,13 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 			// client-side estimate from the CLI's rate card, which is the wrong
 			// provider's for third-party Anthropic-compatible endpoints. Cost always
 			// comes from the pricing table over the reported token buckets.
-			const costCents = price(modelId, {
+			usage = toRunUsage(price, modelId, {
 				inputTokens: regularInput,
 				cacheCreationTokens: cacheCreation,
 				cacheReadTokens: cacheRead,
 				outputTokens: output,
 			});
-			usage = { inputTokens: input, outputTokens: output, costCents };
+			const costCents = usage.costCents;
 			const duration = event.duration_ms ?? 0;
 			const turns = event.num_turns ?? 0;
 			const status = event.is_error ? 'error' : (event.subtype ?? 'success');
@@ -799,15 +827,11 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 			const output = (u.output_tokens ?? 0) + (u.reasoning_output_tokens ?? 0);
 			// `input_tokens` already includes `cached_input_tokens`; price the cached
 			// portion at the (discounted) cache-read rate, the rest at full input.
-			usage = {
-				inputTokens: input,
+			usage = toRunUsage(price, modelId, {
+				inputTokens: Math.max(0, input - cached),
+				cacheReadTokens: cached,
 				outputTokens: output,
-				costCents: price(modelId, {
-					inputTokens: Math.max(0, input - cached),
-					cacheReadTokens: cached,
-					outputTokens: output,
-				}),
-			};
+			});
 			const status = type === 'turn.failed' ? 'error' : 'success';
 			return [`[done] ${status} turns=${turns} tokens=${input}/${output}`];
 		}
@@ -922,11 +946,11 @@ function antigravityUsage(
 	const input = u?.input_tokens ?? 0;
 	const cached = u?.cache_read_tokens ?? 0;
 	const output = u?.output_tokens ?? 0;
-	return {
+	return toRunUsage(price, model, {
 		inputTokens: input,
+		cacheReadTokens: cached,
 		outputTokens: output,
-		costCents: price(model, { inputTokens: input, cacheReadTokens: cached, outputTokens: output }),
-	};
+	});
 }
 
 function createAntigravityParser(
@@ -1196,16 +1220,12 @@ function priceGenericUsage(
 	price: PriceModelFn,
 	modelId: string | undefined,
 ): AgentRunUsage {
-	return {
-		inputTokens: total.input + total.cacheRead + total.cacheWrite,
+	return toRunUsage(price, modelId, {
+		inputTokens: total.input,
+		cacheReadTokens: total.cacheRead,
+		cacheCreationTokens: total.cacheWrite,
 		outputTokens: total.output,
-		costCents: price(modelId, {
-			inputTokens: total.input,
-			cacheReadTokens: total.cacheRead,
-			cacheCreationTokens: total.cacheWrite,
-			outputTokens: total.output,
-		}),
-	};
+	});
 }
 
 const GENERIC_TERMINAL_RE = /complete|finish|result|done|stop|\bend\b/i;
@@ -1497,12 +1517,11 @@ export function extractGrokUsageFromDebugLog(
 		cacheRead += t.cacheRead;
 		if (t.model) model = t.model;
 	}
-	const costCents = price(model, {
+	return toRunUsage(price, model, {
 		inputTokens: Math.max(0, input - cacheRead),
 		cacheReadTokens: cacheRead,
 		outputTokens: output,
 	});
-	return { inputTokens: input, outputTokens: output, costCents };
 }
 
 // ---------------------------------------------------------------------------
@@ -1756,17 +1775,12 @@ export function extractKimiUsageFromSessionLog(
 	// `inputOther` is the non-cached remainder ("other" than cache), so unlike
 	// Codex/Grok it must NOT have the cached portion subtracted out — each bucket
 	// is billed at its own rate directly.
-	const costCents = price(model, {
+	return toRunUsage(price, model, {
 		inputTokens: input,
 		cacheReadTokens: cacheRead,
 		cacheCreationTokens: cacheCreation,
 		outputTokens: output,
 	});
-	return {
-		inputTokens: input + cacheRead + cacheCreation,
-		outputTokens: output,
-		costCents,
-	};
 }
 
 // ---------------------------------------------------------------------------

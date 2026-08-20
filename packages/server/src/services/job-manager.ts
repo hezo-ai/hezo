@@ -1050,6 +1050,10 @@ export class JobManager {
 					inputTokens: run.input_tokens,
 					outputTokens: run.output_tokens,
 					costCents: run.cost_cents,
+					// No split to report: this is a snapshot read back off the row, and
+					// only the cost is used from here anyway. Reconstructing buckets that
+					// were never flushed would be inventing them.
+					buckets: null,
 				},
 				{
 					wsManager,

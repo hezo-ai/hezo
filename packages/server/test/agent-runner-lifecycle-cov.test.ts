@@ -1646,7 +1646,7 @@ describe('recordRunCostAndEnforce', () => {
 		await recordRunCostAndEnforce(
 			db,
 			'ignored-run-id',
-			{ inputTokens: 10, outputTokens: 10, costCents: 0 },
+			{ inputTokens: 10, outputTokens: 10, costCents: 0, buckets: null },
 			{ teamId, taskId: null, memberId: agentId },
 		);
 		const after = await db.query<{ c: number }>(
@@ -1668,7 +1668,7 @@ describe('recordRunCostAndEnforce', () => {
 			recordRunCostAndEnforce(
 				throwingDb,
 				'run-x',
-				{ inputTokens: 1, outputTokens: 1, costCents: 5 },
+				{ inputTokens: 1, outputTokens: 1, costCents: 5, buckets: null },
 				{ teamId, taskId: null, memberId: agentId },
 			),
 		).resolves.toBeUndefined();

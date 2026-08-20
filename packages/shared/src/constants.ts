@@ -669,6 +669,51 @@ export const RUN_CANCEL_BEHAVIOUR: Record<
 };
 
 /**
+ * Why a container's running stretch ended, on a `container_uptime_entries` row.
+ *
+ * The ledger records what a container cost, and a managed backend bills a
+ * started sandbox for vCPU + RAM + disk but a stopped one for reserved disk
+ * only. So compute billing ends at every one of these, and a container that
+ * suspends and resumes is two intervals rather than one reopened.
+ *
+ * Kept as a value set here (read through {@link isContainerUptimeEndReason})
+ * rather than a PG enum, matching `cancel_reason` and `queued_reason`: a reason
+ * written by a newer server degrades to "unattributed" on an older client
+ * instead of throwing mid-render.
+ */
+export const ContainerUptimeEndReason = {
+	/** The idle sweep or a lifecycle call stopped it; its filesystem survives. */
+	Stopped: 'stopped',
+	/** Suspended to free budget memory for another project, or by the provider's own idle timer. */
+	Suspended: 'suspended',
+	/** Removed outright - retired, torn down, or recycled at its disk ceiling. */
+	Destroyed: 'destroyed',
+	/**
+	 * The engine no longer knows this container, so the sweep closed the interval
+	 * on its behalf. Under-counts by design: the close time is the last moment
+	 * there was evidence the container existed, which is never later than the
+	 * moment it actually stopped.
+	 */
+	Reconciled: 'reconciled',
+} as const;
+export type ContainerUptimeEndReason =
+	(typeof ContainerUptimeEndReason)[keyof typeof ContainerUptimeEndReason];
+
+export const CONTAINER_UPTIME_END_REASONS = [
+	ContainerUptimeEndReason.Stopped,
+	ContainerUptimeEndReason.Suspended,
+	ContainerUptimeEndReason.Destroyed,
+	ContainerUptimeEndReason.Reconciled,
+] as const;
+
+/** Whether a stored `end_reason` is one this build knows how to explain. */
+export function isContainerUptimeEndReason(value: unknown): value is ContainerUptimeEndReason {
+	return (
+		typeof value === 'string' && (CONTAINER_UPTIME_END_REASONS as readonly string[]).includes(value)
+	);
+}
+
+/**
  * Whether a stored `cancel_reason` is one this build knows what to do with.
  *
  * Guarding rather than indexing straight into the table matters across a

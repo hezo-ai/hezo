@@ -487,7 +487,12 @@ describe('agent-stream-parser', () => {
 			const half = Math.floor(serialized.length / 2);
 			expect(parser.onStdout(serialized.slice(0, half))).toBe('');
 			parser.onStdout(`${serialized.slice(half)}\n`);
-			expect(parser.getUsage()).toEqual({ inputTokens: 5, outputTokens: 7, costCents: 0 });
+			expect(parser.getUsage()).toEqual({
+				inputTokens: 5,
+				outputTokens: 7,
+				costCents: 0,
+				buckets: { inputTokens: 5, cacheReadTokens: 0, outputTokens: 7 },
+			});
 		});
 
 		it('drops unknown events instead of emitting raw JSON', () => {
@@ -519,10 +524,12 @@ describe('agent-stream-parser', () => {
 					},
 				}),
 			);
-			expect(out).toContain('[done] success tokens=24939/174');
+			// 24939 uncached + 21263 cache reads. The done line reports the total, as
+			// every other runtime's does.
+			expect(out).toContain('[done] success tokens=46202/174');
 
 			const usage = parser.getUsage();
-			expect(usage?.inputTokens).toBe(24939);
+			expect(usage?.inputTokens).toBe(46202);
 			expect(usage?.outputTokens).toBe(174);
 			expect(usage?.costCents).toBe(0);
 		});
@@ -556,8 +563,16 @@ describe('agent-stream-parser', () => {
 				}),
 			);
 			const usage = parser.getUsage();
-			// No subtraction (unlike Codex): input_tokens is already the non-cached input.
-			expect(usage?.inputTokens).toBe(52921);
+			// No subtraction (unlike Codex): input_tokens is already the non-cached
+			// input, so it reaches the pricing buckets as stated.
+			expect(usage?.buckets).toEqual({
+				inputTokens: 52921,
+				cacheReadTokens: 40586,
+				outputTokens: 602,
+			});
+			// The reported total adds the cache back in, so it means the same thing
+			// here as it does for every other runtime.
+			expect(usage?.inputTokens).toBe(52921 + 40586);
 			expect(usage?.outputTokens).toBe(602);
 			expect(usage?.costCents).toBeGreaterThan(0);
 		});

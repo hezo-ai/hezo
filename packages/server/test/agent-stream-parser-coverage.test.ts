@@ -194,10 +194,15 @@ describe('antigravity renderEvent branches', () => {
 			}),
 		);
 		const usage = parser.getUsage();
-		expect(usage?.inputTokens).toBe(60);
-		expect(usage?.outputTokens).toBe(25);
-		// input_tokens is already the non-cached input, priced as-is; cache_read separate.
+		// Two different figures, and the gap between them is the point of this test.
+		// PRICING takes agy's buckets as stated - `input_tokens` is already the
+		// non-cached input, so there is nothing to subtract out (unlike Codex).
 		expect(seen).toEqual([{ model: 'gemini-pro', input: 60, cacheRead: 40, output: 25 }]);
+		expect(usage?.buckets).toEqual({ inputTokens: 60, cacheReadTokens: 40, outputTokens: 25 });
+		// The REPORTED total is cache-inclusive, matching every other runtime and the
+		// `heartbeat_runs.input_tokens` column.
+		expect(usage?.inputTokens).toBe(100);
+		expect(usage?.outputTokens).toBe(25);
 	});
 });
 

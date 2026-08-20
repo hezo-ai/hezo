@@ -561,7 +561,21 @@ Deriving rather than baking absolute figures keeps cache rates correct when a ba
 price moves and covers models released after the table ships. An author with no
 known multipliers keeps NULL rates and still bills cache traffic at the full input
 rate - a conservative upper bound, and the honest answer until that provider's
-multipliers are verified. Budgets are **windowed and computed on
+multipliers are verified.
+
+**The split behind a cost is persisted, not just priced.** Every parser normalizes its
+runtime's buckets to `CostTokens` before pricing, and `toRunUsage` (`agent-stream-parser.ts`)
+is the single place that turns those into an `AgentRunUsage`: it carries the buckets
+through on `usage.buckets` and derives `inputTokens` as their sum. Both halves land on
+`heartbeat_runs` - `cache_read_tokens` / `cache_creation_tokens` alongside the existing
+`input_tokens` - on the mid-run flush as well as at completion, so a run killed
+mid-flight keeps an auditable cost rather than a bare total. **Watch the two conventions:**
+`heartbeat_runs.input_tokens` and the `[done]` line carry the TOTAL including cache, while
+`CostTokens.inputTokens` is the UNCACHED remainder, because that is the portion billed at
+the full rate. Deriving the total in one helper is what made Antigravity's reporting
+consistent with the rest: its buckets are disjoint, so reporting its stated `input_tokens`
+had been excluding cache reads from both the column and the log line, alone among the
+runtimes. Budgets are **windowed and computed on
 demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
 `projects` (0 = unlimited; there is **no team budget**), and spend is summed from
 `cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed
