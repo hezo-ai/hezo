@@ -56,9 +56,11 @@ import {
 	claimPoolMember,
 	clearProjectContainerIfNamed,
 	decidePoolAcquisition,
+	ensurePoolMemberUptimeOpen,
 	listPoolContainerIds,
 	listPoolMembersForReconcile,
 	loadPoolMembers,
+	markPoolMemberRunning,
 	readPoolMemberAllocation,
 	recordPoolMemberMemoryIfUnknown,
 	releasePoolMember,
@@ -876,6 +878,10 @@ export async function ensureProjectContainerRunning(
 			if (info) {
 				// Container exists but is stopped — start it in place.
 				await docker.startContainer(proj.container_id);
+				// The pool is told too, not just `projects`: its member still reads
+				// `suspended`, and a member the pool believes is down bills nothing while
+				// the container it names is up. No-op when no member names this container.
+				await markPoolMemberRunning(db, proj.container_id);
 				await db.query(
 					`UPDATE projects
 					 SET container_status = $1::container_status, container_error = NULL,
@@ -2784,7 +2790,22 @@ export async function reconcilePoolMembers(
 			);
 		}
 
-		if (info.State.Running) continue;
+		if (info.State.Running) {
+			// The repair the ledger cannot do for itself. A container can reach a
+			// running state with no open interval - a member older than the ledger, or
+			// one closed while the container stayed up - and it then bills nothing for
+			// the rest of its life: the warm paths open on a row that moved, which a
+			// container nobody claims never does, and this pass used to be the one
+			// thing that looks at a healthy member and it just walked past. Rides the
+			// round trip already made above, like the memory learn.
+			//
+			// `idle`/`busy` only: `error` means the pool has stopped believing this
+			// container is up, and `creating` opened its interval at the upsert.
+			if (member.state === 'idle' || member.state === 'busy') {
+				await ensurePoolMemberUptimeOpen(db, member.containerId);
+			}
+			continue;
+		}
 		// Only a member the pool believed was up. `suspended` is already stopped,
 		// and `creating`/`error` are outside the ladder - a container still coming
 		// up legitimately reads not-running, and judging it dead here would fail

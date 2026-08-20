@@ -599,16 +599,37 @@ ceiling would mostly fire on legitimately expensive work.
 `container_uptime_entries` (migration 071) records **one row per running stretch**, not
 per container lifetime: a managed backend bills a started sandbox for vCPU + RAM + disk
 and a stopped one for reserved disk only, so a suspend/resume cycle is two rows with a
-free gap between them. Writes live inside `upsertPoolMember` / `setPoolMemberState` /
-`removePoolMember` (`services/sandbox/uptime-ledger.ts`, called from `pool-db.ts`), so the
-ledger cannot drift from the lifecycle it records - the same reasoning that puts the wake
-receipt inside `fireCommentWakeups`. The interval opens at the `creating` upsert rather
+free gap between them. **Every write of `container_pool_members.state` moves the interval,
+through one funnel** - `syncUptimeForState` in `pool-db.ts`, calling
+`services/sandbox/uptime-ledger.ts` - so the ledger cannot drift from the lifecycle it
+records, the same reasoning that puts the wake receipt inside `fireCommentWakeups`.
+
+The funnel replaced per-writer calls, and the reason it exists is what those calls got
+wrong: they had been added to the two **cold** writers (provision, resume) and not to the
+three **warm** ones (`claimPoolMember`, `releasePoolMember`, `reclaimBusyPoolMembers`).
+The warm three are the only writers an ordinary run touches, so a container that reached a
+running state without an interval could never acquire one and billed nothing for the rest
+of its life - while still reporting its full allocation in the run log, since that reads
+the member row. On a backend whose sandboxes outlive a Hezo restart, that was the normal
+case rather than an edge one. The warm writers open only on a row their own `RETURNING`
+says moved, so a container the pool believes is stopped is never billed - the one
+direction cost accounting may not fail in. `reconcilePoolMembers` carries the repair for a
+member that is already running and already unbilled (`ensurePoolMemberUptimeOpen`), riding
+the liveness round trip it already makes and starting the bill at `now()` rather than at an
+invented start; `markPoolMemberRunning` covers the two paths that start a container in
+place and would otherwise tell only `projects`. Forgetting the whole pool at once
+(`clearAllPoolMembers`, used by the backend switch) closes every open interval first,
+because dropping the member rows alone strands them open and an open interval bills to
+`now()` for ever.
+
+The interval opens at the `creating` upsert rather
 than at ready, because on a managed backend the build is the longest phase of a cold start
 and bills like any other minute. `end_reason` separates an ordinary stop from a
 cross-project eviction (`ContainerUptimeEndReason.Suspended`, passed down from
 `executeRetirementPlan`), which is the only contention signal the series can show. A
 unique partial index on `(container_id) WHERE ended_at IS NULL` makes open and close
-idempotent on every path that reaches them.
+idempotent on every path that reaches them, which is what lets the repair pass and the warm
+writers call open unconditionally.
 
 Reads (`services/container-hours.ts`) **clip each interval to each window** rather than
 attributing it to the bucket it started in - `agent-hours.ts` attributes by start, which

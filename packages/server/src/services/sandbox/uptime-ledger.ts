@@ -87,6 +87,33 @@ export async function closeUptimeInterval(
 }
 
 /**
+ * Close every open interval whose container the pool still describes.
+ *
+ * The set-based twin of {@link closeUptimeInterval}, for the one caller that
+ * forgets the whole pool at once: a backend switch destroys every container the
+ * outgoing backend was running, so every stretch they were billing ends with
+ * them. Written here rather than at that call site so the ledger keeps its single
+ * writer, and as one statement rather than a loop because the row count is the
+ * fleet size.
+ *
+ * Left open, those intervals would bill to `now()` for ever, on containers that
+ * no longer exist, on a backend this instance has stopped talking to.
+ */
+export async function closeUptimeIntervalsForMembers(
+	db: Db,
+	reason: ContainerUptimeEndReason,
+): Promise<void> {
+	await db.query(
+		`UPDATE container_uptime_entries e
+		    SET ended_at = now(), end_reason = $1
+		  WHERE e.ended_at IS NULL
+		    AND EXISTS (SELECT 1 FROM container_pool_members m
+		                 WHERE m.container_id = e.container_id)`,
+		[reason],
+	);
+}
+
+/**
  * Carry a container's chat pin onto its open interval.
  *
  * The pin is set *after* the container exists - the chat claims an idle member
