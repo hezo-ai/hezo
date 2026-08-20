@@ -553,9 +553,15 @@ per-model token rates from a single source: the pricepertoken.com MCP catalog
 (`get_all_models` over raw JSON-RPC), fetched at boot and daily by the job manager and
 upserted as `source='pricepertoken'`; a migration bakes a catalog snapshot into the
 table so a fresh instance prices runs before its first fetch, and `source='manual'`
-operator overrides win at lookup. The catalog carries no cache rates, so cache
-reads/writes bill at the full input rate — recorded costs are a conservative upper
-bound (a manual override can set cache rates for exact billing). Budgets are **windowed and computed on
+operator overrides win at lookup. The catalog carries no cache rates, so they are
+**derived from each row's own input rate** via `CACHE_RATE_MULTIPLIERS`
+(`services/pricing/pricepertoken.ts`), keyed by the catalog's `author_name`:
+Anthropic reads at 0.1x input and writes at 1.25x (the default 5-minute TTL).
+Deriving rather than baking absolute figures keeps cache rates correct when a base
+price moves and covers models released after the table ships. An author with no
+known multipliers keeps NULL rates and still bills cache traffic at the full input
+rate - a conservative upper bound, and the honest answer until that provider's
+multipliers are verified. Budgets are **windowed and computed on
 demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
 `projects` (0 = unlimited; there is **no team budget**), and spend is summed from
 `cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed

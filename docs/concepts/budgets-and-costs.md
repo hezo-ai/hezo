@@ -17,12 +17,16 @@ you can see exactly where spend is going from the budget view.
 
 Model pricing ships built in and refreshes daily from
 [pricepertoken.com](https://pricepertoken.com), so rates stay current without any
-setup. Recorded costs are a **conservative upper-bound estimate**: token costs are
-computed at non-cached rates (cached reads and writes are billed at the full input
-rate), and providers charge much less for cache traffic - so your real bill is
-typically lower than the figure Hezo shows, never higher. For exact billing on a
-model (or to correct a rate), add a manual pricing override in Settings - overrides
-win and can include cache rates.
+setup. The catalog carries no cache rates, so Hezo derives them from each model's
+input rate: Anthropic bills cache reads at a tenth of the input rate and cache
+writes at a small premium, and agent runs are cache-heavy, so this is most of what
+a run costs.
+
+For a provider whose cache rates are not yet known, cache traffic still bills at
+the full input rate, which makes those figures a **conservative upper-bound
+estimate** - your real bill is lower than the figure shown, never higher. For exact
+billing on a model (or to correct a rate), add a manual pricing override in
+Settings - overrides win and can include cache rates.
 
 ## Budget windows
 
