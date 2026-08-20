@@ -2088,8 +2088,9 @@ container was built to a cap nobody set. A backend that cannot say leaves the me
 and it keeps being recycled - the right answer for a container nothing can size.
 
 **Capacity is a memory budget, and it reserves for the chat container up front.**
-`max_container_memory_gb` bounds the total memory *task run* containers may hold at once,
-summed from what each one actually asked for (`projects.memory_limit_gib`, else the
+`max_container_memory_gb` bounds the total memory **every** container may hold at once, and
+`taskContainerMemoryBudgetGb` takes one container's worth off it for the chat; what is left
+is what *task run* containers may hold, summed from what each one actually asked for (`projects.memory_limit_gib`, else the
 instance default). It replaced a container **count** (migration 050): a count bounds memory
 only while every container is the same size, and the per-project override exists precisely
 so they are not - one project raising its cap to 4 GB took one "slot" but twice the memory
@@ -2097,11 +2098,20 @@ of the 2 GB containers the host was sized for. There is deliberately no derived 
 count anywhere, not even for display: how many fit depends on the mix of their sizes.
 
 The CEO chat's container is **exempt** from the budget, because a queued task run is
-invisible and harmless while a queued chat turn is a person watching a spinner. On a host
-backend the machine still has to fit it, so `computeDefaultMaxContainerMemoryGb` subtracts
-`HOST_RESERVED_MEMORY_GB` (1) plus one container's worth for the chat. Reserving up front
-rather than subtracting when a session opens keeps task-run capacity a **stable** number -
-opening the chat never silently slows the fleet. The exemption is enforced on **both** sides:
+invisible and harmless while a queued chat turn is a person watching a spinner. Reserving up
+front rather than subtracting when a session opens keeps task-run capacity a **stable**
+number - opening the chat never silently slows the fleet.
+
+**The reservation is taken at the point of use, not baked into the default**, and that is
+the correction: `computeDefaultMaxContainerMemoryGb` used to subtract a container's worth
+itself, so only an *automatic* budget reserved. An operator who set the number by hand got
+no reservation at all, and a 12 GB budget with a 4 GB cap therefore admitted three task
+containers *and* a chat container - 16 GB consumed against a figure that said 12, which on a
+local Docker host is memory the machine actually has to find. Now the auto default returns
+the whole usable total (floored at `minTotalContainerMemoryGb`, two caps, so it can never
+compute a total that admits nothing) and `getActiveContainers` derives the task share from
+whatever the effective total is. Auto-computed instances land on exactly the capacity they
+had before; an explicitly-set one loses a container's worth, which is the point. The exemption is enforced on **both** sides:
 the budget reserves for it, and `getActiveContainers` excludes a `reserved_for_chat` member
 from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projects` row are
 two records of one container). Charging it in both places reserved the same memory twice,

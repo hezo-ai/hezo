@@ -266,7 +266,7 @@ describe('acquireRunContainer', () => {
 		// anywhere is now headroom - the acquire path reclaims it rather than
 		// queueing. This case is the one where there is genuinely nothing to take.
 		await db.query(`UPDATE container_pool_members SET state = 'busy'`);
-		await setMaxContainerMemoryGb(db, 1);
+		await setMaxContainerMemoryGb(db, 3);
 		try {
 			await expect(
 				acquireRunContainer(deps(provisioningDocker()), projectId, TASK_BLOCKED),
@@ -355,8 +355,9 @@ describe('acquireRunContainer reclaiming from another project', () => {
 		const donor = await freshProject('Reclaim Donor');
 		const starved = await freshProject('Reclaim Starved');
 		await seedIdle(donor, 'donor-idle');
-		// Room for exactly one container, which the donor is holding.
-		await setMaxContainerMemoryGb(db, 2);
+		// 4 GB total: one container for a task run, one held back for the chat. The
+		// donor is holding the task one.
+		await setMaxContainerMemoryGb(db, 4);
 		try {
 			const acquired = await acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED);
 			expect(acquired.containerId).not.toBe('donor-idle');
@@ -381,8 +382,9 @@ describe('acquireRunContainer reclaiming from another project', () => {
 		const starved = await freshProject('Reclaim Surplus Starved');
 		await seedIdle(donor, 'donor-a');
 		await seedIdle(donor, 'donor-b');
-		// Room for two containers, both held by the donor.
-		await setMaxContainerMemoryGb(db, 4);
+		// 6 GB total: two task containers, both held by the donor, plus the chat
+		// reservation.
+		await setMaxContainerMemoryGb(db, 6);
 		try {
 			await acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED);
 			// One container's worth covers the shortfall, and the donor still has
@@ -408,7 +410,7 @@ describe('acquireRunContainer reclaiming from another project', () => {
 		const donor = await freshProject('Reclaim Fresh Donor');
 		const starved = await freshProject('Reclaim Fresh Starved');
 		await seedIdle(donor, 'donor-brandnew', { idleMin: 10, ageMin: 1 });
-		await setMaxContainerMemoryGb(db, 2);
+		await setMaxContainerMemoryGb(db, 4);
 		try {
 			await expect(
 				acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED),
@@ -426,7 +428,7 @@ describe('acquireRunContainer reclaiming from another project', () => {
 		const donor = await freshProject('Reclaim Risky Donor');
 		const starved = await freshProject('Reclaim Risky Starved');
 		await seedIdle(donor, 'donor-risky', { unpushed: true });
-		await setMaxContainerMemoryGb(db, 2);
+		await setMaxContainerMemoryGb(db, 4);
 		try {
 			await acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED);
 			expect(stopped).toContain('donor-risky');
@@ -444,7 +446,7 @@ describe('acquireRunContainer reclaiming from another project', () => {
 		const donor = await freshProject('Reclaim Fresh Donor');
 		const starved = await freshProject('Reclaim Fresh Starved');
 		await seedIdle(donor, 'donor-fresh', { idleMin: 0 });
-		await setMaxContainerMemoryGb(db, 2);
+		await setMaxContainerMemoryGb(db, 4);
 		try {
 			await expect(
 				acquireRunContainer(deps(reclaimingDocker()), starved, TASK_STARVED),
@@ -461,7 +463,7 @@ describe('acquireRunContainer reclaiming from another project', () => {
 		const mine = await freshProject('Reclaim Self Server');
 		await seedIdle(donor, 'donor-untouched');
 		await seedIdle(mine, 'my-warm');
-		await setMaxContainerMemoryGb(db, 2);
+		await setMaxContainerMemoryGb(db, 4);
 		try {
 			const acquired = await acquireRunContainer(deps(reclaimingDocker()), mine, TASK_STARVED);
 			expect(acquired.containerId).toBe('my-warm');
@@ -749,7 +751,7 @@ describe('acquireRunContainer for the chat', () => {
 		const project = await chatProject();
 		const docker = provisioningDocker();
 		const run = await acquireRunContainer(deps(docker), project, CHAT_TASK);
-		await setMaxContainerMemoryGb(db, 1);
+		await setMaxContainerMemoryGb(db, 3);
 		try {
 			const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
 			expect(chat.containerId).not.toBe(run.containerId);

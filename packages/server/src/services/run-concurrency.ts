@@ -3,6 +3,7 @@ import {
 	ContainerStatus,
 	HeartbeatRunStatus,
 	QueuedRunReason,
+	taskContainerMemoryBudgetGb,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { getDefaultRamCapPerContainerGb, getMaxContainerMemoryGb } from '../lib/system-meta';
@@ -58,8 +59,13 @@ export async function isTaskBusyInDb(db: Db, taskId: string): Promise<boolean> {
 
 export interface ActiveContainers {
 	/**
-	 * Ceiling on total task-run container memory, in GB - the operator's setting,
-	 * else the automatic default the engine's own memory answer produces.
+	 * Ceiling on total **task-run** container memory, in GB.
+	 *
+	 * The configured total (the operator's setting, else the automatic default)
+	 * **less one container's worth held back for the assistant chat** - see
+	 * {@link taskContainerMemoryBudgetGb}. That reservation is what lets the chat
+	 * stay exempt from {@link usedMemoryGb} without the instance quietly running a
+	 * container over its own configured figure.
 	 */
 	budgetGb: number;
 	/**
@@ -134,7 +140,7 @@ export async function getActiveContainers(
 	db: Db,
 	engine: Pick<ContainerEngine, 'containerHostMemory'>,
 ): Promise<ActiveContainers> {
-	const [budgetGb, defaultCapGb, running, spare, reclaimable] = await Promise.all([
+	const [configuredBudgetGb, defaultCapGb, running, spare, reclaimable] = await Promise.all([
 		getMaxContainerMemoryGb(db, engine),
 		getDefaultRamCapPerContainerGb(db),
 		db.query<{ project_id: string; memory_bytes: string | number | null }>(
@@ -240,7 +246,9 @@ export async function getActiveContainers(
 	}
 
 	return {
-		budgetGb,
+		// The reservation is taken here, at the point of use, so an explicitly-set
+		// budget holds a container back for the chat exactly as an automatic one does.
+		budgetGb: taskContainerMemoryBudgetGb(configuredBudgetGb, defaultCapGb),
 		usedMemoryGb,
 		projectsWithSpareContainer: new Set(spare.rows.map((r) => r.project_id)),
 		reclaimableMemoryGbByProject,

@@ -7,12 +7,18 @@ import { queryKeys } from '../lib/query-keys';
 export interface InstanceSettings {
 	base_url: string | null;
 	max_chat_history_size: number;
-	/** Effective task-run memory budget: the explicit setting, else the computed default. */
+	/** Effective budget for ALL containers: the explicit setting, else the computed default. */
 	max_container_memory_gb: number;
 	/** True when the operator explicitly set a value (vs the automatic default). */
 	max_container_memory_gb_is_set: boolean;
 	/** The automatic default the server computed for this backend. */
 	max_container_memory_gb_computed_default: number;
+	/**
+	 * The share of {@link max_container_memory_gb} task runs may hold; the rest is
+	 * the assistant chat's reservation. Sent by the server rather than derived here
+	 * so the page cannot drift from what admission actually uses.
+	 */
+	task_container_memory_gb: number;
 	default_ram_cap_per_container_gb: number;
 	/** Disk allocated to each container, in GB. Sibling of the RAM cap. */
 	default_container_disk_gb: number;

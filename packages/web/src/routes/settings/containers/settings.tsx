@@ -428,10 +428,10 @@ function ContainerMemoryBudgetForm({ settings }: { settings: InstanceSettings })
 	const hostRamBytes = settings.host_total_ram_bytes;
 	const hostSwapBytes = settings.host_total_swap_bytes;
 	const runsOnHost = hostRamBytes !== null && hostSwapBytes !== null;
-	// What is left for task-run containers: the host reserve comes off first, then
-	// one container's worth for the assistant chat, which is exempt from the budget
-	// and so runs on top of it. Mirrors computeDefaultMaxContainerMemoryGb exactly,
-	// so the rendered arithmetic adds up to the number beside it.
+	// The budget is the total for every container. One container's worth of it is
+	// held back for the assistant chat, which is why the split is rendered below
+	// the formula rather than folded into it - the reservation applies whether the
+	// budget was computed or typed in, so it cannot live in the automatic formula.
 	const chatReserve = settings.default_ram_cap_per_container_gb;
 
 	return (
@@ -480,15 +480,17 @@ function ContainerMemoryBudgetForm({ settings }: { settings: InstanceSettings })
 								swap: gb(hostSwapBytes),
 								total: Math.round((hostRamBytes + hostSwapBytes) / GIB),
 								reserved: HOST_RESERVED_MEMORY_GB,
-								chat: chatReserve,
-								usable: Math.max(
-									0,
-									usableMemoryGibForContainers(hostRamBytes, hostSwapBytes) - chatReserve,
-								),
+								usable: usableMemoryGibForContainers(hostRamBytes, hostSwapBytes),
 							})
 						: t('concurrency.memoryBudget.formulaManaged', {
 								value: settings.max_container_memory_gb_computed_default,
 							})}
+			</p>
+			<p className="text-[13px] text-text-2 mt-1" data-testid="container-memory-budget-split">
+				{t('concurrency.memoryBudget.split', {
+					task: settings.task_container_memory_gb,
+					chat: chatReserve,
+				})}
 			</p>
 			{error && (
 				<p className="text-[13px] text-danger mt-1.5" data-testid="container-memory-budget-error">

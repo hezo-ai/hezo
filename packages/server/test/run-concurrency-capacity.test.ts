@@ -97,8 +97,9 @@ describe('container capacity', () => {
 
 	beforeEach(async () => {
 		db = await createTestDbWithMigrations();
-		// Room for exactly two default-sized (2 GB) containers.
-		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '4');
+		// 6 GB total: room for exactly two default-sized (2 GB) task containers,
+		// plus the 2 GB held back for the assistant chat.
+		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '6');
 	});
 	afterEach(() => db.close());
 
@@ -237,6 +238,23 @@ describe('container capacity', () => {
 		expect(await isContainerCapacityBlockedInDb(db, engine, legacy)).toBe(false);
 	});
 
+	it('admits one fewer task container than the total would fit, because chat is reserved', async () => {
+		// The whole of phase two, at the level an operator would notice. 8 GB total
+		// with a 2 GB cap looks like four containers and is three: the fourth cap is
+		// the assistant chat's, held back whether or not a session is open.
+		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '8');
+		const projects = [];
+		for (let i = 0; i < 3; i++) {
+			const p = await seedProject();
+			await addMember(p, `ctr-res-${i}`, { state: 'busy' });
+			projects.push(p);
+		}
+		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(6);
+
+		const fourth = await seedProject();
+		expect(await isContainerCapacityBlockedInDb(db, engine, fourth)).toBe(true);
+	});
+
 	it('blocks a project with nothing running once the cap is reached', async () => {
 		const a = await seedProject();
 		await addMember(a, 'ctr-1', { state: 'busy' });
@@ -361,9 +379,13 @@ describe('automatic budget source', () => {
 	});
 	afterEach(() => db.close());
 
+	// `budgetGb` is the TASK share: the configured total less one container's worth
+	// held back for the assistant chat. Asserted as an explicit subtraction rather
+	// than through the production helper, so a change that stopped reserving would
+	// fail here instead of agreeing with itself.
 	it('uses the flat default when the containers do not run on this host', async () => {
 		const { budgetGb } = await getActiveContainers(db, remoteEngine);
-		expect(budgetGb).toBe(DEFAULT_MAX_CONTAINER_MEMORY_GB);
+		expect(budgetGb).toBe(DEFAULT_MAX_CONTAINER_MEMORY_GB - DEFAULT_RAM_CAP_PER_CONTAINER_GB);
 	});
 
 	it('derives from host memory when they do', async () => {
@@ -371,13 +393,17 @@ describe('automatic budget source', () => {
 		const host = engine.containerHostMemory();
 		expect(host).not.toBeNull();
 		expect(budgetGb).toBe(
-			computeDefaultMaxContainerMemoryGb(host, DEFAULT_RAM_CAP_PER_CONTAINER_GB),
+			computeDefaultMaxContainerMemoryGb(host, DEFAULT_RAM_CAP_PER_CONTAINER_GB) -
+				DEFAULT_RAM_CAP_PER_CONTAINER_GB,
 		);
 	});
 
-	it('an explicit setting wins on either backend', async () => {
+	it('reserves for the chat out of an explicit setting too, on either backend', async () => {
+		// The defect this phase fixes: only the automatic path used to reserve, so a
+		// hand-set 32 admitted 16 task containers *and* a chat one.
 		await setSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY, '32');
-		expect((await getActiveContainers(db, remoteEngine)).budgetGb).toBe(32);
-		expect((await getActiveContainers(db, engine)).budgetGb).toBe(32);
+		const expected = 32 - DEFAULT_RAM_CAP_PER_CONTAINER_GB;
+		expect((await getActiveContainers(db, remoteEngine)).budgetGb).toBe(expected);
+		expect((await getActiveContainers(db, engine)).budgetGb).toBe(expected);
 	});
 });

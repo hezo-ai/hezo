@@ -153,14 +153,15 @@ export interface ContainerHostMemory {
 
 /**
  * The budget when there is no host memory to derive one from: a managed backend,
- * or a host whose memory is unreadable. The old 3 x 2 GB shape.
+ * or a host whose memory is unreadable. Three 2 GB task containers plus the one
+ * held back for the assistant chat.
  *
  * Deliberately modest rather than generous. On a managed backend this figure is
  * a **spend guard**, and the cost of setting it too low is a queued run the
  * operator can see and raise; the cost of setting it too high is a bill they
  * find out about later.
  */
-export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 6;
+export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 8;
 
 /**
  * The automatic memory-budget default, in GB.
@@ -176,16 +177,13 @@ export const DEFAULT_MAX_CONTAINER_MEMORY_GB = 6;
  * raises it deliberately.
  *
  * On a host engine it is everything host memory allows, less the system reserve
- * ({@link HOST_RESERVED_MEMORY_GB}, via {@link usableMemoryGibForContainers})
- * and one container's worth held back for the CEO chat.
+ * ({@link HOST_RESERVED_MEMORY_GB}, via {@link usableMemoryGibForContainers}).
  *
- * Chat is exempt from the budget on **every** backend (a queued task run is
- * invisible; a queued chat turn is a person watching a spinner), so the chat
- * container is excluded from what the budget counts as used. Reserving for it up
- * front rather than subtracting when a session opens keeps task-run capacity a
- * *stable* number - opening the chat never silently slows the fleet. The
- * managed-backend default already has that reservation priced in, which is why
- * it is not subtracted again here.
+ * **This is the TOTAL, chat included.** The chat's reservation is taken at the
+ * point of use by {@link taskContainerMemoryBudgetGb}, not baked in here, so an
+ * explicitly-set budget reserves exactly as an automatic one does. It used to be
+ * subtracted here instead, which meant an operator who set the number by hand got
+ * no reservation at all and quietly ran one container over their own figure.
  */
 export function computeDefaultMaxContainerMemoryGb(
 	hostMemory: ContainerHostMemory | null,
@@ -193,23 +191,27 @@ export function computeDefaultMaxContainerMemoryGb(
 ): number {
 	if (!hostMemory) return DEFAULT_MAX_CONTAINER_MEMORY_GB;
 	const cap = Math.max(1, ramCapGb);
-	const usableGib = Math.max(
-		0,
-		usableMemoryGibForContainers(hostMemory.totalRamBytes, hostMemory.totalSwapBytes) - cap,
+	const usableGib = usableMemoryGibForContainers(
+		hostMemory.totalRamBytes,
+		hostMemory.totalSwapBytes,
 	);
-	// **Floored at one container's cap, not at MAX_CONTAINER_MEMORY_GB_MIN.**
-	// The budget is compared against a whole container's request, so a budget
-	// below the cap admits nothing: every run queues `InstanceAtCapacity`
-	// forever with nothing naming the cause. Flooring at 1 GB did exactly that
-	// on any host with roughly 5 GiB or less of RAM+swap - a 4 GB VPS with no
-	// swap yielded a 1 GB budget against the 2 GB default cap - so the
-	// instance bricked on hardware the docs treat as ordinary.
+	// **Floored at one task container plus the chat reservation, not at
+	// MAX_CONTAINER_MEMORY_GB_MIN.** The budget is compared against a whole
+	// container's request, so a total that leaves less than one container for task
+	// runs admits nothing: every run queues `InstanceAtCapacity` forever with
+	// nothing naming the cause. Flooring at 1 GB did exactly that on any host with
+	// roughly 5 GiB or less of RAM+swap - a 4 GB VPS with no swap yielded a 1 GB
+	// budget against the 2 GB default cap - so the instance bricked on hardware the
+	// docs treat as ordinary.
 	//
-	// Admitting one container over-subscribes a host that genuinely cannot fit
-	// it, and that is the better failure: the container is memory-capped, so
-	// the kernel bounds the damage to that one run, whereas the alternative is
-	// an instance that can never do anything at all.
-	return Math.min(MAX_CONTAINER_MEMORY_GB_MAX, Math.max(cap, Math.floor(usableGib)));
+	// Admitting one container over-subscribes a host that genuinely cannot fit it,
+	// and that is the better failure: the container is memory-capped, so the kernel
+	// bounds the damage to that one run, whereas the alternative is an instance that
+	// can never do anything at all.
+	return Math.min(
+		MAX_CONTAINER_MEMORY_GB_MAX,
+		Math.max(minTotalContainerMemoryGb(cap), Math.floor(usableGib)),
+	);
 }
 
 /**
@@ -219,6 +221,43 @@ export function computeDefaultMaxContainerMemoryGb(
  * override - rather than at acquire time, because at acquire time the only
  * honest response would be to queue a run that can never start.
  */
+/**
+ * How much of the configured budget task-run containers may hold, in GB.
+ *
+ * The assistant chat is **exempt** from the budget rather than charged to it: a
+ * queued task run is invisible and harmless, while a queued chat turn is a person
+ * watching a spinner. What makes that exemption honest is this reservation - the
+ * configured number is the total all containers may consume at once, and one
+ * container's worth of it is held back so the chat always has somewhere to go.
+ *
+ * Taken here rather than inside the automatic default because an operator can set
+ * the budget by hand, and only the automatic path used to reserve. A 12 GB budget
+ * with a 4 GB cap therefore admitted three task containers *and* a chat container:
+ * 16 GB consumed against a number that said 12.
+ *
+ * **Deliberately unfloored**: it may come out at or below zero, and then nothing
+ * starts. Flooring here would silently hand back the container the reservation
+ * just took, over-subscribing by exactly the amount this reservation exists to
+ * prevent. The floor belongs where a person can see it instead - the automatic
+ * default never computes a total below {@link minTotalContainerMemoryGb}, and the
+ * settings route refuses one, so the only way to reach a budget that admits
+ * nothing is to write `system_meta` by hand.
+ */
+export function taskContainerMemoryBudgetGb(configuredGb: number, ramCapGb: number): number {
+	return configuredGb - Math.max(1, ramCapGb);
+}
+
+/**
+ * The smallest total budget that still admits one task container, in GB.
+ *
+ * One container's worth for the task and one held back for the assistant chat.
+ * A total below this admits nothing, which queues every run forever with nothing
+ * naming the cause - so it is refused where it is set rather than discovered later.
+ */
+export function minTotalContainerMemoryGb(ramCapGb: number): number {
+	return Math.max(1, ramCapGb) * 2;
+}
+
 export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolean {
 	return capGb <= budgetGb;
 }
