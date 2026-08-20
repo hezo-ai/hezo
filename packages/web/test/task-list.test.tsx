@@ -13,6 +13,26 @@ async function patchStatus(ws: SeededWorkspace, taskId: string, status: string) 
 	if (!res.ok) throw new Error(`patchStatus failed: ${res.status} ${await res.text()}`);
 }
 
+/**
+ * Block a task the only way the server allows: `blocked` is derived from open
+ * blockers (`coerceTargetStatusForBlockers`), so a direct status PATCH to
+ * `blocked` collapses straight back to `backlog`.
+ */
+async function addDependency(
+	ws: SeededWorkspace,
+	project: { slug: string },
+	taskId: string,
+	blockedByTaskId: string,
+) {
+	const { apiBase } = getTestContext();
+	const res = await apiBase(`/api/projects/${project.slug}/tasks/${taskId}/dependencies`, {
+		method: 'POST',
+		headers: ws.headers,
+		body: JSON.stringify({ blocked_by_task_id: blockedByTaskId }),
+	});
+	if (!res.ok) throw new Error(`addDependency failed: ${res.status} ${await res.text()}`);
+}
+
 async function insertActiveRun(memberId: string, teamId: string, taskId: string) {
 	const { db } = getTestContext();
 	await db.query(
@@ -589,6 +609,71 @@ test('in progress tasks render in a pinned section without duplicating in the ma
 	expect(mainSection.textContent).toContain('Backlog Task');
 	expect(mainSection.textContent).not.toContain('Active Task');
 	expect(mainSection.textContent).not.toContain('Review Task');
+});
+
+test('blocked tasks pin to the in progress section, not the backlog', async () => {
+	let projectSlug = '';
+
+	const { findByTestId, findByText, findByRole, queryAllByRole, queryByText, router, user } =
+		await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Blocked Split Project' });
+				projectSlug = project.slug;
+				const agentId = ws.agents[0].id;
+				const blocked = await seedTask(ws, project, {
+					title: 'Blocked Task',
+					assignee_id: agentId,
+				});
+				const blocker = await seedTask(ws, project, {
+					title: 'Blocker Task',
+					assignee_id: agentId,
+				});
+				// `blocked` is derived from open blockers, never set directly.
+				await addDependency(ws, project, blocked.id, blocker.id);
+				await seedTask(ws, project, { title: 'Backlog Task', assignee_id: agentId });
+			},
+		});
+
+	await router.navigate({
+		to: '/projects/$projectId/tasks',
+		params: { projectId: projectSlug },
+	});
+
+	await findByText('Blocked Task', undefined, { timeout: 10_000 });
+	await findByText('Backlog Task');
+
+	const inProgressSection = await findByTestId('task-list-in-progress');
+	const mainSection = await findByTestId('task-list-main');
+	expect(inProgressSection.textContent).toContain('Blocked Task');
+	expect(inProgressSection.textContent).not.toContain('Backlog Task');
+	expect(mainSection.textContent).toContain('Backlog Task');
+	expect(mainSection.textContent).not.toContain('Blocked Task');
+
+	// Pinned statuses are dropped from the to-do filter, and narrowing the to-do
+	// list to Backlog leaves the pinned blocked task in place.
+	const toggle = await findByTestId('task-filter-toggle');
+	await user.click(toggle);
+	const statusBtn = await findByTestId('task-filter-status');
+	await user.click(statusBtn);
+	// The pinned statuses are not offered as to-do filters (the row's own status
+	// badge still reads "Blocked", so match the option button, not any text).
+	expect(queryAllByRole('button', { name: 'Blocked' })).toHaveLength(0);
+	const clear = await findByRole('button', { name: 'Clear selection' });
+	await user.click(clear);
+	const backlogOption = await findByRole('button', { name: 'Backlog' });
+	await user.click(backlogOption);
+	await user.click(statusBtn);
+
+	await waitFor(
+		() => {
+			expect(queryByText('Backlog Task')).not.toBeNull();
+			expect(queryByText('Blocked Task')).not.toBeNull();
+		},
+		{ timeout: 10_000 },
+	);
+	expect((await findByTestId('task-list-main')).textContent).not.toContain('Blocked Task');
 });
 
 test('to-do search does not filter the in progress section', async () => {
