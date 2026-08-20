@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.52.0 - 2026-08-20
+
+### Breaking Changes
+
+- **tasks:** remove the review task status ([#1018](https://github.com/hezo-ai/hezo/pull/1018))
+
+### Features
+
+- **web:** autolink URLs in CSV cells and plain-text assets ([#1021](https://github.com/hezo-ai/hezo/pull/1021))
+- **prompts:** compose agent identity and live context instead of requiring variables ([#1019](https://github.com/hezo-ai/hezo/pull/1019))
+
+### Bug Fixes
+
+- **web:** pin blocked tasks to the In progress section ([#1017](https://github.com/hezo-ai/hezo/pull/1017))
+- **inbox:** strip markdown from inbox and search preview text ([#1016](https://github.com/hezo-ai/hezo/pull/1016))
+- **web:** cut the boot and restart screens back to a spinner and a status line ([#1015](https://github.com/hezo-ai/hezo/pull/1015))
+
+### Refactors
+
+- **tasks:** remove the review task status ([#1018](https://github.com/hezo-ai/hezo/pull/1018))
+
+### Other
+
+- accurate spend, container hours, and uncapped agents ([#1020](https://github.com/hezo-ai/hezo/pull/1020))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.51.0...0.52.0
+
 ## 0.51.0 - 2026-08-19
 
 ### Breaking Changes
