@@ -75,6 +75,7 @@ export interface ProjectDashboardMention {
 	comment_public_id: string;
 	content_type: CommentContentType;
 	credential_name: string | null;
+	/** One line of the comment body, Markdown stripped - render it as plain text. */
 	snippet: string;
 	author_display_name: string;
 	created_at: string;
