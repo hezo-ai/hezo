@@ -961,6 +961,12 @@ export const WakeupSkipReason = {
 	 */
 	CredentialBusy: 'credential_busy',
 	/**
+	 * Hezo shut down with this run in flight, so the drain handed the work back
+	 * rather than failing it. Nothing clears this one - the wakeup is queued
+	 * again immediately and dispatches when the process is next up.
+	 */
+	ServerShutdown: 'server_shutdown',
+	/**
 	 * The instance has burned its monthly container-hours allowance, so no new
 	 * container may start. Distinct from `InstanceAtCapacity` because nothing the
 	 * instance does will clear it: retiring a container frees memory but not

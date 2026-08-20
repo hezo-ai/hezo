@@ -2664,6 +2664,22 @@ orphan pass's verdict for a run that never started is itself non-destructive: it
 the row `Cancelled`, hands the *original* wakeup back to the queue (`claimed` → `queued`)
 and spends no strike of the lost-run escalation, so the
 work is redispatched rather than lost or reported as a failure the operator must act on.
+**A clean shutdown hands the work back too, and has to - nothing downstream can.** The
+drain (`drainRunningRuns`) aborts every in-flight run with `server_shutdown`, and that abort
+used to finalize the row `Failed` and settle its wakeup `failed`, both before the process
+exited. Every recovery predicate in the codebase - `reconcileDatabaseOnStartup`,
+`detectOrphanedRuns`, `healStaleRunState`, `requeueContainerKilledRuns` - looks for a run
+left `running` or `queued`, so a *hard crash* recovered and an *orderly drain* dropped the
+work outright: the better the shutdown behaved, the more certainly the task stopped, while
+the row's own message promised a re-queue nothing delivered. The abort now routes through
+`finalizeRequeue` at all three points a shutdown can land (the phase checkpoints, the exec
+rejection, the setup window), so the wakeup returns to `queued` while the process is still
+up and the 5 s cron dispatches it when Hezo is next running. The boot pass still covers the
+crash and the drain-deadline overrun, which are the cases that genuinely leave a row
+non-terminal. `RUN_LOST_TO_SHUTDOWN_ERROR` is a clause rather than a sentence for this
+reason: `finalizeRequeue` adds what became of the work and `recordHandbackOutcome` adds
+where to find it, so no writer asserts an outcome it has not yet attempted.
+
 The handback itself is one seam, `settleWakeupForRun` (`services/wakeup.ts`), shared with
 `JobManager.onAgentComplete`: the two answered the same question separately, which is how
 the sweeper's `claimed` guard ended up missing from the completion path and how both ended
