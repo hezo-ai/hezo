@@ -97,6 +97,10 @@ describe('costs CRUD', () => {
 
 	it('records an over-budget cost and pauses the agent', async () => {
 		const slug = await projectSlugForTeamSlug(db, teamSlug);
+		// Give the agent a window to blow. Agents ship uncapped now, and an
+		// unlimited window never trips - so without this there is no over-budget
+		// state for the spend below to reach.
+		await db.query(`UPDATE member_agents SET monthly_budget_cents = 3000 WHERE id = $1`, [agentId]);
 		// Far exceeds any monthly limit. Spend is always recorded (no 402), but the
 		// agent is reactively paused since this pushes it over budget.
 		const res = await app.request(`/api/projects/${slug}/costs`, {

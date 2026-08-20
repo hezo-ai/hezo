@@ -595,6 +595,35 @@ price to $0 and a cost-only ceiling would never fire there. Deliberately not bui
 thread-read fixes removed the cause of the run that prompted the question, and a blunt
 ceiling would mostly fire on legitimately expensive work.
 
+**Container hours are metered separately from spend, and answer the other bill.**
+`container_uptime_entries` (migration 071) records **one row per running stretch**, not
+per container lifetime: a managed backend bills a started sandbox for vCPU + RAM + disk
+and a stopped one for reserved disk only, so a suspend/resume cycle is two rows with a
+free gap between them. Writes live inside `upsertPoolMember` / `setPoolMemberState` /
+`removePoolMember` (`services/sandbox/uptime-ledger.ts`, called from `pool-db.ts`), so the
+ledger cannot drift from the lifecycle it records - the same reasoning that puts the wake
+receipt inside `fireCommentWakeups`. The interval opens at the `creating` upsert rather
+than at ready, because on a managed backend the build is the longest phase of a cold start
+and bills like any other minute. `end_reason` separates an ordinary stop from a
+cross-project eviction (`ContainerUptimeEndReason.Suspended`, passed down from
+`executeRetirementPlan`), which is the only contention signal the series can show. A
+unique partial index on `(container_id) WHERE ended_at IS NULL` makes open and close
+idempotent on every path that reaches them.
+
+Reads (`services/container-hours.ts`) **clip each interval to each window** rather than
+attributing it to the bucket it started in - `agent-hours.ts` attributes by start, which
+is harmless for a run measured in minutes and wrong for a month boundary on a figure that
+gets invoiced. Overlapping intervals are summed, deliberately: two containers up for one
+hour is two container-hours. **The clip expression guards `alias.id IS NULL` and that guard
+is load-bearing on a LEFT JOIN** - without it `COALESCE(ended_at, now())` reads a missing
+row as still running and `GREATEST` swallows the NULL start, so a bucket in which nothing
+ran bills a full bucket of uptime. Enforcement is a monthly allowance
+(`monthly_container_hours` in `system_meta`, 0 = unlimited) read through
+`hoursQuotaExhausted` in `run-concurrency.ts`: it gates container **starts**, ahead of the
+memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
+project with a spare container is exempt from both. The cap read short-circuits before the
+ledger is scanned, so an instance with no cap pays nothing on the dispatch path.
+
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
 unique scoping and full revision history in `document_revisions`. Project docs additionally
