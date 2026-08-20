@@ -222,6 +222,22 @@ export function computeDefaultMaxContainerMemoryGb(
  * honest response would be to queue a run that can never start.
  */
 /**
+ * Memory held back from the budget so the assistant chat always has somewhere to
+ * go, in GB - one container's worth, at the per-container cap in force.
+ *
+ * Named rather than written inline because three places have to agree on it: the
+ * task-run budget subtracts it, the minimum total is it plus one task container,
+ * and the settings page renders it as its own figure so the split is visible
+ * rather than inferred from a number that does not add up.
+ *
+ * Floored at 1 GB against a cap of zero or less, which no setting permits but
+ * `system_meta` can be made to hold by hand.
+ */
+export function chatContainerReservationGb(ramCapGb: number): number {
+	return Math.max(1, ramCapGb);
+}
+
+/**
  * How much of the configured budget task-run containers may hold, in GB.
  *
  * The assistant chat is **exempt** from the budget rather than charged to it: a
@@ -244,7 +260,7 @@ export function computeDefaultMaxContainerMemoryGb(
  * nothing is to write `system_meta` by hand.
  */
 export function taskContainerMemoryBudgetGb(configuredGb: number, ramCapGb: number): number {
-	return configuredGb - Math.max(1, ramCapGb);
+	return configuredGb - chatContainerReservationGb(ramCapGb);
 }
 
 /**
@@ -255,7 +271,7 @@ export function taskContainerMemoryBudgetGb(configuredGb: number, ramCapGb: numb
  * naming the cause - so it is refused where it is set rather than discovered later.
  */
 export function minTotalContainerMemoryGb(ramCapGb: number): number {
-	return Math.max(1, ramCapGb) * 2;
+	return chatContainerReservationGb(ramCapGb) + Math.max(1, ramCapGb);
 }
 
 export function projectMemoryFitsBudget(capGb: number, budgetGb: number): boolean {
