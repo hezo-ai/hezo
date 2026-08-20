@@ -804,6 +804,7 @@ export interface AdminMentionItem {
 	content_type: CommentContentType;
 	/** Secret name on a `credential_request` row, null on every other kind. */
 	credential_name: string | null;
+	/** One line of the comment body, Markdown stripped - render it as plain text. */
 	snippet: string;
 	author_member_id: string | null;
 	author_display_name: string;
