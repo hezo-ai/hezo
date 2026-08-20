@@ -9,6 +9,7 @@ import {
 	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	DEFAULT_MONTHLY_BUDGET_CENTS,
 	DEFAULT_TEAM_ID,
 	DocumentType,
 	ERRORED_RUN_STATUSES,
@@ -334,7 +335,7 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 	const budgetError = budgetWindowsError({
 		daily_budget_cents: body.daily_budget_cents ?? 0,
 		weekly_budget_cents: body.weekly_budget_cents ?? 0,
-		monthly_budget_cents: body.monthly_budget_cents ?? 3000,
+		monthly_budget_cents: body.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
 	});
 	if (budgetError) {
 		return err(c, 'INVALID_REQUEST', budgetError, 400);
@@ -402,7 +403,7 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 					body.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 					body.daily_budget_cents ?? 0,
 					body.weekly_budget_cents ?? 0,
-					body.monthly_budget_cents ?? 3000,
+					body.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
 					body.touches_code ?? false,
 					JSON.stringify(body.mcp_servers ?? []),
 				],

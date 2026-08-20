@@ -3,6 +3,7 @@ import {
 	ApprovalStatus,
 	type BudgetWindowsCents,
 	CAPTAIN_AGENT_SLUG,
+	DEFAULT_MONTHLY_BUDGET_CENTS,
 } from '@hezo/shared';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { ArrowLeft, Check, Loader2, X } from 'lucide-react';
@@ -55,7 +56,7 @@ const emptyValues: HireFormValues = {
 	budget: {
 		daily_budget_cents: 0,
 		weekly_budget_cents: 0,
-		monthly_budget_cents: 2000,
+		monthly_budget_cents: DEFAULT_MONTHLY_BUDGET_CENTS,
 	} satisfies BudgetWindowsCents,
 	// Deliberately unset: the admin picks the cadence rather than inheriting a
 	// prefilled one. The select is `required`, so submit is blocked until they do.

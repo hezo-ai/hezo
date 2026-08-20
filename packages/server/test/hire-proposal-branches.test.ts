@@ -4,6 +4,7 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	DEFAULT_MONTHLY_BUDGET_CENTS,
 } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -143,7 +144,11 @@ describe('prepareHireProposal — success branches', () => {
 		expect(p.heartbeat_interval_min).toBe(DEFAULT_HEARTBEAT_INTERVAL_MIN);
 		expect(p.daily_budget_cents).toBe(0);
 		expect(p.weekly_budget_cents).toBe(0);
-		expect(p.monthly_budget_cents).toBe(3000);
+		expect(p.monthly_budget_cents).toBe(DEFAULT_MONTHLY_BUDGET_CENTS);
+		// And that default is unlimited. Asserted as a literal, unlike the line
+		// above: this one pins a product decision rather than the wiring, so a
+		// change back to an arbitrary figure should have to come through here.
+		expect(DEFAULT_MONTHLY_BUDGET_CENTS).toBe(0);
 		expect(p.touches_code).toBe(false);
 	});
 
