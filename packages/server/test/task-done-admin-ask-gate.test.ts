@@ -158,7 +158,7 @@ describe('closure rules — unanswered @admin ask blocks done (REST PATCH)', () 
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { error: { message: string } };
 		expect(body.error.message).toMatch(/@admin/);
-		expect(body.error.message).toMatch(/in_progress|review/);
+		expect(body.error.message).toMatch(/in_progress/);
 		expect(await taskStatus(taskId)).toBe(TaskStatus.InProgress);
 	});
 

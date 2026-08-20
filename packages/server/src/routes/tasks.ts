@@ -1,4 +1,11 @@
-import { AuthType, TaskStatus, TERMINAL_TASK_STATUSES, WakeupSource, wsRoom } from '@hezo/shared';
+import {
+	AuthType,
+	TaskStatus,
+	TERMINAL_TASK_STATUSES,
+	taskStatusError,
+	WakeupSource,
+	wsRoom,
+} from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import type { Db } from '../db/database';
 import { readRunLogTail } from '../db/run-log-chunks';
@@ -138,6 +145,10 @@ tasksRoutes.get('/projects/:projectId/tasks', async (c) => {
 	const statusFilter = c.req.query('status');
 	if (statusFilter) {
 		const statuses = statusFilter.split(',').map((s) => s.trim());
+		for (const status of statuses) {
+			const invalid = taskStatusError(status);
+			if (invalid) return err(c, 'INVALID_REQUEST', invalid, 400);
+		}
 		const placeholders = statuses.map((_, i) => `$${idx + i}::task_status`).join(', ');
 		conditions.push(`i.status IN (${placeholders})`);
 		params.push(...statuses);
@@ -511,6 +522,11 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		runtime_type?: string | null;
 		parent_task_id?: string | null;
 	}>();
+
+	if (body.status !== undefined) {
+		const invalid = taskStatusError(body.status);
+		if (invalid) return err(c, 'INVALID_REQUEST', invalid, 400);
+	}
 
 	const auth = c.get('auth');
 

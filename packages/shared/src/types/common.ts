@@ -145,7 +145,6 @@ export type ImageBuildStatus = (typeof ImageBuildStatus)[keyof typeof ImageBuild
 export const TaskStatus = {
 	Backlog: 'backlog',
 	InProgress: 'in_progress',
-	Review: 'review',
 	Blocked: 'blocked',
 	Done: 'done',
 	Cancelled: 'cancelled',
@@ -155,7 +154,6 @@ export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
 	[TaskStatus.Backlog]: 'Backlog',
 	[TaskStatus.InProgress]: 'In Progress',
-	[TaskStatus.Review]: 'Review',
 	[TaskStatus.Blocked]: 'Blocked',
 	[TaskStatus.Done]: 'Done',
 	[TaskStatus.Cancelled]: 'Cancelled',
@@ -163,6 +161,34 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
 
 export function formatTaskStatus(status: string): string {
 	return TASK_STATUS_LABELS[status as TaskStatus] ?? status;
+}
+
+/**
+ * Task statuses that once existed, mapped to what replaced them. A removed value is
+ * rejected by name rather than as a generic unknown: a role prompt is copied into a
+ * `documents` row at provision time and never re-synced from the marketplace, so an
+ * agent on a project created before the removal keeps naming the old status. It needs
+ * the replacement to recover, not just a "not valid" verdict.
+ */
+const REMOVED_TASK_STATUSES: Record<string, TaskStatus> = {
+	review: TaskStatus.InProgress,
+	closed: TaskStatus.Done,
+};
+
+/**
+ * Validates a task status, returning null when it is a `TaskStatus` member and the
+ * message to reject with otherwise. Run this before the value reaches a
+ * `::task_status` cast: Postgres raises 22P02, which nothing classifies, so it
+ * escapes as an opaque 500 naming neither the bad value nor what to use instead.
+ */
+export function taskStatusError(status: string): string | null {
+	if ((Object.values(TaskStatus) as string[]).includes(status)) return null;
+	const valid = Object.values(TaskStatus).join(', ');
+	const replacement = REMOVED_TASK_STATUSES[status];
+	if (replacement) {
+		return `The "${status}" task status was removed; use "${replacement}" instead. Valid statuses: ${valid}.`;
+	}
+	return `Unknown task status "${status}". Valid statuses: ${valid}.`;
 }
 
 export const TaskPriority = {

@@ -74,11 +74,11 @@ test('default view shows open and done tasks with a collapsed filter bar and New
 			const project = await seedProject(ws, { name: 'Filter Project A' });
 			const agentId = ws.agents[0].id;
 			const tasks = [];
-			for (const title of ['Review Task', 'In Progress Task', 'Done Task', 'Backlog Task']) {
+			for (const title of ['Blocked Task', 'In Progress Task', 'Done Task', 'Backlog Task']) {
 				const t = await seedTask(ws, project, { title, assignee_id: agentId });
 				tasks.push(t);
 			}
-			await patchStatus(ws, tasks[0].id, 'review');
+			await patchStatus(ws, tasks[0].id, 'blocked');
 			await patchStatus(ws, tasks[1].id, 'in_progress');
 			await patchStatus(ws, tasks[2].id, 'done');
 			projectSlug = project.slug;
@@ -90,7 +90,7 @@ test('default view shows open and done tasks with a collapsed filter bar and New
 		params: { projectId: projectSlug },
 	});
 
-	await findByText('Review Task', undefined, { timeout: 10_000 });
+	await findByText('Blocked Task', undefined, { timeout: 10_000 });
 	await findByText('In Progress Task');
 	await findByText('Backlog Task');
 	// Done tasks are shown by default now (in the bottom Done section).
@@ -111,11 +111,11 @@ test('multi-select status filter narrows results and reset restores defaults', a
 			const project = await seedProject(ws, { name: 'Filter Project B' });
 			const agentId = ws.agents[0].id;
 			const tasks = [];
-			for (const title of ['Review Task', 'In Progress Task', 'Done Task', 'Backlog Task']) {
+			for (const title of ['Second Active Task', 'In Progress Task', 'Done Task', 'Backlog Task']) {
 				const t = await seedTask(ws, project, { title, assignee_id: agentId });
 				tasks.push(t);
 			}
-			await patchStatus(ws, tasks[0].id, 'review');
+			await patchStatus(ws, tasks[0].id, 'in_progress');
 			await patchStatus(ws, tasks[1].id, 'in_progress');
 			await patchStatus(ws, tasks[2].id, 'done');
 			projectSlug = project.slug;
@@ -127,7 +127,7 @@ test('multi-select status filter narrows results and reset restores defaults', a
 		params: { projectId: projectSlug },
 	});
 
-	await findByText('Review Task', undefined, { timeout: 10_000 });
+	await findByText('Second Active Task', undefined, { timeout: 10_000 });
 
 	const toggle = await findByTestId('task-filter-toggle');
 	await user.click(toggle);
@@ -147,9 +147,9 @@ test('multi-select status filter narrows results and reset restores defaults', a
 		() => {
 			expect(queryByText('Done Task')).not.toBeNull();
 			expect(queryByText('Backlog Task')).toBeNull();
-			// In progress + review stay pinned at the top regardless of the status filter.
+			// In-progress tasks stay pinned at the top regardless of the status filter.
 			expect(queryByText('In Progress Task')).not.toBeNull();
-			expect(queryByText('Review Task')).not.toBeNull();
+			expect(queryByText('Second Active Task')).not.toBeNull();
 		},
 		{ timeout: 10_000 },
 	);
@@ -167,7 +167,7 @@ test('multi-select status filter narrows results and reset restores defaults', a
 			expect(queryByText('Done Task')).toBeNull();
 			// To-do filters do not affect the pinned in-progress section.
 			expect(queryByText('In Progress Task')).not.toBeNull();
-			expect(queryByText('Review Task')).not.toBeNull();
+			expect(queryByText('Second Active Task')).not.toBeNull();
 		},
 		{ timeout: 10_000 },
 	);
@@ -176,7 +176,7 @@ test('multi-select status filter narrows results and reset restores defaults', a
 	await user.click(resetBtn);
 	await waitFor(
 		() => {
-			expect(queryByText('Review Task')).not.toBeNull();
+			expect(queryByText('Second Active Task')).not.toBeNull();
 			expect(queryByText('In Progress Task')).not.toBeNull();
 			expect(queryByText('Backlog Task')).not.toBeNull();
 			// Reset restores the default selection, which now includes done.
@@ -579,12 +579,12 @@ test('in progress tasks render in a pinned section without duplicating in the ma
 				title: 'Active Task',
 				assignee_id: agentId,
 			});
-			const review = await seedTask(ws, project, {
-				title: 'Review Task',
+			const secondActive = await seedTask(ws, project, {
+				title: 'Second Active Task',
 				assignee_id: agentId,
 			});
 			await patchStatus(ws, active.id, 'in_progress');
-			await patchStatus(ws, review.id, 'review');
+			await patchStatus(ws, secondActive.id, 'in_progress');
 		},
 	});
 
@@ -596,19 +596,19 @@ test('in progress tasks render in a pinned section without duplicating in the ma
 	await findByTestId('task-list-in-progress', undefined, { timeout: 10_000 });
 	await findByTestId('task-list-main');
 	await findByText('Active Task');
-	await findByText('Review Task');
+	await findByText('Second Active Task');
 	await findByText('Backlog Task');
 	expect(queryAllByText('Active Task')).toHaveLength(1);
-	expect(queryAllByText('Review Task')).toHaveLength(1);
+	expect(queryAllByText('Second Active Task')).toHaveLength(1);
 
 	const inProgressSection = await findByTestId('task-list-in-progress');
 	const mainSection = await findByTestId('task-list-main');
 	expect(inProgressSection.textContent).toContain('Active Task');
-	expect(inProgressSection.textContent).toContain('Review Task');
+	expect(inProgressSection.textContent).toContain('Second Active Task');
 	expect(inProgressSection.textContent).not.toContain('Backlog Task');
 	expect(mainSection.textContent).toContain('Backlog Task');
 	expect(mainSection.textContent).not.toContain('Active Task');
-	expect(mainSection.textContent).not.toContain('Review Task');
+	expect(mainSection.textContent).not.toContain('Second Active Task');
 });
 
 test('blocked tasks pin to the in progress section, not the backlog', async () => {

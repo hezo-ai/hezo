@@ -53,7 +53,7 @@ export async function shouldDeferWakeupForBlockers(
 /**
  * True when `taskId` has at least one blocker whose status is not terminal.
  * A blocker is satisfied when the upstream task reaches `done` or `cancelled`.
- * Anything else (backlog, in_progress, review, blocked) leaves the downstream
+ * Anything else (backlog, in_progress, blocked) leaves the downstream
  * gated.
  */
 export async function hasOpenBlockers(db: Db, taskId: string): Promise<boolean> {

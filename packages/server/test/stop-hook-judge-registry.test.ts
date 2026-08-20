@@ -375,7 +375,7 @@ describe('stop-hook rules bless waiting on a pending admin approval', () => {
  * Rule 12. The incident: a Captain woken by a teammate's `@captain` review request
  * did the whole review, wrote its PASS verdict, and ended the run with that verdict
  * only in its final message. Rule 10 did not reach it — the message named nobody and
- * passed no baton, so it is not shaped like a handoff — and the ticket sat in `review`
+ * passed no baton, so it is not shaped like a handoff — and the ticket sat open
  * with nobody woken. Rule 12 covers the reply itself, whatever shape it takes.
  */
 describe('stop-hook rules block a reply left only in the final message', () => {

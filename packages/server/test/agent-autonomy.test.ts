@@ -157,11 +157,11 @@ describe('task automation: Coach wakeup on Done', () => {
 
 		await ctx.db.query('DELETE FROM agent_wakeup_requests WHERE member_id = $1', [coachAgentId]);
 
-		// Set status to review — should NOT trigger Coach
+		// Set status to in_progress — should NOT trigger Coach
 		await ctx.app.request(`/api/projects/${projectSlug}/tasks/${taskId}`, {
 			method: 'PATCH',
 			headers: { ...authHeader(ctx.token), 'Content-Type': 'application/json' },
-			body: JSON.stringify({ status: TaskStatus.Review }),
+			body: JSON.stringify({ status: TaskStatus.InProgress }),
 		});
 
 		await new Promise((r) => setTimeout(r, 100));
@@ -470,7 +470,7 @@ describe('agent-runner: mention handoff prompt', () => {
 			openTickets: [
 				{ identifier: 'AUT-10', title: 'Draft spec', status: 'backlog', priority: 'high' },
 				{ identifier: 'AUT-12', title: 'Review PRD', status: 'in_progress', priority: 'medium' },
-				{ identifier: 'AUT-15', title: 'ADR: runtime', status: 'review', priority: 'low' },
+				{ identifier: 'AUT-15', title: 'ADR: runtime', status: 'blocked', priority: 'low' },
 			],
 		};
 
@@ -483,7 +483,7 @@ describe('agent-runner: mention handoff prompt', () => {
 		expect(prompt).toContain('> Please update the spec to cover §6 and §11.');
 		expect(prompt).toContain('AUT-10 — Draft spec (backlog, high)');
 		expect(prompt).toContain('AUT-12 — Review PRD (in_progress, medium)');
-		expect(prompt).toContain('AUT-15 — ADR: runtime (review, low)');
+		expect(prompt).toContain('AUT-15 — ADR: runtime (blocked, low)');
 		expect(prompt).toContain('parent_task_id = trig-uuid');
 		expect(prompt).toContain('Handling an @-mention');
 		// Ensure the normal Current Task block still follows.

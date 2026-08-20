@@ -16,7 +16,7 @@ Give the reviewer precisely the context they need to evaluate the work product �
 2. **Point at the exact change.** The branch, commit range, or PR — reviewers should never guess what's in scope.
 3. **Say what you're least sure about.** Directing attention to the risky part is honesty, not weakness.
 
-Request review when a task's implementation is complete (in Hezo, moving the task to Review and @-mentioning the reviewer is the request), after completing a major piece mid-task, and any time you're stuck and need fresh eyes.
+Request review when a task's implementation is complete (@-mentioning the reviewer is the request), after completing a major piece mid-task, and any time you're stuck and need fresh eyes.
 
 **Act on the result:** fix critical issues immediately, fix important ones before proceeding, note minor ones. If the reviewer is wrong, push back with technical reasoning — don't silently comply, don't silently ignore.
 
