@@ -45,5 +45,7 @@ test('Export team explains the bundle, then downloads it', async () => {
 	const bundle = JSON.parse(content as string);
 	expect(bundle.name).toBe('Demo Team');
 	expect(bundle.roster.length).toBeGreaterThan(0);
-	expect(bundle.captain.system_prompt).toContain('{{team_name}}');
+	// The bundle carries the stored role body, not a run-resolved prompt.
+	expect(bundle.captain.system_prompt).toContain('# Captain');
+	expect(bundle.captain.system_prompt).not.toContain('The team skills database holds');
 });

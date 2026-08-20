@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ReactElement, useState } from 'react';
 import { expect, test, vi } from 'vitest';
@@ -119,21 +119,29 @@ test('isPreviewLoading shows a resolving placeholder instead of the body', async
 	expect(preview.querySelector('h1')).toBeNull();
 });
 
-test('typing the {{ trigger inserts a variable token, with no projectId needed', async () => {
+const TEST_VARS = [
+	{ token: '{{team_name}}', description: "The team's name." },
+	{ token: '{{skills_context}}', description: 'The skills manifest.' },
+];
+
+/**
+ * userEvent reads `{{` as its escape for a literal `{`, so typing the trigger
+ * through it never produces one. Drive the change directly instead - React's
+ * onChange is what the trigger detection hangs off either way.
+ */
+function typeInto(el: HTMLTextAreaElement, value: string) {
+	fireEvent.change(el, { target: { value } });
+}
+
+test('the {{ trigger inserts a variable token, with no projectId needed', async () => {
 	const user = userEvent.setup({ delay: null });
 	const { getByLabelText, findByTestId, getByText } = renderWithClient(
-		<Harness
-			ariaLabel="Body"
-			variables={[
-				{ token: '{{team_name}}', description: "The team's name." },
-				{ token: '{{skills_context}}', description: 'The skills manifest.' },
-			]}
-		/>,
+		<Harness ariaLabel="Body" variables={TEST_VARS} />,
 	);
 
 	const textarea = getByLabelText('Body') as HTMLTextAreaElement;
 	// The variable vocabulary is local, so the picker opens without a project.
-	await user.type(textarea, 'Follow {{team');
+	typeInto(textarea, 'Follow {{team');
 	await findByTestId('mention-picker');
 	await user.click(getByText('{{team_name}}'));
 
@@ -143,28 +151,20 @@ test('typing the {{ trigger inserts a variable token, with no projectId needed',
 });
 
 test('the {{ trigger filters to the matching variables only', async () => {
-	const user = userEvent.setup({ delay: null });
 	const { getByLabelText, findByTestId, queryByText } = renderWithClient(
-		<Harness
-			ariaLabel="Body"
-			variables={[
-				{ token: '{{team_name}}', description: "The team's name." },
-				{ token: '{{skills_context}}', description: 'The skills manifest.' },
-			]}
-		/>,
+		<Harness ariaLabel="Body" variables={TEST_VARS} />,
 	);
 
-	await user.type(getByLabelText('Body'), '{{skills');
+	typeInto(getByLabelText('Body') as HTMLTextAreaElement, '{{skills');
 	await findByTestId('mention-picker');
 	expect(queryByText('{{skills_context}}')).not.toBeNull();
 	expect(queryByText('{{team_name}}')).toBeNull();
 });
 
 test('without variables, {{ is ordinary text', async () => {
-	const user = userEvent.setup({ delay: null });
 	const { getByLabelText, queryByTestId } = renderWithClient(<Harness ariaLabel="Body" />);
 
-	await user.type(getByLabelText('Body'), '{{team');
+	typeInto(getByLabelText('Body') as HTMLTextAreaElement, '{{team');
 	expect(queryByTestId('mention-picker')).toBeNull();
 });
 

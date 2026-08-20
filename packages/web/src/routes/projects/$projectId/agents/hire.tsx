@@ -30,23 +30,20 @@ interface HireSearch {
 }
 
 /**
- * Default starter prompt for a new hire. It already contains every required
- * substitution variable so the form starts in a valid, editable state.
+ * Default starter prompt for a new hire: the shape of a role body, with no
+ * substitution variable. The resolver composes the agent's identity above it and
+ * its live skills/preferences/docs context below it, so scaffolding here would
+ * only suppress the block Hezo already supplies.
  */
-const STARTER_SYSTEM_PROMPT = `You are a new agent at {{team_name}}.
+const STARTER_SYSTEM_PROMPT = `Describe this agent's role and responsibilities here.
 
-You report to: {{reports_to}}.
+## Responsibilities
 
-Describe this agent's role and responsibilities here.
+-
 
-## Skills
-{{skills_context}}
+## Rules
 
-## Project documentation
-{{project_docs_context}}
-
-## Team preferences
-{{team_preferences_context}}`;
+-`;
 
 const emptyValues: HireFormValues = {
 	title: '',
