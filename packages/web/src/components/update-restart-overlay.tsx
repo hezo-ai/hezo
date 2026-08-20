@@ -38,20 +38,12 @@ export function evaluateRestartPoll(
 /**
  * Full-screen overlay shown while the server restarts onto a new binary. Polls
  * `/api/status` (the same public endpoint the app shell gates on) and reloads the
- * page once the relaunched worker is up. A supervised update restart comes back
- * already unlocked (the supervisor hands the in-memory unlock key to the new
- * worker), so the copy only warns about re-entering the master key when the
- * instance will actually come back locked (`autoUnlock` is false).
+ * page once the relaunched worker is up. The copy is deliberately a spinner and
+ * one word: the confirm dialog the user just accepted carries the version, the
+ * in-flight-run consequence and the master-key warning, and repeating them here
+ * only crowds a screen nobody can act on.
  */
-export function UpdateRestartOverlay({
-	targetVersion,
-	fromVersion,
-	autoUnlock,
-}: {
-	targetVersion: string | null;
-	fromVersion: string | null;
-	autoUnlock: boolean;
-}) {
+export function UpdateRestartOverlay({ fromVersion }: { fromVersion: string | null }) {
 	const [reloading, setReloading] = useState(false);
 	const wentDown = useRef(false);
 
@@ -116,15 +108,8 @@ export function UpdateRestartOverlay({
 			<div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-lg border border-border bg-surface p-6 text-center shadow-lg sm:p-8">
 				<Loader2 className="w-8 h-8 animate-spin text-text-1" />
 				<div className="text-base font-semibold text-text-1">
-					{reloading ? 'Reloading…' : 'Updating Hezo…'}
+					{reloading ? 'Reloading…' : 'Restarting…'}
 				</div>
-				<p className="text-[13px] text-text-2 leading-relaxed">
-					{targetVersion ? `Restarting onto ${targetVersion}. ` : 'Restarting. '}
-					In-flight agent runs are paused and resume automatically.{' '}
-					{autoUnlock
-						? 'Hezo will come back unlocked - no master key needed.'
-						: "When Hezo comes back you'll need your 12-word master key to unlock it again."}
-				</p>
 			</div>
 		</div>
 	);

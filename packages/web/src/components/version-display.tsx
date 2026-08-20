@@ -41,13 +41,7 @@ export function VersionDisplay() {
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
 	if (applying) {
-		return (
-			<UpdateRestartOverlay
-				targetVersion={update?.targetVersion ?? update?.latest ?? null}
-				fromVersion={update?.current ?? null}
-				autoUnlock={update?.autoUnlock ?? false}
-			/>
-		);
+		return <UpdateRestartOverlay fromVersion={update?.current ?? null} />;
 	}
 
 	if (!update?.current) return null;

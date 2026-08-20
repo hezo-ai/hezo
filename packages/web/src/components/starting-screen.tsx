@@ -96,8 +96,7 @@ export function StartingScreen({ phase, message, detail, lastFailure }: Starting
 						{detail && <p className="max-w-md break-words text-[13px] text-text-2">{detail}</p>}
 						{elapsed >= SLOW_PHASE_SECONDS && (
 							<p className="max-w-md text-[13px] text-text-2">
-								Still working ({formatElapsed(elapsed)}). A large database can take several minutes
-								to migrate - it is safe to leave this page open.
+								Still working ({formatElapsed(elapsed)})
 							</p>
 						)}
 					</div>
