@@ -28,7 +28,6 @@ export interface BadgeMeta {
 const TASK_STATUS_COLORS: Record<TaskStatus, BadgeColor> = {
 	[TaskStatus.Backlog]: 'neutral',
 	[TaskStatus.InProgress]: 'warning',
-	[TaskStatus.Review]: 'purple',
 	[TaskStatus.Blocked]: 'danger',
 	[TaskStatus.Done]: 'success',
 	[TaskStatus.Cancelled]: 'neutral',

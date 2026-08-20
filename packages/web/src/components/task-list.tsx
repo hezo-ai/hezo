@@ -46,16 +46,12 @@ const DEFAULT_OPEN_STATUSES: string[] = ALL_STATUSES.filter((s) => !TERMINAL_STA
  * already started that has hit something, so it needs the same visibility as the
  * rest of the work in flight.
  */
-const PINNED_TASK_STATUSES = [
-	TaskStatus.InProgress,
-	TaskStatus.Review,
-	TaskStatus.Blocked,
-] as const;
+const PINNED_TASK_STATUSES = [TaskStatus.InProgress, TaskStatus.Blocked] as const;
 const PINNED_STATUS_SET = new Set<string>(PINNED_TASK_STATUSES);
 const PINNED_STATUS_PARAM = PINNED_TASK_STATUSES.join(',');
-// The default selection shows open work (backlog; in_progress/review/blocked are
-// pinned in their own section) plus completed (`done`) tasks, which land in the
-// bottom "Done" section. `cancelled` stays hidden unless explicitly filtered in.
+// The default selection shows open work (backlog; in_progress/blocked are pinned
+// in their own section) plus completed (`done`) tasks, which land in the bottom
+// "Done" section. `cancelled` stays hidden unless explicitly filtered in.
 const DEFAULT_TODO_STATUSES: string[] = [
 	...DEFAULT_OPEN_STATUSES.filter((s) => !PINNED_STATUS_SET.has(s)),
 	TaskStatus.Done,
@@ -328,7 +324,7 @@ export function TaskList({ projectId }: TaskListProps) {
 		[inProgressResult?.data],
 	);
 	// Split the filtered main list into "Backlog" (open work) and "Done" (terminal:
-	// done/closed/cancelled). Each group nests independently so a child whose parent
+	// done/cancelled). Each group nests independently so a child whose parent
 	// sits in the other group surfaces at the top level of its own section — the same
 	// way the In-progress / Backlog split already behaves across separate queries.
 	const { backlogTasks, doneTasks } = useMemo<{

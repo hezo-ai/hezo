@@ -258,12 +258,7 @@ export async function resolveParentAssignment(
 // gating on them would strand the parent permanently. This mirrors
 // `hasOpenBlockers` in dependencies.ts, where a terminal upstream satisfies a
 // dependency.
-const OPEN_CHILD_STATUSES = [
-	TaskStatus.Backlog,
-	TaskStatus.InProgress,
-	TaskStatus.Review,
-	TaskStatus.Blocked,
-];
+const OPEN_CHILD_STATUSES = [TaskStatus.Backlog, TaskStatus.InProgress, TaskStatus.Blocked];
 
 export async function assertChildrenAllClosed(
 	db: Db,
@@ -384,6 +379,6 @@ export async function assertNoUnansweredAdminMentions(db: Db, taskId: string): P
 	if (r.rows.length === 0) return { ok: true };
 	return {
 		ok: false,
-		message: `Cannot mark this task done — an @admin question on it (comment ${r.rows[0].public_id}) has not been answered by a human yet. Keep the task in_progress or move it to review and end your turn; the admin's reply on this task wakes you automatically. Ask before closing — never mark a task done while an @admin ask is still open.`,
+		message: `Cannot mark this task done — an @admin question on it (comment ${r.rows[0].public_id}) has not been answered by a human yet. Keep the task in_progress and end your turn; the admin's reply on this task wakes you automatically. Ask before closing — never mark a task done while an @admin ask is still open.`,
 	};
 }

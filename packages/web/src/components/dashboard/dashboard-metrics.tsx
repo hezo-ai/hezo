@@ -1,16 +1,9 @@
-import {
-	AgentAdminStatus,
-	centsToDollars,
-	GoalHealth,
-	type GoalWithProject,
-	TaskStatus,
-} from '@hezo/shared';
+import { AgentAdminStatus, centsToDollars, GoalHealth, type GoalWithProject } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useAgents } from '../../hooks/use-agents';
 import { useBudgetStatus } from '../../hooks/use-costs';
 import { useProjectMeta } from '../../hooks/use-projects';
-import { useTasks } from '../../hooks/use-tasks';
 import { useI18n } from '../../lib/i18n';
 
 /**
@@ -107,18 +100,8 @@ export function DashboardMetrics({
 	const project = useProjectMeta(projectId);
 	const { data: agents } = useAgents(projectId, AgentAdminStatus.Enabled);
 	const { data: budget } = useBudgetStatus(projectId, { enabled: !isInternal });
-	// Same query the In progress list renders from, so this tile is free.
-	const { data: inFlight } = useTasks(projectId, {
-		status: `${TaskStatus.InProgress},${TaskStatus.Review}`,
-		sort: 'updated_at:desc',
-		per_page: '50',
-	});
-
 	const roster = agents ?? [];
 	const running = roster.filter((a) => a.active_run?.run_status === 'running').length;
-	const inReview = (inFlight?.data ?? []).filter(
-		(task) => task.status === TaskStatus.Review,
-	).length;
 	const rollup = goalRollup(goals);
 	const monthly = budget?.project.monthly;
 
@@ -149,7 +132,6 @@ export function DashboardMetrics({
 			to="/projects/$projectId/tasks"
 			label={t('dashboard.metric.openTasks')}
 			value={String(project?.open_task_count ?? 0)}
-			detail={inReview > 0 ? t('dashboard.metric.inReview', { count: inReview }) : undefined}
 		/>,
 	];
 

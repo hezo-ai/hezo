@@ -529,7 +529,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		await db.query(`DELETE FROM agent_wakeup_requests WHERE member_id = $1`, [otherId]);
 
 		// The exact screenshot incident: a completion report that correctly leaves the
-		// ticket in `review` but hands off via a stative "awaiting <slug> sign-off"
+		// open ticket that hands off via a stative "awaiting <slug> sign-off"
 		// recap — the name is mid-sentence, bound to the sign-off gate, no `@`, so it
 		// wakes no one as-is. detectUnlinkedTeammateAsks now catches this bound form.
 		const deps = makeDeps(
@@ -868,7 +868,7 @@ describe('runAgent handoff-delivery guardrail', () => {
 		// The review-handoff failure: a teammate @-mentions the reviewer asking for
 		// sign-off, the reviewer does the whole review and ends the run with its
 		// verdict only in the final message. Nothing wakes the asker and the ticket
-		// sits in `review` until a human notices.
+		// sits open until a human notices.
 		const other = await db.query<{ id: string }>(
 			`SELECT ma.id FROM member_agents ma
 			 JOIN members m ON m.id = ma.id
