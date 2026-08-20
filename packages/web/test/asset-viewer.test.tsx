@@ -547,3 +547,47 @@ test('a plain-text asset links its URLs and still anchors review quotes across t
 		expect(marks.some((m) => m.querySelector('a'))).toBe(true);
 	});
 });
+
+test('the Source tab leaves the raw file unlinked', async () => {
+	// Preview links per parsed cell; Source shows bytes nothing parsed. Linking
+	// there would run a URL into the delimiter after it - `https://x.com/a,high`
+	// rather than `https://x.com/a` - because a comma is a legal URL character
+	// and only the CSV parser knows this one separates fields.
+	const content = ['url,priority', 'https://x.com/a,high'].join('\n');
+	const { findByTestId, user } = await setupViewer({
+		filename: 'source-raw.csv',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(content),
+	});
+
+	expect((await findByTestId('asset-csv-table')).querySelectorAll('a').length).toBe(1);
+
+	await user.click(await findByTestId('asset-viewer-source-tab'));
+	const source = await findByTestId('asset-viewer-source');
+	expect(source.textContent).toBe(content);
+	expect(source.querySelectorAll('a').length).toBe(0);
+});
+
+test('a review highlight activates from the keyboard as well as the mouse', async () => {
+	const txt = 'first line of output\nsecond line with the flaky assertion\nthird line';
+	const { container, findByTestId, user } = await setupViewer({
+		filename: 'keyboard.txt',
+		contentType: 'text/plain',
+		bytes: new TextEncoder().encode(txt),
+		comments: [{ quote: 'flaky assertion', comment: 'This is the real bug' }],
+	});
+
+	let mark!: HTMLElement;
+	await waitFor(() => {
+		mark = container.querySelector('mark[data-review-id]') as HTMLElement;
+		expect(mark).not.toBeNull();
+	});
+
+	// The mark carries role="button" + tabIndex, so Enter and Space have to open
+	// its comment the same way a click does.
+	const row = await findByTestId('asset-review-row');
+	expect(row.getAttribute('data-active')).not.toBe('true');
+	mark.focus();
+	await user.keyboard('{Enter}');
+	await waitFor(() => expect(row.getAttribute('data-active')).toBe('true'));
+});
