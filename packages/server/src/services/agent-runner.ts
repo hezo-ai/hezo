@@ -1384,7 +1384,21 @@ export async function runAgent(
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
-	if (signal?.aborted) return abortedResult(startTime);
+	// A shutdown landing before the run row even exists still owes the work, and
+	// there is no row to hand it back through - so here the handback is the flag
+	// alone. `settleWakeupForRun` returns the wakeup to the queue on it, and
+	// `recordHandbackOutcome` is skipped downstream for want of a run id, which is
+	// the right answer: no run happened, so there is nothing to annotate.
+	if (signal?.aborted) {
+		const preRunReason = runAbortReason(signal);
+		return preRunReason === 'server_shutdown'
+			? {
+					...abortedResult(startTime),
+					requeued: true,
+					requeueReason: WakeupSkipReason.ServerShutdown,
+				}
+			: abortedResult(startTime);
+	}
 
 	// The run executes in the project's team (see buildRunContext); for instance
 	// agents working another team's project this differs from agent.team_id.

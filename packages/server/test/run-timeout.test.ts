@@ -414,6 +414,90 @@ describe('shutdown handback (runAgent + JobManager)', () => {
 		expect(run.rows[0].error).toContain('returning this run to the queue');
 	});
 
+	it('hands back a run the drain caught before it had a row at all', async () => {
+		// The earliest landing point, and the one with no row to hand back through:
+		// the drain can abort between the dispatch and the run's first write. The
+		// work is owed exactly as much as it is mid-exec, so the flag alone carries
+		// it - there is simply nothing to annotate.
+		const ac = new AbortController();
+		ac.abort('server_shutdown');
+
+		const result = await runAgent(
+			makeDeps(),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBe(true);
+		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		// No run row, deliberately: none was ever created, so none is invented.
+		expect(result.heartbeatRunId).toBeUndefined();
+	});
+
+	it('hands back a run the drain caught between phases', async () => {
+		// The third landing point: `finalizeAbort`, reached at a phase checkpoint
+		// rather than on the exec rejection. Aborting while the container is being
+		// acquired puts the run on the checkpoint before it is marked running.
+		//
+		// Every rung of the acquire ladder aborts, not just the provision one: which
+		// rung this takes depends on whether a sibling case left a warm container on
+		// the shared project, so hooking only `startContainer` passed alone and
+		// failed in a full run.
+		const ac = new AbortController();
+		const shutdown = () => ac.abort('server_shutdown');
+		const deps = makeDeps({
+			startContainer: async () => {
+				shutdown();
+			},
+			createContainer: async () => {
+				shutdown();
+				return { Id: 'container-123', Warnings: [] };
+			},
+			inspectContainer: async () => {
+				shutdown();
+				return {
+					Id: 'container-123',
+					State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+					Config: { Image: 'test' },
+				};
+			},
+		});
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBe(true);
+		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+	});
+
+	it('still fails a bare pre-run abort rather than re-queueing it', async () => {
+		// A user cancel arriving in the same window is a decision to stop, not work
+		// owed - so the handback must be reasoned from the reason, not from the fact
+		// that the signal was already aborted.
+		const ac = new AbortController();
+		ac.abort();
+
+		const result = await runAgent(
+			makeDeps(),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBeFalsy();
+	});
+
 	it('returns the wakeup to the queue, which is the promise the message makes', async () => {
 		await resetTaskHistory();
 		// The wakeup this run was dispatched for, claimed as a live dispatch leaves it.
