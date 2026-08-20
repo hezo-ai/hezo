@@ -8,7 +8,11 @@ import {
 } from '@hezo/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PgliteDb } from '../src/db/drivers/pglite';
-import { MAX_CONTAINER_MEMORY_GB_KEY, setSystemMeta } from '../src/lib/system-meta';
+import {
+	MAX_CONTAINER_MEMORY_GB_KEY,
+	setMonthlyContainerHours,
+	setSystemMeta,
+} from '../src/lib/system-meta';
 import {
 	getActiveContainers,
 	isContainerCapacityBlockedInDb,
@@ -304,6 +308,70 @@ describe('container capacity', () => {
 	 * project's idle containers wedge every other project on the instance: the
 	 * dispatch was skipped as `InstanceAtCapacity` and the reclaim rung never ran.
 	 */
+	/**
+	 * The monthly container-hours allowance, which answers a different question
+	 * from memory and clears on a different clock: reclaiming a neighbour's idle
+	 * container frees GB, never hours.
+	 */
+	describe('the container-hours allowance', () => {
+		/** `hours` of closed uptime already spent this calendar month. */
+		async function seedSpentHours(hours: number): Promise<void> {
+			await db.query(
+				`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+				 VALUES ('spent', date_trunc('month', now() AT TIME ZONE 'UTC'),
+				         date_trunc('month', now() AT TIME ZONE 'UTC') + ($1::int * interval '1 hour'),
+				         'docker')`,
+				[hours],
+			);
+		}
+
+		it('never trips while no cap is set, however many hours were spent', async () => {
+			await seedSpentHours(10_000);
+			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(false);
+		});
+
+		it('trips at the cap, not past it', async () => {
+			await setMonthlyContainerHours(db, 10);
+			await seedSpentHours(9);
+			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(false);
+			await db.query(`DELETE FROM container_uptime_entries`);
+			await seedSpentHours(10);
+			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(true);
+		});
+
+		it('blocks a dispatch that would start a container, with memory to spare', async () => {
+			// Nothing is running, so the memory gate would wave this straight through -
+			// which is the point: the two gates are independent.
+			const project = await seedProject();
+			await setMonthlyContainerHours(db, 10);
+			await seedSpentHours(10);
+			expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(true);
+		});
+
+		it('lets a project with a container already free serve the run anyway', async () => {
+			// A warm container starts nothing, so it spends no *new* hours - the ones
+			// it is spending are already on the meter either way. Blocking here would
+			// idle a container the instance is paying for regardless.
+			const project = await seedProject();
+			await addMember(project, 'ctr-warm');
+			await setMonthlyContainerHours(db, 10);
+			await seedSpentHours(10);
+			expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(false);
+		});
+
+		it('ignores hours spent in a previous month', async () => {
+			await setMonthlyContainerHours(db, 10);
+			await db.query(
+				`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+				 VALUES ('last-month',
+				         date_trunc('month', now() AT TIME ZONE 'UTC') - interval '20 hours',
+				         date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 hour',
+				         'docker')`,
+			);
+			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(false);
+		});
+	});
+
 	describe('reclaimable headroom', () => {
 		it('does not block a run that another project’s idle container can cover', async () => {
 			const hoarder = await seedProject();

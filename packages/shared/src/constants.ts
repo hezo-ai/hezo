@@ -744,10 +744,11 @@ export const ContainerUptimeEndReason = {
 	/** Removed outright - retired, torn down, or recycled at its disk ceiling. */
 	Destroyed: 'destroyed',
 	/**
-	 * The engine no longer knows this container, so the sweep closed the interval
-	 * on its behalf. Under-counts by design: the close time is the last moment
-	 * there was evidence the container existed, which is never later than the
-	 * moment it actually stopped.
+	 * Nobody asked for this stop - the pool lost confidence the container was up
+	 * and closed the interval on its behalf. The close time is when the fault was
+	 * noticed rather than when the container actually went, so a stretch ending
+	 * this way runs slightly long, bounded by how often the thing that noticed
+	 * runs.
 	 */
 	Reconciled: 'reconciled',
 } as const;

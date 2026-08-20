@@ -961,6 +961,15 @@ export const WakeupSkipReason = {
 	 */
 	CredentialBusy: 'credential_busy',
 	/**
+	 * The instance has burned its monthly container-hours allowance, so no new
+	 * container may start. Distinct from `InstanceAtCapacity` because nothing the
+	 * instance does will clear it: retiring a container frees memory but not
+	 * hours, and this lifts only when the calendar month turns or the operator
+	 * raises the cap. A run that lands on a container already running is not
+	 * skipped for this - the hours are being spent either way.
+	 */
+	HoursExhausted: 'hours_exhausted',
+	/**
 	 * A queued run's host-side driver vanished before the agent launched, so the
 	 * work was handed back. Not a capacity wait: nothing is being waited on, and
 	 * the dispatcher should pick this up on its next tick.

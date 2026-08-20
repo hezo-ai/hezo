@@ -41,6 +41,8 @@ export const MAX_CONTAINER_MEMORY_GB_KEY = 'max_container_memory_gb';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
 /** Disk allocated to each project container, in GB. Sibling of the RAM cap. */
 export const CONTAINER_DISK_GB_KEY = 'default_container_disk_gb';
+/** Container-hours the instance may burn per calendar month. 0 = unlimited. */
+export const MONTHLY_CONTAINER_HOURS_KEY = 'monthly_container_hours';
 /** Which view a task thread opens in. See `getDefaultTaskView`. */
 export const DEFAULT_TASK_VIEW_KEY = 'default_task_view';
 
@@ -175,6 +177,37 @@ export async function setMaxContainerMemoryGb(db: Db, value: number): Promise<nu
 /** Clear the explicit value — the computed (auto) default applies again. */
 export async function clearMaxContainerMemoryGb(db: Db): Promise<void> {
 	await deleteSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY);
+}
+
+/**
+ * Container-hours the instance may burn per calendar month, or 0 for unlimited.
+ *
+ * **Unlimited is the default and the only sane one for a self-hoster on local
+ * Docker**, where a container-hour costs nothing anyone bills for - there the
+ * hours view is observability, not a budget. It earns its keep on a managed
+ * backend, where every hour is money and the operator wants a ceiling they chose
+ * rather than an invoice they discover.
+ *
+ * Zero-means-unlimited matches every other budget in the system, and is what
+ * lets a deployment that meters centrally leave this unset and bill from the
+ * ledger instead of capping here.
+ *
+ * A malformed or negative stored value reads as unlimited rather than as zero
+ * hours: degrading to "no runs may ever start" would wedge the instance on a
+ * typo, and the failure would look like a capacity bug rather than a bad setting.
+ */
+export async function getMonthlyContainerHours(db: Db): Promise<number> {
+	const raw = await getSystemMeta(db, MONTHLY_CONTAINER_HOURS_KEY);
+	if (raw === null) return 0;
+	const parsed = Number.parseInt(raw, 10);
+	if (Number.isNaN(parsed) || parsed < 0) return 0;
+	return parsed;
+}
+
+export async function setMonthlyContainerHours(db: Db, value: number): Promise<number> {
+	const clamped = Math.max(0, Math.trunc(value));
+	await setSystemMeta(db, MONTHLY_CONTAINER_HOURS_KEY, String(clamped));
+	return clamped;
 }
 
 /**

@@ -50,6 +50,7 @@ import { chatChannelRoutes } from './routes/chat-channels';
 import { chatWebhookRoutes } from './routes/chat-webhooks';
 import { commentsRoutes } from './routes/comments';
 import { connectorsRoutes } from './routes/connectors';
+import { containerHoursRoutes } from './routes/container-hours';
 import { buildContainerRoutes } from './routes/containers';
 import { costsRoutes } from './routes/costs';
 import { customPromptRoutes } from './routes/custom-prompt';
@@ -857,6 +858,7 @@ export function buildApp(
 	app.route('/api', queuedWakeupsRoutes);
 	app.route('/api', auditLogRoutes);
 	app.route('/api', agentHoursRoutes);
+	app.route('/api', containerHoursRoutes);
 	app.route('/api', connectorsRoutes);
 	app.route('/api', oauthRoutes);
 	app.route('/api', previewRoutes);
