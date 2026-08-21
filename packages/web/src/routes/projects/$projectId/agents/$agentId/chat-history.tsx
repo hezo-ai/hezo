@@ -3,6 +3,10 @@ import { History, Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { RevisionHistoryDialog } from '../../../../../components/document-review/revision-history-dialog';
 import { ViewingRevisionBanner } from '../../../../../components/document-review/viewing-revision-banner';
+import {
+	InjectedTextCapNotice,
+	injectedTextCapBlocks,
+} from '../../../../../components/injected-text-cap-notice';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
 import { MarkdownProse } from '../../../../../components/markdown-prose';
 import { Button } from '../../../../../components/ui/button';
@@ -157,12 +161,25 @@ function ChatHistoryPage() {
 				/>
 			)}
 
+			{!viewingRevision && (
+				<InjectedTextCapNotice
+					kind="chat_memory"
+					content={value}
+					savedLength={serverContent.length}
+				/>
+			)}
+
 			<div className="flex items-center gap-2">
 				<Button
 					size="sm"
 					data-testid="chat-history-save"
 					onClick={handleSave}
-					disabled={!dirty || updateMemory.isPending || viewingRevision !== null}
+					disabled={
+						!dirty ||
+						updateMemory.isPending ||
+						viewingRevision !== null ||
+						injectedTextCapBlocks('chat_memory', value, serverContent.length)
+					}
 				>
 					{updateMemory.isPending && <Loader2 className="w-3 h-3 animate-spin" />} Save
 				</Button>

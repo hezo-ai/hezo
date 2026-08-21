@@ -1,8 +1,7 @@
-import { AuthType, DocumentType } from '@hezo/shared';
+import { AuthType, checkInjectedTextCap, DocumentType } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { canCoordinateTeam, isHqInstanceAgent } from '../lib/agent-roles';
 import { trackBackground } from '../lib/background';
-import { checkInjectedTextCap } from '../lib/injected-text-caps';
 import { resolveActorMemberId } from '../lib/resolve';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
@@ -54,15 +53,16 @@ export async function writeCustomPrompt(
 		}
 	}
 
+	const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
+
 	// The Custom Prompt is injected verbatim into every agent's prompt, so it is
-	// held to the same register as one — and to a ceiling.
-	const tooLarge = checkInjectedTextCap('team_preferences', content);
+	// held to the same register as one — and to a ceiling. The prior length lets a
+	// value that is already over it be walked down instead of frozen.
+	const tooLarge = checkInjectedTextCap('team_preferences', content, prior?.content.length);
 	if (tooLarge) return { status: 'invalid', error: tooLarge.error };
 
 	const styleError = authoredPromptError(content);
 	if (styleError) return { status: 'invalid', error: styleError };
-
-	const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
 	const authorMemberId = await resolveActorMemberId(db, auth, teamId);
 	const doc = await upsertDocument(db, wsManager, {
 		scope: { type: DocumentType.TeamPreferences, teamId },

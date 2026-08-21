@@ -11,6 +11,8 @@
 | What the system *does* — data model, run pipeline, mechanisms | `.dev/architecture.md` |
 | Anything a Hezo user or operator reads | `docs/` |
 
+**This file has a byte budget, enforced by `agents-md-budget.test.ts`.** Every agent working here reads it on every task, so it is a per-run context cost like `SHARED_INSTRUCTIONS`. When it fails, cut an entry down or move rationale to `.dev/` - raising the number is a deliberate call to argue for in the commit, not a way to make the test pass.
+
 **A new specialized area is born as a `.dev/` guide, not as a new section here.** This file reached 150K by accreting them; the summary it keeps is only the rules that bind someone who does not yet know they are in that territory. When you add a guide, link it from the matching section, list it in the `.dev/` bullet under **Layout**, and add its row to **Mirrored surfaces**. **When a surface list or a seam home would go inline, extend the table that already holds it** rather than writing a thirteenth restatement in prose.
 
 ## Commands
@@ -98,6 +100,7 @@
 | A `.dev/` guide added, renamed or removed | the link from its section here, the `.dev/` bullet under **Layout**, this table | **nothing - on you** |
 | A Bun workaround added or removed, or `BUN_VERSION` moved | its entry in `.dev/bun-issues.md` | **nothing - on you** |
 | A rule this file states | its guide in `.dev/`, if one covers that area - they must not disagree | **nothing - on you** |
+| A new rule added here | this file's byte budget - fitting it in usually means cutting something else down | `agents-md-budget.test.ts` |
 | CLI flag / subcommand / config key / port / default (`src/cli.ts`, `src/config/`) | `docs/reference/cli.md`, `docs/deployment/configuration.md`, the CLI table in `packages/server/README.md`, any page showing the command | **nothing - on you** |
 | A new operator setting | its `config/types.ts` field + `DEFAULT_CONFIG` default, its `config/schema.ts` entry, and its row in `docs/deployment/configuration.md` | a missing type field is a compile error; **an unvalidated or undocumented key is on you** |
 | A sharded, renamed or newly-required CI job | its `*-complete` rollup, a shard-unique matrix artifact name, the `main` ruleset's required checks | **nothing - on you** |

@@ -3,6 +3,10 @@ import { FileText, History, Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { RevisionHistoryDialog } from '../../../components/document-review/revision-history-dialog';
 import { ViewingRevisionBanner } from '../../../components/document-review/viewing-revision-banner';
+import {
+	InjectedTextCapNotice,
+	injectedTextCapBlocks,
+} from '../../../components/injected-text-cap-notice';
 import { MarkdownEditor } from '../../../components/markdown-editor';
 import { MarkdownProse } from '../../../components/markdown-prose';
 import { Button } from '../../../components/ui/button';
@@ -114,11 +118,20 @@ function CustomPromptPage() {
 							previewTestId="custom-prompt-preview"
 							emptyPreviewText="_(nothing to preview)_"
 						/>
+						<InjectedTextCapNotice
+							kind="team_preferences"
+							content={content}
+							savedLength={saved.length}
+						/>
 						<div className="flex justify-end">
 							<Button
 								size="sm"
 								onClick={() => updatePrefs.mutateAsync({ content })}
-								disabled={!dirty || updatePrefs.isPending}
+								disabled={
+									!dirty ||
+									updatePrefs.isPending ||
+									injectedTextCapBlocks('team_preferences', content, saved.length)
+								}
 							>
 								{updatePrefs.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 								Save changes

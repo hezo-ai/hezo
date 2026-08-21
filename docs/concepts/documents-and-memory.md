@@ -262,6 +262,15 @@ current size and asks for consolidation, so the next attempt merges overlapping 
 guidance that no longer applies. Nothing is ever silently cut, because a rule that vanished from the
 end of a block would change how the team behaves with nobody knowing.
 
+**A limit never freezes what is already past it.** If one of these is over its ceiling - because it
+came from a team you installed, or was written before the limits existed - it stays editable
+**downwards**: any change that makes it shorter is accepted, however far over it still is, and only
+a change that makes it longer is refused. So you consolidate it a piece at a time instead of having
+to rewrite the whole thing in one go, and the ordinary rule resumes once it is back under.
+
+In the app, the editors for the Custom Prompt, an agent's system prompt and the chat memory show the
+current size against the ceiling as you type, and Save is unavailable while a change would break it.
+
 The limit belongs to the **surface**, not to whoever is writing: these blocks are injected in full on
 every run, so an agent and an admin editing the same field hit the same ceiling.
 

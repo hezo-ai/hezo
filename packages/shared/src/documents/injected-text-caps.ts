@@ -12,6 +12,15 @@
  * instruction block changes what an agent is told without anyone knowing. A
  * refusal that names the ceiling makes the next write a compaction.
  *
+ * One thing a ceiling must never do is freeze what is already past it. Setting a
+ * team up writes these fields uncapped (a roster must not fail to install because
+ * a role was authored long), so a value can legitimately start over the line, and
+ * a rule that only asked "does the new value fit" would refuse every edit that
+ * shrinks it - including the consolidation being asked for. Pass the current
+ * length and an over-ceiling value stays editable **downwards**: shorter than it
+ * is now is always accepted, longer never is, and the plain rule resumes the
+ * moment it is back under.
+ *
  * The numbers are deliberately well under "whatever fits". Instruction-following
  * degrades with the number of stacked behavioural rules long before a context
  * window fills, so a generous cap buys nothing except a prompt nobody reads to the
@@ -49,25 +58,52 @@ export interface InjectedTextTooLarge {
 }
 
 /**
- * `null` when `content` fits, otherwise a refusal describing the overage.
+ * `null` when `content` may be written, otherwise a refusal describing the overage.
  *
  * The message carries the ceiling and the actual size on purpose: the caller is
  * usually an agent, and a refusal it cannot act on is a loop. Knowing both numbers
  * turns the retry into a compaction rather than a guess.
+ *
+ * `currentLength` is the length of the value being replaced. Supply it wherever
+ * the caller already knows it: without it a value that starts over the ceiling can
+ * only be fixed by one all-at-once rewrite, which is the read-whole/rewrite-whole
+ * loop the span-edit tools exist to avoid, forced at the worst moment. With it the
+ * same value can be walked down one edit at a time.
  */
 export function checkInjectedTextCap(
 	kind: InjectedTextKind,
 	content: string,
+	currentLength?: number,
 ): InjectedTextTooLarge | null {
 	const limit = INJECTED_TEXT_CAPS[kind];
 	const length = content.length;
 	if (length <= limit) return null;
+
+	// Already past the ceiling: accept anything strictly shorter, so consolidating
+	// works span by span. Not `<=` - an edit that leaves it the same size makes no
+	// progress, and the pressure to get back under is the whole point.
+	const alreadyOver = currentLength !== undefined && currentLength > limit;
+	if (alreadyOver && length < currentLength) return null;
+
+	const preamble = `This ${LABELS[kind]} is ${length} characters, over the ${limit}-character limit by ${length - limit}. `;
+	if (alreadyOver) {
+		return {
+			kind,
+			limit,
+			length,
+			error:
+				preamble +
+				`It was already over the limit at ${currentLength} characters before this write, so it can ` +
+				'still be edited, but only downwards: send something shorter than it is now, as many times ' +
+				'as it takes. This one is not shorter.',
+		};
+	}
 	return {
 		kind,
 		limit,
 		length,
 		error:
-			`This ${LABELS[kind]} is ${length} characters, over the ${limit}-character limit by ${length - limit}. ` +
+			preamble +
 			'It is injected in full into a prompt, so it has a ceiling. Consolidate it: merge overlapping ' +
 			'entries, drop guidance that no longer applies, and keep each point to a line. Re-send the ' +
 			'shortened version.',

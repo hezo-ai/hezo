@@ -1,8 +1,8 @@
+import { INJECTED_TEXT_CAPS } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
-import { INJECTED_TEXT_CAPS } from '../src/lib/injected-text-caps';
 import type { Env } from '../src/lib/types';
 import { getToolDefs } from '../src/mcp/server';
 import { buildCoachReviewPrompt, type TaskInfo } from '../src/services/agent-runner';
@@ -455,6 +455,68 @@ describe('the agent system-prompt ceiling', () => {
 		expect(payload.error).toContain(String(INJECTED_TEXT_CAPS.agent_system_prompt));
 		expect(payload.error).toContain(String(oversized.length));
 		expect(payload.applied).toBeUndefined();
+	});
+
+	// The deadlock this guards: a prompt provisioned over the ceiling could only be
+	// fixed by one all-at-once rewrite - the read-whole/rewrite-whole loop the span
+	// edits exist to avoid, forced at the worst moment. Shorter-than-now is always
+	// accepted, so it can be walked down instead.
+	it('lets an over-ceiling prompt be consolidated downwards, one edit at a time', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Overgrown Analyst', system_prompt: oversized }),
+		});
+		expect(res.status).toBe(201);
+		const agentId = (await res.json()).data.id;
+
+		const write = async (prompt: string) => {
+			const r = await app.request('/mcp', {
+				method: 'POST',
+				headers: { ...authHeader(captainToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					method: 'tools/call',
+					id: 1,
+					params: {
+						name: 'update_agent_system_prompt',
+						arguments: {
+							project: projectId,
+							agent_id: agentId,
+							new_system_prompt: prompt,
+							change_summary: 'consolidating learned rules',
+						},
+					},
+				}),
+			});
+			return JSON.parse((await r.json()).result.content?.[0]?.text ?? '{}');
+		};
+
+		// Growing it is refused even though it was already over - the ceiling still
+		// bounds growth, it just does not freeze what is past it.
+		const grown = await write(`${oversized}\n- Rule 1200: one more.`);
+		expect(grown.error).toMatch(/only downwards/);
+		expect(grown.applied).toBeUndefined();
+
+		// Two passes that each shrink it but are both still over the ceiling.
+		const half = oversized.slice(0, oversized.length - 4_000);
+		expect(half.length).toBeGreaterThan(INJECTED_TEXT_CAPS.agent_system_prompt);
+		expect((await write(half)).applied).toBe(true);
+
+		const smaller = half.slice(0, half.length - 4_000);
+		expect(smaller.length).toBeGreaterThan(INJECTED_TEXT_CAPS.agent_system_prompt);
+		expect((await write(smaller)).applied).toBe(true);
+
+		// A step backwards from the new size is refused, so progress cannot be undone.
+		expect((await write(half)).error).toMatch(/only downwards/);
+
+		// And the pass that finally lands under the ceiling is an ordinary write.
+		expect((await write(smaller.slice(0, 1_000))).applied).toBe(true);
+		const promptRes = await app.request(
+			`/api/projects/${projectSlug}/agents/${agentId}/system-prompt`,
+			{ headers: authHeader(adminToken) },
+		);
+		expect((await promptRes.json()).data.content.length).toBe(1_000);
 	});
 
 	it('refuses the same content on the admin route, because the ceiling is the surface', async () => {

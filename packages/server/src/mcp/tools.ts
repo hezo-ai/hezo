@@ -25,6 +25,7 @@ import {
 	ConnectorTransport,
 	CredentialInputType,
 	CredentialKind,
+	checkInjectedTextCap,
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
@@ -36,7 +37,9 @@ import {
 	type GoalHealth,
 	getConnectorCapability,
 	hasFixedReportsTo,
+	INJECTED_TEXT_CAPS,
 	INSTANCE_AGENT_SLUGS,
+	InjectedTextCapError,
 	inferGender,
 	isAllowedAttachmentMime,
 	isMarkdownDocSlug,
@@ -91,11 +94,6 @@ import {
 	wouldCreateCycle,
 } from '../lib/dependencies';
 import { readImageDimensions } from '../lib/image-dimensions';
-import {
-	checkInjectedTextCap,
-	INJECTED_TEXT_CAPS,
-	InjectedTextCapError,
-} from '../lib/injected-text-caps';
 import {
 	detectNarratedActiveMentions,
 	detectPassiveTeammateAsks,
@@ -1919,8 +1917,10 @@ export function registerTools(
 				status: string;
 				assignee_id: string | null;
 				parent_task_id: string | null;
+				progress_summary: string | null;
 			}>(
-				'SELECT title, description, status, assignee_id, parent_task_id FROM tasks WHERE id = $1',
+				`SELECT title, description, status, assignee_id, parent_task_id, progress_summary
+				 FROM tasks WHERE id = $1`,
 				[taskId],
 			);
 			const currentRow = currentRowResult.rows[0];
@@ -2047,7 +2047,13 @@ export function registerTools(
 					idx++;
 					continue;
 				} else if (key === 'progress_summary') {
-					const oversize = checkInjectedTextCap('task_progress_summary', String(val ?? ''));
+					// The current length keeps a summary written before this ceiling
+					// existed shrinkable, rather than frozen at whatever size it is.
+					const oversize = checkInjectedTextCap(
+						'task_progress_summary',
+						String(val ?? ''),
+						currentRow?.progress_summary?.length,
+					);
 					if (oversize) return { error: oversize.error };
 					sets.push(`progress_summary = $${idx}`);
 					params.push(val);
@@ -4748,9 +4754,17 @@ export function registerTools(
 			const targetSlug = agentCheck.rows[0].slug;
 			// The house register: mechanical violations reject, judgement calls come
 			// back as an advisory on the successful write (see prompt-style-guard).
+			// The current length goes in so a prompt provisioned over the ceiling can
+			// be consolidated downwards rather than being unwritable.
+			const currentPrompt = await getDocument(db, {
+				type: DocumentType.AgentSystemPrompt,
+				teamId,
+				memberAgentId: agentId,
+			});
 			const tooLarge = checkInjectedTextCap(
 				'agent_system_prompt',
 				args.new_system_prompt as string,
+				currentPrompt?.content.length,
 			);
 			if (tooLarge) return { error: tooLarge.error };
 
@@ -4853,7 +4867,16 @@ export function registerTools(
 					continue;
 				}
 				const slug = agentCheck.rows[0].slug;
-				const tooLarge = checkInjectedTextCap('agent_system_prompt', u.new_system_prompt);
+				const currentPrompt = await getDocument(db, {
+					type: DocumentType.AgentSystemPrompt,
+					teamId,
+					memberAgentId: agentId,
+				});
+				const tooLarge = checkInjectedTextCap(
+					'agent_system_prompt',
+					u.new_system_prompt,
+					currentPrompt?.content.length,
+				);
 				if (tooLarge) {
 					results.push({ index: i, agent_id: u.agent_id, ok: false, error: tooLarge.error });
 					continue;
@@ -5242,7 +5265,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_team_context',
-		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the Captain of the same team.",
+		`Save the team-relationships context for an agent (≤${INJECTED_TEXT_CAPS.agent_team_context} chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the Captain of the same team.`,
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
@@ -5250,11 +5273,7 @@ export function registerTools(
 				.string()
 				.trim()
 				.min(1, 'content must be non-empty')
-				.max(
-					INJECTED_TEXT_CAPS.agent_team_context,
-					`content too long (max ${INJECTED_TEXT_CAPS.agent_team_context})`,
-				)
-				.describe('The new team_context, ≤6000 chars'),
+				.describe(`The new team_context, ≤${INJECTED_TEXT_CAPS.agent_team_context} chars`),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -5265,13 +5284,29 @@ export function registerTools(
 				return { error: 'Access denied: only the Captain can update agent team contexts' };
 			}
 
-			// Length/non-empty enforced by the schema; `.trim()` already trimmed it.
+			// Non-empty enforced by the schema; `.trim()` already trimmed it.
 			const content = (args.content as string).trim();
 
 			// Accept a slug or member ID; the team_id filter scopes the write so an HQ
 			// agent (resolveAgentId's fallback) can't be written through this team.
 			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
 			if (!agentId) return { error: 'Agent not found in this team' };
+
+			// The ceiling is checked here rather than as a schema `.max()` so it can
+			// see the value being replaced: provisioning writes this field uncapped,
+			// so one that starts over the line must stay editable downwards.
+			const current = await db.query<{ team_context: string | null }>(
+				`SELECT ma.team_context FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[agentId, teamId],
+			);
+			const tooLarge = checkInjectedTextCap(
+				'agent_team_context',
+				content,
+				current.rows[0]?.team_context?.length,
+			);
+			if (tooLarge) return { error: tooLarge.error };
+
 			const r = await db.query<{ id: string }>(
 				`UPDATE member_agents SET team_context = $1, updated_at = now()
 				 WHERE id = $2 AND id IN (
@@ -5292,7 +5327,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_team_contexts',
-		`Save team-relationships contexts for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's context together. Same rules and caller as set_agent_team_context (the Captain of the same team); each content is ≤6000 chars of plain second-person prose. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_team_context in a loop.`,
+		`Save team-relationships contexts for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's context together. Same rules and caller as set_agent_team_context (the Captain of the same team); each content is ≤${INJECTED_TEXT_CAPS.agent_team_context} chars of plain second-person prose. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_team_context in a loop.`,
 		{
 			project: projectArg(),
 			updates: z
@@ -5303,11 +5338,9 @@ export function registerTools(
 							.string()
 							.trim()
 							.min(1, 'content must be non-empty')
-							.max(
-								INJECTED_TEXT_CAPS.agent_team_context,
-								`content too long (max ${INJECTED_TEXT_CAPS.agent_team_context})`,
-							)
-							.describe('The new team_context for this agent, ≤6000 chars'),
+							.describe(
+								`The new team_context for this agent, ≤${INJECTED_TEXT_CAPS.agent_team_context} chars`,
+							),
 					}),
 				)
 				.min(1)
@@ -5328,17 +5361,42 @@ export function registerTools(
 			for (let i = 0; i < updates.length; i++) {
 				const u = updates[i];
 				const agentId = await resolveAgentId(db, teamId, u.agent_id);
-				const r = agentId
-					? await db.query<{ id: string; slug: string }>(
-							`UPDATE member_agents SET team_context = $1, updated_at = now()
-							 WHERE id = $2 AND id IN (
-							   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
-							 )
-							 RETURNING id, slug`,
-							[u.content.trim(), agentId, teamId],
+				const current = agentId
+					? await db.query<{ team_context: string | null }>(
+							`SELECT ma.team_context FROM member_agents ma JOIN members m ON m.id = ma.id
+							 WHERE ma.id = $1 AND m.team_id = $2`,
+							[agentId, teamId],
 						)
 					: null;
-				if (!agentId || !r || r.rows.length === 0) {
+				if (!agentId || !current || current.rows.length === 0) {
+					results.push({
+						index: i,
+						agent_id: u.agent_id,
+						ok: false,
+						error: 'Agent not found in this team',
+					});
+					continue;
+				}
+				// Per item, so one over-ceiling context does not lose the rest of the
+				// batch — the same reason the prompt batch refuses per item.
+				const tooLarge = checkInjectedTextCap(
+					'agent_team_context',
+					u.content.trim(),
+					current.rows[0].team_context?.length,
+				);
+				if (tooLarge) {
+					results.push({ index: i, agent_id: u.agent_id, ok: false, error: tooLarge.error });
+					continue;
+				}
+				const r = await db.query<{ id: string; slug: string }>(
+					`UPDATE member_agents SET team_context = $1, updated_at = now()
+					 WHERE id = $2 AND id IN (
+					   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
+					 )
+					 RETURNING id, slug`,
+					[u.content.trim(), agentId, teamId],
+				);
+				if (r.rows.length === 0) {
 					results.push({
 						index: i,
 						agent_id: u.agent_id,

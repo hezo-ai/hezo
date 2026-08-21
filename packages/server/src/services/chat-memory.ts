@@ -1,6 +1,5 @@
-import { ChatMessageRole } from '@hezo/shared';
+import { ChatMessageRole, checkInjectedTextCap, InjectedTextCapError } from '@hezo/shared';
 import type { Db } from '../db/database';
-import { checkInjectedTextCap, InjectedTextCapError } from '../lib/injected-text-caps';
 import { withTransaction } from '../lib/sql';
 
 /**
@@ -62,19 +61,22 @@ export async function upsertChatMemory(
 	changeSummary?: string,
 	authorMemberId?: string | null,
 ): Promise<ChatMemory> {
-	const tooLarge = checkInjectedTextCap('chat_memory', content);
-	// Refuse rather than truncate, but refuse in a way that converges: compaction is
-	// what drains the message window, so a dead-end refusal would wedge the chat.
-	// The error names the ceiling and the current size, so the agent's retry is a
-	// shorter rewrite rather than a guess.
-	if (tooLarge) throw new InjectedTextCapError(tooLarge.error);
-
 	return withTransaction(db, async () => {
 		const prior = await db.query<{ content: string }>(
 			'SELECT content FROM chat_memories WHERE member_id = $1',
 			[memberId],
 		);
 		const priorContent = prior.rows[0]?.content;
+
+		// Refuse rather than truncate, but refuse in a way that converges: compaction
+		// is what drains the message window, so a dead-end refusal would wedge the
+		// chat. The error names the ceiling and the current size, so the agent's
+		// retry is a shorter rewrite rather than a guess — and passing the prior
+		// length keeps an over-ceiling memory shrinkable instead of frozen. Checked
+		// inside the transaction because that read is where the prior length comes
+		// from; the throw rolls back before anything is written.
+		const tooLarge = checkInjectedTextCap('chat_memory', content, priorContent?.length);
+		if (tooLarge) throw new InjectedTextCapError(tooLarge.error);
 
 		// A create has nothing to snapshot; only a real change does.
 		if (priorContent !== undefined && priorContent !== content) {

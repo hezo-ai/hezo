@@ -3,7 +3,7 @@ import {
 	checkInjectedTextCap,
 	INJECTED_TEXT_CAPS,
 	type InjectedTextKind,
-} from '../src/lib/injected-text-caps';
+} from '../src/documents/injected-text-caps.js';
 
 describe('injected-text caps', () => {
 	const kinds = Object.keys(INJECTED_TEXT_CAPS) as InjectedTextKind[];
@@ -43,6 +43,58 @@ describe('injected-text caps', () => {
 		);
 	});
 
+	// The ceiling must bound growth without freezing what is already past it.
+	// Provisioning writes these fields uncapped, and an instance upgrading onto this
+	// release carries values written before the ceiling existed, so "already over"
+	// is a state that legitimately exists and has to remain fixable.
+	describe('content that is already over the ceiling', () => {
+		const limit = INJECTED_TEXT_CAPS.agent_system_prompt;
+		const current = limit + 5_000;
+
+		it('accepts a write that is shorter than what it replaces, even while still over', () => {
+			expect(
+				checkInjectedTextCap('agent_system_prompt', 'x'.repeat(current - 1), current),
+			).toBeNull();
+			expect(
+				checkInjectedTextCap('agent_system_prompt', 'x'.repeat(limit + 1), current),
+			).toBeNull();
+		});
+
+		it('accepts the write that finally lands under the ceiling', () => {
+			expect(checkInjectedTextCap('agent_system_prompt', 'x'.repeat(limit), current)).toBeNull();
+		});
+
+		it('refuses a write that is longer, the same size, or grows an under-limit value', () => {
+			// Not `<=`: an edit that keeps it the same size makes no progress, and the
+			// pressure to get back under the ceiling is the point of having one.
+			expect(
+				checkInjectedTextCap('agent_system_prompt', 'x'.repeat(current), current),
+			).not.toBeNull();
+			expect(
+				checkInjectedTextCap('agent_system_prompt', 'x'.repeat(current + 1), current),
+			).not.toBeNull();
+			// A value that fits today cannot be pushed past the ceiling.
+			expect(
+				checkInjectedTextCap('agent_system_prompt', 'x'.repeat(current), limit - 1),
+			).not.toBeNull();
+		});
+
+		it('says it can only be edited downwards, and names both sizes', () => {
+			const refused = checkInjectedTextCap(
+				'agent_system_prompt',
+				'x'.repeat(current + 10),
+				current,
+			);
+			expect(refused?.error).toContain(String(current));
+			expect(refused?.error).toContain(String(current + 10));
+			expect(refused?.error).toMatch(/only downwards/);
+		});
+
+		it('behaves identically without a current length, so an unwired caller still caps', () => {
+			expect(checkInjectedTextCap('agent_system_prompt', 'x'.repeat(current))).not.toBeNull();
+		});
+	});
+
 	it('keeps every ceiling well under a context window', () => {
 		// The point is instruction-following, not fitting: compliance degrades with
 		// the number of stacked rules long before a window fills, so a generous cap
@@ -53,13 +105,16 @@ describe('injected-text caps', () => {
 	});
 });
 
-// A cap is only real if every writer of that surface hits it. These pin the
-// enforcement points, because the batch tool and the admin REST route both wrote
-// the same field and both originally skipped the check.
+// A cap is only real if every writer of that surface hits it. This pins the
+// server-side enforcement points by name, because the batch tool and the admin
+// REST route both wrote the same field and both originally skipped the check. It
+// is a hand-kept list either way, so it lives beside the rules it is about.
 describe('every writer of a capped surface is capped', () => {
 	it('names an enforcement point for each kind in the table', () => {
 		// This is the list that must grow when a row is added — an unwired row is
 		// worse than no row, because the table then documents a ceiling nobody holds.
+		// Every entry passes the length of the value it replaces. A site that
+		// forgets still caps, but freezes anything provisioned over the ceiling.
 		const enforced: Record<InjectedTextKind, string[]> = {
 			team_preferences: ['services/custom-prompt.ts (REST + MCP share it)'],
 			agent_system_prompt: [
@@ -70,8 +125,8 @@ describe('every writer of a capped surface is capped', () => {
 			chat_memory: ['services/chat-memory.ts (REST + MCP share it)'],
 			task_progress_summary: ['mcp/tools.ts update_task'],
 			agent_team_context: [
-				'mcp/tools.ts set_agent_team_context (zod)',
-				'mcp/tools.ts set_agent_team_contexts (zod)',
+				'mcp/tools.ts set_agent_team_context',
+				'mcp/tools.ts set_agent_team_contexts (batch)',
 			],
 		};
 		for (const kind of Object.keys(INJECTED_TEXT_CAPS) as InjectedTextKind[]) {
