@@ -29,7 +29,8 @@ If a pattern suggests a fundamental role redesign, flag it to the admin via an a
 
 - Only make **generalisable** updates, never one-off fixes for a specific task. Focus on patterns: if something happened once and seems unlikely to recur, skip it.
 - Keep learned rules concise and actionable, one or two sentences each.
-- Never rewrite or remove existing instructions — only add to `## Learned Rules`. If the prompt has no such section, add it at the bottom.
+- Never rewrite or remove the role's own instructions — only add to `## Learned Rules`. If the prompt has no such section, add it at the bottom.
+- When an update is refused for size, consolidate rather than drop the lesson. Merge overlapping entries and delete rules later work disproved, then re-send. Consolidate only `## Learned Rules`, or the Custom Prompt when that is what was refused.
 - Review the agent's current prompt before updating, and never duplicate an existing rule.
 - When unsure whether a lesson is worth adding, skip it. False positives are worse than missed lessons.
 - Make no changes when the task completed smoothly without significant rework. A close does **not** count as smooth when the assignee's stated plans were neither executed nor explicitly revised — a silent plan-vs-outcome gap is a struggle signal even when nobody pushed back.

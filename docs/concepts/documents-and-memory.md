@@ -265,6 +265,14 @@ end of a block would change how the team behaves with nobody knowing.
 The limit belongs to the **surface**, not to whoever is writing: these blocks are injected in full on
 every run, so an agent and an admin editing the same field hit the same ceiling.
 
+**Setting a team up is exempt.** A team you install from the marketplace, and an agent hired through
+an approved proposal, are created with their prompts exactly as authored. The ceiling applies to
+edits made afterwards, so a roster can never fail to install because a role was written long. The
+largest prompt any team currently ships is well inside the limit, which leaves every new agent room
+for the rules the Coach adds over time. When that room does run out, the Coach consolidates the
+rules it has added rather than dropping the lesson, and it never touches the role's own
+instructions above them.
+
 Your task **descriptions** and **rules** are not capped. They aren't injected the same way, and long
 ones are shortened only where they appear in list views, never when they're stored.
 
