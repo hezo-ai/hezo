@@ -3766,28 +3766,40 @@ to the task prompt for a CLI quirk the agent cannot discover from its own tool l
 in `agent-runner.ts` beside the effort directive, so it reaches the prompt the same way and
 is absent for every runtime with no entry.
 
-Only Codex has one, and only because there is no structural lever for its case. Codex surfaces
-the apps connected to its own ChatGPT account as tools, in a namespace of their own, alongside
-the MCP servers Hezo configures - and its config file offers no key to suppress them. Its
-GitHub app is authorized against that account rather than the project's connection, so it
-answers 404 on the project's repos, which reads to an agent as the resource not existing. Two
-runs diagnosed that as a Hezo connector fault and filed it as one.
+Only Codex has one, and it is **insurance rather than the mechanism**. The competing tools are
+switched off outright: `codexAdapter.build` writes `features.apps = false` as a top-level key
+in `config.toml`. Codex surfaces the apps connected to the signed-in ChatGPT account as tools
+in a `codex_apps` namespace, beside the MCP servers Hezo configures. They are the wrong tenant
+- authorized against that account rather than the project's connection, so they answer 404 on
+the project's own repos, which reads to an agent as the resource not existing. Two runs
+diagnosed exactly that as a Hezo connector fault. Codex also documents that app and connector
+traffic "is not controlled by the sandboxed-command network proxy or its domain allowlist", so
+they are an uncontrolled egress path on top of being the wrong credentials.
 
-**The identification rule is the load-bearing half**, because the obvious heuristic is
-actively wrong. A connector's Codex tools are `mcp__<safeName(mcp_connections.name)>__<tool>`
-(`toml.ts` renders the `[mcp_servers.<key>]` table key; `connections.ts` supplies the name),
-and that name is operator-chosen text which need not mention the service - a GitHub connector
-may be called "Marketing". Codex's own family, meanwhile, is `codex_apps` with `github` in the
-tool name. So an agent following `SHARED_INSTRUCTIONS`' "use the `github` MCP tools" and
-scanning its tool list for `github` finds exactly one match, and it is the wrong one. The note
-therefore names `list_connectors` as the connector-name-to-prefix mapping and `codex_apps` as
-the exclusion; without those two facts it would be true but unusable. The same
+An earlier revision claimed no structural lever existed and solved this with the prompt alone.
+That was wrong: `features.apps` and `apps._default.enabled` are both documented keys.
+`features.apps` is preferred - it is the feature gate rather than a per-app default, it stays a
+top-level key so the "top-level before any `[table]`" ordering is undisturbed, and it does not
+touch the `mcp_servers.*` tree. openai/codex#17588 reported `apps.<id>.enabled` being ignored,
+but under a `[profiles.*]` section; Hezo writes top-level keys, so that report does not apply -
+and it is the reason a short note is kept rather than deleted.
+
+**The note's identification rule has one trap worth stating.** A connector's Codex tools are
+`mcp__<connector>__<tool>`, where `<connector>` is `mcp_connections.name` put through **two**
+sanitizers: Hezo's `safeName` (`toml.ts`) maps to `[A-Za-z0-9_-]`, then Codex's own
+`sanitize_responses_api_tool_name` replaces everything outside `[A-Za-z0-9_]` - hyphens
+included (openai/codex#14605, shipped v0.116.0). Stating either half alone is wrong, and wrong
+in the direction that matters: `register_connector` slugs are hyphenated by construction
+(`tools.ts`, `.replace(/[^a-z0-9]+/g, '-')`), so a rule that keeps hyphens misdescribes exactly
+the connectors agents create. The name is also operator-chosen or slug-derived and need not
+mention the service - a GitHub connector may be called "Marketing" - so the note names
+`list_connectors` as the mapping and `codex_apps` as the exclusion. The
 `mcp__<connector_name>__<tool>` convention is already stated to agents in
 `connector-registry.ts`, so the note extends existing vocabulary rather than inventing one.
 
-AGENTS.md's preference for a structural signal over a phrase still holds everywhere it can be
-met; here the competing tools cannot be turned off and cannot be told apart from their names
-alone, so the note is what is left. Keep the table empty for every other runtime rather than
+AGENTS.md's preference for a structural signal over a phrase is met here by the config key; the
+note survives only because that key lives in a third-party CLI. Keep the table empty for every
+other runtime rather than
 using it to restate `SHARED_INSTRUCTIONS`, which already reaches every agent on every runtime.
 
 Related, and a live gap: **Codex reports no tool counts.** Only `createClaudeCodeParser`

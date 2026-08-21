@@ -1,0 +1,153 @@
+# Reports which pinned agent CLIs have fallen behind upstream.
+#
+# Pinning the CLIs (docker/Dockerfile.agent-base) traded surprise breakage for
+# silent staleness, and staleness on an AI coding CLI means missing model support
+# and fixes. Kimi Code sat eight minor versions behind before anything said so.
+#
+# Deliberately a report, not a bump: it opens or updates ONE tracking issue rather
+# than a pull request per release. claude-code alone publishes constantly, so
+# per-release PRs would bury the queue and get ignored - which is the failure mode
+# this is meant to avoid, not reproduce.
+#
+# A bump is still a deliberate act. Each CLI's comment in the Dockerfile says what
+# to re-verify before changing its number.
+name: CLI drift
+
+on:
+  schedule:
+    # Mondays, 07:00 UTC. Weekly is the right cadence for something a human acts on.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    name: Report pinned CLI drift
+    runs-on: ubuntu-latest
+    # Never runs on a pull request, so a fork PR with its read-only GITHUB_TOKEN
+    # cannot hit the issues:write step. This job is in no required check's needs
+    # chain either.
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare pins against upstream
+        id: drift
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const dockerfile = fs.readFileSync('docker/Dockerfile.agent-base', 'utf8');
+
+            const argOf = (name) => {
+              const m = dockerfile.match(new RegExp(`^ARG ${name}=(\\S+)`, 'm'));
+              return m ? m[1] : null;
+            };
+
+            // npm-installed CLIs: ARG name -> npm package.
+            const NPM = {
+              CLAUDE_CODE_VERSION: '@anthropic-ai/claude-code',
+              CODEX_VERSION: '@openai/codex',
+              OPENCODE_VERSION: 'opencode-ai',
+              KIMI_CODE_VERSION: '@moonshot-ai/kimi-code',
+              BUN_VERSION: 'bun',
+            };
+
+            const rows = [];
+            for (const [arg, pkg] of Object.entries(NPM)) {
+              const pinned = argOf(arg);
+              if (!pinned) {
+                rows.push({ name: pkg, pinned: '(no ARG found)', latest: '?', behind: true });
+                continue;
+              }
+              try {
+                const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`);
+                const latest = (await res.json()).version;
+                rows.push({ name: pkg, pinned, latest, behind: pinned !== latest });
+              } catch (e) {
+                // A registry hiccup must not fail the run; report it as unknown.
+                rows.push({ name: pkg, pinned, latest: `lookup failed: ${e.message}`, behind: false });
+              }
+            }
+
+            // Antigravity has no version API - its manifest carries the current
+            // release only, which is exactly why it is pinned by URL + checksum.
+            try {
+              const res = await fetch(
+                'https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json',
+              );
+              const m = await res.json();
+              const pinned = argOf('AGY_VERSION');
+              rows.push({
+                name: 'agy (Antigravity)',
+                pinned: pinned ?? '(no ARG found)',
+                latest: m.version,
+                behind: pinned !== m.version,
+                extra: m.version !== pinned ? `url: ${m.url}\nsha512: ${m.sha512}` : '',
+              });
+            } catch (e) {
+              rows.push({ name: 'agy (Antigravity)', pinned: argOf('AGY_VERSION'), latest: `lookup failed: ${e.message}`, behind: false });
+            }
+
+            // Grok's installer takes a version argument but publishes no manifest we
+            // can read, so it is listed for completeness rather than compared.
+            rows.push({ name: 'grok (xAI)', pinned: argOf('GROK_VERSION'), latest: 'not checked', behind: false });
+
+            const behind = rows.filter((r) => r.behind);
+            const table = [
+              '| CLI | Pinned | Latest |',
+              '|---|---|---|',
+              ...rows.map((r) => `| \`${r.name}\` | \`${r.pinned}\` | ${r.behind ? `**${r.latest}**` : r.latest} |`),
+            ].join('\n');
+
+            const extras = rows.filter((r) => r.extra).map((r) => `\n\n**${r.name}** bump values:\n\`\`\`\n${r.extra}\n\`\`\``).join('');
+
+            const body = [
+              'Pinned agent CLI versions in `docker/Dockerfile.agent-base`, compared with upstream.',
+              '',
+              table,
+              extras,
+              '',
+              behind.length
+                ? `${behind.length} behind. A bump is a deliberate act - read that CLI's comment in the Dockerfile for what to re-verify first.`
+                : 'Everything is current. Nothing to do.',
+              '',
+              `_Updated by [CLI drift](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/workflows/cli-drift.yml) on ${new Date().toISOString().slice(0, 10)}._`,
+            ].join('\n');
+
+            const TITLE = 'Agent CLI pins: upstream drift';
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'cli-drift',
+            });
+
+            if (existing.data.length > 0) {
+              // Update in place rather than opening another - one issue, always current.
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body,
+              });
+              core.info(`Updated #${existing.data[0].number}`);
+            } else if (behind.length > 0) {
+              // Only open one when there is something to act on; a green report needs
+              // no issue at all.
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: TITLE,
+                labels: ['cli-drift'],
+                body,
+              });
+              core.info('Opened a new drift issue');
+            } else {
+              core.info('No drift and no open issue - nothing to do.');
+            }
+
+            core.summary.addRaw(body).write();

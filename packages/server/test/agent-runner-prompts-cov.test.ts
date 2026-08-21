@@ -234,6 +234,15 @@ describe('runAgent — per-runtime prompt notes', () => {
 		expect(codex.prompt).toContain('mcp__<connector>__<tool>');
 		expect(codex.prompt).toContain('list_connectors');
 		expect(codex.prompt).toContain('codex_apps');
+		// The keep-set must be `A-Za-z0-9_` with NO hyphen. Two sanitizers compose:
+		// Hezo's `safeName` keeps hyphens, then Codex's own replaces them with `_`
+		// (openai/codex#14605, v0.116.0). `register_connector` slugs are hyphenated
+		// by construction, so the earlier `A-Za-z0-9_-` wording misdescribed exactly
+		// the connectors agents create - it sent them looking for a prefix that
+		// never exists.
+		expect(codex.prompt).toContain('`A-Za-z0-9_`');
+		expect(codex.prompt).not.toContain('A-Za-z0-9_-');
+		expect(codex.prompt).toContain('hyphens become underscores');
 
 		// The default runtime ships no competing family, so it must not carry the
 		// note. Guidance reaching a runtime it does not apply to is noise in every

@@ -240,6 +240,29 @@ describe('codex adapter', () => {
 		expect(config.contents.indexOf('web_search')).toBeLessThan(config.contents.indexOf('['));
 	});
 
+	it("disables Codex's own account app tools, ahead of every TOML table", () => {
+		// Codex exposes the apps connected to the signed-in ChatGPT account as tools
+		// under a `codex_apps` namespace, beside the MCP servers Hezo configures.
+		// They authenticate as that account rather than the project's connection, so
+		// they 404 on the project's own resources - which reads to an agent as the
+		// resource not existing, and cost two runs exactly that way. They are also
+		// documented to bypass the sandboxed-command network proxy and its domain
+		// allowlist, so they are an uncontrolled egress path on top.
+		const injection = adapter.build([HEZO_DESCRIPTOR], {
+			hostHomeDir: HOME,
+			containerHomeDir: HOME,
+		});
+		const config = injection.files.find((f) => f.hostPath === `${HOME}/config.toml`);
+		if (!config) throw new Error('config.toml not emitted');
+		expect(config.contents).toContain('features.apps = false');
+		// Same ordering constraint as web_search: a top-level key after a [table]
+		// header is a TOML parse error, which would break every Codex run.
+		expect(config.contents.indexOf('features.apps')).toBeLessThan(config.contents.indexOf('['));
+		// It must not disturb the MCP server tree, which is what Hezo's own tools
+		// and every connector ride in on.
+		expect(config.contents).toContain('[mcp_servers.hezo]');
+	});
+
 	it('raises the background-terminal ceiling (top-level) and per-MCP-server timeouts', () => {
 		const injection = adapter.build([HEZO_DESCRIPTOR], {
 			hostHomeDir: HOME,

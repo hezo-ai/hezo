@@ -2364,13 +2364,13 @@ export type PromptDelivery = 'stdin' | 'arg' | 'file';
  * A per-runtime addendum to the task prompt, for a CLI quirk the agent has to
  * know about and cannot discover from its own tool list.
  *
- * Deliberately thin. A prompt instruction is the weakest kind of fix and
- * AGENTS.md says to reach for a structural signal first - but the one case here
- * has no structural lever: Codex exposes its own account-level app tools
- * alongside the MCP servers Hezo configures, and its config file offers no way
- * to suppress them. (The Codex adapter's `enabledTools` comment is about a
- * different wall - no per-server tool filter for Hezo's OWN servers - so it is
- * not evidence for this one.) Telling the agent which is which is what is left.
+ * Deliberately thin, and a last resort. AGENTS.md says to reach for a structural
+ * signal before a phrase, and the one entry here is NOT the primary fix for its
+ * problem: Codex's competing account-level app tools are switched off outright by
+ * `features.apps = false` in the Codex adapter. This note is insurance, because
+ * that key lives in a third-party CLI - if a bump renames or ignores it, the note
+ * still steers the agent right. Drop it once the suppression is verified against a
+ * live Codex run and trusted on its own.
  *
  * A note here earns its place only by carrying something the agent cannot work
  * out from its tool list. State the discriminator, not the warning.
@@ -2380,41 +2380,39 @@ export type PromptDelivery = 'stdin' | 'arg' | 'file';
  * which already reaches every agent on every runtime.
  */
 export const RUNTIME_PROMPT_NOTES: Partial<Record<AgentRuntime, string>> = {
-	// Codex surfaces the apps connected to its own ChatGPT account as tools, under
-	// a separate namespace from the MCP servers Hezo configures. Its GitHub app is
-	// authorized against that account, not against the project's connection, so it
-	// generally cannot see the repositories this run is working in - and an agent
-	// that reaches for it gets a bare 404 that reads like a Hezo fault. Two runs
-	// lost themselves that way before this note existed.
-	//
 	// The identification rule is the load-bearing half, because the obvious
-	// heuristic is actively wrong here. A Hezo connector's tools are prefixed with
-	// `safeName(mcp_connections.name)` - operator-chosen text, which need not
-	// mention the service - while Codex's own family is literally `codex_apps`
-	// with `github` in the tool name. So an agent following the repository block's
-	// "use the `github` MCP tools" (`buildRepositoryBlock` in
-	// `services/template-resolver.ts`, present whenever the project has a linked
-	// repo - exactly when GitHub work happens) and scanning its tool list for
-	// `github` finds one match, and it is the wrong one. Naming `list_connectors`
-	// as the mapping and
-	// `codex_apps` as the exclusion is what makes the note usable rather than
-	// merely true.
+	// heuristic is actively wrong. A Hezo connector's tools are prefixed with its
+	// `mcp_connections.name` - operator-chosen or slug-derived text that need not
+	// mention the service - while Codex's own family is literally `codex_apps` with
+	// `github` in the tool name. So an agent following the repository block's "use
+	// the `github` MCP tools" (`buildRepositoryBlock` in
+	// `services/template-resolver.ts`, rendered whenever the project has a linked
+	// repo, which is exactly when GitHub work happens) and scanning for `github`
+	// finds one match, and it is the wrong one.
+	//
+	// The keep-set is `A-Za-z0-9_` with NO hyphen, and that is not a typo. Two
+	// sanitizers compose: Hezo's `safeName` maps to `[A-Za-z0-9_-]`, then Codex's
+	// own `sanitize_responses_api_tool_name` replaces everything outside
+	// `[A-Za-z0-9_]` - hyphens included (openai/codex#14605, shipped v0.116.0).
+	// `register_connector` slugs are hyphenated by construction, so stating either
+	// half alone misdescribes exactly the connectors agents create.
 	[AgentRuntime.Codex]:
 		'Tool namespaces: your tool list can hold two families of tools for one ' +
-		'service. Hezo configures one family. Your CLI adds another from its own ' +
-		"signed-in account. Identify Hezo's by prefix: a Hezo connector's tools are " +
-		"named `mcp__<connector>__<tool>`, where `<connector>` is that connector's " +
-		'name exactly as `list_connectors` reports it, with any character outside ' +
-		'`A-Za-z0-9_-` replaced by `_`. That name is chosen by the operator and often ' +
-		'does not name the service at all - a GitHub connector may be called ' +
-		'"Marketing". So never pick a tool because its name contains the service ' +
-		'name. Call `list_connectors` and match its names against your tool list ' +
-		"instead. Tools under the `codex_apps` prefix are never Hezo's. " +
-		"Only Hezo connectors carry this project's credentials. Your CLI's own " +
-		"account tools authenticate as somebody else and fail on this project's " +
-		'resources, usually with a 404 that reads as the resource not existing. ' +
-		'Never report a resource missing on that evidence. Retry through the ' +
-		'matching Hezo connector first.',
+		'service - the ones Hezo configured, and any your CLI adds from its own ' +
+		"signed-in account. Only Hezo's carry this project's credentials. Identify " +
+		"them by prefix: a Hezo connector's tools are named " +
+		"`mcp__<connector>__<tool>`, where `<connector>` is that connector's `name` " +
+		'from `list_connectors` (its `name`, not its `display_name`) with every ' +
+		'character outside `A-Za-z0-9_` replaced by `_` - hyphens become underscores ' +
+		'too. That name need not mention the service at all: a GitHub connector may ' +
+		'be called "Marketing". So never pick a tool because its name contains the ' +
+		'service name; call `list_connectors` and match its names against your tool ' +
+		"list instead. Tools under a `codex_apps` prefix are never Hezo's. " +
+		"`mcp__hezo__*` is Hezo's own server rather than a connector, so it correctly " +
+		'has no `list_connectors` row. A tool from the wrong family authenticates as ' +
+		"somebody else and fails on this project's resources, usually with a 404 that " +
+		'reads as the resource not existing. Never report a resource missing on that ' +
+		'evidence - retry through the matching Hezo connector first.',
 };
 
 /**
