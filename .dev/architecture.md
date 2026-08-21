@@ -6051,6 +6051,26 @@ descriptions at all.
 initialization, so a second handshake would be rejected). Passing `instructions` to
 `new McpServer(...)` therefore reaches nobody - a silent no-op.
 
+**Measured: Claude Code does surface it, as a system-reminder in the message stream.** The
+field was shipped additively because nothing verified that a client passes it to the model at
+all. It does, on Claude Code **2.1.238**: a stub stdio MCP server carried a canary in
+`instructions` and in no tool name, description or schema, and a local recorder stood in for
+the provider's `/v1/messages` so the request bodies could be read directly rather than inferred
+from a model's answer. The main-loop turn - identified by the stub's tool appearing in its tool
+list - carried the canary inside a `<system-reminder>` block headed `# MCP Server Instructions`
+then `## <server-name>`, as a `system`-role entry in the `messages` array, not in the top-level
+`system` parameter. The control run, identical but with the field omitted, produced the same
+tool surface with no header and no canary in any of its requests, so `instructions` is what
+carried it. Auxiliary requests the CLI makes on the side (status summarisation, zero tools) do
+not carry it, which is expected.
+
+**That result does not license trimming a tool description.** Only Claude Code was measured, of
+the six runtimes in `AgentRuntime`; only a single-turn `-p` invocation was exercised, so
+whether the block persists across the turns of a long run is unknown; and reaching the context
+window is not the model *attending* to it, which no measurement of the wire can show. So the
+convention prose still duplicated across tool descriptions stays where it is - moving it is
+gated on a tool-selection harness that could detect the regression, not on this gate.
+
 **`tools/list` is projected per caller** (`mcp/tool-visibility.ts`). Every authenticated
 principal used to receive the whole registry, so a worker agent scoped to one project carried
 `create_team`, the CEO's project-creation tools and every Captain-only prompt editor — schemas
