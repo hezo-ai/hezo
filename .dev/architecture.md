@@ -4288,9 +4288,9 @@ probe, its auto-rebind of the bind host, and the run/chat abort gate it fed were
 along with `--container-bind-host`. A tunnel that cannot be established fails the run
 directly, with the error from the exec channel.
 
-For each request the proxy terminates TLS, matches placeholders **in the URL and headers**,
-loads the named secret, verifies the host against `allowed_hosts`, substitutes, and
-forwards. **Request bodies** are forwarded byte-for-byte by default and never buffered —
+For each request the proxy terminates TLS, matches placeholders **in the URL, the headers,
+and - whenever it buffered one - the request body**, loads the named secret, verifies the
+host against `allowed_hosts`, substitutes, and forwards. **Request bodies** are forwarded byte-for-byte by default and never buffered —
 except a narrowly-gated path for secrets a human has opted into body substitution
 (`secrets.allow_body_substitution`): a `POST`/`PUT`/`PATCH` with an uncompressed
 `application/json` body and a fixed `Content-Length` ≤ 8 KB is buffered, has its placeholders
@@ -4303,6 +4303,20 @@ POST that returns a token (the agent then uses that token via the `Authorization
 Failures are explicit HTTP errors returned to the agent: `unknown_secret` (400),
 `secret_not_allowed_for_host` (403), `secret_not_allowed_in_body` (403), `body_too_large`
 (413), `secrets_unavailable` (503, master key locked).
+
+**An MCP `tools/call` sits inside that buffering window**, being a POST of small
+fixed-length `application/json` - so every tool-call payload an agent sends is scanned,
+and a placeholder written into a *tool argument* as literal text (a doc, a test fixture,
+a code comment about the grammar) is refused exactly like a credential the agent meant to
+send. The refusal stays: the proxy cannot read intent, and forwarding instead would ship
+an inert placeholder that 401s upstream with nothing naming the cause. What it does do is
+tell the two apart structurally rather than by inspecting the prose - headers and the URL
+are substituted **before** the body, so `secretsUsed` already records whether this same
+secret is on the wire by a route the proxy supports. `secret_not_allowed_in_body` carries
+that as `deliveredElsewhere`, and `describeFailure` picks one of two messages from it:
+already-sent-in-a-header ("remove the literal text"), or not-sent-at-all ("ask an admin to
+enable body substitution"). The code and the 403 are unchanged, since
+`reportConnectorRunRejection` keys off the code.
 
 **Destination guard** (`services/egress/net-guard.ts`). The proxy runs in the **host's**
 network namespace and will dial whatever an authenticated caller names, so it refuses
