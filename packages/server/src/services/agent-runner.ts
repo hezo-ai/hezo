@@ -29,6 +29,7 @@ import {
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_MODEL_DELIVERY,
 	RUNTIME_PROMPT_DELIVERY,
+	RUNTIME_PROMPT_NOTES,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_SYSTEM_PROMPT_FILE,
 	type RunLink,
@@ -1067,9 +1068,14 @@ async function buildRunContext(
 			catchUp,
 		});
 	}
-	const taskPrompt = effortApplication.promptDirective
-		? `${basePrompt}\n\n${effortApplication.promptDirective}`
-		: basePrompt;
+	// Appended the same way as the effort directive: a runtime note is guidance the
+	// agent needs for THIS CLI, so it belongs beside the prompt rather than in
+	// `SHARED_INSTRUCTIONS`, which reaches every runtime including the ones with no
+	// such quirk.
+	const promptAddenda = [effortApplication.promptDirective, RUNTIME_PROMPT_NOTES[runtimeType]]
+		.filter((part): part is string => typeof part === 'string' && part.length > 0)
+		.join('\n\n');
+	const taskPrompt = promptAddenda ? `${basePrompt}\n\n${promptAddenda}` : basePrompt;
 
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 

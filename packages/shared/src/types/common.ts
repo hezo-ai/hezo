@@ -2361,6 +2361,39 @@ export const MAX_SINGLE_ARG_BYTES = 128 * 1024;
 export type PromptDelivery = 'stdin' | 'arg' | 'file';
 
 /**
+ * A per-runtime addendum to the task prompt, for a CLI quirk the agent has to
+ * know about and cannot discover from its own tool list.
+ *
+ * Deliberately thin. A prompt instruction is the weakest kind of fix and
+ * AGENTS.md says to reach for a structural signal first - but the one case here
+ * has no structural lever: Codex exposes its own account-level app tools
+ * alongside the MCP servers Hezo configures, and its config file offers no way
+ * to suppress them. Telling the agent which one is which is all that is left.
+ *
+ * Empty for every runtime that ships no competing tools. Keep it that way: this
+ * is not a place to restate guidance that belongs in `SHARED_INSTRUCTIONS`,
+ * which already reaches every agent on every runtime.
+ */
+export const RUNTIME_PROMPT_NOTES: Partial<Record<AgentRuntime, string>> = {
+	// Codex surfaces the apps connected to its own ChatGPT account as tools, under
+	// a separate namespace from the MCP servers Hezo configures. Its GitHub app is
+	// authorized against that account, not against the project's connection, so it
+	// generally cannot see the repositories this run is working in - and an agent
+	// that reaches for it gets a bare 404 that reads like a Hezo fault. Two runs
+	// lost themselves that way before this note existed.
+	[AgentRuntime.Codex]:
+		'Tool namespaces: your tool list may contain two families of tools for the ' +
+		'same service - the ones Hezo configured for this project, and the ones your ' +
+		'CLI exposes from its own signed-in account. Always prefer the Hezo ones. ' +
+		"Only the Hezo connectors are authorized against this project's credentials; " +
+		"the CLI's own account tools are authorized against something else and will " +
+		"fail on this project's resources, usually with a 404 that looks like the " +
+		'resource does not exist. If a call fails that way, check `list_connectors` ' +
+		'for a connector covering the same service and retry through it before ' +
+		'reporting the resource missing.',
+};
+
+/**
  * How each CLI receives the task prompt, threaded to the container as
  * `HEZO_PROMPT_MODE` and acted on by the exec wrapper (`PROMPT_DELIVERY_SH` and
  * its twin in `docker/scripts/hezo-run-with-bridge`):

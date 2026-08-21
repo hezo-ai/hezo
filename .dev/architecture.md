@@ -3761,6 +3761,29 @@ The same rule covers AI providers, which have no per-provider module: their quir
 rows in a per-provider table (`PROVIDER_RUNTIME_ADAPTERS`, `SUBSCRIPTION_VALIDATORS`,
 `PROVIDER_MODEL_READERS`, `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`) rather than as branches.
 
+**Per-runtime prompt notes** (`RUNTIME_PROMPT_NOTES`, `@hezo/shared`) append a short addendum
+to the task prompt for a CLI quirk the agent cannot discover from its own tool list. Composed
+in `agent-runner.ts` beside the effort directive, so it reaches the prompt the same way and
+is absent for every runtime with no entry.
+
+Only Codex has one, and only because there is no structural lever for its case. Codex surfaces
+the apps connected to its own ChatGPT account as tools, in a namespace of their own, alongside
+the MCP servers Hezo configures - and its config file offers no key to suppress them. Its
+GitHub app is authorized against that account rather than the project's connection, so it
+answers 404 on the project's repos, which reads to an agent as the resource not existing. Two
+runs diagnosed that as a Hezo connector fault and filed it as one. AGENTS.md's preference for
+a structural signal over a phrase still holds everywhere it can be met; here the competing
+tools cannot be turned off and cannot be told apart from their names alone, so the note is
+what is left. Keep the table empty for every other runtime rather than using it to restate
+`SHARED_INSTRUCTIONS`, which already reaches every agent on every runtime.
+
+Related, and a live gap: **Codex reports no tool counts.** Only `createClaudeCodeParser`
+implements `getMcpToolCounts` - Codex's session event carries no tool list, so
+`heartbeat_runs.mcp_tool_counts` stays null and `list_connectors`' `tools_this_run` reads
+`null` ("nothing measured it") on every Codex run. An agent there cannot confirm its
+connectors' tools arrived; the run log's `[runner] MCP connectors:` line is what it has
+instead.
+
 **Prompt delivery** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE`) has three
 modes. `stdin` redirects the prompt file into the CLI — Claude Code, Codex, Gemini and
 OpenCode, the last of which reads stdin to EOF whenever it is not a TTY and needs no flag for
