@@ -2,6 +2,7 @@ import { AuthType, DocumentType } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { canCoordinateTeam, isHqInstanceAgent } from '../lib/agent-roles';
 import { trackBackground } from '../lib/background';
+import { checkInjectedTextCap } from '../lib/injected-text-caps';
 import { resolveActorMemberId } from '../lib/resolve';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
@@ -54,7 +55,10 @@ export async function writeCustomPrompt(
 	}
 
 	// The Custom Prompt is injected verbatim into every agent's prompt, so it is
-	// held to the same register as one.
+	// held to the same register as one — and to a ceiling.
+	const tooLarge = checkInjectedTextCap('team_preferences', content);
+	if (tooLarge) return { status: 'invalid', error: tooLarge.error };
+
 	const styleError = authoredPromptError(content);
 	if (styleError) return { status: 'invalid', error: styleError };
 

@@ -249,6 +249,14 @@ export const queryKeys = {
 			agentId,
 			'chat-memory',
 		],
+		agentChatMemoryRevisions: (slug: string, agentId: string) => [
+			'projects',
+			slug,
+			'agents',
+			agentId,
+			'chat-memory',
+			'revisions',
+		],
 		agentsMd: (slug: string) => ['projects', slug, 'agents-md'],
 		orgChart: (slug: string) => ['projects', slug, 'org-chart'],
 

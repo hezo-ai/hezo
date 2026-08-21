@@ -238,6 +238,33 @@ its agent page), so you can seed it with preferences up front or prune stale ent
 size of the live window (how much recent conversation is kept before it's compacted) is set
 under **Settings → Chatbox**. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
 
+Because compaction rewrites the whole memory in one go, every change is **versioned and
+restorable**, the same way documents and prompts are: the **History** button on that tab lists
+each version, shows you any past one in place, and restores the one you pick. The history also
+says who caused each change - your own edit, or an automatic compaction - so a compaction that
+summarised away something you wanted is one click from coming back.
+
+## Size limits on what reaches every run
+
+The memories that are injected **in full** carry a size ceiling, because each one is paid for on
+every run or every turn:
+
+| Memory | Limit |
+|---|---|
+| Project Custom Prompt | 12,000 characters |
+| Long-term chat memory | 12,000 characters |
+| Agent system prompt | 40,000 characters |
+| Task progress summary | 8,000 characters |
+| Agent team context | 6,000 characters |
+
+When an agent tries to write past a limit the write is **refused**, not trimmed - the reply names
+the ceiling and the current size and asks it to consolidate, so the next attempt merges overlapping
+entries and drops guidance that no longer applies. Nothing is ever silently cut, because a rule
+that vanished from the end of a block would change how the team behaves with nobody knowing.
+
+Your own writing isn't capped: a task's **description** and **rules** are yours, and long ones are
+shortened only when they appear in list views, never when they're stored.
+
 ## Custom Prompt
 
 Where the CEO's long-term chat memory steers the CEO, a project's **Custom Prompt** steers that project's workers.

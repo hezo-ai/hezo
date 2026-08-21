@@ -92,6 +92,11 @@ import {
 } from '../lib/dependencies';
 import { readImageDimensions } from '../lib/image-dimensions';
 import {
+	checkInjectedTextCap,
+	INJECTED_TEXT_CAPS,
+	InjectedTextCapError,
+} from '../lib/injected-text-caps';
+import {
 	detectNarratedActiveMentions,
 	detectPassiveTeammateAsks,
 	detectQuotedMentionTokens,
@@ -2042,6 +2047,8 @@ export function registerTools(
 					idx++;
 					continue;
 				} else if (key === 'progress_summary') {
+					const oversize = checkInjectedTextCap('task_progress_summary', String(val ?? ''));
+					if (oversize) return { error: oversize.error };
 					sets.push(`progress_summary = $${idx}`);
 					params.push(val);
 					idx++;
@@ -4741,6 +4748,12 @@ export function registerTools(
 			const targetSlug = agentCheck.rows[0].slug;
 			// The house register: mechanical violations reject, judgement calls come
 			// back as an advisory on the successful write (see prompt-style-guard).
+			const tooLarge = checkInjectedTextCap(
+				'agent_system_prompt',
+				args.new_system_prompt as string,
+			);
+			if (tooLarge) return { error: tooLarge.error };
+
 			const styleError = authoredPromptError(args.new_system_prompt as string);
 			if (styleError) return { error: styleError };
 
@@ -5231,7 +5244,10 @@ export function registerTools(
 				.string()
 				.trim()
 				.min(1, 'content must be non-empty')
-				.max(6000, 'content too long (max 6000)')
+				.max(
+					INJECTED_TEXT_CAPS.agent_team_context,
+					`content too long (max ${INJECTED_TEXT_CAPS.agent_team_context})`,
+				)
 				.describe('The new team_context, ≤6000 chars'),
 		},
 		async (args, db, auth) => {
@@ -5281,7 +5297,10 @@ export function registerTools(
 							.string()
 							.trim()
 							.min(1, 'content must be non-empty')
-							.max(6000, 'content too long (max 6000)')
+							.max(
+								INJECTED_TEXT_CAPS.agent_team_context,
+								`content too long (max ${INJECTED_TEXT_CAPS.agent_team_context})`,
+							)
 							.describe('The new team_context for this agent, ≤6000 chars'),
 					}),
 				)
@@ -6943,7 +6962,16 @@ export function registerTools(
 					error: 'update_chat_memory can only be called by an agent updating its own memory',
 				};
 			}
-			const mem = await upsertChatMemory(db, auth.memberId, args.content as string);
+			let mem: Awaited<ReturnType<typeof upsertChatMemory>>;
+			try {
+				mem = await upsertChatMemory(db, auth.memberId, args.content as string);
+			} catch (e) {
+				// A dead-end refusal would wedge the chat, since compaction is what
+				// drains the window — the message names the ceiling so the retry is a
+				// shorter rewrite.
+				if (e instanceof InjectedTextCapError) return { error: e.message };
+				throw e;
+			}
 			return { written: true, updated_at: mem.updated_at };
 		},
 		db,

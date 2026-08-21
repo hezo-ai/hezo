@@ -149,6 +149,20 @@ describe('Team preferences', () => {
 		expect(((await after.json()).data?.content ?? '') as string).toBe(priorContent);
 	});
 
+	it('refuses a Custom Prompt over the injected-text cap, on both entry points', async () => {
+		const oversize = `Convention.\n${'x'.repeat(12_001)}`;
+		const res = await app.request(`/api/projects/${projectSlug}/custom-prompt`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: oversize }),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		// A refusal an agent can act on: it names the ceiling and the actual size.
+		expect(body.error.message).toContain('12000');
+		expect(body.error.message).toMatch(/consolidate/i);
+	});
+
 	it('returns 404 when restoring an unknown revision number', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/custom-prompt/restore`, {
 			method: 'POST',
