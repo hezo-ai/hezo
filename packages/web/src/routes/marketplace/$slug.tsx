@@ -8,6 +8,7 @@ import { HiringForBanner } from '../../components/hiring-for-banner';
 import { marketplaceRosterRows, TeamRosterTable } from '../../components/team-roster-table';
 import { Avatar, getInitials } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
+import { BreadcrumbRow } from '../../components/ui/breadcrumb';
 import { Button } from '../../components/ui/button';
 import { DialogContent } from '../../components/ui/dialog';
 import { useAddMarketplaceTeam, useMarketplaceTeam } from '../../hooks/use-marketplace';
@@ -36,17 +37,21 @@ function MarketplaceTeamDetail() {
 				<HiringForBanner projectId={forProject} messageKey="agents.hire.hiringForTeam" />
 			)}
 
-			<nav className="flex items-center gap-1 text-[13px] text-text-2 mb-4" aria-label="Breadcrumb">
+			{/* Keeps its own `<Link>` rather than taking the `Breadcrumb` component,
+			    whose segments are buttons: this one is a real link, and middle-click and
+			    open-in-new-tab are worth more here than the shared markup. It still takes
+			    the shared row, so it scrolls the way every other crumb does. */}
+			<BreadcrumbRow className="mb-4 text-[13px] text-text-2">
 				<Link
 					to="/marketplace"
 					search={forProject ? { forProject } : {}}
-					className="hover:text-text-1 flex items-center gap-1"
+					className="hover:text-text-1 flex shrink-0 items-center gap-1 whitespace-nowrap"
 				>
-					<Store className="w-3.5 h-3.5" /> {t('marketplace.title')}
+					<Store className="w-3.5 h-3.5 shrink-0" /> {t('marketplace.title')}
 				</Link>
-				<ChevronRight className="w-3.5 h-3.5" />
-				<span className="text-text-1">{team?.name ?? slug}</span>
-			</nav>
+				<ChevronRight className="w-3.5 h-3.5 shrink-0" />
+				<span className="shrink-0 whitespace-nowrap text-text-1">{team?.name ?? slug}</span>
+			</BreadcrumbRow>
 
 			{isLoading ? (
 				<div className="flex items-center gap-2 text-text-2 text-[13px] py-8">

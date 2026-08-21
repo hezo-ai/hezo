@@ -340,6 +340,7 @@ Before writing a helper, check whether it already has a home. **Extend the seam;
 | Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |
 | A per-bucket stacked chart, and its axis/tooltip formatting | `StackedSeriesChart` + `chart-format.ts` (`packages/web/src/components/charts/`) |
 | A dropdown panel's vertical side + height clamp | `usePanelPlacement` (`hooks/use-panel-placement.ts`), pure math in `lib/panel-placement.ts` |
+| A breadcrumb row - one line, scrolling sideways rather than wrapping or truncating | `BreadcrumbRow` (`components/ui/breadcrumb.tsx`) - `Breadcrumb` renders through it; a caller with its own links takes the row, never a second `<nav>` |
 | An optimistic mutation | `useOptimisticMutation` (`hooks/use-optimistic-mutation.ts`) |
 | A server test context | `createTestContext()` (`test/helpers/context.ts`) |
 | A migration test | `createDataPreservationHarness()` (`test/helpers/migrate.ts`) |

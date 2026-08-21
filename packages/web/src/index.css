@@ -374,3 +374,42 @@ body {
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
 }
+
+/* Hides the scrollbar on a row that scrolls sideways by design - a breadcrumb,
+   a chip rail - where a track would cost more of the band than it earns. Only
+   for rows whose overflow is otherwise obvious (an edge fade, a clipped word);
+   never on a region whose only clue that it scrolls is the bar itself. */
+@utility scrollbar-none {
+	scrollbar-width: none;
+	&::-webkit-scrollbar {
+		display: none;
+	}
+}
+
+/* Breadcrumb rows (`BreadcrumbRow`) fade the edge that still has row behind it,
+   so a trail that scrolled out of view says so. `data-overflow` is written by the
+   component from its own scroll position, and is absent when the row fits. */
+.breadcrumb-row[data-overflow='both'] {
+	-webkit-mask-image: linear-gradient(
+		90deg,
+		transparent 0,
+		#000 14px,
+		#000 calc(100% - 20px),
+		transparent 100%
+	);
+	mask-image: linear-gradient(
+		90deg,
+		transparent 0,
+		#000 14px,
+		#000 calc(100% - 20px),
+		transparent 100%
+	);
+}
+.breadcrumb-row[data-overflow='left'] {
+	-webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px);
+	mask-image: linear-gradient(90deg, transparent 0, #000 14px);
+}
+.breadcrumb-row[data-overflow='right'] {
+	-webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 20px), transparent 100%);
+	mask-image: linear-gradient(90deg, #000 calc(100% - 20px), transparent 100%);
+}
