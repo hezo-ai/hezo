@@ -738,11 +738,12 @@ describe('template resolver', () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// The shape rule teaches `@<slug> - ask`, so no mention-address example in the
 		// section may still model an em dash — a contradicted example teaches the
-		// contradiction.
+		// contradiction. This is a spot-check over the examples that exist, not an
+		// exhaustive scan: the section also uses em dashes as ordinary prose dashes
+		// right after a mention token ("`@` or `@@` — ..."), and nothing in the text
+		// distinguishes those from an address separator.
 		for (const example of [
 			'`**devops-engineer** - please update the PR`',
-			'`@<slug>` - please address the required actions above',
-			'`@@<slug> - verification confirms PASS',
 			'`@<slug-a> - signed off, the correction can be made in-line.`',
 			'`@@<slug-b> - strong work on the rewrite.',
 		]) {
@@ -784,8 +785,9 @@ describe('template resolver', () => {
 		expect(result).toContain('the active `@admin` is **not optional — it is the ask**');
 		expect(result).toContain('put `@admin` in that same comment');
 		expect(result).toContain("lands in no admin's inbox");
-		// a worked example demonstrates the correct active admin approval-ask
-		expect(result).toContain('please review and approve the draft');
+		// The approval-ask case is carried by the rule itself rather than a worked
+		// example: `@admin` is the ask, and the passive form stalls the task.
+		expect(result).toContain('active admin reference; lands a row in every admin');
 	});
 
 	it('mention discipline makes a completion report that hands off the next action an active @, and warns against inverting admin/teammate', async () => {
@@ -800,8 +802,9 @@ describe('template resolver', () => {
 		// the who-acts-next test is applied per name — admin isn't auto-active, teammate isn't auto-passive
 		expect(result).toContain('every name independently');
 		expect(result).toContain('the admin is not automatically active');
-		// worked example for the review/analysis completion handoff
-		expect(result).toContain('findings below for you to consolidate and route');
+		// The recap vocabulary that disguises a handoff is named in the rule itself,
+		// so the illustration that repeated it is no longer needed.
+		expect(result).toContain('"review complete", "analysis ready", "findings below"');
 	});
 
 	it('mention discipline requires the closing handoff block itself to be active, not just present', async () => {
@@ -817,8 +820,9 @@ describe('template resolver', () => {
 		// the verdict vocabulary is what disguises the ask as status
 		expect(result).toContain('"PASS", "verified", "clean pass", "cleared", "ready for"');
 		expect(result).toContain('every line in it is active `@<slug>`');
-		// worked example carries the all-passive block as a named Bad case
-		expect(result).toContain('the closing block is *there* but passive throughout');
+		// The all-passive block is named by the rule ("A heading is not a wake"), which
+		// is what the worked example used to restate.
+		expect(result).toContain('A heading is not a wake');
 	});
 
 	it('mention discipline names the MIXED closing block and rejects tone as the test', async () => {
@@ -851,16 +855,16 @@ describe('template resolver', () => {
 		);
 	});
 
-	it('worked examples include a bare-vs-backticked doc/asset reference case', async () => {
+	it('states that backticking a doc or asset reference makes it inert', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		// The screenshot failure: an agent backticked a doc/asset reference in a comment,
-		// so it rendered as an inert code chip instead of a clickable link. The worked
-		// examples (previously all @-mention active/passive) now cover this failure too.
-		expect(result).toContain('Pointing a teammate or the admin at a project doc or asset');
+		// so it rendered as an inert code chip instead of a clickable link. The Rules
+		// block states this directly; the worked example that repeated it is gone.
 		expect(result).toContain(
-			'Hezo linkifies a document or asset reference **only** when it is bare',
+			'Never wrap any of these in backticks or a code fence, because inline code suppresses the link',
 		);
-		expect(result).toContain('never backtick one you want opened');
+		// And the subtle half: a doc that does not exist yet is still written bare.
+		expect(result).toContain('bare even before it exists');
 	});
 
 	it('warns agents that dropping the assets/ prefix also breaks the link and is flagged', async () => {
