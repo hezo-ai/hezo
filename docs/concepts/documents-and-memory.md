@@ -245,9 +245,16 @@ The Custom Prompt is free-form **custom instructions applied to every agent in t
 house conventions, tone, standing do's and don'ts - set from the project's **Settings → Custom Prompt**
 page and injected in full into each agent's prompt on every run. It's the lighter-weight choice when the
 guidance applies to the whole roster rather than one role, and, like documents and system
-prompts, every edit is **versioned and restorable**. You maintain it yourself, and your coordinating
-agents (the CEO, the Coach, and the project's Captain) can update it too when a convention or lesson
-should reach the whole team at once.
+prompts, every edit is **versioned and restorable** - open its history from the **History** button
+beside the editor, read any past version in place, and restore the one you want. You maintain it
+yourself, and your coordinating agents (the CEO, the Coach, and the project's Captain) can update it
+too when a convention or lesson should reach the whole team at once.
+
+An agent changing part of the Custom Prompt uses `edit_project_custom_prompt`, which replaces one span
+and leaves the rest alone; `update_project_custom_prompt` replaces the whole thing and is what writes
+the first version. That split matters here for the same reason it does for documents: an agent that
+rewrites the whole prompt to add one convention can drop another one on the way past, and nothing
+would flag it. A span edit can't.
 
 ## Where each kind of knowledge goes
 

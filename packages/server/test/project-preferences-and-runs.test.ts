@@ -202,6 +202,90 @@ describe('project Custom Prompt tools', () => {
 		expect(res.error).toMatch(/Access denied/i);
 	});
 
+	describe('edit_project_custom_prompt', () => {
+		it('replaces one span and leaves the rest of the prompt alone', async () => {
+			await callToolAs(captainToken, 'update_project_custom_prompt', {
+				content: 'Deploy on Tuesdays.\nReview every deliverable.\nWrite plainly.',
+			});
+
+			const res = (await callToolAs(captainToken, 'edit_project_custom_prompt', {
+				old_string: 'Deploy on Tuesdays.',
+				new_string: 'Never deploy on a Friday.',
+				change_summary: 'narrow the deploy window',
+			})) as { edited?: boolean; replacements?: number; hunk?: string; error?: string };
+			expect(res.error).toBeUndefined();
+			expect(res.edited).toBe(true);
+			expect(res.replacements).toBe(1);
+			expect(res.hunk).toContain('Never deploy on a Friday.');
+
+			const read = (await callToolAs(captainToken, 'get_project_custom_prompt', {})) as {
+				content: string;
+			};
+			expect(read.content).toContain('Never deploy on a Friday.');
+			expect(read.content).not.toContain('Deploy on Tuesdays.');
+			// The untouched lines survive — the whole point of a span edit.
+			expect(read.content).toContain('Review every deliverable.');
+			expect(read.content).toContain('Write plainly.');
+		});
+
+		it('refuses an ambiguous match rather than guessing, unless replace_all is set', async () => {
+			await callToolAs(captainToken, 'update_project_custom_prompt', {
+				content: 'Use pnpm here.\nUse pnpm there.',
+			});
+
+			const ambiguous = (await callToolAs(captainToken, 'edit_project_custom_prompt', {
+				old_string: 'Use pnpm',
+				new_string: 'Use bun',
+			})) as { edited?: boolean; error?: string };
+			expect(ambiguous.edited).toBeUndefined();
+			expect(ambiguous.error).toBeTruthy();
+
+			const all = (await callToolAs(captainToken, 'edit_project_custom_prompt', {
+				old_string: 'Use pnpm',
+				new_string: 'Use bun',
+				replace_all: true,
+			})) as { edited?: boolean; replacements?: number };
+			expect(all.edited).toBe(true);
+			expect(all.replacements).toBe(2);
+		});
+
+		it('refuses a span that is not there', async () => {
+			const res = (await callToolAs(captainToken, 'edit_project_custom_prompt', {
+				old_string: 'a line nobody ever wrote',
+				new_string: 'x',
+			})) as { edited?: boolean; error?: string };
+			expect(res.edited).toBeUndefined();
+			expect(res.error).toBeTruthy();
+		});
+
+		// Same shared write path as a full replace, so the role gate applies here too.
+		it('denies a non-privileged worker', async () => {
+			const res = (await callToolAs(engineerToken, 'edit_project_custom_prompt', {
+				old_string: 'Use bun',
+				new_string: 'Use npm',
+				replace_all: true,
+			})) as { edited?: boolean; error?: string };
+			expect(res.edited).toBeUndefined();
+			expect(res.error).toMatch(/Access denied/i);
+		});
+
+		it('records a revision, so an edit is restorable like a replace', async () => {
+			await callToolAs(captainToken, 'update_project_custom_prompt', {
+				content: 'baseline for the edit revision check',
+			});
+			await callToolAs(captainToken, 'edit_project_custom_prompt', {
+				old_string: 'baseline',
+				new_string: 'edited',
+				change_summary: 'span edit',
+			});
+
+			const revs = (await callToolAs(adminToken, 'get_project_custom_prompt', {
+				project: projectSlug,
+			})) as { content: string };
+			expect(revs.content).toContain('edited for the edit revision check');
+		});
+	});
+
 	it('records a restorable revision on each content change', async () => {
 		await callToolAs(captainToken, 'update_project_custom_prompt', { content: 'version one' });
 		await callToolAs(captainToken, 'update_project_custom_prompt', {

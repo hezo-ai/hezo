@@ -4897,7 +4897,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_project_custom_prompt',
-		"Replace this project's Custom Prompt - the project-wide instruction block (the project context / \"preferences\") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) - it saves editing each agent's prompt one by one. The content you pass REPLACES the whole value, so call get_project_custom_prompt first and extend it. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.",
+		"Replace this project's Custom Prompt - the project-wide instruction block (the project context / \"preferences\") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) - it saves editing each agent's prompt one by one. This sends the WHOLE value and replaces it, so prefer edit_project_custom_prompt for any change to existing guidance - it sends only the span you are changing, so one bad rewrite cannot drop conventions you meant to keep. Reach for this tool to author the first version, or to restructure the whole thing deliberately; when you do, call get_project_custom_prompt first and extend what is there. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.",
 		{
 			project: projectArg(),
 			content: z
@@ -4929,6 +4929,75 @@ export function registerTools(
 				applied: true,
 				document_id: result.row.id,
 				length: (args.content as string).length,
+				...(result.warning ? { warning: result.warning } : {}),
+			};
+		},
+		db,
+		{ write: true, audience: 'coordinator' },
+	);
+
+	tool(
+		server,
+		'edit_project_custom_prompt',
+		"Replace one span of this project's Custom Prompt, leaving the rest untouched. Prefer this over update_project_custom_prompt for any change to existing guidance: it sends only the text you are changing, so a rewrite cannot silently drop a convention you meant to keep, and the argument stays proportional to the edit rather than to the whole prompt. `old_string` must match the current text EXACTLY, including indentation and line breaks: call get_project_custom_prompt first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the new length, so you can confirm what landed without reading it back. Records a revision, and files a team-coherence review when the content really changed. Only callable by the CEO, Coach, or the project's Captain.",
+		{
+			project: projectArg(),
+			old_string: z
+				.string()
+				.describe(
+					'The exact text to replace, copied verbatim from the Custom Prompt (including indentation and line breaks). Must be unique unless replace_all is set.',
+				),
+			new_string: z
+				.string()
+				.describe('The text to put in its place. May be empty to delete the span.'),
+			replace_all: z
+				.boolean()
+				.optional()
+				.describe(
+					'Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous.',
+				),
+			change_summary: z
+				.string()
+				.optional()
+				.describe('Short summary of what changed and why (stored on the revision).'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
+			if (!prior?.content) {
+				return {
+					error:
+						'This project has no Custom Prompt yet. edit_project_custom_prompt changes existing guidance; author the first version with update_project_custom_prompt.',
+				};
+			}
+
+			const edited = applyStringEdit(
+				prior.content,
+				args.old_string as string,
+				args.new_string as string,
+				{ replaceAll: args.replace_all === true },
+			);
+			if (!edited.ok) return { error: edited.error };
+
+			// The shared write path: same role gate, style guard and coherence review
+			// as a full rewrite, so an edit cannot slip past a check a replace runs.
+			const result = await writeCustomPrompt(db, wsManager, {
+				teamId,
+				content: edited.content,
+				changeSummary: args.change_summary as string | undefined,
+				auth,
+			});
+			if (result.status !== 'written') return { error: result.error };
+
+			return {
+				edited: true,
+				document_id: result.row.id,
+				replacements: edited.replacements,
+				length: result.row.content.length,
+				hunk: edited.hunk,
 				...(result.warning ? { warning: result.warning } : {}),
 			};
 		},

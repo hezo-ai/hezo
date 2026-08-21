@@ -302,7 +302,13 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_project_custom_prompt: {
 		category: 'Agent prompts & context',
 		returns:
-			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale; a revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.',
+			'`{ applied: true, document_id, length }`, or `{ error }` if denied. Replaces the project Custom Prompt wholesale - prefer edit_project_custom_prompt to change part of it, so a rewrite cannot drop guidance you meant to keep. A revision snapshot is stored so the admin can restore previous versions, and a content change files a team-coherence review so it is reviewed against the roster.',
+		auth: "The CEO, the Coach, or the team's Captain.",
+	},
+	edit_project_custom_prompt: {
+		category: 'Agent prompts & context',
+		returns:
+			'`{ edited: true, document_id, replacements, length, hunk }` - `hunk` is the applied change with surrounding context and `length` the new size, so you can confirm what landed without reading the Custom Prompt back. Returns `{ error }` if there is no Custom Prompt yet (author the first version with update_project_custom_prompt), or if `old_string` is absent, unchanged, or matches more than one place without `replace_all` - the ambiguous case is refused rather than guessing which match you meant. Prefer this over update_project_custom_prompt for any change to existing guidance: the argument scales with the edit rather than the whole prompt, so a rewrite cannot silently drop a convention. Records a revision and files a team-coherence review on a real change, exactly as a full replace does.',
 		auth: "The CEO, the Coach, or the team's Captain.",
 	},
 	set_agent_name: {
