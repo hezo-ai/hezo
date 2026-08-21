@@ -2141,7 +2141,7 @@ export async function runAgent(
 		const priceFn = pricing
 			? (model: string | undefined, tokens: CostTokens) => pricing.costCents(model, tokens)
 			: undefined;
-		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride);
+		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride, provider);
 
 		const persistRotatedAuth = async (): Promise<void> => {
 			await persistRotatedSubscriptionAuth({
