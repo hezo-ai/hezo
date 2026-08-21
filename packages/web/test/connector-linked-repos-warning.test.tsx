@@ -45,11 +45,22 @@ async function seedConnectorWithRepo(
 	const project = await db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [
 		ws.internalSlug,
 	]);
+	// The scopes matter on the Git page. `useConnectionScopeStatus` flips
+	// `GitHubSection` to its "Permissions needed" branch when any of
+	// REQUIRED_REPO_SETUP_SCOPES is absent, and that branch carries no Disconnect
+	// button and no dialog - so a scope-less connection makes the Git page test
+	// unwinnable, and did so only once the click was slow enough to lose the race.
 	const conn = await db.query<{ id: string }>(
 		`INSERT INTO oauth_connections
-		     (provider, provider_account_id, provider_account_label, access_token_secret_id, project_id)
-		 VALUES ('github', $1, 'octocat', $2, $3) RETURNING id`,
-		[`acct-${suffix}`, secret.rows[0].id, project.rows[0].id],
+		     (provider, provider_account_id, provider_account_label, access_token_secret_id,
+		      project_id, scopes)
+		 VALUES ('github', $1, 'octocat', $2, $3, $4::text[]) RETURNING id`,
+		[
+			`acct-${suffix}`,
+			secret.rows[0].id,
+			project.rows[0].id,
+			['repo', 'read:org', 'write:public_key'],
+		],
 	);
 	// Which destructive control the row offers follows `connectorStatus`: active or
 	// degraded shows Disconnect (which deletes the connection and breaks git),
@@ -95,7 +106,9 @@ async function openDialog(
 		.getAllByTestId('connector-row')
 		.find((li) => li.getAttribute('data-connector-id'));
 	if (!row) throw new Error('connector row not found');
-	within(row).getByTestId(opts.control).click();
+	// `user.click`, not a raw `.click()` - see the Git page test below for what the
+	// un-act-wrapped version costs when a query settles mid-click.
+	await rendered.user.click(within(row).getByTestId(opts.control));
 	// Radix portals the dialog onto document.body, so wait on the screen.
 	await screen.findByTestId('confirm-dialog');
 	return rendered;
@@ -200,8 +213,15 @@ test('the Git page disconnect names the repos it is about to orphan', async () =
 		params: { projectId: slug },
 	});
 
+	// `user.click` rather than a raw `.click()`, and wait on the dialog before the
+	// warning inside it. A bare DOM click is not act-wrapped, so it can land on a
+	// node React is replacing as the connections query settles - the dialog then
+	// never opens and the warning lookup burns its whole timeout. This is the same
+	// order `openDialog` above uses, and without it the test failed roughly one run
+	// in three.
 	const disconnect = await screen.findByTestId('github-disconnect');
-	disconnect.click();
+	await rendered.user.click(disconnect);
+	await screen.findByTestId('confirm-dialog');
 
 	const warning = await screen.findByTestId('linked-repos-warning');
 	expect(warning.textContent).toContain('hezo-ai/website');
