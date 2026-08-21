@@ -1472,10 +1472,16 @@ function describeFailure(failure: SubstitutionFailure): FailureDescription {
 				message: `Secret ${failure.name} is not permitted for host ${failure.host}.`,
 			};
 		case 'secret_not_allowed_in_body':
+			// Two very different mistakes share this code. Telling them apart matters:
+			// the old single message sent an agent that had merely written the
+			// placeholder as literal text off to enable body substitution on a
+			// credential it never meant to send, which is also not its call to make.
 			return {
 				statusCode: 403,
 				code: 'secret_not_allowed_in_body',
-				message: `Secret ${failure.name} is not permitted in request bodies. Enable body substitution for this credential to use it in a JSON payload.`,
+				message: failure.deliveredElsewhere
+					? `Secret ${failure.name} was already substituted into this request's headers, so the credential has been sent. The text __HEZO_SECRET_${failure.name}__ also appears in the JSON body, and Hezo does not substitute secrets into request bodies. Remove that literal text from the body content.`
+					: `A __HEZO_SECRET_${failure.name}__ placeholder appears in this JSON request body. Hezo substitutes secrets into headers and the URL, never into a body unless an admin has enabled body substitution on that credential. If you meant to send the credential in the payload, ask an admin to enable it. If the placeholder is literal text you are trying to write, it cannot be sent through the proxy.`,
 			};
 		case 'secrets_unavailable':
 			return {
