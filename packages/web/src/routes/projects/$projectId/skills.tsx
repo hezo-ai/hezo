@@ -1,9 +1,11 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { BookOpen, ExternalLink, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
+import { BookOpen, ExternalLink, Eye, History, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { RevisionHistoryDialog } from '../../../components/document-review/revision-history-dialog';
+import { ViewingRevisionBanner } from '../../../components/document-review/viewing-revision-banner';
 import { InfiniteScrollSentinel } from '../../../components/infinite-scroll-sentinel';
 import { MarkdownEditor } from '../../../components/markdown-editor';
-import { RevisionsPanel } from '../../../components/revisions-panel';
+import { MarkdownProse } from '../../../components/markdown-prose';
 import { SkillViewDialog } from '../../../components/skill-view-dialog';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -17,6 +19,7 @@ import {
 	useRestoreProjectSkill,
 	useUpdateProjectSkill,
 } from '../../../hooks/use-project-skills';
+import { buildDocVersionHistory, type DocVersionEntry } from '../../../lib/doc-version-history';
 
 export const Route = createFileRoute('/projects/$projectId/skills')({
 	component: ProjectSkillsPage,
@@ -42,6 +45,9 @@ function ProjectSkillsPage() {
 	const [content, setContent] = useState('');
 	const [tags, setTags] = useState('');
 	const [error, setError] = useState<string | null>(null);
+	const [historyOpen, setHistoryOpen] = useState(false);
+	// The whole entry, not just its number — the body is rendered from it.
+	const [viewingRevision, setViewingRevision] = useState<DocVersionEntry | null>(null);
 
 	const { data: editingSkill } = useProjectSkill(projectId, editingId);
 	const { data: viewingSkill } = useProjectSkill(projectId, viewingId);
@@ -58,12 +64,19 @@ function ProjectSkillsPage() {
 
 	function resetForm() {
 		setEditingId(null);
+		setHistoryOpen(false);
+		setViewingRevision(null);
 		setName('');
 		setDescription('');
 		setContent('');
 		setTags('');
 		setError(null);
 	}
+
+	const versionEntries = useMemo(
+		() => (editingSkill ? buildDocVersionHistory(editingSkill, revisions) : []),
+		[editingSkill, revisions],
+	);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
@@ -116,58 +129,106 @@ function ProjectSkillsPage() {
 					onClose={resetForm}
 					onSubmit={handleSubmit}
 					footer={
-						<RevisionsPanel
-							revisions={revisions}
-							onRestore={(revisionNumber) => restoreSkill.mutateAsync(revisionNumber)}
-							isRestoring={restoreSkill.isPending}
-						/>
+						<div className="mt-4 flex justify-end border-t border-border pt-3">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={() => setHistoryOpen(true)}
+								data-testid="skill-history"
+								aria-label="Revision history"
+							>
+								<History className="w-3.5 h-3.5" />
+								<span className="hidden sm:inline">History</span>
+							</Button>
+						</div>
 					}
 				>
-					<div className="flex flex-col sm:flex-row gap-2">
-						<Input
-							placeholder="Name"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							required
-							className="flex-1"
-						/>
-						<Input
-							placeholder="Tags (comma-separated, optional)"
-							value={tags}
-							onChange={(e) => setTags(e.target.value)}
-							className="flex-1"
-						/>
-					</div>
-					<Input
-						placeholder="Description (optional - auto-derived from content if empty)"
-						value={description}
-						onChange={(e) => setDescription(e.target.value)}
-					/>
-					<MarkdownEditor
-						label="Content (markdown)"
-						labelClassName="text-[13px] text-text-2"
-						ariaLabel="Skill content"
-						placeholder="Skill content (markdown)"
-						value={content}
-						onChange={setContent}
-						required
-						rows={10}
-						className="font-mono"
-						previewClassName="min-h-[200px]"
-						previewTestId="skill-content-preview"
-						emptyPreviewText="_(nothing to preview)_"
-					/>
-					{error && <p className="text-[13px] text-danger">{error}</p>}
-					<div className="flex gap-2">
-						<Button type="submit" size="sm" disabled={updateSkill.isPending}>
-							Save changes
-						</Button>
-						<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
-							Cancel
-						</Button>
-					</div>
+					{viewingRevision && viewingRevision.revisionNumber !== null ? (
+						<>
+							<ViewingRevisionBanner
+								revisionNumber={viewingRevision.revisionNumber}
+								timestamp={viewingRevision.timestamp}
+								authorName={viewingRevision.authorName}
+								onViewLatest={() => setViewingRevision(null)}
+							/>
+							<div
+								className="min-h-[200px] rounded-md border border-border bg-surface-2 px-4 py-3"
+								data-testid="skill-revision-body"
+							>
+								<MarkdownProse projectId={projectId} projectSlug={projectId}>
+									{viewingRevision.content || '_(this version was empty)_'}
+								</MarkdownProse>
+							</div>
+						</>
+					) : (
+						<>
+							<div className="flex flex-col sm:flex-row gap-2">
+								<Input
+									placeholder="Name"
+									value={name}
+									onChange={(e) => setName(e.target.value)}
+									required
+									className="flex-1"
+								/>
+								<Input
+									placeholder="Tags (comma-separated, optional)"
+									value={tags}
+									onChange={(e) => setTags(e.target.value)}
+									className="flex-1"
+								/>
+							</div>
+							<Input
+								placeholder="Description (optional - auto-derived from content if empty)"
+								value={description}
+								onChange={(e) => setDescription(e.target.value)}
+							/>
+							<MarkdownEditor
+								label="Content (markdown)"
+								labelClassName="text-[13px] text-text-2"
+								ariaLabel="Skill content"
+								placeholder="Skill content (markdown)"
+								value={content}
+								onChange={setContent}
+								required
+								rows={10}
+								className="font-mono"
+								previewClassName="min-h-[200px]"
+								previewTestId="skill-content-preview"
+								emptyPreviewText="_(nothing to preview)_"
+							/>
+							{error && <p className="text-[13px] text-danger">{error}</p>}
+							<div className="flex gap-2">
+								<Button type="submit" size="sm" disabled={updateSkill.isPending}>
+									Save changes
+								</Button>
+								<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
+									Cancel
+								</Button>
+							</div>
+						</>
+					)}
 				</InPlaceForm>
 			)}
+
+			<RevisionHistoryDialog
+				open={historyOpen}
+				onOpenChange={setHistoryOpen}
+				label={editingSkill?.name ?? 'Skill'}
+				entries={versionEntries}
+				projectId={projectId}
+				projectSlug={projectId}
+				viewingRevision={viewingRevision?.revisionNumber ?? null}
+				onView={(entry) => {
+					setViewingRevision(entry.isCurrent ? null : entry);
+					setHistoryOpen(false);
+				}}
+				onRestore={async (rev) => {
+					await restoreSkill.mutateAsync(rev);
+					setViewingRevision(null);
+				}}
+				isRestoring={restoreSkill.isPending}
+			/>
 
 			<section className="space-y-2">
 				<h2 className="text-[13px] font-medium text-text-2">This project</h2>

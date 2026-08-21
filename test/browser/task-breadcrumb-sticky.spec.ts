@@ -1,10 +1,11 @@
-// Real CSS layout plus a viewport-conditional rule (testing decision tree,
-// points 1 & 2): the breadcrumb's pinning is `position: sticky` resolving
-// against the shell <main> scroller, asserted through `boundingBox()` before and
-// after a real scroll; and the one-line guarantee is a layout fact - whether the
-// segments share a line box, and whether the name truncated - which happy-dom
-// cannot answer because it runs no layout pass and no media queries. The crumb's
-// links, name and ancestor rendering stay covered by the component tests in
+// Real CSS layout (testing decision tree, point 1): the breadcrumb's pinning is
+// `position: sticky` resolving against the shell <main> scroller, asserted
+// through `boundingBox()` before and after a real scroll; the handoff of the task
+// name from the heading to the crumb turns on whether the heading is still
+// visible, which is a geometry question; and the one-line guarantee is a layout
+// fact - whether the segments share a line box, and whether the row overflows and
+// scrolls. happy-dom answers none of these, because it runs no layout pass. The
+// crumb's links and ancestor rendering stay covered by the component tests in
 // packages/web/test/task-breadcrumb.test.tsx.
 
 import { expect, test } from './fixtures';
@@ -64,6 +65,47 @@ async function scrollMain(page: Page, top: number): Promise<number> {
 	return main.evaluate((el) => el.scrollTop);
 }
 
+/**
+ * How far apart the tops of the crumb's segments are. One line box means ~0; two
+ * lines would spread them by a whole line-height.
+ */
+async function topSpreadOf(page: Page): Promise<number> {
+	return page.getByTestId('task-breadcrumb').evaluate((el) => {
+		const row = el.querySelector('[data-breadcrumb-content]');
+		const tops = Array.from(row?.children ?? [])
+			.filter((kid) => {
+				const cs = getComputedStyle(kid);
+				return cs.position !== 'absolute' && cs.display !== 'none';
+			})
+			.map((kid) => kid.getBoundingClientRect().top);
+		return Math.max(...tops) - Math.min(...tops);
+	});
+}
+
+/** How far the crumb could scroll sideways, and where it currently sits. */
+async function crumbScroll(page: Page): Promise<{ max: number; left: number }> {
+	return page
+		.getByTestId('task-breadcrumb')
+		.evaluate((el) => ({ max: el.scrollWidth - el.clientWidth, left: el.scrollLeft }));
+}
+
+/**
+ * The name lives in exactly one place at a time, and that place is whichever one
+ * the reader can see. Asserted together so a change that drops it from both - the
+ * failure mode the offset in `usePinnedBandHeight` exists to prevent - cannot pass
+ * as "the crumb is correct".
+ */
+async function expectNameCarriedOnce(page: Page, by: 'heading' | 'crumb') {
+	const crumbName = page.getByTestId('task-breadcrumb-title');
+	if (by === 'heading') {
+		await expect(page.getByTestId('task-title')).toBeInViewport();
+		await expect(crumbName).toHaveCount(0);
+	} else {
+		await expect(crumbName).toBeAttached();
+		await expect(page.getByTestId('task-title')).not.toBeInViewport();
+	}
+}
+
 test('desktop: the breadcrumb stays pinned to the top while the thread scrolls', async ({
 	sharedPage: page,
 	sharedWorkspace,
@@ -80,8 +122,10 @@ test('desktop: the breadcrumb stays pinned to the top while the thread scrolls',
 
 	const before = await crumb.boundingBox();
 	expect(before).not.toBeNull();
-	// At rest the crumb carries no hairline - the page keeps its clean top edge.
+	// At rest the crumb carries no hairline - the page keeps its clean top edge -
+	// and no name, because the heading right below it is still saying it.
 	await expect(crumb).toHaveAttribute('data-pinned', 'false');
+	await expectNameCarriedOnce(page, 'heading');
 
 	const scrolled = await scrollMain(page, 600);
 	// Proves the thread genuinely overflowed and we moved a meaningful amount.
@@ -99,9 +143,15 @@ test('desktop: the breadcrumb stays pinned to the top while the thread scrolls',
 	await expect(crumb).toContainText(task.identifier);
 	await expect(crumb).toHaveAttribute('data-pinned', 'true');
 
-	// Back at the top it lets go of the hairline again.
+	// The heading has gone, so the crumb is carrying the name now.
+	await expectNameCarriedOnce(page, 'crumb');
+	await expect(crumb).toContainText('Task with a long thread');
+
+	// Back at the top it lets go of the hairline, and hands the name back to the
+	// heading rather than saying it twice.
 	await scrollMain(page, 0);
 	await expect(crumb).toHaveAttribute('data-pinned', 'false');
+	await expectNameCarriedOnce(page, 'heading');
 });
 
 test('mobile: the breadcrumb stays pinned too', async ({ sharedPage: page, sharedWorkspace }) => {
@@ -118,21 +168,24 @@ test('mobile: the breadcrumb stays pinned too', async ({ sharedPage: page, share
 	const before = await crumb.boundingBox();
 	expect(before).not.toBeNull();
 	await expect(crumb).toHaveAttribute('data-pinned', 'false');
+	await expectNameCarriedOnce(page, 'heading');
 
 	const scrolled = await scrollMain(page, 600);
 	expect(scrolled).toBeGreaterThan(300);
 
 	// The phone is where the title leaves the screen soonest, so the crumb holds
-	// its band here as well - carrying the name, not just the identifier.
+	// its band here as well - and picks up the name, which is the whole point of
+	// holding it.
 	await expect(crumb).toBeInViewport();
 	const after = await crumb.boundingBox();
 	expect(after).not.toBeNull();
 	if (before && after) expect(Math.abs(after.y - before.y)).toBeLessThan(30);
 	await expect(crumb).toContainText(task.identifier);
 	await expect(crumb).toHaveAttribute('data-pinned', 'true');
+	await expectNameCarriedOnce(page, 'crumb');
 });
 
-test('the crumb stays one line when a deep sub-task has a long name on a narrow phone', async ({
+test('the crumb scrolls sideways rather than wrapping or hiding a segment at 320px', async ({
 	sharedPage: page,
 	sharedWorkspace,
 }) => {
@@ -165,7 +218,20 @@ test('the crumb stays one line when a deep sub-task has a long name on a narrow 
 		`/api/projects/${project.slug}/tasks/${parent.id}/sub-tasks`,
 		{ headers, data: { title: longTitle, assignee_id: assigneeId } },
 	);
-	const child = ((await childRes.json()) as { data: { identifier: string } }).data;
+	const child = ((await childRes.json()) as { data: { id: string; identifier: string } }).data;
+	// Enough thread that <main> overflows at this viewport, so the heading can
+	// actually be scrolled away and hand the name over.
+	await Promise.all(
+		Array.from({ length: 15 }, (_, i) =>
+			page.request.post(`/api/projects/${project.slug}/tasks/${child.id}/comments`, {
+				headers,
+				data: {
+					content_type: 'text',
+					content: { text: `seeded comment ${i}. ${'lorem ipsum '.repeat(8)}` },
+				},
+			}),
+		),
+	);
 
 	await page.goto(`/projects/${project.slug}/tasks/${child.identifier.toLowerCase()}`);
 	await waitForPageLoad(page);
@@ -176,34 +242,39 @@ test('the crumb stays one line when a deep sub-task has a long name on a narrow 
 	// One line, stated structurally rather than as a pixel budget: every segment
 	// that occupies flow shares a line box. Two lines would spread these tops by
 	// a whole line-height.
-	const topSpread = await crumb.evaluate((el) => {
-		const tops = Array.from(el.children)
-			.filter((kid) => {
-				const cs = getComputedStyle(kid);
-				return cs.position !== 'absolute' && cs.display !== 'none';
-			})
-			.map((kid) => kid.getBoundingClientRect().top);
-		return Math.max(...tops) - Math.min(...tops);
+	expect(await topSpreadOf(page)).toBeLessThan(2);
+
+	// Every ancestor is a real, reachable link at this width - there is no `sm`
+	// collapse standing in for the chain, and nothing is left screen-reader-only.
+	const ancestors = page.getByTestId('task-breadcrumb-ancestor');
+	await expect(ancestors).toHaveCount(1);
+	await expect(ancestors.first()).toBeInViewport();
+	await expect(page.getByTestId('task-breadcrumb-tasks')).toBeInViewport();
+
+	// A sideways swipe belongs to the row, never to the browser's back gesture.
+	await expect(crumb).toHaveCSS('overscroll-behavior-x', 'contain');
+
+	// Carrying the identifier alone, this chain fits even here. Scroll the heading
+	// away and the row takes on a name far longer than the viewport - which is the
+	// width at which a row that truncated instead of scrolling would lose it.
+	expect(await scrollMain(page, 600)).toBeGreaterThan(300);
+	await expectNameCarriedOnce(page, 'crumb');
+
+	const grown = await crumbScroll(page);
+	expect(grown.max).toBeGreaterThan(0);
+	// Anchored to the end as it grew, so the name is what the phone shows rather
+	// than the part of the trail the reader already knows.
+	expect(grown.left).toBeGreaterThan(0);
+	await expect(page.getByTestId('task-breadcrumb-title')).toBeInViewport();
+
+	// ...and the start of the trail is still reachable the other way, so nothing
+	// is stranded at the narrowest width the UX rules cover.
+	await crumb.evaluate((el) => {
+		el.scrollTo({ left: 0, behavior: 'instant' });
 	});
-	expect(topSpread).toBeLessThan(2);
+	await expect(page.getByTestId('task-breadcrumb-tasks')).toBeInViewport();
+	await expect(ancestors.first()).toBeInViewport();
 
-	// ...and it holds because the name gave way, not because this title happened
-	// to fit: the browser really did cut it.
-	const nameOverflow = await page
-		.getByTestId('task-breadcrumb-title')
-		.evaluate((el) => el.scrollWidth - el.clientWidth);
-	expect(nameOverflow).toBeGreaterThan(0);
-
-	// Below `sm` the ancestor identifiers give up their room to the name, leaving
-	// the ellipsis in their place. The links stay in the accessibility tree.
-	await expect(page.getByTestId('task-breadcrumb-ancestors-collapsed')).toBeVisible();
-	await expect(page.getByTestId('task-breadcrumb-ancestor')).toBeAttached();
-	await expect(page.getByTestId('task-breadcrumb-ancestor')).not.toBeInViewport();
-
-	// Widen past `sm` and the chain comes back in place of the ellipsis - the
-	// other half of the same rule, and the half no other test would catch if
-	// `sm:not-sr-only` stopped resolving.
-	await page.setViewportSize({ width: 1280, height: 800 });
-	await expect(page.getByTestId('task-breadcrumb-ancestor')).toBeVisible();
-	await expect(page.getByTestId('task-breadcrumb-ancestors-collapsed')).toBeHidden();
+	// Still one line with the name aboard - the row grew sideways, not downwards.
+	expect(await topSpreadOf(page)).toBeLessThan(2);
 });

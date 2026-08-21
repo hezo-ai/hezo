@@ -10,6 +10,7 @@ import {
 import { Command } from 'commander';
 import { buildCombinedLcov, formatStats } from './coverage/merge';
 import { ensureBundles } from './ensure-bundles';
+import { shouldRunBunNative } from './test-selection';
 
 const ROOT = resolve(import.meta.dir, '..');
 
@@ -55,24 +56,38 @@ const program = new Command()
 	.description('Run Hezo test suite across all packages')
 	.option('--bail', 'Stop on first test failure')
 	.option('--concurrency <n>', 'Number of parallel test workers', String(defaultConcurrency))
-	.option('--pattern <str>', 'Filter test files by substring match')
+	.option(
+		'--pattern <str>',
+		'Filter test files by substring match (repeatable; matches are OR-ed)',
+		(value: string, previous: string[]) => previous.concat(value),
+		[] as string[],
+	)
 	.option('--package <name>', 'Run tests only in a specific package')
 	.option('--skip-browser', 'Skip Playwright browser tests')
 	.option('--browser', 'Run only Playwright browser tests')
 	.option('--shard <value>', 'Vitest shard, form <index>/<count> (e.g. 1/3)')
+	.option('--bun-native', 'Force the Bun-native tier on, whatever --pattern/--shard select')
+	.option('--skip-bun-native', 'Skip the Bun-native tier')
 	.option('--coverage', 'Collect coverage and write lcov/json per tier')
 	.parse();
 
 const opts = program.opts();
 const bail = opts.bail as boolean;
 const concurrency = Number.parseInt(opts.concurrency, 10);
-const pattern = opts.pattern as string | undefined;
+const patterns = opts.pattern as string[];
 const packageFilter = opts.package as string | undefined;
 const skipBrowser = opts.skipBrowser as boolean;
 const browserFlag = opts.browser as boolean;
 const shard = opts.shard as string | undefined;
 const shardIndex = shard ? Number.parseInt(shard.split('/')[0], 10) : undefined;
+const forceBunNative = opts.bunNative as boolean;
+const skipBunNative = opts.skipBunNative as boolean;
 const coverage = opts.coverage as boolean;
+
+if (forceBunNative && skipBunNative) {
+	console.error('--bun-native and --skip-bun-native are mutually exclusive');
+	process.exit(1);
+}
 
 const TEST_PACKAGES = ['packages/server', 'packages/web', 'packages/shared'];
 
@@ -144,12 +159,14 @@ async function runVitestForPackage(pkg: string): Promise<boolean> {
 	if (shard) args.push(`--shard=${shard}`);
 	// --passWithNoTests guards an empty selection (a pattern matching nothing, or
 	// a shard that lands zero files); add it once if either is in play.
-	if (pattern || shard) args.push('--passWithNoTests');
+	if (patterns.length || shard) args.push('--passWithNoTests');
 	// Overrides the config's enabled:false default. reportsDirectory ('./coverage')
 	// is package-relative and cwd is the package dir below, so server/web reports
 	// land in their own packages/<pkg>/coverage/ — no collision.
 	if (coverage) args.push('--coverage.enabled', '--coverage.provider=v8');
-	if (pattern) args.push(pattern);
+	// vitest treats trailing positionals as OR-ed filename filters, so a repeated
+	// --pattern maps straight onto them.
+	args.push(...patterns);
 
 	console.log(`\n── Running ${pkg} tests (pool=forks, workers=${concurrency}) ──`);
 	const start = Date.now();
@@ -217,7 +234,7 @@ async function runBrowserTests(): Promise<boolean> {
 	console.log('\n── Browser Tests ──');
 	if (!(await buildWebBundle())) return false;
 	const playwrightArgs = ['playwright', 'test'];
-	if (pattern) playwrightArgs.push(pattern);
+	playwrightArgs.push(...patterns);
 	// Fan the browser suite across CI runners the same way the vitest tiers shard.
 	// Playwright distributes its tests across the shards; `--pass-with-no-tests`
 	// keeps a shard that lands zero tests green instead of erroring.
@@ -259,12 +276,23 @@ async function main() {
 
 		// The Bun-native tier runs under `bun test` (production runtime). Its
 		// files live in test/bun/ and contain "bun" in their path, so honour
-		// --pattern by running it only when no pattern is set or the pattern
+		// --pattern by running it only when no pattern is set or a pattern
 		// targets that tier. It isn't shardable by vitest, so when sharding run
 		// it exactly once (on shard 1) — not duplicated across the matrix, not
 		// dropped. Without --shard, shardIndex is undefined → unchanged behavior.
-		const runBunNative =
-			(!pattern || pattern.includes('bun')) && (shardIndex === undefined || shardIndex === 1);
+		//
+		// The two flags override that default in either direction, and exist
+		// because CI no longer runs this tier inside the backend shards at all:
+		// it needs Docker and the agent-base image, so it runs in the dedicated
+		// `test-containers` job (--bun-native) while every backend shard opts out
+		// (--skip-bun-native). Keeping the shard-1 default means a local
+		// `--shard` run still behaves as it always did.
+		const runBunNative = shouldRunBunNative({
+			patterns,
+			shardIndex,
+			force: forceBunNative,
+			skip: skipBunNative,
+		});
 
 		for (const pkg of packages) {
 			const passed = await runVitestForPackage(pkg);

@@ -72,16 +72,22 @@ export function buildCombinedLcov(inputs: MergeInputs): MergeResult {
 
 /**
  * Locate each tier's coverage input inside a directory of downloaded CI
- * artifacts. Artifact names are fixed by ci.yml: `backend-coverage-<shard>` and
+ * artifacts. Artifact names are fixed by ci.yml: `backend-coverage-<suffix>` and
  * `web-coverage-<shard>` each hold a `coverage-final.json`; `shared-coverage`
  * holds the shared `coverage-final.json`; `backend-bun-coverage` holds the Bun
  * `lcov.info`.
+ *
+ * The backend suffix is not just a shard ordinal: the container suites run off
+ * the shard matrix, on their own runner, and upload
+ * `backend-coverage-containers`. Every backend vitest report merges the same
+ * way whatever produced it, so the pattern accepts any suffix rather than
+ * forcing that job to claim a fake shard number.
  */
 export function resolveArtifacts(dir: string): MergeInputs {
 	const entries = existsSync(dir) ? readdirSync(dir) : [];
 	const jsonIn = (name: string) => resolve(dir, name, 'coverage-final.json');
 	const serverJson = entries
-		.filter((e) => /^backend-coverage-\d+$/.test(e))
+		.filter((e) => /^backend-coverage-[\w-]+$/.test(e))
 		.map(jsonIn)
 		.filter(existsSync);
 	const webJson = entries

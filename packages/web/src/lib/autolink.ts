@@ -30,7 +30,7 @@ const CANDIDATE_RE =
 
 // What a link may follow. Anything else means the match continues a word
 // (`xhttps://…`, a path segment) and is not a link of its own.
-const BOUNDARY_BEFORE_RE = /[\s(\[{<"'`,;:*_~|]/;
+const BOUNDARY_BEFORE_RE = /[\s([{<"'`,;:*_~|]/;
 
 /** Sentence punctuation a link never ends on, trimmed back off the match. */
 const TRAILING_PUNCTUATION = new Set(['?', '!', '.', ',', ':', ';', '*', '_', '~', "'", '"']);

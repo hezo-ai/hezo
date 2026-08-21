@@ -3,10 +3,10 @@ import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
 
-test('agent settings page shows system prompt textarea, edits persist, revisions panel lists history', async () => {
+test('agent settings page shows system prompt textarea, edits persist, revision history dialog lists and previews versions', async () => {
 	let ws!: SeededWorkspace;
 	let engineerId = '';
-	const { findByLabelText, findByRole, findByText, router } = await renderApp({
+	const { findByLabelText, findByRole, findByText, findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			ws = await seedWorkspace();
@@ -50,10 +50,16 @@ test('agent settings page shows system prompt textarea, edits persist, revisions
 		{ timeout: 15_000 },
 	);
 
-	// Toggle revision history visibility
-	const showBtn = await findByRole('button', { name: /Show revision history/i });
-	fireEvent.click(showBtn);
+	// Open the revision history and read a past version without loading it into
+	// the editor — a save of any other field must not write the old prompt back.
+	fireEvent.click(await findByRole('button', { name: /revision history/i }));
+	await findByTestId('revision-history-dialog');
 	await findByText(/Rev \d+/, undefined, { timeout: 15_000 });
+
+	fireEvent.click(await findByTestId('revision-view'));
+	await findByTestId('viewing-revision-banner');
+	await findByTestId('system-prompt-revision-body');
+	fireEvent.click(await findByTestId('view-latest'));
 });
 
 test('agent settings preview tab resolves placeholders and edit tab keeps the raw template', async () => {

@@ -1,5 +1,6 @@
 import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { clearMaxContainerMemoryGb, setMaxContainerMemoryGb } from '../src/lib/system-meta';
 import {
 	authHeader,
 	createAgentRun,
@@ -53,6 +54,22 @@ afterAll(() => destroyTestContext(ctx));
 
 const gitStateUrl = () => `${ctx.baseUrl}/api/projects/${projectSlug}/repos/${repoId}/git-state`;
 const resetUrl = () => `${ctx.baseUrl}/api/projects/${projectSlug}/repos/${repoId}/reset`;
+
+/** Poll the project row until its container settles, so a background start is observable. */
+async function waitForContainerStatus(want: string, timeoutMs = 10_000): Promise<string | null> {
+	const deadline = Date.now() + timeoutMs;
+	let last: string | null = null;
+	while (Date.now() < deadline) {
+		const res = await ctx.db.query<{ container_status: string | null }>(
+			'SELECT container_status FROM projects WHERE id = $1',
+			[projectId],
+		);
+		last = res.rows[0]?.container_status ?? null;
+		if (last === want) return last;
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	return last;
+}
 
 describe('GET /repos/:repoId/git-state', () => {
 	it('rejects a non-superuser (team-member agent) with 403', async () => {
@@ -109,6 +126,100 @@ describe('GET /repos/:repoId/git-state', () => {
 			} finally {
 				await finalizeAgentRun(ctx.db, runId);
 			}
+		} finally {
+			await ctx.db.query(
+				`UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1`,
+				[projectId],
+			);
+		}
+	});
+});
+
+describe('POST /repos/:repoId/git-state', () => {
+	it('rejects a non-superuser (team-member agent) with 403', async () => {
+		const { token, runId } = await mintAgentToken(
+			ctx.db,
+			ctx.masterKeyManager,
+			captainId,
+			teamId,
+			planningTaskId,
+		);
+		const res = await fetch(gitStateUrl(), { method: 'POST', headers: authHeader(token) });
+		expect(res.status).toBe(403);
+		await finalizeAgentRun(ctx.db, runId);
+	});
+
+	it('404s for a repo that is not on the project', async () => {
+		const url = `${ctx.baseUrl}/api/projects/${projectSlug}/repos/00000000-0000-0000-0000-000000000000/git-state`;
+		const res = await fetch(url, { method: 'POST', headers: authHeader(ctx.token) });
+		expect(res.status).toBe(404);
+	});
+
+	it('starts nothing when a container is already running', async () => {
+		await ctx.db.query(
+			`UPDATE projects SET container_id = 'test-container', container_status = 'running' WHERE id = $1`,
+			[projectId],
+		);
+		try {
+			const res = await fetch(gitStateUrl(), { method: 'POST', headers: authHeader(ctx.token) });
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as {
+				data: { starting: boolean; container_running: boolean };
+			};
+			expect(body.data).toEqual({ starting: false, container_running: true });
+		} finally {
+			await ctx.db.query(
+				`UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1`,
+				[projectId],
+			);
+		}
+	});
+
+	it('409s without starting anything while the instance memory budget leaves no room', async () => {
+		// The floor budget (1 GiB) cannot fit one container at the default 2 GiB
+		// per-container cap, so this project's next container does not fit.
+		await setMaxContainerMemoryGb(ctx.db, 1);
+		try {
+			const res = await fetch(gitStateUrl(), { method: 'POST', headers: authHeader(ctx.token) });
+			expect(res.status).toBe(409);
+			const body = (await res.json()) as { error: { code: string } };
+			expect(body.error.code).toBe('CONTAINER_AT_CAPACITY');
+			// The 409 is the whole response: nothing was provisioned behind it.
+			const row = await ctx.db.query<{ container_status: string | null }>(
+				'SELECT container_status FROM projects WHERE id = $1',
+				[projectId],
+			);
+			expect(row.rows[0]?.container_status ?? null).toBeNull();
+		} finally {
+			await clearMaxContainerMemoryGb(ctx.db);
+		}
+	});
+
+	it('brings a container up when there is headroom', async () => {
+		// A row naming a container that is not marked running is the start-in-place
+		// branch of `ensureProjectContainerRunning` - deliberately not a cold
+		// provision, whose post-provision repo-setup fan-out the stub engine cannot
+		// serve (it would only log a mock failure). What is under test here is that
+		// the route hands the start off and the project row settles to running,
+		// which is the transition the panel polls the GET for.
+		await ctx.db.query(
+			`UPDATE projects SET container_id = 'test-container', container_status = 'stopped' WHERE id = $1`,
+			[projectId],
+		);
+		try {
+			const res = await fetch(gitStateUrl(), { method: 'POST', headers: authHeader(ctx.token) });
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as {
+				data: { starting: boolean; container_running: boolean };
+			};
+			expect(body.data).toEqual({ starting: true, container_running: false });
+
+			// The request returns before the container is up, so wait for the start.
+			expect(await waitForContainerStatus('running')).toBe('running');
+			const after = (await (
+				await fetch(gitStateUrl(), { headers: authHeader(ctx.token) })
+			).json()) as { data: { container_running: boolean } };
+			expect(after.data.container_running).toBe(true);
 		} finally {
 			await ctx.db.query(
 				`UPDATE projects SET container_id = NULL, container_status = NULL WHERE id = $1`,

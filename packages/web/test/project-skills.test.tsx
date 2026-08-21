@@ -126,3 +126,55 @@ test('the built-in connector-recipes skill shows on the project page as a global
 	const dialogContent = await within(dialog).findByTestId('skill-view-content');
 	expect(dialogContent.querySelector('h2')?.textContent).toContain('Connection patterns');
 });
+
+test('project skill revision history previews a past version and restores it', async () => {
+	let projectSlug = '';
+	const { findByText, findByRole, findByLabelText, findByTestId, getByLabelText, router, user } =
+		await renderApp({
+			initialPath: '/',
+			seed: async (ctx) => {
+				const ws = await seedWorkspace();
+				const project = await seedProject(ws, { name: 'Rev Proj' });
+				projectSlug = project.slug;
+				await seedSkill(ctx, {
+					name: 'Versioned Project Skill',
+					content: 'Project body v1',
+					project_id: project.id,
+				});
+			},
+		});
+
+	await router.navigate({
+		to: '/projects/$projectId/skills',
+		params: { projectId: projectSlug },
+	});
+	await findByText('Versioned Project Skill');
+
+	// Edit once so the prior content is snapshotted as a revision.
+	await user.click(await findByLabelText('Edit Versioned Project Skill'));
+	const content = (await findByLabelText('Skill content')) as HTMLTextAreaElement;
+	await waitFor(() => expect(content.value).toBe('Project body v1'));
+	await user.clear(content);
+	await user.type(content, 'Project body v2');
+	await user.click(await findByRole('button', { name: 'Save changes' }));
+
+	// Re-open the editor and read revision 1 without loading it into the editor.
+	await user.click(await findByLabelText('Edit Versioned Project Skill'));
+	await user.click(await findByRole('button', { name: /revision history/i }));
+	await findByTestId('revision-history-dialog');
+	await findByText('Rev 1');
+
+	await user.click(await findByTestId('revision-view'));
+	await findByTestId('viewing-revision-banner');
+	expect((await findByTestId('skill-revision-body')).textContent).toContain('Project body v1');
+	await user.click(await findByTestId('view-latest'));
+	await waitFor(() => expect(getByLabelText('Skill content')).toBeDefined());
+
+	// Restore revision 1 → confirm → the editor reverts.
+	await user.click(await findByRole('button', { name: /revision history/i }));
+	await user.click(await findByTestId('revision-restore'));
+	await user.click(await findByTestId('confirm-dialog-confirm'));
+	await waitFor(() =>
+		expect((getByLabelText('Skill content') as HTMLTextAreaElement).value).toBe('Project body v1'),
+	);
+});

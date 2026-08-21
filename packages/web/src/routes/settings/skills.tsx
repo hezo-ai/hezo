@@ -3,6 +3,7 @@ import {
 	ChevronDown,
 	ExternalLink,
 	Eye,
+	History,
 	Loader2,
 	Pencil,
 	Plus,
@@ -11,9 +12,11 @@ import {
 	Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { RevisionHistoryDialog } from '../../components/document-review/revision-history-dialog';
+import { ViewingRevisionBanner } from '../../components/document-review/viewing-revision-banner';
 import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
 import { MarkdownEditor } from '../../components/markdown-editor';
-import { RevisionsPanel } from '../../components/revisions-panel';
+import { MarkdownProse } from '../../components/markdown-prose';
 import { SkillViewDialog } from '../../components/skill-view-dialog';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -44,6 +47,7 @@ import {
 } from '../../hooks/use-instance-skills';
 import { useMe } from '../../hooks/use-me';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
+import { buildDocVersionHistory, type DocVersionEntry } from '../../lib/doc-version-history';
 
 // Scope sentinel: create against / re-scope to "all projects" (a global skill,
 // project_id null). Any other option value is a concrete project id.
@@ -95,6 +99,13 @@ function InstanceSkillsPage() {
 	const { data: viewingSkill } = useInstanceSkill(viewingId);
 	const { data: revisions } = useInstanceSkillRevisions(editingId);
 	const restoreSkill = useRestoreInstanceSkill(editingId);
+	const [historyOpen, setHistoryOpen] = useState(false);
+	// The whole entry, not just its number — the body is rendered from it.
+	const [viewingRevision, setViewingRevision] = useState<DocVersionEntry | null>(null);
+	const versionEntries = useMemo(
+		() => (editingSkill ? buildDocVersionHistory(editingSkill, revisions) : []),
+		[editingSkill, revisions],
+	);
 	useEffect(() => {
 		if (editingSkill && editingSkill.id === editingId) {
 			setName(editingSkill.name);
@@ -107,6 +118,8 @@ function InstanceSkillsPage() {
 	function resetForm() {
 		setShowForm(false);
 		setEditingId(null);
+		setHistoryOpen(false);
+		setViewingRevision(null);
 		setCreateScope(ALL_PROJECTS);
 		setName('');
 		setDescription('');
@@ -226,80 +239,126 @@ function InstanceSkillsPage() {
 						onClose={resetForm}
 						onSubmit={handleSubmit}
 						footer={
-							/* Outside the <form> so the panel's buttons never submit the editor. */
+							/* Outside the <form> so this button never submits the editor. */
 							editingId ? (
-								<RevisionsPanel
-									revisions={revisions}
-									onRestore={(revisionNumber) => restoreSkill.mutateAsync(revisionNumber)}
-									isRestoring={restoreSkill.isPending}
-								/>
+								<div className="mt-4 flex justify-end border-t border-border pt-3">
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={() => setHistoryOpen(true)}
+										data-testid="skill-history"
+										aria-label="Revision history"
+									>
+										<History className="w-3.5 h-3.5" />
+										<span className="hidden sm:inline">History</span>
+									</Button>
+								</div>
 							) : undefined
 						}
 					>
-						<div className="flex flex-col sm:flex-row gap-2">
-							<Input
-								placeholder="Name (e.g. Commit conventions)"
-								value={name}
-								onChange={(e) => setName(e.target.value)}
-								required
-								className="flex-1"
-							/>
-							<Input
-								placeholder="Tags (comma-separated, optional)"
-								value={tags}
-								onChange={(e) => setTags(e.target.value)}
-								className="flex-1"
-							/>
-						</div>
-						<Input
-							placeholder="Description (optional - auto-derived from content if empty)"
-							value={description}
-							onChange={(e) => setDescription(e.target.value)}
-						/>
-						{/* Scope is chosen at create time; existing skills re-scope via the
-						    per-row drop-down (a skill's slug is namespaced per scope). */}
-						{!editingId && (
-							<div className="flex flex-wrap items-center gap-2">
-								<span className="text-[13px] text-text-2">Scope</span>
-								<SearchableSelect
-									options={scopeOptions}
-									value={createScope}
-									onChange={setCreateScope}
-									searchPlaceholder="Search projects…"
-									emptyLabel="No projects"
-									testId="create-scope-select"
+						{viewingRevision && viewingRevision.revisionNumber !== null ? (
+							<>
+								<ViewingRevisionBanner
+									revisionNumber={viewingRevision.revisionNumber}
+									timestamp={viewingRevision.timestamp}
+									authorName={viewingRevision.authorName}
+									onViewLatest={() => setViewingRevision(null)}
 								/>
-							</div>
+								<div
+									className="min-h-[200px] rounded-md border border-border bg-surface-2 px-4 py-3"
+									data-testid="skill-revision-body"
+								>
+									<MarkdownProse>
+										{viewingRevision.content || '_(this version was empty)_'}
+									</MarkdownProse>
+								</div>
+							</>
+						) : (
+							<>
+								<div className="flex flex-col sm:flex-row gap-2">
+									<Input
+										placeholder="Name (e.g. Commit conventions)"
+										value={name}
+										onChange={(e) => setName(e.target.value)}
+										required
+										className="flex-1"
+									/>
+									<Input
+										placeholder="Tags (comma-separated, optional)"
+										value={tags}
+										onChange={(e) => setTags(e.target.value)}
+										className="flex-1"
+									/>
+								</div>
+								<Input
+									placeholder="Description (optional - auto-derived from content if empty)"
+									value={description}
+									onChange={(e) => setDescription(e.target.value)}
+								/>
+								{/* Scope is chosen at create time; existing skills re-scope via the
+						    per-row drop-down (a skill's slug is namespaced per scope). */}
+								{!editingId && (
+									<div className="flex flex-wrap items-center gap-2">
+										<span className="text-[13px] text-text-2">Scope</span>
+										<SearchableSelect
+											options={scopeOptions}
+											value={createScope}
+											onChange={setCreateScope}
+											searchPlaceholder="Search projects…"
+											emptyLabel="No projects"
+											testId="create-scope-select"
+										/>
+									</div>
+								)}
+								<MarkdownEditor
+									label="Content (markdown)"
+									labelClassName="text-[13px] text-text-2"
+									ariaLabel="Skill content"
+									placeholder="Skill content (markdown)"
+									value={content}
+									onChange={setContent}
+									required
+									rows={10}
+									className="font-mono"
+									previewClassName="min-h-[200px]"
+									previewTestId="skill-content-preview"
+									emptyPreviewText="_(nothing to preview)_"
+								/>
+								{error && <p className="text-[13px] text-danger">{error}</p>}
+								<div className="flex gap-2">
+									<Button
+										type="submit"
+										size="sm"
+										disabled={createSkill.isPending || updateSkill.isPending}
+									>
+										{editingId ? 'Save changes' : 'Add skill'}
+									</Button>
+									<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
+										Cancel
+									</Button>
+								</div>
+							</>
 						)}
-						<MarkdownEditor
-							label="Content (markdown)"
-							labelClassName="text-[13px] text-text-2"
-							ariaLabel="Skill content"
-							placeholder="Skill content (markdown)"
-							value={content}
-							onChange={setContent}
-							required
-							rows={10}
-							className="font-mono"
-							previewClassName="min-h-[200px]"
-							previewTestId="skill-content-preview"
-							emptyPreviewText="_(nothing to preview)_"
-						/>
-						{error && <p className="text-[13px] text-danger">{error}</p>}
-						<div className="flex gap-2">
-							<Button
-								type="submit"
-								size="sm"
-								disabled={createSkill.isPending || updateSkill.isPending}
-							>
-								{editingId ? 'Save changes' : 'Add skill'}
-							</Button>
-							<Button type="button" variant="secondary" size="sm" onClick={resetForm}>
-								Cancel
-							</Button>
-						</div>
 					</InPlaceForm>
 				)}
+
+				<RevisionHistoryDialog
+					open={historyOpen}
+					onOpenChange={setHistoryOpen}
+					label={editingSkill?.name ?? 'Skill'}
+					entries={versionEntries}
+					viewingRevision={viewingRevision?.revisionNumber ?? null}
+					onView={(entry) => {
+						setViewingRevision(entry.isCurrent ? null : entry);
+						setHistoryOpen(false);
+					}}
+					onRestore={async (rev) => {
+						await restoreSkill.mutateAsync(rev);
+						setViewingRevision(null);
+					}}
+					isRestoring={restoreSkill.isPending}
+				/>
 
 				{!skills.length ? (
 					<p className="text-[13px] text-text-2">

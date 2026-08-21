@@ -3346,7 +3346,18 @@ computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` 
 to their tasks and the project's active (queued/running) agent-run count (`active_runs`, from
 `getProjectConcurrency`) so the panel can disable the reset controls proactively instead of only
 failing them server-side — and returns `{ container_running: false }` when the container is stopped
-rather than auto-starting one, since a passive inspect must not trigger a provision. It also
+rather than auto-starting one, since that read fires whenever the panel is expanded and a passive
+inspect must not trigger a provision. Starting one is the operator's own call and lives on `POST` to
+the same path: it answers `{ starting: false, container_running: true }` when one is already up,
+**409 `CONTAINER_AT_CAPACITY`** when `isContainerCapacityBlockedInDb` says the instance memory
+budget has no room for this project's next container, and otherwise backgrounds
+`ensureProjectContainerRunning` and answers `{ starting: true }`. That ensure is the row-consistent
+start — it is what leaves `projects.container_id` naming a running container, the only thing the
+`GET` reads — but it does not consult the pool ladder, so the budget check in front of it is what
+keeps it from starting a container the budget forbids. The **wait for capacity belongs to the
+panel**, not the server: it re-posts every 5s for up to 3 minutes showing "waiting for container
+capacity", because nothing in `ContainerStatus` can represent being parked on capacity, and a wait
+nobody is watching would provision a container the operator has already navigated away from. It also
 re-checks and returns `can_push` (`refreshRepoPushAccess`), computed **before** the
 container-gated branch so it is reported either way — the check needs GitHub, not a container,
 and the panel is where an operator notices write access changed upstream. `POST .../reset`
@@ -4304,9 +4315,9 @@ probe, its auto-rebind of the bind host, and the run/chat abort gate it fed were
 along with `--container-bind-host`. A tunnel that cannot be established fails the run
 directly, with the error from the exec channel.
 
-For each request the proxy terminates TLS, matches placeholders **in the URL and headers**,
-loads the named secret, verifies the host against `allowed_hosts`, substitutes, and
-forwards. **Request bodies** are forwarded byte-for-byte by default and never buffered —
+For each request the proxy terminates TLS, matches placeholders **in the URL, the headers,
+and - whenever it buffered one - the request body**, loads the named secret, verifies the
+host against `allowed_hosts`, substitutes, and forwards. **Request bodies** are forwarded byte-for-byte by default and never buffered —
 except a narrowly-gated path for secrets a human has opted into body substitution
 (`secrets.allow_body_substitution`): a `POST`/`PUT`/`PATCH` with an uncompressed
 `application/json` body and a fixed `Content-Length` ≤ 8 KB is buffered, has its placeholders
@@ -4319,6 +4330,20 @@ POST that returns a token (the agent then uses that token via the `Authorization
 Failures are explicit HTTP errors returned to the agent: `unknown_secret` (400),
 `secret_not_allowed_for_host` (403), `secret_not_allowed_in_body` (403), `body_too_large`
 (413), `secrets_unavailable` (503, master key locked).
+
+**An MCP `tools/call` sits inside that buffering window**, being a POST of small
+fixed-length `application/json` - so every tool-call payload an agent sends is scanned,
+and a placeholder written into a *tool argument* as literal text (a doc, a test fixture,
+a code comment about the grammar) is refused exactly like a credential the agent meant to
+send. The refusal stays: the proxy cannot read intent, and forwarding instead would ship
+an inert placeholder that 401s upstream with nothing naming the cause. What it does do is
+tell the two apart structurally rather than by inspecting the prose - headers and the URL
+are substituted **before** the body, so `secretsUsed` already records whether this same
+secret is on the wire by a route the proxy supports. `secret_not_allowed_in_body` carries
+that as `deliveredElsewhere`, and `describeFailure` picks one of two messages from it:
+already-sent-in-a-header ("remove the literal text"), or not-sent-at-all ("ask an admin to
+enable body substitution"). The code and the 403 are unchanged, since
+`reportConnectorRunRejection` keys off the code.
 
 **Destination guard** (`services/egress/net-guard.ts`). The proxy runs in the **host's**
 network namespace and will dial whatever an authenticated caller names, so it refuses
@@ -6004,6 +6029,27 @@ directly, since the registry's connection has already negotiated initialization;
 unapproved caller is served the onboarding tools (`register`, `connection_status`) and
 nothing else. Only `tools/list` and `tools/call` from an authenticated principal reach the
 registry.
+
+**Registry-wide conventions ride the `initialize` result, not the tool descriptions.**
+`mcpConventionLines()` (`mcp/mcp-reference.ts`) is authored once and rendered to two surfaces:
+the reference page prints it as its Conventions section, and `handleMcpRequest`'s `initialize`
+branch sends it as the protocol's `instructions` field - once per session, ~3.3 KB. Two clauses
+that point at the page's own layout are reworded for the wire; a test asserts those are the
+only two that differ.
+
+This exists because a convention stated on a tool is serialized once **per tool** on every
+`tools/list`. The `project` parameter's 128-character description costs ~9 KB that way, across
+70 tools - 7% of the whole payload from one string. `tools.ts` is already DRY about it
+(`projectArg()` is a shared factory), so the duplication is in the serialization, not the
+source, and no amount of editing `tools.ts` reaches it. `SHARED_INSTRUCTIONS` cannot serve as
+that home either: it is built inside `resolveTemplate` for an agent run's system prompt, so an
+external API-key MCP caller never receives it, and `GET /SKILL.md` carries no parameter
+descriptions at all.
+
+**The `instructions` field must go on the hand-rolled response.** `handleMcpRequest` answers
+`initialize` itself rather than delegating to the SDK (the proxy client has already negotiated
+initialization, so a second handshake would be rejected). Passing `instructions` to
+`new McpServer(...)` therefore reaches nobody - a silent no-op.
 
 **`tools/list` is projected per caller** (`mcp/tool-visibility.ts`). Every authenticated
 principal used to receive the whole registry, so a worker agent scoped to one project carried

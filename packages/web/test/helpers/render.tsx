@@ -347,11 +347,13 @@ async function interactUntil(
 /**
  * Scopes a text query to the task page's `<h1>`.
  *
- * A task's title renders twice on its own page: the heading, and the breadcrumb
- * that carries the name beside the identifier. So a bare `findByText(title)`
- * matches two elements and throws. Pass this as the query's options argument
- * when the intent is "wait until the page for this task is up", which is what
- * the heading means:
+ * A task's title can render twice on its own page: the heading, and - once the
+ * heading has scrolled out of sight - the breadcrumb, which then carries the name
+ * beside the identifier. The harness reports every observed node as intersecting,
+ * so the crumb stays at rest here and the heading is the only copy; scoping to it
+ * says which one is meant, and keeps the query honest if that changes. Pass this
+ * as the query's options argument when the intent is "wait until the page for
+ * this task is up", which is what the heading means:
  *
  *     await findByText('Target task', taskHeadingQuery, { timeout: 10_000 });
  */

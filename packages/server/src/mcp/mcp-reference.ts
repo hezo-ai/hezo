@@ -605,6 +605,68 @@ function renderTool(tool: McpReferenceTool, meta: ToolDocMeta): string[] {
  * registry order within each category, and categories follow
  * `MCP_REFERENCE_CATEGORY_ORDER`.
  */
+/**
+ * The calling conventions that hold across the whole registry - project scope,
+ * errors, paging, result caps, excerpts, secrets.
+ *
+ * Authored once and rendered to two surfaces. The reference page prints them as
+ * a section; the MCP server sends them as the `instructions` field of its
+ * `initialize` result, which reaches a client once per session. Stating a
+ * convention here rather than in each tool is what keeps it out of all 81 tool
+ * descriptions, where it would otherwise be serialized on every `tools/list`.
+ *
+ * Two clauses differ by surface because they point at page furniture the wire
+ * has no equivalent for.
+ */
+export function mcpConventionLines(surface: 'docs' | 'wire'): string[] {
+	return [
+		'- **Project scope (`project`):** most tools take an optional `project` (slug or ID).',
+		'  Omit it to act in the project your run is already in; an API key and instance agents',
+		'  (CEO/Coach) must name the project they are acting in.',
+		"- **Authorization:** every call is scoped to the resolved project's team and the caller",
+		'  must have access to it. Tools that restrict callers further note it under',
+		surface === 'docs' ? '  **Authorization** below.' : '  their own description.',
+		'- **Errors:** a handled failure comes back as `{ "error": "<message>" }` in the tool',
+		'  result (the HTTP response itself stays successful).',
+		'- **Paging is the norm, in one of three shapes.** A read that can return many rows,',
+		'  or content with no size ceiling, always returns a bounded slice plus the cursor to',
+		'  continue. A response carrying `has_more: true`, `next_cursor`, `next_offset`, or',
+		'  `next_index` is telling you it is partial - keep calling until the cursor is null or',
+		'  `has_more` is false. Treating the first page as the whole set is the one failure',
+		'  mode none of these shapes can protect you from.',
+		'  - **Lists** take `limit` (default 50, ceiling 200) and an opaque `cursor`, and return',
+		'    `{ items, next_cursor, has_more }`. Pass back the `next_cursor` you were given;',
+		'    do not construct or parse one. `list_comments` also still accepts `before`',
+		'    (a comment `id` or `public_id`) to resume from a comment you already know.',
+		'  - **Large single content** (`read_project_doc`, `get_agent_system_prompt`,',
+		'    `get_run_log`) takes `offset` plus `max_bytes` and returns a UTF-8 window with',
+		'    `next_offset`. Note `get_run_log` defaults to the log **tail**; pass `offset: 0`',
+		'    to read a run that failed early, since the tail cannot reach the start.',
+		'  - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus',
+		'    `next_index`; call again with the same `items` and `start_index` set to it.',
+		'- **Result size:** a tool result is capped at 64 KB (higher for a few full-resource',
+		'  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is',
+		'  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The',
+		'  `remedies` are built from the parameters that tool actually declares, so follow',
+		'  them rather than guessing - and when the tool takes a batch, they name the exact',
+		'  item count to retry with. Split the work and retry; do not fall back to one call',
+		'  per item, and do not narrow what you cover to whatever fits in one call.',
+		'- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts',
+		'  with `_truncated`/`_length` companions, so one page cannot be dominated by a few',
+		'  large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops',
+		'  mid-sentence; always check the `_truncated` companion rather than judging from',
+		'  whether the text reads as complete. To get the whole value, call the matching',
+		'  single-item read - `get_task` for a task, `get_comment` for a comment,',
+		'  `read_project_doc` for a doc - not a larger `excerpt_chars`.',
+		'- **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the',
+		"  egress proxy substitutes the real value only for the secret's `allowed_hosts`.",
+		surface === 'docs'
+			? '- **Write tools:** tools marked _Write tool_ persist data - a successful call from an'
+			: '- **Write tools:** a tool that persists data - a successful call from an',
+		'  agent run marks the run as having produced output.',
+	];
+}
+
 export function generateMcpReference(
 	tools: McpReferenceTool[],
 	onboarding: McpReferenceTool[],
@@ -650,48 +712,7 @@ export function generateMcpReference(
 		'',
 		'## Conventions',
 		'',
-		'- **Project scope (`project`):** most tools take an optional `project` (slug or ID).',
-		'  Omit it to act in the project your run is already in; an API key and instance agents',
-		'  (CEO/Coach) must name the project they are acting in.',
-		"- **Authorization:** every call is scoped to the resolved project's team and the caller",
-		'  must have access to it. Tools that restrict callers further note it under',
-		'  **Authorization** below.',
-		'- **Errors:** a handled failure comes back as `{ "error": "<message>" }` in the tool',
-		'  result (the HTTP response itself stays successful).',
-		'- **Paging is the norm, in one of three shapes.** A read that can return many rows,',
-		'  or content with no size ceiling, always returns a bounded slice plus the cursor to',
-		'  continue. A response carrying `has_more: true`, `next_cursor`, `next_offset`, or',
-		'  `next_index` is telling you it is partial - keep calling until the cursor is null or',
-		'  `has_more` is false. Treating the first page as the whole set is the one failure',
-		'  mode none of these shapes can protect you from.',
-		'  - **Lists** take `limit` (default 50, ceiling 200) and an opaque `cursor`, and return',
-		'    `{ items, next_cursor, has_more }`. Pass back the `next_cursor` you were given;',
-		'    do not construct or parse one. `list_comments` also still accepts `before`',
-		'    (a comment `id` or `public_id`) to resume from a comment you already know.',
-		'  - **Large single content** (`read_project_doc`, `get_agent_system_prompt`,',
-		'    `get_run_log`) takes `offset` plus `max_bytes` and returns a UTF-8 window with',
-		'    `next_offset`. Note `get_run_log` defaults to the log **tail**; pass `offset: 0`',
-		'    to read a run that failed early, since the tail cannot reach the start.',
-		'  - **Batch tools** (`get_agent_system_prompts`) return as many items as fit plus',
-		'    `next_index`; call again with the same `items` and `start_index` set to it.',
-		'- **Result size:** a tool result is capped at 64 KB (higher for a few full-resource',
-		'  inspection tools, e.g. `get_agent_system_prompt`). Over the cap the whole result is',
-		'  discarded and you get `{ "error": "result_too_large", "remedies": [...] }`. The',
-		'  `remedies` are built from the parameters that tool actually declares, so follow',
-		'  them rather than guessing - and when the tool takes a batch, they name the exact',
-		'  item count to retry with. Split the work and retry; do not fall back to one call',
-		'  per item, and do not narrow what you cover to whatever fits in one call.',
-		'- **Excerpts (`excerpt_chars`):** list tools return long free-text fields as excerpts',
-		'  with `_truncated`/`_length` companions, so one page cannot be dominated by a few',
-		'  large rows. An excerpt is cut to fill `excerpt_chars`, so it usually stops',
-		'  mid-sentence; always check the `_truncated` companion rather than judging from',
-		'  whether the text reads as complete. To get the whole value, call the matching',
-		'  single-item read - `get_task` for a task, `get_comment` for a comment,',
-		'  `read_project_doc` for a doc - not a larger `excerpt_chars`.',
-		'- **Secrets:** agents reference secrets by placeholder (`__HEZO_SECRET_<NAME>__`); the',
-		"  egress proxy substitutes the real value only for the secret's `allowed_hosts`.",
-		'- **Write tools:** tools marked _Write tool_ persist data - a successful call from an',
-		'  agent run marks the run as having produced output.',
+		...mcpConventionLines('docs'),
 		'',
 	];
 

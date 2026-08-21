@@ -311,10 +311,44 @@ describe('substituteRequest', () => {
 				},
 				secrets,
 			);
-			expect(result.failure).toEqual({ kind: 'secret_not_allowed_in_body', name: 'UMAMI_PW' });
+			expect(result.failure).toEqual({
+				kind: 'secret_not_allowed_in_body',
+				name: 'UMAMI_PW',
+				deliveredElsewhere: false,
+			});
 			expect(result.body).toBe('{"password":"__HEZO_SECRET_UMAMI_PW__"}');
 			expect(result.bodyChanged).toBe(false);
 			expect(result.secretsUsed.size).toBe(0);
+		});
+
+		// The MCP shape: the connector's credential rides the Authorization header
+		// the runtime configured, and the same placeholder turns up in the tool-call
+		// arguments because the agent is writing that literal text somewhere. The
+		// credential is already on the wire, so the body occurrence is content.
+		it('reports a body placeholder as already delivered when the header carried it', () => {
+			const secrets = new Map([
+				['MCP_GITHUB', makeSecret('MCP_GITHUB', 'gho_real', ['api.githubcopilot.com'])],
+			]);
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'api.githubcopilot.com',
+					url: 'https://api.githubcopilot.com/mcp/',
+					headers: { authorization: 'Bearer __HEZO_SECRET_MCP_GITHUB__' },
+					body: '{"method":"tools/call","params":{"arguments":{"body":"__HEZO_SECRET_MCP_GITHUB__"}}}',
+				},
+				secrets,
+			);
+			expect(result.failure).toEqual({
+				kind: 'secret_not_allowed_in_body',
+				name: 'MCP_GITHUB',
+				deliveredElsewhere: true,
+			});
+			// The header pass still ran and still counted, so the discriminator is a
+			// fact about this request rather than a guess about the payload.
+			expect(result.headers.authorization).toBe('Bearer gho_real');
+			expect([...result.secretsUsed]).toEqual(['MCP_GITHUB']);
+			expect(result.bodyChanged).toBe(false);
 		});
 
 		it('still enforces allowed_hosts on body placeholders', () => {

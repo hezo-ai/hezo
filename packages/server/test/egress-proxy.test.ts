@@ -264,6 +264,78 @@ describe('EgressProxy', () => {
 		}
 	}, 30_000);
 
+	// An MCP `tools/call` over Streamable HTTP is a POST of small fixed-length
+	// application/json, so it lands inside the body-buffering window and every
+	// tool-call payload gets scanned. An agent writing the literal placeholder
+	// text into a tool argument therefore trips the body gate even though its
+	// credential is already being delivered by the header the runtime configured.
+	// The refusal is right; the message has to name which mistake it is.
+	it('tells an agent the credential was already sent when an mcp tool-call body repeats it', async () => {
+		const runId = `run-${Date.now()}-body-mcp`;
+		await insertSecret('MCP_GITHUB_DELIVERED', 'gho-never-leaked', ['127.0.0.1']);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/mcp/`,
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					authorization: 'Bearer __HEZO_SECRET_MCP_GITHUB_DELIVERED__',
+				},
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 1,
+					method: 'tools/call',
+					params: {
+						name: 'create_or_update_file',
+						arguments: { content: 'docs say Bearer __HEZO_SECRET_MCP_GITHUB_DELIVERED__ here' },
+					},
+				}),
+			});
+			expect(res.status).toBe(403);
+			const parsed = JSON.parse(res.body);
+			// The code is load-bearing for `reportRejection`, so only the prose moves.
+			expect(parsed.error).toBe('secret_not_allowed_in_body');
+			expect(parsed.message).toContain('already substituted into this request');
+			expect(parsed.message).toContain('Remove that literal text from the body content.');
+			// The old message sent the agent after an admin-only toggle it did not need.
+			expect(parsed.message).not.toContain('ask an admin to enable it');
+			for (const req of upstreamRequests) {
+				expect(req.body.includes('gho-never-leaked')).toBe(false);
+			}
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
+	it('points at the admin opt-in when a body placeholder was not sent any other way', async () => {
+		const runId = `run-${Date.now()}-body-only`;
+		await insertSecret('UMAMI_PW_BODYONLY', 'never-leaked-bodyonly', ['127.0.0.1']);
+		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
+		try {
+			const res = await fetchThroughProxy({
+				proxyHost: '127.0.0.1',
+				proxyPort: allocated.proxyPort,
+				url: `${upstreamUrl}/api/auth/login`,
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{"password":"__HEZO_SECRET_UMAMI_PW_BODYONLY__"}',
+			});
+			expect(res.status).toBe(403);
+			const parsed = JSON.parse(res.body);
+			expect(parsed.error).toBe('secret_not_allowed_in_body');
+			expect(parsed.message).toContain('ask an admin to enable it');
+			expect(parsed.message).not.toContain('already substituted into this request');
+			for (const req of upstreamRequests) {
+				expect(req.body.includes('never-leaked-bodyonly')).toBe(false);
+			}
+		} finally {
+			await proxy.releaseRunProxy(runId);
+		}
+	}, 30_000);
+
 	it('does not substitute a body placeholder on a non-allowed host', async () => {
 		const runId = `run-${Date.now()}-body-host`;
 		await insertSecret('UMAMI_PW_HOST', 'never-leaked-host', ['only.example'], true);

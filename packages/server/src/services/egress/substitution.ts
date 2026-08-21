@@ -42,7 +42,16 @@ export interface ResolvedSecret {
 export type SubstitutionFailure =
 	| { kind: 'unknown_secret'; name: string }
 	| { kind: 'secret_not_allowed_for_host'; name: string; host: string }
-	| { kind: 'secret_not_allowed_in_body'; name: string }
+	| {
+			kind: 'secret_not_allowed_in_body';
+			name: string;
+			/** Whether this same secret was already substituted into a header or the
+			 * URL of this request. When it was, the credential is already on its way
+			 * and the body occurrence is the placeholder used as literal text - a
+			 * different mistake from meaning to send the credential in the payload,
+			 * and a different remedy. */
+			deliveredElsewhere: boolean;
+	  }
 	| { kind: 'secrets_unavailable' };
 
 export interface SubstitutionResult {
@@ -214,7 +223,17 @@ export function substituteRequest(
 		const hostFailure = checkAccess(name);
 		if (hostFailure) return hostFailure;
 		const secret = secrets.get(name);
-		if (!secret?.allowBodySubstitution) return { kind: 'secret_not_allowed_in_body', name };
+		if (!secret?.allowBodySubstitution) {
+			// Headers and the URL are substituted before the body (below), so
+			// `secretsUsed` already tells us whether this credential is on the wire
+			// by a route the proxy does support. Structural, so it stays true for a
+			// payload no phrase-matcher would recognise.
+			return {
+				kind: 'secret_not_allowed_in_body',
+				name,
+				deliveredElsewhere: secretsUsed.has(name),
+			};
+		}
 		return null;
 	};
 

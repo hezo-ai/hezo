@@ -9,6 +9,7 @@ import {
 	generateMcpReference,
 	MCP_REFERENCE_CATEGORY_ORDER,
 	type McpReferenceTool,
+	mcpConventionLines,
 	TOOL_DOC_META,
 } from '../src/mcp/mcp-reference';
 import { ONBOARDING_TOOLS } from '../src/mcp/onboarding';
@@ -80,5 +81,30 @@ describe('MCP API reference (docs/reference/mcp-api.md)', () => {
 		expect(doc.title).toBe('MCP API reference');
 		expect(doc.section).toBe('Reference');
 		expect(doc.order).toBe(32);
+	});
+});
+
+describe('registry conventions', () => {
+	// Authored once and rendered to two surfaces: the reference page prints them
+	// as a section, the MCP server sends them as `initialize` instructions. One
+	// source is the point - a convention stated per tool costs its bytes once per
+	// tool on every `tools/list`.
+	it('renders the same conventions to both surfaces, bar the page furniture', () => {
+		const docs = mcpConventionLines('docs');
+		const wire = mcpConventionLines('wire');
+		expect(wire.length).toBe(docs.length);
+		const differing = docs.filter((line, i) => line !== wire[i]);
+		// Exactly the two clauses that point at the reference page's own layout.
+		expect(differing).toEqual([
+			'  **Authorization** below.',
+			expect.stringContaining('_Write tool_'),
+		]);
+	});
+
+	it('covers the conventions no single tool schema can convey', () => {
+		const wire = mcpConventionLines('wire').join('\n');
+		for (const topic of ['`project`', 'Paging is the norm', 'result_too_large', 'excerpt_chars']) {
+			expect(wire, topic).toContain(topic);
+		}
 	});
 });
