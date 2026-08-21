@@ -1,4 +1,10 @@
-import { CEO_AGENT_SLUG, CredentialKind, DEFAULT_TEAM_ID, ReactionKind } from '@hezo/shared';
+import {
+	CEO_AGENT_SLUG,
+	CredentialKind,
+	DEFAULT_TEAM_ID,
+	INJECTED_TEXT_CAPS,
+	ReactionKind,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -1000,9 +1006,39 @@ describe('MCP set_agent_team_context / get_agent_team_context', () => {
 		const result = (await callToolAs(await captainToken(), 'set_agent_team_context', {
 			project: projectId,
 			agent_id: agentId,
-			content: 'x'.repeat(6001),
+			content: 'x'.repeat(INJECTED_TEXT_CAPS.agent_team_context + 1),
 		})) as ToolResult;
-		expect(result.error).toContain('too long');
+		// The ceiling moved off a zod `.max()` so it can see the value it replaces
+		// (an over-ceiling context has to stay editable downwards), so the refusal
+		// is the shared one - it names the ceiling and the actual size.
+		expect(result.error).toContain(String(INJECTED_TEXT_CAPS.agent_team_context));
+		expect(result.error).toContain(String(INJECTED_TEXT_CAPS.agent_team_context + 1));
+		expect(result.error).toMatch(/limit/i);
+	});
+
+	it('set_agent_team_context lets an over-ceiling context be edited downwards', async () => {
+		const limit = INJECTED_TEXT_CAPS.agent_team_context;
+		// Written straight to the column, the way provisioning does - the tool would
+		// refuse it, and that is exactly the state it has to stay usable in.
+		await db.query('UPDATE member_agents SET team_context = $1 WHERE id = $2', [
+			'y'.repeat(limit + 500),
+			agentId,
+		]);
+
+		const shorter = (await callToolAs(await captainToken(), 'set_agent_team_context', {
+			project: projectId,
+			agent_id: agentId,
+			content: 'y'.repeat(limit + 100),
+		})) as ToolResult;
+		expect(shorter.updated).toBe(true);
+
+		// Still bounded: longer than it is now is refused even from over the line.
+		const longer = (await callToolAs(await captainToken(), 'set_agent_team_context', {
+			project: projectId,
+			agent_id: agentId,
+			content: 'y'.repeat(limit + 400),
+		})) as ToolResult;
+		expect(longer.error).toMatch(/only downwards/);
 	});
 
 	it('get_agent_team_context errors for an unknown agent', async () => {
