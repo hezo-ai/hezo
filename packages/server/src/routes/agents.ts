@@ -46,7 +46,7 @@ import { broadcastChange } from '../lib/broadcast';
 import { budgetWindowsError } from '../lib/budget-validation';
 import { signEntityIconUrl, verifyEntityIconUrl } from '../lib/entity-icon-urls';
 import { readImageDimensions } from '../lib/image-dimensions';
-import { InjectedTextCapError } from '../lib/injected-text-caps';
+import { checkInjectedTextCap, InjectedTextCapError } from '../lib/injected-text-caps';
 import { buildMeta, parsePagination } from '../lib/pagination';
 import {
 	actorTypeFromAuth,
@@ -1183,6 +1183,10 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 	}
 
 	if (body.system_prompt !== undefined) {
+		// Capped for the admin too. The ceiling is a property of the surface — this
+		// text is injected in full into every run of this agent — not of who wrote it.
+		const tooLarge = checkInjectedTextCap('agent_system_prompt', body.system_prompt);
+		if (tooLarge) return err(c, 'INVALID_REQUEST', tooLarge.error, 400);
 		await upsertDocument(db, undefined, {
 			scope: {
 				type: DocumentType.AgentSystemPrompt,

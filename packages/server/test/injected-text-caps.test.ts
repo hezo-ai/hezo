@@ -52,3 +52,30 @@ describe('injected-text caps', () => {
 		}
 	});
 });
+
+// A cap is only real if every writer of that surface hits it. These pin the
+// enforcement points, because the batch tool and the admin REST route both wrote
+// the same field and both originally skipped the check.
+describe('every writer of a capped surface is capped', () => {
+	it('names an enforcement point for each kind in the table', () => {
+		// This is the list that must grow when a row is added — an unwired row is
+		// worse than no row, because the table then documents a ceiling nobody holds.
+		const enforced: Record<InjectedTextKind, string[]> = {
+			team_preferences: ['services/custom-prompt.ts (REST + MCP share it)'],
+			agent_system_prompt: [
+				'mcp/tools.ts update_agent_system_prompt',
+				'mcp/tools.ts update_agent_system_prompts (batch)',
+				'routes/agents.ts PATCH agent (admin)',
+			],
+			chat_memory: ['services/chat-memory.ts (REST + MCP share it)'],
+			task_progress_summary: ['mcp/tools.ts update_task'],
+			agent_team_context: [
+				'mcp/tools.ts set_agent_team_context (zod)',
+				'mcp/tools.ts set_agent_team_contexts (zod)',
+			],
+		};
+		for (const kind of Object.keys(INJECTED_TEXT_CAPS) as InjectedTextKind[]) {
+			expect(enforced[kind]?.length ?? 0).toBeGreaterThan(0);
+		}
+	});
+});

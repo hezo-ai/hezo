@@ -257,13 +257,16 @@ every run or every turn:
 | Task progress summary | 8,000 characters |
 | Agent team context | 6,000 characters |
 
-When an agent tries to write past a limit the write is **refused**, not trimmed - the reply names
-the ceiling and the current size and asks it to consolidate, so the next attempt merges overlapping
-entries and drops guidance that no longer applies. Nothing is ever silently cut, because a rule
-that vanished from the end of a block would change how the team behaves with nobody knowing.
+When a write goes past a limit it is **refused**, not trimmed - the reply names the ceiling and the
+current size and asks for consolidation, so the next attempt merges overlapping entries and drops
+guidance that no longer applies. Nothing is ever silently cut, because a rule that vanished from the
+end of a block would change how the team behaves with nobody knowing.
 
-Your own writing isn't capped: a task's **description** and **rules** are yours, and long ones are
-shortened only when they appear in list views, never when they're stored.
+The limit belongs to the **surface**, not to whoever is writing: these blocks are injected in full on
+every run, so an agent and an admin editing the same field hit the same ceiling.
+
+Your task **descriptions** and **rules** are not capped. They aren't injected the same way, and long
+ones are shortened only where they appear in list views, never when they're stored.
 
 ## Custom Prompt
 

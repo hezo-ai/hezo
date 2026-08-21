@@ -4853,6 +4853,12 @@ export function registerTools(
 					continue;
 				}
 				const slug = agentCheck.rows[0].slug;
+				const tooLarge = checkInjectedTextCap('agent_system_prompt', u.new_system_prompt);
+				if (tooLarge) {
+					results.push({ index: i, agent_id: u.agent_id, ok: false, error: tooLarge.error });
+					continue;
+				}
+
 				const styleError = authoredPromptError(u.new_system_prompt);
 				if (styleError) {
 					results.push({ index: i, agent_id: u.agent_id, ok: false, error: styleError });
