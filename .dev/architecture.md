@@ -3784,6 +3784,18 @@ touch the `mcp_servers.*` tree. openai/codex#17588 reported `apps.<id>.enabled` 
 but under a `[profiles.*]` section; Hezo writes top-level keys, so that report does not apply -
 and it is the reason a short note is kept rather than deleted.
 
+**The repository block names the connector, so the note is a fallback rather than the map.**
+`buildRepositoryBlock` (`services/template-resolver.ts`) used to say "the `github` MCP", which
+names no tool an agent can find - a connector's tools are prefixed with the CONNECTOR's name,
+and that name need not mention the service. It now resolves each repo's authenticating
+connector (`repos.oauth_connection_id` -> `mcp_connections`, joined with the same not-revoked
+and project-or-global predicate `selectConnectorsInScope` uses, so the name emitted is one the
+run actually receives) and names it in the repo line and in the generic bullets. A repo with no
+connector is called out explicitly: git still works over SSH, so the absence is otherwise
+invisible until an agent hunts for API tools that were never in the run. That, plus the
+`[runner] MCP connectors:` line, is what turns "I cannot find the GitHub tools" from a guess
+into a lookup.
+
 **The note's identification rule has one trap worth stating.** A connector's Codex tools are
 `mcp__<connector>__<tool>`, where `<connector>` is `mcp_connections.name` put through **two**
 sanitizers: Hezo's `safeName` (`toml.ts`) maps to `[A-Za-z0-9_-]`, then Codex's own
