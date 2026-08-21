@@ -3501,6 +3501,22 @@ see below), so it is the one provider that offers a choice. Every other provider
 one CLI and the UI omits the picker for it — for Ollama and LM Studio the Advanced disclosure
 then holds only the optional API key.
 
+**Off-registry model ids are the price of that gateway, and the run log paid it.** Claude Code
+resolves every model id against its own built-in registry and writes
+`[claude-code:unrecognized_model] {"model":…,"query_source":…}` to stderr for each one it cannot
+place - the run's own model (`query_source: sdk`), plus the haiku-slot id
+(`ANTHROPIC_DEFAULT_HAIKU_MODEL`) it uses for session titles and subagents. Pointed at a
+third-party gateway every id is off-registry by construction, so those lines were guaranteed
+noise on every run. The Claude Code stream parser now drops them for exactly the providers
+`claudeCodeProviderUsesCustomEndpoint` covers - the third-party gateways above and the two local
+runners - and relays them untouched on Anthropic, where an id the CLI cannot resolve is a real
+signal, and when the parser is built without a provider at all. That is the predicate's third
+consumer, alongside the Stop-hook judge model and the subagent default. Filtering is
+line-oriented, so the wrapper buffers a partial stderr line until its newline, drains it in
+`flush()`, and releases it unfiltered past a 64 KiB ceiling rather than buffering without bound.
+Nothing else rests on the CLI's registry: run cost is priced from `model_pricing` over the
+reported token buckets, never from the CLI's own rate card.
+
 The one-to-many shape is deliberately kept even at one alternate: it is what makes a second CLI
 for a provider a table row rather than a refactor.
 

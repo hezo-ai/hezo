@@ -17,7 +17,12 @@
  * client parses in `parse-agent-log.ts`, so the log viewer's Done block shows
  * tokens uniformly across runtimes.
  */
-import { AgentRuntime, type CostTokens } from '@hezo/shared';
+import {
+	AgentRuntime,
+	type AiProvider,
+	type CostTokens,
+	claudeCodeProviderUsesCustomEndpoint,
+} from '@hezo/shared';
 import { HEZO_MCP_SERVER_NAME } from './runtime-adapters/types';
 
 export interface AgentRunUsage {
@@ -144,15 +149,20 @@ export function classifyRuntimeError(raw: string | undefined | null): string | n
  *   stream names no model. OpenCode reports token counts but never a model id,
  *   so without this every OpenCode run priced at $0 no matter what it spent. A
  *   model named in the stream still wins - this is the floor, not an override.
+ * @param provider the run's model provider, for the runtimes whose stderr noise
+ *   depends on which endpoint they were pointed at. Omitted, every parser keeps
+ *   its default behaviour, so an unknown provider never silences anything.
  */
 export function createAgentStreamParser(
 	runtime: AgentRuntime,
 	price: PriceModelFn = NO_PRICE,
 	runModel?: string | null,
+	provider?: AiProvider | null,
 ): AgentStreamParser {
 	return (STREAM_PARSER_FACTORIES[runtime] ?? createPassthroughParser)(
 		price,
 		runModel?.trim() || undefined,
+		provider ?? undefined,
 	);
 }
 
@@ -160,16 +170,21 @@ export function createAgentStreamParser(
  * Which parser reads which CLI's stream. A `Record` rather than a switch so a
  * runtime added to the enum without a parser is a compile error.
  *
- * Every factory takes the same two arguments and ignores what it does not need:
- * Claude Code and Gemini name their model in the stream, while Codex, OpenCode
- * and the two usage-less runtimes do not, and depend on the run's own model to
- * price at all.
+ * Every factory takes the same three arguments and ignores what it does not
+ * need: Claude Code and Gemini name their model in the stream, while Codex,
+ * OpenCode and the two usage-less runtimes do not, and depend on the run's own
+ * model to price at all. Only Claude Code reads the provider.
  */
 const STREAM_PARSER_FACTORIES: Record<
 	AgentRuntime,
-	(price: PriceModelFn, runModel: string | undefined) => AgentStreamParser
+	(
+		price: PriceModelFn,
+		runModel: string | undefined,
+		provider: AiProvider | undefined,
+	) => AgentStreamParser
 > = {
-	[AgentRuntime.ClaudeCode]: (price) => createClaudeCodeParser(price),
+	[AgentRuntime.ClaudeCode]: (price, _runModel, provider) =>
+		createClaudeCodeParser(price, provider),
 	[AgentRuntime.Codex]: (price, runModel) => createCodexParser(price, runModel),
 	[AgentRuntime.Antigravity]: (price, runModel) => createAntigravityParser(price, runModel),
 	// OpenCode emits JSONL whose shapes vary across versions and are not fully
@@ -578,7 +593,72 @@ function mcpToolCounts(
 	return counts;
 }
 
-function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
+/**
+ * Claude Code writes one of these to stderr for every model id its built-in
+ * registry cannot resolve, once per (model, call site):
+ *
+ *   [claude-code:unrecognized_model] {"model":"deepseek-v4-pro","query_source":"sdk"}
+ *
+ * Pointed at a third-party Anthropic-compatible endpoint every id is off-registry
+ * by design - the run's own model, plus the haiku-slot id the CLI uses for its
+ * session-title and subagent calls - so the line is guaranteed noise on every
+ * run. On Anthropic itself it is a real signal (a `--model` the CLI cannot
+ * resolve), which is why the filter is scoped to the custom-endpoint providers
+ * rather than applied to the runtime as a whole. It costs nothing else: run cost
+ * is priced from `model_pricing`, never from the CLI's own rate card.
+ */
+const CLAUDE_UNRECOGNIZED_MODEL_PREFIX = '[claude-code:unrecognized_model]';
+
+/**
+ * Ceiling on the partial stderr line held back while waiting for its newline.
+ * Filtering is line-oriented, so a chunk splitting mid-line has to be buffered;
+ * a stream that never sends a newline must not grow that buffer without bound,
+ * and past this length the line cannot be the ~100-byte diagnostic anyway, so it
+ * is released unfiltered.
+ */
+const STDERR_FILTER_BUFFER_LIMIT = 64 * 1024;
+
+function isUnrecognizedModelLine(line: string): boolean {
+	return line.trimStart().startsWith(CLAUDE_UNRECOGNIZED_MODEL_PREFIX);
+}
+
+/**
+ * Wraps a parser so `onStderr` drops the lines above. Every other stderr byte
+ * reaches the log in its original order, including a line released early by the
+ * buffer ceiling and the fragment that completes it.
+ */
+function withUnrecognizedModelFilter(base: AgentStreamParser): AgentStreamParser {
+	let buffer = '';
+	return {
+		...base,
+		onStderr(chunk: string): string {
+			buffer += chunk;
+			const parts = buffer.split('\n');
+			buffer = parts.pop() ?? '';
+			let out = '';
+			for (const line of parts) {
+				if (isUnrecognizedModelLine(line)) continue;
+				out += `${line}\n`;
+			}
+			if (buffer.length > STDERR_FILTER_BUFFER_LIMIT) {
+				out += buffer;
+				buffer = '';
+			}
+			return out;
+		},
+		// The stdout tail first, then any stderr line that never got its newline -
+		// held back by the filter above, so it would otherwise be lost.
+		flush(): string {
+			const tail = base.flush();
+			const remainder = buffer;
+			buffer = '';
+			if (!remainder || isUnrecognizedModelLine(remainder)) return tail;
+			return `${tail}${remainder}`;
+		},
+	};
+}
+
+function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
 	let terminalError: string | null = null;
@@ -732,13 +812,19 @@ function createClaudeCodeParser(price: PriceModelFn): AgentStreamParser {
 		return out;
 	};
 
-	return createJsonlParser(
+	const base = createJsonlParser(
 		renderEvent,
 		() => usage,
 		() => terminalError,
 		() => finalMessage,
 		() => mcpCounts,
 	);
+	// Untouched passthrough unless this run's endpoint makes the diagnostic
+	// unconditional, so an unknown provider never silences a real one.
+	if (!provider || !claudeCodeProviderUsesCustomEndpoint(provider, AgentRuntime.ClaudeCode)) {
+		return base;
+	}
+	return withUnrecognizedModelFilter(base);
 }
 
 // ---------------------------------------------------------------------------

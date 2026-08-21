@@ -1,4 +1,10 @@
-import { AgentRuntime, type CostTokens, costCentsFromRate, type ModelRate } from '@hezo/shared';
+import {
+	AgentRuntime,
+	AiProvider,
+	type CostTokens,
+	costCentsFromRate,
+	type ModelRate,
+} from '@hezo/shared';
 import { describe, expect, it } from 'vitest';
 import {
 	createAgentStreamParser,
@@ -1325,5 +1331,159 @@ describe('extractKimiUsageFromSessionLog', () => {
 		const usage = extractKimiUsageFromSessionLog(log, price);
 		expect(usage?.inputTokens).toBe(1000);
 		expect(usage?.costCents).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Claude Code stderr: the unrecognized-model diagnostic
+//
+// Pointed at a third-party Anthropic-compatible endpoint, the CLI cannot resolve
+// any of the model ids Hezo hands it and says so on stderr once per (model, call
+// site). Suppressed for exactly those providers, kept everywhere else.
+// ---------------------------------------------------------------------------
+
+const UNRECOGNIZED_RUN =
+	'[claude-code:unrecognized_model] {"model":"deepseek-v4-pro","query_source":"sdk"}';
+const UNRECOGNIZED_TITLE =
+	'[claude-code:unrecognized_model] {"model":"deepseek-v4-flash","query_source":"generate_session_title"}';
+
+describe('claude-code unrecognized-model stderr', () => {
+	it('drops the diagnostic on a third-party Anthropic-compatible provider', () => {
+		const parser = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.DeepSeek,
+		);
+		expect(parser.onStderr(`${UNRECOGNIZED_TITLE}\n`)).toBe('');
+		expect(parser.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe('');
+		expect(parser.flush()).toBe('');
+	});
+
+	it('keeps every other stderr line, including neighbours of a dropped one', () => {
+		const parser = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.DeepSeek,
+		);
+		const chunk = `before\n${UNRECOGNIZED_RUN}\nafter\n`;
+		expect(parser.onStderr(chunk)).toBe('before\nafter\n');
+	});
+
+	it('keeps the diagnostic on Anthropic, where it means a model the CLI cannot resolve', () => {
+		const parser = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.Anthropic,
+		);
+		expect(parser.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe(`${UNRECOGNIZED_RUN}\n`);
+	});
+
+	it('keeps the diagnostic when no provider is supplied, so an unknown one silences nothing', () => {
+		const parser = createAgentStreamParser(AgentRuntime.ClaudeCode);
+		expect(parser.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe(`${UNRECOGNIZED_RUN}\n`);
+	});
+
+	it('drops it for a Moonshot credential running on Claude Code, not on its own CLI', () => {
+		const onClaudeCode = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.Kimi,
+		);
+		expect(onClaudeCode.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe('');
+
+		// The kimi runtime has its own parser and never sees this line; its stderr
+		// stays a straight passthrough.
+		const onKimi = createAgentStreamParser(AgentRuntime.Kimi, undefined, null, AiProvider.Kimi);
+		expect(onKimi.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe(`${UNRECOGNIZED_RUN}\n`);
+	});
+
+	it('drops it for a local provider, whose ids are off-registry too', () => {
+		const parser = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.Ollama,
+		);
+		expect(parser.onStderr(`${UNRECOGNIZED_RUN}\n`)).toBe('');
+	});
+
+	it('matches a line split across chunks rather than leaking half of it', () => {
+		const parser = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.DeepSeek,
+		);
+		const half = Math.floor(UNRECOGNIZED_RUN.length / 2);
+		expect(parser.onStderr(UNRECOGNIZED_RUN.slice(0, half))).toBe('');
+		expect(parser.onStderr(`${UNRECOGNIZED_RUN.slice(half)}\n`)).toBe('');
+	});
+
+	it('flush() releases a held partial line, and drops it when it is the diagnostic', () => {
+		const kept = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.DeepSeek,
+		);
+		expect(kept.onStderr('tail with no newline')).toBe('');
+		expect(kept.flush()).toBe('tail with no newline');
+
+		const dropped = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.DeepSeek,
+		);
+		expect(dropped.onStderr(UNRECOGNIZED_RUN)).toBe('');
+		expect(dropped.flush()).toBe('');
+	});
+
+	it('flush() still renders the buffered stdout event alongside the stderr tail', () => {
+		const parser = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.DeepSeek,
+		);
+		parser.onStdout('{"type":"system","subtype":"init","model":"deepseek-v4-pro","tools":[]}');
+		parser.onStderr('partial');
+		expect(parser.flush()).toBe('[session] model=deepseek-v4-pro tools=0\npartial');
+	});
+
+	it('releases an over-long partial line instead of buffering it without bound', () => {
+		const parser = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			undefined,
+			null,
+			AiProvider.DeepSeek,
+		);
+		const huge = 'x'.repeat(64 * 1024 + 1);
+		expect(parser.onStderr(huge)).toBe(huge);
+		// Released early, so the fragment completing it arrives next - concatenated,
+		// the log still reads as the original bytes.
+		expect(parser.onStderr('rest\n')).toBe('rest\n');
+		expect(parser.flush()).toBe('');
+	});
+
+	it('leaves stdout rendering untouched', () => {
+		const parser = createAgentStreamParser(
+			AgentRuntime.ClaudeCode,
+			price,
+			null,
+			AiProvider.DeepSeek,
+		);
+		expect(
+			parser.onStdout('{"type":"system","subtype":"init","model":"claude-x","tools":["Bash"]}\n'),
+		).toBe('[session] model=claude-x tools=1\n');
+		parser.onStdout(
+			'{"type":"result","subtype":"success","result":"done","usage":{"input_tokens":10,"output_tokens":5}}\n',
+		);
+		expect(parser.getUsage()?.inputTokens).toBe(10);
+		expect(parser.getFinalAssistantMessage()).toBe('done');
 	});
 });
