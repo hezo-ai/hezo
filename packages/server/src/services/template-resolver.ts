@@ -45,6 +45,14 @@ interface ResolveContext {
 	embedDocs?: boolean;
 }
 
+/**
+ * How many project docs the run-prompt manifest lists before it stops and points
+ * at `list_project_docs`. The block is injected into every agent's prompt on every
+ * run, so this is a fixed per-run cost that must not scale with the project's doc
+ * count. Recency-ordered, so the cap drops the least-recently-touched docs first.
+ */
+const PROJECT_DOCS_MANIFEST_LIMIT = 40;
+
 const SHARED_INSTRUCTIONS = `
 
 ---
@@ -476,27 +484,43 @@ export async function resolveSystemPrompt(
 		if (ctx.projectId) {
 			// Active docs only — archived (soft-deleted) docs never enter run
 			// context; read_project_doc(filter: 'archived') can still fetch one.
+			//
+			// Bounded and recency-ordered. This block lands in EVERY agent's prompt on
+			// EVERY run, so an unbounded listing grows the fixed cost of every run with
+			// the project's doc count. Query one past the cap so "there are more" is
+			// exact without a second COUNT, and name the overflow rather than truncating
+			// silently — a doc an agent cannot see is worse than a line saying to page.
 			const docs = await db.query<{
 				filename: string;
 				description: string;
 				updated_at: string;
+				content_length: number;
 			}>(
-				"SELECT slug AS filename, description, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL ORDER BY slug",
-				[ctx.projectId],
+				`SELECT slug AS filename, description, updated_at, length(content)::int AS content_length
+				 FROM documents
+				 WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL
+				 ORDER BY updated_at DESC, slug ASC
+				 LIMIT $2`,
+				[ctx.projectId, PROJECT_DOCS_MANIFEST_LIMIT + 1],
 			);
-			if (docs.rows.length > 0) {
-				const lines = docs.rows
+			const shown = docs.rows.slice(0, PROJECT_DOCS_MANIFEST_LIMIT);
+			if (shown.length > 0) {
+				const lines = shown
 					.map((d) => {
 						const date = new Date(d.updated_at).toISOString().slice(0, 10);
 						const descPart = d.description ? ` — ${d.description}` : '';
-						return `- ${d.filename}${descPart} (updated ${date})`;
+						return `- ${d.filename}${descPart} (updated ${date}, ${d.content_length} chars)`;
 					})
 					.join('\n');
+				const overflow =
+					docs.rows.length > PROJECT_DOCS_MANIFEST_LIMIT
+						? `\n\nMost recently updated ${PROJECT_DOCS_MANIFEST_LIMIT} shown. There are more — call list_project_docs to page through the rest.`
+						: '';
 				docsText = [
-					'The project docs database holds high-level project context (PRDs, specs, architecture decisions, research). Entries are listed below by filename.',
+					'The project docs database holds high-level project context (PRDs, specs, architecture decisions, research). Entries are listed newest-first, each with its size so you can tell whether one read returns it whole.',
 					"Call read_project_doc(filename) to load a doc's full contents when relevant to your task. These docs live in the database, not the filesystem — there is no /workspace/.hezo/project-docs path, so don't use the Read/cat file tools; load each one by its bare filename through read_project_doc. To create or change a doc, call write_project_doc(filename, content) (it overwrites the whole doc) — the Edit/Write file tools target disk and will not touch these, so never reach for them to edit a doc.",
 					'',
-					lines,
+					lines + overflow,
 				].join('\n');
 			}
 		}

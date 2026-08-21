@@ -264,14 +264,18 @@ describe('template resolver', () => {
 		expect(result).toContain('write_project_doc(filename, content)');
 		expect(result).toContain('will not touch these');
 
-		// Described doc — the manifest shows "filename — description (updated date)".
+		// Described doc — the manifest shows
+		// "filename — description (updated date, N chars)". The size is there so an
+		// agent can tell before opening whether one read_project_doc returns it whole.
 		expect(result).toMatch(
-			/- spec\.md — The technical spec for the build\. \(updated \d{4}-\d{2}-\d{2}\)/,
+			/- spec\.md — The technical spec for the build\. \(updated \d{4}-\d{2}-\d{2}, \d+ chars\)/,
 		);
 
 		// Description-less doc (architecture-guidelines.md is seeded with no description) —
 		// no em-dash, no "undefined".
-		expect(result).toMatch(/- architecture-guidelines\.md \(updated \d{4}-\d{2}-\d{2}\)/);
+		expect(result).toMatch(
+			/- architecture-guidelines\.md \(updated \d{4}-\d{2}-\d{2}, \d+ chars\)/,
+		);
 		expect(result).not.toContain('architecture-guidelines.md —');
 		expect(result).not.toContain('undefined');
 
@@ -282,7 +286,7 @@ describe('template resolver', () => {
 		expect(result).not.toContain('use `write_project_doc`');
 	});
 
-	it('sorts the {{project_docs_context}} manifest by filename', async () => {
+	it('orders the {{project_docs_context}} manifest newest-first, breaking ties by filename', async () => {
 		const teamRes = await createTestTeam(db, { name: 'Sort Co', description: '' });
 		const sortTeamId = (await teamRes.json()).data.id as string;
 		const proj = await db.query<{ id: string }>(
@@ -303,10 +307,84 @@ describe('template resolver', () => {
 			teamId: sortTeamId,
 			projectId: sortProjectId,
 		});
+		// Same updated_at, so the slug tiebreak decides.
 		const aIdx = result.indexOf('a-first.md');
 		const zIdx = result.indexOf('z-last.md');
 		expect(aIdx).toBeGreaterThan(-1);
 		expect(zIdx).toBeGreaterThan(aIdx);
+
+		// Touching the alphabetically-last doc moves it to the top: recency is the
+		// primary key, so a doc edited today outranks one edited months ago.
+		await db.query(
+			`UPDATE documents SET updated_at = now() + interval '1 hour'
+			 WHERE project_id = $1 AND slug = 'z-last.md'`,
+			[sortProjectId],
+		);
+		const reordered = await resolveSystemPrompt(db, '{{project_docs_context}}', {
+			teamId: sortTeamId,
+			projectId: sortProjectId,
+		});
+		expect(reordered.indexOf('z-last.md')).toBeLessThan(reordered.indexOf('a-first.md'));
+	});
+
+	it('bounds the {{project_docs_context}} manifest and names the overflow', async () => {
+		const teamRes = await createTestTeam(db, { name: 'Many Docs Co', description: '' });
+		const manyTeamId = (await teamRes.json()).data.id as string;
+		const proj = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix, description, docker_base_image)
+			 VALUES ($1, 'Many', 'many', 'MD', '', 'hezo/agent-base:latest')
+			 RETURNING id`,
+			[manyTeamId],
+		);
+		const manyProjectId = proj.rows[0].id;
+		// 45 docs against a cap of 40, each with a distinct updated_at so the order
+		// is deterministic: doc-000 is newest.
+		for (let i = 0; i < 45; i++) {
+			await db.query(
+				`INSERT INTO documents (team_id, project_id, type, slug, content, updated_at)
+				 VALUES ($1, $2, 'project_doc', $3, $4, now() - ($5 || ' minutes')::interval)`,
+				[manyTeamId, manyProjectId, `doc-${String(i).padStart(3, '0')}.md`, 'body', String(i)],
+			);
+		}
+
+		const result = await resolveSystemPrompt(db, '{{project_docs_context}}', {
+			teamId: manyTeamId,
+			projectId: manyProjectId,
+		});
+
+		// Exactly the cap is listed — the block lands in every agent's prompt on
+		// every run, so it must not grow with the project's doc count.
+		const listed = [...result.matchAll(/^- doc-\d{3}\.md/gm)];
+		expect(listed).toHaveLength(40);
+		expect(result).toContain('doc-000.md');
+		expect(result).not.toContain('doc-044.md');
+
+		// The overflow is named rather than silently dropped.
+		expect(result).toContain('There are more');
+		expect(result).toContain('list_project_docs');
+	});
+
+	it('carries each doc size in the {{project_docs_context}} manifest', async () => {
+		const teamRes = await createTestTeam(db, { name: 'Size Co', description: '' });
+		const sizeTeamId = (await teamRes.json()).data.id as string;
+		const proj = await db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix, description, docker_base_image)
+			 VALUES ($1, 'Size', 'size', 'SZ', '', 'hezo/agent-base:latest')
+			 RETURNING id`,
+			[sizeTeamId],
+		);
+		await db.query(
+			`INSERT INTO documents (team_id, project_id, type, slug, content)
+			 VALUES ($1, $2, 'project_doc', 'sized.md', $3)`,
+			[sizeTeamId, proj.rows[0].id, 'x'.repeat(1234)],
+		);
+
+		const result = await resolveSystemPrompt(db, '{{project_docs_context}}', {
+			teamId: sizeTeamId,
+			projectId: proj.rows[0].id,
+		});
+		// So an agent can tell from the prompt alone whether one read returns it whole.
+		expect(result).toContain('1234 chars');
 	});
 
 	it('passes through text without template variables', async () => {

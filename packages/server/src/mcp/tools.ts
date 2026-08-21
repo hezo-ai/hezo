@@ -69,7 +69,7 @@ import {
 	checkHumanNameAvailable,
 	isNameOnlyRole,
 } from '../lib/agent-identity';
-import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
+import { canCoordinateTeam, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
 import { assetSearchTextFromBlob } from '../lib/asset-search-text';
 import { assetSortOrderBy } from '../lib/asset-sort';
@@ -146,6 +146,7 @@ import {
 } from '../services/connector-registry';
 import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
+import { writeCustomPrompt } from '../services/custom-prompt';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
@@ -4914,50 +4915,21 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { teamId } = scope;
 
-			const allowed =
-				(await canCoordinateTeam(db, auth, teamId)) || (await isHqInstanceAgent(db, auth));
-			if (!allowed) {
-				return {
-					error:
-						'Access denied: only the CEO, Coach, or Captain can update the project Custom Prompt',
-				};
-			}
-
-			// The Custom Prompt is injected verbatim into every agent's prompt, so it
-			// is held to the same register as one.
-			const styleError = authoredPromptError(args.content as string);
-			if (styleError) return { error: styleError };
-
-			const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
-			const authorMemberId = await resolveActorMemberId(db, auth, teamId);
-			const doc = await upsertDocument(db, wsManager, {
-				scope: { type: DocumentType.TeamPreferences, teamId },
+			// Shared with the REST route so the role gate, the style guard and the
+			// coherence review can never apply on one path and not the other.
+			const result = await writeCustomPrompt(db, wsManager, {
+				teamId,
 				content: args.content as string,
 				changeSummary: args.change_summary as string | undefined,
-				authorMemberId,
+				auth,
 			});
+			if (result.status !== 'written') return { error: result.error };
 
-			// The Custom Prompt reaches every agent's prompt, so a real change warrants
-			// a team coherence review (same as an agent-prompt edit).
-			if ((prior?.content ?? '') !== (args.content as string)) {
-				const summary = args.change_summary
-					? `Project Custom Prompt updated: ${args.change_summary as string}`
-					: 'The project Custom Prompt was updated.';
-				trackBackground(
-					enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
-						changeSummary: summary,
-					}).catch((e) =>
-						log.error('Failed to enqueue coherence review after Custom Prompt update:', e),
-					),
-				);
-			}
-
-			const styleWarning = authoredPromptWarning(args.content as string);
 			return {
 				applied: true,
-				document_id: doc.row.id,
+				document_id: result.row.id,
 				length: (args.content as string).length,
-				...(styleWarning ? { warning: styleWarning } : {}),
+				...(result.warning ? { warning: result.warning } : {}),
 			};
 		},
 		db,
@@ -7649,22 +7621,4 @@ export function registerTools(
 	);
 
 	return [...registeredTools];
-}
-
-/**
- * Whether the caller may perform team-coordination writes (summaries, team
- * contexts, prompts) for `teamId`. True for the team's own Captain and for any
- * HQ virtual member running inside the team — the latter covers the CEO/Coach
- * doing cross-team setup and coherence work.
- */
-async function canCoordinateTeam(db: Db, auth: AuthInfo, teamId: string): Promise<boolean> {
-	if (auth.type !== AuthType.Agent) return false;
-	if (await isVirtualHqMemberInTeam(db, auth, teamId)) return true;
-	const r = await db.query<{ slug: string }>(
-		`SELECT ma.slug FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE ma.id = $1 AND m.team_id = $2`,
-		[auth.memberId, teamId],
-	);
-	return r.rows[0]?.slug === CAPTAIN_AGENT_SLUG;
 }

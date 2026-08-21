@@ -1,4 +1,4 @@
-import { AuthType, COACH_AGENT_SLUG, DEFAULT_TEAM_ID } from '@hezo/shared';
+import { AuthType, CAPTAIN_AGENT_SLUG, COACH_AGENT_SLUG, DEFAULT_TEAM_ID } from '@hezo/shared';
 import type { Db } from '../db/database';
 import type { AuthInfo } from './types';
 
@@ -43,4 +43,22 @@ export async function isHqInstanceAgent(db: Db, auth: AuthInfo): Promise<boolean
 		auth.memberId,
 	]);
 	return r.rows[0]?.team_id === DEFAULT_TEAM_ID;
+}
+
+/**
+ * Whether the caller may perform team-coordination writes (summaries, team
+ * contexts, prompts) for `teamId`. True for the team's own Captain and for any
+ * HQ virtual member running inside the team — the latter covers the CEO/Coach
+ * doing cross-team setup and coherence work.
+ */
+export async function canCoordinateTeam(db: Db, auth: AuthInfo, teamId: string): Promise<boolean> {
+	if (auth.type !== AuthType.Agent) return false;
+	if (await isVirtualHqMemberInTeam(db, auth, teamId)) return true;
+	const r = await db.query<{ slug: string }>(
+		`SELECT ma.slug FROM member_agents ma
+		 JOIN members m ON m.id = ma.id
+		 WHERE ma.id = $1 AND m.team_id = $2`,
+		[auth.memberId, teamId],
+	);
+	return r.rows[0]?.slug === CAPTAIN_AGENT_SLUG;
 }
