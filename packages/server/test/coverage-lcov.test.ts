@@ -230,6 +230,21 @@ describe('resolveArtifacts + buildCombinedLcov (the CI merge job)', () => {
 		expect(bun).not.toContain('DA:99,0');
 	});
 
+	it('merges the off-matrix container job’s report alongside the numbered shards', () => {
+		const dir = artifactTree();
+		// test-containers runs off the shard matrix, so it uploads a named suffix
+		// rather than claiming a shard ordinal. It is a backend vitest report like
+		// any other and must merge as one.
+		mkdirSync(join(dir, 'backend-coverage-containers'), { recursive: true });
+		writeFileSync(
+			join(dir, 'backend-coverage-containers', 'coverage-final.json'),
+			JSON.stringify(fileCoverage('/r/packages/server/src/c.ts', [1, 1], [1, 1])),
+		);
+		const inputs = resolveArtifacts(dir);
+		expect(inputs.serverJson).toHaveLength(3);
+		expect(buildCombinedLcov(inputs).combined).toContain('SF:packages/server/src/c.ts');
+	});
+
 	it('tolerates a missing artifact dir (a run where every shard failed to report)', () => {
 		const inputs = resolveArtifacts(join(tmpdir(), 'does-not-exist-hezo-cov'));
 		expect(inputs.serverJson).toHaveLength(0);

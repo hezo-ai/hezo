@@ -101,28 +101,79 @@ jobs:
   test-backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Ordered after the image build so the *-docker.test.ts suites run against a
-    # real image instead of self-skipping - but **not gated on its success**.
-    # A bare `needs:` skips this whole tier when that job fails, which turned a
-    # registry hiccup into five shards of backend tests that never ran and a
-    # required check that failed having tested nothing. Every step below that
-    # touches the image is already conditioned on `published`, and the suites
-    # self-skip without it, so running image-less is a path that already works -
-    # it is the one a fork PR takes on every run.
-    needs: build-agent-image
-    if: ${{ !cancelled() }}
-    permissions:
-      contents: read
-      packages: read
+    # Deliberately needs nothing: every suite here runs on plain Node with no
+    # Docker daemon and no agent-base image. The container-dependent work - the
+    # three *-docker.test.ts vitest suites and the whole Bun-native tier - moved
+    # to test-containers below, so these shards no longer wait on the image
+    # build, log in to GHCR, or pull anything.
     # Sharded across runners: each shard runs ~a fifth of the server files at the
     # same per-runner fork concurrency, so the per-fork PGlite+Hono contention
     # ceiling (the reason we can't just raise --concurrency) is unchanged.
-    # 5 shards keeps every shard comfortably under 5 minutes wall time.
     # fail-fast off so one shard failing still lets the others report.
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      # Runs the server vitest suite (Node runtime). The three container suites
+      # land in whichever shard vitest's file-sharding gives them and self-skip
+      # for want of the image, which is exactly why they are also run for real in
+      # test-containers. --skip-bun-native keeps the un-shardable Bun tier out of
+      # every shard rather than welding it to shard 1: it was 121s of the 357s
+      # that made shard 1 the slowest job in the workflow.
+      - run: bun run test --package server --shard ${{ matrix.shard }}/5 --skip-bun-native --coverage
+      # Upload this shard's istanbul coverage-final.json as an artifact for the
+      # coverage-merge job (which combines shards in JSON space, not by OR-ing
+      # per-shard lcovs — that double-counts branches whose coverage-v8 ordinals
+      # differ per run). if:always() + reportOnFailure:true so a failing shard
+      # still contributes its partial report.
+      - name: Upload backend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-${{ matrix.shard }}
+          path: packages/server/coverage/coverage-final.json
+          if-no-files-found: ignore
+
+  # Everything in the backend tier that needs a Docker daemon and the agent-base
+  # image, on one runner: the three vitest suites that provision real containers,
+  # plus the whole Bun-native tier (test/bun/** under `bun test`), which
+  # exercises runtime-sensitive code - egress TLS, docker exec/log framing - on
+  # the production Bun runtime and half of whose files drive containers too.
+  #
+  # It sits outside the shard matrix for two reasons. The Bun tier is not
+  # shardable by vitest, so it used to be pinned to shard 1 and made that shard
+  # the slowest job in the workflow; and pinning the container suites here means
+  # the five shards no longer each pull the image (~40s apiece) just because
+  # file-sharding might hand them one of these three.
+  #
+  # Rolls up into test-backend-complete, so the branch ruleset's existing
+  # required check covers it with no ruleset edit.
+  test-containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Ordered after the image build so these suites run against a real image
+    # instead of self-skipping - but **not gated on its success**. A bare
+    # `needs:` skips this job when that one fails, which turns a registry hiccup
+    # into a required check that failed having tested nothing. Every step below
+    # that touches the image is conditioned on `published`, and all of these
+    # suites self-skip without it, so running image-less is a path that already
+    # works - it is the one a fork PR takes on every run.
+    needs: build-agent-image
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -139,52 +190,50 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Pull the image built by build-agent-image and retag to the exact name the
-      # container suites gate on (`docker image inspect hezo/agent-base:latest`).
-      # Every shard pulls it — vitest file-sharding is non-deterministic about
-      # which shard gets the *-docker.test.ts suites. Image is cached in GHCR.
+      # Retag to the exact name the container suites gate on
+      # (`docker image inspect hezo/agent-base:latest`). Cached in GHCR.
       - name: Pull agent base image
         if: needs.build-agent-image.outputs.published == 'true'
         run: |
           docker pull ghcr.io/hezo-ai/agent-base:${{ github.sha }}
           docker tag ghcr.io/hezo-ai/agent-base:${{ github.sha }} hezo/agent-base:latest
-      # No silent coverage gap: say so in the run when the container suites are
-      # going to self-skip, and say which of the two reasons it was — a fork PR
-      # never had a writable token, while a failed build means the image itself
-      # needs looking at.
+      # No silent coverage gap: say so in the run when these suites are going to
+      # self-skip, and say which of the two reasons it was - a fork PR never had
+      # a writable token, while a failed build means the image itself needs
+      # looking at.
       - name: Note unavailable agent base image
         if: needs.build-agent-image.outputs.published != 'true' && needs.build-agent-image.result == 'success'
         run: |
-          echo "::notice title=agent-base image unavailable::A fork pull request gets a read-only GITHUB_TOKEN, so the image was built but not pushed to GHCR. The *-docker.test.ts container suites will self-skip on this run; they run in full once the change lands on main."
+          echo "::notice title=agent-base image unavailable::A fork pull request gets a read-only GITHUB_TOKEN, so the image was built but not pushed to GHCR. The container suites in this job will self-skip on this run; they run in full once the change lands on main."
       - name: Warn that the agent base image failed to build
         if: needs.build-agent-image.result != 'success'
         run: |
-          echo "::warning title=agent-base image unavailable::build-agent-image did not succeed, so the *-docker.test.ts container suites self-skip on this run. The rest of the backend tier still ran. Check that job before trusting a green result here."
+          echo "::warning title=agent-base image unavailable::build-agent-image did not succeed, so the container suites in this job self-skip on this run. The rest of the backend tier still ran in test-backend. Check that job before trusting a green result here."
       - run: bun install --frozen-lockfile
-      # Runs the server vitest suite (Node runtime) — including the ssh-agent /
-      # egress-proxy / mcp-connections container suites now that the image is
-      # present — followed by the Bun-native tier (test/bun/** under `bun test`,
-      # gated to shard 1 by scripts/test.ts), which exercises runtime-sensitive
-      # code (e.g. egress TLS) on the production Bun runtime. --coverage writes
-      # lcov to packages/server/coverage (vitest) and coverage-bun (Bun tier).
-      - run: bun run test --package server --shard ${{ matrix.shard }}/5 --coverage
-      # Upload this shard's istanbul coverage-final.json as an artifact for the
-      # coverage-merge job (which combines shards in JSON space, not by OR-ing
-      # per-shard lcovs — that double-counts branches whose coverage-v8 ordinals
-      # differ per run). if:always() + reportOnFailure:true so a failing shard
-      # still contributes its partial report.
-      - name: Upload backend coverage report
+      # The three vitest suites naming hezo/agent-base and provisioning real
+      # containers from it, plus the Bun tier (--bun-native forces it on, since
+      # the --pattern list would otherwise select it out). Keep this list in step
+      # with the suites that call imageExists(BRIDGE_IMAGE) - a new one added to
+      # the shards instead just self-skips there, silently.
+      - run: >
+          bun run test --package server --bun-native --coverage
+          --pattern egress-proxy-docker
+          --pattern ssh-agent-docker
+          --pattern mcp-connections-docker
+      # Named backend-coverage-containers, not -<n>: resolveArtifacts() in
+      # scripts/coverage/merge.ts globs any backend-coverage-* subdir, and a
+      # numeric name here would collide with a real shard's.
+      - name: Upload container-suite coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-coverage-${{ matrix.shard }}
+          name: backend-coverage-containers
           path: packages/server/coverage/coverage-final.json
           if-no-files-found: ignore
-      # The Bun-native tier only runs on shard 1 (gated in scripts/test.ts) and
-      # writes only lcov (no branch data); the merge job reconciles it against the
-      # merged vitest line model.
+      # The Bun tier writes only lcov (no branch data); the merge job reconciles
+      # it against the merged vitest line model.
       - name: Upload backend Bun-native coverage
-        if: always() && matrix.shard == 1
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: backend-bun-coverage
@@ -456,13 +505,18 @@ jobs:
   # fan out to `test-backend (1)`, `test-integration (2)`, … which a required
   # status check can't pin to; these roll each matrix up to a single name that
   # is green only when every shard passed. Point branch protection at these.
+  # Covers test-containers as well as the shard matrix: the container suites and
+  # the Bun-native tier are part of the backend tier, just on their own runner,
+  # so folding them in here keeps `test-backend-complete` the one required check
+  # for the whole tier and needs no ruleset edit.
   test-backend-complete:
     if: always()
-    needs: test-backend
+    needs: [test-backend, test-containers]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: '[ "${{ needs.test-backend.result }}" = "success" ]'
+      - run: '[ "${{ needs.test-containers.result }}" = "success" ]'
 
   test-integration-complete:
     if: always()
@@ -501,7 +555,7 @@ jobs:
   # Requires the repo to be enabled on Coveralls (see AGENTS.md).
   coverage-merge:
     if: always()
-    needs: [test-backend, test-integration, test-shared]
+    needs: [test-backend, test-containers, test-integration, test-shared]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -516,8 +570,8 @@ jobs:
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       # Every per-shard artifact lands under its own subdir of coverage-artifacts/
-      # (backend-coverage-<n>/, web-coverage-<n>/, shared-coverage/,
-      # backend-bun-coverage/), which resolveArtifacts() in
+      # (backend-coverage-<n>/, backend-coverage-containers/, web-coverage-<n>/,
+      # shared-coverage/, backend-bun-coverage/), which resolveArtifacts() in
       # scripts/coverage/merge.ts globs. The `*coverage*` pattern skips unrelated
       # artifacts (e.g. playwright-report-*).
       - name: Download coverage artifacts
