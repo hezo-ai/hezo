@@ -11,7 +11,7 @@
 [![CI](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hezo-ai/hezo/actions/workflows/ci.yml)
 [![Coverage Status](https://coveralls.io/repos/github/hezo-ai/hezo/badge.svg?branch=main)](https://coveralls.io/github/hezo-ai/hezo?branch=main)
 [![License: GPL v3](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](./LICENSE.md)
-[![Languages: 12](https://img.shields.io/badge/languages-12-brightgreen.svg)](./docs/concepts/languages-and-formats.md)
+[![UI languages: 12](https://img.shields.io/badge/UI%20languages-12-brightgreen.svg)](./docs/concepts/languages-and-formats.md)
 
 </div>
 
@@ -41,16 +41,10 @@
   <sub>⭐ If this is useful to you, a star helps other people find it.</sub>
 </p>
 
-<table>
-  <tr>
-    <td width="52%" valign="middle" align="center">
-      <img src="assets/readme/hero-story.gif" alt="A task moves from your one-line brief through the team to shipped" width="440" />
-    </td>
-    <td width="48%" valign="middle" align="center">
-      <img src="assets/readme/org-chart.gif" alt="An org chart builds itself: you, the CEO, the Captain, then an Engineer on Claude, a Designer on GPT and an Analyst on Gemini" width="420" />
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/readme/hero-story.gif" alt="A task moves from your one-line brief through the team to shipped" width="440" />
+  <img src="assets/readme/org-chart.gif" alt="An org chart builds itself: you, the CEO, the Captain, then an Engineer on Claude, a Designer on GPT and an Analyst on Gemini" width="420" />
+</p>
 
 ## What is Hezo?
 
@@ -143,18 +137,14 @@ provider that takes cloud-init works too - see
    when needed. The [project dashboard](./docs/concepts/progress.md) tells you where things
    stand without your having to read the board.
 
-<table>
-  <tr>
-    <td width="50%" valign="top" align="center">
-      <img src="assets/readme/ceo-chat.gif" alt="A teammate asks the CEO for status in a chat channel and the CEO answers" width="430" />
-      <br /><sub>Ask the CEO from Slack, Telegram or Discord</sub>
-    </td>
-    <td width="50%" valign="top" align="center">
-      <img src="assets/readme/approvals.gif" alt="The Captain proposes a hire and waits for your approval before acting" width="430" />
-      <br /><sub>Nothing consequential happens without your approval</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/readme/ceo-chat.gif" alt="A teammate asks the CEO for status in a chat channel and the CEO answers" width="430" />
+  <img src="assets/readme/approvals.gif" alt="The Captain proposes a hire and waits for your approval before acting" width="430" />
+</p>
+
+<p align="center">
+  <sub>Ask the CEO from Slack, Telegram or Discord &nbsp;·&nbsp; Nothing consequential happens without your approval</sub>
+</p>
 
 ## Features
 
@@ -163,10 +153,15 @@ provider that takes cloud-init works too - see
   you reshape while a project runs.
 - **Tasks that run themselves.** A [task board](./docs/concepts/tasks.md) with nested
   sub-tasks, heartbeat wake-ups, approval gates, and long runs that resume on their own.
+- **Works on your real repositories.** Agents clone, commit and push over your connected
+  GitHub account, and the [signing key never enters the container](./docs/security/git-and-verified-commits.md),
+  so commits land verified.
 - **One platform layer over every model.** The [meta-harness](./docs/concepts/meta-harness.md)
   runs each model in its own first-party CLI, then levels the differences: the same tools,
   skills, memory and sandbox whichever you pick, plus a completeness check that will not let
-  a run end on failing tests or an "out of scope" dodge.
+  a run end on failing tests or an "out of scope" dodge on the runtimes whose CLI can block a
+  turn (Claude Code, Codex and Kimi Code; Antigravity, Grok Build and OpenCode cannot, and
+  fail open).
 - **Agents never hold your secrets.** Every credential is a
   [placeholder](./docs/security/secret-protection.md). The egress proxy swaps in the real
   value only for the hosts you allowed.
@@ -203,18 +198,14 @@ provider that takes cloud-init works too - see
 
 </details>
 
-<table>
-  <tr>
-    <td width="50%" valign="top" align="center">
-      <img src="assets/readme/coach-loop.gif" alt="A task ships, the Coach reviews it and writes a durable rule back onto the agent" width="430" />
-      <br /><sub>The Coach turns every finished task into a durable rule</sub>
-    </td>
-    <td width="50%" valign="top" align="center">
-      <img src="assets/readme/skills.gif" alt="Skills land in the library one by one, scoped per project or globally" width="430" />
-      <br /><sub>Skills the whole team can use, per project or globally</sub>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <img src="assets/readme/coach-loop.gif" alt="A task ships, the Coach reviews it and writes a durable rule back onto the agent" width="430" />
+  <img src="assets/readme/skills.gif" alt="Skills land in the library one by one, scoped per project or globally" width="430" />
+</p>
+
+<p align="center">
+  <sub>The Coach reviews every finished task and writes back the lessons worth keeping &nbsp;·&nbsp; Skills the whole team can use, per project or globally</sub>
+</p>
 
 ## Agents never hold your secrets
 
@@ -231,10 +222,10 @@ the real value only if it matches - say, `api.stripe.com`. Send it anywhere else
 proxy blocks the request; the substitution simply never happens.
 
 So a buggy, jailbroken, or outright malicious agent **cannot leak what it never sees**. It
-can only use a secret against the hosts you scoped it to, and every substitution is logged
-by name, never by value. The same posture runs end to end - encrypted at rest behind your
-master key, every project sandboxed in its own container, and an append-only audit trail of
-every action and secret use. See the [security documentation](./docs/security/secret-protection.md)
+can only use a secret against the hosts you scoped it to, and the value is never written to
+a log line or to disk - diagnostics record the placeholder instead. The same posture runs end
+to end: encrypted at rest behind your master key, every project sandboxed in its own
+container, and an append-only audit trail of what people and agents did. See the [security documentation](./docs/security/secret-protection.md)
 for the full picture.
 
 <p align="center">
@@ -248,10 +239,11 @@ your spend, your data.
 
 Bring your own provider accounts - connect as many as you like, and give any individual
 agent [its own model](./docs/ai-models.md#give-an-agent-its-own-model). Each provider is
-driven through its **native command-line runtime** inside the container, so you get each
-model's first-party agentic tooling, not a lowest-common-denominator wrapper - and Hezo's
-[meta-harness](./docs/concepts/meta-harness.md) levels the differences between them, so the
-tooling, guardrails and security stay the same underneath whichever model you pick.
+driven through a **first-party agentic command-line runtime** inside the container, not a
+lowest-common-denominator wrapper. Anthropic, OpenAI, Google and xAI each run on their own
+CLI; the Anthropic-compatible providers run through Claude Code, and OpenRouter through
+OpenCode. Hezo's [meta-harness](./docs/concepts/meta-harness.md) levels the differences, so
+the tooling, memory and sandbox stay the same underneath whichever model you pick.
 
 | Provider | Models | Runtime | Auth |
 |---|---|---|---|
@@ -290,7 +282,7 @@ You'll need [Bun](https://bun.sh/) v1.3.14+ and a Docker-compatible runtime.
 git clone https://github.com/hezo-ai/hezo.git
 cd hezo
 bun install
-bun run dev        # server + web UI on http://localhost:3100
+bun run dev        # server on :3100, web UI on http://localhost:5173
 bun run test       # the full test suite
 ```
 
