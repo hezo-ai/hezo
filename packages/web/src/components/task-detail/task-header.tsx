@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { Check, ChevronRight, Loader2, Pencil, X } from 'lucide-react';
-import { type RefObject, useEffect, useRef, useState } from 'react';
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useAgentLookup } from '../../hooks/use-agent-lookup';
 import { type Task, useTaskAncestors, type useUpdateTask } from '../../hooks/use-tasks';
 import { formatDuration } from '../../lib/format-duration';
@@ -10,6 +10,7 @@ import { MarkdownProse } from '../markdown-prose';
 import { TaskPriorityBadge } from '../task-priority-badge';
 import { TaskStatusBadge } from '../task-status-badge';
 import { Badge } from '../ui/badge';
+import { BreadcrumbRow } from '../ui/breadcrumb';
 import { Tooltip } from '../ui/tooltip';
 import { MarkdownFieldEditor } from './markdown-field-editor';
 
@@ -29,34 +30,76 @@ interface TaskHeaderProps {
  * means the pinned breadcrumb is now covering content rather than sitting in
  * the page flow.
  *
+ * `topOffsetPx` shrinks the top of the scrollport by whatever is pinned over it,
+ * so "out of the top" means "out of sight" rather than "past the scrollport
+ * edge". The title sentinel needs it: the crumb band hides the heading a band's
+ * height before the heading actually leaves, and without the offset there is a
+ * stretch of scroll where neither the heading nor the crumb carries the name.
+ *
  * Reading the breadcrumb's own rect on every scroll event would force a layout
  * flush per frame on a thread that runs to hundreds of comments, so this asks
  * the question with one IntersectionObserver over a zero-height sentinel.
  */
-function useScrolledPast(ref: RefObject<HTMLElement | null>): boolean {
+function useScrolledPast(ref: RefObject<HTMLElement | null>, topOffsetPx = 0): boolean {
 	const [scrolledPast, setScrolledPast] = useState(false);
 	useEffect(() => {
-		// The component-test harness stubs IntersectionObserver to a no-op, so the
-		// crumb keeps its resting look there; the browser spec covers the pinning.
+		// The component-test harness stubs IntersectionObserver to report the target
+		// as intersecting, so the crumb keeps its resting look there - no hairline,
+		// no name. The browser spec covers both transitions.
 		if (typeof IntersectionObserver === 'undefined') return;
 		const el = ref.current;
 		if (!el) return;
 		// <main> is the scroll container - the window never scrolls (see __root.tsx).
 		const io = new IntersectionObserver(
 			([entry]) => setScrolledPast(entry ? !entry.isIntersecting : false),
-			{ root: document.querySelector('main') },
+			{ root: document.querySelector('main'), rootMargin: `-${topOffsetPx}px 0px 0px 0px` },
 		);
 		io.observe(el);
 		return () => io.disconnect();
-	}, [ref]);
+	}, [ref, topOffsetPx]);
 	return scrolledPast;
 }
 
 /**
+ * Height of everything pinned over the top of the shell scroller on this page:
+ * the project banners the crumb clears (published as `--container-banner-h`) plus
+ * the crumb's own band. That is the strip of `<main>` a reader cannot see into,
+ * and so the offset the title sentinel is judged against.
+ */
+function usePinnedBandHeight(navRef: RefObject<HTMLElement | null>, pinned: boolean): number {
+	const [band, setBand] = useState(0);
+	useLayoutEffect(() => {
+		// Only measurable while the crumb is actually pinned - that is when its own
+		// bottom edge marks the bottom of the strip. Taking it from the crumb's rect
+		// rather than adding up `--container-banner-h` and a height keeps the two
+		// halves in step: whatever ends up stacked above the crumb is already
+		// counted, because the crumb sits below it.
+		if (!pinned) return;
+		const el = navRef.current;
+		const main = document.querySelector('main');
+		if (!el || !main) return;
+		const measure = () => {
+			const next = Math.round(el.getBoundingClientRect().bottom - main.getBoundingClientRect().top);
+			// Only ever set a changed value: this feeds an effect dependency, and a
+			// fresh number every measurement would rebuild the observer in a loop.
+			setBand((prev) => (prev === next ? prev : next));
+		};
+		measure();
+		if (typeof ResizeObserver === 'undefined') return;
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		ro.observe(main);
+		return () => ro.disconnect();
+	}, [navRef, pinned]);
+	return band;
+}
+
+/**
  * Top-of-page header for a task: a breadcrumb of ancestor tasks ending in the
- * current identifier and the task's own name - pinned to the top of the shell
- * scroller at every breakpoint, so a long thread never leaves the reader without
- * the task's identity or a way back to the list - then the title, an inline mono
+ * current identifier - pinned to the top of the shell scroller at every
+ * breakpoint, so a long thread never leaves the reader without the task's
+ * identity or a way back to the list, and taking on the task's name once the
+ * heading below has scrolled out of sight - then the title, an inline mono
  * metadata row (status ·
  * priority · assignee) with a runs · duration · cost summary, the queued-wakeup
  * chip, and the description card. The title renames in place and the description
@@ -88,6 +131,14 @@ export function TaskHeader({
 	// clean top edge, drawn once content is passing underneath.
 	const restingSentinelRef = useRef<HTMLDivElement>(null);
 	const pinned = useScrolledPast(restingSentinelRef);
+	// Drives the handoff of the task's name from the heading to the crumb. The
+	// sentinel sits under the heading rather than on it, because TaskTitle swaps
+	// the <h1> for an <input> mid-rename and an observer on the heading would let
+	// go of the name for as long as the field is open.
+	const navRef = useRef<HTMLElement>(null);
+	const titleSentinelRef = useRef<HTMLDivElement>(null);
+	const band = usePinnedBandHeight(navRef, pinned);
+	const titleHidden = useScrolledPast(titleSentinelRef, band);
 	return (
 		<>
 			{/* Marks where the breadcrumb rests. `-mb-px` keeps it out of the layout. */}
@@ -102,19 +153,18 @@ export function TaskHeader({
 			    breathing room, so the resting position is unmoved; the route wrapper
 			    always leaves at least that much above (py-4 at its narrowest).
 
-			    NO `flex-wrap`: the crumb is one line at every width, and only the task
-			    name gives way. Everything ahead of it is `shrink-0`, the name alone is
-			    `min-w-0 truncate`, so the browser cuts it to whatever the column is
-			    rather than pushing the row to two lines. */}
-			<nav
-				aria-label="Breadcrumb"
+			    One line at every width: nothing here gives way, and BreadcrumbRow scrolls
+			    the overflow sideways instead, so a deep sub-task's whole chain stays
+			    reachable on the narrowest phone. */}
+			<BreadcrumbRow
+				ref={navRef}
 				data-pinned={pinned ? 'true' : 'false'}
-				className={`sticky top-[var(--container-banner-h,0px)] z-10 -mt-3 flex items-center gap-x-1 border-b border-transparent bg-bg pt-3 pb-2 text-[13px] font-mono text-text-2 transition-[border-color,box-shadow] duration-150 ${
+				className={`sticky top-[var(--container-banner-h,0px)] z-10 -mt-3 border-b border-transparent bg-bg pt-3 pb-2 text-[13px] font-mono text-text-2 transition-[border-color,box-shadow] duration-150 ${
 					pinned ? 'border-border shadow-xs' : ''
 				}`}
 				data-testid="task-breadcrumb"
 			>
-				<span className="flex shrink-0 items-center gap-x-1">
+				<span className="flex shrink-0 items-center gap-x-1 whitespace-nowrap">
 					<Link
 						to="/projects/$projectId/tasks"
 						params={{ projectId: taskProjectSlug }}
@@ -125,25 +175,8 @@ export function TaskHeader({
 					</Link>
 					<ChevronRight className="w-3 h-3 shrink-0 text-text-3" />
 				</span>
-				{/* Below `sm` the ancestor identifiers would spend the whole line, so they
-				    collapse to one ellipsis and the name keeps the room. The links stay in
-				    the accessibility tree (`sr-only`, not `hidden`), so a screen reader on
-				    a phone still gets the full path this stands in for. */}
-				{!!ancestors?.length && (
-					<span
-						aria-hidden="true"
-						className="flex shrink-0 items-center gap-x-1 sm:hidden"
-						data-testid="task-breadcrumb-ancestors-collapsed"
-					>
-						<span className="text-text-3">…</span>
-						<ChevronRight className="w-3 h-3 shrink-0 text-text-3" />
-					</span>
-				)}
 				{ancestors?.map((ancestor) => (
-					<span
-						key={ancestor.id}
-						className="sr-only items-center gap-x-1 sm:not-sr-only sm:flex sm:shrink-0"
-					>
+					<span key={ancestor.id} className="flex shrink-0 items-center gap-x-1 whitespace-nowrap">
 						<Link
 							to="/projects/$projectId/tasks/$taskId"
 							params={{ projectId: taskProjectSlug, taskId: ancestor.identifier.toLowerCase() }}
@@ -158,24 +191,36 @@ export function TaskHeader({
 				))}
 				{/* Identifier and name are one crumb, so they sit inside a single
 				    `aria-current` - a reader hears "HM-246, Fix the flaky test", not two
-				    separate items. The name is sans against the mono identifiers because
-				    it is prose, not something you quote, and `title` keeps the full text
-				    reachable once it truncates. */}
-				<span aria-current="page" className="flex min-w-0 items-center gap-x-1">
-					<span className="shrink-0">{task.identifier}</span>
-					<span aria-hidden="true" className="shrink-0 text-text-3">
-						·
-					</span>
-					<span
-						className="min-w-0 truncate font-sans text-text-3"
-						title={task.title}
-						data-testid="task-breadcrumb-title"
-					>
-						{task.title}
-					</span>
+				    separate items. The name is sans against the mono identifiers because it
+				    is prose, not something you quote.
+
+				    It joins the crumb only once the heading carrying it has gone under the
+				    band: while both are on screen the crumb would just be saying the title
+				    twice, and the identifier alone leaves the row short enough to read at a
+				    glance. */}
+				<span aria-current="page" className="flex shrink-0 items-center gap-x-1">
+					<span className="whitespace-nowrap">{task.identifier}</span>
+					{titleHidden && (
+						<>
+							<span aria-hidden="true" className="shrink-0 text-text-3">
+								·
+							</span>
+							<span
+								className="whitespace-nowrap font-sans text-text-3"
+								title={task.title}
+								data-testid="task-breadcrumb-title"
+							>
+								{task.title}
+							</span>
+						</>
+					)}
 				</span>
-			</nav>
+			</BreadcrumbRow>
 			<TaskTitle task={task} updateTask={updateTask} />
+			{/* Marks the foot of the heading: once this is under the pinned band, the
+			    name has left the page and the crumb picks it up. `-mb-px` keeps it out
+			    of the layout. */}
+			<div ref={titleSentinelRef} aria-hidden="true" className="h-px w-full -mb-px" />
 
 			{/* Wire spec - status / priority / assignee render as quiet-tint badges
 			    (treatment A, the default), color-coding state at a glance the same way
