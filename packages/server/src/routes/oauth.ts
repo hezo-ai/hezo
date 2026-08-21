@@ -17,6 +17,7 @@ import {
 	type ConnectorRow,
 	fireCredentialProvidedWakeup,
 	getConnector,
+	linkedReposByConnection,
 	markActive,
 	markFailed,
 	restoreRevokedConnector,
@@ -670,6 +671,18 @@ oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 	const projectId = c.get('projectId') as string;
 	// This project's own connections plus global ("all projects") ones.
 	const list = await listConnections({ db, masterKeyManager }, projectId);
+	// Disconnecting deletes the connection outright and nulls
+	// `repos.oauth_connection_id` across every project, degrading those remotes to
+	// anonymous clone. The dialog names the repos, so it needs them here. One
+	// batched query for the page, not one per row.
+	const linked = await linkedReposByConnection(
+		db,
+		list.map((conn) => conn.id),
+		// Scoped to the caller's team: a global connection is visible from every
+		// project on the instance, and naming another team's repos here would walk
+		// around the 403 `requireProjectAccessMiddleware` gives for those projects.
+		c.get('teamId') as string,
+	);
 
 	return ok(
 		c,
@@ -682,6 +695,7 @@ oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 			expires_at: conn.expiresAt,
 			metadata: conn.metadata,
 			project_id: conn.projectId,
+			linked_repos: linked.get(conn.id) ?? [],
 			created_at: conn.createdAt,
 			updated_at: conn.updatedAt,
 		})),
@@ -713,6 +727,12 @@ oauthRoutes.delete('/projects/:projectId/oauth-connections/:id', async (c) => {
 	const id = c.req.param('id');
 
 	const conn = await getConnection({ db, masterKeyManager }, id);
+	// Visibility, not ownership. Requiring ownership was tried and reverted: this
+	// is the ONLY route that deletes an `oauth_connections` row, so refusing a
+	// global one left it undeletable from every surface, and the UI went on
+	// offering a Disconnect button that always 404'd. `deleteConnection` still
+	// nulls `repos.oauth_connection_id` across every project - the protection is
+	// the dialog naming those repos first, not a refusal.
 	if (!conn || !connectionVisibleToProject(conn, projectId)) {
 		return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 	}

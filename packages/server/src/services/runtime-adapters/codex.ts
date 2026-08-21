@@ -34,6 +34,28 @@ const BACKGROUND_TERMINAL_MAX_TIMEOUT_MS = 3_600_000;
 const MCP_TOOL_TIMEOUT_SEC = 1_800;
 const MCP_STARTUP_TIMEOUT_SEC = 120;
 
+// Codex surfaces the apps connected to the signed-in ChatGPT account as tools, in
+// a namespace of their own (`codex_apps`), beside the MCP servers Hezo configures.
+// They are the wrong tenant: authorized against that account rather than the
+// project's connection, so they answer 404 on the project's own resources - which
+// reads to an agent as the resource not existing. Two runs diagnosed exactly that
+// as a Hezo connector fault. Codex also documents that "app and connector traffic
+// is not controlled by the sandboxed-command network proxy or its domain
+// allowlist", so they are an egress path outside the run's control as well.
+//
+// `features.apps` is the feature gate rather than a per-app default, and it is a
+// top-level key, so it does not disturb the "top-level before any [table]"
+// ordering below. It does not touch `mcp_servers.*`, which is a separate tree.
+//
+// openai/codex#17588 reported `apps.<id>.enabled` being ignored - but under a
+// `[profiles.*]` section, and Hezo writes top-level keys, so that report does not
+// apply here. It is why RUNTIME_PROMPT_NOTES still carries a short Codex note
+// rather than relying on this key alone.
+//
+// If Codex runs ever stop starting after a CLI bump, check this key first: an
+// unrecognised key is the failure mode that breaks a whole config.
+const APPS_DISABLED_KEY = 'features.apps = false';
+
 /** Append Codex's per-server timeout keys to a rendered `[mcp_servers.<name>]` table. */
 function withServerTimeouts(serverBlock: string): string {
 	return [
@@ -71,11 +93,11 @@ export const codexAdapter: RuntimeAdapter = {
 		const judgeScriptContainerPath = join(ctx.containerHomeDir, JUDGE_SCRIPT_BASENAME);
 
 		// Top-level keys must precede every [table] header in TOML, so the
-		// web-search mode + background-terminal ceiling lead the file. "live"
-		// fetches current pages rather than the cached index, giving agents
-		// real-time web search.
+		// web-search mode, background-terminal ceiling and apps switch lead the
+		// file. "live" fetches current pages rather than the cached index, giving
+		// agents real-time web search.
 		const blocks: string[] = [
-			`web_search = "live"\nbackground_terminal_max_timeout = ${BACKGROUND_TERMINAL_MAX_TIMEOUT_MS}`,
+			`web_search = "live"\nbackground_terminal_max_timeout = ${BACKGROUND_TERMINAL_MAX_TIMEOUT_MS}\n${APPS_DISABLED_KEY}`,
 		];
 		// A descriptor's `enabledTools` is intentionally ignored here: Codex
 		// documents no per-server tool filter, and inventing a TOML key risks the

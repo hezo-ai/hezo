@@ -125,11 +125,17 @@ describe('POST /projects/:projectId/connectors — success arms', () => {
 describe('POST /projects/:projectId/connectors/:id/revoke — oauth-attached arm', () => {
 	it('revokes a connector that has an oauth connection and deletes the oauth row', async () => {
 		const oauthId = await seedOauthConnection();
+		// Project-scoped rather than global, so this arm exercises the ordinary case.
+		// A project surface may revoke a global row too - see
+		// connector-linked-repos-guard.test.ts, which covers that path.
+		const project = await db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [
+			projectSlug,
+		]);
 		const conn = await db.query<{ id: string }>(
-			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status)
-			 VALUES ('proj-revoke-oauth', $1::mcp_connection_kind, '{"url":"https://r/mcp"}'::jsonb, $2, 'installed')
+			`INSERT INTO mcp_connections (name, kind, config, oauth_connection_id, install_status, project_id)
+			 VALUES ('proj-revoke-oauth', $1::mcp_connection_kind, '{"url":"https://r/mcp"}'::jsonb, $2, 'installed', $3)
 			 RETURNING id`,
-			[ConnectorTransport.Saas, oauthId],
+			[ConnectorTransport.Saas, oauthId, project.rows[0].id],
 		);
 		const res = await app.request(
 			`/api/projects/${projectSlug}/connectors/${conn.rows[0].id}/revoke`,

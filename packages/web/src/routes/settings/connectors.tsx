@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { ConnectorMethodsDialog } from '../../components/connector-methods-dialog';
 import { ConnectorProbeNotice } from '../../components/connector-probe-notice';
 import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
+import { LinkedReposWarning } from '../../components/linked-repos-warning';
 import { RelatedItemsList } from '../../components/related-items-list';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -33,7 +34,7 @@ import {
 import { useMe } from '../../hooks/use-me';
 import { useOAuthSuccessRefetch } from '../../hooks/use-oauth-success';
 import { useAllVisibleProjects } from '../../hooks/use-projects';
-import { useI18n } from '../../lib/i18n';
+import { Trans, useI18n } from '../../lib/i18n';
 
 // Scope sentinel: create against / re-scope to "all projects" (a global
 // connector, project_id null). Any other option value is a concrete project id.
@@ -415,20 +416,23 @@ function InstanceConnectorRow({
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
-				title="Remove connector?"
+				title={t('connectors.remove.title')}
 				description={
-					<>
-						Remove connector{' '}
-						<span className="font-medium">{connector.display_name || connector.name}</span>? Its
-						runs will lose access to this MCP server.
-					</>
+					<Trans
+						k="connectors.remove.bodyGlobal"
+						vars={{
+							name: <span className="font-medium">{connector.display_name || connector.name}</span>,
+						}}
+					/>
 				}
-				confirmLabel="Remove"
+				confirmLabel={t('connectors.action.remove')}
 				variant="danger"
 				onConfirm={async () => {
 					await deleteConnector.mutateAsync(connector.id);
 				}}
-			/>
+			>
+				<LinkedReposWarning repos={connector.linked_repos} kind="connector" />
+			</ConfirmDialog>
 		</div>
 	);
 }

@@ -1656,8 +1656,14 @@ describe('repository block', () => {
 		expect(result).toContain('git push -u origin');
 		expect(result).toContain('do **not** need a GitHub Personal Access Token');
 		expect(result).toContain('Never disable TLS verification');
-		// PRs go through the github MCP, not raw curl to api.github.com.
-		expect(result).toContain('`github` MCP');
+		// PRs go through a connector's tools, not raw curl to api.github.com. The
+		// block used to say "the `github` MCP", which names no tool an agent can
+		// find: a connector's tools are prefixed with the CONNECTOR's name, and that
+		// name need not mention the service. An agent scanning for `github` found
+		// nothing, or worse found the CLI's own account tools.
+		expect(result).not.toContain('`github` MCP');
+		expect(result).toContain('list_connectors');
+		expect(result).toContain("the prefix is the connector's name, not the service's");
 		expect(result).toContain('api.github.com');
 		// CI failures: read logs via the github MCP's actions tools, never curl.
 		expect(result).toContain('get_job_logs');
@@ -1786,6 +1792,87 @@ describe('repository block', () => {
 		expect(runCtxIdx).toBeGreaterThan(-1);
 		expect(repoIdx).toBeGreaterThan(runCtxIdx);
 		expect(stateIdx).toBeGreaterThan(repoIdx);
+	});
+
+	/**
+	 * The block used to tell agents to use "the `github` MCP". No such tool exists:
+	 * a connector's tools are prefixed with the CONNECTOR's name, which is
+	 * operator-chosen or slug-derived and need not mention the service. An agent
+	 * scanning its tool list for `github` therefore found nothing - or, on Codex,
+	 * found the CLI's own account tools and 404'd against them. Two runs were lost
+	 * that way. Naming the connector is what makes the tools findable.
+	 */
+	it('names the connector that authenticates each repo', async () => {
+		const teamRes = await createTestTeam(db, { name: 'Named Connector Co' });
+		const teamId = ((await teamRes.json()) as any).data.id;
+		const projectRes = await createTestProject(db, teamId, { name: 'Named Connector Project' });
+		const projectId = ((await projectRes.json()) as any).data.id;
+
+		const secret = await db.query<{ id: string }>(
+			`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
+			 VALUES ('OAUTH_GITHUB_NAMEDCONN', 'enc', 'other', ARRAY['api.github.com'])
+			 RETURNING id`,
+		);
+		const conn = await db.query<{ id: string }>(
+			`INSERT INTO oauth_connections
+			     (provider, provider_account_id, provider_account_label, access_token_secret_id, project_id)
+			 VALUES ('github', 'acct-namedconn', 'octocat', $1, $2) RETURNING id`,
+			[secret.rows[0].id, projectId],
+		);
+		// A name that does NOT contain "github" - the whole point. This is the shape
+		// a real operator produces ("Hezo Marketing") and the shape register_connector
+		// produces (a hyphen slug), neither of which an agent can guess.
+		await db.query(
+			`INSERT INTO mcp_connections
+			     (name, kind, config, install_status, project_id, oauth_connection_id, activated_at)
+			 VALUES ('marketing-site', 'saas', $1::jsonb, 'installed', $2, $3, now())`,
+			[JSON.stringify({ url: 'https://api.githubcopilot.com/mcp/' }), projectId, conn.rows[0].id],
+		);
+		const repoIns = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id)
+			 VALUES ($1, 'acme/site', 'github'::repo_host_type, $2) RETURNING id`,
+			[projectId, conn.rows[0].id],
+		);
+		await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
+			repoIns.rows[0].id,
+			projectId,
+		]);
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId, projectId });
+
+		expect(result).toContain('`marketing-site` connector');
+		// The generic guidance must name it too, not fall back to a service name.
+		expect(result).toContain("the `marketing-site` connector's tools");
+		expect(result).not.toContain('`github` MCP');
+		// And it must say where the prefix comes from, since the name alone does not
+		// tell an agent that the tools are namespaced by it.
+		expect(result).toContain('prefixed with that name');
+	});
+
+	it('says so plainly when no connector authenticates a repo', async () => {
+		// The silent case from the original incident: git keeps working over SSH, so
+		// nothing looks wrong, and the agent burns the run hunting for API tools that
+		// were never in it.
+		const teamRes = await createTestTeam(db, { name: 'No Connector Co' });
+		const teamId = ((await teamRes.json()) as any).data.id;
+		const projectRes = await createTestProject(db, teamId, { name: 'No Connector Project' });
+		const projectId = ((await projectRes.json()) as any).data.id;
+
+		const repoIns = await db.query<{ id: string }>(
+			`INSERT INTO repos (project_id, repo_identifier, host_type)
+			 VALUES ($1, 'acme/orphan', 'github'::repo_host_type) RETURNING id`,
+			[projectId],
+		);
+		await db.query('UPDATE projects SET designated_repo_id = $1 WHERE id = $2', [
+			repoIns.rows[0].id,
+			projectId,
+		]);
+
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId, projectId });
+
+		expect(result).toContain('No MCP connector authenticates this repository');
+		// It must not send the agent looking, which is the failure being prevented.
+		expect(result).toContain('Do not hunt for them');
 	});
 });
 

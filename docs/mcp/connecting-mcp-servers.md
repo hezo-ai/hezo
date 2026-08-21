@@ -323,6 +323,28 @@ the connector from the project (an agent can request it again if it's still need
 connected connector shows **Disconnect** instead; disconnect it first, then **Remove** the
 revoked row if you want it gone.
 
+### When the connector also authenticates a repo
+
+A GitHub connector and your linked repositories share one OAuth connection, but they read it
+through different records, so the two controls do different damage:
+
+- **Remove** deletes only the connector. Git keeps working, because your repositories hold
+  their own reference to the connection. What goes away is the connector's MCP tools, on
+  every future agent run.
+- **Disconnect** deletes the connection itself. That drops the repositories' reference too,
+  so those remotes fall back to anonymous access: fine for a public repository, a 403 for a
+  private one.
+
+Every one of these confirmations lists the repositories affected before you commit - on the
+Connectors page and on the Git page alike - so neither surprise is one you find out about
+later. Repositories in other teams are not listed, because they are not yours to see; the
+count still includes them. Agents cannot make either change: `remove_connector` refuses a
+connector that still authenticates a repository and tells the agent to bring it to you.
+
+A connection shared across all projects can be disconnected from any project that can see it,
+and doing so takes every other project's repositories with it. That is why the confirmation
+names them. Removing the shared **connector** row is a Settings -> Connectors action.
+
 ## Connectors and their credentials
 
 [Credentials](/docs/security/secret-protection) stay **global** - one shared vault, not

@@ -827,6 +827,18 @@ interface RepoContextRow {
 	host_type: string;
 	is_designated: boolean | null;
 	can_push: boolean | null;
+	/**
+	 * The MCP connector authenticating this repo, or null when none does.
+	 *
+	 * Naming it is the point. Saying "the `github` MCP" describes no tool an agent
+	 * can actually find: a connector's tools are prefixed with its own name, which
+	 * is operator-chosen or slug-derived and need not mention the service, so an
+	 * agent told to look for `github` searches for something that does not exist.
+	 * A null here is the other half of the same problem and is worth saying out
+	 * loud - git still works over SSH, so nothing looks broken until an agent
+	 * reaches for a GitHub API tool that was never in the run.
+	 */
+	connector_name: string | null;
 }
 
 /**
@@ -859,11 +871,29 @@ interface RepoContextRow {
 async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string> {
 	if (!ctx.projectId) return '';
 
+	// The connector join mirrors `selectConnectorsInScope`'s predicate - not
+	// revoked, and this project's own row or a global one - so the name emitted
+	// here is a connector the run actually receives. Joining on a non-null
+	// `oauth_connection_id` also satisfies `SAAS_CREDENTIALED_SQL`'s first arm, so
+	// the run gate cannot drop it for want of a credential. A lateral pick rather
+	// than a plain join: several connectors may share one OAuth connection, and
+	// naming a different one per render would be worse than naming none. Prefer
+	// the project's own row over a global one, then by name, so it is stable.
 	const repos = await db.query<RepoContextRow>(
 		`SELECT r.repo_identifier, r.host_type::text AS host_type, r.can_push,
-		        (r.id = p.designated_repo_id) AS is_designated
+		        (r.id = p.designated_repo_id) AS is_designated,
+		        c.name AS connector_name
 		 FROM repos r
 		 JOIN projects p ON p.id = r.project_id
+		 LEFT JOIN LATERAL (
+		   SELECT mc.name
+		     FROM mcp_connections mc
+		    WHERE mc.oauth_connection_id = r.oauth_connection_id
+		      AND mc.revoked_at IS NULL
+		      AND (mc.project_id = r.project_id OR mc.project_id IS NULL)
+		    ORDER BY (mc.project_id IS NOT NULL) DESC, mc.name ASC
+		    LIMIT 1
+		 ) c ON true
 		 WHERE r.project_id = $1
 		 ORDER BY (r.id = p.designated_repo_id) DESC NULLS LAST, r.created_at ASC`,
 		[ctx.projectId],
@@ -898,13 +928,36 @@ async function buildRepositoryBlock(db: Db, ctx: ResolveContext): Promise<string
 			? ` **The connected GitHub account has no write access to this repository**, so a push here will be rejected — do not attempt one, and do not work around it. If the task needs a change here, say so and ask \`@admin\` to grant that account write access.`
 			: '';
 
+	// Name the connector rather than a service. `list_connectors` reports exactly
+	// this string, and a connector's tools carry it as their prefix, so this is
+	// the one fact that turns "I cannot find the GitHub tools" into a lookup.
+	const connectorNote = (r: RepoContextRow): string =>
+		r.connector_name
+			? ` API operations for it run through the \`${r.connector_name}\` connector — its tools are prefixed with that name, so find them under \`${r.connector_name}\` rather than under the service's name.`
+			: ` **No MCP connector authenticates this repository**, so you have git but no API tools for it. Do not hunt for them: say so in your wrap-up and \`@admin\` it.`;
+
+	// One phrase for the generic bullets below, derived from what this project
+	// actually has. With a single connector it can be named outright; with several
+	// the bullets point back at the per-repo lines rather than guessing which one
+	// a given operation belongs to; with none the guidance must not promise tools
+	// that are not in the run.
+	const connectorNames = [
+		...new Set(repos.rows.map((r) => r.connector_name).filter((n): n is string => n !== null)),
+	];
+	const githubTools =
+		connectorNames.length === 1
+			? `the \`${connectorNames[0]}\` connector's tools`
+			: connectorNames.length > 1
+				? 'the tools of the connector named for that repository above'
+				: 'the GitHub MCP tools, if any connector provides them';
+
 	const repoLines = [
-		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type}) — already cloned; your working directory is its worktree, and it is the default target for this project's work.${readOnlyNote(designated)}`,
+		`- Designated repository: \`${designated.repo_identifier}\` (${designated.host_type}) — already cloned; your working directory is its worktree, and it is the default target for this project's work.${connectorNote(designated)}${readOnlyNote(designated)}`,
 	];
 	for (const o of others) {
 		const name = repoNameFromIdentifier(o.repo_identifier);
 		repoLines.push(
-			`- Also linked: \`${o.repo_identifier}\` (${o.host_type}) — cloned and checked out for this run at ${localPathOf(name)}, on the same \`hezo/<TASK>\` branch, with its own \`origin\` over SSH. You can commit, push, and open a pull request here exactly as you do in the designated repo — \`cd\` to that path first.${readOnlyNote(o)}`,
+			`- Also linked: \`${o.repo_identifier}\` (${o.host_type}) — cloned and checked out for this run at ${localPathOf(name)}, on the same \`hezo/<TASK>\` branch, with its own \`origin\` over SSH. You can commit, push, and open a pull request here exactly as you do in the designated repo — \`cd\` to that path first.${connectorNote(o)}${readOnlyNote(o)}`,
 		);
 	}
 
@@ -919,12 +972,12 @@ This project's repositories are listed below. Each one is already cloned into yo
 ${repoLines.join('\n')}
 
 - **Every repository listed above is yours to work in, not just the designated one.** Each has its own worktree on the same \`hezo/<TASK>\` branch, its own \`origin\` over SSH, and the same auto-push — so committing there, pushing there, and opening a pull request against it are all normal. Nothing about your run is scoped to a single repository: one project SSH key and one connected GitHub account serve all of them. If a repo above carries no read-only note, treat it as writable and just do the work — never leave a finished change unpushed because you assumed you lacked access to that repo.
-- **Read connected repositories from disk, never through an API.** Every linked repo above is cloned and checked out locally for this run — your working directory is the designated repo's worktree, and any additional repos sit in sibling worktree directories (paths above). Inspect them with \`ls\`/\`Read\`/\`grep\`/\`cat\` directly. Do **not** pull a repo's file contents through the \`github\` MCP (\`get_file_contents\`) or any other remote fetch just to read code — that is slower, spends tokens per file, and returns GitHub's default branch instead of the exact ref checked out here. The \`github\` MCP is for GitHub *operations* (pull requests, CI logs, issues), not for reading files that are already on disk.
+- **Read connected repositories from disk, never through an API.** Every linked repo above is cloned and checked out locally for this run — your working directory is the designated repo's worktree, and any additional repos sit in sibling worktree directories (paths above). Inspect them with \`ls\`/\`Read\`/\`grep\`/\`cat\` directly. Do **not** pull a repo's file contents through ${githubTools} (\`get_file_contents\`) or any other remote fetch just to read code — that is slower, spends tokens per file, and returns GitHub's default branch instead of the exact ref checked out here. Those tools are for GitHub *operations* (pull requests, CI logs, issues), not for reading files that are already on disk.
 - **Commits auto-push to \`origin\`; you don't need a manual push to preserve work.** Every commit you make is pushed to \`origin/<branch>\` (e.g. \`origin/hezo/<TASK>\`) automatically the moment it lands — git authenticates over **SSH** with the project's key — so committed work survives even if the run ends early. This applies in every repo above, each pushing to its own \`origin\`. An explicit \`git push -u origin <branch>\` still works out of the box if you want one. You do **not** need a GitHub Personal Access Token for git, so never call \`request_credential\` for a PAT to push or to create a repo.
-- **If a push is actually rejected, report the error — don't theorise about it.** Run the push, and if it fails, quote the exact git output (e.g. \`Permission to <owner>/<repo>.git denied to <account>\`) in your wrap-up and \`@admin\` it. Never assert a restriction that is not written in this block — there is no per-repository scoping of the SSH key, the connected account, or the \`github\` MCP, so claiming one sends the human looking for a problem that does not exist. Leaving a committed fix unpushed and asking a human to apply a patch by hand is never the answer while an untried push remains.
-- **Open and manage pull requests** with the \`github\` MCP tools (e.g. \`create_pull_request\`), targeting whichever of the repositories above the change lives in. Use the \`github\` MCP for any other GitHub API need rather than raw \`curl\` to \`api.github.com\`.
-- **When CI checks fail, read the logs through the \`github\` MCP, never by hand.** Use \`get_job_logs\` with \`failed_only: true\` + the \`run_id\` (or a specific \`job_id\`), \`return_content: true\`, and a \`tail_lines\` bound (e.g. 200) so output stays scoped to the failure. Find the run and its jobs with \`list_workflow_runs\` / \`list_workflow_jobs\`, or \`pull_request_read\` (\`method: "get_check_runs"\`) for a PR's checks. Do **not** \`curl\` \`api.github.com/.../actions/jobs/<id>/logs\` or wrestle with zip downloads — the MCP returns ready-to-read text.
-- **GitHub auth is already provisioned by the project's connected account** — git over SSH and the \`github\` MCP both authenticate through it, so you almost never need a PAT. A few REST operations have no \`github\` MCP tool (e.g. editing repo settings — description, homepage, topics, visibility). For those, call \`list_connectors\`, take the active \`github\` connector's \`rest_auth.placeholder\`, and send it as \`Authorization: Bearer <placeholder>\` on a normal request to \`api.github.com\` — the egress proxy substitutes the real token (only for that connection's \`allowed_hosts\`) and you never see it. Only if there is no active \`github\` connection should you \`register_connector\` with \`provider_id: "github"\` to have the human connect one, or — last resort — \`request_credential\` for a **fine-grained** \`github_pat\` scoped to \`api.github.com\`. Never use a broad classic PAT, and never request a credential for work git-over-SSH or the \`github\` MCP already handle.
+- **If a push is actually rejected, report the error — don't theorise about it.** Run the push, and if it fails, quote the exact git output (e.g. \`Permission to <owner>/<repo>.git denied to <account>\`) in your wrap-up and \`@admin\` it. Never assert a restriction that is not written in this block — there is no per-repository scoping of the SSH key, the connected account, or the connectors above, so claiming one sends the human looking for a problem that does not exist. Leaving a committed fix unpushed and asking a human to apply a patch by hand is never the answer while an untried push remains.
+- **Open and manage pull requests** with ${githubTools} (e.g. \`create_pull_request\`), targeting whichever of the repositories above the change lives in. Use them for any other GitHub API need rather than raw \`curl\` to \`api.github.com\`. If you cannot see a tool you expect, call \`list_connectors\` and match its \`name\` against your tool list before concluding it is missing — the prefix is the connector's name, not the service's.
+- **When CI checks fail, read the logs through ${githubTools}, never by hand.** Use \`get_job_logs\` with \`failed_only: true\` + the \`run_id\` (or a specific \`job_id\`), \`return_content: true\`, and a \`tail_lines\` bound (e.g. 200) so output stays scoped to the failure. Find the run and its jobs with \`list_workflow_runs\` / \`list_workflow_jobs\`, or \`pull_request_read\` (\`method: "get_check_runs"\`) for a PR's checks. Do **not** \`curl\` \`api.github.com/.../actions/jobs/<id>/logs\` or wrestle with zip downloads — the MCP returns ready-to-read text.
+- **GitHub auth is already provisioned by the project's connected account** — git over SSH and the connectors above both authenticate through it, so you almost never need a PAT. A few REST operations have no MCP tool (e.g. editing repo settings — description, homepage, topics, visibility). For those, call \`list_connectors\`, take the active \`github\` connector's \`rest_auth.placeholder\`, and send it as \`Authorization: Bearer <placeholder>\` on a normal request to \`api.github.com\` — the egress proxy substitutes the real token (only for that connection's \`allowed_hosts\`) and you never see it. Only if there is no active \`github\` connection should you \`register_connector\` with \`provider_id: "github"\` to have the human connect one, or — last resort — \`request_credential\` for a **fine-grained** \`github_pat\` scoped to \`api.github.com\`. Never use a broad classic PAT, and never request a credential for work git-over-SSH or those connectors already handle.
 - **Never disable TLS verification** (\`curl -k\`, \`-c http.sslVerify=false\`, \`GIT_SSL_NO_VERIFY\`). Outbound HTTPS is already trusted via the preconfigured CA; a TLS error is a signal to diagnose, not to bypass.
-- If the \`github\` MCP is unavailable, push the branch and say so in your wrap-up — do not fall back to creating a repo or fetching a PAT.`;
+- If no GitHub connector reached this run, push the branch and say so in your wrap-up — do not fall back to creating a repo or fetching a PAT.`;
 }

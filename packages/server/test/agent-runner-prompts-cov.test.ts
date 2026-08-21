@@ -195,6 +195,64 @@ function baseDeps(docker: ContainerEngine): RunnerDeps {
 	};
 }
 
+describe('runAgent — per-runtime prompt notes', () => {
+	it('appends the Codex tool-namespace note, and leaves other runtimes without it', async () => {
+		// Codex exposes its own signed-in account's apps as tools beside the MCP
+		// servers Hezo configures, and its config file offers no way to suppress
+		// them. Its GitHub app is authorized against that account rather than this
+		// project's connection, so it 404s on the project's repos - which reads as a
+		// Hezo fault. Two runs lost themselves that way. No structural lever exists
+		// (the tools cannot be turned off), so the note is the fix and this asserts
+		// it reaches the prompt.
+		await db.query(`DELETE FROM ai_provider_configs WHERE provider = 'openai'`);
+		globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
+		await app.request('/api/ai-providers', {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				provider: 'openai',
+				api_key: 'sk-test-runtime-note',
+				label: 'openai-runtime-note',
+			}),
+		});
+		globalThis.fetch = originalFetch;
+
+		const codex = { prompt: '', env: [] as string[] };
+		await runAgent(
+			baseDeps(promptCaptureDocker(codex)),
+			makeAgent(),
+			{ ...makeTask(), runtime_type: 'codex' as const },
+			makeProject(),
+		);
+		expect(codex.prompt).toContain('Tool namespaces:');
+		// The identification rule is the load-bearing half. A note that only says
+		// "prefer the Hezo ones" is unusable: the Hezo prefix is the operator's
+		// connector name, which need not mention the service, while Codex's own
+		// family is literally `codex_apps` with `github` in the tool name. An agent
+		// scanning for the service name therefore finds exactly one match and it is
+		// the wrong one - which is how this failed in production.
+		expect(codex.prompt).toContain('mcp__<connector>__<tool>');
+		expect(codex.prompt).toContain('list_connectors');
+		expect(codex.prompt).toContain('codex_apps');
+		// The keep-set must be `A-Za-z0-9_` with NO hyphen. Two sanitizers compose:
+		// Hezo's `safeName` keeps hyphens, then Codex's own replaces them with `_`
+		// (openai/codex#14605, v0.116.0). `register_connector` slugs are hyphenated
+		// by construction, so the earlier `A-Za-z0-9_-` wording misdescribed exactly
+		// the connectors agents create - it sent them looking for a prefix that
+		// never exists.
+		expect(codex.prompt).toContain('`A-Za-z0-9_`');
+		expect(codex.prompt).not.toContain('A-Za-z0-9_-');
+		expect(codex.prompt).toContain('hyphens become underscores');
+
+		// The default runtime ships no competing family, so it must not carry the
+		// note. Guidance reaching a runtime it does not apply to is noise in every
+		// prompt that runtime ever runs.
+		const other = { prompt: '', env: [] as string[] };
+		await runAgent(baseDeps(promptCaptureDocker(other)), makeAgent(), makeTask(), makeProject());
+		expect(other.prompt).not.toContain('Tool namespaces:');
+	});
+});
+
 describe('runAgent — progress-update run (no task)', () => {
 	it('runs a task-less goal check with the progress prompt, env marker, and no run comment', async () => {
 		const capture = { prompt: '', env: [] as string[] };

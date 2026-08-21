@@ -29,6 +29,7 @@ import {
 	RUNTIME_HEADLESS_SUFFIX_ARGS,
 	RUNTIME_MODEL_DELIVERY,
 	RUNTIME_PROMPT_DELIVERY,
+	RUNTIME_PROMPT_NOTES,
 	RUNTIME_STREAM_ARGS,
 	RUNTIME_SYSTEM_PROMPT_FILE,
 	type RunLink,
@@ -1067,9 +1068,14 @@ async function buildRunContext(
 			catchUp,
 		});
 	}
-	const taskPrompt = effortApplication.promptDirective
-		? `${basePrompt}\n\n${effortApplication.promptDirective}`
-		: basePrompt;
+	// Appended the same way as the effort directive: a runtime note is guidance the
+	// agent needs for THIS CLI, so it belongs beside the prompt rather than in
+	// `SHARED_INSTRUCTIONS`, which reaches every runtime including the ones with no
+	// such quirk.
+	const promptAddenda = [effortApplication.promptDirective, RUNTIME_PROMPT_NOTES[runtimeType]]
+		.filter((part): part is string => typeof part === 'string' && part.length > 0)
+		.join('\n\n');
+	const taskPrompt = promptAddenda ? `${basePrompt}\n\n${promptAddenda}` : basePrompt;
 
 	const promptFilePath = getContainerPromptPath(heartbeatRunId);
 
@@ -2162,6 +2168,36 @@ export async function runAgent(
 			policy: await buildTunnelHostPolicy(deps.db, connectorDescriptors),
 		});
 		runTunnel = tunnel;
+
+		// Which MCP connectors this run actually received.
+		//
+		// Until this line the only connector entry a run log could carry was a
+		// rejection warning, and that fires for a request aimed at a *registered*
+		// connector - so a connector that was simply absent produced no evidence at
+		// all. An agent then had nothing to separate "never configured" from
+		// "broken", and two runs burned themselves concluding an upstream was
+		// answering 404 when the connector had never been in the run. This is a
+		// statement of what the run got, not a heuristic, so it stays true whatever
+		// the reason for an absence.
+		const connectorSummary = connectorDescriptors.map((d) =>
+			d.enabledTools ? `${d.name} (restricted)` : d.name,
+		);
+		emit(
+			'stdout',
+			connectorSummary.length > 0
+				? `[runner] MCP connectors: ${connectorSummary.join(', ')}\n`
+				: // Name no cause. The first version guessed "none registered, or none
+					// carries a credential", and `loadConnectorDescriptors` drops rows for
+					// neither reason far more often than that: an `api` connector builds no
+					// descriptor at all, and a local stdio one is skipped while
+					// `install_status` is still `pending`, which is what every newly
+					// registered connector starts as. Asserting a cause there tells the
+					// agent a configured-but-broken connector was never configured - the
+					// inversion of what this line exists to prevent, and the opposite of
+					// what `connector-registry.ts` tells agents about claiming a connector
+					// is broken without evidence.
+					'[runner] MCP connectors: none reached this run. Call list_connectors for what is registered and why it did not arrive.\n',
+		);
 		// The tunnel is the container's only path to Hezo, so losing it mid-run
 		// leaves the agent with no MCP tools, no egress proxy and no ssh agent for
 		// the rest of its budget - and it cannot even call `report_no_work`, which

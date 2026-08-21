@@ -2361,6 +2361,61 @@ export const MAX_SINGLE_ARG_BYTES = 128 * 1024;
 export type PromptDelivery = 'stdin' | 'arg' | 'file';
 
 /**
+ * A per-runtime addendum to the task prompt, for a CLI quirk the agent has to
+ * know about and cannot discover from its own tool list.
+ *
+ * Deliberately thin, and a last resort. AGENTS.md says to reach for a structural
+ * signal before a phrase, and the one entry here is NOT the primary fix for its
+ * problem: Codex's competing account-level app tools are switched off outright by
+ * `features.apps = false` in the Codex adapter. This note is insurance, because
+ * that key lives in a third-party CLI - if a bump renames or ignores it, the note
+ * still steers the agent right. Drop it once the suppression is verified against a
+ * live Codex run and trusted on its own.
+ *
+ * A note here earns its place only by carrying something the agent cannot work
+ * out from its tool list. State the discriminator, not the warning.
+ *
+ * Empty for every runtime that ships no competing tools. Keep it that way: this
+ * is not a place to restate guidance that belongs in `SHARED_INSTRUCTIONS`,
+ * which already reaches every agent on every runtime.
+ */
+export const RUNTIME_PROMPT_NOTES: Partial<Record<AgentRuntime, string>> = {
+	// The identification rule is the load-bearing half, because the obvious
+	// heuristic is actively wrong. A Hezo connector's tools are prefixed with its
+	// `mcp_connections.name` - operator-chosen or slug-derived text that need not
+	// mention the service - while Codex's own family is literally `codex_apps` with
+	// `github` in the tool name. So an agent following the repository block's "use
+	// the `github` MCP tools" (`buildRepositoryBlock` in
+	// `services/template-resolver.ts`, rendered whenever the project has a linked
+	// repo, which is exactly when GitHub work happens) and scanning for `github`
+	// finds one match, and it is the wrong one.
+	//
+	// The keep-set is `A-Za-z0-9_` with NO hyphen, and that is not a typo. Two
+	// sanitizers compose: Hezo's `safeName` maps to `[A-Za-z0-9_-]`, then Codex's
+	// own `sanitize_responses_api_tool_name` replaces everything outside
+	// `[A-Za-z0-9_]` - hyphens included (openai/codex#14605, shipped v0.116.0).
+	// `register_connector` slugs are hyphenated by construction, so stating either
+	// half alone misdescribes exactly the connectors agents create.
+	[AgentRuntime.Codex]:
+		'Tool namespaces: your tool list can hold two families of tools for one ' +
+		'service - the ones Hezo configured, and any your CLI adds from its own ' +
+		"signed-in account. Only Hezo's carry this project's credentials. Identify " +
+		"them by prefix: a Hezo connector's tools are named " +
+		"`mcp__<connector>__<tool>`, where `<connector>` is that connector's `name` " +
+		'from `list_connectors` (its `name`, not its `display_name`) with every ' +
+		'character outside `A-Za-z0-9_` replaced by `_` - hyphens become underscores ' +
+		'too. That name need not mention the service at all: a GitHub connector may ' +
+		'be called "Marketing". So never pick a tool because its name contains the ' +
+		'service name; call `list_connectors` and match its names against your tool ' +
+		"list instead. Tools under a `codex_apps` prefix are never Hezo's. " +
+		"`mcp__hezo__*` is Hezo's own server rather than a connector, so it correctly " +
+		'has no `list_connectors` row. A tool from the wrong family authenticates as ' +
+		"somebody else and fails on this project's resources, usually with a 404 that " +
+		'reads as the resource not existing. Never report a resource missing on that ' +
+		'evidence - retry through the matching Hezo connector first.',
+};
+
+/**
  * How each CLI receives the task prompt, threaded to the container as
  * `HEZO_PROMPT_MODE` and acted on by the exec wrapper (`PROMPT_DELIVERY_SH` and
  * its twin in `docker/scripts/hezo-run-with-bridge`):

@@ -40,9 +40,29 @@ ENV PATH="/root/.local/bin:${PATH}"
 #                                       endpoints)
 #   @openai/codex             → codex
 #   opencode-ai               → opencode
-RUN npm install -g @anthropic-ai/claude-code \
-    && npm install -g @openai/codex \
-    && npm install -g opencode-ai
+#
+# Every CLI is pinned. These float otherwise, and a floating CLI changes the
+# behaviour of a run with no commit, no review and no signal: Codex v0.116.0
+# changed how it sanitizes MCP tool names (hyphens became underscores) and the
+# change simply arrived mid-flight, breaking the tool names agents were told to
+# look for. Pinning is not upgrading - each version below is what `latest`
+# resolved to when the pin landed, so this froze the status quo rather than
+# moving it.
+#
+# A bump is a deliberate act: re-verify that runtime's stream parsing, hook
+# contract and config keys still hold before changing a number here.
+# `.github/workflows/cli-drift.yml` reports what has fallen behind so a pin
+# cannot rot unnoticed. `agent-cli-pins.test.ts` fails the suite if an install
+# here loses its pin.
+ARG CLAUDE_CODE_VERSION=2.1.238
+ARG CODEX_VERSION=0.149.0
+ARG OPENCODE_VERSION=1.18.20
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+    && npm install -g @openai/codex@${CODEX_VERSION} \
+    && npm install -g opencode-ai@${OPENCODE_VERSION} \
+    && claude --version \
+    && codex --version \
+    && opencode --version
 
 # Google Antigravity CLI (`agy`) - drives the `google` provider (API-key only in
 # Hezo for now; Antigravity's consumer subscription can't yet be delivered into a
@@ -51,8 +71,36 @@ RUN npm install -g @anthropic-ai/claude-code \
 # build), so install to the shared PATH like Grok so the non-root `node` run-user
 # can execute it. At run time agy reads its config from the run-user's own
 # `$HOME/.gemini`, written per run by the antigravity adapter.
-RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- -d /usr/local/bin \
-    && agy --version
+#
+# Pinned by artifact URL + checksum rather than by version, because the upstream
+# installer offers no way to choose one: it accepts only `-d` and `-h`, and the
+# manifest it reads (`/manifests/linux_amd64.json`) exposes the current release
+# only. The artifact path carries an opaque build id after the version
+# (`.../1.1.17-5084709148033024/...`), so it cannot be rebuilt from AGY_VERSION
+# alone - the full URL has to be recorded.
+#
+# To bump: fetch
+# https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
+# and copy `version`, `url` and `sha512` across. The `agy --version` check below
+# compares against AGY_VERSION, so a URL and a version that disagree fail the
+# build instead of shipping a mislabelled binary.
+ARG AGY_VERSION=1.1.17
+ARG AGY_URL=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.17-5084709148033024/linux-x64/cli_linux_x64.tar.gz
+ARG AGY_SHA512=5c6047a19e80025ea7cecc8152fb263a7f14e80591ee75bdf1ca10191cc0cd1639b5b5ebdce4d1c9d43b14bd2446f038a457821694579f4392b6ca9736512936
+# The archive holds a single member named `antigravity`; upstream's installer
+# renames it to `agy` on the way in, and then hands off to `agy install --dir`
+# for its own shell setup. Both steps are reproduced here so replacing the
+# installer changes only WHICH build lands, not what the image ends up with.
+# `agy install` is tolerant by design (upstream absorbs its exit), so it must not
+# fail the build.
+RUN curl -fsSL "${AGY_URL}" -o /tmp/agy.tar.gz \
+    && echo "${AGY_SHA512}  /tmp/agy.tar.gz" | sha512sum -c - \
+    && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity \
+    && install -m 0755 /tmp/antigravity /usr/local/bin/agy \
+    && rm -f /tmp/agy.tar.gz /tmp/antigravity \
+    && (agy install --dir /usr/local/bin || true) \
+    && agy --version \
+    && agy --version | grep -q "${AGY_VERSION}"
 
 # Moonshot Kimi Code (`kimi`) — the `kimi` provider's native-CLI option, alongside
 # (not instead of) its default Claude Code path above. Pinned
@@ -78,11 +126,17 @@ RUN HOME=/opt GROK_BIN_DIR=/usr/local/bin bash -c \
     && chmod -R a+rX /opt/.grok \
     && grok --version
 
-# Pre-install Bun (latest) for agent-authored JS/TS projects — the common case,
-# and the runtime Hezo itself uses. Installed globally via npm so `bun`/`bunx`
-# land on the shared PATH for both root and the `node` user (matching the AI CLIs
-# above). The trailing `bun --version` fails the build if the install is broken.
-RUN npm install -g bun \
+# Pre-install Bun for agent-authored JS/TS projects — the common case, and the
+# runtime Hezo itself uses. Installed globally via npm so `bun`/`bunx` land on the
+# shared PATH for both root and the `node` user (matching the AI CLIs above). The
+# trailing `bun --version` fails the build if the install is broken.
+#
+# This is the CONTAINER's bun, for code agents write. It is independent of
+# `BUN_VERSION` in `.github/workflows/ci.yml`, which pins the Bun that builds and
+# runs Hezo itself; the two can and will diverge, and neither constrains the
+# other.
+ARG BUN_VERSION=1.4.0
+RUN npm install -g bun@${BUN_VERSION} \
     && bun --version
 
 # SSH agent bridge: in-container Unix socket relayed to host TCP. Used so

@@ -3761,6 +3761,66 @@ The same rule covers AI providers, which have no per-provider module: their quir
 rows in a per-provider table (`PROVIDER_RUNTIME_ADAPTERS`, `SUBSCRIPTION_VALIDATORS`,
 `PROVIDER_MODEL_READERS`, `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`) rather than as branches.
 
+**Per-runtime prompt notes** (`RUNTIME_PROMPT_NOTES`, `@hezo/shared`) append a short addendum
+to the task prompt for a CLI quirk the agent cannot discover from its own tool list. Composed
+in `agent-runner.ts` beside the effort directive, so it reaches the prompt the same way and
+is absent for every runtime with no entry.
+
+Only Codex has one, and it is **insurance rather than the mechanism**. The competing tools are
+switched off outright: `codexAdapter.build` writes `features.apps = false` as a top-level key
+in `config.toml`. Codex surfaces the apps connected to the signed-in ChatGPT account as tools
+in a `codex_apps` namespace, beside the MCP servers Hezo configures. They are the wrong tenant
+- authorized against that account rather than the project's connection, so they answer 404 on
+the project's own repos, which reads to an agent as the resource not existing. Two runs
+diagnosed exactly that as a Hezo connector fault. Codex also documents that app and connector
+traffic "is not controlled by the sandboxed-command network proxy or its domain allowlist", so
+they are an uncontrolled egress path on top of being the wrong credentials.
+
+An earlier revision claimed no structural lever existed and solved this with the prompt alone.
+That was wrong: `features.apps` and `apps._default.enabled` are both documented keys.
+`features.apps` is preferred - it is the feature gate rather than a per-app default, it stays a
+top-level key so the "top-level before any `[table]`" ordering is undisturbed, and it does not
+touch the `mcp_servers.*` tree. openai/codex#17588 reported `apps.<id>.enabled` being ignored,
+but under a `[profiles.*]` section; Hezo writes top-level keys, so that report does not apply -
+and it is the reason a short note is kept rather than deleted.
+
+**The repository block names the connector, so the note is a fallback rather than the map.**
+`buildRepositoryBlock` (`services/template-resolver.ts`) used to say "the `github` MCP", which
+names no tool an agent can find - a connector's tools are prefixed with the CONNECTOR's name,
+and that name need not mention the service. It now resolves each repo's authenticating
+connector (`repos.oauth_connection_id` -> `mcp_connections`, joined with the same not-revoked
+and project-or-global predicate `selectConnectorsInScope` uses, so the name emitted is one the
+run actually receives) and names it in the repo line and in the generic bullets. A repo with no
+connector is called out explicitly: git still works over SSH, so the absence is otherwise
+invisible until an agent hunts for API tools that were never in the run. That, plus the
+`[runner] MCP connectors:` line, is what turns "I cannot find the GitHub tools" from a guess
+into a lookup.
+
+**The note's identification rule has one trap worth stating.** A connector's Codex tools are
+`mcp__<connector>__<tool>`, where `<connector>` is `mcp_connections.name` put through **two**
+sanitizers: Hezo's `safeName` (`toml.ts`) maps to `[A-Za-z0-9_-]`, then Codex's own
+`sanitize_responses_api_tool_name` replaces everything outside `[A-Za-z0-9_]` - hyphens
+included (openai/codex#14605, shipped v0.116.0). Stating either half alone is wrong, and wrong
+in the direction that matters: `register_connector` slugs are hyphenated by construction
+(`tools.ts`, `.replace(/[^a-z0-9]+/g, '-')`), so a rule that keeps hyphens misdescribes exactly
+the connectors agents create. The name is also operator-chosen or slug-derived and need not
+mention the service - a GitHub connector may be called "Marketing" - so the note names
+`list_connectors` as the mapping and `codex_apps` as the exclusion. The
+`mcp__<connector_name>__<tool>` convention is already stated to agents in
+`connector-registry.ts`, so the note extends existing vocabulary rather than inventing one.
+
+AGENTS.md's preference for a structural signal over a phrase is met here by the config key; the
+note survives only because that key lives in a third-party CLI. Keep the table empty for every
+other runtime rather than
+using it to restate `SHARED_INSTRUCTIONS`, which already reaches every agent on every runtime.
+
+Related, and a live gap: **Codex reports no tool counts.** Only `createClaudeCodeParser`
+implements `getMcpToolCounts` - Codex's session event carries no tool list, so
+`heartbeat_runs.mcp_tool_counts` stays null and `list_connectors`' `tools_this_run` reads
+`null` ("nothing measured it") on every Codex run. An agent there cannot confirm its
+connectors' tools arrived; the run log's `[runner] MCP connectors:` line is what it has
+instead.
+
 **Prompt delivery** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE`) has three
 modes. `stdin` redirects the prompt file into the CLI — Claude Code, Codex, Gemini and
 OpenCode, the last of which reads stdin to EOF whenever it is not a TTY and needs no flag for
@@ -4604,6 +4664,57 @@ which nulls the revocation and every auth artifact (`oauth_connection_id`,
 `api_key_secret_id`, `activated_at`, `auth_error`) while preserving `config` — including any
 cached DCR client registration, so the reconnect reuses it. This is the same in-place
 restore `createOrFetchConnector` performs for a re-requested agent connector.
+
+**Removal is guarded on the agent surface and narrated on the human ones.** Git provisioning
+and a connector's MCP tools ride the same OAuth token but hang off different rows -
+`repos.oauth_connection_id` builds the git remote (`repo-sync.ts`), `mcp_connections.oauth_connection_id`
+puts the connector into a run - so deleting the connector leaves git working and strips every
+MCP tool it carried, silently. Nothing in a run log recorded which connectors a run received
+either, so the loss was invisible from inside; the `[runner] MCP connectors:` line added at
+the same time closes that half. Two agent runs burned themselves diagnosing this as an
+upstream 404 before it was found. So:
+
+- The three hand-written `DELETE FROM mcp_connections` statements are now one
+  `deleteConnector` (`services/connectors/lifecycle.ts`), and its `guardLinkedRepos` option
+  rides the DELETE's own `WHERE ... NOT EXISTS (SELECT 1 FROM repos ...)` rather than a
+  preceding SELECT, so a concurrent repo link cannot race it. Indexed by the existing partial
+  `idx_repos_oauth_connection`, so no migration.
+- `remove_connector` (the agent tool) sets it and returns `{ error, connector_id, hint }`
+  unchanged on refusal, mirroring `add_connector`'s re-point refusal. The human REST paths do
+  **not** set it: a human may legitimately want the tools gone while git keeps working, and
+  refusing there would deadlock against `DELETE /api/secrets/:id`'s `409 IN_USE`, whose
+  documented remedy is to remove the connector first.
+- Both row types carry `linked_repos` (`connectorLinkedReposJson` on the connector
+  projections, `linkedReposByConnection` batched onto the oauth-connections list), and the
+  four confirmation dialogs render it. The connector and connection cases get **different**
+  copy, because the consequences differ: Remove leaves git alone, Disconnect deletes the
+  connection and nulls the repos' reference, degrading those remotes to anonymous clone.
+
+**Revoke and disconnect stay open to any project that can see the row, and the dialog is the
+protection.** `deleteConnection`'s `UPDATE repos SET oauth_connection_id = NULL` carries no
+project filter, so one project disconnecting a shared connection does strip git auth from
+every other project's repos. Requiring ownership was tried and reverted, for two independent
+reasons. It did not work: the revoke guard scopes on `mcp_connections.project_id` while the
+destruction happens in `oauth_connections`, a different row whose scope
+`PATCH /api/connectors/:id {project_id}` moves on its own, so a project-owned connector
+pointing at a global connection still took every project's repos. And it broke more than it
+fixed: `DELETE /projects/:p/oauth-connections/:id` is the **only** route anywhere that deletes
+an `oauth_connections` row - the admin connector delete removes the `mcp_connections` row and
+leaves the connection behind - so refusing a global row there made global connections
+undeletable instance-wide while the UI went on offering a Disconnect button that 404'd with no
+error surfaced. The protection is therefore the same one the delete path uses: name every repo
+that breaks, in the confirmation, before the click.
+
+**`linked_repos` is team-scoped; the guard is not.** A global connector is visible from every
+project on the instance, other teams' included, so an unfiltered aggregate handed a project
+member - and, through `list_connectors`, an agent - the repo identifiers and project names of
+teams `requireProjectAccessMiddleware` answers 403 for. The disclosure carries
+`AND lp.team_id = $N` (`null` only on the `requireAdminEquivalent` surface). The DELETE guard
+deliberately does **not**: it counts every team's repos, so a connector still cannot be removed
+out from under a repo the caller cannot see. `remove_connector`'s refusal therefore reports an
+instance-wide count with a team-scoped name list, and says so when the two differ - deriving
+the count from the scoped list rendered "still authenticates 0 linked repo(s) ()", which reads
+as the guard misfiring.
 
 **Instance-address change self-heals.** A DCR client is bound at the Authorization Server to
 the exact `redirect_uri` it registered, so the cached `config.dcr` also records the callback
