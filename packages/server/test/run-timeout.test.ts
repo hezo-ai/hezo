@@ -1,4 +1,11 @@
-import { ContainerStatus, HeartbeatRunStatus, WakeupSource } from '@hezo/shared';
+import {
+	ContainerStatus,
+	HeartbeatRunStatus,
+	RunCancelReason,
+	WakeupSkipReason,
+	WakeupSource,
+	WakeupStatus,
+} from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -359,5 +366,214 @@ describe('timeout continuation (JobManager)', () => {
 			[taskId],
 		);
 		expect(failed.rows.length).toBe(0); // failure ping suppressed for a continuing timeout
+	});
+});
+
+/**
+ * Shutdown is the one abort reason that hands the work back instead of ending the
+ * run, and it has to, because nothing downstream can do it afterwards.
+ *
+ * The drain finalizes the run row and settles its wakeup before the process
+ * exits, and every recovery predicate in the codebase - `reconcileDatabaseOnStartup`,
+ * `detectOrphanedRuns`, `healStaleRunState`, `requeueContainerKilledRuns` - looks
+ * for a row left `running` or `queued`. So an orderly shutdown dropped the work
+ * outright while a hard crash recovered: the better the shutdown behaved, the more
+ * certainly the task stopped. The row's own message promised a re-queue that no
+ * code delivered.
+ */
+describe('shutdown handback (runAgent + JobManager)', () => {
+	it('finalizes a shutdown-aborted run as cancelled and asks for a re-queue', async () => {
+		const ac = new AbortController();
+		const deps = makeDeps({
+			execStart: async () => {
+				ac.abort('server_shutdown');
+				throw new DOMException('Aborted', 'AbortError');
+			},
+		});
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBe(true);
+		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+
+		const run = await db.query<{ status: string; error: string }>(
+			'SELECT status, error FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		// `cancelled`, not `failed`. A shutdown is not a verdict on the agent, and a
+		// terminal `failed` row is precisely what boot recovery cannot match.
+		expect(run.rows[0].status).toBe(HeartbeatRunStatus.Cancelled);
+		expect(run.rows[0].error).toContain('Server shut down while this run was in flight');
+		expect(run.rows[0].error).toContain('returning this run to the queue');
+	});
+
+	it('hands back a run the drain caught before it had a row at all', async () => {
+		// The earliest landing point, and the one with no row to hand back through:
+		// the drain can abort between the dispatch and the run's first write. The
+		// work is owed exactly as much as it is mid-exec, so the flag alone carries
+		// it - there is simply nothing to annotate.
+		const ac = new AbortController();
+		ac.abort('server_shutdown');
+
+		const result = await runAgent(
+			makeDeps(),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBe(true);
+		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+		// No run row, deliberately: none was ever created, so none is invented.
+		expect(result.heartbeatRunId).toBeUndefined();
+	});
+
+	it('hands back a run the drain caught between phases', async () => {
+		// The third landing point: `finalizeAbort`, reached at a phase checkpoint
+		// rather than on the exec rejection. Aborting while the container is being
+		// acquired puts the run on the checkpoint before it is marked running.
+		//
+		// Every rung of the acquire ladder aborts, not just the provision one: which
+		// rung this takes depends on whether a sibling case left a warm container on
+		// the shared project, so hooking only `startContainer` passed alone and
+		// failed in a full run.
+		const ac = new AbortController();
+		const shutdown = () => ac.abort('server_shutdown');
+		const deps = makeDeps({
+			startContainer: async () => {
+				shutdown();
+			},
+			createContainer: async () => {
+				shutdown();
+				return { Id: 'container-123', Warnings: [] };
+			},
+			inspectContainer: async () => {
+				shutdown();
+				return {
+					Id: 'container-123',
+					State: { Status: 'running', Running: true, Pid: 1, ExitCode: 0 },
+					Config: { Image: 'test' },
+				};
+			},
+		});
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBe(true);
+		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+	});
+
+	it('hands back a shutdown that lands in the setup window', async () => {
+		// The fourth landing point: after the container is acquired and before the
+		// exec, where the credential lock, the tunnel and `buildRunContext` run. A
+		// throw there with the signal already aborted is the shape the drain makes
+		// at that moment, and it has its own branch because the exec catch is not
+		// reached from here at all.
+		const ac = new AbortController();
+		const deps = makeDeps({
+			openExecChannel: async () => {
+				ac.abort('server_shutdown');
+				throw new Error('tunnel torn down by shutdown');
+			},
+		});
+
+		const result = await runAgent(
+			deps,
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBe(true);
+		expect(result.requeueReason).toBe(WakeupSkipReason.ServerShutdown);
+	});
+
+	it('still fails a bare pre-run abort rather than re-queueing it', async () => {
+		// A user cancel arriving in the same window is a decision to stop, not work
+		// owed - so the handback must be reasoned from the reason, not from the fact
+		// that the signal was already aborted.
+		const ac = new AbortController();
+		ac.abort();
+
+		const result = await runAgent(
+			makeDeps(),
+			makeAgent(),
+			makeTask(),
+			makeProject(),
+			undefined,
+			ac.signal,
+		);
+
+		expect(result.requeued).toBeFalsy();
+	});
+
+	it('returns the wakeup to the queue, which is the promise the message makes', async () => {
+		await resetTaskHistory();
+		// The wakeup this run was dispatched for, claimed as a live dispatch leaves it.
+		const wakeup = await db.query<{ id: string }>(
+			`INSERT INTO agent_wakeup_requests (member_id, team_id, source, status, payload)
+			 VALUES ($1, $2, $3::wakeup_source, 'claimed', $4::jsonb) RETURNING id`,
+			[agentId, teamId, WakeupSource.Timer, JSON.stringify({ task_id: taskId })],
+		);
+		const runRow = await db.query<{ id: string }>(
+			`INSERT INTO heartbeat_runs (team_id, member_id, task_id, status, started_at)
+			 VALUES ($1, $2, $3, 'cancelled', now()) RETURNING id`,
+			[teamId, agentId, taskId],
+		);
+		const manager = createJobManager();
+
+		await (manager as any).onAgentComplete(
+			agentId,
+			'engineer',
+			taskId,
+			taskIdentifier,
+			teamId,
+			wakeup.rows[0].id,
+			undefined,
+			{
+				success: false,
+				exitCode: -1,
+				stdout: '',
+				stderr: 'Server shut down while this run was in flight',
+				durationMs: 1,
+				heartbeatRunId: runRow.rows[0].id,
+				requeued: true,
+				requeueReason: WakeupSkipReason.ServerShutdown,
+			},
+		);
+
+		const w = await db.query<{ status: string }>(
+			'SELECT status FROM agent_wakeup_requests WHERE id = $1',
+			[wakeup.rows[0].id],
+		);
+		// Queued, so the 5s cron picks it up when the process is next up. This is the
+		// half that was missing: the drain settled it `failed` and it stayed there.
+		expect(w.rows[0].status).toBe(WakeupStatus.Queued);
+
+		const row = await db.query<{ cancel_reason: string | null }>(
+			'SELECT cancel_reason FROM heartbeat_runs WHERE id = $1',
+			[runRow.rows[0].id],
+		);
+		// Recorded only once the handback is known to have landed, and it is what
+		// keeps a dead Retry button off a run whose work is already carried.
+		expect(row.rows[0].cancel_reason).toBe(RunCancelReason.HandedBack);
 	});
 });

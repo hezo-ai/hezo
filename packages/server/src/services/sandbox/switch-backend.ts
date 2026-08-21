@@ -34,6 +34,7 @@ import { SandboxBackendError } from './errors';
 import type { SandboxBackendHolder } from './holder';
 import { INSTANCE_LABEL } from './labels';
 import { openSandboxBackend } from './open';
+import { clearAllPoolMembers } from './pool-db';
 import type { ContainerEngine } from './types';
 
 const log = logger.child('sandbox-switch');
@@ -125,7 +126,9 @@ async function destroyAll(db: Db, engine: ContainerEngine, dataDir: string): Pro
 	// The records go regardless of whether each destroy succeeded: they name
 	// containers on a backend this instance is about to stop talking to, so
 	// keeping them would leave the pool handing out ids that resolve to nothing.
-	await db.query('DELETE FROM container_pool_members');
+	// Through the pool rather than a DELETE of its own, so the uptime intervals
+	// these members were billing are closed rather than stranded open for ever.
+	await clearAllPoolMembers(db);
 	await db.query(
 		`UPDATE projects SET container_id = NULL, container_status = NULL
 		  WHERE container_id IS NOT NULL OR container_status IS NOT NULL`,

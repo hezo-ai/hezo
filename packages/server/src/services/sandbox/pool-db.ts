@@ -21,6 +21,7 @@ import {
 } from './pool';
 import {
 	closeUptimeInterval,
+	closeUptimeIntervalsForMembers,
 	openUptimeInterval,
 	setUptimeIntervalChatReservation,
 } from './uptime-ledger';
@@ -34,6 +35,71 @@ import {
  * rather than as zero (which would recycle instantly) or as unbounded.
  */
 const DEFAULT_DISK_CEILING_SQL = String(poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB));
+
+/**
+ * Move a container's uptime interval to match the state just written.
+ *
+ * **Every write of `container_pool_members.state` goes through here.** The ledger
+ * used to be called from the two writers that happened to think of it, which left
+ * the three that did not - claim, release and the boot reclaim - moving a
+ * container between states while billing nothing for it. That is less a missed
+ * call site than a missing rule: a state write and its interval are one act, and
+ * separating them means the next transition anyone adds is billed nowhere.
+ *
+ * `suspended` and `error` both mean the container is no longer running and no
+ * longer billing compute; anything else means it is. `endReason` names *why* a
+ * stretch ended, which the state alone cannot say - the pool spells every
+ * not-running container `suspended` whether the idle sweep stopped it, it exited
+ * on its own, or another project's run evicted it to free budget memory.
+ *
+ * Opening is idempotent, so a caller may reach here for a container that is
+ * already billing. What a caller must not do is reach here for a row that did
+ * **not** move: the pool believes a stopped container is stopped, and opening an
+ * interval for one would over-bill, which is the single direction cost accounting
+ * may never fail in.
+ */
+async function syncUptimeForState(
+	db: Db,
+	containerId: string,
+	state: PoolMemberState | 'creating' | 'error',
+	endReason?: ContainerUptimeEndReason,
+): Promise<void> {
+	if (state === 'suspended') {
+		await closeUptimeInterval(db, containerId, endReason ?? ContainerUptimeEndReason.Stopped);
+		return;
+	}
+	if (state === 'error') {
+		// The pool has lost confidence that this container is up, so it stops
+		// billing on the pool's own evidence. `Reconciled` rather than `Stopped`:
+		// nobody asked for this stop, and the close time is when the fault was
+		// noticed rather than when the container actually went.
+		await closeUptimeInterval(db, containerId, endReason ?? ContainerUptimeEndReason.Reconciled);
+		return;
+	}
+	// creating, idle or busy - the container is up. A resume opens a NEW interval
+	// rather than reopening the closed one, which is what makes a suspend/resume
+	// cycle read as two billed stretches with a free gap between them.
+	await openUptimeInterval(db, containerId);
+}
+
+/**
+ * Open an interval for a container the pool already believes is up, if it has none.
+ *
+ * The repair half of the rule above. A container can reach a running state with
+ * no interval - a member older than the ledger itself, or one whose interval was
+ * closed while the container stayed up - and nothing else heals it: the warm
+ * paths reach a running container through claim and release, and both of those
+ * open only on a row that moved, which a container nobody claims never does.
+ *
+ * Billing starts at `now()`, deliberately. The real start is unknowable here, and
+ * inventing one bills for time this instance cannot show its own evidence for.
+ *
+ * Exported so the liveness pass can call it without importing the ledger, which
+ * would put a second writer outside this file.
+ */
+export async function ensurePoolMemberUptimeOpen(db: Db, containerId: string): Promise<void> {
+	await openUptimeInterval(db, containerId);
+}
 
 /**
  * Record whether a container is holding committed work that reached no durable
@@ -167,11 +233,7 @@ export async function upsertPoolMember(
 	);
 	// After the member write, never before: the ledger reads the container's
 	// shape, owner and chat pin straight off the row this just settled.
-	if (state === 'suspended') {
-		await closeUptimeInterval(db, containerId, ContainerUptimeEndReason.Stopped);
-	} else {
-		await openUptimeInterval(db, containerId);
-	}
+	await syncUptimeForState(db, containerId, state);
 }
 
 /**
@@ -207,7 +269,13 @@ export async function claimPoolMember(
 		  RETURNING container_id`,
 		[containerId, lastTaskId],
 	);
-	return res.rows.length > 0;
+	if (res.rows.length === 0) return false;
+	// The row moved out of `idle`, so the pool believes this container is up. A
+	// warm container taken straight off the ladder is the common case that reaches
+	// a run without passing through provision or resume, so this is the only point
+	// its interval can open.
+	await syncUptimeForState(db, containerId, 'busy');
+	return true;
 }
 
 /**
@@ -255,13 +323,18 @@ export async function releasePoolMember(
 	containerId: string,
 	lastTaskId: string | null,
 ): Promise<void> {
-	await db.query(
+	const res = await db.query<{ container_id: string }>(
 		`UPDATE container_pool_members
 		    SET state = 'idle', last_task_id = COALESCE($2, last_task_id),
 		        last_released_at = now(), updated_at = now()
-		  WHERE container_id = $1 AND state <> 'suspended'`,
+		  WHERE container_id = $1 AND state <> 'suspended'
+		 RETURNING container_id`,
 		[containerId, lastTaskId],
 	);
+	// `RETURNING` because the guard above means the row may not have moved: a
+	// container suspended under a running run is left alone, and billing one the
+	// pool believes is stopped is the over-bill this must not do.
+	if (res.rows.length > 0) await syncUptimeForState(db, containerId, 'idle');
 }
 
 /**
@@ -290,20 +363,7 @@ export async function setPoolMemberState(
 		  WHERE container_id = $1 AND state IS DISTINCT FROM $2::container_pool_state`,
 		[containerId, state],
 	);
-	if (state === 'suspended') {
-		await closeUptimeInterval(db, containerId, endReason ?? ContainerUptimeEndReason.Stopped);
-	} else if (state === 'error') {
-		// The pool has lost confidence that this container is up, so it stops
-		// billing on the pool's own evidence. `Reconciled` rather than `Stopped`:
-		// nobody asked for this stop, and the close time is when the fault was
-		// noticed rather than when the container actually went.
-		await closeUptimeInterval(db, containerId, endReason ?? ContainerUptimeEndReason.Reconciled);
-	} else {
-		// idle or busy - the container is up. A resume opens a NEW interval rather
-		// than reopening the closed one, which is what makes a suspend/resume cycle
-		// read as two billed stretches with a free gap between them.
-		await openUptimeInterval(db, containerId);
-	}
+	await syncUptimeForState(db, containerId, state, endReason);
 }
 
 /**
@@ -317,6 +377,53 @@ export async function setPoolMemberState(
 export async function removePoolMember(db: Db, containerId: string): Promise<void> {
 	await closeUptimeInterval(db, containerId, ContainerUptimeEndReason.Destroyed);
 	await db.query(`DELETE FROM container_pool_members WHERE container_id = $1`, [containerId]);
+}
+
+/**
+ * Forget every member at once, closing what they were billing first.
+ *
+ * The backend switch destroys every container the outgoing backend was running
+ * and then drops the rows describing them. Dropping the rows alone would strand
+ * each open interval for ever - an open interval bills to `now()`, so the switch
+ * would quietly accrue hours on containers that no longer exist. `Destroyed` is
+ * the honest reason: that is what just happened to them.
+ *
+ * Returns how many members were forgotten.
+ */
+export async function clearAllPoolMembers(db: Db): Promise<number> {
+	await closeUptimeIntervalsForMembers(db, ContainerUptimeEndReason.Destroyed);
+	const res = await db.query<{ container_id: string }>(
+		'DELETE FROM container_pool_members RETURNING container_id',
+	);
+	return res.rows.length;
+}
+
+/**
+ * Record that a container came up outside the pool's own lifecycle calls.
+ *
+ * Two paths start a container in place and tell only `projects`: the on-demand
+ * start, and the boot self-heal. The member each leaves behind still reads
+ * `suspended`, so the pool believes a running container is stopped and bills
+ * nothing for it until something suspends and resumes it again.
+ *
+ * `WHERE state = 'suspended'` is the whole safety of this. It can only promote a
+ * container the pool already thought was down, so it can never demote a `busy`
+ * member out from under the run holding it, and never re-advertises a member that
+ * a lifecycle call is part-way through retiring.
+ *
+ * Returns whether the row moved.
+ */
+export async function markPoolMemberRunning(db: Db, containerId: string): Promise<boolean> {
+	const res = await db.query<{ container_id: string }>(
+		`UPDATE container_pool_members
+		    SET state = 'idle', updated_at = now()
+		  WHERE container_id = $1 AND state = 'suspended'
+		 RETURNING container_id`,
+		[containerId],
+	);
+	if (res.rows.length === 0) return false;
+	await syncUptimeForState(db, containerId, 'idle');
+	return true;
 }
 
 /**
@@ -342,7 +449,13 @@ export async function reclaimBusyPoolMembers(db: Db): Promise<string[]> {
 		  WHERE state = 'busy'
 		 RETURNING container_id`,
 	);
-	return res.rows.map((r) => r.container_id);
+	const ids = res.rows.map((r) => r.container_id);
+	// Each of these was `busy` a moment ago, so the pool believes it is up. On a
+	// backend whose containers outlive a Hezo restart nothing re-provisions and
+	// nothing resumes, so without this the whole fleet reaches its next run
+	// through the warm path alone and bills nothing for the rest of its life.
+	for (const id of ids) await syncUptimeForState(db, id, 'idle');
+	return ids;
 }
 
 /**

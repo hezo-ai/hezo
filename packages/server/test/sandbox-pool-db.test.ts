@@ -178,6 +178,13 @@ describe('reconcilePoolMembers', () => {
 			typeof reconcilePoolMembers
 		>[0]);
 
+	const openIntervals = async (): Promise<string[]> => {
+		const r = await db.query<{ container_id: string }>(
+			'SELECT container_id FROM container_uptime_entries WHERE ended_at IS NULL ORDER BY container_id',
+		);
+		return r.rows.map((x) => x.container_id);
+	};
+
 	const stateOf = async (containerId: string): Promise<string | undefined> =>
 		(
 			await db.query<{ state: string }>(
@@ -200,7 +207,10 @@ describe('reconcilePoolMembers', () => {
 	afterAll(() => db.close());
 	// Each case owns the whole table: a member left behind by a previous case
 	// would be judged missing by the next one's engine and inflate its count.
-	beforeEach(() => db.query('DELETE FROM container_pool_members'));
+	beforeEach(async () => {
+		await db.query('DELETE FROM container_pool_members');
+		await db.query('DELETE FROM container_uptime_entries');
+	});
 
 	it('drops a busy member whose container is gone — the case nothing else repairs', async () => {
 		await seed('gone-busy', 'busy', 300);
@@ -208,6 +218,34 @@ describe('reconcilePoolMembers', () => {
 		const result = await reconcile(engine(['live-busy']));
 		expect(result.dropped).toBe(1);
 		expect(await remaining()).toEqual(['live-busy']);
+	});
+
+	it('opens a missing interval for a container it finds running', async () => {
+		// The repair for the fault that read as "0 containers up now" on a live
+		// container. A member can reach a running state with no interval - older
+		// than the ledger, or closed while the container stayed up - and the warm
+		// paths only open on a row that moves, which a container nobody claims
+		// never does. This pass used to `continue` straight past exactly those.
+		await seed('running-unbilled', 'idle', 300);
+		await seed('running-busy', 'busy', 300);
+		await seed('broken', 'error', 300);
+		expect(await openIntervals()).toEqual([]);
+
+		await reconcile(engine(['running-unbilled', 'running-busy', 'broken']));
+
+		// `error` stays unbilled: the pool has stopped believing that one is up.
+		expect(await openIntervals()).toEqual(['running-busy', 'running-unbilled']);
+	});
+
+	it('does not bill the same minutes twice when it sweeps again', async () => {
+		await seed('swept-twice', 'idle', 300);
+		await reconcile(engine(['swept-twice']));
+		await reconcile(engine(['swept-twice']));
+		const all = await db.query<{ n: number }>(
+			'SELECT COUNT(*)::int AS n FROM container_uptime_entries WHERE container_id = $1',
+			['swept-twice'],
+		);
+		expect(all.rows[0].n).toBe(1);
 	});
 
 	it('leaves a member alone when the engine could not answer', async () => {

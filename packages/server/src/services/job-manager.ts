@@ -91,7 +91,7 @@ import {
 	sumProjectContainerMemoryGb,
 } from './run-concurrency';
 import { recordHandbackOutcome } from './run-handback';
-import { reclaimBusyPoolMembers } from './sandbox/pool-db';
+import { markPoolMemberRunning, reclaimBusyPoolMembers } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -1366,6 +1366,10 @@ export class JobManager {
 				if (info.State.Running) continue;
 
 				await docker.startContainer(row.container_id);
+				// The pool hears about it too. Its member still reads `suspended` after a
+				// restart-time start, and a container the pool believes is down bills
+				// nothing while it is up.
+				await markPoolMemberRunning(db, row.container_id);
 				await db.query(
 					'UPDATE projects SET container_error = NULL, container_last_started_at = now() WHERE id = $1',
 					[row.id],
