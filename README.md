@@ -203,13 +203,6 @@ provider that takes cloud-init works too - see
 
 </details>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/task-board-dark.svg" />
-    <img src="assets/diagrams/task-board-light.svg" alt="A task board with To do, In progress and Done columns, one card running and one blocked" width="440" />
-  </picture>
-</p>
-
 <table>
   <tr>
     <td width="50%" valign="top" align="center">
