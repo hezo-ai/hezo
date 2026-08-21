@@ -82,6 +82,40 @@ describe('handleMcpRequest branches', () => {
 		expect(result.protocolVersion).toBeDefined();
 	});
 
+	it('carries the registry conventions as initialize instructions', async () => {
+		// The only surface above an individual tool that reaches a caller on the
+		// wire. Without it a convention has nowhere to live but the 81 tool
+		// descriptions, where one sentence is serialized once per tool on every
+		// `tools/list`.
+		const { json } = await rpc({ jsonrpc: '2.0', id: 8, method: 'initialize', params: {} });
+		const instructions = (json.result as { instructions?: string }).instructions ?? '';
+		expect(instructions.length).toBeGreaterThan(1000);
+		// The conventions a caller cannot infer from any single tool's schema.
+		expect(instructions).toContain('**Project scope (`project`):**');
+		expect(instructions).toContain('Omit it to act in the project your run is already in');
+		expect(instructions).toContain('**Paging is the norm');
+		expect(instructions).toContain('result_too_large');
+		expect(instructions).toContain('__HEZO_SECRET_<NAME>__');
+	});
+
+	it('states the conventions without the reference page furniture', async () => {
+		// Same source as docs/reference/mcp-api.md, so two clauses that point at
+		// page layout are reworded for the wire rather than shipped verbatim.
+		const { json } = await rpc({ jsonrpc: '2.0', id: 9, method: 'initialize', params: {} });
+		const instructions = (json.result as { instructions?: string }).instructions ?? '';
+		expect(instructions).not.toContain('**Authorization** below');
+		expect(instructions).not.toContain('_Write tool_');
+	});
+
+	it('serves identical instructions on every initialize', async () => {
+		// Cached, and constant: a caller that reconnects must not see it drift.
+		const a = await rpc({ jsonrpc: '2.0', id: 10, method: 'initialize', params: {} });
+		const b = await rpc({ jsonrpc: '2.0', id: 11, method: 'initialize', params: {} });
+		expect((a.json.result as { instructions?: string }).instructions).toBe(
+			(b.json.result as { instructions?: string }).instructions,
+		);
+	});
+
 	it('unauthenticated tools/list returns only the onboarding tools', async () => {
 		const { json } = await rpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
 		const tools = (json.result as { tools: Array<{ name: string }> }).tools;

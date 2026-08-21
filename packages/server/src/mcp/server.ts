@@ -11,6 +11,7 @@ import { verifyToken } from '../middleware/auth';
 import { storeUploadedAsset } from '../routes/assets';
 import type { ContainerDeps } from '../services/containers';
 import type { WebSocketManager } from '../services/ws';
+import { mcpConventionLines } from './mcp-reference';
 import {
 	handleConnectionStatusTool,
 	handleRegisterTool,
@@ -103,6 +104,29 @@ export function audienceOf(name: string): ToolAudience | undefined {
 	return toolDefs.find((t) => t.name === name)?.audience;
 }
 
+/**
+ * The registry-wide calling conventions, sent once per session as the
+ * `initialize` result's `instructions`.
+ *
+ * This is the only surface above an individual tool that reaches an MCP caller
+ * on the wire. Without it a convention has nowhere to live but the tool
+ * descriptions, where one sentence becomes 70 copies on every `tools/list` -
+ * `project` alone costs ~9 KB that way. `SHARED_INSTRUCTIONS` is not a
+ * substitute: it is built for an agent run's system prompt, so an external
+ * API-key caller never sees it, and `GET /SKILL.md` carries no parameter
+ * descriptions at all.
+ *
+ * Authored with the reference page in `mcp-reference.ts` so the two cannot
+ * disagree.
+ */
+let instructionsCache: string | null = null;
+function mcpInstructions(): string {
+	if (instructionsCache === null) {
+		instructionsCache = mcpConventionLines('wire').join('\n');
+	}
+	return instructionsCache;
+}
+
 function extractBearer(c: Context<Env>): string | null {
 	const header = c.req.header('Authorization');
 	if (!header?.startsWith('Bearer ')) return null;
@@ -180,6 +204,10 @@ export async function handleMcpRequest(c: Context<Env>): Promise<Response> {
 				protocolVersion: '2025-03-26',
 				capabilities: { tools: {} },
 				serverInfo: { name: 'hezo', version: '0.1.0' },
+				// Hand-rolled rather than delegated to the SDK (see the branch above),
+				// so this is the only place `instructions` can reach a caller -
+				// passing it to `new McpServer(...)` would be a silent no-op.
+				instructions: mcpInstructions(),
 			},
 		});
 	}

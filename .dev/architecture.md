@@ -6030,6 +6030,27 @@ unapproved caller is served the onboarding tools (`register`, `connection_status
 nothing else. Only `tools/list` and `tools/call` from an authenticated principal reach the
 registry.
 
+**Registry-wide conventions ride the `initialize` result, not the tool descriptions.**
+`mcpConventionLines()` (`mcp/mcp-reference.ts`) is authored once and rendered to two surfaces:
+the reference page prints it as its Conventions section, and `handleMcpRequest`'s `initialize`
+branch sends it as the protocol's `instructions` field - once per session, ~3.3 KB. Two clauses
+that point at the page's own layout are reworded for the wire; a test asserts those are the
+only two that differ.
+
+This exists because a convention stated on a tool is serialized once **per tool** on every
+`tools/list`. The `project` parameter's 128-character description costs ~9 KB that way, across
+70 tools - 7% of the whole payload from one string. `tools.ts` is already DRY about it
+(`projectArg()` is a shared factory), so the duplication is in the serialization, not the
+source, and no amount of editing `tools.ts` reaches it. `SHARED_INSTRUCTIONS` cannot serve as
+that home either: it is built inside `resolveTemplate` for an agent run's system prompt, so an
+external API-key MCP caller never receives it, and `GET /SKILL.md` carries no parameter
+descriptions at all.
+
+**The `instructions` field must go on the hand-rolled response.** `handleMcpRequest` answers
+`initialize` itself rather than delegating to the SDK (the proxy client has already negotiated
+initialization, so a second handshake would be rejected). Passing `instructions` to
+`new McpServer(...)` therefore reaches nobody - a silent no-op.
+
 **`tools/list` is projected per caller** (`mcp/tool-visibility.ts`). Every authenticated
 principal used to receive the whole registry, so a worker agent scoped to one project carried
 `create_team`, the CEO's project-creation tools and every Captain-only prompt editor — schemas
