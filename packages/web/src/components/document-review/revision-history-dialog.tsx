@@ -13,10 +13,18 @@ import { RelativeTime } from '../ui/relative-time';
 interface RevisionHistoryDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	filename: string;
+	/**
+	 * What this history belongs to, shown beside the version count — a doc's
+	 * filename (`prd.md`), `Custom Prompt`, an agent's name, a skill's slug.
+	 */
+	label: string;
 	entries: DocVersionEntry[];
-	projectId: string;
-	projectSlug: string;
+	/**
+	 * Only for resolving @-mention and doc links in a changelog. A global skill
+	 * has no project, so both are optional and links fall back to plain text.
+	 */
+	projectId?: string;
+	projectSlug?: string;
 	/** null = viewing the latest version; a number = viewing that revision. */
 	viewingRevision: number | null;
 	/** Show that entry's content; `null` returns to the latest version. */
@@ -27,15 +35,16 @@ interface RevisionHistoryDialogProps {
 }
 
 /**
- * The revision-history viewer for a project document: every version newest-first,
+ * The revision-history viewer for anything that keeps revisions — project docs,
+ * the project Custom Prompt, agent system prompts and skills: every version newest-first,
  * each rendered like a task comment (author, timestamp, and its changelog with
  * live @-mention/doc links). Selecting a version shows the document as it stood
- * then; admins can Restore a past version (which appends a new current version).
+ * then; callers that pass `onRestore` also get a Restore action (omit it to hide one).
  */
 export function RevisionHistoryDialog({
 	open,
 	onOpenChange,
-	filename,
+	label,
 	entries,
 	projectId,
 	projectSlug,
@@ -55,7 +64,7 @@ export function RevisionHistoryDialog({
 				<div className="mb-4 flex items-center gap-2 pr-8">
 					<Dialog.Title className="text-base font-semibold">Revision history</Dialog.Title>
 					<span className="font-mono text-[11px] text-text-3">
-						{entries.length} {entries.length === 1 ? 'version' : 'versions'} · {filename}
+						{entries.length} {entries.length === 1 ? 'version' : 'versions'} · {label}
 					</span>
 				</div>
 

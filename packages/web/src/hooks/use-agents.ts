@@ -72,6 +72,9 @@ export interface AgentSystemPromptRevision {
 	content: string;
 	change_summary: string;
 	author_name: string | null;
+	/** 'agent' | 'admin' | 'api_key' — drives the human/API-key badge. */
+	author_type?: string;
+	author_api_key_id?: string | null;
 	created_at: string;
 }
 
@@ -201,6 +204,10 @@ export function useRestoreAgentSystemPrompt(projectId: string, agentId: string) 
 		onSuccess: () => {
 			queryClient.invalidateQueries({
 				queryKey: queryKeys.projects.agentSystemPrompt(projectId, agentId),
+			});
+			// A restore appends a new revision, so the history list is stale too.
+			queryClient.invalidateQueries({
+				queryKey: queryKeys.projects.agentSystemPromptRevisions(projectId, agentId),
 			});
 		},
 	});

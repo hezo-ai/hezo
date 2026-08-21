@@ -206,13 +206,18 @@ Restoring is yours to do: agents can read and write documents, but only you can 
 Because you and the agents write to the same documents, that history doubles as an audit trail -
 you can see how a spec evolved and roll back a bad edit without losing the thread.
 
-This **versioned-and-reversible** guarantee isn't limited to project documents. The same
-applies to **agent system prompts** - every edit, including the
+This **versioned-and-reversible** guarantee isn't limited to project documents, and neither is
+the history view above. The same **History** button, the same list of versions, and the same
+read-a-past-version-then-**Restore** flow appear on **agent system prompts** - every edit,
+including the
 [learned rules the Coach adds](/docs/concepts/coach-and-self-improving-teams#every-change-is-reversible),
-is snapshotted and restorable from the agent's settings - to a project's
-[Custom Prompt](#custom-prompt), and to
+is snapshotted and restorable from the agent's settings - on a project's
+[Custom Prompt](#custom-prompt), and on
 [**skills**](/docs/concepts/skills#version-history--restore), your reusable how-to
-(global or scoped to one project). Whatever your agents change, you can see what changed and put it back.
+(global or scoped to one project). On every one of them you can open a past version and read it
+in place, with a banner and **View latest** to return, before deciding whether to restore it - so
+you never roll something back sight unseen. Whatever your agents change, you can see what changed
+and put it back.
 
 ## Long-term chat memory
 

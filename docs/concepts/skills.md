@@ -92,11 +92,13 @@ so the whole instance benefits.
 
 ## Version history & restore
 
-Every change to a skill's content is **versioned automatically**. From a skill's editor in
-**Settings → Skills**, open its **revision history** to see each past version - who changed
-it and when - and **restore** any earlier one with a click. Restoring is itself recorded as
-a new revision, so you can always move forward or back without losing the thread. This is
-the same "versioned & reversible" guarantee that covers
+Every change to a skill's content is **versioned automatically**. From a skill's editor -
+in **Settings → Skills** for a global skill, or the project's **Skills** page for a
+project-scoped one - the **History** button lists every past version with who changed it, when,
+and the changelog for that edit. Select one to read the skill exactly as it stood then, with a
+banner and **View latest** to return; **restore** brings it back as the current version.
+Restoring is itself recorded as a new revision, so you can always move forward or back without
+losing the thread. This is the same "versioned & reversible" guarantee that covers
 [project documents and agent system prompts](/docs/concepts/documents-and-memory#version-history).
 
 ## Finding skills

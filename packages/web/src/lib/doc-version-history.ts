@@ -1,4 +1,20 @@
-import type { DocumentRevision } from '../components/revisions-panel';
+/**
+ * One revision row as every revision endpoint returns it — documents (which
+ * backs project docs, the project Custom Prompt and agent system prompts) and
+ * skills alike. The two tables are shape-compatible: `revision_number`,
+ * `content`, `change_summary`, `author_member_id` and `created_at` in both.
+ * `author_api_key_id` exists only on `document_revisions`, so it is optional.
+ */
+export interface RevisionRow {
+	id: string;
+	revision_number: number;
+	content: string;
+	change_summary: string;
+	author_name: string | null;
+	author_type?: string;
+	author_api_key_id?: string | null;
+	created_at: string;
+}
 
 /**
  * Builds the version timeline shown in the revision-history dialog.
@@ -41,7 +57,7 @@ export interface DocVersionHead {
 
 export function buildDocVersionHistory(
 	head: DocVersionHead,
-	revisions: DocumentRevision[] | undefined,
+	revisions: RevisionRow[] | undefined,
 ): DocVersionEntry[] {
 	const rows = revisions ?? []; // newest-first, as the API returns them
 	const entries: DocVersionEntry[] = [];
