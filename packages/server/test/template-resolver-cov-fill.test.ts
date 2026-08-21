@@ -203,12 +203,13 @@ describe('placeholder substitution', () => {
 			mode: 'placeholders',
 		});
 		expect(result).toContain('read_project_doc(filename)');
-		// A doc with a description renders "filename — description (updated date)".
+		// A doc with a description renders
+		// "filename — description (updated date, N chars)".
 		expect(result).toMatch(
-			/- described\.md — What this doc covers\. \(updated \d{4}-\d{2}-\d{2}\)/,
+			/- described\.md — What this doc covers\. \(updated \d{4}-\d{2}-\d{2}, \d+ chars\)/,
 		);
 		// A description-less doc renders bare — no em-dash.
-		expect(result).toMatch(/- bare-notes\.md \(updated \d{4}-\d{2}-\d{2}\)/);
+		expect(result).toMatch(/- bare-notes\.md \(updated \d{4}-\d{2}-\d{2}, \d+ chars\)/);
 		expect(result).not.toContain('bare-notes.md —');
 		expect(result).not.toContain('note body');
 	});

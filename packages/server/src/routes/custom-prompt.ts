@@ -1,14 +1,10 @@
 import { AuthType, DocumentType } from '@hezo/shared';
 import { Hono } from 'hono';
-import { trackBackground } from '../lib/background';
 import { resolveActorMemberId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
-import { logger } from '../logger';
-import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
-import { getDocument, listRevisions, restoreRevision, upsertDocument } from '../services/documents';
-
-const log = logger.child('custom-prompt');
+import { writeCustomPrompt } from '../services/custom-prompt';
+import { getDocument, listRevisions, restoreRevision } from '../services/documents';
 
 export const customPromptRoutes = new Hono<Env>();
 
@@ -32,35 +28,18 @@ customPromptRoutes.patch('/projects/:projectId/custom-prompt', async (c) => {
 		return err(c, 'INVALID_REQUEST', 'content is required', 400);
 	}
 
-	const authorMemberId = await resolveActorMemberId(db, auth, teamId);
-	const existing = await getDocument(db, {
-		type: DocumentType.TeamPreferences,
+	// Shared with the MCP tool so the role gate, the style guard and the coherence
+	// review can never apply on one path and not the other.
+	const result = await writeCustomPrompt(db, c.get('wsManager'), {
 		teamId,
-	});
-
-	const doc = await upsertDocument(db, c.get('wsManager'), {
-		scope: { type: DocumentType.TeamPreferences, teamId },
 		content: body.content,
 		changeSummary: body.change_summary,
-		authorMemberId,
+		auth,
 	});
+	if (result.status === 'denied') return err(c, 'FORBIDDEN', result.error, 403);
+	if (result.status === 'invalid') return err(c, 'INVALID_REQUEST', result.error, 400);
 
-	// The Custom Prompt reaches every agent's prompt, so a change warrants a team
-	// coherence review — regardless of who made it (the admin here, or an agent via MCP).
-	if ((existing?.content ?? '') !== body.content) {
-		const summary = body.change_summary
-			? `Project Custom Prompt updated: ${body.change_summary}`
-			: 'The project Custom Prompt was updated.';
-		trackBackground(
-			enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
-				changeSummary: summary,
-			}).catch((e) =>
-				log.error('Failed to enqueue coherence review after Custom Prompt update:', e),
-			),
-		);
-	}
-
-	return ok(c, doc.row, existing ? 200 : 201);
+	return ok(c, result.row, result.existed ? 200 : 201);
 });
 
 customPromptRoutes.get('/projects/:projectId/custom-prompt/revisions', async (c) => {

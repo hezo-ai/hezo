@@ -173,3 +173,72 @@ test('the help dialog explains compaction into long-term memory', async () => {
 		expect(document.body.textContent).toContain('maintained automatically');
 	});
 });
+
+// Chat memory is the one surface where a bad rewrite used to be unrecoverable:
+// compaction rewrites the whole field automatically, and nothing was snapshotted.
+// These cover the history that now backs it.
+test('an edit is snapshotted, readable in place, and restorable', async () => {
+	const seeded = { slug: '', agentId: '' };
+	const { findByTestId, findByRole, findByLabelText, user, router, container } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			const { db } = getTestContext();
+			const agent = await db.query<{ id: string }>(
+				`SELECT ma.id FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE m.team_id = $1 LIMIT 1`,
+				[ws.team.id],
+			);
+			seeded.slug = ws.internalSlug;
+			seeded.agentId = agent.rows[0].id;
+			await enableChatMemory(ws, seeded.agentId, 'operator deploys on Tuesdays');
+		},
+	});
+
+	await router.navigate({
+		to: '/projects/$projectId/agents/$agentId/chat-history',
+		params: { projectId: seeded.slug, agentId: seeded.agentId },
+	});
+
+	const editor = (await findByLabelText('Long-term chat memory')) as HTMLTextAreaElement;
+	await waitFor(() => expect(editor.value).toContain('operator deploys on Tuesdays'));
+
+	await user.clear(editor);
+	await user.type(editor, 'operator deploys on Thursdays');
+	await user.click(await findByTestId('chat-history-save'));
+	await waitFor(() =>
+		expect(
+			(
+				document.querySelector(
+					'textarea[aria-label="Long-term chat memory"]',
+				) as HTMLTextAreaElement
+			).value,
+		).toContain('Thursdays'),
+	);
+
+	// The version the edit replaced is readable before restoring it.
+	await user.click(await findByRole('button', { name: /revision history/i }));
+	await findByTestId('revision-history-dialog');
+	await user.click(await findByTestId('revision-view'));
+	await findByTestId('viewing-revision-banner');
+	expect((await findByTestId('chat-memory-revision-body')).textContent).toContain(
+		'operator deploys on Tuesdays',
+	);
+	// Read-only while viewing — the editor is gone, so nothing can save it back.
+	expect(container.querySelector('textarea[aria-label="Long-term chat memory"]')).toBeNull();
+
+	await user.click(await findByTestId('view-latest'));
+	await user.click(await findByRole('button', { name: /revision history/i }));
+	await user.click(await findByTestId('revision-restore'));
+	await user.click(await findByTestId('confirm-dialog-confirm'));
+
+	await waitFor(() =>
+		expect(
+			(
+				document.querySelector(
+					'textarea[aria-label="Long-term chat memory"]',
+				) as HTMLTextAreaElement
+			).value,
+		).toContain('operator deploys on Tuesdays'),
+	);
+});

@@ -438,8 +438,8 @@ describe('set_team_summary / set_agent_team_context authorization', () => {
 		expect(r.error).toContain('Access denied');
 	});
 
-	// Over-long content rejection is schema-enforced (.max(6000)) and covered by
-	// mcp-tools-extended.test.ts.
+	// Over-long content rejection runs in the handler, not the schema, so it can
+	// see the value it replaces; covered by mcp-tools-extended.test.ts.
 
 	it('get_agent_team_context returns the stored context', async () => {
 		const t = await agentToken(captainId, teamId);

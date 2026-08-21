@@ -123,6 +123,46 @@ describe('Team preferences', () => {
 		expect(revs[0].change_summary).toBe('Restored content from revision 1');
 	});
 
+	// The REST route and the MCP tool reach the same documents row. They used to
+	// diverge: the route ran neither the style guard nor the agent role check that
+	// update_project_custom_prompt enforced. Both now run on one shared write path.
+	it('rejects a style-guard error on the REST route, as the MCP tool does', async () => {
+		const before = await app.request(`/api/projects/${projectSlug}/custom-prompt`, {
+			headers: authHeader(token),
+		});
+		const priorContent = ((await before.json()).data?.content ?? '') as string;
+
+		const res = await app.request(`/api/projects/${projectSlug}/custom-prompt`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			// A backticked project-doc filename is inert where a bare one links.
+			body: JSON.stringify({ content: '- Always read `spec.md` before planning.' }),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.message).toContain('spec.md');
+
+		// Rejected, not stored — the content is unchanged.
+		const after = await app.request(`/api/projects/${projectSlug}/custom-prompt`, {
+			headers: authHeader(token),
+		});
+		expect(((await after.json()).data?.content ?? '') as string).toBe(priorContent);
+	});
+
+	it('refuses a Custom Prompt over the injected-text cap, on both entry points', async () => {
+		const oversize = `Convention.\n${'x'.repeat(12_001)}`;
+		const res = await app.request(`/api/projects/${projectSlug}/custom-prompt`, {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: oversize }),
+		});
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		// A refusal an agent can act on: it names the ceiling and the actual size.
+		expect(body.error.message).toContain('12000');
+		expect(body.error.message).toMatch(/consolidate/i);
+	});
+
 	it('returns 404 when restoring an unknown revision number', async () => {
 		const res = await app.request(`/api/projects/${projectSlug}/custom-prompt/restore`, {
 			method: 'POST',

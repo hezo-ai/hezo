@@ -238,6 +238,53 @@ its agent page), so you can seed it with preferences up front or prune stale ent
 size of the live window (how much recent conversation is kept before it's compacted) is set
 under **Settings → Chatbox**. See [Roles & the CEO](/docs/concepts/roles-and-coordination).
 
+Because compaction rewrites the whole memory in one go, every change is **versioned and
+restorable**, the same way documents and prompts are: the **History** button on that tab lists
+each version, shows you any past one in place, and restores the one you pick. The history also
+says who caused each change - your own edit, or an automatic compaction - so a compaction that
+summarised away something you wanted is one click from coming back.
+
+## Size limits on what reaches every run
+
+The memories that are injected **in full** carry a size ceiling, because each one is paid for on
+every run or every turn:
+
+| Memory | Limit |
+|---|---|
+| Project Custom Prompt | 12,000 characters |
+| Long-term chat memory | 12,000 characters |
+| Agent system prompt | 40,000 characters |
+| Task progress summary | 8,000 characters |
+| Agent team context | 6,000 characters |
+
+When a write goes past a limit it is **refused**, not trimmed - the reply names the ceiling and the
+current size and asks for consolidation, so the next attempt merges overlapping entries and drops
+guidance that no longer applies. Nothing is ever silently cut, because a rule that vanished from the
+end of a block would change how the team behaves with nobody knowing.
+
+**A limit never freezes what is already past it.** If one of these is over its ceiling - because it
+came from a team you installed, or was written before the limits existed - it stays editable
+**downwards**: any change that makes it shorter is accepted, however far over it still is, and only
+a change that makes it longer is refused. So you consolidate it a piece at a time instead of having
+to rewrite the whole thing in one go, and the ordinary rule resumes once it is back under.
+
+In the app, the editors for the Custom Prompt, an agent's system prompt and the chat memory show the
+current size against the ceiling as you type, and Save is unavailable while a change would break it.
+
+The limit belongs to the **surface**, not to whoever is writing: these blocks are injected in full on
+every run, so an agent and an admin editing the same field hit the same ceiling.
+
+**Setting a team up is exempt.** A team you install from the marketplace, and an agent hired through
+an approved proposal, are created with their prompts exactly as authored. The ceiling applies to
+edits made afterwards, so a roster can never fail to install because a role was written long. The
+largest prompt any team currently ships is well inside the limit, which leaves every new agent room
+for the rules the Coach adds over time. When that room does run out, the Coach consolidates the
+rules it has added rather than dropping the lesson, and it never touches the role's own
+instructions above them.
+
+Your task **descriptions** and **rules** are not capped. They aren't injected the same way, and long
+ones are shortened only where they appear in list views, never when they're stored.
+
 ## Custom Prompt
 
 Where the CEO's long-term chat memory steers the CEO, a project's **Custom Prompt** steers that project's workers.
@@ -245,9 +292,16 @@ The Custom Prompt is free-form **custom instructions applied to every agent in t
 house conventions, tone, standing do's and don'ts - set from the project's **Settings → Custom Prompt**
 page and injected in full into each agent's prompt on every run. It's the lighter-weight choice when the
 guidance applies to the whole roster rather than one role, and, like documents and system
-prompts, every edit is **versioned and restorable**. You maintain it yourself, and your coordinating
-agents (the CEO, the Coach, and the project's Captain) can update it too when a convention or lesson
-should reach the whole team at once.
+prompts, every edit is **versioned and restorable** - open its history from the **History** button
+beside the editor, read any past version in place, and restore the one you want. You maintain it
+yourself, and your coordinating agents (the CEO, the Coach, and the project's Captain) can update it
+too when a convention or lesson should reach the whole team at once.
+
+An agent changing part of the Custom Prompt uses `edit_project_custom_prompt`, which replaces one span
+and leaves the rest alone; `update_project_custom_prompt` replaces the whole thing and is what writes
+the first version. That split matters here for the same reason it does for documents: an agent that
+rewrites the whole prompt to add one convention can drop another one on the way past, and nothing
+would flag it. A span edit can't.
 
 ## Where each kind of knowledge goes
 

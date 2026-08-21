@@ -1,15 +1,28 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { History, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { RevisionHistoryDialog } from '../../../../../components/document-review/revision-history-dialog';
+import { ViewingRevisionBanner } from '../../../../../components/document-review/viewing-revision-banner';
+import {
+	InjectedTextCapNotice,
+	injectedTextCapBlocks,
+} from '../../../../../components/injected-text-cap-notice';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
+import { MarkdownProse } from '../../../../../components/markdown-prose';
 import { Button } from '../../../../../components/ui/button';
 import { HelpDialog } from '../../../../../components/ui/help-dialog';
 import { RelativeTime } from '../../../../../components/ui/relative-time';
 import {
 	useAgentChatMemory,
+	useAgentChatMemoryRevisions,
+	useRestoreAgentChatMemory,
 	useUpdateAgentChatMemory,
 } from '../../../../../hooks/use-agent-chat-memory';
 import type { ApiError } from '../../../../../lib/api';
+import {
+	buildDocVersionHistory,
+	type DocVersionEntry,
+} from '../../../../../lib/doc-version-history';
 
 function ChatHistoryHelp() {
 	return (
@@ -40,10 +53,26 @@ function ChatHistoryPage() {
 	const { projectId, agentId } = Route.useParams();
 	const { data, isLoading, error } = useAgentChatMemory(projectId, agentId);
 	const updateMemory = useUpdateAgentChatMemory(projectId, agentId);
+	const { data: revisions } = useAgentChatMemoryRevisions(projectId, agentId);
+	const restoreMemory = useRestoreAgentChatMemory(projectId, agentId);
 
 	const [value, setValue] = useState('');
 	const [saveError, setSaveError] = useState<string | null>(null);
+	const [historyOpen, setHistoryOpen] = useState(false);
+	// The whole entry, not just its number — the body is rendered from it.
+	const [viewingRevision, setViewingRevision] = useState<DocVersionEntry | null>(null);
 	const serverContent = data?.content ?? '';
+
+	const versionEntries = useMemo(
+		() =>
+			data
+				? buildDocVersionHistory(
+						{ content: data.content, updated_at: data.updated_at ?? '' },
+						revisions,
+					)
+				: [],
+		[data, revisions],
+	);
 
 	// Seed the editor from the server once loaded; re-sync when the stored value
 	// changes underneath us (e.g. an automatic compaction) and the field is clean.
@@ -78,30 +107,79 @@ function ChatHistoryPage() {
 					<h2 className="text-[13px] font-medium">Long-term chat memory</h2>
 					<ChatHistoryHelp />
 				</div>
-				{data?.updated_at && (
-					<span className="text-[11px] text-text-3" data-testid="chat-history-updated">
-						Updated <RelativeTime iso={data.updated_at} />
-					</span>
-				)}
+				<div className="flex items-center gap-2">
+					{data?.updated_at && (
+						<span className="text-[11px] text-text-3" data-testid="chat-history-updated">
+							Updated <RelativeTime iso={data.updated_at} />
+						</span>
+					)}
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => setHistoryOpen(true)}
+						data-testid="chat-memory-history"
+						aria-label="Revision history"
+					>
+						<History className="w-3.5 h-3.5" />
+						<span className="hidden sm:inline">History</span>
+					</Button>
+				</div>
 			</div>
 
-			<MarkdownEditor
-				value={value}
-				onChange={setValue}
-				ariaLabel="Long-term chat memory"
-				projectId={projectId}
-				projectSlug={projectId}
-				rows={18}
-				emptyPreviewText="_Nothing recorded yet. As the conversation grows, the assistant will compact older messages into memory here._"
-				placeholder="The assistant maintains this automatically as the conversation is compacted."
-			/>
+			{viewingRevision && viewingRevision.revisionNumber !== null && (
+				<ViewingRevisionBanner
+					revisionNumber={viewingRevision.revisionNumber}
+					timestamp={viewingRevision.timestamp}
+					authorName={viewingRevision.authorName}
+					onViewLatest={() => setViewingRevision(null)}
+				/>
+			)}
+
+			{viewingRevision ? (
+				/*
+				 * Read-only, and never loaded into `value`: `dirty` drives Save, so
+				 * seeding a past version here would arm Save to write it back.
+				 */
+				<div
+					className="min-h-[240px] rounded-md border border-border bg-surface-2 px-4 py-3"
+					data-testid="chat-memory-revision-body"
+				>
+					<MarkdownProse projectId={projectId} projectSlug={projectId}>
+						{viewingRevision.content || '_(this version was empty)_'}
+					</MarkdownProse>
+				</div>
+			) : (
+				<MarkdownEditor
+					value={value}
+					onChange={setValue}
+					ariaLabel="Long-term chat memory"
+					projectId={projectId}
+					projectSlug={projectId}
+					rows={18}
+					emptyPreviewText="_Nothing recorded yet. As the conversation grows, the assistant will compact older messages into memory here._"
+					placeholder="The assistant maintains this automatically as the conversation is compacted."
+				/>
+			)}
+
+			{!viewingRevision && (
+				<InjectedTextCapNotice
+					kind="chat_memory"
+					content={value}
+					savedLength={serverContent.length}
+				/>
+			)}
 
 			<div className="flex items-center gap-2">
 				<Button
 					size="sm"
 					data-testid="chat-history-save"
 					onClick={handleSave}
-					disabled={!dirty || updateMemory.isPending}
+					disabled={
+						!dirty ||
+						updateMemory.isPending ||
+						viewingRevision !== null ||
+						injectedTextCapBlocks('chat_memory', value, serverContent.length)
+					}
 				>
 					{updateMemory.isPending && <Loader2 className="w-3 h-3 animate-spin" />} Save
 				</Button>
@@ -111,6 +189,25 @@ function ChatHistoryPage() {
 					</span>
 				)}
 			</div>
+
+			<RevisionHistoryDialog
+				open={historyOpen}
+				onOpenChange={setHistoryOpen}
+				label="Long-term chat memory"
+				entries={versionEntries}
+				projectId={projectId}
+				projectSlug={projectId}
+				viewingRevision={viewingRevision?.revisionNumber ?? null}
+				onView={(entry) => {
+					setViewingRevision(entry.isCurrent ? null : entry);
+					setHistoryOpen(false);
+				}}
+				onRestore={async (rev) => {
+					await restoreMemory.mutateAsync(rev);
+					setViewingRevision(null);
+				}}
+				isRestoring={restoreMemory.isPending}
+			/>
 		</div>
 	);
 }

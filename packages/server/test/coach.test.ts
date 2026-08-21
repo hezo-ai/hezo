@@ -1,3 +1,4 @@
+import { INJECTED_TEXT_CAPS } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -298,6 +299,33 @@ describe('Coach review prompt builder', () => {
 		expect(template).toContain('`@@admin` for the admin');
 		expect(template).toContain('@@admin approved on first review');
 	});
+
+	it('tells the coach to consolidate, not skip, when a prompt write is refused for size', async () => {
+		const res = await db.query<{ system_prompt_template: string }>(
+			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",
+		);
+		const template = res.rows[0].system_prompt_template;
+		// The Coach's whole job is appending, so an injected-text cap eventually
+		// refuses it. Without this rule the refusal collides with "never remove"
+		// plus "when unsure, skip it", and the Coach quietly stops learning.
+		expect(template).toContain(
+			'When an update is refused for size, consolidate rather than drop the lesson',
+		);
+		// The carve-out is bounded: it may compact what it wrote, never the role.
+		expect(template).toContain("Never rewrite or remove the role's own instructions");
+		expect(template).toContain('Consolidate only `## Learned Rules`');
+	});
+
+	it('points the coach at the span-edit tool for an existing Custom Prompt', async () => {
+		const res = await db.query<{ system_prompt_template: string }>(
+			"SELECT system_prompt_template FROM agent_types WHERE slug = 'coach'",
+		);
+		const template = res.rows[0].system_prompt_template;
+		// From the shared guidance-placement partial: a full rewrite is how a
+		// convention gets silently dropped, so it is the first-version path only.
+		expect(template).toContain('Change existing guidance with `edit_project_custom_prompt`');
+		expect(template).toContain('so it has a size ceiling');
+	});
 });
 
 describe('MCP tools registration', () => {
@@ -370,6 +398,137 @@ describe('Agent system-prompt access', () => {
 		);
 		const promptDoc = (await promptRes.json()).data;
 		expect(promptDoc.content).toContain('Captain coherence rewrite');
+	});
+});
+
+// The Coach's whole job is appending to these, so the ceiling is the one thing
+// that eventually stops it. What must hold: setting a team up is exempt, editing
+// afterwards is not, and both writers of the field are refused alike.
+describe('the agent system-prompt ceiling', () => {
+	// Distinct lines, because the style guard errors on a duplicated bullet.
+	const oversized = Array.from(
+		{ length: 1200 },
+		(_, i) => `- Rule ${i}: keep the change small and name the file you touched.`,
+	).join('\n');
+
+	it('lets a new agent be created with a prompt over the ceiling', async () => {
+		// The provisioning path (`initAgentSystemPrompt`) is deliberately uncapped:
+		// a roster must never fail to install because a role was authored long, and
+		// nobody in the run authored it. The same call backs an approved hire.
+		expect(oversized.length).toBeGreaterThan(INJECTED_TEXT_CAPS.agent_system_prompt);
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Longhand Specialist', system_prompt: oversized }),
+		});
+		expect(res.status).toBe(201);
+		const created = (await res.json()).data;
+
+		const promptRes = await app.request(
+			`/api/projects/${projectSlug}/agents/${created.id}/system-prompt`,
+			{ headers: authHeader(adminToken) },
+		);
+		expect((await promptRes.json()).data.content.length).toBe(oversized.length);
+	});
+
+	it('refuses an oversized rewrite through the tool the Coach uses', async () => {
+		const res = await app.request('/mcp', {
+			method: 'POST',
+			headers: { ...authHeader(captainToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				jsonrpc: '2.0',
+				method: 'tools/call',
+				id: 1,
+				params: {
+					name: 'update_agent_system_prompt',
+					arguments: {
+						project: projectId,
+						agent_id: architectId,
+						new_system_prompt: oversized,
+						change_summary: 'one learned rule too many',
+					},
+				},
+			}),
+		});
+		const payload = JSON.parse((await res.json()).result.content?.[0]?.text ?? '{}');
+		// Refused with both numbers, so the Coach's retry is a compaction.
+		expect(payload.error).toContain(String(INJECTED_TEXT_CAPS.agent_system_prompt));
+		expect(payload.error).toContain(String(oversized.length));
+		expect(payload.applied).toBeUndefined();
+	});
+
+	// The deadlock this guards: a prompt provisioned over the ceiling could only be
+	// fixed by one all-at-once rewrite - the read-whole/rewrite-whole loop the span
+	// edits exist to avoid, forced at the worst moment. Shorter-than-now is always
+	// accepted, so it can be walked down instead.
+	it('lets an over-ceiling prompt be consolidated downwards, one edit at a time', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Overgrown Analyst', system_prompt: oversized }),
+		});
+		expect(res.status).toBe(201);
+		const agentId = (await res.json()).data.id;
+
+		const write = async (prompt: string) => {
+			const r = await app.request('/mcp', {
+				method: 'POST',
+				headers: { ...authHeader(captainToken), 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					method: 'tools/call',
+					id: 1,
+					params: {
+						name: 'update_agent_system_prompt',
+						arguments: {
+							project: projectId,
+							agent_id: agentId,
+							new_system_prompt: prompt,
+							change_summary: 'consolidating learned rules',
+						},
+					},
+				}),
+			});
+			return JSON.parse((await r.json()).result.content?.[0]?.text ?? '{}');
+		};
+
+		// Growing it is refused even though it was already over - the ceiling still
+		// bounds growth, it just does not freeze what is past it.
+		const grown = await write(`${oversized}\n- Rule 1200: one more.`);
+		expect(grown.error).toMatch(/only downwards/);
+		expect(grown.applied).toBeUndefined();
+
+		// Two passes that each shrink it but are both still over the ceiling.
+		const half = oversized.slice(0, oversized.length - 4_000);
+		expect(half.length).toBeGreaterThan(INJECTED_TEXT_CAPS.agent_system_prompt);
+		expect((await write(half)).applied).toBe(true);
+
+		const smaller = half.slice(0, half.length - 4_000);
+		expect(smaller.length).toBeGreaterThan(INJECTED_TEXT_CAPS.agent_system_prompt);
+		expect((await write(smaller)).applied).toBe(true);
+
+		// A step backwards from the new size is refused, so progress cannot be undone.
+		expect((await write(half)).error).toMatch(/only downwards/);
+
+		// And the pass that finally lands under the ceiling is an ordinary write.
+		expect((await write(smaller.slice(0, 1_000))).applied).toBe(true);
+		const promptRes = await app.request(
+			`/api/projects/${projectSlug}/agents/${agentId}/system-prompt`,
+			{ headers: authHeader(adminToken) },
+		);
+		expect((await promptRes.json()).data.content.length).toBe(1_000);
+	});
+
+	it('refuses the same content on the admin route, because the ceiling is the surface', async () => {
+		const res = await app.request(`/api/projects/${projectSlug}/agents/${architectId}`, {
+			method: 'PATCH',
+			headers: { ...authHeader(adminToken), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ system_prompt: oversized }),
+		});
+		expect(res.status).toBe(400);
+		expect(JSON.stringify(await res.json())).toContain(
+			String(INJECTED_TEXT_CAPS.agent_system_prompt),
+		);
 	});
 });
 

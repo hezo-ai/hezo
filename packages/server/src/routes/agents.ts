@@ -7,6 +7,7 @@ import {
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
 	CEO_AGENT_SLUG,
+	checkInjectedTextCap,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
 	DEFAULT_MONTHLY_BUDGET_CENTS,
@@ -16,6 +17,7 @@ import {
 	HeartbeatRunStatus,
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
+	InjectedTextCapError,
 	inferGender,
 	isAgentEffort,
 	isAllowedProjectIconStoredMime,
@@ -66,7 +68,12 @@ import {
 	fetchAgentSystemPromptForBatch,
 	type SystemPromptMode,
 } from '../services/agent-system-prompts';
-import { getChatMemory, upsertChatMemory } from '../services/chat-memory';
+import {
+	getChatMemory,
+	listChatMemoryRevisions,
+	restoreChatMemoryRevision,
+	upsertChatMemory,
+} from '../services/chat-memory';
 import {
 	enqueueSetupReviewForNewAgents,
 	enqueueTeamCoherenceReviewTask,
@@ -719,8 +726,58 @@ agentsRoutes.put('/projects/:projectId/agents/:agentId/chat-memory', async (c) =
 	if (typeof body.content !== 'string') {
 		return err(c, 'INVALID_REQUEST', 'content must be a string', 400);
 	}
-	const mem = await upsertChatMemory(db, agentId, body.content);
-	return ok(c, { content: mem.content, updated_at: mem.updated_at });
+	try {
+		const editorMemberId = await resolveActorMemberId(db, c.get('auth'), teamId);
+		const mem = await upsertChatMemory(
+			db,
+			agentId,
+			body.content,
+			'Edited by the admin',
+			editorMemberId,
+		);
+		return ok(c, { content: mem.content, updated_at: mem.updated_at });
+	} catch (e) {
+		if (e instanceof InjectedTextCapError) return err(c, 'INVALID_REQUEST', e.message, 400);
+		throw e;
+	}
+});
+
+agentsRoutes.get('/projects/:projectId/agents/:agentId/chat-memory/revisions', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	if (!(await isChatEnabledAgent(db, agentId))) {
+		return err(c, 'NOT_FOUND', 'Agent has no chat memory', 404);
+	}
+	return ok(c, await listChatMemoryRevisions(db, agentId));
+});
+
+agentsRoutes.post('/projects/:projectId/agents/:agentId/chat-memory/restore', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const auth = c.get('auth');
+	// Compaction is automatic, so an agent could otherwise undo an operator's own
+	// correction by restoring. Restoring stays the admin's call, as it is for docs.
+	if (auth.type === AuthType.Agent) {
+		return err(c, 'FORBIDDEN', 'Only the admin can restore revisions', 403);
+	}
+	const agentId = await resolveAgentId(db, teamId, c.req.param('agentId'));
+	if (!agentId) return err(c, 'NOT_FOUND', 'Agent not found', 404);
+	const body = await c.req
+		.json<{ revision_number?: unknown }>()
+		.catch(() => ({}) as { revision_number?: unknown });
+	if (typeof body.revision_number !== 'number') {
+		return err(c, 'INVALID_REQUEST', 'revision_number is required', 400);
+	}
+	const restoredBy = await resolveActorMemberId(db, auth, teamId);
+	const restored = await restoreChatMemoryRevision(db, agentId, body.revision_number, restoredBy);
+	if (!restored) return err(c, 'NOT_FOUND', 'Revision not found', 404);
+	return ok(c, { content: restored.content, updated_at: restored.updated_at });
 });
 
 agentsRoutes.get('/projects/:projectId/agents/:agentId/system-prompt', async (c) => {
@@ -1127,6 +1184,21 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 	}
 
 	if (body.system_prompt !== undefined) {
+		// Capped for the admin too. The ceiling is a property of the surface — this
+		// text is injected in full into every run of this agent — not of who wrote it.
+		// The current length keeps a prompt that is already over it editable
+		// downwards, which is what an admin consolidating one actually does.
+		const currentPrompt = await getDocument(db, {
+			type: DocumentType.AgentSystemPrompt,
+			teamId,
+			memberAgentId: agentId,
+		});
+		const tooLarge = checkInjectedTextCap(
+			'agent_system_prompt',
+			body.system_prompt,
+			currentPrompt?.content.length,
+		);
+		if (tooLarge) return err(c, 'INVALID_REQUEST', tooLarge.error, 400);
 		await upsertDocument(db, undefined, {
 			scope: {
 				type: DocumentType.AgentSystemPrompt,

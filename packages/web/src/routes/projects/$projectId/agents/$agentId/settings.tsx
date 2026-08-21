@@ -19,6 +19,10 @@ import { agentDisplayName } from '../../../../../components/agent-identity-toolt
 import { BudgetWindowsEditor } from '../../../../../components/budget/budget-windows-editor';
 import { RevisionHistoryDialog } from '../../../../../components/document-review/revision-history-dialog';
 import { ViewingRevisionBanner } from '../../../../../components/document-review/viewing-revision-banner';
+import {
+	InjectedTextCapNotice,
+	injectedTextCapBlocks,
+} from '../../../../../components/injected-text-cap-notice';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
 import { MarkdownProse } from '../../../../../components/markdown-prose';
 import { SystemPromptReference } from '../../../../../components/system-prompt-reference';
@@ -268,6 +272,13 @@ function AgentSettingsPage() {
 							isPreviewLoading={isPreviewLoading}
 						/>
 					)}
+					{!viewingRevision && (
+						<InjectedTextCapNotice
+							kind="agent_system_prompt"
+							content={systemPrompt}
+							savedLength={(promptDoc?.content ?? '').length}
+						/>
+					)}
 				</div>
 
 				<label className="flex flex-col gap-1.5">
@@ -363,7 +374,18 @@ function AgentSettingsPage() {
 				/>
 
 				<div className="flex justify-end gap-2 mt-2">
-					<Button type="submit" disabled={updateAgent.isPending || viewingRevision !== null}>
+					<Button
+						type="submit"
+						disabled={
+							updateAgent.isPending ||
+							viewingRevision !== null ||
+							injectedTextCapBlocks(
+								'agent_system_prompt',
+								systemPrompt,
+								(promptDoc?.content ?? '').length,
+							)
+						}
+					>
 						{updateAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 						Save Changes
 					</Button>

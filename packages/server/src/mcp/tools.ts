@@ -25,6 +25,7 @@ import {
 	ConnectorTransport,
 	CredentialInputType,
 	CredentialKind,
+	checkInjectedTextCap,
 	connectorOAuthStatus,
 	credentialKindRequiresAllowedHosts,
 	DEFAULT_TEAM_ID,
@@ -36,7 +37,9 @@ import {
 	type GoalHealth,
 	getConnectorCapability,
 	hasFixedReportsTo,
+	INJECTED_TEXT_CAPS,
 	INSTANCE_AGENT_SLUGS,
+	InjectedTextCapError,
 	inferGender,
 	isAllowedAttachmentMime,
 	isMarkdownDocSlug,
@@ -69,7 +72,7 @@ import {
 	checkHumanNameAvailable,
 	isNameOnlyRole,
 } from '../lib/agent-identity';
-import { isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
+import { canCoordinateTeam, isHqInstanceAgent, isVirtualHqMemberInTeam } from '../lib/agent-roles';
 import { archivedAssetHolderId, upsertProjectAsset } from '../lib/asset-name';
 import { assetSearchTextFromBlob } from '../lib/asset-search-text';
 import { assetSortOrderBy } from '../lib/asset-sort';
@@ -146,6 +149,7 @@ import {
 } from '../services/connector-registry';
 import { validateApiConnectorConfig } from '../services/connectors/connections';
 import type { ContainerDeps } from '../services/containers';
+import { writeCustomPrompt } from '../services/custom-prompt';
 import { enqueueTeamCoherenceReviewTask } from '../services/description-tasks';
 import {
 	getAgentSystemPrompt,
@@ -1913,8 +1917,10 @@ export function registerTools(
 				status: string;
 				assignee_id: string | null;
 				parent_task_id: string | null;
+				progress_summary: string | null;
 			}>(
-				'SELECT title, description, status, assignee_id, parent_task_id FROM tasks WHERE id = $1',
+				`SELECT title, description, status, assignee_id, parent_task_id, progress_summary
+				 FROM tasks WHERE id = $1`,
 				[taskId],
 			);
 			const currentRow = currentRowResult.rows[0];
@@ -2041,6 +2047,14 @@ export function registerTools(
 					idx++;
 					continue;
 				} else if (key === 'progress_summary') {
+					// The current length keeps a summary written before this ceiling
+					// existed shrinkable, rather than frozen at whatever size it is.
+					const oversize = checkInjectedTextCap(
+						'task_progress_summary',
+						String(val ?? ''),
+						currentRow?.progress_summary?.length,
+					);
+					if (oversize) return { error: oversize.error };
 					sets.push(`progress_summary = $${idx}`);
 					params.push(val);
 					idx++;
@@ -4740,6 +4754,20 @@ export function registerTools(
 			const targetSlug = agentCheck.rows[0].slug;
 			// The house register: mechanical violations reject, judgement calls come
 			// back as an advisory on the successful write (see prompt-style-guard).
+			// The current length goes in so a prompt provisioned over the ceiling can
+			// be consolidated downwards rather than being unwritable.
+			const currentPrompt = await getDocument(db, {
+				type: DocumentType.AgentSystemPrompt,
+				teamId,
+				memberAgentId: agentId,
+			});
+			const tooLarge = checkInjectedTextCap(
+				'agent_system_prompt',
+				args.new_system_prompt as string,
+				currentPrompt?.content.length,
+			);
+			if (tooLarge) return { error: tooLarge.error };
+
 			const styleError = authoredPromptError(args.new_system_prompt as string);
 			if (styleError) return { error: styleError };
 
@@ -4839,6 +4867,21 @@ export function registerTools(
 					continue;
 				}
 				const slug = agentCheck.rows[0].slug;
+				const currentPrompt = await getDocument(db, {
+					type: DocumentType.AgentSystemPrompt,
+					teamId,
+					memberAgentId: agentId,
+				});
+				const tooLarge = checkInjectedTextCap(
+					'agent_system_prompt',
+					u.new_system_prompt,
+					currentPrompt?.content.length,
+				);
+				if (tooLarge) {
+					results.push({ index: i, agent_id: u.agent_id, ok: false, error: tooLarge.error });
+					continue;
+				}
+
 				const styleError = authoredPromptError(u.new_system_prompt);
 				if (styleError) {
 					results.push({ index: i, agent_id: u.agent_id, ok: false, error: styleError });
@@ -4896,7 +4939,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_project_custom_prompt',
-		"Replace this project's Custom Prompt - the project-wide instruction block (the project context / \"preferences\") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) - it saves editing each agent's prompt one by one. The content you pass REPLACES the whole value, so call get_project_custom_prompt first and extend it. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.",
+		"Replace this project's Custom Prompt - the project-wide instruction block (the project context / \"preferences\") injected verbatim into every agent's system prompt in this project. Reach for this when guidance should apply to ALL of the project's agents from the very start of every run (a shared convention, standard, or fact) - it saves editing each agent's prompt one by one. This sends the WHOLE value and replaces it, so prefer edit_project_custom_prompt for any change to existing guidance - it sends only the span you are changing, so one bad rewrite cannot drop conventions you meant to keep. Reach for this tool to author the first version, or to restructure the whole thing deliberately; when you do, call get_project_custom_prompt first and extend what is there. Applied immediately; a revision snapshot is stored so the admin can restore previous versions. Only callable by the CEO, Coach, or the project's Captain.",
 		{
 			project: projectArg(),
 			content: z
@@ -4914,50 +4957,90 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { teamId } = scope;
 
-			const allowed =
-				(await canCoordinateTeam(db, auth, teamId)) || (await isHqInstanceAgent(db, auth));
-			if (!allowed) {
+			// Shared with the REST route so the role gate, the style guard and the
+			// coherence review can never apply on one path and not the other.
+			const result = await writeCustomPrompt(db, wsManager, {
+				teamId,
+				content: args.content as string,
+				changeSummary: args.change_summary as string | undefined,
+				auth,
+			});
+			if (result.status !== 'written') return { error: result.error };
+
+			return {
+				applied: true,
+				document_id: result.row.id,
+				length: (args.content as string).length,
+				...(result.warning ? { warning: result.warning } : {}),
+			};
+		},
+		db,
+		{ write: true, audience: 'coordinator' },
+	);
+
+	tool(
+		server,
+		'edit_project_custom_prompt',
+		"Replace one span of this project's Custom Prompt, leaving the rest untouched. Prefer this over update_project_custom_prompt for any change to existing guidance: it sends only the text you are changing, so a rewrite cannot silently drop a convention you meant to keep, and the argument stays proportional to the edit rather than to the whole prompt. `old_string` must match the current text EXACTLY, including indentation and line breaks: call get_project_custom_prompt first and copy the span verbatim rather than retyping it. It must also be unique - if it matches several places the call is refused, so extend it with surrounding lines until it is unique, or pass replace_all to change every match. The result returns the applied hunk with surrounding context plus the new length, so you can confirm what landed without reading it back. Records a revision, and files a team-coherence review when the content really changed. Only callable by the CEO, Coach, or the project's Captain.",
+		{
+			project: projectArg(),
+			old_string: z
+				.string()
+				.describe(
+					'The exact text to replace, copied verbatim from the Custom Prompt (including indentation and line breaks). Must be unique unless replace_all is set.',
+				),
+			new_string: z
+				.string()
+				.describe('The text to put in its place. May be empty to delete the span.'),
+			replace_all: z
+				.boolean()
+				.optional()
+				.describe(
+					'Replace every occurrence of `old_string` rather than requiring it to be unique. Use for a rename that legitimately recurs; otherwise prefer extending `old_string` so the edit is unambiguous.',
+				),
+			change_summary: z
+				.string()
+				.optional()
+				.describe('Short summary of what changed and why (stored on the revision).'),
+		},
+		async (args, db, auth) => {
+			const scope = await resolveScope(db, auth, args);
+			if ('error' in scope) return scope;
+			const { teamId } = scope;
+
+			const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
+			if (!prior?.content) {
 				return {
 					error:
-						'Access denied: only the CEO, Coach, or Captain can update the project Custom Prompt',
+						'This project has no Custom Prompt yet. edit_project_custom_prompt changes existing guidance; author the first version with update_project_custom_prompt.',
 				};
 			}
 
-			// The Custom Prompt is injected verbatim into every agent's prompt, so it
-			// is held to the same register as one.
-			const styleError = authoredPromptError(args.content as string);
-			if (styleError) return { error: styleError };
+			const edited = applyStringEdit(
+				prior.content,
+				args.old_string as string,
+				args.new_string as string,
+				{ replaceAll: args.replace_all === true },
+			);
+			if (!edited.ok) return { error: edited.error };
 
-			const prior = await getDocument(db, { type: DocumentType.TeamPreferences, teamId });
-			const authorMemberId = await resolveActorMemberId(db, auth, teamId);
-			const doc = await upsertDocument(db, wsManager, {
-				scope: { type: DocumentType.TeamPreferences, teamId },
-				content: args.content as string,
+			// The shared write path: same role gate, style guard and coherence review
+			// as a full rewrite, so an edit cannot slip past a check a replace runs.
+			const result = await writeCustomPrompt(db, wsManager, {
+				teamId,
+				content: edited.content,
 				changeSummary: args.change_summary as string | undefined,
-				authorMemberId,
+				auth,
 			});
+			if (result.status !== 'written') return { error: result.error };
 
-			// The Custom Prompt reaches every agent's prompt, so a real change warrants
-			// a team coherence review (same as an agent-prompt edit).
-			if ((prior?.content ?? '') !== (args.content as string)) {
-				const summary = args.change_summary
-					? `Project Custom Prompt updated: ${args.change_summary as string}`
-					: 'The project Custom Prompt was updated.';
-				trackBackground(
-					enqueueTeamCoherenceReviewTask(db, teamId, 'custom_prompt_updated', {
-						changeSummary: summary,
-					}).catch((e) =>
-						log.error('Failed to enqueue coherence review after Custom Prompt update:', e),
-					),
-				);
-			}
-
-			const styleWarning = authoredPromptWarning(args.content as string);
 			return {
-				applied: true,
-				document_id: doc.row.id,
-				length: (args.content as string).length,
-				...(styleWarning ? { warning: styleWarning } : {}),
+				edited: true,
+				document_id: result.row.id,
+				replacements: edited.replacements,
+				length: result.row.content.length,
+				hunk: edited.hunk,
+				...(result.warning ? { warning: result.warning } : {}),
 			};
 		},
 		db,
@@ -5182,7 +5265,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_team_context',
-		"Save the team-relationships context for an agent (≤6000 chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the Captain of the same team.",
+		`Save the team-relationships context for an agent (≤${INJECTED_TEXT_CAPS.agent_team_context} chars, plain prose, second-person 'you', describes how this agent relates to its manager, direct reports, peers, indirect reports, and humans). This blob is injected into the agent's system prompt at the start of every run. Only callable by the Captain of the same team.`,
 		{
 			project: projectArg(),
 			agent_id: z.string().describe('Target agent - its slug (e.g. "engineer") or member ID'),
@@ -5190,8 +5273,7 @@ export function registerTools(
 				.string()
 				.trim()
 				.min(1, 'content must be non-empty')
-				.max(6000, 'content too long (max 6000)')
-				.describe('The new team_context, ≤6000 chars'),
+				.describe(`The new team_context, ≤${INJECTED_TEXT_CAPS.agent_team_context} chars`),
 		},
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
@@ -5202,13 +5284,29 @@ export function registerTools(
 				return { error: 'Access denied: only the Captain can update agent team contexts' };
 			}
 
-			// Length/non-empty enforced by the schema; `.trim()` already trimmed it.
+			// Non-empty enforced by the schema; `.trim()` already trimmed it.
 			const content = (args.content as string).trim();
 
 			// Accept a slug or member ID; the team_id filter scopes the write so an HQ
 			// agent (resolveAgentId's fallback) can't be written through this team.
 			const agentId = await resolveAgentId(db, teamId, args.agent_id as string);
 			if (!agentId) return { error: 'Agent not found in this team' };
+
+			// The ceiling is checked here rather than as a schema `.max()` so it can
+			// see the value being replaced: provisioning writes this field uncapped,
+			// so one that starts over the line must stay editable downwards.
+			const current = await db.query<{ team_context: string | null }>(
+				`SELECT ma.team_context FROM member_agents ma JOIN members m ON m.id = ma.id
+				 WHERE ma.id = $1 AND m.team_id = $2`,
+				[agentId, teamId],
+			);
+			const tooLarge = checkInjectedTextCap(
+				'agent_team_context',
+				content,
+				current.rows[0]?.team_context?.length,
+			);
+			if (tooLarge) return { error: tooLarge.error };
+
 			const r = await db.query<{ id: string }>(
 				`UPDATE member_agents SET team_context = $1, updated_at = now()
 				 WHERE id = $2 AND id IN (
@@ -5229,7 +5327,7 @@ export function registerTools(
 	tool(
 		server,
 		'set_agent_team_contexts',
-		`Save team-relationships contexts for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's context together. Same rules and caller as set_agent_team_context (the Captain of the same team); each content is ≤6000 chars of plain second-person prose. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_team_context in a loop.`,
+		`Save team-relationships contexts for MULTIPLE agents in one call (max ${MAX_BATCH_AGENT_SYSTEM_PROMPTS}) - the preferred way during a coherence review, which rewrites every affected agent's context together. Same rules and caller as set_agent_team_context (the Captain of the same team); each content is ≤${INJECTED_TEXT_CAPS.agent_team_context} chars of plain second-person prose. Returns a per-item result so one bad agent_id does not lose the rest of the batch. Prefer this over calling set_agent_team_context in a loop.`,
 		{
 			project: projectArg(),
 			updates: z
@@ -5240,8 +5338,9 @@ export function registerTools(
 							.string()
 							.trim()
 							.min(1, 'content must be non-empty')
-							.max(6000, 'content too long (max 6000)')
-							.describe('The new team_context for this agent, ≤6000 chars'),
+							.describe(
+								`The new team_context for this agent, ≤${INJECTED_TEXT_CAPS.agent_team_context} chars`,
+							),
 					}),
 				)
 				.min(1)
@@ -5262,17 +5361,42 @@ export function registerTools(
 			for (let i = 0; i < updates.length; i++) {
 				const u = updates[i];
 				const agentId = await resolveAgentId(db, teamId, u.agent_id);
-				const r = agentId
-					? await db.query<{ id: string; slug: string }>(
-							`UPDATE member_agents SET team_context = $1, updated_at = now()
-							 WHERE id = $2 AND id IN (
-							   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
-							 )
-							 RETURNING id, slug`,
-							[u.content.trim(), agentId, teamId],
+				const current = agentId
+					? await db.query<{ team_context: string | null }>(
+							`SELECT ma.team_context FROM member_agents ma JOIN members m ON m.id = ma.id
+							 WHERE ma.id = $1 AND m.team_id = $2`,
+							[agentId, teamId],
 						)
 					: null;
-				if (!agentId || !r || r.rows.length === 0) {
+				if (!agentId || !current || current.rows.length === 0) {
+					results.push({
+						index: i,
+						agent_id: u.agent_id,
+						ok: false,
+						error: 'Agent not found in this team',
+					});
+					continue;
+				}
+				// Per item, so one over-ceiling context does not lose the rest of the
+				// batch — the same reason the prompt batch refuses per item.
+				const tooLarge = checkInjectedTextCap(
+					'agent_team_context',
+					u.content.trim(),
+					current.rows[0].team_context?.length,
+				);
+				if (tooLarge) {
+					results.push({ index: i, agent_id: u.agent_id, ok: false, error: tooLarge.error });
+					continue;
+				}
+				const r = await db.query<{ id: string; slug: string }>(
+					`UPDATE member_agents SET team_context = $1, updated_at = now()
+					 WHERE id = $2 AND id IN (
+					   SELECT m.id FROM members m WHERE m.id = $2 AND m.team_id = $3
+					 )
+					 RETURNING id, slug`,
+					[u.content.trim(), agentId, teamId],
+				);
+				if (r.rows.length === 0) {
 					results.push({
 						index: i,
 						agent_id: u.agent_id,
@@ -6902,7 +7026,16 @@ export function registerTools(
 					error: 'update_chat_memory can only be called by an agent updating its own memory',
 				};
 			}
-			const mem = await upsertChatMemory(db, auth.memberId, args.content as string);
+			let mem: Awaited<ReturnType<typeof upsertChatMemory>>;
+			try {
+				mem = await upsertChatMemory(db, auth.memberId, args.content as string);
+			} catch (e) {
+				// A dead-end refusal would wedge the chat, since compaction is what
+				// drains the window — the message names the ceiling so the retry is a
+				// shorter rewrite.
+				if (e instanceof InjectedTextCapError) return { error: e.message };
+				throw e;
+			}
 			return { written: true, updated_at: mem.updated_at };
 		},
 		db,
@@ -7649,22 +7782,4 @@ export function registerTools(
 	);
 
 	return [...registeredTools];
-}
-
-/**
- * Whether the caller may perform team-coordination writes (summaries, team
- * contexts, prompts) for `teamId`. True for the team's own Captain and for any
- * HQ virtual member running inside the team — the latter covers the CEO/Coach
- * doing cross-team setup and coherence work.
- */
-async function canCoordinateTeam(db: Db, auth: AuthInfo, teamId: string): Promise<boolean> {
-	if (auth.type !== AuthType.Agent) return false;
-	if (await isVirtualHqMemberInTeam(db, auth, teamId)) return true;
-	const r = await db.query<{ slug: string }>(
-		`SELECT ma.slug FROM member_agents ma
-		 JOIN members m ON m.id = ma.id
-		 WHERE ma.id = $1 AND m.team_id = $2`,
-		[auth.memberId, teamId],
-	);
-	return r.rows[0]?.slug === CAPTAIN_AGENT_SLUG;
 }

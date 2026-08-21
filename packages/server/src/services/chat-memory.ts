@@ -1,5 +1,6 @@
-import { ChatMessageRole } from '@hezo/shared';
+import { ChatMessageRole, checkInjectedTextCap, InjectedTextCapError } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { withTransaction } from '../lib/sql';
 
 /**
  * Per-agent long-term chat memory + the byte-window math that drives automatic
@@ -28,20 +29,123 @@ export async function getChatMemory(db: Db, memberId: string): Promise<ChatMemor
 	return r.rows[0] ?? null;
 }
 
-/** Overwrite an agent's long-term memory (full rewrite; no revision history). */
+export interface ChatMemoryRevision {
+	id: string;
+	revision_number: number;
+	content: string;
+	change_summary: string;
+	/** Display name of the operator who wrote it; null for automatic compaction. */
+	author_name: string | null;
+	/** 'admin' when a person wrote it; 'agent' for the agent's own compaction. */
+	author_type: string;
+	created_at: string;
+}
+
+/**
+ * Overwrite an agent's long-term memory, snapshotting what it replaced.
+ *
+ * The write is a full rewrite — the agent hands back the whole revised markdown —
+ * and it happens automatically whenever the live message window overflows its cap.
+ * A compaction that over-summarises would otherwise destroy standing operator
+ * preferences with nothing to roll back to, so each content-changing write records
+ * the PRIOR content as a revision, mirroring `document_revisions`.
+ *
+ * A no-op write records nothing: under MVCC an unchanged UPDATE still leaves a dead
+ * tuple, and a revision saying "identical to the one before it" is noise in the
+ * history the operator reads.
+ */
 export async function upsertChatMemory(
 	db: Db,
 	memberId: string,
 	content: string,
+	changeSummary?: string,
+	authorMemberId?: string | null,
 ): Promise<ChatMemory> {
-	const r = await db.query<ChatMemory>(
-		`INSERT INTO chat_memories (member_id, content, updated_at)
-		 VALUES ($1, $2, now())
-		 ON CONFLICT (member_id) DO UPDATE SET content = $2, updated_at = now()
-		 RETURNING content, updated_at`,
-		[memberId, content],
+	return withTransaction(db, async () => {
+		const prior = await db.query<{ content: string }>(
+			'SELECT content FROM chat_memories WHERE member_id = $1',
+			[memberId],
+		);
+		const priorContent = prior.rows[0]?.content;
+
+		// Refuse rather than truncate, but refuse in a way that converges: compaction
+		// is what drains the message window, so a dead-end refusal would wedge the
+		// chat. The error names the ceiling and the current size, so the agent's
+		// retry is a shorter rewrite rather than a guess — and passing the prior
+		// length keeps an over-ceiling memory shrinkable instead of frozen. Checked
+		// inside the transaction because that read is where the prior length comes
+		// from; the throw rolls back before anything is written.
+		const tooLarge = checkInjectedTextCap('chat_memory', content, priorContent?.length);
+		if (tooLarge) throw new InjectedTextCapError(tooLarge.error);
+
+		// A create has nothing to snapshot; only a real change does.
+		if (priorContent !== undefined && priorContent !== content) {
+			await db.query(
+				`INSERT INTO chat_memory_revisions
+				        (member_id, revision_number, content, change_summary, author_member_id)
+				 SELECT $1,
+				        COALESCE(MAX(revision_number), 0) + 1,
+				        $2,
+				        $3,
+				        $4
+				 FROM chat_memory_revisions WHERE member_id = $1`,
+				[memberId, priorContent, changeSummary ?? '', authorMemberId ?? null],
+			);
+		}
+
+		const r = await db.query<ChatMemory>(
+			`INSERT INTO chat_memories (member_id, content, updated_at)
+			 VALUES ($1, $2, now())
+			 ON CONFLICT (member_id) DO UPDATE SET content = $2, updated_at = now()
+			 RETURNING content, updated_at`,
+			[memberId, content],
+		);
+		return r.rows[0];
+	});
+}
+
+/** An agent's chat-memory revisions, newest first. */
+export async function listChatMemoryRevisions(
+	db: Db,
+	memberId: string,
+): Promise<ChatMemoryRevision[]> {
+	const r = await db.query<ChatMemoryRevision>(
+		`SELECT r.id, r.revision_number, r.content, r.change_summary, r.created_at,
+		        m.display_name AS author_name,
+		        CASE WHEN r.author_member_id IS NULL THEN 'agent' ELSE 'admin' END AS author_type
+		 FROM chat_memory_revisions r
+		 LEFT JOIN members m ON m.id = r.author_member_id
+		 WHERE r.member_id = $1
+		 ORDER BY r.revision_number DESC`,
+		[memberId],
 	);
-	return r.rows[0];
+	return r.rows;
+}
+
+/**
+ * Bring a past chat-memory version back as the current one. Append-only: the
+ * restore is itself a content change, so the version being replaced is snapshotted
+ * too and the timeline stays intact.
+ */
+export async function restoreChatMemoryRevision(
+	db: Db,
+	memberId: string,
+	revisionNumber: number,
+	restoredByMemberId?: string | null,
+): Promise<ChatMemory | null> {
+	const r = await db.query<{ content: string }>(
+		'SELECT content FROM chat_memory_revisions WHERE member_id = $1 AND revision_number = $2',
+		[memberId, revisionNumber],
+	);
+	const target = r.rows[0];
+	if (!target) return null;
+	return upsertChatMemory(
+		db,
+		memberId,
+		target.content,
+		`Restored content from revision ${revisionNumber}`,
+		restoredByMemberId ?? null,
+	);
 }
 
 export interface WindowMessage {

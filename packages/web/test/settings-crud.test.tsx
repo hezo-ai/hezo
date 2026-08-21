@@ -1,4 +1,5 @@
 import { createTestProject, createTestTeam } from '@hezo/server/test/helpers/app';
+import { INJECTED_TEXT_CAPS } from '@hezo/shared';
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
@@ -236,4 +237,89 @@ test('can restore a previous Custom Prompt revision', async () => {
 		},
 		{ timeout: 30_000 },
 	);
+});
+
+/*
+ * The ceiling is enforced on the server; these prove the editor tells you about it
+ * *before* you spend an edit on it, and that its Save gate reads the same rule.
+ * The one worth pinning is the third: an over-ceiling value must stay saveable
+ * downwards, so the gate has to compare against the stored length, not just the
+ * limit - a gate that only asked "does it fit" would freeze the page.
+ */
+async function openCustomPrompt(team: CreatedTeam) {
+	const app = await renderApp({ initialPath: '/' });
+	await app.router.navigate({
+		to: '/projects/$projectId/custom-prompt',
+		params: { projectId: team.projectSlug },
+	});
+	await app.findByRole('heading', { name: 'Custom Prompt' });
+	const textarea = await waitFor(
+		() => {
+			const el = app.container.querySelector('textarea') as HTMLTextAreaElement | null;
+			expect(el).toBeTruthy();
+			return el as HTMLTextAreaElement;
+		},
+		{ timeout: 15_000 },
+	);
+	return { ...app, textarea };
+}
+
+const PREFS_LIMIT = INJECTED_TEXT_CAPS.team_preferences;
+
+test('the Custom Prompt editor shows its size against the ceiling', async () => {
+	const { findByTestId } = await openCustomPrompt(await createTeam());
+	const counter = await findByTestId('injected-cap-counter');
+	expect(counter.textContent).toContain(PREFS_LIMIT.toLocaleString());
+});
+
+test('going past the ceiling blocks Save and names the overage', async () => {
+	const team = await createTeam();
+	const { textarea, findByTestId, findByRole } = await openCustomPrompt(team);
+
+	fireEvent.change(textarea, { target: { value: 'x'.repeat(PREFS_LIMIT + 25) } });
+	expect((await findByTestId('injected-cap-message')).textContent).toContain('25');
+	expect((await findByRole('button', { name: 'Save changes' })).hasAttribute('disabled')).toBe(
+		true,
+	);
+
+	// Back under, and Save is live again.
+	fireEvent.change(textarea, { target: { value: 'x'.repeat(PREFS_LIMIT) } });
+	await waitFor(async () => {
+		expect((await findByRole('button', { name: 'Save changes' })).hasAttribute('disabled')).toBe(
+			false,
+		);
+	});
+});
+
+test('a Custom Prompt already over the ceiling can still be edited downwards', async () => {
+	const team = await createTeam();
+	// Written straight to the document, the way provisioning does - the API would
+	// refuse this, which is exactly the state the page has to stay usable in.
+	const { db } = getTestContext();
+	const stored = 'y'.repeat(PREFS_LIMIT + 500);
+	await db.query(
+		`INSERT INTO documents (team_id, type, slug, title, content)
+		 VALUES ($1, 'team_preferences', 'preferences', 'Custom Prompt', $2)`,
+		[team.id, stored],
+	);
+
+	const { textarea, findByTestId, findByRole } = await openCustomPrompt(team);
+	await waitFor(() => expect(textarea.value.length).toBe(stored.length), { timeout: 15_000 });
+
+	// Shorter, still over: allowed, and the page says why it is allowed.
+	fireEvent.change(textarea, { target: { value: 'y'.repeat(PREFS_LIMIT + 100) } });
+	expect((await findByTestId('injected-cap-message')).textContent).toMatch(/already over/i);
+	await waitFor(async () => {
+		expect((await findByRole('button', { name: 'Save changes' })).hasAttribute('disabled')).toBe(
+			false,
+		);
+	});
+
+	// Longer than it is now: refused, so the ceiling still bounds growth.
+	fireEvent.change(textarea, { target: { value: 'y'.repeat(PREFS_LIMIT + 900) } });
+	await waitFor(async () => {
+		expect((await findByRole('button', { name: 'Save changes' })).hasAttribute('disabled')).toBe(
+			true,
+		);
+	});
 });

@@ -45,6 +45,14 @@ interface ResolveContext {
 	embedDocs?: boolean;
 }
 
+/**
+ * How many project docs the run-prompt manifest lists before it stops and points
+ * at `list_project_docs`. The block is injected into every agent's prompt on every
+ * run, so this is a fixed per-run cost that must not scale with the project's doc
+ * count. Recency-ordered, so the cap drops the least-recently-touched docs first.
+ */
+const PROJECT_DOCS_MANIFEST_LIMIT = 40;
+
 const SHARED_INSTRUCTIONS = `
 
 ---
@@ -122,13 +130,6 @@ const SHARED_INSTRUCTIONS = `
 - Skills are referenced by the slug shown in the injected manifest. Only reference entities that actually exist.
 
 **Rules.** Only teammates and the admin take the \`@\`/\`@@\` prefix — tasks, docs and assets are bare, and the UI detects them by shape. Always use a teammate's slug, never their title, even when an earlier part of this prompt names them by title; the Teammates block is the authoritative slug list. Never wrap any of these in backticks or a code fence, because inline code suppresses the link. Use backticks only for things that are *not* Hezo entities — repo file paths, package names, shell commands, code identifiers. A Hezo doc or asset you are *about to create* is still a Hezo entity: write it **bare even before it exists** — the bare form renders as plain text until the target is real, then links automatically the moment it does, whereas backticks make it inert *permanently*. An \`assets/<path>\` reference is never a repo path, so it is never backticked, **and it always keeps its \`assets/\` prefix**: a prefix-dropped folder path (\`diagrams/hero.svg\`) reads as a repo file and never links. The single deliberate exception is a mention token you are **quoting rather than using**, covered above; it never extends to tasks, docs or assets. The server returns an advisory warning whenever you backtick a Hezo reference, drop the \`assets/\` prefix on a real asset, **or** write a live mention while describing a mention that lives elsewhere — treat that warning as a defect to fix in place with \`update_comment\`/the matching update tool, not as noise.
-
-**Worked examples.**
-- Asking the admin for a decision or approval → active (lands in every admin's inbox): \`@admin\` - please review and approve the draft so the next stage can start. Bad: writing that as prose or \`@@admin\`, which wakes no one and the task stalls.
-- Marking your task done and naming who the cascade will wake on *their* task → passive: \`Shipped. @@<slug> - TASK-1, TASK-2 unblock now.\` Bad: \`@<slug>\` here, which spawns a redundant wake on a task no longer theirs to act on.
-- Reporting a finished review or analysis and naming who must act on its output → active: \`@<slug>\` - review complete; findings below for you to consolidate and route. Bad: \`@@<slug>\` (or a bare/bold name), a recap-shaped handoff that renders as a chip but wakes no one.
-- A verdict or report with per-recipient sections → passive in the body, active at the bottom: the heading stays \`Required actions for @@<slug>\`, and the comment closes with \`@<slug>\` - please address the required actions above and send this back for re-verification. Bad, and easiest to miss: the closing block is *there* but passive throughout — \`@@<slug> - verification confirms PASS, the document is ready for the admin.\` — which looks routed, wakes no one, and strands the whole report on a status line. Worse still, a *mixed* block where the one line carrying an explicit request is the line that wakes nobody.
-- Pointing a teammate or the admin at a project doc or asset → write the reference **bare** so it links: \`the plan is in directory-assessment-and-plan.md\`, \`the mockup is assets/startup-directories/hero.png\`. Bad: the same reference wrapped in backticks, which renders an inert chip the admin can't click. Hezo linkifies a document or asset reference **only** when it is bare, so never backtick one you want opened. It holds equally for a deliverable you have *not created yet*: \`the tracker will live at assets/startup-directories/submission-tracker.md\`.
 
 **Handling an @-mention.** When you are @-mentioned on a task, first check who it is assigned to.
 - **Assigned to you** — it IS your work; do what the comment asks *in this run* (act on the request, answer any question it asks by posting your answer as a comment, carry the task forward, transitions included). The mention is your wake and the triage flow below does not apply. But "do what it asks" means making sure it **lands**, which is not the same as producing it yourself: if the comment bears on a deliverable you have already delegated and whose sub-task is still open, routing it to that task **is** the action this run (see **New instructions on work you have already delegated** under **Sub-Tasks & Delegation**), because executing it here duplicates your report's in-flight work.
@@ -220,7 +221,7 @@ const SHARED_INSTRUCTIONS = `
 - **Read the thread before you act.** Before taking any action on a task, call \`list_comments\` and read what is being asked — including the most recent comment. A comment posted after the task was created (by the admin or a teammate) may add, change, or override the instructions in the description, and it is often what triggered this run. Your prompt shows only the latest few comments inline as a head-start, so fetch the rest rather than acting on the description alone. When the prompt carries a "Since your last run" timestamp, that read is \`list_comments(since: …)\` — you have already seen everything before it. \`list_comments\` leaves agent run markers out by default; \`list_task_runs\` is where a run's outcome lives.
 - **Post at the end of your run, after every other action.** A comment is almost always a summary of what you did, an answer to a question you were asked, and/or a request for someone to take a look — all are end-of-run moves. If your run will create tasks the comment should reference, call \`create_task\` first and quote the resulting identifiers — a comment announcing work you haven't yet filed leaves readers nowhere to look. Skip play-by-play narration ("starting now", "halfway done"); the run record already shows every tool call you made.
 - **Don't repost when nothing changed.** Before \`create_comment\`, find the most recent comment *you* authored (match \`author_name\` to your role title) — \`list_comments\` returns newest first, so this is the first page, not a walk back through the thread. If what you're about to post conveys the same substance — same status, findings, asks, mentions — don't post it; end the turn silently. Reposting re-wakes everyone you mention for no gain. Only post on genuine new substance: a status transition you haven't reported, a new finding or blocker, a response to activity since your last comment, or a mention of someone you haven't already woken here. The one exception is a fresh @-mention directed at you that post-dates your last comment — acknowledge it (per the handling-an-@-mention guidance) so the mentioner's reply-wakeup fires, even if the substance overlaps. A different wording or tidier formatting is NOT new substance: to fix a typo, a broken reference, or bad markdown in a comment you posted **earlier in this run**, edit it in place with \`update_comment\` — never repost a reformatted or reworded copy (that spawns a duplicate and re-wakes everyone). \`update_comment\` re-notifies idempotently, so fixing a mention you'd backticked actually wakes that teammate. Being re-woken by the completeness gate after you have already posted your wrap-up is likewise not a reason to post again — address only the specific gap the gate names, and if that substance is already posted call \`report_no_work\` (or end the turn) instead of re-summarizing.
-- **Format as proper markdown.** Bodies render as GFM. Separate paragraphs with a blank line (single newlines collapse into a wall of text), use bullet lists for enumerable points, and \`**bold**\` sparingly for an update's headline. Use \`inline code\` only for literal code tokens — shell commands, code symbols, config keys, and opaque values like commit SHAs. **Never** wrap a task identifier, project-doc filename, skill slug, asset path, or @-mention in backticks: reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), assets by their bare \`assets/<path>\` (e.g. assets/launch/images/hero.png — this renders as a clickable link that opens the file in the assets viewer; in backticks it becomes an inert code chip the admin can't click), skills by their bare slug, and teammates as @<agent-slug> — backticks make all of these inert so they no longer render as links or mentions. Lead with a one-line summary of the outcome so the thread stays scannable.
+- **Format as proper markdown.** Bodies render as GFM. Separate paragraphs with a blank line (single newlines collapse into a wall of text), use bullet lists for enumerable points, and \`**bold**\` sparingly for an update's headline. Use \`inline code\` only for literal code tokens — shell commands, code symbols, config keys, and opaque values like commit SHAs, never for a Hezo reference (see **Link forms** above; backticks make all of these inert). Lead with a one-line summary of the outcome so the thread stays scannable.
 
 ### No Work To Do This Run
 - A heartbeat sometimes wakes you when there is genuinely nothing to act on — e.g. you're on a planning/epic task whose sub-tasks are still open, or you've re-read the thread and every line is already handled. When that is truly the case and no comment, sub-task, status change, or code change is warranted, call \`report_no_work\` with a one-line reason and end your turn.
@@ -476,27 +477,43 @@ export async function resolveSystemPrompt(
 		if (ctx.projectId) {
 			// Active docs only — archived (soft-deleted) docs never enter run
 			// context; read_project_doc(filter: 'archived') can still fetch one.
+			//
+			// Bounded and recency-ordered. This block lands in EVERY agent's prompt on
+			// EVERY run, so an unbounded listing grows the fixed cost of every run with
+			// the project's doc count. Query one past the cap so "there are more" is
+			// exact without a second COUNT, and name the overflow rather than truncating
+			// silently — a doc an agent cannot see is worse than a line saying to page.
 			const docs = await db.query<{
 				filename: string;
 				description: string;
 				updated_at: string;
+				content_length: number;
 			}>(
-				"SELECT slug AS filename, description, updated_at FROM documents WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL ORDER BY slug",
-				[ctx.projectId],
+				`SELECT slug AS filename, description, updated_at, length(content)::int AS content_length
+				 FROM documents
+				 WHERE type = 'project_doc' AND project_id = $1 AND archived_at IS NULL
+				 ORDER BY updated_at DESC, slug ASC
+				 LIMIT $2`,
+				[ctx.projectId, PROJECT_DOCS_MANIFEST_LIMIT + 1],
 			);
-			if (docs.rows.length > 0) {
-				const lines = docs.rows
+			const shown = docs.rows.slice(0, PROJECT_DOCS_MANIFEST_LIMIT);
+			if (shown.length > 0) {
+				const lines = shown
 					.map((d) => {
 						const date = new Date(d.updated_at).toISOString().slice(0, 10);
 						const descPart = d.description ? ` — ${d.description}` : '';
-						return `- ${d.filename}${descPart} (updated ${date})`;
+						return `- ${d.filename}${descPart} (updated ${date}, ${d.content_length} chars)`;
 					})
 					.join('\n');
+				const overflow =
+					docs.rows.length > PROJECT_DOCS_MANIFEST_LIMIT
+						? `\n\nMost recently updated ${PROJECT_DOCS_MANIFEST_LIMIT} shown. There are more — call list_project_docs to page through the rest.`
+						: '';
 				docsText = [
-					'The project docs database holds high-level project context (PRDs, specs, architecture decisions, research). Entries are listed below by filename.',
+					'The project docs database holds high-level project context (PRDs, specs, architecture decisions, research). Entries are listed newest-first, each with its size so you can tell whether one read returns it whole.',
 					"Call read_project_doc(filename) to load a doc's full contents when relevant to your task. These docs live in the database, not the filesystem — there is no /workspace/.hezo/project-docs path, so don't use the Read/cat file tools; load each one by its bare filename through read_project_doc. To create or change a doc, call write_project_doc(filename, content) (it overwrites the whole doc) — the Edit/Write file tools target disk and will not touch these, so never reach for them to edit a doc.",
 					'',
-					lines,
+					lines + overflow,
 				].join('\n');
 			}
 		}
