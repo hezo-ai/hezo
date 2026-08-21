@@ -194,25 +194,45 @@ test('can restore a previous Custom Prompt revision', async () => {
 		params: { projectId: team.projectSlug },
 	});
 
-	const textarea = await waitFor(
+	await waitFor(
 		() => {
 			const el = container.querySelector('textarea') as HTMLTextAreaElement | null;
 			expect(el?.value ?? '').toContain('Updated preferences body');
-			return el as HTMLTextAreaElement;
 		},
 		{ timeout: 15_000 },
 	);
 
-	await user.click(await findByRole('button', { name: /show revision history/i }));
+	// The dialog is a Radix portal, so its contents live on document.body.
+	const body = within(document.body);
+
+	await user.click(await findByRole('button', { name: /revision history/i }));
+	await findByTestId('revision-history-dialog');
 	await findByText(/Rev 1/, undefined, { timeout: 15_000 });
 
-	const restoreButtons = within(container).getAllByRole('button', { name: /restore/i });
-	fireEvent.click(restoreButtons[0]);
+	// Preview the older version read-only before restoring it: the editor is
+	// replaced by the revision body, so nothing can save the old text back.
+	fireEvent.click(body.getAllByTestId('revision-view')[0]);
+	await findByTestId('viewing-revision-banner');
+	const revisionBody = await findByTestId('custom-prompt-revision-body');
+	expect(revisionBody.textContent).toContain('Original preferences body');
+	expect(container.querySelector('textarea')).toBeNull();
+
+	fireEvent.click(await findByTestId('view-latest'));
+	await waitFor(() => expect(container.querySelector('textarea')).not.toBeNull(), {
+		timeout: 15_000,
+	});
+
+	await user.click(await findByRole('button', { name: /revision history/i }));
+	fireEvent.click(body.getAllByTestId('revision-restore')[0]);
 
 	const confirmBtn = await findByTestId('confirm-dialog-confirm');
 	fireEvent.click(confirmBtn);
 
-	await waitFor(() => expect(textarea.value).toContain('Original preferences body'), {
-		timeout: 30_000,
-	});
+	await waitFor(
+		() => {
+			const el = container.querySelector('textarea') as HTMLTextAreaElement | null;
+			expect(el?.value ?? '').toContain('Original preferences body');
+		},
+		{ timeout: 30_000 },
+	);
 });

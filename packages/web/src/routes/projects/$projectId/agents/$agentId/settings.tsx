@@ -11,13 +11,15 @@ import {
 	isNameOnlyRole,
 } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Loader2, Power, PowerOff } from 'lucide-react';
+import { History, Loader2, Power, PowerOff } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentIdentitySection } from '../../../../../components/agent-identity-section';
 import { agentDisplayName } from '../../../../../components/agent-identity-tooltip';
 import { BudgetWindowsEditor } from '../../../../../components/budget/budget-windows-editor';
+import { RevisionHistoryDialog } from '../../../../../components/document-review/revision-history-dialog';
+import { ViewingRevisionBanner } from '../../../../../components/document-review/viewing-revision-banner';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
-import { RevisionsPanel } from '../../../../../components/revisions-panel';
+import { MarkdownProse } from '../../../../../components/markdown-prose';
 import { getInitials } from '../../../../../components/ui/avatar';
 import { Button } from '../../../../../components/ui/button';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
@@ -38,6 +40,10 @@ import {
 import { useAiProviderModels, useAiProviders } from '../../../../../hooks/use-ai-providers';
 import { useBudgetStatus } from '../../../../../hooks/use-costs';
 import { useScrollToHash } from '../../../../../hooks/use-scroll-to-hash';
+import {
+	buildDocVersionHistory,
+	type DocVersionEntry,
+} from '../../../../../lib/doc-version-history';
 
 function AgentSettingsPage() {
 	const { projectId, agentId } = Route.useParams();
@@ -93,12 +99,22 @@ function AgentSettingsPage() {
 		setModelId(agent.model_override_model ?? '');
 	}, [agent]);
 
-	const initializedPromptForAgentId = useRef<string | null>(null);
+	// Seed (and re-sync) the editor from the saved prompt. Keyed on the stored
+	// content rather than a per-agent latch: a latch never re-seeds, so a restore
+	// wrote a new revision the editor never showed. `savedPrompt` only changes when
+	// the stored value does, so this cannot clobber in-progress typing on refetch.
+	const savedPrompt = promptDoc?.content ?? '';
 	useEffect(() => {
-		if (!promptDoc || initializedPromptForAgentId.current === agentId) return;
-		initializedPromptForAgentId.current = agentId;
-		setSystemPrompt(promptDoc.content);
-	}, [promptDoc, agentId]);
+		setSystemPrompt(savedPrompt);
+	}, [savedPrompt]);
+
+	const [historyOpen, setHistoryOpen] = useState(false);
+	// The whole entry, not just its number — the body is rendered from it.
+	const [viewingRevision, setViewingRevision] = useState<DocVersionEntry | null>(null);
+	const versionEntries = useMemo(
+		() => (promptDoc ? buildDocVersionHistory(promptDoc, revisions) : []),
+		[promptDoc, revisions],
+	);
 
 	if (isLoading || !agent || isPromptLoading)
 		return <div className="text-text-2 text-sm">Loading...</div>;
@@ -196,24 +212,57 @@ function AgentSettingsPage() {
 					onChange={(e) => setRoleDesc(e.target.value)}
 				/>
 				<div>
-					<MarkdownEditor
-						label="System Prompt"
-						ariaLabel="System Prompt"
-						value={systemPrompt}
-						onChange={setSystemPrompt}
-						defaultMode={promptMode}
-						onModeChange={setPromptMode}
-						className="min-h-[160px] font-mono text-xs"
-						previewClassName="min-h-[160px]"
-						previewTestId="system-prompt-preview"
-						previewContent={previewData?.content ?? ''}
-						isPreviewLoading={isPreviewLoading}
-					/>
-					<RevisionsPanel
-						revisions={revisions}
-						onRestore={(rev) => restorePrompt.mutateAsync(rev)}
-						isRestoring={restorePrompt.isPending}
-					/>
+					<div className="mb-1.5 flex items-center justify-between">
+						<span className="text-sm text-text-2">System Prompt</span>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => setHistoryOpen(true)}
+							data-testid="system-prompt-history"
+							aria-label="Revision history"
+						>
+							<History className="w-3.5 h-3.5" />
+							<span className="hidden sm:inline">History</span>
+						</Button>
+					</div>
+					{viewingRevision && viewingRevision.revisionNumber !== null ? (
+						<>
+							<ViewingRevisionBanner
+								revisionNumber={viewingRevision.revisionNumber}
+								timestamp={viewingRevision.timestamp}
+								authorName={viewingRevision.authorName}
+								onViewLatest={() => setViewingRevision(null)}
+							/>
+							{/*
+							 * Read-only, and deliberately never loaded into `systemPrompt`:
+							 * handleSave sends the prompt whenever it differs from the stored
+							 * one, so seeding a past revision here would let a save of any
+							 * unrelated field write the old body back.
+							 */}
+							<div
+								className="min-h-[160px] rounded-md border border-border bg-surface-2 px-4 py-3"
+								data-testid="system-prompt-revision-body"
+							>
+								<MarkdownProse projectId={projectId} projectSlug={projectId}>
+									{viewingRevision.content || '_(this version was empty)_'}
+								</MarkdownProse>
+							</div>
+						</>
+					) : (
+						<MarkdownEditor
+							ariaLabel="System Prompt"
+							value={systemPrompt}
+							onChange={setSystemPrompt}
+							defaultMode={promptMode}
+							onModeChange={setPromptMode}
+							className="min-h-[160px] font-mono text-xs"
+							previewClassName="min-h-[160px]"
+							previewTestId="system-prompt-preview"
+							previewContent={previewData?.content ?? ''}
+							isPreviewLoading={isPreviewLoading}
+						/>
+					)}
 				</div>
 
 				<label className="flex flex-col gap-1.5">
@@ -309,12 +358,31 @@ function AgentSettingsPage() {
 				/>
 
 				<div className="flex justify-end gap-2 mt-2">
-					<Button type="submit" disabled={updateAgent.isPending}>
+					<Button type="submit" disabled={updateAgent.isPending || viewingRevision !== null}>
 						{updateAgent.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
 						Save Changes
 					</Button>
 				</div>
 			</form>
+
+			<RevisionHistoryDialog
+				open={historyOpen}
+				onOpenChange={setHistoryOpen}
+				label={agent.title || agent.slug}
+				entries={versionEntries}
+				projectId={projectId}
+				projectSlug={projectId}
+				viewingRevision={viewingRevision?.revisionNumber ?? null}
+				onView={(entry) => {
+					setViewingRevision(entry.isCurrent ? null : entry);
+					setHistoryOpen(false);
+				}}
+				onRestore={async (rev) => {
+					await restorePrompt.mutateAsync(rev);
+					setViewingRevision(null);
+				}}
+				isRestoring={restorePrompt.isPending}
+			/>
 
 			<div className="mt-8 pt-6 border-t border-border-subtle">
 				<div className="text-sm font-medium mb-1">Agent status</div>

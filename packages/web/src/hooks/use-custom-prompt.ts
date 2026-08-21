@@ -25,6 +25,9 @@ export interface CustomPromptRevision {
 	content: string;
 	change_summary: string;
 	author_name: string | null;
+	/** 'agent' | 'admin' | 'api_key' — drives the human/API-key badge. */
+	author_type?: string;
+	author_api_key_id?: string | null;
 	created_at: string;
 }
 

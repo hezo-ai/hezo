@@ -310,7 +310,7 @@ function ProjectDocumentsPage() {
 				<RevisionHistoryDialog
 					open={historyOpen}
 					onOpenChange={setHistoryOpen}
-					filename={file}
+					label={file}
 					entries={versionEntries}
 					projectId={projectId}
 					projectSlug={projectId}

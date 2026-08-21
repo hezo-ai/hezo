@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { DocumentRevision } from '../components/revisions-panel';
 import { type ApiError, api } from '../lib/api';
+import type { RevisionRow } from '../lib/doc-version-history';
 import { queryClient } from '../lib/query-client';
 import { queryKeys } from '../lib/query-keys';
 
@@ -21,7 +21,7 @@ export interface ProjectDoc {
 	last_updated_by_type?: string;
 }
 
-export type ProjectDocRevision = DocumentRevision;
+export type ProjectDocRevision = RevisionRow;
 
 export interface ProjectAgentsMd {
 	filename: string;

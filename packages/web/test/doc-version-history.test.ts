@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import type { DocumentRevision } from '../src/components/revisions-panel';
+import type { RevisionRow } from '../src/lib/doc-version-history';
 import { buildDocVersionHistory, type DocVersionHead } from '../src/lib/doc-version-history';
 
-function rev(partial: Partial<DocumentRevision> & { revision_number: number }): DocumentRevision {
+function rev(partial: Partial<RevisionRow> & { revision_number: number }): RevisionRow {
 	return {
 		id: `r${partial.revision_number}`,
 		content: `content-${partial.revision_number}`,
@@ -24,7 +24,7 @@ describe('buildDocVersionHistory', () => {
 		};
 		// Newest-first, as the API returns. A row's change_summary is the update that
 		// REPLACED that row's content.
-		const revisions: DocumentRevision[] = [
+		const revisions: RevisionRow[] = [
 			rev({
 				revision_number: 3,
 				content: 'V3',

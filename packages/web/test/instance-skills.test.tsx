@@ -83,7 +83,16 @@ test('shows skill revision history and restores a prior version', async () => {
 	await user.click(await findByRole('button', { name: /revision history/i }));
 	await findByText('Rev 1');
 
+	// Read revision 1 before restoring it: the editor is replaced by a read-only
+	// body, so a past version can never be saved back by accident.
+	await user.click(await findByTestId('revision-view'));
+	await findByTestId('viewing-revision-banner');
+	expect((await findByTestId('skill-revision-body')).textContent).toContain('Original body v1');
+	await user.click(await findByTestId('view-latest'));
+	await waitFor(() => expect(getByLabelText('Skill content')).toBeDefined());
+
 	// Restore revision 1 → confirm → the editor content reverts to the original.
+	await user.click(await findByRole('button', { name: /revision history/i }));
 	await user.click(await findByRole('button', { name: /restore/i }));
 	await user.click(await findByTestId('confirm-dialog-confirm'));
 	await waitFor(() =>
