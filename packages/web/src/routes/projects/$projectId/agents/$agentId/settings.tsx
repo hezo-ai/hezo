@@ -9,6 +9,7 @@ import {
 	hasFixedReportsTo,
 	INSTANCE_AGENT_SLUGS,
 	isNameOnlyRole,
+	SYSTEM_PROMPT_TEMPLATE_VARS,
 } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { History, Loader2, Power, PowerOff } from 'lucide-react';
@@ -20,6 +21,7 @@ import { RevisionHistoryDialog } from '../../../../../components/document-review
 import { ViewingRevisionBanner } from '../../../../../components/document-review/viewing-revision-banner';
 import { MarkdownEditor } from '../../../../../components/markdown-editor';
 import { MarkdownProse } from '../../../../../components/markdown-prose';
+import { SystemPromptReference } from '../../../../../components/system-prompt-reference';
 import { getInitials } from '../../../../../components/ui/avatar';
 import { Button } from '../../../../../components/ui/button';
 import { ExpandableText } from '../../../../../components/ui/expandable-text';
@@ -212,8 +214,8 @@ function AgentSettingsPage() {
 					onChange={(e) => setRoleDesc(e.target.value)}
 				/>
 				<div>
-					<div className="mb-1.5 flex items-center justify-between">
-						<span className="text-sm text-text-2">System Prompt</span>
+					{/* Right-aligned only: the editor renders its own "System Prompt" label. */}
+					<div className="mb-1.5 flex items-center justify-end">
 						<Button
 							type="button"
 							variant="ghost"
@@ -251,9 +253,12 @@ function AgentSettingsPage() {
 						</>
 					) : (
 						<MarkdownEditor
+							label="System Prompt"
 							ariaLabel="System Prompt"
 							value={systemPrompt}
 							onChange={setSystemPrompt}
+							reference={<SystemPromptReference />}
+							variables={SYSTEM_PROMPT_TEMPLATE_VARS}
 							defaultMode={promptMode}
 							onModeChange={setPromptMode}
 							className="min-h-[160px] font-mono text-xs"

@@ -162,6 +162,7 @@ describe('concurrency settings', () => {
 		max_container_memory_gb: number;
 		max_container_memory_gb_is_set: boolean;
 		max_container_memory_gb_computed_default: number;
+		task_container_memory_gb: number;
 		default_ram_cap_per_container_gb: number;
 		host_total_ram_bytes: number;
 		host_total_swap_bytes: number;
@@ -173,27 +174,34 @@ describe('concurrency settings', () => {
 
 	it('computes the default memory budget from host memory when unset', async () => {
 		const data = await getSettings();
-		// round(1.92 + 6) = 8 GiB, less 1 GB for the host and one 2 GB cap for the
-		// assistant's container, which runs on top of the budget rather than in it.
-		expect(data.max_container_memory_gb).toBe(5);
+		// round(1.92 + 6) = 8 GiB, less 1 GB for the host = 7 GB for ALL containers.
+		expect(data.max_container_memory_gb).toBe(7);
 		expect(data.max_container_memory_gb_is_set).toBe(false);
-		expect(data.max_container_memory_gb_computed_default).toBe(5);
+		expect(data.max_container_memory_gb_computed_default).toBe(7);
+		// Task runs get the total less one 2 GB cap, held back so the assistant chat
+		// always has somewhere to go. **5 is what this instance could already run**:
+		// the reservation moved from the default into this figure, so an
+		// auto-computed instance has exactly the task capacity it had before.
+		expect(data.task_container_memory_gb).toBe(5);
 		expect(data.default_ram_cap_per_container_gb).toBe(2);
 		expect(data.host_total_swap_bytes).toBe(6 * GIB);
 	});
 
-	it('changing the ram cap moves the computed budget, because the chat reserve moves', async () => {
-		// The cap no longer divides the budget - it is only the chat container's
-		// share, held back up front. Asserted in both directions so a change that
-		// stopped subtracting it would not slip through.
+	it('changing the ram cap moves the task share, because the chat reserve moves', async () => {
+		// The cap does not divide the budget - it is the chat container's share, held
+		// back off the top. So the TOTAL is fixed by host memory while the TASK share
+		// moves with the cap. Asserted in both directions so a change that stopped
+		// reserving would not slip through.
 		expect((await patchSettings({ default_ram_cap_per_container_gb: 3 })).status).toBe(200);
 		let data = await getSettings();
 		expect(data.default_ram_cap_per_container_gb).toBe(3);
-		expect(data.max_container_memory_gb).toBe(4); // 8 - 1 - 3
+		expect(data.max_container_memory_gb).toBe(7); // 8 - 1, unchanged by the cap
+		expect(data.task_container_memory_gb).toBe(4); // 7 - 3
 
 		expect((await patchSettings({ default_ram_cap_per_container_gb: 1 })).status).toBe(200);
 		data = await getSettings();
-		expect(data.max_container_memory_gb).toBe(6); // 8 - 1 - 1
+		expect(data.max_container_memory_gb).toBe(7);
+		expect(data.task_container_memory_gb).toBe(6); // 7 - 1
 		expect(data.max_container_memory_gb_is_set).toBe(false);
 		await patchSettings({ default_ram_cap_per_container_gb: 2 });
 	});
@@ -204,14 +212,18 @@ describe('concurrency settings', () => {
 		const data = await getSettings();
 		expect(data.max_container_memory_gb).toBe(14);
 		expect(data.max_container_memory_gb_is_set).toBe(true);
-		expect(data.max_container_memory_gb_computed_default).toBe(5);
+		expect(data.max_container_memory_gb_computed_default).toBe(7);
+		// The reservation applies to an explicitly-set budget too. It used not to,
+		// which is how a hand-set 14 admitted 7 task containers *and* a chat one.
+		expect(data.task_container_memory_gb).toBe(12);
 	});
 
 	it('null resets the budget back to the computed default', async () => {
 		const res = await patchSettings({ max_container_memory_gb: null });
 		expect(res.status).toBe(200);
 		const data = await getSettings();
-		expect(data.max_container_memory_gb).toBe(5);
+		expect(data.max_container_memory_gb).toBe(7);
+		expect(data.task_container_memory_gb).toBe(5);
 		expect(data.max_container_memory_gb_is_set).toBe(false);
 	});
 

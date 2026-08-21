@@ -1,4 +1,4 @@
-import { AtSign, FileText, Hash, UserRound } from 'lucide-react';
+import { AtSign, Braces, FileText, Hash, UserRound } from 'lucide-react';
 import { type RefObject, useEffect, useMemo } from 'react';
 import type { MentionKind, MentionSearchResult } from '../hooks/use-mentions';
 import { usePanelPlacement } from '../hooks/use-panel-placement';
@@ -8,6 +8,7 @@ const KIND_ICON: Record<MentionKind, React.ComponentType<{ className?: string }>
 	task: Hash,
 	kb: FileText,
 	doc: FileText,
+	variable: Braces,
 };
 
 const KIND_LABEL: Record<MentionKind, string> = {
@@ -15,6 +16,7 @@ const KIND_LABEL: Record<MentionKind, string> = {
 	task: 'Task',
 	kb: 'KB doc',
 	doc: 'Project doc',
+	variable: 'Variable',
 };
 
 /** Everything but the vertical side, which `usePanelPlacement` decides per open. */
@@ -33,6 +35,8 @@ interface MentionPickerProps {
 	onSelect: (result: MentionSearchResult) => void;
 	/** The textarea's positioning wrapper — what the picker is measured against. */
 	anchorRef: RefObject<HTMLElement | null>;
+	/** The characters that opened the picker, echoed in the no-matches line. */
+	trigger?: string;
 }
 
 export function MentionPicker({
@@ -43,6 +47,7 @@ export function MentionPicker({
 	onHoverIndex,
 	onSelect,
 	anchorRef,
+	trigger = '@',
 }: MentionPickerProps) {
 	// The picker only mounts while open, so `open` is unconditionally true here.
 	// One ref serves both jobs: the panel is the scroll container, so it is what
@@ -71,7 +76,7 @@ export function MentionPicker({
 				data-placement={side}
 			>
 				<div className="px-3 py-2 text-xs text-text-2">
-					{query ? `No matches for @${query}` : 'Type to search'}
+					{query ? `No matches for ${trigger}${query}` : 'Type to search'}
 				</div>
 			</div>
 		);
@@ -108,8 +113,11 @@ export function MentionPicker({
 						<div className="flex min-w-0 flex-1 flex-col">
 							<span className="truncate text-text-1">{r.label}</span>
 							<span className="truncate text-[11px] text-text-3">
-								{r.kind === 'agent' ? `@${r.handle}` : r.handle}
-								{r.sublabel ? ` · ${r.sublabel}` : ''}
+								{/* A variable's handle IS its label, so repeating it here would
+								    print the token twice; its description stands alone. */}
+								{r.kind === 'variable' ? (r.sublabel ?? '') : null}
+								{r.kind !== 'variable' && (r.kind === 'agent' ? `@${r.handle}` : r.handle)}
+								{r.kind !== 'variable' && r.sublabel ? ` · ${r.sublabel}` : ''}
 							</span>
 						</div>
 						<span className="ml-2 shrink-0 text-[10px] uppercase tracking-wider text-text-3">

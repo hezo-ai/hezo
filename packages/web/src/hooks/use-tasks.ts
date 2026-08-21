@@ -15,6 +15,7 @@ export interface QueuedWakeup {
 		| 'project_at_capacity'
 		| 'agent_running'
 		| 'credential_busy'
+		| 'hours_exhausted'
 		| 'run_never_started';
 	since: string;
 	blocker_task_id: string | null;

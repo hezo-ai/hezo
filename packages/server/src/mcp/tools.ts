@@ -44,15 +44,14 @@ import {
 	type McpMethodInfo,
 	matchesArchiveFilter,
 	normalizeAssetPath,
-	REQUIRED_SYSTEM_PROMPT_VARS,
 	ReactionKind,
-	requiredSystemPromptVarsError,
 	SEARCH_SCOPES,
 	summarizeMethodAccess,
 	TaskStatus,
 	TERMINAL_TASK_STATUSES,
 	THREAD_ROW_CATEGORIES,
 	type ThreadRowCategory,
+	taskStatusError,
 	WakeupSource,
 	wsRoom,
 } from '@hezo/shared';
@@ -539,7 +538,7 @@ async function buildBacktickedEntityWarning(
  * Returns a warning when an agent posts an active mention (an ask) on a task
  * that is already terminal, or null otherwise. A done/cancelled task reads as
  * finished, so an ask parked on it is easy to miss — the correct move was to
- * ask before closing and keep the task in_progress/review while waiting.
+ * ask before closing and keep the task in_progress while waiting.
  * Best-effort and non-blocking, exactly like the builders above.
  */
 async function buildTerminalTaskAskWarning(
@@ -557,7 +556,7 @@ async function buildTerminalTaskAskWarning(
 	return (
 		`Note: this task is already ${status} (terminal). An ask posted on a closed task is easy ` +
 		`to miss - if you still need an answer or action, ask on an open task instead; next time ` +
-		`ask BEFORE closing and keep the task in_progress or review until the answer lands.`
+		`ask BEFORE closing and keep the task in_progress until the answer lands.`
 	);
 }
 
@@ -1395,7 +1394,11 @@ export function registerTools(
 			const params: unknown[] = [scope.projectId];
 			let idx = 2;
 			if (args.status) {
-				const statuses = (args.status as string).split(',');
+				const statuses = (args.status as string).split(',').map((v) => v.trim());
+				for (const status of statuses) {
+					const invalid = taskStatusError(status);
+					if (invalid) return { error: invalid };
+				}
 				const ph = statuses.map((_, i) => `$${idx + i}::task_status`).join(', ');
 				conditions.push(`i.status IN (${ph})`);
 				params.push(...statuses);
@@ -1860,7 +1863,7 @@ export function registerTools(
 	tool(
 		server,
 		'update_task',
-		'Update a task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a task, set status to `done` - that is the final completed state and wakes Coach to review the task for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` or move it to `review` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. A run on the task blocks a reassignment only when it belongs to some other agent - your own run never blocks you, so you can hand off a task you are running, and neither does a run belonging to the agent you are assigning to. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
+		'Update a task. Agents can use this to change status, update progress, set rules, and record branch names. To finish a task, set status to `done` - that is the final completed state and wakes Coach to review the task for prompt-learning (the task stays `done`). Use `cancelled` for abandoned work. Setting `done` is rejected for agent callers while the task has an @admin question no human has answered yet - keep the task `in_progress` until the admin replies. Re-opening a completed task (`done`/`cancelled`) is admin-only. As an agent caller, reassigning is limited to yourself or your direct subordinates; to hand work to a peer or manager use create_comment with @<agent-slug> instead. A run on the task blocks a reassignment only when it belongs to some other agent - your own run never blocks you, so you can hand off a task you are running, and neither does a run belonging to the agent you are assigning to. Set `parent_task_id` to move this task under a different parent, or to an empty string to promote it to a top-level task; prefer that over cancelling a mis-filed sub-task and re-filing it as a new top-level task. In description, progress_summary, and rules, reference teammates with @<agent-slug>. Reference tasks and project docs by their bare identifier/filename (e.g. IN-42, spec.md), and skills by their slug - no @ prefix. Do not wrap any of these in backticks - that makes them inert.',
 		{
 			project: projectArg(),
 			task_id: z.string().describe('Task identifier or UUID'),
@@ -1870,7 +1873,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					'New status (backlog, in_progress, review, blocked, done, cancelled). `done` = completed (final); marking a task `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
+					'New status (backlog, in_progress, blocked, done, cancelled). `done` = completed (final); marking a task `done` wakes Coach to review it for prompt-learning but leaves it `done`. `cancelled` = abandoned. Re-opening a completed task (done/cancelled) is admin-only.',
 				),
 			priority: z.string().optional().describe('New priority'),
 			assignee_id: z
@@ -1933,6 +1936,11 @@ export function registerTools(
 				const resolvedAssignee = await resolveAssigneeId(db, teamId, args.assignee_id);
 				if (!resolvedAssignee) return { error: `Assignee not found: ${args.assignee_id}` };
 				args.assignee_id = resolvedAssignee;
+			}
+
+			if (args.status !== undefined) {
+				const invalid = taskStatusError(args.status as string);
+				if (invalid) return { error: invalid };
 			}
 
 			// `done` and `cancelled` are the only terminal states; once a task is
@@ -2353,7 +2361,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					`Updated system prompt. If provided, it must keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) or the revision is rejected.`,
+					'Updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name.',
 				),
 			reports_to: z
 				.string()
@@ -2408,12 +2416,6 @@ export function registerTools(
 				return { error: 'Hire approval is already resolved' };
 			}
 
-			// A revised system prompt must keep the required substitution variables.
-			if (typeof args.system_prompt === 'string' && args.system_prompt.trim()) {
-				const promptError = requiredSystemPromptVarsError(args.system_prompt);
-				if (promptError) return { error: promptError };
-			}
-
 			// A revised manager must resolve to an agent on this team (empty clears it).
 			if (typeof args.reports_to === 'string' && args.reports_to.trim()) {
 				const raw = args.reports_to.trim();
@@ -2461,7 +2463,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					`Full system prompt for the new agent. If provided, it MUST contain every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) or the proposal is rejected - these inject the agent's identity, manager, and live skills/docs/preferences context. Author it in the style of the built-in role docs.`,
+					'Full system prompt for the new agent. Write the role itself; no substitution variable is required. Hezo composes the agent identity (team, description, manager) above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Author it in the style of the built-in role docs.',
 				),
 			reports_to: z
 				.string()
@@ -4707,7 +4709,7 @@ export function registerTools(
 			new_system_prompt: z
 				.string()
 				.describe(
-					`The full updated system prompt. It MUST keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) - read the current prompt with get_agent_system_prompt(placeholders=false) first and preserve them, or the update is rejected. (The CEO and Coach are exempt.)`,
+					'The full updated system prompt. No substitution variable is required: Hezo composes the agent identity above this body and the live skills, preferences and project-docs context below it, adding only what the body does not already name. Read the current prompt with get_agent_system_prompt(placeholders=false) first so the round-trip is safe.',
 				),
 			change_summary: z.string().describe('Summary of what changed and why'),
 		},
@@ -4735,15 +4737,7 @@ export function registerTools(
 			);
 			if (agentCheck.rows.length === 0) return { error: 'Agent not found in this team' };
 
-			// A revised prompt must keep the required substitution variables.
-			// Instance singletons (CEO/Coach) are exempt — they have no in-team
-			// manager, so the {{reports_to}} requirement does not apply.
 			const targetSlug = agentCheck.rows[0].slug;
-			const isInstanceSingleton = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(targetSlug);
-			if (!isInstanceSingleton) {
-				const promptError = requiredSystemPromptVarsError(args.new_system_prompt as string);
-				if (promptError) return { error: promptError };
-			}
 			// The house register: mechanical violations reject, judgement calls come
 			// back as an advisory on the successful write (see prompt-style-guard).
 			const styleError = authoredPromptError(args.new_system_prompt as string);
@@ -4794,7 +4788,7 @@ export function registerTools(
 						new_system_prompt: z
 							.string()
 							.describe(
-								`Full updated prompt for this agent; MUST keep every required substitution variable (${REQUIRED_SYSTEM_PROMPT_VARS.join(', ')}) unless the target is the CEO/Coach.`,
+								'Full updated prompt for this agent. No substitution variable is required; Hezo composes the identity and live-context blocks around it.',
 							),
 						change_summary: z.string().describe('Summary of what changed and why for this agent'),
 					}),
@@ -4845,14 +4839,6 @@ export function registerTools(
 					continue;
 				}
 				const slug = agentCheck.rows[0].slug;
-				const isInstanceSingleton = (INSTANCE_AGENT_SLUGS as readonly string[]).includes(slug);
-				if (!isInstanceSingleton) {
-					const promptError = requiredSystemPromptVarsError(u.new_system_prompt);
-					if (promptError) {
-						results.push({ index: i, agent_id: u.agent_id, ok: false, error: promptError });
-						continue;
-					}
-				}
 				const styleError = authoredPromptError(u.new_system_prompt);
 				if (styleError) {
 					results.push({ index: i, agent_id: u.agent_id, ok: false, error: styleError });

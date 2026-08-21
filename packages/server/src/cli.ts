@@ -7,6 +7,7 @@ import {
 } from '@hezo/shared';
 import { Command } from 'commander';
 import { loadConfigFile } from './config/load';
+import { loadPolicy } from './config/policy';
 import {
 	detectRemovedEnvVars,
 	formatRemovedEnvFatal,
@@ -876,6 +877,14 @@ export function resolveConfig(
 		jobs: { ...d.jobs, ...file.jobs },
 		logCompaction: { ...d.logCompaction, ...file.logCompaction },
 		chat: { ...d.chat, ...file.chat },
+
+		// An inline block and a standalone file are the same shape; the file wins,
+		// because it is the one a deployment can rewrite without restarting.
+		// Loading it here rather than at first read keeps a malformed file a
+		// startup failure, which is when an operator can still see it.
+		policyFile: file.policyFile ? resolve(file.policyFile) : undefined,
+		policy:
+			loadPolicy(file.policyFile ? resolve(file.policyFile) : undefined) ?? file.policy ?? null,
 
 		reset,
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,

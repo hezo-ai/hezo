@@ -15,7 +15,6 @@ import {
 	type MarketplaceTeamDef,
 	normalizeKeywords,
 	RESERVED_ROSTER_SLUGS,
-	requiredSystemPromptVarsError,
 	teamKeywordsError,
 } from '@hezo/shared';
 
@@ -139,8 +138,6 @@ export function buildTeamDef(
 		if (!prompt?.trim()) {
 			throw new Error(`Team "${manifest.slug}": missing system prompt for ${label}`);
 		}
-		const err = requiredSystemPromptVarsError(prompt);
-		if (err) throw new Error(`Team "${manifest.slug}" ${label}: ${err}`);
 		return prompt;
 	};
 

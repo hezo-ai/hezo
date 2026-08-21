@@ -607,13 +607,13 @@ describe('MCP endpoint: tool call integration', () => {
 		expect(summary.error).toBeUndefined();
 
 		// A non-in_progress status change on another ticket is also allowed.
-		const review = await callUpdateTaskScoped(agentToken, {
+		const parked = await callUpdateTaskScoped(agentToken, {
 			project: projectId,
 			task_id: other.id,
-			status: 'review',
+			status: 'backlog',
 		});
-		expect(review.error).toBeUndefined();
-		expect(review.status).toBe('review');
+		expect(parked.error).toBeUndefined();
+		expect(parked.status).toBe('backlog');
 	});
 
 	it('update_task scope gate does not apply to board callers', async () => {
@@ -669,8 +669,11 @@ describe('MCP endpoint: tool call integration', () => {
 			placeholders: false,
 		})) as { system_prompt: string; error?: string };
 		expect(result.error).toBeUndefined();
-		expect(result.system_prompt).toContain('{{team_name}}');
+		// The stored body, with none of the composed blocks and no live values -
+		// what makes an edit round-trip safely back through update_agent_system_prompt.
 		expect(result.system_prompt).not.toContain('MCP Tool Test Co');
+		expect(result.system_prompt).not.toContain('The team skills database holds');
+		expect(result.system_prompt).not.toMatch(/^You are the .+ at /);
 	});
 });
 

@@ -11,6 +11,22 @@
  *   monthly >= weekly * 52/12
  */
 
+/**
+ * The monthly cap a newly hired agent starts with, in cents. **0 is unlimited**,
+ * and that is the default.
+ *
+ * It used to be 3000. Nothing chose that figure, and until cache traffic was
+ * priced at real rates it bit several times sooner than its face value read - so
+ * a team could stop working for a reason its operator never set and could not
+ * see. Projects have defaulted to unlimited since the baseline schema; agents now
+ * match, and an operator who wants a cap sets one.
+ *
+ * Stated once here because four call sites had the old figure written out
+ * separately - the hire proposal, both agent-create paths, and the hire form -
+ * and a default spelled four times is a default that changes in three places.
+ */
+export const DEFAULT_MONTHLY_BUDGET_CENTS = 0;
+
 export interface BudgetWindowsCents {
 	daily_budget_cents: number;
 	weekly_budget_cents: number;

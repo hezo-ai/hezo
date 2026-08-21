@@ -222,6 +222,57 @@ describe('appendRunLogChunks usage stamping', () => {
 		expect(row.rows[0]).toMatchObject({ input_tokens: 5, usage_partial: true });
 	});
 
+	it('stamps the cache split alongside the running usage', async () => {
+		const runId = await seedRun();
+		await appendRunLogChunks(db, runId, 'streaming\n', {
+			inputTokens: 9000,
+			outputTokens: 120,
+			costCents: 4,
+			cacheReadTokens: 7500,
+			cacheCreationTokens: 400,
+		});
+		const row = await db.query<{
+			input_tokens: string | number;
+			cache_read_tokens: string | number | null;
+			cache_creation_tokens: string | number | null;
+			usage_partial: boolean;
+		}>(
+			`SELECT input_tokens, cache_read_tokens, cache_creation_tokens, usage_partial
+			 FROM heartbeat_runs WHERE id = $1`,
+			[runId],
+		);
+		// The whole reason the split is flushed rather than only stamped at the end:
+		// a run killed mid-flight keeps an auditable cost instead of a bare sum.
+		expect(Number(row.rows[0].input_tokens)).toBe(9000);
+		expect(Number(row.rows[0].cache_read_tokens)).toBe(7500);
+		expect(Number(row.rows[0].cache_creation_tokens)).toBe(400);
+		expect(row.rows[0].usage_partial).toBe(true);
+	});
+
+	it('leaves an already-stamped split alone when a later flush carries none', async () => {
+		const runId = await seedRun();
+		await appendRunLogChunks(db, runId, 'a\n', {
+			inputTokens: 100,
+			outputTokens: 10,
+			costCents: 1,
+			cacheReadTokens: 60,
+			cacheCreationTokens: 5,
+		});
+		// A runtime that stops reporting a split must not erase the one already
+		// recorded - that is what the COALESCE in the statement is for.
+		await appendRunLogChunks(db, runId, 'b\n', {
+			inputTokens: 200,
+			outputTokens: 20,
+			costCents: 2,
+		});
+		const row = await db.query<{
+			input_tokens: string | number;
+			cache_read_tokens: string | number | null;
+		}>(`SELECT input_tokens, cache_read_tokens FROM heartbeat_runs WHERE id = $1`, [runId]);
+		expect(Number(row.rows[0].input_tokens)).toBe(200);
+		expect(Number(row.rows[0].cache_read_tokens)).toBe(60);
+	});
+
 	it('keeps seq monotonic across many appends, including oversized ones', async () => {
 		const runId = await seedRun();
 		await appendRunLogChunks(db, runId, 'a\n');

@@ -27,7 +27,7 @@ export interface GitWorktree {
 	task: { title: string; status: string } | null;
 }
 
-export type RepoGitState =
+export type RepoGitState = { can_push: boolean } & (
 	| { container_running: false }
 	| {
 			container_running: true;
@@ -35,19 +35,56 @@ export type RepoGitState =
 			worktrees: GitWorktree[];
 			/** Queued/running agent runs on the project; reset is blocked while > 0. */
 			active_runs: number;
-	  };
+	  }
+);
 
 export type ResetAction = 'discard_local' | 'prune_worktrees' | 'reclone';
 
 /**
  * Live git state for one repository. Lazy: pass `enabled` so the query (which does
  * live docker execs in the container) fires only when the panel is expanded.
+ *
+ * `pollMs` turns on a temporary watch while a container the panel asked for is
+ * coming up. Left off the rest of the time on purpose: every call re-checks push
+ * access against GitHub, so this is not a query to leave ticking.
  */
-export function useRepoGitState(projectId: string, repoId: string, enabled: boolean) {
+export function useRepoGitState(
+	projectId: string,
+	repoId: string,
+	enabled: boolean,
+	pollMs?: number,
+) {
 	return useQuery({
 		queryKey: queryKeys.projects.gitState(projectId, repoId),
 		queryFn: () => api.get<RepoGitState>(`/api/projects/${projectId}/repos/${repoId}/git-state`),
 		enabled,
+		refetchInterval: pollMs ?? false,
+	});
+}
+
+/** What `POST .../git-state` answers: one was already up, or a start is under way. */
+export interface RepoContainerStart {
+	starting: boolean;
+	container_running: boolean;
+}
+
+/** The code that route returns while the instance memory budget leaves no room. */
+export const CONTAINER_AT_CAPACITY = 'CONTAINER_AT_CAPACITY';
+
+/**
+ * Ask for a container so the git state can be read.
+ *
+ * Invalidate-and-refetch rather than optimistic: this is container lifecycle, and
+ * nothing about it is settled until the server says so.
+ */
+export function useStartRepoContainer(projectId: string, repoId: string) {
+	return useMutation({
+		mutationFn: () =>
+			api.post<RepoContainerStart>(`/api/projects/${projectId}/repos/${repoId}/git-state`, {}),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.gitState(projectId, repoId) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+		},
 	});
 }
 

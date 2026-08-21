@@ -7,10 +7,11 @@
  * SDK — and normalizes the result to per-token `ParsedRate` rows.
  *
  * The catalog quotes prices per **million** tokens and carries **no cache
- * rates**, so `cacheReadPerToken`/`cacheCreationPerToken` are always null and
- * the cost math bills cache reads/writes at the full input rate — recorded
- * costs are a conservative upper-bound estimate (see `@hezo/shared` pricing).
- * A `manual` override can supply cache rates for exact per-model billing.
+ * rates**. Rather than leave them null - which bills cache traffic at the full
+ * input rate, ~10x over on the cache-read bucket that dominates agent runs -
+ * they are derived from the feed's own input rate per provider
+ * ({@link CACHE_RATE_MULTIPLIERS}). A `manual` override still wins for exact
+ * per-model billing.
  */
 
 /** The pricepertoken.com MCP endpoint (streamable HTTP, JSON-RPC POST). */
@@ -21,6 +22,27 @@ const GET_ALL_MODELS_LIMIT = 10_000;
 
 /** The catalog quotes costs per this many tokens; we store per-token. */
 const TOKENS_PER_MILLION = 1_000_000;
+
+/**
+ * Cache rates the catalog does not carry, as multiples of the base input rate,
+ * keyed by the catalog's `author_name` (case-insensitive).
+ *
+ * Anthropic prices cache reads at 0.1x input and cache writes at 1.25x for the
+ * default 5-minute TTL (2x for the 1-hour TTL, which no runtime Hezo drives
+ * opts into - 1.25x is both the common case and the lower of the two).
+ *
+ * **Derived rather than baked** so the cache rates stay correct when the feed
+ * moves a base price, and so a model released after this ships is covered
+ * without a code change - the failure mode a snapshot of absolute figures has.
+ *
+ * A provider absent here keeps null rates and bills cache traffic at the full
+ * input rate, exactly as before. Add a row only once that provider's
+ * multipliers are verified: a guessed multiplier is worse than the honest
+ * fallback, because it is wrong in a direction nobody checks.
+ */
+const CACHE_RATE_MULTIPLIERS: Record<string, { read: number; creation: number }> = {
+	anthropic: { read: 0.1, creation: 1.25 },
+};
 
 /** A normalized rate row ready to upsert into `model_pricing`. */
 export interface ParsedRate {
@@ -166,8 +188,9 @@ export function deriveModelId(slug: string, authorName: string): string {
  * Map the raw `get_all_models` array to rate rows: per-million → per-token,
  * author prefix stripped from the slug. Skips entries without both numeric
  * prices (the catalog lists some models it has no rates for). Cache rates are
- * always null — the tool doesn't carry them. Dedupes by derived id (first
- * entry wins) so two slugs collapsing to one id can't break the bulk upsert.
+ * derived from the input rate where the author has known multipliers and null
+ * otherwise. Dedupes by derived id (first entry wins) so two slugs collapsing
+ * to one id can't break the bulk upsert.
  */
 export function parsePricePerTokenModels(raw: unknown): ParsedRate[] {
 	if (!Array.isArray(raw)) return [];
@@ -178,14 +201,17 @@ export function parsePricePerTokenModels(raw: unknown): ParsedRate[] {
 		if (typeof slug !== 'string' || slug === '') continue;
 		if (typeof input_per_1m !== 'number' || !Number.isFinite(input_per_1m)) continue;
 		if (typeof output_per_1m !== 'number' || !Number.isFinite(output_per_1m)) continue;
-		const modelId = deriveModelId(slug, typeof author_name === 'string' ? author_name : '');
+		const author = typeof author_name === 'string' ? author_name : '';
+		const modelId = deriveModelId(slug, author);
 		if (byId.has(modelId)) continue;
+		const inputPerToken = input_per_1m / TOKENS_PER_MILLION;
+		const cache = CACHE_RATE_MULTIPLIERS[author.toLowerCase()];
 		byId.set(modelId, {
 			modelId,
-			inputPerToken: input_per_1m / TOKENS_PER_MILLION,
+			inputPerToken,
 			outputPerToken: output_per_1m / TOKENS_PER_MILLION,
-			cacheReadPerToken: null,
-			cacheCreationPerToken: null,
+			cacheReadPerToken: cache ? inputPerToken * cache.read : null,
+			cacheCreationPerToken: cache ? inputPerToken * cache.creation : null,
 		});
 	}
 	return [...byId.values()];

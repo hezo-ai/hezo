@@ -1,4 +1,11 @@
-import { ApprovalStatus, ApprovalType, AuthType, CommentContentType, wsRoom } from '@hezo/shared';
+import {
+	ApprovalStatus,
+	ApprovalType,
+	AuthType,
+	CommentContentType,
+	markdownToPreviewText,
+	wsRoom,
+} from '@hezo/shared';
 import { Hono } from 'hono';
 import { agentDisplayNameSql } from '../lib/agent-identity';
 import { broadcastChange } from '../lib/broadcast';
@@ -9,10 +16,18 @@ import type { Env } from '../lib/types';
 export const inboxRoutes = new Hono<Env>();
 
 const SNIPPET_MAX_LEN = 180;
+/**
+ * Chars of the body the Markdown strip runs over. A listing renders up to 200
+ * rows and a comment body has no ceiling, so the scan is bounded - far above
+ * `SNIPPET_MAX_LEN`, so a cut can never strand syntax inside the kept window.
+ */
+const SNIPPET_SCAN_LIMIT = 4000;
 
 /**
- * The one line of prose an inbox row shows. A comment kind that carries no
- * `text` still has to read as something: a credential request's human-facing
+ * The one line of prose an inbox row shows. Comment bodies are Markdown, so the
+ * syntax is stripped: a row is a preview, not a source view, and `**bold**` read
+ * literally is what the reader would otherwise see. A comment kind that carries
+ * no `text` still has to read as something: a credential request's human-facing
  * `instructions` is that comment's whole point, so it stands in.
  */
 function buildSnippet(content: unknown): string {
@@ -20,7 +35,7 @@ function buildSnippet(content: unknown): string {
 	const fields = content as Record<string, unknown>;
 	const body = typeof fields.text === 'string' ? fields.text : fields.instructions;
 	if (typeof body !== 'string') return '';
-	const stripped = body.replace(/\s+/g, ' ').trim();
+	const stripped = markdownToPreviewText(body.slice(0, SNIPPET_SCAN_LIMIT));
 	if (stripped.length <= SNIPPET_MAX_LEN) return stripped;
 	return `${stripped.slice(0, SNIPPET_MAX_LEN - 1).trimEnd()}…`;
 }

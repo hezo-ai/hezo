@@ -6,13 +6,16 @@ import {
 	MAX_CHAT_HISTORY_SIZE_MIN,
 	MAX_CONTAINER_MEMORY_GB_MAX,
 	MAX_CONTAINER_MEMORY_GB_MIN,
+	minTotalContainerMemoryGb,
 	parseLocaleSettingsPatch,
 	projectMemoryFitsBudget,
 	RAM_CAP_PER_CONTAINER_GB_MAX,
 	RAM_CAP_PER_CONTAINER_GB_MIN,
 	TASK_VIEWS,
+	taskContainerMemoryBudgetGb,
 } from '@hezo/shared';
 import { Hono } from 'hono';
+import { runtimeConfig } from '../config/runtime';
 import type { Db } from '../db/database';
 import { err, ok } from '../lib/response';
 import {
@@ -29,7 +32,9 @@ import {
 	getMaxContainerMemoryGbSetting,
 	INSTANCE_BASE_URL_KEY,
 	instanceLocaleIsConfigured,
+	isPinned,
 	normalizeBaseUrl,
+	type PinnableSetting,
 	setDefaultContainerDiskGb,
 	setDefaultRamCapPerContainerGb,
 	setDefaultTaskView,
@@ -47,9 +52,11 @@ export const instanceSettingsRoutes = new Hono<Env>();
 
 /**
  * The settings payload GET and PATCH both return. `max_container_memory_gb` is
- * the effective budget; `_is_set` distinguishes an explicit choice from the
- * computed default, and the host memory figures let the settings page render
- * the formula behind the automatic value.
+ * the effective budget for **all** containers; `task_container_memory_gb` is the
+ * share of it task runs may hold, the remainder being the assistant chat's
+ * reservation. `_is_set` distinguishes an explicit choice from the computed
+ * default, and the host memory figures let the settings page render the formula
+ * behind the automatic value.
  *
  * **The host memory figures are null when containers do not run on this host.**
  * They come from the engine rather than a probe here, so the page cannot render
@@ -65,20 +72,56 @@ export const instanceSettingsRoutes = new Hono<Env>();
 async function instanceSettingsPayload(db: Db, engine: ContainerEngine) {
 	const explicitBudget = await getMaxContainerMemoryGbSetting(db);
 	const hostMemory = engine.containerHostMemory();
+	const totalBudgetGb = await getMaxContainerMemoryGb(db, engine);
+	const ramCapGb = await getDefaultRamCapPerContainerGb(db);
 	return {
 		base_url: await getInstanceBaseUrl(db),
 		max_chat_history_size: await getMaxChatHistorySize(db),
-		max_container_memory_gb: await getMaxContainerMemoryGb(db, engine),
+		max_container_memory_gb: totalBudgetGb,
 		max_container_memory_gb_is_set: explicitBudget !== null,
 		max_container_memory_gb_computed_default: await computeAutoMaxContainerMemoryGb(db, engine),
-		default_ram_cap_per_container_gb: await getDefaultRamCapPerContainerGb(db),
+		// The share of the total task runs may hold: the rest is the reservation
+		// that keeps the assistant chat exempt from the budget without letting the
+		// instance run a container over its own configured figure. Sent rather than
+		// derived in the client so the page cannot drift from what admission uses.
+		task_container_memory_gb: taskContainerMemoryBudgetGb(totalBudgetGb, ramCapGb),
+		default_ram_cap_per_container_gb: ramCapGb,
 		default_container_disk_gb: await getDefaultContainerDiskGb(db),
 		host_total_ram_bytes: hostMemory?.totalRamBytes ?? null,
 		host_total_swap_bytes: hostMemory?.totalSwapBytes ?? null,
 		default_task_view: await getDefaultTaskView(db),
 		locale: await getInstanceLocale(db),
+		// Provenance, in the same spirit as `max_container_memory_gb_is_set` above:
+		// the page renders a locked control from these rather than inferring that a
+		// value it cannot change is somehow special.
+		max_container_memory_gb_pinned: isPinned('maxContainerMemoryGb'),
+		default_ram_cap_per_container_gb_pinned: isPinned('defaultRamCapPerContainerGb'),
+		default_container_disk_gb_pinned: isPinned('defaultContainerDiskGb'),
+		// Who fixed them and where to change them. Null when nothing is pinned,
+		// which is every self-hosted instance that has not opted in.
+		policy: policyBanner(),
 	};
 }
+
+/** The rendered half of the policy - a name and an optional link, never anything to branch on. */
+function policyBanner(): { managed_by: string; manage_url: string | null } | null {
+	const policy = runtimeConfig().policy;
+	if (!policy) return null;
+	return { managed_by: policy.managedBy, manage_url: policy.manageUrl ?? null };
+}
+
+/**
+ * The pinnable settings, by the PATCH field that writes each.
+ *
+ * A table rather than a check per field, so adding a pinnable setting is one row
+ * and a field with no entry is simply not pinnable - there is no third state to
+ * get wrong.
+ */
+const PINNED_BY_FIELD: Record<string, PinnableSetting> = {
+	max_container_memory_gb: 'maxContainerMemoryGb',
+	default_ram_cap_per_container_gb: 'defaultRamCapPerContainerGb',
+	default_container_disk_gb: 'defaultContainerDiskGb',
+};
 
 // Instance-wide settings. Readable by any authenticated principal (the same
 // openness as GET /api/ai-providers); writes are superuser-only.
@@ -127,27 +170,35 @@ instanceSettingsRoutes.patch('/instance-settings/locale', async (c) => {
  * Checked against the projects that actually carry an override plus the
  * inherited default, so the operator learns immediately rather than watching a
  * project's runs queue forever with nothing naming the cause.
+ *
+ * The budget is the total for **all** containers, and one container's worth is
+ * held back for the assistant chat, so what a task run may take is the total less
+ * that reservation - which is why the floor is two caps rather than one.
  */
 async function budgetTooSmallError(db: Db, budgetGb: number): Promise<string | null> {
 	const defaultCap = await getDefaultRamCapPerContainerGb(db);
-	if (!projectMemoryFitsBudget(defaultCap, budgetGb)) {
+	const minTotal = minTotalContainerMemoryGb(defaultCap);
+	if (budgetGb < minTotal) {
 		return (
-			`a budget of ${budgetGb} GB is below the ${defaultCap} GB default per-container cap, ` +
-			`so no container could ever start. Lower default_ram_cap_per_container_gb first.`
+			`a budget of ${budgetGb} GB leaves less than the ${defaultCap} GB default ` +
+			`per-container cap for task runs once the assistant chat's container is ` +
+			`reserved, so no container could ever start. It needs at least ${minTotal} GB. ` +
+			`Lower default_ram_cap_per_container_gb first.`
 		);
 	}
+	const taskBudgetGb = taskContainerMemoryBudgetGb(budgetGb, defaultCap);
 	const worst = await db.query<{ slug: string; memory_limit_gib: number }>(
 		`SELECT slug, memory_limit_gib FROM projects
 		  WHERE memory_limit_gib IS NOT NULL AND memory_limit_gib > $1
 		  ORDER BY memory_limit_gib DESC LIMIT 1`,
-		[budgetGb],
+		[taskBudgetGb],
 	);
 	const row = worst.rows[0];
 	if (!row) return null;
 	return (
-		`a budget of ${budgetGb} GB is below project "${row.slug}"'s ${row.memory_limit_gib} GB ` +
-		`per-container cap, so that project could never start a container. Lower its memory ` +
-		`limit first.`
+		`a budget of ${budgetGb} GB leaves ${taskBudgetGb} GB for task runs, below project ` +
+		`"${row.slug}"'s ${row.memory_limit_gib} GB per-container cap, so that project could ` +
+		`never start a container. Lower its memory limit first.`
 	);
 }
 
@@ -190,6 +241,25 @@ instanceSettingsRoutes.patch('/instance-settings', async (c) => {
 	] as const;
 	if (!knownFields.some((f) => f in body)) {
 		return err(c, 'INVALID_REQUEST', `one of ${knownFields.join(', ')} is required`, 400);
+	}
+
+	// **Refused, never silently ignored.** This is the actual enforcement rather
+	// than UI politeness: whoever runs this instance is still its superuser and
+	// can call the API directly, so a write that appeared to succeed and changed
+	// nothing would be the worst of both. 409 rather than 403 - the request is
+	// authorized, it conflicts with a decision made above this instance.
+	const policy = runtimeConfig().policy;
+	if (policy) {
+		for (const [field, key] of Object.entries(PINNED_BY_FIELD)) {
+			if (field in body && isPinned(key)) {
+				return err(
+					c,
+					'CONFLICT',
+					`${field} is set by ${policy.managedBy} and cannot be changed here.`,
+					409,
+				);
+			}
+		}
 	}
 
 	if ('max_chat_history_size' in body) {

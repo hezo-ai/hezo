@@ -81,6 +81,14 @@
 	],
 	"changelog": [
 		{
+			"version": 30,
+			"notes": "Agents ship with no monthly spend cap. The old per-role figures were arbitrary, and until cache traffic was priced at real rates they bit several times sooner than they read - so a team could stop working for a reason its operator never set. Set a cap per agent if you want one."
+		},
+		{
+			"version": 28,
+			"notes": "Removed the review task status. The Engineer hands off to QA with an active mention and records the holder in progress_summary; the exclusive test-runner slot now reads the comment thread and progress_summary instead of a status value."
+		},
+		{
 			"version": 27,
 			"notes": "Renamed the team slug from software-development to app-dev, matching the App Team name it has always shown."
 		},
@@ -183,6 +191,10 @@
 		{
 			"version": 1,
 			"notes": "Initial marketplace release."
+		},
+		{
+			"version": 29,
+			"notes": "Role prompts no longer carry the identity line or the live-context block. Hezo composes both around the authored body at run time, adding only what a prompt does not already name, so the prompts here hold the role itself and no substitution variable is required."
 		}
 	],
 	"captain": {
@@ -203,7 +215,7 @@
 			"default_effort": "max",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 4000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false,
@@ -225,7 +237,7 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false,
@@ -247,7 +259,7 @@
 			"default_effort": "medium",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 5000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": true,
@@ -269,7 +281,7 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 4000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": true,
@@ -291,7 +303,7 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": true,
@@ -313,7 +325,7 @@
 			"default_effort": "medium",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": true,
@@ -335,7 +347,7 @@
 			"default_effort": "medium",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": true,
@@ -357,7 +369,7 @@
 			"default_effort": "medium",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 2000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false,
@@ -379,7 +391,7 @@
 			"default_effort": "high",
 			"heartbeat_interval_min": 720,
 			"run_timeout_min": 60,
-			"monthly_budget_cents": 3000,
+			"monthly_budget_cents": 0,
 			"daily_budget_cents": 0,
 			"weekly_budget_cents": 0,
 			"touches_code": false,

@@ -1,6 +1,8 @@
 import {
 	HEZO_DOCS_URL,
-	REQUIRED_SYSTEM_PROMPT_VARS,
+	IDENTITY_BLOCK_VARS,
+	INSTANCE_AGENT_SLUGS,
+	LIVE_CONTEXT_BLOCK_VARS,
 	renderPromptStyleRules,
 	repoNameFromIdentifier,
 	SandboxBackend,
@@ -58,8 +60,6 @@ const SHARED_INSTRUCTIONS = `
 - **Rules**: The task \`rules\` field captures *how this task should be worked on* — approach constraints, guardrails, or required workflows that shape execution (e.g. "run the full suite before pushing", "consult the architect before touching auth", "do not edit migrations"). Add these via \`update_task\` as you discover them. Do NOT use \`rules\` to pass project domain knowledge to a future agent — domain and scope context belongs in the task \`description\`; work-in-flight status belongs in \`progress_summary\`; project- or team-wide knowledge belongs in project docs (\`write_project_doc\`) or the team skills database (\`create_skill\`).
 - **Status**: Update the task status as you progress:
   - \`in_progress\` — when you begin active work
-  - \`review\` — when handing off for review
-  - \`approved\` — after a reviewer approves the work (the reviewer sets this)
   - \`done\` — when work is complete and delivered (triggers Coach review)
 - **One task per run.** This run is scoped to the single task shown in the Current Task block above. Drive only *that* task to \`in_progress\` and do only its work in this run. If another of your tasks needs progressing, leave it — its own run (your next heartbeat, or an assignment) picks it up. Route work elsewhere through the structural channels (a sub-task, a \`blocked_by\` dependency, or a comment/@-mention), but never flip a *different* task to \`in_progress\` or start executing it inside this run. If a tool rejects an \`in_progress\` transition on another task on these grounds, that rejection means *stop and route it structurally* (a sub-task, a \`blocked_by\` dependency, or an @-mention) — never treat it as a cue to do that task's work inline here instead.
 
@@ -76,15 +76,15 @@ const SHARED_INSTRUCTIONS = `
 
 ### Completion Handoff
 - **Mark \`done\` instead of announcing completion via mentions.** When your work on the current task is genuinely complete — the deliverable exists and no further step from you is expected — call \`update_task(status: "done")\`. The status transition *is* the handoff; do not try to hand off via an \`@\`-mention to the next owner instead.
-- **A task waiting on an answer is not complete — ask BEFORE closing, never close-then-ask.** If an active mention you posted is still unanswered on this task, whether to a teammate (\`@<slug>\`) or the admin (\`@admin\`), do NOT set the task \`done\`: keep it \`in_progress\` or move it to \`review\` and end your turn, and the reply wakes you automatically. Closing first and asking after — even seconds later — is the same failure, because a terminal task reads as finished and nobody treats it as awaiting anything. The server enforces the admin half: \`update_task(status: "done")\` is rejected while an \`@admin\` question on the task has no later human reply, so \`in_progress\`/\`review\` is the only correct state to wait in. If a *teammate* question becomes moot, say so in a comment, then close. A moot \`@admin\` question you cannot clear yourself, because your own comment is not the human reply the gate requires: state why it is moot, move the task to \`review\`, and end your turn.
-- **Completing a task is YOUR action — the admin has no "mark done" button, so never hand them the done-transition.** The board gives a human exactly two controls on a task: *Cancel task*, which marks it \`cancelled\`, and *Re-open*. Telling the admin to "mark this done from the UI" or "close it as done" points at a control that does not exist. When you believe the deliverable is finished, drive the task to \`done\` yourself. If the done-gate blocks you — an unanswered \`@admin\`, or an approval the thread established as required — post the concrete ask as a live \`@admin\` (or \`@<approver>\`), leave the task in \`review\`, and end your turn; their reply wakes you and *you* then set \`done\`. Asking the admin to **approve** completion is correct; asking them to **perform** it is not, because they cannot.
-- **A reviewer's own pass is not the task's final approval — track the whole approval chain before you close.** Some tasks carry a multi-step flow the thread establishes over time: the deliverable is produced, you review it, and it still needs a higher sign-off. Before marking such a task \`done\`, reconstruct from \`list_comments(categories: ["conversation"])\` who still owes an approval — not only a question *you* posted this run, but any approval the flow established as required, stated by **any** participant, possibly in an earlier run. Never conflate "my review passed" or "no changes needed" with "the task is approved": your own pass is one link in the chain. If a required approval has not been granted by *that party*, keep the task in \`review\` and post the approval request as a **live \`@\`-mention ask** (\`@admin\` for the human, \`@<slug>\` for a named approver), then end your turn. A prose "ready for admin approval" note wakes no one and is forgotten across runs. A rework or detour cycle does **not** discharge a pending approval — re-request it rather than closing on your fresh review.
-- **Never end a run stating you're waiting on a named teammate without first creating the wake.** "Waiting for the marketing-lead to review", "the designer will finalise this next", "the task stays in review awaiting the captain's sign-off" — each names the next actor and creates no wake at all. A completion-report framing never downgrades a handoff. Whenever your wrap-up says a named approver or teammate still owes something, put the request in that same comment as a live active \`@<slug>\` (or \`@admin\`), leave the task non-terminal, and end your turn. This wait state applies **only** if you genuinely created a wake; see the three real wakes under **@-Mentions, Linking & Handoffs**.
+- **A task waiting on an answer is not complete — ask BEFORE closing, never close-then-ask.** If an active mention you posted is still unanswered on this task, whether to a teammate (\`@<slug>\`) or the admin (\`@admin\`), do NOT set the task \`done\`: keep it \`in_progress\` and end your turn, and the reply wakes you automatically. Closing first and asking after — even seconds later — is the same failure, because a terminal task reads as finished and nobody treats it as awaiting anything. The server enforces the admin half: \`update_task(status: "done")\` is rejected while an \`@admin\` question on the task has no later human reply, so \`in_progress\` is the only correct state to wait in. If a *teammate* question becomes moot, say so in a comment, then close. A moot \`@admin\` question you cannot clear yourself, because your own comment is not the human reply the gate requires: state why it is moot, keep the task \`in_progress\`, and end your turn.
+- **Completing a task is YOUR action — the admin has no "mark done" button, so never hand them the done-transition.** The board gives a human exactly two controls on a task: *Cancel task*, which marks it \`cancelled\`, and *Re-open*. Telling the admin to "mark this done from the UI" or "close it as done" points at a control that does not exist. When you believe the deliverable is finished, drive the task to \`done\` yourself. If the done-gate blocks you — an unanswered \`@admin\`, or an approval the thread established as required — post the concrete ask as a live \`@admin\` (or \`@<approver>\`), leave the task \`in_progress\`, and end your turn; their reply wakes you and *you* then set \`done\`. Asking the admin to **approve** completion is correct; asking them to **perform** it is not, because they cannot.
+- **A reviewer's own pass is not the task's final approval — track the whole approval chain before you close.** Some tasks carry a multi-step flow the thread establishes over time: the deliverable is produced, you review it, and it still needs a higher sign-off. Before marking such a task \`done\`, reconstruct from \`list_comments(categories: ["conversation"])\` who still owes an approval — not only a question *you* posted this run, but any approval the flow established as required, stated by **any** participant, possibly in an earlier run. Never conflate "my review passed" or "no changes needed" with "the task is approved": your own pass is one link in the chain. If a required approval has not been granted by *that party*, keep the task \`in_progress\` and post the approval request as a **live \`@\`-mention ask** (\`@admin\` for the human, \`@<slug>\` for a named approver), then end your turn. A prose "ready for admin approval" note wakes no one and is forgotten across runs. A rework or detour cycle does **not** discharge a pending approval — re-request it rather than closing on your fresh review.
+- **Never end a run stating you're waiting on a named teammate without first creating the wake.** "Waiting for the marketing-lead to review", "the designer will finalise this next", "the task is awaiting the captain's sign-off" — each names the next actor and creates no wake at all. A completion-report framing never downgrades a handoff. Whenever your wrap-up says a named approver or teammate still owes something, put the request in that same comment as a live active \`@<slug>\` (or \`@admin\`), leave the task non-terminal, and end your turn. This wait state applies **only** if you genuinely created a wake; see the three real wakes under **@-Mentions, Linking & Handoffs**.
 - **The server does the wake.** Marking a task terminal (\`done\`, \`cancelled\`) walks the dependency graph: every task blocked on it is reconciled out of \`blocked\` and its assignee auto-woken, and Coach is woken on \`done\`. You do not need to ping anyone. To see which tasks your completion will unblock, read the \`dependents\` field on \`get_task\`.
 - **Wrap-up comment carries no \`@\`-mentions.** A short closing comment — a sentence or two on what shipped, optionally listing the bare identifiers of the dependents that now unblock — is the right end-of-run move. But whenever a comment coincides with marking the task \`done\` in the same wrap-up step, do not \`@\`-mention any agent in that comment: the auto-wake from the status transition already covers every notification the mention would serve, so an \`@\` on top creates a redundant wakeup. A genuinely out-of-band ping goes in a separate later comment.
 - **Reconcile your announced plan before you close.** If an earlier comment of yours stated what you would do next — a delegation fan-out, a named set of updates, steps contingent on a decision — then before marking \`done\` either carry each announced step out (directly, or through a sub-task or \`blocked_by\` follow-up) or explicitly revise it in your wrap-up comment with the reason. Silently doing less than you announced is indistinguishable from dropping work, because a thread reader cannot tell scope-collapse from abandonment. When a reply unblocks a plan you announced, that wakeup is for *executing* the plan, not merely acknowledging the answer. Re-read your own earlier comments via \`list_comments(categories: ["conversation"])\` before you close.
 - **Don't park a task \`blocked\` when your own deliverable is already done.** If the only remaining work belongs to a *separate* unfinished task, that remainder is its own deliverable: file it as a top-level task with \`blocked_by_task_ids\` set to the gating task, then mark your current task \`done\`. Apply the deliverable-feed test — if the remainder feeds *this* task's deliverable, keep it here; if it cannot proceed without external work and is not part of this deliverable, it is a new task, not a reason to sit blocked.
-- **When a task can't close until remediation you're routing out is done, GATE it.** A review or audit task that surfaces findings is not done until those findings are fixed and re-verified. The failure mode: you open a *fix* task and leave the review task sitting in \`review\` with only a passive "Linked from …" reference, which creates **no** wake — nothing re-opens the review when the fix lands, so it rots, and anything \`blocked_by\` the review never unblocks. The moment the fix task exists, set the originating review task \`blocked_by\` it via \`add_task_blocker\` (or \`blocked_by_task_ids\` at create time). \`blocked_by\` is many-to-many: one consolidated fix task can gate several review tasks, and several fixes can gate one review. Prefer this over a sub-task whenever the fix has its own sign-off lifecycle or feeds more than one review task.
+- **When a task can't close until remediation you're routing out is done, GATE it.** A review or audit task that surfaces findings is not done until those findings are fixed and re-verified. The failure mode: you open a *fix* task and leave the review task sitting \`in_progress\` with only a passive "Linked from …" reference, which creates **no** wake — nothing re-opens the review when the fix lands, so it rots, and anything \`blocked_by\` the review never unblocks. The moment the fix task exists, set the originating review task \`blocked_by\` it via \`add_task_blocker\` (or \`blocked_by_task_ids\` at create time). \`blocked_by\` is many-to-many: one consolidated fix task can gate several review tasks, and several fixes can gate one review. Prefer this over a sub-task whenever the fix has its own sign-off lifecycle or feeds more than one review task.
 - **Follow-ups that *don't* block this task still need an owner and a home — never strand them as prose.** A bare list in the closing comment with a passive \`@@<slug>\` tracks nothing and wakes no one; the moment the task closes those items are lost. Either **create the tasks yourself** before closing — top-level or sub-task per the deliverable-feed test — or, if a more senior or other-domain owner should triage them, wake that owner with an active \`@<slug>\` in the same comment.
 - **Don't defer work you can still do yourself this run.** While run-time and budget remain, keep driving the current task to completion or to its handoff point rather than parking the rest for "next time" — nothing re-engages a parked task until your next heartbeat, which may be hours away. This is not a mandate to grind on regardless: when the only thing left genuinely needs input you cannot produce yourself, stopping is correct, using the proper structural wait (an active \`@<slug>\` with the task non-terminal, \`@admin\` for a decision, \`request_credential\` for a secret, or \`add_task_blocker\` when gated on another task). The test is simply: *can I make more progress myself right now?*
 - **If you do defer remaining work to a later run, say so in a comment.** When you legitimately stop with more of *this task's own* work still to do, post a comment stating that the work is parked for your next run, listing concretely what remains, and leave the task non-terminal. Silent deferral with nothing on the thread reads as abandonment to both humans and your future self.
@@ -134,7 +134,7 @@ const SHARED_INSTRUCTIONS = `
 - **Assigned to you** — it IS your work; do what the comment asks *in this run* (act on the request, answer any question it asks by posting your answer as a comment, carry the task forward, transitions included). The mention is your wake and the triage flow below does not apply. But "do what it asks" means making sure it **lands**, which is not the same as producing it yourself: if the comment bears on a deliverable you have already delegated and whose sub-task is still open, routing it to that task **is** the action this run (see **New instructions on work you have already delegated** under **Sub-Tasks & Delegation**), because executing it here duplicates your report's in-flight work.
 - **Assigned to someone else** — your run opens for triage only. (1) If one of your own open tasks already covers the topic, fold the new information into the field that fits it — scope/context → \`description\`, in-flight status → \`progress_summary\`, approach constraints → \`rules\` — and reference the triggering task. (2) Otherwise run the duplicate check; if a matching open task exists, comment there (mention the assignee if it isn't you); only if nothing covers it, \`create_task\` assigned to yourself, shaped per the deliverable-feed test. (3) Acknowledge the triggering comment with \`add_reaction(kind='ack')\` using the \`comment_id\` from the Mention Handoff section. (4) Also post a short comment whenever **any** of these holds: (a) the mention asks you something only you can answer — a question, a decision, or status only you have — in which case the comment IS your answer (a reaction alone tells the commenter you saw the mention, not what you did with it — an acknowledgement, never an answer); (b) you took substantive action this run, summarised in the comment; or (c) the mentioner is the admin, who deserves a visible reply rather than an emoji. Keep it to one or two lines — the answer, or what you did and where the work now lives, quoting the task identifiers you created or updated; add an active \`@\`-mention only if you genuinely need something back. Post the reaction alone — no comment — only when the mention was purely informational and needed nothing from you, **and** the mentioner is a teammate, not the admin. Then end the turn; your own task is picked up by its next run. Don't narrate play-by-play, and don't re-post substance you've already stated (see **Don't repost when nothing changed**).
 
-**When to ask the admin.** \`@admin\` is reserved for asks only a human can resolve — product or strategy decisions, sensitive trade-offs, scope ambiguity no teammate can settle, or permission for a high-impact action. When that is where you're blocked, the active \`@admin\` is **not optional — it is the ask**: write the question concretely (what you're stuck on, what you've already considered, what you need decided), put \`@admin\` in that same comment, then stop your turn with the task in a non-terminal status — a recognised "waiting on input" state, and the admin's reply on the same task wakes you automatically. The server enforces it: \`done\` is rejected while your \`@admin\` ask has no human reply, so \`in_progress\`/\`review\` is the only correct state to wait in. A question left as prose or marked passive (\`@@admin\`) lands in no admin's inbox — it notifies no one and the task simply stalls. Don't use \`@admin\` as a substitute for doing the work yourself or asking a teammate who can answer.
+**When to ask the admin.** \`@admin\` is reserved for asks only a human can resolve — product or strategy decisions, sensitive trade-offs, scope ambiguity no teammate can settle, or permission for a high-impact action. When that is where you're blocked, the active \`@admin\` is **not optional — it is the ask**: write the question concretely (what you're stuck on, what you've already considered, what you need decided), put \`@admin\` in that same comment, then stop your turn with the task in a non-terminal status — a recognised "waiting on input" state, and the admin's reply on the same task wakes you automatically. The server enforces it: \`done\` is rejected while your \`@admin\` ask has no human reply, so \`in_progress\` is the only correct state to wait in. A question left as prose or marked passive (\`@@admin\`) lands in no admin's inbox — it notifies no one and the task simply stalls. Don't use \`@admin\` as a substitute for doing the work yourself or asking a teammate who can answer.
 
 ### Knowledge Maintenance
 - **Project docs**: Use \`list_project_docs\`, \`read_project_doc\` and \`write_project_doc\` for high-level project context — requirements, design decisions, plans, research. Docs are addressed by bare filename (e.g. \`prd.md\`), never a filesystem path, so never prefix a folder. Keep them aligned with the actual state of the work, and keep agent-specific working knowledge out of them.
@@ -276,17 +276,90 @@ const SHARED_INSTRUCTIONS = `
  */
 export const SHARED_INSTRUCTIONS_TEXT = SHARED_INSTRUCTIONS;
 
-export const REQUIRED_PROMPT_VARS_PLACEHOLDER = '{{required_prompt_vars}}';
-
 /** Placeholder expanding to the machine-checked half of the writing register. */
 export const PROMPT_STYLE_RULES_PLACEHOLDER = '{{prompt_style_rules}}';
+
+/**
+ * The agent's opening line, prepended when the authored body states no identity
+ * of its own. Carries the team name, the team's description and the manager, so
+ * a prompt that names none of them still tells its agent who it is - and so the
+ * team description reaches an agent at all, which nothing else in the resolver
+ * does.
+ *
+ * Skipped whole rather than per value when the body names `{{team_name}}` or
+ * `{{reports_to}}`: an author who placed either wrote their own opening line,
+ * and a second one above it would contradict it. Skipped for the instance
+ * singletons (CEO, Coach) too - they roam across every team, so "the <title> at
+ * <team>" would name whichever team this run happens to be scoped to and read
+ * as their home.
+ *
+ * Values are inlined rather than emitted as tokens, and the block is prepended
+ * after the substitution pass rather than before it, so a `{{…}}` occurring
+ * inside a team description is left as the prose it is.
+ */
+async function buildIdentityBlock(db: Db, template: string, ctx: ResolveContext): Promise<string> {
+	if (IDENTITY_BLOCK_VARS.some((token) => template.includes(token))) return '';
+	if (!ctx.agentId) return '';
+
+	// Slug, title and manager together - the block needs all three or none.
+	const agent = await db.query<{ slug: string; title: string; manager_name: string | null }>(
+		`SELECT ma.slug, ma.title, mgr.display_name AS manager_name
+		 FROM member_agents ma
+		 LEFT JOIN members mgr ON mgr.id = ma.reports_to
+		 WHERE ma.id = $1`,
+		[ctx.agentId],
+	);
+	const row = agent.rows[0];
+	if (!row) return '';
+	if ((INSTANCE_AGENT_SLUGS as readonly string[]).includes(row.slug)) return '';
+	const title = row.title?.trim();
+	if (!title) return '';
+
+	const team = await db.query<{ name: string; description: string | null }>(
+		'SELECT name, description FROM teams WHERE id = $1',
+		[ctx.teamId],
+	);
+	const teamName = team.rows[0]?.name?.trim();
+	const description = team.rows[0]?.description?.trim();
+	const manager = row.manager_name?.trim();
+
+	const lines = [teamName ? `You are the ${title} at ${teamName}.` : `You are the ${title}.`];
+	if (description) lines.push('', description);
+	if (manager) lines.push('', `You report to: ${manager}.`);
+	return `${lines.join('\n')}\n\n`;
+}
+
+/**
+ * The live manifests every agent needs, appended when the authored body does not
+ * place them itself. Each line is independent: a body naming `{{skills_context}}`
+ * mid-prose still gets the preferences and docs manifests here, and never a
+ * second skills manifest.
+ *
+ * Emits tokens rather than values - the substitution pass below owns the queries
+ * that build each manifest.
+ */
+function buildLiveContextBlock(template: string): string {
+	const missing = LIVE_CONTEXT_BLOCK_VARS.filter((token) => !template.includes(token));
+	if (missing.length === 0) return '';
+	const lines = missing.map((token) =>
+		token === '{{current_date}}' ? 'Current date: {{current_date}}' : token,
+	);
+	return `\n\n---\n\n${lines.join('\n\n')}\n`;
+}
 
 export async function resolveSystemPrompt(
 	db: Db,
 	template: string,
 	ctx: ResolveContext,
 ): Promise<string> {
-	let resolved = template;
+	// The live-context block carries the same `{{…}}` tokens an authored body
+	// would, so it goes on before the pass below and needs no resolver of its own.
+	// The identity block is prepended *after* that pass instead (see below).
+	//
+	// Both add only what the template does not already carry, which is what keeps
+	// a prompt written before this existed resolving to exactly the bytes it
+	// always did.
+	let resolved = template + buildLiveContextBlock(template);
 
 	if (resolved.includes('{{current_date}}')) {
 		resolved = resolved.replace(/\{\{current_date\}\}/g, new Date().toISOString().slice(0, 10));
@@ -321,16 +394,11 @@ export async function resolveSystemPrompt(
 		resolved = resolved.replace(/\{\{reports_to\}\}/g, managerName);
 	}
 
+	// team_context retired: `buildTeamContextBlock` appends the org chart on every
+	// run whether or not a template asks for it, so substituting the token here as
+	// well printed it twice. Strip any leftover so it never leaks into a prompt.
 	if (resolved.includes('{{team_context}}')) {
-		let teamContext = '';
-		if (ctx.agentId) {
-			const result = await db.query<{ team_context: string }>(
-				'SELECT team_context FROM member_agents WHERE id = $1',
-				[ctx.agentId],
-			);
-			teamContext = result.rows[0]?.team_context ?? '';
-		}
-		resolved = resolved.replace(/\{\{team_context\}\}/g, teamContext);
+		resolved = resolved.replace(/\{\{team_context\}\}\n?/g, '');
 	}
 
 	// kb_context retired: the knowledge base merged into the skills database.
@@ -445,30 +513,6 @@ export async function resolveSystemPrompt(
 
 	resolved = resolved.replace(/\{\{requester_context\}\}/g, '');
 
-	// The one placeholder that expands *to* placeholders, and therefore the last
-	// one resolved.
-	//
-	// Several prompts have to tell an agent which substitution variables a system
-	// prompt it authors must contain - `create_hire_proposal` and
-	// `update_agent_system_prompt` reject one that drops any. Writing that list as
-	// prose meant writing `{{team_name}}` literally, which every branch above
-	// happily substituted: the CEO was told its required variables were the team's
-	// name, an empty string, and "No preferences set." - so every hire it filed
-	// was rejected for missing variables it had never been shown.
-	//
-	// Rendering it from `REQUIRED_SYSTEM_PROMPT_VARS` fixes both halves at once:
-	// the list can no longer be eaten, and it can no longer drift from what the
-	// validator actually enforces (it was hand-copied into four prompts). Position
-	// is load-bearing rather than incidental - every `{{…}}` replace above targets
-	// one specific literal and has already run, so the text inserted here is not
-	// re-scanned by anything. Keep it last.
-	if (resolved.includes(REQUIRED_PROMPT_VARS_PLACEHOLDER)) {
-		resolved = resolved.replaceAll(
-			REQUIRED_PROMPT_VARS_PLACEHOLDER,
-			REQUIRED_SYSTEM_PROMPT_VARS.map((v) => `\`${v}\``).join(', '),
-		);
-	}
-
 	// The writing register an authored prompt is held to, rendered from the same
 	// module the validator reads (`@hezo/shared` prompt-style). Hand-copying the
 	// list into a prompt is how it drifts from what the server actually enforces.
@@ -486,6 +530,12 @@ export async function resolveSystemPrompt(
 			: `Full Hezo product & API documentation: ${HEZO_DOCS_URL}`;
 		resolved = resolved.replace(HEZO_DOCS_MARKER, replacement);
 	}
+
+	// Prepended only now that substitution has run. The block holds values, not
+	// tokens - a team description reading "we document {{team_name}} for new
+	// joiners" is prose the admin wrote, and putting it in ahead of the pass would
+	// have the resolver substitute its own output.
+	resolved = (await buildIdentityBlock(db, template, ctx)) + resolved;
 
 	if (ctx.mode === 'placeholders') {
 		return resolved;

@@ -9,6 +9,7 @@ import {
 	CEO_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	DEFAULT_MONTHLY_BUDGET_CENTS,
 	DEFAULT_TEAM_ID,
 	DocumentType,
 	ERRORED_RUN_STATUSES,
@@ -25,7 +26,6 @@ import {
 	PROJECT_ICON_MAX_BYTES,
 	PROJECT_ICON_MAX_DIMENSION,
 	RunOutcomeFilter,
-	requiredSystemPromptVarsError,
 	TaskPriority,
 	TaskStatus,
 	WakeupSource,
@@ -335,17 +335,13 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 	const budgetError = budgetWindowsError({
 		daily_budget_cents: body.daily_budget_cents ?? 0,
 		weekly_budget_cents: body.weekly_budget_cents ?? 0,
-		monthly_budget_cents: body.monthly_budget_cents ?? 3000,
+		monthly_budget_cents: body.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
 	});
 	if (budgetError) {
 		return err(c, 'INVALID_REQUEST', budgetError, 400);
 	}
 
-	// A supplied prompt must keep the required substitution variables; an
-	// omitted/empty one keeps the existing default behaviour.
 	if (body.system_prompt?.trim()) {
-		const promptError = requiredSystemPromptVarsError(body.system_prompt);
-		if (promptError) return err(c, 'INVALID_REQUEST', promptError, 400);
 		const styleError = authoredPromptError(body.system_prompt);
 		if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
 	}
@@ -407,7 +403,7 @@ agentsRoutes.post('/projects/:projectId/agents', async (c) => {
 					body.heartbeat_interval_min ?? DEFAULT_HEARTBEAT_INTERVAL_MIN,
 					body.daily_budget_cents ?? 0,
 					body.weekly_budget_cents ?? 0,
-					body.monthly_budget_cents ?? 3000,
+					body.monthly_budget_cents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
 					body.touches_code ?? false,
 					JSON.stringify(body.mcp_servers ?? []),
 				],
@@ -957,15 +953,8 @@ agentsRoutes.patch('/projects/:projectId/agents/:agentId', async (c) => {
 			'SELECT slug FROM member_agents WHERE id = $1',
 			[agentId],
 		);
-		const slug = agentMeta.rows[0]?.slug;
-		const isInstanceSingleton =
-			!!slug && (INSTANCE_AGENT_SLUGS as readonly string[]).includes(slug);
-		if (!isInstanceSingleton) {
-			const promptError = requiredSystemPromptVarsError(body.system_prompt);
-			if (promptError) return err(c, 'INVALID_REQUEST', promptError, 400);
-			const styleError = authoredPromptError(body.system_prompt);
-			if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
-		}
+		const styleError = authoredPromptError(body.system_prompt);
+		if (styleError) return err(c, 'INVALID_REQUEST', styleError, 400);
 	}
 
 	const providerSet = Object.hasOwn(body, 'model_override_provider');

@@ -26,6 +26,24 @@ export function runtimeConfig(): HezoConfig {
 	return current ?? DEFAULT_CONFIG;
 }
 
+/**
+ * Replace the pinned-settings slice, and only that slice.
+ *
+ * The narrow counterpart to {@link setRuntimeConfig}: a deployment can change
+ * what it pins while the server runs, and a restart would kill in-flight agent
+ * runs - billed container time thrown away. Every reader already calls
+ * `runtimeConfig()` inside the function that needs it rather than capturing it
+ * at module scope (see above), so a swapped slice is picked up on the next call
+ * with no call-site changes. That accessor discipline is what makes this cheap.
+ *
+ * Deliberately not a general "patch the config" entry point. Most keys - data
+ * dir, port, database URL - genuinely cannot change while running, and a setter
+ * that could reach them would imply they can.
+ */
+export function setPolicy(policy: HezoConfig['policy']): void {
+	current = { ...runtimeConfig(), policy };
+}
+
 /** Restore the unset state. Tests only, so one spec's override cannot leak into the next. */
 export function resetRuntimeConfig(): void {
 	current = null;

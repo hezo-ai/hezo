@@ -41,9 +41,9 @@ test('Budgets page shows per-agent windows and flags an over-budget agent', asyn
 
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: teamSlug } });
 
-	// The subtitle discloses that costs are a conservative upper-bound estimate
-	// (cache traffic is billed at the full input rate).
-	await findByText(/conservative upper-bound estimate/);
+	// The subtitle no longer discloses an upper-bound estimate: cache traffic is
+	// priced at its own rates now, so the figure is the figure.
+	await findByText('Track spend and set caps for this project and its agents.');
 
 	// The agent row renders, is flagged over budget, and the project banner appears.
 	await findByTestId(`agent-budget-row-${overAgentSlug}`);

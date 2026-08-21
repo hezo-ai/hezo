@@ -1,15 +1,9 @@
-import {
-	DEFAULT_TEAM_ID,
-	HeartbeatRunStatus,
-	HQ_PROJECT_SLUG,
-	REQUIRED_SYSTEM_PROMPT_VARS,
-} from '@hezo/shared';
+import { DEFAULT_TEAM_ID, HeartbeatRunStatus, HQ_PROJECT_SLUG } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { appendRunLogChunks } from '../src/db/run-log-chunks';
 import { signAdminJwt, signAgentJwt } from '../src/middleware/auth';
 import { authHeader, createAgentRun, createTestTeam, projectSlugFor } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
-import { compliantPrompt } from './helpers/prompt';
 
 /**
  * Coverage suite for packages/server/src/routes/agents.ts. Exercises the
@@ -201,7 +195,7 @@ describe('POST /agents/onboard', () => {
 			body: JSON.stringify({
 				title: 'Support Engineer',
 				role_description: 'Handles support',
-				system_prompt: compliantPrompt('Support prompt'),
+				system_prompt: 'Support prompt',
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -390,21 +384,9 @@ describe('system prompt fetch / preview / revisions / restore', () => {
 		expect(res.status).toBe(200);
 		const content = (await res.json()).data.content as string;
 
-		// The Captain's hire guidance has to *name* the variables a prompt it
-		// authors must contain, and the validator matches the full `{{…}}` token -
-		// so that list renders as placeholder text on purpose. Strip exactly those
-		// before checking, rather than loosening the pattern: the assertion that
-		// matters is "nothing was left unresolved", and it still holds for
-		// everything else.
-		const withoutNamedVars = REQUIRED_SYSTEM_PROMPT_VARS.reduce(
-			(text, token) => text.replaceAll(token, '<named>'),
-			content,
-		);
-		expect(withoutNamedVars).not.toMatch(/\{\{[a-z_]+\}\}/);
-		// And the naming really did survive - the point of rendering it that way.
-		for (const token of REQUIRED_SYSTEM_PROMPT_VARS) {
-			expect(content).toContain(token);
-		}
+		// No prompt names a substitution variable in prose any more, so nothing is
+		// expected to survive as a literal token.
+		expect(content).not.toMatch(/\{\{[a-z_]+\}\}/);
 	});
 
 	it('preview / revisions / restore 404 when the prompt document is missing', async () => {
@@ -477,8 +459,8 @@ describe('system prompt fetch / preview / revisions / restore', () => {
 
 	it('edits create revisions; restore brings back the prior content; unknown revision 404s', async () => {
 		const agent = await createAgent('Revisable Agent');
-		const v1 = compliantPrompt('Version one');
-		const v2 = compliantPrompt('Version two');
+		const v1 = 'Version one';
+		const v2 = 'Version two';
 		for (const prompt of [v1, v2]) {
 			const patch = await ctx.app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 				method: 'PATCH',
@@ -601,18 +583,17 @@ describe('PATCH /agents/:agentId', () => {
 		expect((await res.json()).error.message).toContain('reports to the admin');
 	});
 
-	it('rejects a system_prompt missing required vars for a team agent', async () => {
+	it('accepts a system_prompt that names no variable, for a team agent', async () => {
 		const captain = await findAgent('captain');
 		const res = await ctx.app.request(`/api/projects/${projectSlug}/agents/${captain.id}`, {
 			method: 'PATCH',
 			headers: json(ctx.token),
 			body: JSON.stringify({ system_prompt: 'No variables here at all' }),
 		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toContain(REQUIRED_SYSTEM_PROMPT_VARS[0]);
+		expect(res.status).toBe(200);
 	});
 
-	it('exempts the instance CEO from the required-vars check', async () => {
+	it('stores an instance-singleton prompt verbatim', async () => {
 		const res = await ctx.app.request(`/api/projects/${HQ_PROJECT_SLUG}/agents/ceo`, {
 			method: 'PATCH',
 			headers: json(ctx.token),
@@ -698,7 +679,17 @@ describe('PATCH /agents/:agentId', () => {
 
 	it('validates the merged budget trio and accepts a coherent single-window change', async () => {
 		const agent = await createAgent('Budget Agent');
-		// Stored monthly is 3000; a daily above it is incoherent.
+		// Give it a monthly cap to be incoherent *with*. Agents now ship unlimited,
+		// and an unlimited window is disabled - it constrains nothing, so without
+		// this the trio below is coherent and there is nothing under test.
+		const cap = await ctx.app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
+			method: 'PATCH',
+			headers: json(ctx.token),
+			body: JSON.stringify({ monthly_budget_cents: 3000 }),
+		});
+		expect(cap.status).toBe(200);
+
+		// Stored monthly is now 3000; a daily above it is incoherent.
 		const bad = await ctx.app.request(`/api/projects/${projectSlug}/agents/${agent.id}`, {
 			method: 'PATCH',
 			headers: json(ctx.token),

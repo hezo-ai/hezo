@@ -134,7 +134,13 @@ export function useInstanceMentions(content: string, enabled: boolean) {
 	});
 }
 
-export type MentionKind = 'agent' | 'task' | 'kb' | 'doc';
+/**
+ * `variable` rows never come from the server search: they are the system-prompt
+ * substitution variables, filtered locally from the shared registry when the
+ * textarea's `{{` trigger is active. They share this vocabulary so both
+ * triggers reuse one picker, one keyboard path and one placement.
+ */
+export type MentionKind = 'agent' | 'task' | 'kb' | 'doc' | 'variable';
 
 export interface MentionSearchResult {
 	kind: MentionKind;

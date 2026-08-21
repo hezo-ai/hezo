@@ -7,6 +7,7 @@ import {
 	CONTAINER_RECLAIM_MIN_AGE_SEC,
 	CONTAINER_RECLAIM_MIN_IDLE_SEC,
 	ContainerStatus,
+	ContainerUptimeEndReason,
 	HeartbeatRunStatus,
 	TaskPriority,
 	TEST_CONTAINER_LABEL_KEY,
@@ -55,9 +56,11 @@ import {
 	claimPoolMember,
 	clearProjectContainerIfNamed,
 	decidePoolAcquisition,
+	ensurePoolMemberUptimeOpen,
 	listPoolContainerIds,
 	listPoolMembersForReconcile,
 	loadPoolMembers,
+	markPoolMemberRunning,
 	readPoolMemberAllocation,
 	recordPoolMemberMemoryIfUnknown,
 	releasePoolMember,
@@ -875,6 +878,10 @@ export async function ensureProjectContainerRunning(
 			if (info) {
 				// Container exists but is stopped — start it in place.
 				await docker.startContainer(proj.container_id);
+				// The pool is told too, not just `projects`: its member still reads
+				// `suspended`, and a member the pool believes is down bills nothing while
+				// the container it names is up. No-op when no member names this container.
+				await markPoolMemberRunning(db, proj.container_id);
 				await db.query(
 					`UPDATE projects
 					 SET container_status = $1::container_status, container_error = NULL,
@@ -1153,7 +1160,10 @@ async function reclaimIdleCapacityForProject(
 							suspend: group.suspend.filter((id) => stillIdle.has(id)),
 							destroy: group.destroy.filter((id) => stillIdle.has(id)),
 						},
-						{ reason: `reclaimed for ${ref(requestingSlug, requestingProjectId)}` },
+						{
+							reason: `reclaimed for ${ref(requestingSlug, requestingProjectId)}`,
+							endReason: ContainerUptimeEndReason.Suspended,
+						},
 					);
 					if (retired > 0) reclaimedAny = true;
 				});
@@ -1760,6 +1770,14 @@ export async function stopContainerGracefully(
 	projectSlug: string,
 	teamId: string,
 	containerId: string,
+	/**
+	 * Why the container's billed stretch ended, for the uptime ledger. Defaults to
+	 * `stopped` - the ordinary case, where the container ended for its own reasons.
+	 * The cross-project reclaim passes `suspended`, which is what separates "this
+	 * project was done with it" from "another project's run took it", the one
+	 * contention signal the hours series can show.
+	 */
+	endReason?: ContainerUptimeEndReason,
 ): Promise<void> {
 	const { db, docker, wsManager } = deps;
 
@@ -1790,7 +1808,7 @@ export async function stopContainerGracefully(
 		// than at each caller is what stops the ladder from handing a run a
 		// container that is not up - the two representations of one container have
 		// to move together or the pool reads stale.
-		await setPoolMemberState(db, containerId, 'suspended');
+		await setPoolMemberState(db, containerId, 'suspended', endReason);
 		log.info(
 			`project ${ref(projectSlug, projectId)} container ${ref(projectSlug, containerId.slice(0, 12))} stopped`,
 		);
@@ -2028,6 +2046,12 @@ export async function executeRetirementPlan(
 		reason: string;
 		/** Park a live assistant session before its container goes. Omitted where none can exist. */
 		parkSession?: (containerId: string) => Promise<void>;
+		/**
+		 * Why the suspended containers' billed stretches ended, for the uptime
+		 * ledger. The idle sweep omits it; the cross-project reclaim passes
+		 * `suspended` so its evictions are distinguishable from ordinary stops.
+		 */
+		endReason?: ContainerUptimeEndReason;
 	},
 ): Promise<number> {
 	const { db, docker } = deps;
@@ -2069,7 +2093,14 @@ export async function executeRetirementPlan(
 		log.info(
 			`project ${ref(project.slug, project.id)} ${opts.reason} — suspending container ${ref(project.slug, containerId.slice(0, 12))}`,
 		);
-		await stopContainerGracefully(deps, project.id, project.slug, project.team_id, containerId);
+		await stopContainerGracefully(
+			deps,
+			project.id,
+			project.slug,
+			project.team_id,
+			containerId,
+			opts.endReason,
+		);
 		retired++;
 	}
 	return retired;
@@ -2759,7 +2790,22 @@ export async function reconcilePoolMembers(
 			);
 		}
 
-		if (info.State.Running) continue;
+		if (info.State.Running) {
+			// The repair the ledger cannot do for itself. A container can reach a
+			// running state with no open interval - a member older than the ledger, or
+			// one closed while the container stayed up - and it then bills nothing for
+			// the rest of its life: the warm paths open on a row that moved, which a
+			// container nobody claims never does, and this pass used to be the one
+			// thing that looks at a healthy member and it just walked past. Rides the
+			// round trip already made above, like the memory learn.
+			//
+			// `idle`/`busy` only: `error` means the pool has stopped believing this
+			// container is up, and `creating` opened its interval at the upsert.
+			if (member.state === 'idle' || member.state === 'busy') {
+				await ensurePoolMemberUptimeOpen(db, member.containerId);
+			}
+			continue;
+		}
 		// Only a member the pool believed was up. `suspended` is already stopped,
 		// and `creating`/`error` are outside the ladder - a container still coming
 		// up legitimately reads not-running, and judging it dead here would fail

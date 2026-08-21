@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { findLinkRanges, type LinkRange, shiftLinkRanges } from '../../lib/autolink';
 import { csvColumnCount } from '../../lib/csv';
 import { claimQuoteRanges, type ReviewAnnotation } from '../../lib/rehype-review-highlights';
 import { ReviewTextSegments, segmentsForSlice } from './review-text-segments';
@@ -8,6 +9,8 @@ interface CellSlice {
 	/** Offset of this cell's text in the table's flat text stream. */
 	start: number;
 	end: number;
+	/** Links found in this cell, in the flat stream's coordinates. */
+	links: LinkRange[];
 }
 
 interface CsvTableProps {
@@ -44,8 +47,12 @@ export function CsvTable({ rows, annotations, activeId, onHighlightClick }: CsvT
 		const cells: CellSlice[][] = rows.map((row) =>
 			row.map((text) => {
 				const start = stream.length;
+				// Links are found per cell and only then shifted into the stream: the
+				// stream concatenates cells with no separator, so a URL ending one cell
+				// would otherwise swallow the start of the next.
+				const links = shiftLinkRanges(findLinkRanges(text), start);
 				stream += text;
-				return { text, start, end: stream.length };
+				return { text, start, end: stream.length, links };
 			}),
 		);
 		return { stream, cells };
@@ -63,7 +70,7 @@ export function CsvTable({ rows, annotations, activeId, onHighlightClick }: CsvT
 	const renderCell = (cell: CellSlice | undefined) =>
 		cell ? (
 			<ReviewTextSegments
-				segments={segmentsForSlice(stream, cell.start, cell.end, claimed)}
+				segments={segmentsForSlice(stream, cell.start, cell.end, claimed, cell.links)}
 				activeId={activeId}
 				onHighlightClick={onHighlightClick}
 			/>

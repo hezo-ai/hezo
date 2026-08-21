@@ -553,9 +553,29 @@ per-model token rates from a single source: the pricepertoken.com MCP catalog
 (`get_all_models` over raw JSON-RPC), fetched at boot and daily by the job manager and
 upserted as `source='pricepertoken'`; a migration bakes a catalog snapshot into the
 table so a fresh instance prices runs before its first fetch, and `source='manual'`
-operator overrides win at lookup. The catalog carries no cache rates, so cache
-reads/writes bill at the full input rate — recorded costs are a conservative upper
-bound (a manual override can set cache rates for exact billing). Budgets are **windowed and computed on
+operator overrides win at lookup. The catalog carries no cache rates, so they are
+**derived from each row's own input rate** via `CACHE_RATE_MULTIPLIERS`
+(`services/pricing/pricepertoken.ts`), keyed by the catalog's `author_name`:
+Anthropic reads at 0.1x input and writes at 1.25x (the default 5-minute TTL).
+Deriving rather than baking absolute figures keeps cache rates correct when a base
+price moves and covers models released after the table ships. An author with no
+known multipliers keeps NULL rates and still bills cache traffic at the full input
+rate - a conservative upper bound, and the honest answer until that provider's
+multipliers are verified.
+
+**The split behind a cost is persisted, not just priced.** Every parser normalizes its
+runtime's buckets to `CostTokens` before pricing, and `toRunUsage` (`agent-stream-parser.ts`)
+is the single place that turns those into an `AgentRunUsage`: it carries the buckets
+through on `usage.buckets` and derives `inputTokens` as their sum. Both halves land on
+`heartbeat_runs` - `cache_read_tokens` / `cache_creation_tokens` alongside the existing
+`input_tokens` - on the mid-run flush as well as at completion, so a run killed
+mid-flight keeps an auditable cost rather than a bare total. **Watch the two conventions:**
+`heartbeat_runs.input_tokens` and the `[done]` line carry the TOTAL including cache, while
+`CostTokens.inputTokens` is the UNCACHED remainder, because that is the portion billed at
+the full rate. Deriving the total in one helper is what made Antigravity's reporting
+consistent with the rest: its buckets are disjoint, so reporting its stated `input_tokens`
+had been excluding cache reads from both the column and the log line, alone among the
+runtimes. Budgets are **windowed and computed on
 demand**: limits live as `daily_/weekly_/monthly_budget_cents` on `member_agents` and
 `projects` (0 = unlimited; there is **no team budget**), and spend is summed from
 `cost_entries` over rolling UTC windows — no counter, no reset event (§ 5). A run killed
@@ -574,6 +594,56 @@ completion), an operator-facing control, and a token backstop, because the local
 price to $0 and a cost-only ceiling would never fire there. Deliberately not built: the
 thread-read fixes removed the cause of the run that prompted the question, and a blunt
 ceiling would mostly fire on legitimately expensive work.
+
+**Container hours are metered separately from spend, and answer the other bill.**
+`container_uptime_entries` (migration 071) records **one row per running stretch**, not
+per container lifetime: a managed backend bills a started sandbox for vCPU + RAM + disk
+and a stopped one for reserved disk only, so a suspend/resume cycle is two rows with a
+free gap between them. **Every write of `container_pool_members.state` moves the interval,
+through one funnel** - `syncUptimeForState` in `pool-db.ts`, calling
+`services/sandbox/uptime-ledger.ts` - so the ledger cannot drift from the lifecycle it
+records, the same reasoning that puts the wake receipt inside `fireCommentWakeups`.
+
+The funnel replaced per-writer calls, and the reason it exists is what those calls got
+wrong: they had been added to the two **cold** writers (provision, resume) and not to the
+three **warm** ones (`claimPoolMember`, `releasePoolMember`, `reclaimBusyPoolMembers`).
+The warm three are the only writers an ordinary run touches, so a container that reached a
+running state without an interval could never acquire one and billed nothing for the rest
+of its life - while still reporting its full allocation in the run log, since that reads
+the member row. On a backend whose sandboxes outlive a Hezo restart, that was the normal
+case rather than an edge one. The warm writers open only on a row their own `RETURNING`
+says moved, so a container the pool believes is stopped is never billed - the one
+direction cost accounting may not fail in. `reconcilePoolMembers` carries the repair for a
+member that is already running and already unbilled (`ensurePoolMemberUptimeOpen`), riding
+the liveness round trip it already makes and starting the bill at `now()` rather than at an
+invented start; `markPoolMemberRunning` covers the two paths that start a container in
+place and would otherwise tell only `projects`. Forgetting the whole pool at once
+(`clearAllPoolMembers`, used by the backend switch) closes every open interval first,
+because dropping the member rows alone strands them open and an open interval bills to
+`now()` for ever.
+
+The interval opens at the `creating` upsert rather
+than at ready, because on a managed backend the build is the longest phase of a cold start
+and bills like any other minute. `end_reason` separates an ordinary stop from a
+cross-project eviction (`ContainerUptimeEndReason.Suspended`, passed down from
+`executeRetirementPlan`), which is the only contention signal the series can show. A
+unique partial index on `(container_id) WHERE ended_at IS NULL` makes open and close
+idempotent on every path that reaches them, which is what lets the repair pass and the warm
+writers call open unconditionally.
+
+Reads (`services/container-hours.ts`) **clip each interval to each window** rather than
+attributing it to the bucket it started in - `agent-hours.ts` attributes by start, which
+is harmless for a run measured in minutes and wrong for a month boundary on a figure that
+gets invoiced. Overlapping intervals are summed, deliberately: two containers up for one
+hour is two container-hours. **The clip expression guards `alias.id IS NULL` and that guard
+is load-bearing on a LEFT JOIN** - without it `COALESCE(ended_at, now())` reads a missing
+row as still running and `GREATEST` swallows the NULL start, so a bucket in which nothing
+ran bills a full bucket of uptime. Enforcement is a monthly allowance
+(`monthly_container_hours` in `system_meta`, 0 = unlimited) read through
+`hoursQuotaExhausted` in `run-concurrency.ts`: it gates container **starts**, ahead of the
+memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
+project with a spare container is exempt from both. The cap read short-circuits before the
+ledger is scanned, so an instance with no cap pays nothing on the dispatch path.
 
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
@@ -635,7 +705,14 @@ the asset viewer reuses for text assets (markdown through the same rehype plugin
 text through `PlainTextWithHighlights`, a CSV through `CsvTable`). The three highlight
 painters share one resolver, `claimQuoteRanges`, and the two non-markdown ones share
 `ReviewTextSegments`; a CSV's stream is its cells concatenated in document order, which the
-table keeps byte-identical to the DOM by emitting no text of its own. Those same three surfaces each carry
+table keeps byte-identical to the DOM by emitting no text of its own. Those two surfaces also
+**autolink**: `findLinkRanges` (`packages/web/src/lib/autolink.ts`) finds `http(s)://`, `www.`,
+`mailto:` and bare-email runs - and only those four, so no other scheme can be emitted from
+file content - and `segmentsForSlice` splits the stream on link and review boundaries together,
+so a quote overlapping a URL still resolves. Links are found **per CSV cell** and shifted into
+the stream afterwards, because the stream concatenates cells with no separator; the anchors
+carry only the segment's own text, so the DOM stream is unchanged and anchoring is unaffected.
+Markdown reaches the same reading through remark-gfm's autolink literals. Those same three surfaces each carry
 `DocumentDownloadMenu` (`packages/web/src/components/document-download-menu.tsx`) — a
 client-side save of the already-loaded content as Markdown (verbatim) or plain text
 (`markdownToPlainText`), no server round-trip; the two preview surfaces render it in the
@@ -2068,8 +2145,9 @@ container was built to a cap nobody set. A backend that cannot say leaves the me
 and it keeps being recycled - the right answer for a container nothing can size.
 
 **Capacity is a memory budget, and it reserves for the chat container up front.**
-`max_container_memory_gb` bounds the total memory *task run* containers may hold at once,
-summed from what each one actually asked for (`projects.memory_limit_gib`, else the
+`max_container_memory_gb` bounds the total memory **every** container may hold at once, and
+`taskContainerMemoryBudgetGb` takes one container's worth off it for the chat; what is left
+is what *task run* containers may hold, summed from what each one actually asked for (`projects.memory_limit_gib`, else the
 instance default). It replaced a container **count** (migration 050): a count bounds memory
 only while every container is the same size, and the per-project override exists precisely
 so they are not - one project raising its cap to 4 GB took one "slot" but twice the memory
@@ -2077,11 +2155,20 @@ of the 2 GB containers the host was sized for. There is deliberately no derived 
 count anywhere, not even for display: how many fit depends on the mix of their sizes.
 
 The CEO chat's container is **exempt** from the budget, because a queued task run is
-invisible and harmless while a queued chat turn is a person watching a spinner. On a host
-backend the machine still has to fit it, so `computeDefaultMaxContainerMemoryGb` subtracts
-`HOST_RESERVED_MEMORY_GB` (1) plus one container's worth for the chat. Reserving up front
-rather than subtracting when a session opens keeps task-run capacity a **stable** number -
-opening the chat never silently slows the fleet. The exemption is enforced on **both** sides:
+invisible and harmless while a queued chat turn is a person watching a spinner. Reserving up
+front rather than subtracting when a session opens keeps task-run capacity a **stable**
+number - opening the chat never silently slows the fleet.
+
+**The reservation is taken at the point of use, not baked into the default**, and that is
+the correction: `computeDefaultMaxContainerMemoryGb` used to subtract a container's worth
+itself, so only an *automatic* budget reserved. An operator who set the number by hand got
+no reservation at all, and a 12 GB budget with a 4 GB cap therefore admitted three task
+containers *and* a chat container - 16 GB consumed against a figure that said 12, which on a
+local Docker host is memory the machine actually has to find. Now the auto default returns
+the whole usable total (floored at `minTotalContainerMemoryGb`, two caps, so it can never
+compute a total that admits nothing) and `getActiveContainers` derives the task share from
+whatever the effective total is. Auto-computed instances land on exactly the capacity they
+had before; an explicitly-set one loses a container's worth, which is the point. The exemption is enforced on **both** sides:
 the budget reserves for it, and `getActiveContainers` excludes a `reserved_for_chat` member
 from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projects` row are
 two records of one container). Charging it in both places reserved the same memory twice,
@@ -2577,6 +2664,22 @@ orphan pass's verdict for a run that never started is itself non-destructive: it
 the row `Cancelled`, hands the *original* wakeup back to the queue (`claimed` → `queued`)
 and spends no strike of the lost-run escalation, so the
 work is redispatched rather than lost or reported as a failure the operator must act on.
+**A clean shutdown hands the work back too, and has to - nothing downstream can.** The
+drain (`drainRunningRuns`) aborts every in-flight run with `server_shutdown`, and that abort
+used to finalize the row `Failed` and settle its wakeup `failed`, both before the process
+exited. Every recovery predicate in the codebase - `reconcileDatabaseOnStartup`,
+`detectOrphanedRuns`, `healStaleRunState`, `requeueContainerKilledRuns` - looks for a run
+left `running` or `queued`, so a *hard crash* recovered and an *orderly drain* dropped the
+work outright: the better the shutdown behaved, the more certainly the task stopped, while
+the row's own message promised a re-queue nothing delivered. The abort now routes through
+`finalizeRequeue` at all three points a shutdown can land (the phase checkpoints, the exec
+rejection, the setup window), so the wakeup returns to `queued` while the process is still
+up and the 5 s cron dispatches it when Hezo is next running. The boot pass still covers the
+crash and the drain-deadline overrun, which are the cases that genuinely leave a row
+non-terminal. `RUN_LOST_TO_SHUTDOWN_ERROR` is a clause rather than a sentence for this
+reason: `finalizeRequeue` adds what became of the work and `recordHandbackOutcome` adds
+where to find it, so no writer asserts an outcome it has not yet attempted.
+
 The handback itself is one seam, `settleWakeupForRun` (`services/wakeup.ts`), shared with
 `JobManager.onAgentComplete`: the two answered the same question separately, which is how
 the sweeper's `claimed` guard ended up missing from the completion path and how both ended
@@ -2704,14 +2807,44 @@ irrecoverably behind is dropped and recovers through the existing reconnect-and-
 path instead of growing an unbounded send queue.
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`
-document, loaded from its **home** team) is resolved per run by
-`services/template-resolver.ts`: `{{…}}` placeholders are substituted with live DB values
-(`{{team_name}}`, `{{reports_to}}` — wired to the instance CEO for a Captain via
-`linkTeamCaptainToInstanceCeo` — `{{skills_context}}`, `{{project_docs_context}}`,
-`{{team_preferences_context}}`, `{{team_description}}`, `{{team_context}}`,
-`{{current_date}}`, and the CEO-only `{{projects_context}}`), then the resolver appends the
-Run Context / Repository / Project State / Teammates blocks, `SHARED_INSTRUCTIONS`, and the
-**Container Environment** block.
+document, loaded from its **home** team) holds the **role body alone**. `services/template-resolver.ts`
+composes the rest around it per run, in three stages.
+
+First it wraps the body, *before* any substitution runs, so the wrapper's own tokens go
+through the same single pass an authored one does:
+
+- **The identity block, prepended** (`buildIdentityBlock`). The agent's title, its team's
+  name, the team's description and its manager's display name — the only route the team
+  description has into a prompt at all. Its values are inlined rather than emitted as
+  tokens, since the block already holds the rows a second substitution pass would re-query.
+  Skipped **whole** when the body names `{{team_name}}` or `{{reports_to}}`: an author who
+  placed either wrote their own opening line, and a second one above it would contradict
+  it. Skipped for the instance singletons (CEO, Coach) too — they roam across every team,
+  so "the &lt;title&gt; at &lt;team&gt;" would name whichever team the run is scoped to and read as
+  their home.
+- **The live-context block, appended** (`buildLiveContextBlock`). `{{current_date}}`,
+  `{{skills_context}}`, `{{team_preferences_context}}`, `{{project_docs_context}}`, emitted
+  as tokens because the substitution pass owns the queries that build each manifest. Each
+  line is skipped **on its own** when the body already names it, so a body placing the
+  skills manifest mid-prose still gets the other three appended and never a second skills
+  manifest.
+
+Both add only what the template does not already carry, checked with the same literal
+`includes('{{token}}')` the substitution pass uses. That is what makes the change a pure
+superset: a prompt written before the composition existed resolves to exactly the bytes it
+always did.
+
+Second it substitutes every `{{…}}` with live DB values — `{{team_name}}`, `{{reports_to}}`
+(wired to the instance CEO for a Captain via `linkTeamCaptainToInstanceCeo`),
+`{{skills_context}}`, `{{project_docs_context}}`, `{{team_preferences_context}}`,
+`{{current_date}}`, `{{team_description}}`, and the CEO-only `{{projects_context}}`.
+Retired placeholders are stripped rather than substituted so they can never leak as literal
+text: `{{kb_context}}`, `{{requester_context}}`, and `{{team_context}}` — that last one
+because `buildTeamContextBlock` appends the org chart on every run whether or not a template
+asks, so substituting the token as well printed it twice.
+
+Third it appends the Run Context / Repository / Project State / Your Team / Teammates
+blocks, `SHARED_INSTRUCTIONS`, and the **Container Environment** block.
 
 That last one tells the agent which container service it is running on and what that
 service's network will carry, from `SANDBOX_AGENT_ENVIRONMENTS`
@@ -2730,15 +2863,15 @@ additional one its on-disk worktree path (`/worktrees/<task>/<repo>`, a sibling 
 directory), and directs agents to read connected repos from disk (`ls`/`Read`/`grep`) rather
 than fetch their files through the `github` MCP `get_file_contents` API — which is slower, costs
 tokens per file, and returns GitHub's default branch instead of the ref checked out for the run.
-Every surface that authors or edits a prompt — the hire proposal create/edit
-(`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`, and the
-`create_hire_proposal` / `update_agent_system_prompt` MCP tools — validates a supplied,
-non-empty prompt against `REQUIRED_SYSTEM_PROMPT_VARS` (`@hezo/shared` —
-`{{team_name}}`, `{{reports_to}}`, `{{skills_context}}`, `{{project_docs_context}}`,
-`{{team_preferences_context}}`) and rejects it (4xx / tool error) when one is missing, so an
-edited prompt can never silently drop the agent's identity or live context. The instance
-singletons (CEO/Coach) are exempt — they have no in-team manager. `{{team_context}}` is
-**not** required because the resolver auto-appends that block on every run regardless.
+**No substitution variable is required, on any authoring surface.** The hire proposal
+create/edit (`prepareHireProposal`, `PATCH /approvals`), direct agent create + `PATCH /agents`,
+and the `create_hire_proposal` / `update_agent_system_prompt` MCP tools each accept a body
+that names none, because the composition above supplies the agent's identity and live
+context whatever the body says. `SYSTEM_PROMPT_TEMPLATE_VARS` (`@hezo/shared`) is what
+remains: six optional tokens, described once for the web editor's reference strip, its `{{`
+insertion lookup, and the agent-facing tool docs. Placing one is only ever a way to put that
+value at a chosen point in the author's own prose, which suppresses the composed copy of it.
+Style is still enforced (`authoredPromptError`) on every one of those surfaces.
 
 **Who may edit prompts & the Custom Prompt.** `update_agent_system_prompt` (editing an existing
 agent's stored prompt) is authorized for the **Coach**, the team's **Captain**, and the **CEO**: the
@@ -3213,7 +3346,18 @@ computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` 
 to their tasks and the project's active (queued/running) agent-run count (`active_runs`, from
 `getProjectConcurrency`) so the panel can disable the reset controls proactively instead of only
 failing them server-side — and returns `{ container_running: false }` when the container is stopped
-rather than auto-starting one, since a passive inspect must not trigger a provision. It also
+rather than auto-starting one, since that read fires whenever the panel is expanded and a passive
+inspect must not trigger a provision. Starting one is the operator's own call and lives on `POST` to
+the same path: it answers `{ starting: false, container_running: true }` when one is already up,
+**409 `CONTAINER_AT_CAPACITY`** when `isContainerCapacityBlockedInDb` says the instance memory
+budget has no room for this project's next container, and otherwise backgrounds
+`ensureProjectContainerRunning` and answers `{ starting: true }`. That ensure is the row-consistent
+start — it is what leaves `projects.container_id` naming a running container, the only thing the
+`GET` reads — but it does not consult the pool ladder, so the budget check in front of it is what
+keeps it from starting a container the budget forbids. The **wait for capacity belongs to the
+panel**, not the server: it re-posts every 5s for up to 3 minutes showing "waiting for container
+capacity", because nothing in `ContainerStatus` can represent being parked on capacity, and a wait
+nobody is watching would provision a container the operator has already navigated away from. It also
 re-checks and returns `can_push` (`refreshRepoPushAccess`), computed **before** the
 container-gated branch so it is reported either way — the check needs GitHub, not a container,
 and the panel is where an operator notices write access changed upstream. `POST .../reset`
@@ -3367,6 +3511,22 @@ Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-pa
 see below), so it is the one provider that offers a choice. Every other provider offers exactly
 one CLI and the UI omits the picker for it — for Ollama and LM Studio the Advanced disclosure
 then holds only the optional API key.
+
+**Off-registry model ids are the price of that gateway, and the run log paid it.** Claude Code
+resolves every model id against its own built-in registry and writes
+`[claude-code:unrecognized_model] {"model":…,"query_source":…}` to stderr for each one it cannot
+place - the run's own model (`query_source: sdk`), plus the haiku-slot id
+(`ANTHROPIC_DEFAULT_HAIKU_MODEL`) it uses for session titles and subagents. Pointed at a
+third-party gateway every id is off-registry by construction, so those lines were guaranteed
+noise on every run. The Claude Code stream parser now drops them for exactly the providers
+`claudeCodeProviderUsesCustomEndpoint` covers - the third-party gateways above and the two local
+runners - and relays them untouched on Anthropic, where an id the CLI cannot resolve is a real
+signal, and when the parser is built without a provider at all. That is the predicate's third
+consumer, alongside the Stop-hook judge model and the subagent default. Filtering is
+line-oriented, so the wrapper buffers a partial stderr line until its newline, drains it in
+`flush()`, and releases it unfiltered past a 64 KiB ceiling rather than buffering without bound.
+Nothing else rests on the CLI's registry: run cost is priced from `model_pricing` over the
+reported token buckets, never from the CLI's own rate card.
 
 The one-to-many shape is deliberately kept even at one alternate: it is what makes a second CLI
 for a provider a table row rather than a refactor.
@@ -5149,7 +5309,11 @@ is the single home for how each kind is labelled across the three surfaces that 
 them. Read state is per user (`read_at`), and acting on the request clears it for everyone -
 `fulfill-credential` and `resolve-asset-deletion` both mark the comment's rows read, the
 same way resolving an approval retires it. Migration `057` backfilled rows for the
-credential requests that predate the fan-out.
+credential requests that predate the fan-out. Each row's `snippet` is the comment body run
+through `markdownToPreviewText` (`@hezo/shared`) and truncated - a preview line renders as
+plain text on all three surfaces, so a stripped body is the only form that reads as prose
+rather than source. `buildHighlightedSnippet` (search results) normalises through the same
+function, so one strip serves every preview line in the product.
 
 **Task list ordering: two tiers, then the chosen sort.** `buildTaskListOrderBy`
 (`lib/task-sort.ts`) prefixes every sort mode of `GET /api/projects/:projectId/tasks` with

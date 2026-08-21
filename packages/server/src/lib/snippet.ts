@@ -1,4 +1,4 @@
-import { HIGHLIGHT_SENTINEL } from '@hezo/shared';
+import { HIGHLIGHT_SENTINEL, markdownToPreviewText } from '@hezo/shared';
 
 /**
  * Builds the gray preview line for a search result. Full-text search matches by
@@ -9,7 +9,8 @@ import { HIGHLIGHT_SENTINEL } from '@hezo/shared';
  * text with no markers.
  *
  * Pure (no DB) so it runs identically under Node (vitest) and Bun (prod), and is
- * unit-testable in isolation. Generalises `buildSnippet` in `routes/inbox.ts`.
+ * unit-testable in isolation. Generalises `buildSnippet` in `routes/inbox.ts`,
+ * which shares this module's markdown strip.
  */
 
 const SNIPPET_MAX_LEN = 200;
@@ -28,18 +29,15 @@ export interface HighlightedSnippet {
 
 /**
  * Collapse whitespace and strip the markdown syntax that would otherwise land
- * inside a highlight (`##`, list/quote markers, link/image wrappers, code
- * backticks). Conservative — keeps the visible text, only drops markup. Runs
- * before any windowing so offsets stay stable.
+ * inside a highlight (`##`, `**`, list/quote markers, link/image wrappers, code
+ * backticks). Runs before any windowing so offsets stay stable. Shares the strip
+ * with every other preview line via `markdownToPreviewText`, so a search result
+ * and an inbox row read the same body the same way.
  */
 function normalize(raw: string | null | undefined): string {
 	if (!raw) return '';
-	let text = raw.split(HIGHLIGHT_SENTINEL).join(''); // defensive; NUL can't occur in corpus
-	text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1'); // image → alt
-	text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1'); // link → text
-	text = text.replace(/`+/g, ''); // code fences/backticks → inner text
-	text = text.replace(/^[ \t]*(?:#{1,6}|[-*+>]|\d+\.)\s+/gm, ''); // leading block markers
-	return text.replace(/\s+/g, ' ').trim();
+	// Defensive; NUL can't occur in the corpus.
+	return markdownToPreviewText(raw.split(HIGHLIGHT_SENTINEL).join(''));
 }
 
 /** Lowercased query tokens; drop sub-2-char tokens unless that empties the set. */

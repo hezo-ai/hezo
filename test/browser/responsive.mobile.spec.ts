@@ -91,20 +91,21 @@ test.describe('Responsive — mobile (390px)', () => {
 		await expectNoHorizontalOverflow(page);
 	});
 
-	// The Hours tab is the widest thing on the Activity page - a chart sized from
-	// its container plus a table with a 420px floor - and both only have a real
-	// width under a layout engine. The assertion is deliberately data-independent:
-	// the fixture guarantees no finished runs, so anything keyed on a populated
-	// table would pass or fail on timing rather than on layout.
-	test('activity hours tab fits the viewport at 390px', async ({ page, lightWorkspace }) => {
+	// The Hours tab is the widest thing on the Budget page - a chart sized from its
+	// container, plus a four-across tile grid and a bucket-size control - and none
+	// of them has a real width without a layout engine. The assertion is
+	// deliberately data-independent: the fixture guarantees no container history,
+	// so anything keyed on a populated chart would pass or fail on timing rather
+	// than on layout.
+	test('budget hours tab fits the viewport at 390px', async ({ page, lightWorkspace }) => {
 		const { projectSlug } = lightWorkspace;
-		await page.goto(`/projects/${projectSlug}/activity/hours`);
-		await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible({
+		await page.goto(`/projects/${projectSlug}/budget/hours`);
+		await expect(page.getByRole('heading', { name: 'Budget' })).toBeVisible({
 			timeout: 20000,
 		});
 		// Both tabs stay reachable: the strip scrolls rather than compressing.
-		await expect(page.getByTestId('activity-tab-log')).toBeVisible();
-		await expect(page.getByTestId('activity-tab-hours')).toBeVisible();
+		await expect(page.getByTestId('budget-tab-spend')).toBeVisible();
+		await expect(page.getByTestId('budget-tab-hours')).toBeVisible();
 		await expectNoHorizontalOverflow(page);
 	});
 

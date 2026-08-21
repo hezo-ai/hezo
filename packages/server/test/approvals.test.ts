@@ -4,7 +4,6 @@ import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugFor } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 let app: Hono<Env>;
 let db: Db;
@@ -124,7 +123,7 @@ describe('approvals CRUD', () => {
 			method: 'PATCH',
 			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				system_prompt: compliantPrompt('You are the Analyst. Own all reporting.'),
+				system_prompt: 'You are the Analyst. Own all reporting.',
 				monthly_budget_cents: 7000,
 			}),
 		});

@@ -1002,6 +1002,15 @@ Current date: {{current_date}}
 		return (((await res.json()) as any).data?.content ?? '') as string;
 	}
 
+	/** The prompt as the agent receives it: composed blocks and all. */
+	async function getResolvedPrompt(agentId: string): Promise<string> {
+		const res = await app.request(
+			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents/${agentId}/system-prompt/preview`,
+			{ headers: authHeader(token) },
+		);
+		return (((await res.json()) as any).data?.content ?? '') as string;
+	}
+
 	it('agents created from team type have system prompts', async () => {
 		const agentsRes = await app.request(
 			`/api/projects/${await projectSlugForTeamSlug(db, agentTeamSlug)}/agents`,
@@ -1013,13 +1022,19 @@ Current date: {{current_date}}
 		const agents = ((await agentsRes.json()) as any).data.filter((a: any) => !a.is_instance);
 
 		for (const agent of agents) {
+			// The stored prompt is the role body alone - the scaffolding it used to
+			// carry is composed at resolve time, so none of those tokens are here.
 			const prompt = await getAgentPrompt(agent.id);
 			expect(prompt).toBeTruthy();
 			expect(prompt.length).toBeGreaterThan(100);
-			expect(prompt).toContain('{{team_name}}');
-			expect(prompt).toContain('{{reports_to}}');
-			expect(prompt).toContain('{{skills_context}}');
+			expect(prompt).not.toContain('{{skills_context}}');
+			expect(prompt).not.toContain('{{team_preferences_context}}');
 			expect(prompt).toMatch(/##\s*Rules/);
+
+			// And the agent still receives every one of them.
+			const resolved = await getResolvedPrompt(agent.id);
+			expect(resolved).toContain('The team skills database holds reusable know-how.');
+			expect(resolved).toMatch(/Current date: \d{4}-\d{2}-\d{2}/);
 		}
 	});
 
@@ -1034,26 +1049,26 @@ Current date: {{current_date}}
 		const agents = ((await agentsRes.json()) as any).data;
 		const bySlug = new Map<string, any>(agents.map((a: any) => [a.slug, a]));
 
-		expect(await getAgentPrompt(bySlug.get('captain').id)).toContain('You are the Captain of');
-		expect(await getAgentPrompt(bySlug.get('architect').id)).toContain('You are the Architect at');
-		expect(await getAgentPrompt(bySlug.get('product-lead').id)).toContain(
-			'You are the Product Lead at',
-		);
-		expect(await getAgentPrompt(bySlug.get('engineer').id)).toContain('You are an Engineer at');
-		expect(await getAgentPrompt(bySlug.get('qa-engineer').id)).toContain(
-			'You are the QA Engineer at',
-		);
-		expect(await getAgentPrompt(bySlug.get('ui-designer').id)).toContain(
-			'You are the UI Designer at',
-		);
-		expect(await getAgentPrompt(bySlug.get('devops-engineer').id)).toContain(
-			'You are the DevOps Engineer at',
-		);
-		expect(await getAgentPrompt(bySlug.get('marketing-lead').id)).toContain(
-			'You are the Marketing Lead at',
-		);
-		expect(await getAgentPrompt(bySlug.get('researcher').id)).toContain(
-			'You are the Researcher at',
+		// The identity line is composed from the agent's own title, so every role
+		// gets one whether or not its body ever said so.
+		for (const title of [
+			'Captain',
+			'Architect',
+			'Product Lead',
+			'Engineer',
+			'QA Engineer',
+			'UI Designer',
+			'DevOps Engineer',
+			'Marketing Lead',
+			'Researcher',
+		]) {
+			const slug = title.toLowerCase().replace(/ /g, '-');
+			expect(await getResolvedPrompt(bySlug.get(slug).id)).toContain(`You are the ${title} at`);
+		}
+
+		// The stored bodies still differ from one another by role.
+		expect(await getAgentPrompt(bySlug.get('qa-engineer').id)).not.toBe(
+			await getAgentPrompt(bySlug.get('ui-designer').id),
 		);
 	});
 
@@ -1105,9 +1120,9 @@ Current date: {{current_date}}
 		);
 		const agents = ((await agentsRes.json()) as any).data;
 		const captain = agents.find((a: any) => a.slug === 'captain');
-		// A Captain reports to the CEO, so its prompt carries {{reports_to}} like
-		// every other role; it is wired to the CEO at provisioning time.
-		expect(await getAgentPrompt(captain.id)).toContain('{{reports_to}}');
+		// A Captain is wired to the instance CEO at provisioning time, and the
+		// composed identity block names whoever that is.
+		expect(await getResolvedPrompt(captain.id)).toMatch(/You report to: .+\./);
 	});
 
 	it('non-Captain agents use {{reports_to}} in their system prompts', async () => {
@@ -1123,7 +1138,7 @@ Current date: {{current_date}}
 			(a: any) => !a.is_instance && a.slug !== 'captain' && a.slug !== 'architect',
 		);
 		for (const agent of nonCeo) {
-			expect(await getAgentPrompt(agent.id)).toContain('{{reports_to}}');
+			expect(await getResolvedPrompt(agent.id)).toMatch(/You report to: .+\./);
 		}
 	});
 });
@@ -1322,7 +1337,7 @@ describe('team context block', () => {
 		expect(teammatesIdx).toBeGreaterThan(yourTeamIdx);
 	});
 
-	it('substitutes {{team_context}} inline when the template uses it', async () => {
+	it('strips a leftover {{team_context}} rather than printing the org chart twice', async () => {
 		await db.query(`UPDATE member_agents SET team_context = $1 WHERE id = $2`, [
 			'INLINE TEAM CONTEXT MARKER',
 			tcCaptainMemberId,
@@ -1331,7 +1346,9 @@ describe('team context block', () => {
 			teamId: tcTeamId,
 			agentId: tcCaptainMemberId,
 		});
-		expect(result).toContain('Body: INLINE TEAM CONTEXT MARKER');
+		expect(result).not.toContain('{{team_context}}');
+		// Once, from the appended "Your Team" block - never also inline.
+		expect(result.match(/INLINE TEAM CONTEXT MARKER/g)).toHaveLength(1);
 	});
 });
 

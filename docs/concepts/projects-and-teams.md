@@ -33,7 +33,7 @@ A normal project dashboard shows, top to bottom:
   mentions and credential requests. **Open inbox** always lands on the rows listed here,
   and reading one there clears it from the dashboard while the Inbox keeps it under
   **Read**.
-- **In progress** - tasks currently in progress or review.
+- **In progress** - tasks currently in progress.
 - **Team snapshot** - open-task count, last activity, and any agents currently running.
 - **Goals** - the top goals by health.
 - **Spend** - Today / This week / This month / All time, with the same calendar budget

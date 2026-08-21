@@ -3,9 +3,9 @@ import {
 	ApprovalType,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	DEFAULT_MONTHLY_BUDGET_CENTS,
 	isAgentEffort,
 	isReservedAgentSlug,
-	requiredSystemPromptVarsError,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { checkHumanNameAvailable } from '../lib/agent-identity';
@@ -14,8 +14,6 @@ import { resolveAgentId } from '../lib/resolve';
 import { toSlug } from '../lib/slug';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 import { authoredPromptError } from './prompt-style-guard';
-
-const DEFAULT_MONTHLY_BUDGET_CENTS = 3000;
 
 /** Raw hire spec as supplied by the admin form or an agent tool. */
 export interface HireProposalInput {
@@ -99,11 +97,9 @@ export async function prepareHireProposal(
 	});
 	if (budgetError) return { error: budgetError };
 
-	// A supplied prompt must keep the required substitution variables so the
-	// agent always receives its identity + live skills/docs/preferences context.
-	// An omitted/empty prompt keeps the existing default behaviour.
-	const promptError = requiredSystemPromptVarsError(input.system_prompt ?? '');
-	if (input.system_prompt?.trim() && promptError) return { error: promptError };
+	// No substitution variable is required: the resolver composes the agent's
+	// identity and its live skills/docs/preferences context around whatever body
+	// is supplied. Style is still enforced.
 	const styleError = authoredPromptError(input.system_prompt ?? '');
 	if (input.system_prompt?.trim() && styleError) return { error: styleError };
 

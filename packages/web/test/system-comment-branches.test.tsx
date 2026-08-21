@@ -69,7 +69,7 @@ test('status_change renders from/to with formatted labels and actor name', async
 
 test('status_change falls back to "Admin" when author_name is absent', async () => {
 	const { findByText } = renderSystem(
-		comment({ kind: 'status_change', from: 'review', to: 'done' }, { author_name: undefined }),
+		comment({ kind: 'status_change', from: 'in_progress', to: 'done' }, { author_name: undefined }),
 	);
 	expect((await findByText(/changed status/)).textContent).toContain('Admin');
 });

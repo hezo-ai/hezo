@@ -99,11 +99,11 @@ describe('POST /agents validation', () => {
 		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('rejects a system_prompt missing required substitution variables', async () => {
+	it('accepts a system_prompt that names no substitution variable', async () => {
+		// The resolver composes the identity and live-context blocks around it, so
+		// there is nothing an authored body has to carry.
 		const res = await post({ title: 'Prompt Bot', system_prompt: 'just some text, no vars' });
-		expect(res.status).toBe(400);
-		const body = await res.json();
-		expect(body.error.message).toMatch(/substitution variable/i);
+		expect(res.status).toBe(201);
 	});
 
 	it('rejects a reserved slug (admin)', async () => {
@@ -342,10 +342,9 @@ describe('PATCH /agents validation', () => {
 		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
 	});
 
-	it('rejects a system_prompt missing required vars for a non-instance agent', async () => {
+	it('accepts a system_prompt with no template vars for a non-instance agent', async () => {
 		const res = await patch('engineer', { system_prompt: 'no template vars here' });
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.message).toMatch(/substitution variable/i);
+		expect(res.status).toBe(200);
 	});
 
 	it('clears the model override when provider is set to null (also clears model)', async () => {

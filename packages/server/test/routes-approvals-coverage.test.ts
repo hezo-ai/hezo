@@ -8,7 +8,6 @@ import {
 	projectSlugFor,
 } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
-import { compliantPrompt } from './helpers/prompt';
 
 /**
  * Line coverage for packages/server/src/routes/approvals.ts: the list filters
@@ -277,14 +276,14 @@ describe('PATCH /approvals/:approvalId (hire proposal edit)', () => {
 		expect(res.status).toBe(409);
 	});
 
-	it('400s when the revised system prompt drops required variables', async () => {
+	it('accepts a revised system prompt that names no variables', async () => {
 		const hire = await createApproval('hire', { title: 'Prompted', slug: 'prompted' });
 		const res = await ctx.app.request(`/api/approvals/${hire.id}`, {
 			method: 'PATCH',
 			headers: jsonHeaders(ctx.token),
 			body: JSON.stringify({ system_prompt: 'You are an agent with no variables.' }),
 		});
-		expect(res.status).toBe(400);
+		expect(res.status).toBe(200);
 	});
 
 	it('400s when reports_to names an agent not on the team', async () => {
@@ -319,7 +318,7 @@ describe('PATCH /approvals/:approvalId (hire proposal edit)', () => {
 			method: 'PATCH',
 			headers: jsonHeaders(ctx.token),
 			body: JSON.stringify({
-				system_prompt: compliantPrompt('You are the Analyst. Own reporting.'),
+				system_prompt: 'You are the Analyst. Own reporting.',
 				reports_to: agentSlug,
 			}),
 		});

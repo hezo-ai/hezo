@@ -19,6 +19,8 @@ import {
 	RAM_CAP_PER_CONTAINER_GB_MIN,
 	type TaskView,
 } from '@hezo/shared';
+import { runtimeConfig } from '../config/runtime';
+import type { HezoConfig } from '../config/types';
 import type { Db } from '../db/database';
 import type { ContainerEngine } from '../services/sandbox/types';
 
@@ -41,6 +43,8 @@ export const MAX_CONTAINER_MEMORY_GB_KEY = 'max_container_memory_gb';
 export const RAM_CAP_PER_CONTAINER_KEY = 'default_ram_cap_per_container_gb';
 /** Disk allocated to each project container, in GB. Sibling of the RAM cap. */
 export const CONTAINER_DISK_GB_KEY = 'default_container_disk_gb';
+/** Container-hours the instance may burn per calendar month. 0 = unlimited. */
+export const MONTHLY_CONTAINER_HOURS_KEY = 'monthly_container_hours';
 /** Which view a task thread opens in. See `getDefaultTaskView`. */
 export const DEFAULT_TASK_VIEW_KEY = 'default_task_view';
 
@@ -109,6 +113,37 @@ export async function setMaxChatHistorySize(db: Db, value: number): Promise<numb
 }
 
 /**
+ * The pinnable settings, by the name the policy block uses.
+ *
+ * A union rather than free strings so a typo is a compile error, and so the set
+ * of things a deployment may fix is enumerable from one place - `config/schema.ts`
+ * validates against the same names.
+ */
+export type PinnableSetting = keyof NonNullable<HezoConfig['policy']>['pinned'];
+
+/**
+ * What a setting resolves to: the deployer's pinned value where there is one,
+ * otherwise what the operator stored.
+ *
+ * **Every pinnable getter routes through this**, so pinning is one indirection
+ * rather than a check repeated per setting - and so `_pinned` in the settings
+ * payload and the 409 on PATCH cannot disagree with what the run path actually
+ * reads.
+ *
+ * `runtimeConfig()` is read inside the call, never captured: the policy slice is
+ * hot-reloaded on a plan change, and a module-level capture would keep serving
+ * the plan the instance started on.
+ */
+export function pinnedSetting(key: PinnableSetting): number | undefined {
+	return runtimeConfig().policy?.pinned[key];
+}
+
+/** Whether this setting is fixed by the deployer, for the settings payload and the PATCH guard. */
+export function isPinned(key: PinnableSetting): boolean {
+	return pinnedSetting(key) !== undefined;
+}
+
+/**
  * Clamp to the allowed max-active-containers range. Exported so the settings
  * route validates with the same bounds the reader enforces.
  */
@@ -144,6 +179,8 @@ export async function computeAutoMaxContainerMemoryGb(
  * has never set one (→ the computed default applies).
  */
 export async function getMaxContainerMemoryGbSetting(db: Db): Promise<number | null> {
+	const pinned = pinnedSetting('maxContainerMemoryGb');
+	if (pinned !== undefined) return clampMaxContainerMemoryGb(pinned);
 	const raw = await getSystemMeta(db, MAX_CONTAINER_MEMORY_GB_KEY);
 	if (raw === null) return null;
 	const parsed = Number.parseInt(raw, 10);
@@ -178,6 +215,39 @@ export async function clearMaxContainerMemoryGb(db: Db): Promise<void> {
 }
 
 /**
+ * Container-hours the instance may burn per calendar month, or 0 for unlimited.
+ *
+ * **Unlimited is the default and the only sane one for a self-hoster on local
+ * Docker**, where a container-hour costs nothing anyone bills for - there the
+ * hours view is observability, not a budget. It earns its keep on a managed
+ * backend, where every hour is money and the operator wants a ceiling they chose
+ * rather than an invoice they discover.
+ *
+ * Zero-means-unlimited matches every other budget in the system, and is what
+ * lets a deployment that meters centrally leave this unset and bill from the
+ * ledger instead of capping here.
+ *
+ * A malformed or negative stored value reads as unlimited rather than as zero
+ * hours: degrading to "no runs may ever start" would wedge the instance on a
+ * typo, and the failure would look like a capacity bug rather than a bad setting.
+ */
+export async function getMonthlyContainerHours(db: Db): Promise<number> {
+	const pinned = pinnedSetting('monthlyContainerHours');
+	if (pinned !== undefined) return Math.max(0, Math.trunc(pinned));
+	const raw = await getSystemMeta(db, MONTHLY_CONTAINER_HOURS_KEY);
+	if (raw === null) return 0;
+	const parsed = Number.parseInt(raw, 10);
+	if (Number.isNaN(parsed) || parsed < 0) return 0;
+	return parsed;
+}
+
+export async function setMonthlyContainerHours(db: Db, value: number): Promise<number> {
+	const clamped = Math.max(0, Math.trunc(value));
+	await setSystemMeta(db, MONTHLY_CONTAINER_HOURS_KEY, String(clamped));
+	return clamped;
+}
+
+/**
  * Clamp to the allowed per-container ram-cap range (GB). Exported so the
  * settings route validates with the same bounds the reader enforces.
  */
@@ -196,6 +266,8 @@ export function clampRamCapPerContainerGb(value: number): number {
  * default. Falls back to 2 when unset or malformed.
  */
 export async function getDefaultRamCapPerContainerGb(db: Db): Promise<number> {
+	const pinned = pinnedSetting('defaultRamCapPerContainerGb');
+	if (pinned !== undefined) return clampRamCapPerContainerGb(pinned);
 	const raw = await getSystemMeta(db, RAM_CAP_PER_CONTAINER_KEY);
 	if (raw === null) return DEFAULT_RAM_CAP_PER_CONTAINER_GB;
 	const parsed = Number.parseInt(raw, 10);
@@ -221,6 +293,8 @@ export function clampContainerDiskGb(value: number): number {
  * unset or malformed.
  */
 export async function getDefaultContainerDiskGb(db: Db): Promise<number> {
+	const pinned = pinnedSetting('defaultContainerDiskGb');
+	if (pinned !== undefined) return clampContainerDiskGb(pinned);
 	const raw = await getSystemMeta(db, CONTAINER_DISK_GB_KEY);
 	if (raw === null) return DEFAULT_CONTAINER_DISK_GB;
 	const parsed = Number.parseInt(raw, 10);

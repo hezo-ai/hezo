@@ -4,6 +4,7 @@ import {
 	CAPTAIN_AGENT_SLUG,
 	DEFAULT_EFFORT,
 	DEFAULT_HEARTBEAT_INTERVAL_MIN,
+	DEFAULT_MONTHLY_BUDGET_CENTS,
 } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db/database';
@@ -14,7 +15,6 @@ import {
 } from '../src/services/hire-proposal';
 import { safeClose } from './helpers';
 import { createTestApp, createTestTeam } from './helpers/app';
-import { compliantPrompt } from './helpers/prompt';
 
 /**
  * Branch-coverage companion for `services/hire-proposal.ts`. Drives every
@@ -77,12 +77,12 @@ describe('prepareHireProposal — rejection branches', () => {
 		expect(isError(r) && r.error).toMatch(/must be an integer ≥ 0/);
 	});
 
-	it('rejects a non-empty system_prompt missing required vars', async () => {
+	it('accepts a non-empty system_prompt with no substitution variables', async () => {
 		const r = await prepareHireProposal(db, teamId, {
 			title: 'Prompt Bot',
 			system_prompt: 'You are a bot with no substitution variables.',
 		});
-		expect(isError(r) && r.error).toMatch(/missing required substitution variable/);
+		expect(isError(r)).toBe(false);
 	});
 
 	it('rejects a reserved slug', async () => {
@@ -144,7 +144,11 @@ describe('prepareHireProposal — success branches', () => {
 		expect(p.heartbeat_interval_min).toBe(DEFAULT_HEARTBEAT_INTERVAL_MIN);
 		expect(p.daily_budget_cents).toBe(0);
 		expect(p.weekly_budget_cents).toBe(0);
-		expect(p.monthly_budget_cents).toBe(3000);
+		expect(p.monthly_budget_cents).toBe(DEFAULT_MONTHLY_BUDGET_CENTS);
+		// And that default is unlimited. Asserted as a literal, unlike the line
+		// above: this one pins a product decision rather than the wiring, so a
+		// change back to an arbitrary figure should have to come through here.
+		expect(DEFAULT_MONTHLY_BUDGET_CENTS).toBe(0);
 		expect(p.touches_code).toBe(false);
 	});
 
@@ -152,7 +156,7 @@ describe('prepareHireProposal — success branches', () => {
 		const r = await prepareHireProposal(db, teamId, {
 			title: 'Senior Bot',
 			role_description: 'does senior things',
-			system_prompt: compliantPrompt('You are a senior bot.'),
+			system_prompt: 'You are a senior bot.',
 			reports_to: CAPTAIN_AGENT_SLUG,
 			default_effort: 'high',
 			heartbeat_interval_min: 60,

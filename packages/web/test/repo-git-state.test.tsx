@@ -5,8 +5,9 @@ import { seedProject, seedWorkspace } from './helpers/seed';
 // Component-tier coverage for the admin git-state panel on the Git settings page.
 // Per the test decision tree this needs no real layout engine or WebSocket, so it
 // runs here rather than as a Playwright spec. The in-process backend has no
-// container for the seeded project, so the panel resolves to the container-stopped
-// state — enough to prove the toggle gating and the lazy fetch wiring.
+// container for the seeded project, so the panel resolves to its no-container
+// state — enough to prove the toggle gating, the lazy fetch wiring, and what
+// Refresh does from there.
 
 async function seedRepo(projectId: string, identifier = 'acme/website'): Promise<void> {
 	const { db } = getTestContext();
@@ -27,18 +28,32 @@ const RUNNING_CLONE = {
 	behind: 0,
 };
 
-// Stub the lazy git-state fetch with a running-container payload so the panel
-// renders its reset buttons (the in-process backend has no container). Returns a
-// restore fn so the global fetch never leaks into other tests.
-function stubGitState(payload: Record<string, unknown>): () => void {
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+/**
+ * Stub both git-state routes: the `GET` the panel reads, and the `POST` Refresh
+ * uses to ask for a container. The in-process backend has no container for the
+ * seeded project, so a spec states the server's answers here instead. Returns a
+ * restore fn so the global fetch never leaks into other tests.
+ */
+function stubGitState(payload: Record<string, unknown>, post?: () => Response): () => void {
 	const appFetch = globalThis.fetch;
 	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url =
 			input instanceof Request ? input.url : typeof input === 'string' ? input : input.toString();
 		if (new URL(url, 'http://localhost').pathname.endsWith('/git-state')) {
+			if ((init?.method ?? 'GET').toUpperCase() === 'POST') {
+				return (
+					post?.() ??
+					new Response(JSON.stringify({ data: { starting: true, container_running: false } }), {
+						status: 200,
+						headers: JSON_HEADERS,
+					})
+				);
+			}
 			return new Response(JSON.stringify({ data: payload }), {
 				status: 200,
-				headers: { 'Content-Type': 'application/json' },
+				headers: JSON_HEADERS,
 			});
 		}
 		return appFetch(input, init);
@@ -104,7 +119,7 @@ test('reset actions are enabled when no run is active', async () => {
 
 test('superuser can expand a repo to inspect its git state', async () => {
 	let slug = '';
-	const { findByTestId, user, router } = await renderApp({
+	const { findByTestId, queryByTestId, user, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -119,9 +134,56 @@ test('superuser can expand a repo to inspect its git state', async () => {
 	const toggle = await findByTestId('repo-git-toggle-website');
 	await user.click(toggle);
 
-	// No container is provisioned for the seeded project, so the panel reports the
-	// stopped-container state rather than spinning forever.
-	await findByTestId('repo-git-container-stopped-website');
+	// No container is provisioned for the seeded project. The panel says nothing
+	// about that any more - Refresh is the whole affordance, and the notice that
+	// used to sit here linked to a page with no start control.
+	await findByTestId('repo-git-state-website');
+	await findByTestId('repo-git-refresh-website');
+	expect(queryByTestId('repo-git-container-stopped-website')).toBeNull();
+});
+
+test('refresh asks for a container when none is running', async () => {
+	let posts = 0;
+	const restore = stubGitState({ container_running: false, can_push: true }, () => {
+		posts++;
+		return new Response(JSON.stringify({ data: { starting: true, container_running: false } }), {
+			status: 200,
+			headers: JSON_HEADERS,
+		});
+	});
+	try {
+		const { findByTestId, queryByTestId, user } = await renderExpandedPanel();
+		// Expanding the row is a passive read: it must not start anything.
+		expect(posts).toBe(0);
+		expect(queryByTestId('repo-git-starting-website')).toBeNull();
+
+		await user.click(await findByTestId('repo-git-refresh-website'));
+		await findByTestId('repo-git-starting-website');
+		expect(posts).toBe(1);
+	} finally {
+		restore();
+	}
+});
+
+test('refresh reports the wait while the instance is at container capacity', async () => {
+	const restore = stubGitState(
+		{ container_running: false, can_push: true },
+		() =>
+			new Response(
+				JSON.stringify({
+					error: { code: 'CONTAINER_AT_CAPACITY', message: 'no memory left for a container' },
+				}),
+				{ status: 409, headers: JSON_HEADERS },
+			),
+	);
+	try {
+		const { findByTestId, user } = await renderExpandedPanel();
+		await user.click(await findByTestId('repo-git-refresh-website'));
+		// Parked, not failed: the panel keeps asking until a slot frees.
+		await findByTestId('repo-git-waiting-capacity-website');
+	} finally {
+		restore();
+	}
 });
 
 test('a non-superuser does not see the git-state disclosure', async () => {

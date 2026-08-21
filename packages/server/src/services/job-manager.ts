@@ -91,7 +91,7 @@ import {
 	sumProjectContainerMemoryGb,
 } from './run-concurrency';
 import { recordHandbackOutcome } from './run-handback';
-import { reclaimBusyPoolMembers } from './sandbox/pool-db';
+import { markPoolMemberRunning, reclaimBusyPoolMembers } from './sandbox/pool-db';
 import type { SshAgentServer } from './ssh-agent';
 import { reportTelemetry } from './telemetry';
 import { ensureUpdateStaged, isSupervisedWorker, readUpdateState } from './updater';
@@ -162,6 +162,13 @@ interface RunDispatchContext {
 interface CapacityVerdict {
 	blocked: boolean;
 	hasSpareContainer: boolean;
+	/**
+	 * Set when the block is the monthly container-hours allowance rather than
+	 * memory. The two park a wakeup under different reasons because they clear on
+	 * different clocks, and telling an operator to wait for a container to free
+	 * when the calendar is what they are waiting on is worse than saying nothing.
+	 */
+	hoursExhausted?: boolean;
 }
 
 interface RunningTask {
@@ -200,6 +207,7 @@ export type DispatchNowResult =
 			reason:
 				| 'task_busy'
 				| 'instance_at_capacity'
+				| 'hours_exhausted'
 				| 'agent_busy'
 				| 'blocked'
 				| 'not_queued'
@@ -216,6 +224,7 @@ export type ProgressUpdateDispatchReason =
 	| 'not_due'
 	| 'agent_busy'
 	| 'instance_at_capacity'
+	| 'hours_exhausted'
 	| 'over_budget'
 	| 'launch_conflict';
 
@@ -540,15 +549,21 @@ export class JobManager {
 				return { dispatched: false, reason: 'task_busy' };
 			}
 			const project = await this.resolveProjectForTask(wakeupTaskId);
-			if ((await this.isContainerCapacityBlocked(project?.id ?? null)).blocked) {
+			const capacity = await this.isContainerCapacityBlocked(project?.id ?? null);
+			if (capacity.blocked) {
 				await this.markWakeupSkipped(
 					wakeup.id,
-					WakeupSkipReason.InstanceAtCapacity,
+					capacity.hoursExhausted
+						? WakeupSkipReason.HoursExhausted
+						: WakeupSkipReason.InstanceAtCapacity,
 					wakeupTaskId,
 					wakeup.team_id,
 					null,
 				);
-				return { dispatched: false, reason: 'instance_at_capacity' };
+				return {
+					dispatched: false,
+					reason: capacity.hoursExhausted ? 'hours_exhausted' : 'instance_at_capacity',
+				};
 			}
 			if (project && (await this.isAgentBusyInProject(wakeup.member_id, project.id))) {
 				await this.markWakeupSkipped(
@@ -1050,6 +1065,10 @@ export class JobManager {
 					inputTokens: run.input_tokens,
 					outputTokens: run.output_tokens,
 					costCents: run.cost_cents,
+					// No split to report: this is a snapshot read back off the row, and
+					// only the cost is used from here anyway. Reconstructing buckets that
+					// were never flushed would be inventing them.
+					buckets: null,
 				},
 				{
 					wsManager,
@@ -1347,6 +1366,10 @@ export class JobManager {
 				if (info.State.Running) continue;
 
 				await docker.startContainer(row.container_id);
+				// The pool hears about it too. Its member still reads `suspended` after a
+				// restart-time start, and a container the pool believes is down bills
+				// nothing while it is up.
+				await markPoolMemberRunning(db, row.container_id);
 				await db.query(
 					'UPDATE projects SET container_error = NULL, container_last_started_at = now() WHERE id = $1',
 					[row.id],
@@ -1635,6 +1658,13 @@ export class JobManager {
 		const hasSpareContainer = projectId !== null && projectsWithSpareContainer.has(projectId);
 		if (projectId && (hasSpareContainer || this.pendingContainerStarts.has(projectId))) {
 			return { blocked: false, hasSpareContainer };
+		}
+		// Hours before memory, and only for dispatches that would START a container -
+		// the short-circuit above has already let through everything that would not.
+		// Kept ahead of the memory arithmetic because no amount of reclaiming buys an
+		// hour back, so there is nothing for the acquire path's reclaim rung to do.
+		if (active.hoursExhausted) {
+			return { blocked: true, hasSpareContainer, hoursExhausted: true };
 		}
 		// A lazy start already in flight has not reached the DB yet, so its memory
 		// has to be added here or two dispatches would both see room for the same
@@ -2204,13 +2234,21 @@ export class JobManager {
 				// already claimed by the dispatcher, so the transient branch must re-queue it,
 				// not just stamp a skip reason — otherwise it would stick in `claimed`.)
 				if (wakeupPayload?.trigger === 'progress_update_now' && wakeupId) {
-					if (result.reason === 'agent_busy' || result.reason === 'instance_at_capacity') {
+					if (
+						result.reason === 'agent_busy' ||
+						result.reason === 'instance_at_capacity' ||
+						result.reason === 'hours_exhausted'
+					) {
 						// Still transient — re-queue so a later cron tick retries once the
-						// Captain frees / capacity clears.
+						// Captain frees / capacity clears. Hours belong here too: the
+						// allowance returns when the calendar month turns, which is later
+						// than a container freeing but no less certain.
 						const skipReason =
 							result.reason === 'instance_at_capacity'
 								? WakeupSkipReason.InstanceAtCapacity
-								: WakeupSkipReason.AgentRunning;
+								: result.reason === 'hours_exhausted'
+									? WakeupSkipReason.HoursExhausted
+									: WakeupSkipReason.AgentRunning;
 						await db.query(
 							`UPDATE agent_wakeup_requests
 							 SET status = $1::wakeup_status, claimed_at = NULL,
@@ -2933,8 +2971,12 @@ export class JobManager {
 		if (await this.isAgentBusyInProject(memberId, projectRow.id)) {
 			return { dispatched: false, reason: 'agent_busy' };
 		}
-		if ((await this.isContainerCapacityBlocked(projectRow.id)).blocked) {
-			return { dispatched: false, reason: 'instance_at_capacity' };
+		const capacity = await this.isContainerCapacityBlocked(projectRow.id);
+		if (capacity.blocked) {
+			return {
+				dispatched: false,
+				reason: capacity.hoursExhausted ? 'hours_exhausted' : 'instance_at_capacity',
+			};
 		}
 		if (await checkOverBudget(db, memberId, projectRow.id)) {
 			return { dispatched: false, reason: 'over_budget' };
@@ -3236,6 +3278,7 @@ export class JobManager {
 			!result.dispatched &&
 			(result.reason === 'agent_busy' ||
 				result.reason === 'instance_at_capacity' ||
+				result.reason === 'hours_exhausted' ||
 				result.reason === 'launch_conflict')
 		) {
 			const projRow = await db.query<{ id: string }>(

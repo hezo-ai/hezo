@@ -1,20 +1,21 @@
-import { HQ_PROJECT_SLUG } from '@hezo/shared';
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { HoursBucket } from '@hezo/shared';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { BarChart3, Pencil, Users } from 'lucide-react';
-import { agentDisplayName } from '../../../components/agent-identity-tooltip';
-import { agentPageParams } from '../../../components/agent-link';
-import { AgentRef } from '../../../components/agent-ref';
-import { BudgetCharts } from '../../../components/budget/budget-charts';
-import { ProjectBudgetPanel } from '../../../components/budget/project-budget-panel';
-import { dollars, formatDay } from '../../../components/charts/chart-format';
+import { agentDisplayName } from '../../../../components/agent-identity-tooltip';
+import { agentPageParams } from '../../../../components/agent-link';
+import { AgentRef } from '../../../../components/agent-ref';
+import { BudgetCharts } from '../../../../components/budget/budget-charts';
+import { ProjectBudgetPanel } from '../../../../components/budget/project-budget-panel';
+import { dollars, formatDay } from '../../../../components/charts/chart-format';
 import {
 	type SeriesCell,
 	StackedSeriesChart,
-} from '../../../components/charts/stacked-series-chart';
-import { Avatar, getInitials } from '../../../components/ui/avatar';
-import { Badge } from '../../../components/ui/badge';
-import { BudgetBar } from '../../../components/ui/budget-bar';
-import { SectionHeader } from '../../../components/ui/section-header';
+} from '../../../../components/charts/stacked-series-chart';
+import { Avatar, getInitials } from '../../../../components/ui/avatar';
+import { Badge } from '../../../../components/ui/badge';
+import { BudgetBar } from '../../../../components/ui/budget-bar';
+import { SectionHeader } from '../../../../components/ui/section-header';
+import { useAgentHours } from '../../../../hooks/use-agent-hours';
 import {
 	type AdapterDailyCostPoint,
 	type AgentDailyCostPoint,
@@ -23,8 +24,10 @@ import {
 	useAgentDailyCostSeries,
 	useBudgetStatus,
 	type WindowStatus,
-} from '../../../hooks/use-costs';
-import { defaultAvatarForSlug } from '../../../lib/default-avatars';
+} from '../../../../hooks/use-costs';
+import { defaultAvatarForSlug } from '../../../../lib/default-avatars';
+import { formatDuration } from '../../../../lib/format-duration';
+import { useI18n } from '../../../../lib/i18n';
 
 /** A single window's spend vs. cap with a fill bar. 0 cap renders "no cap". */
 function WindowRow({ label, status }: { label: string; status: WindowStatus }) {
@@ -84,23 +87,22 @@ const centsToPlottedDollars = (cents: number) => cents / 100;
 const dollarsSpent = (plotted: number) => dollars(Math.round(plotted * 100));
 
 function BudgetPage() {
+	const { t } = useI18n();
 	const { projectId } = Route.useParams();
 	const { data: status } = useBudgetStatus(projectId);
 	const { data: agentSeries, isLoading: agentLoading } = useAgentDailyCostSeries(projectId);
 	const { data: adapterSeries, isLoading: adapterLoading } = useAdapterDailyCostSeries(projectId);
+	// Per-agent run time, folded into the cards below rather than given a panel of
+	// its own. It answers "how long was this agent working", which sits naturally
+	// beside its spend - while "hours" on its own tab means container uptime, the
+	// figure that is actually billed. One word, one meaning per surface.
+	const { data: hours } = useAgentHours(projectId, HoursBucket.Month);
+	const monthSecondsByAgent = new Map(
+		(hours?.agents ?? []).map((a) => [a.agent_id, a.month_seconds]),
+	);
 
 	return (
 		<div className="flex flex-col gap-8">
-			<div>
-				<h1 className="text-[28px] font-semibold leading-tight tracking-[-0.02em] text-text-1">
-					Budget
-				</h1>
-				<p className="mt-1 text-[13px] text-text-2">
-					Track spend and set caps for this project and its agents. Token costs are computed at
-					non-cached rates, so figures are a conservative upper-bound estimate.
-				</p>
-			</div>
-
 			{/* Hero + per-window caps + binding-window banner. */}
 			<ProjectBudgetPanel projectId={projectId} variant="spend" />
 
@@ -191,6 +193,16 @@ function BudgetPage() {
 										</div>
 									</div>
 									<WindowGrid status={agent} />
+									{(monthSecondsByAgent.get(agent.agent_id) ?? 0) > 0 && (
+										<span
+											className="text-[11.5px] text-text-3"
+											data-testid={`agent-run-time-${agent.agent_slug}`}
+										>
+											{t('budget.agentRunTime', {
+												duration: formatDuration(monthSecondsByAgent.get(agent.agent_id) ?? 0),
+											})}
+										</span>
+									)}
 								</div>
 							))}
 						</div>
@@ -206,12 +218,6 @@ function agentLabel(agent: { agent_name: string | null; agent_title: string }): 
 	return agentDisplayName({ human_name: agent.agent_name, title: agent.agent_title });
 }
 
-export const Route = createFileRoute('/projects/$projectId/budget')({
-	beforeLoad: ({ params }) => {
-		// HQ (internal) has no per-project budget surface.
-		if (params.projectId === HQ_PROJECT_SLUG) {
-			throw redirect({ to: '/projects/$projectId/tasks', params, replace: true });
-		}
-	},
+export const Route = createFileRoute('/projects/$projectId/budget/')({
 	component: BudgetPage,
 });

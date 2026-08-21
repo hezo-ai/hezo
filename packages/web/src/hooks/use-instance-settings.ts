@@ -7,12 +7,18 @@ import { queryKeys } from '../lib/query-keys';
 export interface InstanceSettings {
 	base_url: string | null;
 	max_chat_history_size: number;
-	/** Effective task-run memory budget: the explicit setting, else the computed default. */
+	/** Effective budget for ALL containers: the explicit setting, else the computed default. */
 	max_container_memory_gb: number;
 	/** True when the operator explicitly set a value (vs the automatic default). */
 	max_container_memory_gb_is_set: boolean;
 	/** The automatic default the server computed for this backend. */
 	max_container_memory_gb_computed_default: number;
+	/**
+	 * The share of {@link max_container_memory_gb} task runs may hold; the rest is
+	 * the assistant chat's reservation. Sent by the server rather than derived here
+	 * so the page cannot drift from what admission actually uses.
+	 */
+	task_container_memory_gb: number;
 	default_ram_cap_per_container_gb: number;
 	/** Disk allocated to each container, in GB. Sibling of the RAM cap. */
 	default_container_disk_gb: number;
@@ -25,6 +31,18 @@ export interface InstanceSettings {
 	host_total_swap_bytes: number | null;
 	/** Which view every task thread opens in on this instance. Admin-owned. */
 	default_task_view: TaskView;
+	/**
+	 * Settings this deployment fixed, so the page renders them locked rather than
+	 * offering an edit the server will refuse with a 409.
+	 */
+	max_container_memory_gb_pinned: boolean;
+	default_ram_cap_per_container_gb_pinned: boolean;
+	default_container_disk_gb_pinned: boolean;
+	/**
+	 * Who fixed them and where to change them, or null on an instance where
+	 * nothing is pinned - which is every ordinary self-hosted one.
+	 */
+	policy: { managed_by: string; manage_url: string | null } | null;
 }
 
 export type InstanceSettingsUpdate = Partial<{

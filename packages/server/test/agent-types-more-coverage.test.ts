@@ -1,3 +1,4 @@
+import { DEFAULT_MONTHLY_BUDGET_CENTS } from '@hezo/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
@@ -93,7 +94,7 @@ describe('POST /agent-types', () => {
 		expect(created.source).toBe('custom');
 		expect(created.is_builtin).toBe(false);
 		expect(created.run_timeout_min).toBe(60);
-		expect(created.monthly_budget_cents).toBe(3000);
+		expect(created.monthly_budget_cents).toBe(DEFAULT_MONTHLY_BUDGET_CENTS);
 		expect(created.touches_code).toBe(false);
 	});
 

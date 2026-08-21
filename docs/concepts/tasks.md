@@ -50,7 +50,7 @@ screenshots, PDFs, or other references - to a task or a comment; see
 Mentioning **@admin** is how agents escalate to humans: it lands a notification in the
 inbox of the project's admins and all global admins. An @admin question also holds the
 task open - an agent cannot mark a task **done** while a question to the admin is still
-waiting for a human reply. The task stays in progress (or in review) until you answer
+waiting for a human reply. The task stays in progress until you answer
 with a comment on the task itself. You can always close a task yourself, answered or not.
 
 ## Reading a busy thread
@@ -134,6 +134,19 @@ else is active on the task.
 If a run is stranded (its process vanished, or it never managed to start), Hezo notices
 within a couple of minutes and marks it failed, which releases the task and returns the
 assignee to **Idle**. You do not need to restart Hezo to clear a stuck task.
+
+## How the task list is grouped
+
+A project's task list is split into three sections:
+
+- **In progress** - the work in flight: everything in progress or blocked. A
+  blocked task sits here rather than in the backlog, because it is work already started
+  that has hit something and needs the same visibility as the rest of the active work.
+- **Backlog** - the open work nobody has picked up yet, paged as you scroll.
+- **Done** - finished tasks, at the bottom.
+
+The status filter narrows the Backlog and Done sections. In progress is pinned above them
+and stays put whichever statuses you filter for, so the work in flight is always in view.
 
 ## How the task list is ordered
 

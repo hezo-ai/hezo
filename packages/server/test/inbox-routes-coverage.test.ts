@@ -147,6 +147,22 @@ describe('GET /inbox/mentions', () => {
 		expect(empty).toBeDefined();
 	});
 
+	it('strips markdown so the snippet reads as prose, not source', async () => {
+		const markdownComment = await insertComment(
+			'**Captain review: PASS.**\n\nThe submission satisfies:\n\n- ZNTL uses the [Aug 17 offering](/x)\n- `verify_totals` passes',
+		);
+		await insertMention(markdownComment);
+
+		const res = await ctx.app.request(`/api/projects/${projectSlug}/inbox/mentions`, {
+			headers: authHeader(ctx.token),
+		});
+		const mentions = (await res.json()).data as Array<Record<string, unknown>>;
+		const row = mentions.find((m) => (m.snippet as string).startsWith('Captain review'));
+		expect(row?.snippet).toBe(
+			'Captain review: PASS. The submission satisfies: • ZNTL uses the Aug 17 offering • verify_totals passes',
+		);
+	});
+
 	it('archived=true returns only archived mentions', async () => {
 		const archivedComment = await insertComment('archived mention');
 		await insertMention(archivedComment, { archived: true });

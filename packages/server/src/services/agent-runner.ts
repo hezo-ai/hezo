@@ -43,7 +43,7 @@ import {
 } from '@hezo/shared';
 import type { MasterKeyManager } from '../crypto/master-key';
 import type { Db } from '../db/database';
-import { appendRunLogChunks, runLogLengthSql } from '../db/run-log-chunks';
+import { appendRunLogChunks, type RunUsageSnapshot, runLogLengthSql } from '../db/run-log-chunks';
 import type { DomainEventBus } from '../events/bus';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { trackBackground } from '../lib/background';
@@ -183,6 +183,25 @@ import {
 	getWorktreesPath,
 } from './workspace';
 import type { WebSocketManager } from './ws';
+
+/**
+ * Flatten a parser usage record for the log-chunk writer.
+ *
+ * The DB layer takes flat columns and has no business learning `CostTokens`;
+ * the runner owns both shapes, so the adapter lives on this side of the seam.
+ * A runtime that reports no split writes NULLs, which the COALESCE in the
+ * statement leaves alone - so a later flush that does have them still lands.
+ */
+function toUsageSnapshot(usage: AgentRunUsage | null): RunUsageSnapshot | null {
+	if (!usage) return null;
+	return {
+		inputTokens: usage.inputTokens,
+		outputTokens: usage.outputTokens,
+		costCents: usage.costCents,
+		cacheReadTokens: usage.buckets?.cacheReadTokens ?? null,
+		cacheCreationTokens: usage.buckets?.cacheCreationTokens ?? null,
+	};
+}
 
 const log = logger.child('agent-runner');
 
@@ -1102,7 +1121,8 @@ async function buildRunContext(
 export type ContainerExitAbortReason = 'container_error' | 'container_stopped';
 /**
  * Reasons the runner tags on a run's AbortSignal. A bare abort — a user cancel via
- * `cancelTask`, server shutdown, or the stale-dispatch reaper — carries none.
+ * `cancelTask`, or the stale-dispatch reaper — carries none. Shutdown is tagged, and
+ * is the one reason that hands the work back rather than ending the run.
  *
  * `tunnel_lost` is the runner's own: the container reaches Hezo only through the
  * run tunnel, so a tunnel that dies mid-run leaves the agent unable to read a
@@ -1129,9 +1149,12 @@ const RUN_ABORT_REASONS: readonly string[] = [
  * Deliberately distinguishable from `reconcileOnStartup`'s "Server restarted
  * while run in flight": this one means the drain saw it coming, that one means
  * it did not. Which of the two a run wears says whether the shutdown was orderly.
+ *
+ * A clause, not a sentence, because it is handed to `finalizeRequeue`: that adds
+ * what became of the work, and `recordHandbackOutcome` adds where to find it. It
+ * previously promised a re-queue on its own, which nothing then delivered.
  */
-export const RUN_LOST_TO_SHUTDOWN_ERROR =
-	'Server shut down while this run was in flight; it will be re-queued when Hezo comes back.';
+export const RUN_LOST_TO_SHUTDOWN_ERROR = 'Server shut down while this run was in flight';
 
 function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
 	const reason = signal?.reason as unknown;
@@ -1143,7 +1166,10 @@ function runAbortReason(signal?: AbortSignal): RunAbortReason | null {
 /**
  * Terminal status for an aborted run: a wall-clock timeout is `TimedOut` (and drives an
  * automatic same-task continuation — see `JobManager.onAgentComplete`), container death and
- * a lost tunnel are `Failed`, and a bare abort (user cancel / shutdown) is `Cancelled`.
+ * a lost tunnel are `Failed`, and a bare abort (a user cancel) is `Cancelled`.
+ *
+ * `server_shutdown` never reaches here: it is handed back before any caller asks for
+ * a status, and a handback finalizes `Cancelled` with `handed_back` on the row.
  */
 function abortedRunStatus(reason: RunAbortReason | null): HeartbeatRunStatus {
 	if (reason === 'run_timeout') return HeartbeatRunStatus.TimedOut;
@@ -1358,7 +1384,21 @@ export async function runAgent(
 ): Promise<RunResult> {
 	const startTime = Date.now();
 
-	if (signal?.aborted) return abortedResult(startTime);
+	// A shutdown landing before the run row even exists still owes the work, and
+	// there is no row to hand it back through - so here the handback is the flag
+	// alone. `settleWakeupForRun` returns the wakeup to the queue on it, and
+	// `recordHandbackOutcome` is skipped downstream for want of a run id, which is
+	// the right answer: no run happened, so there is nothing to annotate.
+	if (signal?.aborted) {
+		const preRunReason = runAbortReason(signal);
+		return preRunReason === 'server_shutdown'
+			? {
+					...abortedResult(startTime),
+					requeued: true,
+					requeueReason: WakeupSkipReason.ServerShutdown,
+				}
+			: abortedResult(startTime);
+	}
 
 	// The run executes in the project's team (see buildRunContext); for instance
 	// agents working another team's project this differs from agent.team_id.
@@ -1425,7 +1465,7 @@ export async function runAgent(
 			// usage must land all-or-nothing to stay exactly-once, and every
 			// transaction block serializes process-wide on both drivers.
 			if (delta.length === 0 && !currentUsage) return;
-			await appendRunLogChunks(deps.db, heartbeatRunId, delta, currentUsage);
+			await appendRunLogChunks(deps.db, heartbeatRunId, delta, toUsageSnapshot(currentUsage));
 		},
 	});
 
@@ -1487,11 +1527,76 @@ export async function runAgent(
 		else signal.addEventListener('abort', () => runAbort.abort(signal.reason), { once: true });
 	}
 
+	/**
+	 * Give up waiting on the instance and hand the work back to the queue.
+	 *
+	 * Reached from both waits a run can sit in - container capacity, and the
+	 * rotating provider credential - once either passes its ceiling, and from a
+	 * shutdown that killed the run mid-flight. None of the three is a verdict on
+	 * the run: the instance is busy, or going away, not the agent failing. So the
+	 * row is finalized `Cancelled` rather than `Failed`, and the caller re-queues
+	 * the wakeup.
+	 *
+	 * Finalizing it is the load-bearing part. A row left `queued` here is
+	 * abandoned: nothing returns to it, it still matches `isTaskBusyInDb` so it
+	 * blocks the retry of the very wakeup it came from, and 120s later the orphan
+	 * pass reaps it as `Orphaned: run never started` and counts it toward the
+	 * lost-run escalation. A terminal row does none of that, so the requeued
+	 * wakeup is free to dispatch on the next tick.
+	 */
+	const finalizeRequeue = async (
+		reason: string,
+		requeueReason: WakeupSkipReason,
+	): Promise<RunResult> => {
+		releaseCredentialLock?.();
+		const message = `${reason} - returning this run to the queue.`;
+		emit('stdout', `[runner] ${message}\n`);
+		const durationMs = Date.now() - startTime;
+		await deps.logs.end(streamId);
+		await updateHeartbeatRun(
+			deps.db,
+			heartbeatRunId,
+			{
+				status: HeartbeatRunStatus.Cancelled,
+				exitCode: -1,
+				durationMs,
+				error: message,
+				// Deliberately NOT stamping `cancel_reason` here. Whether the work is
+				// actually carried is not known until the caller settles the wakeup,
+				// and the guard there can bite. Writing `handed_back` at this point
+				// asserted an outcome before attempting it - the same defect the orphan
+				// sweeper was restructured to avoid - and left it standing when the
+				// handback failed. `JobManager.settleWakeupForRun` records it once the
+				// answer is in, through the recorder the sweeper shares.
+			},
+			runBroadcast,
+		);
+		return {
+			success: false,
+			exitCode: -1,
+			stderr: reason,
+			durationMs,
+			heartbeatRunId,
+			requeued: true,
+			requeueReason,
+		};
+	};
+
 	const finalizeAbort = async (): Promise<RunResult> => {
+		const abortReason = runAbortReason(runAbort.signal);
+		// A shutdown is not a verdict on this run, and the work is still owed. Hand
+		// it back here, while the process is still up, because boot recovery cannot
+		// do it afterwards: it scans for runs left `running` or `queued`, and an
+		// orderly drain leaves neither - it finalizes the row and settles the wakeup
+		// before exiting. The better the shutdown behaved, the more certainly the
+		// work was dropped.
+		if (abortReason === 'server_shutdown') {
+			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+		}
 		releaseCredentialLock?.();
 		const durationMs = Date.now() - startTime;
 		await deps.logs.end(streamId);
-		const reason = runAbortReason(runAbort.signal);
+		const reason = abortReason;
 		const status = abortedRunStatus(reason);
 		await updateHeartbeatRun(
 			deps.db,
@@ -1701,59 +1806,6 @@ export async function runAgent(
 			   AND queued_reason IS DISTINCT FROM $1`,
 			[CAPACITY_PARK_QUEUED_REASON, heartbeatRunId, HeartbeatRunStatus.Queued],
 		);
-	};
-
-	/**
-	 * Give up waiting on the instance and hand the work back to the queue.
-	 *
-	 * Reached from both waits a run can sit in - container capacity, and the
-	 * rotating provider credential - once either passes its ceiling. Neither is a
-	 * failure: the instance is busy, not the agent. So the row is finalized
-	 * `Cancelled` rather than `Failed`, and the caller re-queues the wakeup.
-	 *
-	 * Finalizing it is the load-bearing part. A row left `queued` here is
-	 * abandoned: nothing returns to it, it still matches `isTaskBusyInDb` so it
-	 * blocks the retry of the very wakeup it came from, and 120s later the orphan
-	 * pass reaps it as `Orphaned: run never started` and counts it toward the
-	 * lost-run escalation. A terminal row does none of that, so the requeued
-	 * wakeup is free to dispatch on the next tick.
-	 */
-	const finalizeRequeue = async (
-		reason: string,
-		requeueReason: WakeupSkipReason,
-	): Promise<RunResult> => {
-		releaseCredentialLock?.();
-		const message = `${reason} - returning this run to the queue.`;
-		emit('stdout', `[runner] ${message}\n`);
-		const durationMs = Date.now() - startTime;
-		await deps.logs.end(streamId);
-		await updateHeartbeatRun(
-			deps.db,
-			heartbeatRunId,
-			{
-				status: HeartbeatRunStatus.Cancelled,
-				exitCode: -1,
-				durationMs,
-				error: message,
-				// Deliberately NOT stamping `cancel_reason` here. Whether the work is
-				// actually carried is not known until the caller settles the wakeup,
-				// and the guard there can bite. Writing `handed_back` at this point
-				// asserted an outcome before attempting it - the same defect the orphan
-				// sweeper was restructured to avoid - and left it standing when the
-				// handback failed. `JobManager.settleWakeupForRun` records it once the
-				// answer is in, through the recorder the sweeper shares.
-			},
-			runBroadcast,
-		);
-		return {
-			success: false,
-			exitCode: -1,
-			stderr: reason,
-			durationMs,
-			heartbeatRunId,
-			requeued: true,
-			requeueReason,
-		};
 	};
 
 	// Human-friendly label for run-scoped logs (egress proxy, ssh-agent) and for
@@ -2174,7 +2226,7 @@ export async function runAgent(
 		const priceFn = pricing
 			? (model: string | undefined, tokens: CostTokens) => pricing.costCents(model, tokens)
 			: undefined;
-		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride);
+		const parser = createAgentStreamParser(runtimeType, priceFn, modelOverride, provider);
 
 		const persistRotatedAuth = async (): Promise<void> => {
 			await persistRotatedSubscriptionAuth({
@@ -2607,7 +2659,7 @@ export async function runAgent(
 								// TEAMMATE'S ACTIVE @-MENTION. That last case is the review-handoff one —
 								// a teammate @-mentions the reviewer, the reviewer does the whole review
 								// and ends the run with its verdict only in the final message, so the
-								// task sits in `review` with nobody woken. An agent's *reply* wake stays
+								// task sits open with nobody woken. An agent's *reply* wake stays
 								// excluded as the routine chatter it usually is.
 								//
 								// Admitting agent mentions is safe for a structural reason, not a
@@ -2899,6 +2951,17 @@ export async function runAgent(
 				}
 			}
 
+			// The drain's own path: aborting the exec rejects here, and until now that
+			// wrote a terminal `failed` row and settled the wakeup `failed` too, so
+			// boot recovery could match neither. Handing back instead re-queues the
+			// wakeup while the process is still up, which is what the message on the
+			// row has always promised. The kill above has already torn the tree down,
+			// and no lost-run strike is spent: a shutdown is not the run failing.
+			if (reason === 'server_shutdown') {
+				await cleanupRunArtifacts();
+				return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+			}
+
 			emit('stderr', `\n[runner] ${errorMessage}\n`);
 
 			await deps.logs.end(streamId);
@@ -2962,6 +3025,11 @@ export async function runAgent(
 		// exec block and is not in scope. The `finally` below is what releases the
 		// tunnel, both host ports and the container claim on this path, which is the
 		// job it was written for.
+		// A shutdown landing inside the setup window strands the same work as one
+		// landing mid-exec, and has the same answer.
+		if (runAbortReason(runAbort.signal) === 'server_shutdown') {
+			return finalizeRequeue(RUN_LOST_TO_SHUTDOWN_ERROR, WakeupSkipReason.ServerShutdown);
+		}
 		const verdict = throwVerdict(error);
 		const durationMs = Date.now() - startTime;
 		log.error(`Run ${heartbeatRunId} failed before the agent could start:`, error);
@@ -4768,6 +4836,8 @@ async function updateHeartbeatRun(
 		     input_tokens = COALESCE($4, input_tokens),
 		     output_tokens = COALESCE($5, output_tokens),
 		     cost_cents = COALESCE($6, cost_cents),
+		     cache_read_tokens = COALESCE($11, cache_read_tokens),
+		     cache_creation_tokens = COALESCE($12, cache_creation_tokens),
 		     usage_partial = COALESCE($7, usage_partial)
 		     -- cancel_reason is deliberately absent from this SET list. A cancel
 		     -- attribution says WHO stopped the run, and this finalizer is never that
@@ -4790,6 +4860,12 @@ async function updateHeartbeatRun(
 			runId,
 			HeartbeatRunStatus.Queued,
 			HeartbeatRunStatus.Running,
+			// $11/$12. Appended rather than slotted in beside the other usage binds
+			// so every existing placeholder keeps its number - renumbering a
+			// ten-parameter statement to insert two in the middle is how the wrong
+			// value lands in the wrong column.
+			update.usage?.buckets?.cacheReadTokens ?? null,
+			update.usage?.buckets?.cacheCreationTokens ?? null,
 		],
 	);
 	if (applied.rows.length > 0) {

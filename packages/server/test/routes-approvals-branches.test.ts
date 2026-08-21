@@ -129,15 +129,14 @@ describe('PATCH /approvals/:approvalId — validation + auth arms', () => {
 		expect(res.status).toBe(403);
 	});
 
-	it('400s when a revised system_prompt drops required substitution vars', async () => {
+	it('accepts a revised system_prompt that names no substitution vars', async () => {
 		const id = await createHire({ title: 'Prompt Vars', system_prompt: 'original' });
 		const res = await app.request(`/api/approvals/${id}`, {
 			method: 'PATCH',
 			headers: jsonHeaders(token),
-			body: JSON.stringify({ system_prompt: 'A prompt with no required template variables.' }),
+			body: JSON.stringify({ system_prompt: 'A prompt with no template variables.' }),
 		});
-		expect(res.status).toBe(400);
-		expect((await res.json()).error.code).toBe('INVALID_REQUEST');
+		expect(res.status).toBe(200);
 	});
 
 	it('400s when reports_to names an agent not on this team', async () => {

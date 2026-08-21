@@ -65,16 +65,18 @@ describe('team types CRUD', () => {
 			expect(agent.system_prompt.length).toBeGreaterThan(100);
 		}
 
+		// Seeded prompts hold the role body alone - the identity line and the live
+		// manifests are composed around it at resolve time.
 		const captain = builtin.agent_types.find((a: Record<string, unknown>) => a.slug === 'captain');
-		expect(captain.system_prompt).toContain('You are the Captain of');
-		expect(captain.system_prompt).toContain('{{team_name}}');
+		expect(captain.system_prompt).toContain('# Captain');
 		expect(captain.system_prompt).toMatch(/##\s+Rules\b/);
+		expect(captain.system_prompt).not.toContain('{{skills_context}}');
 
 		const engineer = builtin.agent_types.find(
 			(a: Record<string, unknown>) => a.slug === 'engineer',
 		);
-		expect(engineer.system_prompt).toContain('You are an Engineer at');
-		expect(engineer.system_prompt).toContain('{{reports_to}}');
+		expect(engineer.system_prompt).toContain('# Engineer');
+		expect(engineer.system_prompt).not.toContain('{{project_docs_context}}');
 	});
 
 	it('creates a custom team type', async () => {

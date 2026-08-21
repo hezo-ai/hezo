@@ -232,6 +232,46 @@ export interface ChatConfig {
  * `masterKey` and `reset` (see `schema.ts`), so the file, the type and the docs
  * cannot drift apart.
  */
+/**
+ * Settings fixed by whoever deployed this instance, and who to ask about them.
+ *
+ * **Core never learns any deployment's name.** What it learns is that a setting
+ * was decided by the operator who runs this instance rather than by the person
+ * using it, who that operator is, and where to go to change it. A managed
+ * service fills this in; so does an IT department that fixes limits for a team.
+ * Nothing in the server branches on `managedBy` - it is rendered, never read.
+ *
+ * **Per-key optional, deliberately.** A single `managed: true` boolean could not
+ * express pinning memory while leaving disk to the operator, which is the normal
+ * case: a deployment fixes what it bills for and leaves the rest alone.
+ */
+export interface PolicyConfig {
+	/** Who fixed these settings, as shown to the operator. Rendered, never branched on. */
+	managedBy: string;
+	/**
+	 * Where to change them. Absent means "locked, with no link" - which is the
+	 * honest rendering for a deployment with no self-service surface.
+	 *
+	 * Stored as an opaque string so whether it is generic or instance-scoped stays
+	 * the deployer's decision. Validated as `https:` at parse (`config/schema.ts`)
+	 * and again at the render end, because React does not reliably block a
+	 * `javascript:` href.
+	 */
+	manageUrl?: string;
+	/**
+	 * The settings this deployment fixes. A key present here wins over whatever
+	 * `system_meta` holds, and `PATCH` of it is refused rather than silently
+	 * ignored - on a managed deployment the person using the instance is still its
+	 * superuser and can call the API directly.
+	 */
+	pinned: {
+		maxContainerMemoryGb?: number;
+		defaultRamCapPerContainerGb?: number;
+		defaultContainerDiskGb?: number;
+		monthlyContainerHours?: number;
+	};
+}
+
 export interface HezoConfig {
 	port: number;
 	dataDir: string;
@@ -255,6 +295,18 @@ export interface HezoConfig {
 	jobs: JobsConfig;
 	logCompaction: LogCompactionConfig;
 	chat: ChatConfig;
+	/**
+	 * Settings fixed by the deployer, or null when nothing is. Loaded from its own
+	 * file (`policyFile`) rather than the main config, so it can be reloaded on a
+	 * plan change without re-running `resolveConfig` - which re-reads argv and env
+	 * and can legitimately refuse to start.
+	 */
+	policy: PolicyConfig | null;
+	/**
+	 * Path to the JSON file `policy` is read from, watched for changes. Unset ->
+	 * nothing is pinned and nothing is watched.
+	 */
+	policyFile?: string;
 
 	/**
 	 * The `--config` file this was resolved from, absolute, or undefined when none
@@ -293,6 +345,8 @@ export const DEFAULT_CONFIG: HezoConfig = {
 	webUrl: '',
 	logLevel: 'info',
 	open: true,
+
+	policy: null,
 
 	database: { poolSize: 10 },
 	assetStorage: {},

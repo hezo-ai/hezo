@@ -91,7 +91,6 @@ test('task detail no longer shows a delete button or status pill row', async () 
 	await findByTestId('task-close-button', undefined, { timeout: 10_000 });
 	expect(queryByRole('button', { name: /Delete Task/i })).toBeNull();
 	expect(queryByRole('button', { name: 'in progress' })).toBeNull();
-	expect(queryByRole('button', { name: 'review' })).toBeNull();
 });
 
 test('a done task offers re-open and hides close (done is terminal)', async () => {

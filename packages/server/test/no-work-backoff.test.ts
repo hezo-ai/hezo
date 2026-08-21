@@ -223,7 +223,11 @@ describe('noWorkCooldownActive', () => {
 			[
 				taskId,
 				CommentContentType.System,
-				JSON.stringify({ kind: 'status_change', from: TaskStatus.Backlog, to: TaskStatus.Review }),
+				JSON.stringify({
+					kind: 'status_change',
+					from: TaskStatus.Backlog,
+					to: TaskStatus.InProgress,
+				}),
 			],
 		);
 

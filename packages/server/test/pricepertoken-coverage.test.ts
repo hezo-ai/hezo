@@ -90,7 +90,7 @@ describe('parsePricePerTokenModels', () => {
 		expect(parsePricePerTokenModels('nope')).toEqual([]);
 	});
 
-	it('converts per-million prices to per-token and nulls cache rates', () => {
+	it('converts per-million prices to per-token and derives Anthropic cache rates', () => {
 		const rates = parsePricePerTokenModels([
 			pptModel('anthropic-claude-sonnet-4', 'Anthropic', 3, 15),
 		]);
@@ -99,10 +99,28 @@ describe('parsePricePerTokenModels', () => {
 				modelId: 'claude-sonnet-4',
 				inputPerToken: 3 / 1_000_000,
 				outputPerToken: 15 / 1_000_000,
-				cacheReadPerToken: null,
-				cacheCreationPerToken: null,
+				// The catalog carries no cache rates, so they come off the input rate:
+				// Anthropic reads at 0.1x and writes at 1.25x (the default 5-minute TTL).
+				cacheReadPerToken: (3 / 1_000_000) * 0.1,
+				cacheCreationPerToken: (3 / 1_000_000) * 1.25,
 			},
 		]);
+	});
+
+	it('matches the author case-insensitively', () => {
+		const [row] = parsePricePerTokenModels([
+			pptModel('anthropic-claude-sonnet-4', 'ANTHROPIC', 3, 15),
+		]);
+		expect(row.cacheReadPerToken).toBe((3 / 1_000_000) * 0.1);
+	});
+
+	it('leaves cache rates null for an author with no known multipliers', () => {
+		// Null is what makes `costCentsFromRate` fall back to the full input rate -
+		// conservative, and the right answer until that provider's real multipliers
+		// are verified. A guessed multiplier would be wrong in a direction nobody checks.
+		const [row] = parsePricePerTokenModels([pptModel('acme-model', 'Acme', 1, 2)]);
+		expect(row.cacheReadPerToken).toBeNull();
+		expect(row.cacheCreationPerToken).toBeNull();
 	});
 
 	it('skips malformed entries: null, missing slug, non-numeric or missing prices', () => {
