@@ -21,7 +21,7 @@ const CONNECTORS_ROUTE = '/projects/$projectId/connectors';
 async function seedConnectorWithRepo(
 	ws: SeededWorkspace,
 	name: string,
-	opts: { withRepo: boolean; activated: boolean },
+	opts: { repos: string[]; activated: boolean },
 ): Promise<void> {
 	const { apiBase, db } = getTestContext();
 	const res = await apiBase(`/api/projects/${ws.internalSlug}/connectors`, {
@@ -66,18 +66,18 @@ async function seedConnectorWithRepo(
 		 WHERE id = $2`,
 		[conn.rows[0].id, connectorId, opts.activated],
 	);
-	if (opts.withRepo) {
+	for (const identifier of opts.repos) {
 		await db.query(
 			`INSERT INTO repos (project_id, repo_identifier, host_type, oauth_connection_id)
-			 VALUES ($1, 'hezo-ai/website', 'github', $2)`,
-			[project.rows[0].id, conn.rows[0].id],
+			 VALUES ($1, $2, 'github', $3)`,
+			[project.rows[0].id, identifier, conn.rows[0].id],
 		);
 	}
 }
 
 async function openDialog(
 	name: string,
-	opts: { withRepo: boolean; activated: boolean; control: 'connector-remove' | 'connector-revoke' },
+	opts: { repos: string[]; activated: boolean; control: 'connector-remove' | 'connector-revoke' },
 ) {
 	let slug = '';
 	const rendered = await renderApp({
@@ -103,7 +103,7 @@ async function openDialog(
 
 test('Remove names the repo and says git survives', async () => {
 	await openDialog('github-linked', {
-		withRepo: true,
+		repos: ['hezo-ai/website'],
 		activated: false,
 		control: 'connector-remove',
 	});
@@ -118,7 +118,7 @@ test('Remove names the repo and says git survives', async () => {
 
 test('Disconnect names the repo and says git stops authenticating', async () => {
 	await openDialog('github-connected', {
-		withRepo: true,
+		repos: ['hezo-ai/website'],
 		activated: true,
 		control: 'connector-revoke',
 	});
@@ -132,7 +132,7 @@ test('Disconnect names the repo and says git stops authenticating', async () => 
 
 test('no repo warning appears for a connector that backs nothing', async () => {
 	await openDialog('github-bare', {
-		withRepo: false,
+		repos: [],
 		activated: false,
 		control: 'connector-remove',
 	});
@@ -141,4 +141,37 @@ test('no repo warning appears for a connector that backs nothing', async () => {
 	await waitFor(() => {
 		expect(screen.queryByTestId('linked-repos-warning')).toBeNull();
 	});
+});
+
+/**
+ * The plural copy is not a cosmetic variant of the singular. A connection
+ * backing several repos is the shared one - migration 018 says a global
+ * connection is by construction the one whose repos span projects - so the
+ * plural branch is what renders in the case with the widest blast radius. It
+ * has to carry the count and name every repo, not just the first.
+ */
+test('the plural copy counts the repos and names all of them', async () => {
+	await openDialog('github-multi', {
+		repos: ['hezo-ai/website', 'hezo-ai/docs', 'hezo-ai/infra'],
+		activated: true,
+		control: 'connector-revoke',
+	});
+
+	const warning = await screen.findByTestId('linked-repos-warning');
+	expect(warning.textContent).toContain('3 linked repos');
+	for (const repo of ['hezo-ai/website', 'hezo-ai/docs', 'hezo-ai/infra']) {
+		expect(warning.textContent).toContain(repo);
+	}
+});
+
+test('the plural connector copy still says git survives', async () => {
+	await openDialog('github-multi-remove', {
+		repos: ['hezo-ai/one', 'hezo-ai/two'],
+		activated: false,
+		control: 'connector-remove',
+	});
+
+	const warning = await screen.findByTestId('linked-repos-warning');
+	expect(warning.textContent).toContain('2 linked repos');
+	expect(warning.textContent).toContain('Git keeps working');
 });
