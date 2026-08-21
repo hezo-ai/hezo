@@ -117,6 +117,21 @@ export interface AgentStreamParser {
 	 * zero" — the latter is the actionable one.
 	 */
 	getMcpToolCounts(): Record<string, number> | null;
+	/**
+	 * Which tools this run actually called, and how many times each, keyed by the
+	 * name the runtime puts on the wire - a connector tool as
+	 * `mcp__<server>__<tool>`, a built-in as its bare name.
+	 *
+	 * Deliberately a different question from `getMcpToolCounts()`, which counts
+	 * what each server *offered*. Offered and called diverge, and only the second
+	 * says whether a tool is earning the context its schema occupies - the figure
+	 * a decision to defer a tool has to be made against.
+	 *
+	 * Null rather than `{}` when nothing was recorded, so "not instrumented" stays
+	 * distinguishable from "called nothing", exactly as `getMcpToolCounts()` keeps
+	 * "not reported" apart from "reported zero".
+	 */
+	getToolCallCounts(): Record<string, number> | null;
 }
 
 /**
@@ -207,6 +222,28 @@ function createPassthroughParser(): AgentStreamParser {
 		getTerminalError: () => null,
 		getFinalAssistantMessage: () => null,
 		getMcpToolCounts: () => null,
+		getToolCallCounts: () => null,
+	};
+}
+
+/**
+ * Accumulates the tool calls a single run made. One per parser instance - never
+ * module-level, which would pool counts across concurrent runs.
+ */
+interface ToolCallTally {
+	record(name: string): void;
+	snapshot(): Record<string, number> | null;
+}
+
+function createToolCallTally(): ToolCallTally {
+	const counts = new Map<string, number>();
+	return {
+		record(name: string): void {
+			const key = name.trim();
+			if (!key) return;
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		},
+		snapshot: () => (counts.size === 0 ? null : Object.fromEntries(counts)),
 	};
 }
 
@@ -223,6 +260,7 @@ function createJsonlParser(
 	getTerminalError: () => string | null = () => null,
 	getFinalAssistantMessage: () => string | null = () => null,
 	getMcpToolCounts: () => Record<string, number> | null = () => null,
+	getToolCallCounts: () => Record<string, number> | null = () => null,
 ): AgentStreamParser {
 	let buffer = '';
 
@@ -260,6 +298,7 @@ function createJsonlParser(
 		getTerminalError,
 		getFinalAssistantMessage,
 		getMcpToolCounts,
+		getToolCallCounts,
 	};
 }
 
@@ -659,6 +698,7 @@ function withUnrecognizedModelFilter(base: AgentStreamParser): AgentStreamParser
 }
 
 function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): AgentStreamParser {
+	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
 	let terminalError: string | null = null;
@@ -748,7 +788,7 @@ function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): Age
 				if (block.type === 'thinking') {
 					out.push(formatThinking(block.thinking ?? ''));
 				} else if (block.type === 'tool_use') {
-					out.push(formatToolUse(block.name ?? 'unknown', block.input));
+					out.push(formatToolUse(block.name ?? 'unknown', block.input, toolTally));
 				} else if (block.type === 'text') {
 					const text = (block.text ?? '').trim();
 					if (text) {
@@ -818,6 +858,7 @@ function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): Age
 		() => terminalError,
 		() => finalMessage,
 		() => mcpCounts,
+		toolTally.snapshot,
 	);
 	// Untouched passthrough unless this run's endpoint makes the diagnostic
 	// unconditional, so an unknown provider never silences a real one.
@@ -884,6 +925,7 @@ interface CodexEvent {
  *   wins; this is the floor, not an override.
  */
 function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamParser {
+	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let turns = 0;
 	let modelId: string | undefined = runModel;
@@ -928,7 +970,7 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 				const text = (event.item.text ?? event.item.message ?? '').trim();
 				if (text) finalMessage = text;
 			}
-			return renderCodexItem(event.item);
+			return renderCodexItem(event.item, toolTally);
 		}
 
 		if (type === 'error') {
@@ -946,10 +988,12 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 		() => usage,
 		() => terminalError,
 		() => finalMessage,
+		() => null,
+		toolTally.snapshot,
 	);
 }
 
-function renderCodexItem(item: CodexItem): string[] {
+function renderCodexItem(item: CodexItem, tally: ToolCallTally): string[] {
 	const kind = item.type ?? item.item_type ?? '';
 
 	if (kind === 'reasoning') {
@@ -979,7 +1023,7 @@ function renderCodexItem(item: CodexItem): string[] {
 			? extractErrorMessage(item.error ?? undefined)
 			: extractToolResultText(item.result?.content);
 		return [
-			formatToolUse(codexToolName(item), item.arguments ?? item.args),
+			formatToolUse(codexToolName(item), item.arguments ?? item.args, tally),
 			labelledResult(failed, body.replace(/\s+/g, ' ').trim()),
 		];
 	}
@@ -1190,11 +1234,15 @@ function extractGenericTool(event: Record<string, unknown>, type: string): strin
  * (every other probe-matched shape) still renders the single `[tool]` line it
  * always did, and its dot stays pending because nothing ever reports a result.
  */
-function renderGenericTool(event: Record<string, unknown>, name: string): string[] {
+function renderGenericTool(
+	event: Record<string, unknown>,
+	name: string,
+	tally: ToolCallTally,
+): string[] {
 	const part = isRecord(event.part) ? event.part : undefined;
 	const state = part && isRecord(part.state) ? part.state : undefined;
 	const input = state?.input ?? event.input ?? event.arguments ?? event.args;
-	const out = [formatToolUse(name, input)];
+	const out = [formatToolUse(name, input, tally)];
 	if (!state) return out;
 
 	const failed = state.status === 'error' || Boolean(state.error);
@@ -1320,6 +1368,7 @@ function createGenericJsonlParser(
 	price: PriceModelFn,
 	fallbackModelId: string | undefined,
 ): AgentStreamParser {
+	const toolTally = createToolCallTally();
 	let tokens: GenericTokenBuckets | null = null;
 	let modelId: string | undefined = fallbackModelId;
 	let finalMessage: string | null = null;
@@ -1365,7 +1414,7 @@ function createGenericJsonlParser(
 		}
 
 		const toolName = extractGenericTool(event, type);
-		if (toolName) return renderGenericTool(event, toolName);
+		if (toolName) return renderGenericTool(event, toolName, toolTally);
 
 		const text = extractGenericText(event);
 		if (text) {
@@ -1395,6 +1444,8 @@ function createGenericJsonlParser(
 		() => (tokens ? priceGenericUsage(tokens, price, modelId) : null),
 		() => terminalError,
 		() => finalMessage,
+		() => null,
+		toolTally.snapshot,
 	);
 
 	return {
@@ -1654,6 +1705,7 @@ function kimiContentText(content: unknown): string {
 }
 
 function createKimiParser(): AgentStreamParser {
+	const toolTally = createToolCallTally();
 	let terminalError: string | null = null;
 	let finalAssistantMessage: string | null = null;
 
@@ -1681,7 +1733,7 @@ function createKimiParser(): AgentStreamParser {
 						// Leave it as the raw string — renderToolInput stringifies it fine.
 					}
 				}
-				out.push(formatToolUse(name, args));
+				out.push(formatToolUse(name, args, toolTally));
 			}
 			return out;
 		}
@@ -1718,6 +1770,8 @@ function createKimiParser(): AgentStreamParser {
 		() => null,
 		() => terminalError,
 		() => finalAssistantMessage,
+		() => null,
+		toolTally.snapshot,
 	);
 }
 
@@ -1910,7 +1964,8 @@ function formatThinking(text: string): string {
 		.join('\n');
 }
 
-function formatToolUse(name: string, input: unknown): string {
+function formatToolUse(name: string, input: unknown, tally: ToolCallTally): string {
+	tally.record(name);
 	const rendered = renderToolInput(input);
 	return rendered ? `[tool] ${name}(${rendered})` : `[tool] ${name}()`;
 }

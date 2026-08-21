@@ -2955,6 +2955,10 @@ export async function runAgent(
 					// The stream ran to its terminal event, so this usage is final, not a
 					// mid-run snapshot — clear the partial flag any earlier flush set.
 					usagePartial: false,
+					// Written here rather than mid-run like mcp_tool_counts: the tally only
+					// completes when the stream does, and updating it per call would leave a
+					// dead tuple behind every tool the agent used.
+					toolCallCounts: parser.getToolCallCounts(),
 				},
 				runBroadcast,
 			);
@@ -3012,6 +3016,10 @@ export async function runAgent(
 					// Persist whatever the parser captured before the throw/abort; leave
 					// usage_partial as the last flush set it (true once any usage landed).
 					usage: parser.getUsage(),
+					// Partial by nature - the calls made before the run died are still the
+					// truth about what it reached for, and a died-early run is exactly the
+					// case worth being able to inspect.
+					toolCallCounts: parser.getToolCallCounts(),
 				},
 				runBroadcast,
 			);
@@ -4852,6 +4860,12 @@ async function updateHeartbeatRun(
 		 * as the last periodic flush set it (true once any usage landed).
 		 */
 		usagePartial?: boolean | null;
+		/**
+		 * Which tools the run called and how many times, from the parser's tally.
+		 * Null when the runtime's parser renders no tool events (Grok, Antigravity),
+		 * which the column reads as "not instrumented" rather than "called nothing".
+		 */
+		toolCallCounts?: Record<string, number> | null;
 	},
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
@@ -4874,7 +4888,8 @@ async function updateHeartbeatRun(
 		     cost_cents = COALESCE($6, cost_cents),
 		     cache_read_tokens = COALESCE($11, cache_read_tokens),
 		     cache_creation_tokens = COALESCE($12, cache_creation_tokens),
-		     usage_partial = COALESCE($7, usage_partial)
+		     usage_partial = COALESCE($7, usage_partial),
+		     tool_call_counts = COALESCE($13::jsonb, tool_call_counts)
 		     -- cancel_reason is deliberately absent from this SET list. A cancel
 		     -- attribution says WHO stopped the run, and this finalizer is never that
 		     -- party: terminateHeartbeatRun backfills operator_terminated while the
@@ -4902,6 +4917,8 @@ async function updateHeartbeatRun(
 			// value lands in the wrong column.
 			update.usage?.buckets?.cacheReadTokens ?? null,
 			update.usage?.buckets?.cacheCreationTokens ?? null,
+			// $13, appended for the same reason as $11/$12 above.
+			update.toolCallCounts ? JSON.stringify(update.toolCallCounts) : null,
 		],
 	);
 	if (applied.rows.length > 0) {

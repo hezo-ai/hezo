@@ -525,6 +525,70 @@ describe('runAgent', () => {
 		expect(run.rows[0].log_text).toContain('[runner]');
 	});
 
+	it('records which tools the run called on the run row', async () => {
+		// The write half of the tool_call_counts instrument. The parser tally is
+		// covered in agent-stream-parser-tool-calls.test.ts; this asserts it reaches
+		// the row, which is what makes it readable across runs afterwards.
+		const turn = JSON.stringify({
+			type: 'assistant',
+			message: {
+				role: 'assistant',
+				content: [
+					{ type: 'tool_use', name: 'mcp__hezo__get_task', input: { id: 't1' } },
+					{ type: 'tool_use', name: 'mcp__hezo__get_task', input: { id: 't2' } },
+					{ type: 'tool_use', name: 'Bash', input: { command: 'ls' } },
+				],
+			},
+		});
+		const docker = createMockDocker({
+			execStart: async (
+				_execId: string,
+				opts: { onChunk?: (chunk: { stream: string; text: string }) => Promise<void> },
+			) => {
+				await opts.onChunk?.({ stream: 'stdout', text: `${turn}\n` });
+				return { stdout: '', stderr: '' };
+			},
+		});
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		const run = await db.query<{ tool_call_counts: Record<string, number> | null }>(
+			'SELECT tool_call_counts FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].tool_call_counts).toEqual({ mcp__hezo__get_task: 2, Bash: 1 });
+	});
+
+	it('leaves tool_call_counts null for a run that called nothing', async () => {
+		// Null is "not instrumented", and a run whose stream carried no tool event is
+		// indistinguishable from one on a runtime that reports none - so it must not
+		// be written as {}, which would read as a measured zero.
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker(),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		const run = await db.query<{ tool_call_counts: unknown }>(
+			'SELECT tool_call_counts FROM heartbeat_runs WHERE id = $1',
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].tool_call_counts).toBeNull();
+	});
+
 	it('marks produced_output on a successful run', async () => {
 		const deps: RunnerDeps = {
 			db,

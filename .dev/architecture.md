@@ -1810,6 +1810,31 @@ cover the rest of the run:
   `typefully=connected(25)` on a DeepSeek run - showed the tools had been there all along.
   Before assuming a connector is broken, read this field.
 
+  **Offered is not called, and `tool_call_counts` records the second**
+  (migration 073). The same parser tallies every tool the run actually invoked, keyed by the
+  name the runtime puts on the wire (`mcp__hezo__create_comment`, `Bash`), exposed as
+  `getToolCallCounts()`. The tally is per parser instance, never module-level, or concurrent
+  runs would pool their calls.
+
+  Unlike `mcp_tool_counts` this is written **once at the end**, folded into
+  `updateHeartbeatRun`'s terminal `UPDATE` as a `COALESCE`d bind rather than given a write of
+  its own: the tally only completes when the stream does, and updating per call would leave a
+  dead tuple behind every tool the agent used. The abort path persists it too - the calls a
+  run made before it died are still the truth about what it reached for.
+
+  `formatToolUse` takes the tally as a required argument, so recording and rendering cannot
+  separate; a runtime added without wiring it is a compile error rather than a silent zero.
+  Four of six runtimes report: Claude Code, Codex, OpenCode and Kimi Code. **Grok and
+  Antigravity return NULL** - Grok's tool calls arrive as a type its parser drops, and
+  Antigravity's handles only `init`/`step_update`/`result`. Neither can be instrumented
+  without first teaching its parser to render tool calls, so both read as "not instrumented"
+  rather than as runs that called nothing.
+
+  This exists to answer whether a tool earns the context its schema occupies on every
+  request. Hezo's own surface measures 82 tools at ~136 KB, 71.4% of it prose, and a real
+  instance carries ~337 tools across six MCP servers - so which of them are ever called is
+  the figure any decision to defer a tool has to be made against, and nothing recorded it.
+
 The runner also orders these: a signal kill outranks a captured terminal error, which in
 turn outranks "produced no output" on the run row - each is the cause of the one below it,
 and reporting the symptom first sends the reader after the wrong thing. A process a signal
