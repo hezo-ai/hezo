@@ -3,6 +3,7 @@ import { ContainerStatus, RepoSetupStatus, repoNameFromIdentifier, wsRoom } from
 import { Hono } from 'hono';
 import { trackBackground } from '../lib/background';
 import { broadcastChange } from '../lib/broadcast';
+import { buildContainerDeps } from '../lib/container-deps';
 import { withProjectGitLock } from '../lib/git-lock';
 import { getProjectLocator, resolveProjectId } from '../lib/resolve';
 import { err, ok } from '../lib/response';
@@ -11,7 +12,7 @@ import type { Env } from '../lib/types';
 import { logger } from '../logger';
 import { requireSuperuser } from '../middleware/auth';
 import { resolveContainerRunUser } from '../services/container-user';
-import type { ContainerDeps } from '../services/containers';
+import { type ContainerDeps, ensureProjectContainerRunning } from '../services/containers';
 import type { EgressProxy } from '../services/egress';
 import {
 	getCloneState,
@@ -28,7 +29,10 @@ import { loadConnectionAccessToken } from '../services/repo-github';
 import { performRepoSetup } from '../services/repo-provisioning';
 import { refreshRepoPushAccess } from '../services/repo-push-access';
 import { removeRepoFromWorkspace } from '../services/repo-sync';
-import { countActiveRunsInProject } from '../services/run-concurrency';
+import {
+	countActiveRunsInProject,
+	isContainerCapacityBlockedInDb,
+} from '../services/run-concurrency';
 import { collectFinishedWorktrees } from '../services/sandbox/worktree-gc';
 import { type BridgeRunnerArgs, withProvisionBridge } from '../services/ssh-agent';
 import {
@@ -325,9 +329,11 @@ reposRoutes.delete('/projects/:projectId/repos/:repoId', async (c) => {
  * clean/dirty, ahead/behind origin (all read locally — no network fetch), plus the
  * active per-task worktrees. Git runs inside the project container, so this
  * requires the container running; a stopped container returns
- * `{ container_running: false }` rather than auto-starting one (a passive inspect
- * must never trigger a minutes-long provision). Reads run under the project git
- * lock so they never interleave with a run's worktree prep on the shared `.git`.
+ * `{ container_running: false }` rather than auto-starting one, because this read
+ * fires whenever the panel is expanded and a passive inspect must never trigger a
+ * minutes-long provision. Starting one is the operator's explicit call and lives on
+ * `POST` to this same path. Reads run under the project git lock so they never
+ * interleave with a run's worktree prep on the shared `.git`.
  */
 reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 	const denied = requireSuperuser(c);
@@ -426,6 +432,69 @@ reposRoutes.get('/projects/:projectId/repos/:repoId/git-state', async (c) => {
 		worktrees: state.worktrees.map((w) => ({ ...w, task: taskMap.get(w.taskIdentifier) ?? null })),
 		active_runs: active,
 	});
+});
+
+/**
+ * Bring a container up so the git state above can be read, reporting which of the
+ * two answers the caller got: one is already running, or a start is now under way.
+ *
+ * The `GET` twin stays passive, so this is the only path here that provisions - an
+ * operator asking for it, never a panel being expanded. Two things make that safe
+ * to hand an operator:
+ *
+ * - **The instance memory budget is checked first.** `ensureProjectContainerRunning`
+ *   is the start that leaves `projects.container_id` naming a running container,
+ *   which is the only thing the `GET` above reads - but it does not consult the pool
+ *   ladder, so an unguarded call could start a container the budget forbids and
+ *   starve the runs that budget exists to protect. A blocked instance is a 409 the
+ *   caller waits on rather than a queue held open server-side: nothing here can
+ *   represent "parked on capacity", and a wait nobody is watching provisions a
+ *   container the operator has already navigated away from.
+ * - **The start runs in the background.** A provision takes minutes; this returns as
+ *   soon as one is under way and the panel polls the `GET` for the result, the same
+ *   shape `reclone` below already uses.
+ */
+reposRoutes.post('/projects/:projectId/repos/:repoId/git-state', async (c) => {
+	const denied = requireSuperuser(c);
+	if (denied) return denied;
+
+	const teamId = c.get('teamId') as string;
+	const db = c.get('db');
+	const projectId = await resolveProjectId(db, teamId, c.req.param('projectId'));
+	if (!projectId) return err(c, 'NOT_FOUND', 'Project not found', 404);
+	const dataDir = c.get('dataDir');
+	if (!dataDir)
+		return err(c, 'GIT_STATE_UNSUPPORTED', 'git state unavailable in this deployment', 400);
+
+	const repo = await loadRepoForGit(db, dataDir, teamId, projectId, c.req.param('repoId'));
+	if (!repo) return err(c, 'NOT_FOUND', 'Repo not found', 404);
+
+	// Idempotent: a container already up is the answer, not an error. The panel
+	// posts here on every refresh rather than branching on state it read seconds ago.
+	if (repo.containerId && repo.containerRunning) {
+		return ok(c, { starting: false, container_running: true });
+	}
+
+	if (await isContainerCapacityBlockedInDb(db, c.get('docker'), projectId)) {
+		return err(
+			c,
+			'CONTAINER_AT_CAPACITY',
+			'This instance is already using all the memory it is allowed to give agent containers. ' +
+				'A container for this project starts as soon as another finishes and hands its memory back.',
+			409,
+		);
+	}
+
+	trackBackground(
+		ensureProjectContainerRunning(buildContainerDeps(c), projectId).catch((e) => {
+			// Nothing to report back to: the caller has already had its answer. A
+			// failed provision parks `container_status` at `error` with the reason on
+			// the project row; the panel just stops seeing a container arrive and
+			// says so when it gives up watching.
+			log.error(`Failed to start container for git state of project ${projectId}:`, e);
+		}),
+	);
+	return ok(c, { starting: true, container_running: false });
 });
 
 const RESET_ACTIONS = ['discard_local', 'prune_worktrees', 'reclone'] as const;

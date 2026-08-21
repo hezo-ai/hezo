@@ -3213,7 +3213,18 @@ computed locally, no network fetch), plus the active `/worktrees/<task>/<repo>` 
 to their tasks and the project's active (queued/running) agent-run count (`active_runs`, from
 `getProjectConcurrency`) so the panel can disable the reset controls proactively instead of only
 failing them server-side — and returns `{ container_running: false }` when the container is stopped
-rather than auto-starting one, since a passive inspect must not trigger a provision. It also
+rather than auto-starting one, since that read fires whenever the panel is expanded and a passive
+inspect must not trigger a provision. Starting one is the operator's own call and lives on `POST` to
+the same path: it answers `{ starting: false, container_running: true }` when one is already up,
+**409 `CONTAINER_AT_CAPACITY`** when `isContainerCapacityBlockedInDb` says the instance memory
+budget has no room for this project's next container, and otherwise backgrounds
+`ensureProjectContainerRunning` and answers `{ starting: true }`. That ensure is the row-consistent
+start — it is what leaves `projects.container_id` naming a running container, the only thing the
+`GET` reads — but it does not consult the pool ladder, so the budget check in front of it is what
+keeps it from starting a container the budget forbids. The **wait for capacity belongs to the
+panel**, not the server: it re-posts every 5s for up to 3 minutes showing "waiting for container
+capacity", because nothing in `ContainerStatus` can represent being parked on capacity, and a wait
+nobody is watching would provision a container the operator has already navigated away from. It also
 re-checks and returns `can_push` (`refreshRepoPushAccess`), computed **before** the
 container-gated branch so it is reported either way — the check needs GitHub, not a container,
 and the panel is where an operator notices write access changed upstream. `POST .../reset`
