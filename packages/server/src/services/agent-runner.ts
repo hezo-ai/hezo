@@ -2162,6 +2162,26 @@ export async function runAgent(
 			policy: await buildTunnelHostPolicy(deps.db, connectorDescriptors),
 		});
 		runTunnel = tunnel;
+
+		// Which MCP connectors this run actually received.
+		//
+		// Until this line the only connector entry a run log could carry was a
+		// rejection warning, and that fires for a request aimed at a *registered*
+		// connector - so a connector that was simply absent produced no evidence at
+		// all. An agent then had nothing to separate "never configured" from
+		// "broken", and two runs burned themselves concluding an upstream was
+		// answering 404 when the connector had never been in the run. This is a
+		// statement of what the run got, not a heuristic, so it stays true whatever
+		// the reason for an absence.
+		const connectorSummary = connectorDescriptors.map((d) =>
+			d.enabledTools ? `${d.name} (restricted)` : d.name,
+		);
+		emit(
+			'stdout',
+			connectorSummary.length > 0
+				? `[runner] MCP connectors: ${connectorSummary.join(', ')}\n`
+				: '[runner] MCP connectors: none - either none is registered for this project, or none carries a credential. See the project Connectors page.\n',
+		);
 		// The tunnel is the container's only path to Hezo, so losing it mid-run
 		// leaves the agent with no MCP tools, no egress proxy and no ssh agent for
 		// the rest of its budget - and it cannot even call `report_no_work`, which

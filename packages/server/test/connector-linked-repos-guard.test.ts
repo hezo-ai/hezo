@@ -183,6 +183,36 @@ describe('remove_connector refuses a connector that still authenticates repos', 
 	});
 });
 
+describe('an agent-initiated removal leaves a trail', () => {
+	it('records the delete in the audit log', async () => {
+		// Both REST deletes emit `mcp_connection.deleted`, and `register_connector`
+		// emits the matching `created`. This path emitted neither, so a connector an
+		// agent removed simply vanished, with nothing in the audit log to say who or
+		// when.
+		const connectorId = await seedConnector('github-audited', null);
+
+		const result = (await callTool('remove_connector', {
+			project: projectId,
+			id: 'github-audited',
+		})) as { removed?: boolean };
+		expect(result.removed).toBe(true);
+
+		// The bus is async, so poll rather than read once.
+		const deadline = Date.now() + 2000;
+		let row: { entity_id: string; action: string } | undefined;
+		while (Date.now() < deadline && !row) {
+			const r = await db.query<{ entity_id: string; action: string }>(
+				`SELECT entity_id, action FROM audit_log
+				 WHERE entity_type = 'mcp_connection' AND entity_id = $1 AND action = 'deleted'`,
+				[connectorId],
+			);
+			row = r.rows[0];
+			if (!row) await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+		expect(row?.entity_id).toBe(connectorId);
+	});
+});
+
 describe('the human delete path stays unguarded', () => {
 	it('deletes a connector that backs linked repos', async () => {
 		// Deliberate: a human may want the MCP tools gone while git keeps working,

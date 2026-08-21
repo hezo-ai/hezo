@@ -545,6 +545,35 @@ describe('runAgent', () => {
 		expect(run.rows[0].produced_output).toBe(true);
 	});
 
+	it('records which MCP connectors the run received, and says so when there are none', async () => {
+		// The absence of a connector used to leave no trace in a run log at all: the
+		// only connector line it could carry was a rejection warning, which fires for
+		// a request aimed at a registered connector. An agent with no `github` tools
+		// therefore could not tell "never configured" from "broken", and two runs
+		// concluded an upstream was answering 404 when the connector had never been
+		// handed to them.
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker(),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		const run = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[result.heartbeatRunId],
+		);
+		expect(run.rows[0].log_text).toContain('[runner] MCP connectors:');
+		// This project has none registered, and the line has to say that rather than
+		// stay silent - silence is what it is replacing.
+		expect(run.rows[0].log_text).toContain('none');
+		expect(run.rows[0].log_text).toContain('Connectors page');
+	});
+
 	it('fails a clean exit that produced no output', async () => {
 		const deps: RunnerDeps = {
 			db,

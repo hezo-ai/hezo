@@ -76,7 +76,11 @@ import { assetSortOrderBy } from '../lib/asset-sort';
 import { signAgentAssetUrl } from '../lib/asset-urls';
 import { assertSubordinateAssignee } from '../lib/assignment-hierarchy';
 import { trackBackground } from '../lib/background';
-import { broadcastCommentFamilyChange, broadcastRowChange } from '../lib/broadcast';
+import {
+	broadcastCommentFamilyChange,
+	broadcastConnectorRowChange,
+	broadcastRowChange,
+} from '../lib/broadcast';
 import {
 	commentCategoryPredicate,
 	commentSincePredicate,
@@ -7673,6 +7677,24 @@ export function registerTools(
 					hint: 'Unlink the repo on the project Git page first if you really want this connector gone, or ask an admin to remove it on the Connectors page. If you were trying to fix missing tools, call list_connectors and read tools_this_run before removing anything.',
 				};
 			}
+			// Both REST deletes record the removal and tell open tabs about it, and
+			// `register_connector` emits the matching `mcp_connection.created`. This
+			// path emitted neither, so an agent-initiated delete left no audit trail
+			// and no UI update - the row simply vanished from a page on next refetch.
+			events?.emit({
+				type: 'mcp_connection.deleted',
+				teamId: scope.teamId,
+				actorType: auth.type === AuthType.Agent ? AuditActorType.Agent : AuditActorType.Admin,
+				actorMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+				connectionId: outcome.id,
+				name: outcome.name,
+			});
+			broadcastConnectorRowChange(
+				wsManager,
+				{ teamId: scope.teamId, projectId: scope.projectId },
+				'DELETE',
+				{ id: outcome.id },
+			);
 			return { removed: true, id: outcome.id };
 		},
 		db,
