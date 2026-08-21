@@ -14,8 +14,8 @@ available to your agents' runs and survives container rebuilds.
 A connector comes in one of three kinds, depending on how the service is exposed:
 
 - A **hosted MCP server** - the service publishes an HTTP
-  [MCP](https://modelcontextprotocol.io) endpoint, and its tools appear directly in your
-  agents' tool list (GitHub, Linear, Notion, …).
+  [MCP](https://modelcontextprotocol.io) endpoint, and your agents reach its tools through
+  the `hezo-mcp` command in their container (GitHub, Linear, Notion, …).
 - A **REST API** - the service has no MCP server, just a credentialed plain HTTP API.
   Agents call the API directly, and the credential is filled in on the way out.
 - A **local MCP server** - a process-based (stdio) server that runs inside the project
@@ -166,6 +166,32 @@ server calls out, scoped to that API's host. Because connections are scoped per 
 (below), each project supplies its own key for the same tool without them ever colliding -
 each project's credential just gets its own name.
 
+## How agents reach connector tools
+
+Agents do not carry a connector's tools in their tool list. They reach them through a
+`hezo-mcp` command that Hezo writes into every run's container:
+
+```sh
+hezo-mcp servers                       # what this run can reach
+hezo-mcp search drafts                 # find a tool by name or description
+hezo-mcp describe typefully create_draft   # its arguments
+hezo-mcp call typefully create_draft --args '{"text":"..."}'
+```
+
+This is a cost measure. A tool's schema is text the model re-reads on every single
+request, and a busy instance can carry several hundred tools across its connectors - far
+more context than most tasks ever use. Fetching a schema when the agent asks for it,
+rather than all of them up front, keeps that cost proportional to the work.
+
+It also means the behaviour is the same on every coding tool Hezo supports. Some of them
+offer no way to narrow a server's tool list and no way to defer one, so anything built on
+those features would only ever work for some of your agents.
+
+Hezo's own tools are unaffected and remain directly available.
+
+Credentials are unchanged by this: the call still leaves from inside the container and
+still has its credential filled in on the way out, exactly as described below.
+
 ## How agents pick the right connection
 
 Hezo ships a built-in **`connector-recipes`** [skill](/docs/concepts/skills) - a curated
@@ -244,10 +270,9 @@ a server declares nothing, Hezo infers the category from the method name and lab
 as a write method, so a method Hezo can't place is withheld rather than quietly allowed.
 
 A disabled method is blocked on the way out of the container, so the restriction holds no
-matter which AI model or coding tool the agent is running. On most of them the disabled
-methods are also hidden from the agent's tool list, so it never sees a tool it can't use
-and won't waste a turn trying; on the rest the tool is still listed but calling it fails
-with an error saying it's disabled. Either way it cannot be called.
+matter which AI model or coding tool the agent is running. Disabled methods are also hidden
+from `hezo-mcp search`, so an agent never sees a tool it can't use and won't waste a turn
+trying. Either way it cannot be called.
 
 Methods are listed when you connect the server. If a connector shows that its methods
 haven't been listed yet - it was connected before this existed, or the listing failed -
@@ -302,10 +327,10 @@ record, and its history, and every agent picks it up again on its next run. The 
 itself as soon as the authorization window closes: the amber badge becomes **Connected** and
 the provider's error message clears, with no page reload.
 
-Until you do, the connector's tools may still appear in agent tool lists, but calls through
-them fail. That is deliberate: withdrawing the tools mid-task would look to an agent like
-the integration had never existed, whereas a failing call plus a `degraded` status tells it
-what is actually wrong.
+Until you do, the connector's tools are still listed by `hezo-mcp`, but calls through them
+fail. That is deliberate: withdrawing the tools mid-task would look to an agent like the
+integration had never existed, whereas a failing call plus a `degraded` status tells it what
+is actually wrong.
 
 ## Reconnecting a revoked connector
 

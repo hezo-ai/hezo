@@ -4826,6 +4826,45 @@ connector on no timer at all, since the sweep skips those. All three `DO UPDATE 
 that can re-point a connector also reset `probed_at` / `probe_error`, or a row proven public at
 one URL would stay "proven" at another.
 
+**Connector tools are reached through an in-container CLI, not the runtime's MCP config.**
+A connector's descriptors used to be handed to the coding CLI alongside Hezo's own server,
+which put every tool of every connector in the model's context on every request - ~255 tools
+at roughly 1.4 KB of schema each on a real instance. `agent-runner.ts` now passes only the
+`hezo` descriptor to `buildMcpInjection` and writes the connectors into a manifest instead
+(`services/mcp-cli/manifest.ts`), alongside the `hezo-mcp` client itself
+(`services/mcp-cli/cli-source.ts`). The agent runs `hezo-mcp search` / `describe` / `call`,
+so a connector tool's schema costs tokens only when it is asked for.
+
+**Below the runtime, not inside it.** `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` is false for Codex,
+Grok and Antigravity, and none of the three defers tools natively either, so any mechanism
+built on a runtime feature would cover half the fleet. Every runtime has a shell, so a CLI is
+runtime-agnostic by construction and needs no capability branch.
+
+**The credential path is untouched**, which is what makes this compatible with the § 7 red
+line. The manifest carries the descriptor's `__HEZO_SECRET_*__` placeholders verbatim; the
+call still originates in the container, still traverses the egress proxy, and is still
+substituted there scoped by `allowed_hosts`. Hezo never makes the outbound call, so no
+credential is resolved host-side against an agent-named destination.
+
+Three consequences worth knowing before touching this area:
+
+- **`mcp-method-guard.ts` is now the sole enforcement point** for a method allowlist. The CLI
+  hides disabled tools from `search`, but it is written into the container and the agent has a
+  shell, so nothing there is a boundary. HTTP connectors are genuinely enforced at the proxy;
+  a stdio connector's allowlist is advisory, as it always was - an agent could always have
+  spawned the server itself.
+- **`tools_this_run` is permanently `null` for a connector.** It counts what the *runtime*
+  loaded, and connectors are no longer in that list. The guidance that pointed agents at it
+  moved to `hezo-mcp search --server <name>` in the same change; leaving it would have turned
+  the expected reading into a standing false alarm.
+- **The manifest is written on every run, connectors or not.** The CLI answering "no MCP
+  servers are configured for this run" is a fact an agent can act on; a missing command is
+  indistinguishable from a broken image, which is the ambiguity that has already cost this
+  codebase two incidents (the Typefully claim, and the orphaned-connector 404 diagnosis).
+
+Paths root at `CONTAINER_SUBSCRIPTION_BASE`, not a per-run home dir: Antigravity declares
+`requiresHomeDir: false`, so a home-rooted CLI would be missing on exactly one of the six.
+
 **MCP connections** (`mcp_connections`, see § 3 scoping). `kind='saas'` carries
 `{ url, headers, apiKey? }`. Connector auth is **always emitted as a `__HEZO_SECRET_*__`
 placeholder, never a materialized token** (the § 7 red line): the descriptor loader resolves
