@@ -2368,7 +2368,11 @@ export type PromptDelivery = 'stdin' | 'arg' | 'file';
  * AGENTS.md says to reach for a structural signal first - but the one case here
  * has no structural lever: Codex exposes its own account-level app tools
  * alongside the MCP servers Hezo configures, and its config file offers no way
- * to suppress them. Telling the agent which one is which is all that is left.
+ * to suppress them (see the `enabledTools` comment in the Codex adapter, which
+ * hits the same wall). Telling the agent which one is which is all that is left.
+ *
+ * A note here earns its place only by carrying something the agent cannot work
+ * out from its tool list. State the discriminator, not the warning.
  *
  * Empty for every runtime that ships no competing tools. Keep it that way: this
  * is not a place to restate guidance that belongs in `SHARED_INSTRUCTIONS`,
@@ -2381,16 +2385,32 @@ export const RUNTIME_PROMPT_NOTES: Partial<Record<AgentRuntime, string>> = {
 	// generally cannot see the repositories this run is working in - and an agent
 	// that reaches for it gets a bare 404 that reads like a Hezo fault. Two runs
 	// lost themselves that way before this note existed.
+	//
+	// The identification rule is the load-bearing half, because the obvious
+	// heuristic is actively wrong here. A Hezo connector's tools are prefixed with
+	// `safeName(mcp_connections.name)` - operator-chosen text, which need not
+	// mention the service - while Codex's own family is literally `codex_apps`
+	// with `github` in the tool name. So an agent following SHARED_INSTRUCTIONS'
+	// "use the `github` MCP tools" and scanning for `github` finds exactly one
+	// match, and it is the wrong one. Naming `list_connectors` as the mapping and
+	// `codex_apps` as the exclusion is what makes the note usable rather than
+	// merely true.
 	[AgentRuntime.Codex]:
-		'Tool namespaces: your tool list may contain two families of tools for the ' +
-		'same service - the ones Hezo configured for this project, and the ones your ' +
-		'CLI exposes from its own signed-in account. Always prefer the Hezo ones. ' +
-		"Only the Hezo connectors are authorized against this project's credentials; " +
-		"the CLI's own account tools are authorized against something else and will " +
-		"fail on this project's resources, usually with a 404 that looks like the " +
-		'resource does not exist. If a call fails that way, check `list_connectors` ' +
-		'for a connector covering the same service and retry through it before ' +
-		'reporting the resource missing.',
+		'Tool namespaces: your tool list can hold two families of tools for one ' +
+		'service. Hezo configures one family. Your CLI adds another from its own ' +
+		"signed-in account. Identify Hezo's by prefix: a Hezo connector's tools are " +
+		"named `mcp__<connector>__<tool>`, where `<connector>` is that connector's " +
+		'name exactly as `list_connectors` reports it, with any character outside ' +
+		'`A-Za-z0-9_-` replaced by `_`. That name is chosen by the operator and often ' +
+		'does not name the service at all - a GitHub connector may be called ' +
+		'"Marketing". So never pick a tool because its name contains the service ' +
+		'name. Call `list_connectors` and match its names against your tool list ' +
+		"instead. Tools under the `codex_apps` prefix are never Hezo's. " +
+		"Only Hezo connectors carry this project's credentials. Your CLI's own " +
+		"account tools authenticate as somebody else and fail on this project's " +
+		'resources, usually with a 404 that reads as the resource not existing. ' +
+		'Never report a resource missing on that evidence. Retry through the ' +
+		'matching Hezo connector first.',
 };
 
 /**

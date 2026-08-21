@@ -225,7 +225,15 @@ describe('runAgent — per-runtime prompt notes', () => {
 			makeProject(),
 		);
 		expect(codex.prompt).toContain('Tool namespaces:');
+		// The identification rule is the load-bearing half. A note that only says
+		// "prefer the Hezo ones" is unusable: the Hezo prefix is the operator's
+		// connector name, which need not mention the service, while Codex's own
+		// family is literally `codex_apps` with `github` in the tool name. An agent
+		// scanning for the service name therefore finds exactly one match and it is
+		// the wrong one - which is how this failed in production.
+		expect(codex.prompt).toContain('mcp__<connector>__<tool>');
 		expect(codex.prompt).toContain('list_connectors');
+		expect(codex.prompt).toContain('codex_apps');
 
 		// The default runtime ships no competing family, so it must not carry the
 		// note. Guidance reaching a runtime it does not apply to is noise in every

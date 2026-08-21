@@ -3771,11 +3771,24 @@ the apps connected to its own ChatGPT account as tools, in a namespace of their 
 the MCP servers Hezo configures - and its config file offers no key to suppress them. Its
 GitHub app is authorized against that account rather than the project's connection, so it
 answers 404 on the project's repos, which reads to an agent as the resource not existing. Two
-runs diagnosed that as a Hezo connector fault and filed it as one. AGENTS.md's preference for
-a structural signal over a phrase still holds everywhere it can be met; here the competing
-tools cannot be turned off and cannot be told apart from their names alone, so the note is
-what is left. Keep the table empty for every other runtime rather than using it to restate
-`SHARED_INSTRUCTIONS`, which already reaches every agent on every runtime.
+runs diagnosed that as a Hezo connector fault and filed it as one.
+
+**The identification rule is the load-bearing half**, because the obvious heuristic is
+actively wrong. A connector's Codex tools are `mcp__<safeName(mcp_connections.name)>__<tool>`
+(`toml.ts` renders the `[mcp_servers.<key>]` table key; `connections.ts` supplies the name),
+and that name is operator-chosen text which need not mention the service - a GitHub connector
+may be called "Marketing". Codex's own family, meanwhile, is `codex_apps` with `github` in the
+tool name. So an agent following `SHARED_INSTRUCTIONS`' "use the `github` MCP tools" and
+scanning its tool list for `github` finds exactly one match, and it is the wrong one. The note
+therefore names `list_connectors` as the connector-name-to-prefix mapping and `codex_apps` as
+the exclusion; without those two facts it would be true but unusable. The same
+`mcp__<connector_name>__<tool>` convention is already stated to agents in
+`connector-registry.ts`, so the note extends existing vocabulary rather than inventing one.
+
+AGENTS.md's preference for a structural signal over a phrase still holds everywhere it can be
+met; here the competing tools cannot be turned off and cannot be told apart from their names
+alone, so the note is what is left. Keep the table empty for every other runtime rather than
+using it to restate `SHARED_INSTRUCTIONS`, which already reaches every agent on every runtime.
 
 Related, and a live gap: **Codex reports no tool counts.** Only `createClaudeCodeParser`
 implements `getMcpToolCounts` - Codex's session event carries no tool list, so
