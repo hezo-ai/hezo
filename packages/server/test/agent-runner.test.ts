@@ -686,6 +686,75 @@ describe('runAgent', () => {
 		await db.query(`DELETE FROM mcp_connections WHERE project_id = $1`, [projectId]);
 	});
 
+	it('writes the hezo-mcp CLI and a manifest, and keeps connectors out of the runtime config', async () => {
+		// The whole point of the change: a connector's tool schemas must stop being
+		// loaded by the runtime's own MCP client (~255 tools, ~357 KB on a real
+		// instance) and travel in a manifest the CLI reads on demand instead.
+		await db.query(
+			`INSERT INTO mcp_connections
+			     (name, kind, config, install_status, project_id, probed_at, probe_error, enabled_methods)
+			 VALUES ($1, 'saas', $2::jsonb, 'installed', $3, now(), NULL, $4::jsonb)`,
+			[
+				'typefully',
+				JSON.stringify({ url: 'https://typefully.example/mcp' }),
+				projectId,
+				JSON.stringify(['list_drafts']),
+			],
+		);
+
+		const engine = createMockDocker();
+		const deps: RunnerDeps = {
+			db,
+			docker: engine,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+		await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		const staged = engine.files('container-123', '/workspace/.hezo/subscription');
+		const manifest = JSON.parse(await staged.read('mcp-cli/manifest.json'));
+		expect(manifest.version).toBe(1);
+		const names = manifest.servers.map((x: { name: string }) => x.name);
+		expect(names).toContain('typefully');
+		// Hezo's own server stays in the runtime config, so it must NOT be duplicated
+		// into the manifest - two routes to one server is the "two of everything"
+		// this design exists to avoid.
+		expect(names).not.toContain('hezo');
+		// The allowlist rides along so the CLI can refuse locally instead of making a
+		// call the egress guard would reject anyway.
+		expect(manifest.servers[0].enabledTools).toEqual(['list_drafts']);
+		// The red line: a placeholder, never a resolved credential.
+		expect(JSON.stringify(manifest)).not.toMatch(/Bearer (?!__HEZO_SECRET)/);
+
+		// The CLI itself is written on every run, connectors or not - a missing
+		// command is indistinguishable from a broken image.
+		const cli = await staged.read('mcp-cli/hezo-mcp.mjs');
+		expect(cli).toContain('#!/usr/bin/env node');
+
+		await db.query(`DELETE FROM mcp_connections WHERE project_id = $1`, [projectId]);
+	});
+
+	it('writes a manifest even when the run has no connectors', async () => {
+		// "No MCP servers are configured for this run" is a fact the agent can act
+		// on; an absent manifest would read as a broken CLI.
+		const engine = createMockDocker();
+		const deps: RunnerDeps = {
+			db,
+			docker: engine,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+		await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		const staged = engine.files('container-123', '/workspace/.hezo/subscription');
+		const manifest = JSON.parse(await staged.read('mcp-cli/manifest.json'));
+		expect(manifest).toEqual({ version: 1, servers: [] });
+	});
+
 	it('fails a clean exit that produced no output', async () => {
 		const deps: RunnerDeps = {
 			db,

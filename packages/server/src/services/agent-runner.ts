@@ -129,6 +129,15 @@ import {
 import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
+import { HEZO_MCP_CLI_SOURCE } from './mcp-cli/cli-source';
+import {
+	CONTAINER_MCP_CLI_MANIFEST,
+	MCP_CLI_DIR,
+	MCP_CLI_MANIFEST_ENV,
+	MCP_CLI_MANIFEST_FILENAME,
+	MCP_CLI_SCRIPT_FILENAME,
+	renderMcpCliManifest,
+} from './mcp-cli/manifest';
 import { retryOrEscalateLostRun, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
@@ -721,6 +730,17 @@ export async function buildRuntimeInvocation(
 			)
 		: null;
 
+	// Only Hezo's own server goes into the runtime's MCP config. A connector's
+	// tools used to be loaded here too, which put every tool of every connector in
+	// the model's context on every request - ~255 of them on a real instance, at
+	// roughly 1.4 KB of schema each. They now travel in a manifest the in-container
+	// `hezo-mcp` CLI reads, so a connector tool's schema costs tokens only when the
+	// agent asks for it.
+	//
+	// Below the runtime rather than inside it on purpose: three of the six runtimes
+	// (Codex, Grok, Antigravity) support no per-server tool filter and no native
+	// tool-search deferral, so anything built on a runtime feature would cover half
+	// the fleet. Every runtime has a shell.
 	const mcpDescriptors: McpDescriptor[] = [
 		{
 			kind: 'http',
@@ -728,7 +748,6 @@ export async function buildRuntimeInvocation(
 			url: `${endpoints.hezoBaseUrl}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...connectorDescriptors,
 	];
 
 	// Active project-doc filenames, baked into the runtime's doc-write guard so it
@@ -767,6 +786,24 @@ export async function buildRuntimeInvocation(
 			dirMode: SUBSCRIPTION_DIR_MODE,
 		});
 	}
+
+	// The `hezo-mcp` CLI and the manifest it reads. Written through the same
+	// SandboxFiles as everything else here, so they reach a container that is not
+	// on this machine by the engine's own file transport rather than a bind mount.
+	//
+	// Written on every run even when the run has no connectors: the CLI answering
+	// "no MCP servers are configured for this run" is a fact the agent can act on,
+	// whereas a missing command is indistinguishable from a broken image - which is
+	// the class of ambiguity that has already cost this codebase two incidents.
+	await runtimeFiles.write(`${MCP_CLI_DIR}/${MCP_CLI_SCRIPT_FILENAME}`, HEZO_MCP_CLI_SOURCE, {
+		mode: 0o755,
+		dirMode: SUBSCRIPTION_DIR_MODE,
+	});
+	await runtimeFiles.write(
+		`${MCP_CLI_DIR}/${MCP_CLI_MANIFEST_FILENAME}`,
+		renderMcpCliManifest(connectorDescriptors),
+		{ mode: 0o644, dirMode: SUBSCRIPTION_DIR_MODE },
+	);
 
 	// The host (root in production) just wrote the per-run config dir + files at
 	// restrictive modes; give the container's non-root run-user ownership so the
@@ -809,6 +846,7 @@ export async function buildRuntimeInvocation(
 		`HEZO_AGENT_EFFORT=${effort}`,
 		`HEZO_PROMPT_FILE=${promptContainerPath}`,
 		`HEZO_PROMPT_MODE=${RUNTIME_PROMPT_DELIVERY[runtimeType]}`,
+		`${MCP_CLI_MANIFEST_ENV}=${CONTAINER_MCP_CLI_MANIFEST}`,
 		...extraEnv,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential, modelOverride),
