@@ -109,7 +109,7 @@ async function seedApiConnector(
 // Seed an "active" GitHub OAuth connection straight into the DB (the same shape
 // finalizeConnectorConnection produces) so the GitHub row renders its connected
 // state without driving the full device flow.
-async function seedGithubOAuth(scopes: string[]): Promise<{ id: string }> {
+async function seedGithubOAuth(scopes: string[], projectSlug?: string): Promise<{ id: string }> {
 	const { db } = getTestContext();
 	const secret = await db.query<{ id: string }>(
 		`INSERT INTO secrets (name, encrypted_value, category, allowed_hosts)
@@ -117,12 +117,25 @@ async function seedGithubOAuth(scopes: string[]): Promise<{ id: string }> {
 		 RETURNING id`,
 		[`OAUTH_GITHUB_${Math.random().toString(16).slice(2, 10)}`],
 	);
+	// Scope it to the project when one is named. A project surface may only
+	// disconnect a connection it owns - a global one is shared, and deleting it
+	// nulls every project's `repos.oauth_connection_id`, so it is managed from the
+	// instance page instead.
+	const project = projectSlug
+		? await db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [projectSlug])
+		: null;
 	const conn = await db.query<{ id: string }>(
 		`INSERT INTO oauth_connections
-		   (provider, provider_account_id, provider_account_label, access_token_secret_id, scopes)
-		 VALUES ('github', $1, 'octocat', $2, $3)
+		   (provider, provider_account_id, provider_account_label, access_token_secret_id, scopes,
+		    project_id)
+		 VALUES ('github', $1, 'octocat', $2, $3, $4)
 		 RETURNING id`,
-		[Math.random().toString(16).slice(2, 10), secret.rows[0].id, scopes],
+		[
+			Math.random().toString(16).slice(2, 10),
+			secret.rows[0].id,
+			scopes,
+			project?.rows[0]?.id ?? null,
+		],
 	);
 	return conn.rows[0];
 }
@@ -544,7 +557,7 @@ test('GitHub row renders the connected state and disconnects', async () => {
 		seed: async () => {
 			const ws = await seedWorkspace();
 			slug = ws.internalSlug;
-			await seedGithubOAuth(['repo', 'workflow', 'read:org']);
+			await seedGithubOAuth(['repo', 'workflow', 'read:org'], slug);
 		},
 	});
 	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });

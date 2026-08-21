@@ -29,6 +29,23 @@ export interface McpToolDescriptor {
 }
 
 /** A classified method, as cached on the connector and rendered in the dialog. */
+/**
+ * A git repo that authenticates through the same OAuth connection as a
+ * connector. Projected by the server onto connector and oauth-connection rows,
+ * rendered by the web confirmation dialogs, and returned to agents by
+ * `list_connectors` - one shape so the three cannot drift.
+ *
+ * Its presence is what makes removing a connector consequential: git reads
+ * `repos.oauth_connection_id` and keeps working, while every MCP tool the
+ * connector carried disappears from the next run with nothing recording it.
+ */
+export interface LinkedRepo {
+	id: string;
+	repo_identifier: string;
+	project_id: string;
+	project_name: string;
+}
+
 export interface McpMethodInfo {
 	name: string;
 	description?: string;

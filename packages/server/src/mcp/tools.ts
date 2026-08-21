@@ -7248,6 +7248,17 @@ export function registerTools(
 			// first, so keep the first occurrence per name.
 			const byName = new Map<string, (typeof r.rows)[number]>();
 			for (const row of r.rows) if (!byName.has(row.name)) byName.set(row.name, row);
+			// Which git remotes ride each connector's OAuth connection. Same field the
+			// Connectors page gets - an agent that can see this understands why
+			// remove_connector refuses before it tries, instead of reading the refusal
+			// as a Hezo fault. One batched query, not one per row.
+			const { linkedReposByConnection } = await import('../services/connectors/lifecycle');
+			const linkedRepos = await linkedReposByConnection(
+				db,
+				[...byName.values()]
+					.map((row) => row.oauth_connection_id)
+					.filter((id): id is string => id !== null),
+			);
 			const connectors = [...byName.values()].map((row) => {
 				// oauth_status is the load-bearing signal for whether the connector is
 				// usable by agents on subsequent runs. Derived by the shared ladder so
@@ -7343,6 +7354,9 @@ export function registerTools(
 					// server connected and contributed nothing callable, which is worth
 					// reporting to the human. Null means nobody measured it.
 					tools_this_run: runToolCounts ? (runToolCounts[row.name] ?? null) : null,
+					linked_repos: row.oauth_connection_id
+						? (linkedRepos.get(row.oauth_connection_id) ?? [])
+						: [],
 				};
 			});
 			// Shadowed duplicates are dropped above, so page the de-duped set.
@@ -7637,12 +7651,29 @@ export function registerTools(
 		async (args, db, auth) => {
 			const scope = await resolveScope(db, auth, args);
 			if ('error' in scope) return scope;
-			const r = await db.query<{ id: string }>(
-				'DELETE FROM mcp_connections WHERE (id::text = $1 OR name = $1) AND project_id = $2 RETURNING id',
-				[args.id as string, scope.projectId],
-			);
-			if (r.rows.length === 0) return { error: 'MCP connection not found' };
-			return { removed: true, id: r.rows[0].id };
+			const { deleteConnector } = await import('../services/connectors/lifecycle');
+			// `guardLinkedRepos` refuses a connector whose OAuth connection still
+			// authenticates this project's git remotes. Deleting it would not break
+			// git - `repos.oauth_connection_id` survives - but every MCP tool it
+			// carried would vanish from the next run, and nothing in the run log
+			// records which connectors a run received, so the loss is invisible.
+			// Removing a human-configured capability that way is not the agent's
+			// call to make; the human paths are unguarded.
+			const outcome = await deleteConnector(db, args.id as string, {
+				matchName: true,
+				projectId: scope.projectId,
+				guardLinkedRepos: true,
+			});
+			if (outcome.outcome === 'not_found') return { error: 'MCP connection not found' };
+			if (outcome.outcome === 'backs_linked_repos') {
+				const names = outcome.repos.map((r) => r.repo_identifier).join(', ');
+				return {
+					error: `connector ${outcome.name} still authenticates ${outcome.repos.length} linked repo(s) (${names}); removing it would leave git working but strip its MCP tools from every run`,
+					connector_id: outcome.id,
+					hint: 'Unlink the repo on the project Git page first if you really want this connector gone, or ask an admin to remove it on the Connectors page. If you were trying to fix missing tools, call list_connectors and read tools_this_run before removing anything.',
+				};
+			}
+			return { removed: true, id: outcome.id };
 		},
 		db,
 		{ write: true },

@@ -3,9 +3,13 @@ import {
 	type ConnectorStatus,
 	ConnectorTransport,
 	connectorStatus,
+	type LinkedRepo,
 	type McpTransport,
 	WakeupSource,
 } from '@hezo/shared';
+
+export type { LinkedRepo };
+
 import type { Db } from '../../db/database';
 import { trackBackground } from '../../lib/background';
 import { logger } from '../../logger';
@@ -381,6 +385,140 @@ export async function getConnector(db: Db, connectorId: string): Promise<Connect
 		[connectorId],
 	);
 	return result.rows[0] ?? null;
+}
+
+/**
+ * The repos riding a connector's OAuth connection, across every project.
+ *
+ * Deliberately not project-filtered: a global connection is, by construction,
+ * the one whose repos span more than one project (see
+ * `018_scope_connections_per_project.sql`), so scoping this to the caller's
+ * project would under-report exactly the case with the widest blast radius.
+ *
+ * The join is null-safe - a connector with no `oauth_connection_id` matches
+ * nothing, because `NULL = NULL` is not true - so no special case is needed.
+ * Indexed by `idx_repos_oauth_connection`.
+ */
+export async function linkedReposForConnector(db: Db, connectorId: string): Promise<LinkedRepo[]> {
+	const result = await db.query<LinkedRepo>(
+		`SELECT r.id, r.repo_identifier, r.project_id, p.name AS project_name
+		   FROM repos r
+		   JOIN mcp_connections mc ON mc.oauth_connection_id = r.oauth_connection_id
+		   JOIN projects p ON p.id = r.project_id
+		  WHERE mc.id = $1
+		  ORDER BY p.name ASC, r.repo_identifier ASC`,
+		[connectorId],
+	);
+	return result.rows;
+}
+
+/**
+ * The same linkage, batched by OAuth connection id, for a list route that would
+ * otherwise loop. One query for the whole page rather than one per row - the
+ * repos list is small, but a per-row lookup is the shape AGENTS.md rules out
+ * ("Fold repeated lookups into one query, batch or join instead of looping").
+ * Connections with no repos are simply absent from the map.
+ */
+export async function linkedReposByConnection(
+	db: Db,
+	connectionIds: readonly string[],
+): Promise<Map<string, LinkedRepo[]>> {
+	const out = new Map<string, LinkedRepo[]>();
+	if (connectionIds.length === 0) return out;
+	const result = await db.query<LinkedRepo & { oauth_connection_id: string }>(
+		`SELECT r.id, r.repo_identifier, r.project_id, p.name AS project_name,
+		        r.oauth_connection_id
+		   FROM repos r
+		   JOIN projects p ON p.id = r.project_id
+		  WHERE r.oauth_connection_id = ANY($1::uuid[])
+		  ORDER BY p.name ASC, r.repo_identifier ASC`,
+		[connectionIds as string[]],
+	);
+	for (const row of result.rows) {
+		const list = out.get(row.oauth_connection_id);
+		const entry: LinkedRepo = {
+			id: row.id,
+			repo_identifier: row.repo_identifier,
+			project_id: row.project_id,
+			project_name: row.project_name,
+		};
+		if (list) list.push(entry);
+		else out.set(row.oauth_connection_id, [entry]);
+	}
+	return out;
+}
+
+export interface DeleteConnectorOptions {
+	/** Match `name` as well as `id` - the MCP tool's selector, not the REST one. */
+	matchName?: boolean;
+	/** Restrict to one project's own rows. Omit for the instance-admin path,
+	 *  which may delete a global row. */
+	projectId?: string;
+	/**
+	 * Refuse when the connector's OAuth connection still backs linked repos.
+	 *
+	 * On for agent callers, off for humans, and that asymmetry is the point: a
+	 * human may legitimately want the MCP tools gone while git keeps working, but
+	 * an agent doing it strips a human-configured capability whose loss shows up
+	 * nowhere. Withholding the capability from agents is the same call the
+	 * codebase already makes for asset deletion ("hard deletion is admin-only").
+	 */
+	guardLinkedRepos?: boolean;
+}
+
+export type DeleteConnectorResult =
+	| { outcome: 'deleted'; id: string; name: string }
+	| { outcome: 'not_found' }
+	| { outcome: 'backs_linked_repos'; id: string; name: string; repos: LinkedRepo[] };
+
+/**
+ * Delete a connector row, optionally refusing when it still backs linked repos.
+ *
+ * One home for what were three hand-written `DELETE FROM mcp_connections`
+ * statements with three different WHERE clauses, so a guard cannot be added to
+ * one path and missed on the others.
+ */
+export async function deleteConnector(
+	db: Db,
+	idOrName: string,
+	opts: DeleteConnectorOptions = {},
+): Promise<DeleteConnectorResult> {
+	const match = opts.matchName ? '(id::text = $1 OR name = $1)' : 'id = $1';
+	const params: unknown[] = [idOrName];
+	let scope = '';
+	if (opts.projectId != null) {
+		params.push(opts.projectId);
+		scope = ` AND project_id = $${params.length}`;
+	}
+	// The guard rides the DELETE's own WHERE rather than a preceding SELECT so it
+	// is atomic, for the same reason `add_connector` gives for its ON CONFLICT
+	// guard: a check-then-delete could be raced by a concurrent repo link.
+	const guard = opts.guardLinkedRepos
+		? ` AND NOT EXISTS (
+			     SELECT 1 FROM repos r
+			      WHERE r.oauth_connection_id = mcp_connections.oauth_connection_id
+		     )`
+		: '';
+	const deleted = await db.query<{ id: string; name: string }>(
+		`DELETE FROM mcp_connections WHERE ${match}${scope}${guard} RETURNING id, name`,
+		params,
+	);
+	const gone = deleted.rows[0];
+	if (gone) return { outcome: 'deleted', id: gone.id, name: gone.name };
+
+	// Zero rows is either "no such row in scope" or "the guard suppressed it".
+	const existing = await db.query<{ id: string; name: string }>(
+		`SELECT id, name FROM mcp_connections WHERE ${match}${scope}`,
+		params,
+	);
+	const row = existing.rows[0];
+	if (!row) return { outcome: 'not_found' };
+	return {
+		outcome: 'backs_linked_repos',
+		id: row.id,
+		name: row.name,
+		repos: await linkedReposForConnector(db, row.id),
+	};
 }
 
 /**

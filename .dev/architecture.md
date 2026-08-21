@@ -4605,6 +4605,38 @@ which nulls the revocation and every auth artifact (`oauth_connection_id`,
 cached DCR client registration, so the reconnect reuses it. This is the same in-place
 restore `createOrFetchConnector` performs for a re-requested agent connector.
 
+**Removal is guarded on the agent surface and narrated on the human ones.** Git provisioning
+and a connector's MCP tools ride the same OAuth token but hang off different rows -
+`repos.oauth_connection_id` builds the git remote (`repo-sync.ts`), `mcp_connections.oauth_connection_id`
+puts the connector into a run - so deleting the connector leaves git working and strips every
+MCP tool it carried, silently: no run log records which connectors a run received. Two agent
+runs burned themselves diagnosing that as an upstream 404 before it was found. So:
+
+- The three hand-written `DELETE FROM mcp_connections` statements are now one
+  `deleteConnector` (`services/connectors/lifecycle.ts`), and its `guardLinkedRepos` option
+  rides the DELETE's own `WHERE ... NOT EXISTS (SELECT 1 FROM repos ...)` rather than a
+  preceding SELECT, so a concurrent repo link cannot race it. Indexed by the existing partial
+  `idx_repos_oauth_connection`, so no migration.
+- `remove_connector` (the agent tool) sets it and returns `{ error, connector_id, hint }`
+  unchanged on refusal, mirroring `add_connector`'s re-point refusal. The human REST paths do
+  **not** set it: a human may legitimately want the tools gone while git keeps working, and
+  refusing there would deadlock against `DELETE /api/secrets/:id`'s `409 IN_USE`, whose
+  documented remedy is to remove the connector first.
+- Both row types carry `linked_repos` (`connectorLinkedReposJson` on the connector
+  projections, `linkedReposByConnection` batched onto the oauth-connections list), and the
+  four confirmation dialogs render it. The connector and connection cases get **different**
+  copy, because the consequences differ: Remove leaves git alone, Disconnect deletes the
+  connection and nulls the repos' reference, degrading those remotes to anonymous clone.
+
+**Revoke and disconnect are scoped to owned rows.** Both used to accept a global row from a
+project surface (`WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`, and
+`connectionVisibleToProject`), while `deleteConnection`'s
+`UPDATE repos SET oauth_connection_id = NULL` carries no project filter - so one project
+could strip git auth from every other project's repos. Migration
+`018_scope_connections_per_project.sql` makes that the common case rather than a corner: a
+connection whose repos span more than one project is precisely the one left global. Both now
+require ownership and 404 otherwise; global rows are managed from the instance surface.
+
 **Instance-address change self-heals.** A DCR client is bound at the Authorization Server to
 the exact `redirect_uri` it registered, so the cached `config.dcr` also records the callback
 URL it was minted against (`redirect_uri`). `startConnectorAuthCode` reuses the cached client

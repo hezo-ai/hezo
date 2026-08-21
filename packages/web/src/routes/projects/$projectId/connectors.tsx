@@ -8,6 +8,7 @@ import { ConnectorOAuthBrokerForm } from '../../../components/connector-oauth-br
 import { ConnectorProbeNotice } from '../../../components/connector-probe-notice';
 import { ConnectorSettingsSection } from '../../../components/connector-settings-section';
 import { InfiniteScrollSentinel } from '../../../components/infinite-scroll-sentinel';
+import { LinkedReposWarning } from '../../../components/linked-repos-warning';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { ConfirmDialog } from '../../../components/ui/confirm-dialog';
@@ -32,7 +33,7 @@ import {
 } from '../../../hooks/use-oauth-connections';
 import { useOAuthSuccessRefetch } from '../../../hooks/use-oauth-success';
 import { useProject } from '../../../hooks/use-projects';
-import { useI18n } from '../../../lib/i18n';
+import { Trans, useI18n } from '../../../lib/i18n';
 import { queryKeys } from '../../../lib/query-keys';
 
 interface ConnectorsSearch {
@@ -392,6 +393,7 @@ interface GitHubRowProps {
 }
 
 function GitHubRow({ projectId, connection, optional = false }: GitHubRowProps) {
+	const { t } = useI18n();
 	const deleteConn = useDeleteOAuthConnection(projectId);
 	const ensure = useEnsureConnector(projectId);
 	const [deviceConnectorId, setDeviceConnectorId] = useState<string | null>(null);
@@ -486,20 +488,23 @@ function GitHubRow({ projectId, connection, optional = false }: GitHubRowProps) 
 				<ConfirmDialog
 					open={confirmOpen}
 					onOpenChange={setConfirmOpen}
-					title="Disconnect GitHub?"
+					title={t('connectors.disconnectGithub.title')}
 					description={
-						<>
-							Remove the GitHub connection{' '}
-							<span className="font-mono">{connection.provider_account_label}</span>? Git operations
-							and the GitHub MCP server will stop working for this project.
-						</>
+						<Trans
+							k="connectors.disconnectGithub.body"
+							vars={{
+								name: <span className="font-mono">{connection.provider_account_label}</span>,
+							}}
+						/>
 					}
 					confirmLabel="Disconnect"
 					variant="danger"
 					onConfirm={async () => {
 						await deleteConn.mutateAsync(connection.id);
 					}}
-				/>
+				>
+					<LinkedReposWarning repos={connection.linked_repos} kind="connection" />
+				</ConfirmDialog>
 			)}
 		</li>
 	);
@@ -843,32 +848,42 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
-				title="Disconnect connector?"
+				title={t('connectors.revoke.title')}
 				description={
-					<>
-						Revoke <span className="font-medium">{connector.display_name ?? connector.name}</span>?
-						Agents will lose access immediately.
-					</>
+					<Trans
+						k="connectors.revoke.body"
+						vars={{
+							name: <span className="font-medium">{connector.display_name ?? connector.name}</span>,
+						}}
+					/>
 				}
 				confirmLabel="Disconnect"
 				variant="danger"
 				onConfirm={doRevoke}
-			/>
+			>
+				{/* Revoke deletes the OAuth connection itself, so the repos lose their
+				    own reference too - a different, worse consequence than Remove. */}
+				<LinkedReposWarning repos={connector.linked_repos} kind="connection" />
+			</ConfirmDialog>
 
 			<ConfirmDialog
 				open={removeConfirmOpen}
 				onOpenChange={setRemoveConfirmOpen}
-				title="Remove connector?"
+				title={t('connectors.remove.title')}
 				description={
-					<>
-						Remove <span className="font-medium">{connector.display_name ?? connector.name}</span>?
-						This deletes it from this project. An agent can request it again if needed.
-					</>
+					<Trans
+						k="connectors.remove.body"
+						vars={{
+							name: <span className="font-medium">{connector.display_name ?? connector.name}</span>,
+						}}
+					/>
 				}
 				confirmLabel="Remove"
 				variant="danger"
 				onConfirm={doRemove}
-			/>
+			>
+				<LinkedReposWarning repos={connector.linked_repos} kind="connector" />
+			</ConfirmDialog>
 		</li>
 	);
 }

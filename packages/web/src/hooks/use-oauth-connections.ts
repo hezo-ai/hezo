@@ -1,3 +1,4 @@
+import type { LinkedRepo } from '@hezo/shared';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -12,6 +13,12 @@ export interface OAuthConnection {
 	scopes: string[];
 	expires_at: string | null;
 	metadata: Record<string, unknown>;
+	/** Owning project, or null for a global ("all projects") connection. */
+	project_id?: string | null;
+	/** Git repos this connection authenticates, across every project.
+	 * Disconnecting deletes the connection outright and nulls their reference, so
+	 * those remotes fall back to anonymous clone. `[]`, never null. */
+	linked_repos?: LinkedRepo[];
 	created_at: string;
 	updated_at: string;
 }

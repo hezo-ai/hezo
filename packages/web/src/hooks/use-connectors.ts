@@ -3,6 +3,7 @@ import {
 	type ConnectorStatus,
 	connectorNeedsHuman,
 	connectorStatus,
+	type LinkedRepo,
 	type McpMethodInfo,
 	type MethodAccessSummary,
 } from '@hezo/shared';
@@ -55,6 +56,11 @@ export interface Connector {
 	/** The credential(s) this connector uses — its pasted API-key secret or the
 	 * access token of its OAuth connection. Populated by the list/detail routes. */
 	credentials?: { id: string; name: string }[];
+	/** Git repos authenticating through this connector's OAuth connection, across
+	 * every project - a global connection is by definition the shared one.
+	 * Removing the connector leaves these working and strips its MCP tools from
+	 * every run, so the confirmation names them. `[]`, never null. */
+	linked_repos?: LinkedRepo[];
 	/** Allowlist of the MCP methods agents may call, or `null` for no
 	 * restriction. See {@link ConnectorMethods} on why the two differ. */
 	enabled_methods?: string[] | null;

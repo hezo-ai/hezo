@@ -20,6 +20,7 @@ import { resolveConnectorRegistry } from '../services/connector-registry';
 import { validateApiConnectorConfig } from '../services/connectors/connections';
 import {
 	createOrFetchConnector,
+	deleteConnector,
 	fireCredentialProvidedWakeup,
 	markApiKeyActive,
 } from '../services/connectors/lifecycle';
@@ -67,6 +68,31 @@ const connectorCredentialsJson = (alias: string): string =>
 		   OR cs.id = (SELECT oc2.access_token_secret_id FROM oauth_connections oc2
 		               WHERE oc2.id = ${alias}.oauth_connection_id)
 	), '[]'::json) AS credentials`;
+
+// The repos that authenticate through the same OAuth connection as a connector,
+// as a JSON array. Deleting the connector leaves these working - git reads
+// `repos.oauth_connection_id`, which survives - but strips the connector's MCP
+// tools from every subsequent run, and nothing in the run log records which
+// connectors a run received. The confirmation dialogs read this so a human is
+// told that before the fact rather than discovering it from an agent's wrong
+// guess. Correlated on the connector row aliased `<alias>`; `[]` when the
+// connector carries no OAuth connection (`NULL = NULL` is not true, so the
+// comparison is null-safe on its own).
+//
+// Deliberately not project-filtered: a global connection is by construction the
+// one whose repos span more than one project (see
+// `018_scope_connections_per_project.sql`), so scoping this to the caller's
+// project would under-report exactly the case with the widest blast radius.
+const connectorLinkedReposJson = (alias: string): string =>
+	`COALESCE((
+		SELECT json_agg(json_build_object(
+			'id', lr.id, 'repo_identifier', lr.repo_identifier,
+			'project_id', lr.project_id, 'project_name', lp.name
+		) ORDER BY lp.name, lr.repo_identifier)
+		FROM repos lr
+		JOIN projects lp ON lp.id = lr.project_id
+		WHERE lr.oauth_connection_id = ${alias}.oauth_connection_id
+	), '[]'::json) AS linked_repos`;
 
 export const connectorsRoutes = new Hono<Env>();
 
@@ -230,7 +256,8 @@ connectorsRoutes.get('/projects/:projectId/connectors', async (c) => {
 	const result = await db.query(
 		`SELECT ${CONNECTOR_COLUMNS_MC}, oc.provider_account_label AS oauth_account_label,
 		        LOWER(t.identifier) AS created_by_task_identifier, t.title AS created_by_task_title,
-		        ${connectorCredentialsJson('mc')}
+		        ${connectorCredentialsJson('mc')},
+		        ${connectorLinkedReposJson('mc')}
 		 FROM mcp_connections mc
 		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
 		 LEFT JOIN tasks t ON t.id = mc.created_by_task_id
@@ -290,7 +317,8 @@ connectorsRoutes.get('/connectors', async (c) => {
 	const result = await db.query(
 		`SELECT ${CONNECTOR_COLUMNS_MC}, p.name AS project_name, p.slug AS project_slug,
 		        oc.provider_account_label AS oauth_account_label,
-		        ${connectorCredentialsJson('mc')}
+		        ${connectorCredentialsJson('mc')},
+		        ${connectorLinkedReposJson('mc')}
 		 FROM mcp_connections mc
 		 LEFT JOIN projects p ON p.id = mc.project_id
 		 LEFT JOIN oauth_connections oc ON oc.id = mc.oauth_connection_id
@@ -474,11 +502,10 @@ connectorsRoutes.delete('/connectors/:id', async (c) => {
 	if (denied) return denied;
 	const db = c.get('db');
 	const id = c.req.param('id');
-	const result = await db.query<{ id: string; name: string }>(
-		'DELETE FROM mcp_connections WHERE id = $1 RETURNING id, name',
-		[id],
-	);
-	if (result.rows.length === 0) {
+	// No linked-repo guard: an admin removing a connector is a deliberate act, and
+	// unlike an agent doing it they are told what it costs by the Connectors page.
+	const outcome = await deleteConnector(db, id);
+	if (outcome.outcome === 'not_found') {
 		return err(c, 'NOT_FOUND', 'connector not found', 404);
 	}
 	c.get('events').emit({
@@ -486,8 +513,8 @@ connectorsRoutes.delete('/connectors/:id', async (c) => {
 		teamId: null,
 		actorType: 'admin',
 		actorMemberId: null,
-		connectionId: result.rows[0].id,
-		name: result.rows[0].name,
+		connectionId: outcome.id,
+		name: outcome.name,
 	});
 	return c.json({ data: null }, 200);
 });
@@ -497,7 +524,8 @@ connectorsRoutes.get('/projects/:projectId/connectors/:id', async (c) => {
 	const projectId = c.get('projectId') as string;
 	const id = c.req.param('id');
 	const result = await db.query(
-		`SELECT ${CONNECTOR_COLUMNS_MC}, ${connectorCredentialsJson('mc')} FROM mcp_connections mc
+		`SELECT ${CONNECTOR_COLUMNS_MC}, ${connectorCredentialsJson('mc')},
+		        ${connectorLinkedReposJson('mc')} FROM mcp_connections mc
 		 WHERE mc.id = $1 AND (mc.project_id = $2 OR mc.project_id IS NULL)`,
 		[id, projectId],
 	);
@@ -693,8 +721,15 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/revoke', async (c) =>
 		oauth_connection_id: string | null;
 		api_key_secret_id: string | null;
 	}>(
+		// Own rows only, matching the delete route. Revoke deletes the underlying
+		// OAuth connection, and `deleteConnection` nulls `repos.oauth_connection_id`
+		// with no project filter - so allowing a project to revoke a GLOBAL row let
+		// one project strip git auth from every other project's repos. A global
+		// connection is by construction the shared one (see
+		// `018_scope_connections_per_project.sql`), so that was the common case, not
+		// a corner. Global rows are managed on the instance Connectors page.
 		`SELECT name, oauth_connection_id, api_key_secret_id FROM mcp_connections
-		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+		 WHERE id = $1 AND project_id = $2`,
 		[id, projectId],
 	);
 	if (existing.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
@@ -1153,12 +1188,10 @@ connectorsRoutes.delete('/projects/:projectId/connectors/:id', async (c) => {
 	const id = c.req.param('id');
 
 	// A project may only delete its own connectors, never a global or another
-	// project's.
-	const result = await db.query<{ id: string; name: string }>(
-		'DELETE FROM mcp_connections WHERE id = $1 AND project_id = $2 RETURNING id, name',
-		[id, projectId],
-	);
-	if (result.rows.length === 0) {
+	// project's. No linked-repo guard: a human may legitimately want the MCP tools
+	// gone while git keeps working, and the Connectors page names what it costs.
+	const outcome = await deleteConnector(db, id, { projectId });
+	if (outcome.outcome === 'not_found') {
 		return err(c, 'NOT_FOUND', 'MCP connection not found', 404);
 	}
 	broadcastConnectorChange(c, { teamId, projectId }, 'DELETE', { id });
@@ -1168,8 +1201,8 @@ connectorsRoutes.delete('/projects/:projectId/connectors/:id', async (c) => {
 		teamId,
 		actorType: deleteActor.actorType,
 		actorMemberId: deleteActor.actorMemberId,
-		connectionId: result.rows[0].id,
-		name: result.rows[0].name,
+		connectionId: outcome.id,
+		name: outcome.name,
 	});
 	return c.json({ data: null }, 200);
 });

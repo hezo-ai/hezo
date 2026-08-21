@@ -17,6 +17,7 @@ import {
 	type ConnectorRow,
 	fireCredentialProvidedWakeup,
 	getConnector,
+	linkedReposByConnection,
 	markActive,
 	markFailed,
 	restoreRevokedConnector,
@@ -670,6 +671,14 @@ oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 	const projectId = c.get('projectId') as string;
 	// This project's own connections plus global ("all projects") ones.
 	const list = await listConnections({ db, masterKeyManager }, projectId);
+	// Disconnecting deletes the connection outright and nulls
+	// `repos.oauth_connection_id` across every project, degrading those remotes to
+	// anonymous clone. The dialog names the repos, so it needs them here. One
+	// batched query for the page, not one per row.
+	const linked = await linkedReposByConnection(
+		db,
+		list.map((conn) => conn.id),
+	);
 
 	return ok(
 		c,
@@ -682,6 +691,7 @@ oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 			expires_at: conn.expiresAt,
 			metadata: conn.metadata,
 			project_id: conn.projectId,
+			linked_repos: linked.get(conn.id) ?? [],
 			created_at: conn.createdAt,
 			updated_at: conn.updatedAt,
 		})),
@@ -713,7 +723,14 @@ oauthRoutes.delete('/projects/:projectId/oauth-connections/:id', async (c) => {
 	const id = c.req.param('id');
 
 	const conn = await getConnection({ db, masterKeyManager }, id);
-	if (!conn || !connectionVisibleToProject(conn, projectId)) {
+	// Ownership, not visibility. A project can SEE a global connection (it may
+	// link a repo through one), but deleting it runs `deleteConnection`, whose
+	// `UPDATE repos SET oauth_connection_id = NULL` carries no project filter - so
+	// disconnecting a global connection from one project's page strips git auth
+	// from every other project's repos too. A global connection is by construction
+	// the shared one (`018_scope_connections_per_project.sql`), so this was the
+	// common case. Global connections are disconnected from the instance surface.
+	if (!conn || conn.projectId !== projectId) {
 		return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 	}
 

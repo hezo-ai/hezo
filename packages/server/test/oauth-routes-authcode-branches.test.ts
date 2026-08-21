@@ -883,13 +883,16 @@ describe('oauth-connections list / scope-status / delete routes', () => {
 		expect(((await good.json()) as { data: unknown }).data).toBeTruthy();
 	});
 
-	it('404s delete for an unknown connection and deletes an existing one', async () => {
+	it('404s delete for an unknown connection and deletes one the project owns', async () => {
 		const missing = await app.request(
 			`/api/projects/${projectSlug}/oauth-connections/${randomUUID()}`,
 			{ method: 'DELETE', headers: authHeader(token) },
 		);
 		expect(missing.status).toBe(404);
 
+		const projectId = (
+			await db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [projectSlug])
+		).rows[0].id;
 		const created = await createConnection(
 			{ db, masterKeyManager },
 			{
@@ -899,6 +902,7 @@ describe('oauth-connections list / scope-status / delete routes', () => {
 				accessToken: 'del-tok',
 				scopes: [],
 				allowedHosts: ['del.test'],
+				projectId,
 			},
 		);
 		const del = await app.request(`/api/projects/${projectSlug}/oauth-connections/${created.id}`, {
@@ -909,5 +913,31 @@ describe('oauth-connections list / scope-status / delete routes', () => {
 		expect(((await del.json()) as { data: { deleted: boolean } }).data.deleted).toBe(true);
 		const gone = await db.query(`SELECT id FROM oauth_connections WHERE id = $1`, [created.id]);
 		expect(gone.rows.length).toBe(0);
+	});
+
+	it('404s delete of a GLOBAL connection from a project surface', async () => {
+		// A project can SEE a global connection - it may link a repo through one -
+		// but deleting it runs `deleteConnection`, whose
+		// `UPDATE repos SET oauth_connection_id = NULL` carries no project filter.
+		// Allowing this let one project strip git auth from every other project's
+		// repos. Global connections are disconnected from the instance surface.
+		const global = await createConnection(
+			{ db, masterKeyManager },
+			{
+				provider: 'globaldeletable',
+				providerAccountId: 'delr:global',
+				providerAccountLabel: 'Global Deletable',
+				accessToken: 'del-tok-global',
+				scopes: [],
+				allowedHosts: ['del.test'],
+			},
+		);
+		const del = await app.request(`/api/projects/${projectSlug}/oauth-connections/${global.id}`, {
+			method: 'DELETE',
+			headers: authHeader(token),
+		});
+		expect(del.status).toBe(404);
+		const still = await db.query(`SELECT id FROM oauth_connections WHERE id = $1`, [global.id]);
+		expect(still.rows.length).toBe(1);
 	});
 });
