@@ -335,13 +335,15 @@ through different records, so the two controls do different damage:
   so those remotes fall back to anonymous access: fine for a public repository, a 403 for a
   private one.
 
-Both confirmations list the repositories affected before you commit, so neither surprise is
-one you find out about later. Agents cannot make either change: `remove_connector` refuses a
+Every one of these confirmations lists the repositories affected before you commit - on the
+Connectors page and on the Git page alike - so neither surprise is one you find out about
+later. Repositories in other teams are not listed, because they are not yours to see; the
+count still includes them. Agents cannot make either change: `remove_connector` refuses a
 connector that still authenticates a repository and tells the agent to bring it to you.
 
-A connector or connection shared across all projects is managed on
-**Settings → Connectors**, not from a single project's page - one project disconnecting a
-shared connection would take every other project's repositories with it.
+A connection shared across all projects can be disconnected from any project that can see it,
+and doing so takes every other project's repositories with it. That is why the confirmation
+names them. Removing the shared **connector** row is a Settings -> Connectors action.
 
 ## Connectors and their credentials
 

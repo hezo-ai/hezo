@@ -2186,7 +2186,17 @@ export async function runAgent(
 			'stdout',
 			connectorSummary.length > 0
 				? `[runner] MCP connectors: ${connectorSummary.join(', ')}\n`
-				: '[runner] MCP connectors: none - either none is registered for this project, or none carries a credential. See the project Connectors page.\n',
+				: // Name no cause. The first version guessed "none registered, or none
+					// carries a credential", and `loadConnectorDescriptors` drops rows for
+					// neither reason far more often than that: an `api` connector builds no
+					// descriptor at all, and a local stdio one is skipped while
+					// `install_status` is still `pending`, which is what every newly
+					// registered connector starts as. Asserting a cause there tells the
+					// agent a configured-but-broken connector was never configured - the
+					// inversion of what this line exists to prevent, and the opposite of
+					// what `connector-registry.ts` tells agents about claiming a connector
+					// is broken without evidence.
+					'[runner] MCP connectors: none reached this run. Call list_connectors for what is registered and why it did not arrive.\n',
 		);
 		// The tunnel is the container's only path to Hezo, so losing it mid-run
 		// leaves the agent with no MCP tools, no egress proxy and no ssh agent for

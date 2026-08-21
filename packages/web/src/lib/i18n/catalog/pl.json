@@ -178,6 +178,8 @@
 	"connection.retrying": "Ponawianie próby…",
 	"connection.unreachable": "Nie można połączyć się z serwerem.",
 	"connection.unreachableHint": "Połączymy się ponownie automatycznie, gdy tylko serwer wróci.",
+	"connectors.action.disconnect": "Odłącz",
+	"connectors.action.remove": "Usuń",
 	"connectors.banner.action": "Zobacz konektory",
 	"connectors.banner.many": "Konektory ({count}) przestały działać. Połącz je ponownie, aby agenci znów mogli z nich korzystać.",
 	"connectors.banner.one": "{name} przestał działać. Połącz go ponownie, aby agenci znów mogli z niego korzystać.",

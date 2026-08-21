@@ -175,3 +175,35 @@ test('the plural connector copy still says git survives', async () => {
 	expect(warning.textContent).toContain('2 linked repos');
 	expect(warning.textContent).toContain('Git keeps working');
 });
+
+/**
+ * The Git page's own Disconnect. It deletes the same OAuth connection as the
+ * Connectors page, but shipped as a bare `window.confirm` that could not name
+ * anything - on the one screen where the repos that break are listed a few rows
+ * below the button. Nothing else covers this surface.
+ */
+test('the Git page disconnect names the repos it is about to orphan', async () => {
+	let slug = '';
+	const rendered = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await seedConnectorWithRepo(ws, 'github-gitpage', {
+				repos: ['hezo-ai/website'],
+				activated: true,
+			});
+		},
+	});
+	await rendered.router.navigate({
+		to: '/projects/$projectId/git',
+		params: { projectId: slug },
+	});
+
+	const disconnect = await screen.findByTestId('github-disconnect');
+	disconnect.click();
+
+	const warning = await screen.findByTestId('linked-repos-warning');
+	expect(warning.textContent).toContain('hezo-ai/website');
+	expect(warning.textContent).toContain('anonymous access');
+});

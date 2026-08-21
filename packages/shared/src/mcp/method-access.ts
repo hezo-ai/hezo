@@ -28,7 +28,6 @@ export interface McpToolDescriptor {
 	};
 }
 
-/** A classified method, as cached on the connector and rendered in the dialog. */
 /**
  * A git repo that authenticates through the same OAuth connection as a
  * connector. Projected by the server onto connector and oauth-connection rows,
@@ -37,7 +36,11 @@ export interface McpToolDescriptor {
  *
  * Its presence is what makes removing a connector consequential: git reads
  * `repos.oauth_connection_id` and keeps working, while every MCP tool the
- * connector carried disappears from the next run with nothing recording it.
+ * connector carried disappears from the next run.
+ *
+ * Every projection of this type is scoped to the reader's team, so an EMPTY
+ * array is not proof that nothing is linked - a repo in another team is counted
+ * by the removal guard and deliberately absent here.
  */
 export interface LinkedRepo {
 	id: string;
@@ -46,6 +49,7 @@ export interface LinkedRepo {
 	project_name: string;
 }
 
+/** A classified method, as cached on the connector and rendered in the dialog. */
 export interface McpMethodInfo {
 	name: string;
 	description?: string;

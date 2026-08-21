@@ -57,7 +57,9 @@ export interface Connector {
 	 * access token of its OAuth connection. Populated by the list/detail routes. */
 	credentials?: { id: string; name: string }[];
 	/** Git repos authenticating through this connector's OAuth connection, across
-	 * every project - a global connection is by definition the shared one.
+	 * every project of this team that shares the connection - the repo that breaks
+	 * may not be the one on screen. Repos in other teams are excluded: the delete
+	 * guard still counts them, but naming them would cross a team boundary.
 	 * Removing the connector leaves these working and strips its MCP tools from
 	 * every run, so the confirmation names them. `[]`, never null. */
 	linked_repos?: LinkedRepo[];

@@ -23,7 +23,13 @@ let app: Hono<Env>;
 let db: Db;
 let token: string;
 let projectId: string;
-let otherProjectId: string;
+/**
+ * A project in a DIFFERENT team. It has to be a different team: `projects.team_id`
+ * is UNIQUE, so `createTestProject` is idempotent per team and a second call for
+ * the same team returns the same project - which is how the first version of these
+ * tests ended up asserting cross-project behaviour without ever crossing a project.
+ */
+let otherTeamProjectId: string;
 
 async function callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
 	const res = await app.request('/mcp', {
@@ -109,9 +115,11 @@ beforeAll(async () => {
 	const teamId = (await teamRes.json()).data.id;
 	projectId = (await createTestProject(db, teamId, { name: 'Primary' }).then((r) => r.json())).data
 		.id;
-	otherProjectId = (
-		await createTestProject(db, teamId, { name: 'Secondary' }).then((r) => r.json())
+	const otherTeamId = (await (await createTestTeam(db, { name: 'Other Repos Co' })).json()).data.id;
+	otherTeamProjectId = (
+		await createTestProject(db, otherTeamId, { name: 'Secondary' }).then((r) => r.json())
 	).data.id;
+	if (otherTeamProjectId === projectId) throw new Error('fixture failed to cross a project');
 });
 
 afterAll(async () => {
@@ -168,18 +176,44 @@ describe('remove_connector refuses a connector that still authenticates repos', 
 		expect(await connectorExists(connectorId)).toBe(false);
 	});
 
-	it('counts repos in other projects, since a global connection is the shared one', async () => {
-		const connectionId = await seedConnection('crossproject', null);
-		const connectorId = await seedConnector('github-crossproject', connectionId);
-		await seedRepo('hezo-ai/elsewhere', connectionId, otherProjectId);
+	it('guards on another team repos but does not name them', async () => {
+		// The two halves pull in opposite directions and both matter. PROTECTION is
+		// instance-wide: a connection may back repos the caller cannot see, so the
+		// guard counts every team's or it would let an agent strip a connector out
+		// from under one of them. DISCLOSURE is team-scoped:
+		// naming that repo would hand this team an identifier and project name that
+		// `requireProjectAccessMiddleware` answers 403 for.
+		const connectionId = await seedConnection('crossteam', null);
+		const connectorId = await seedConnector('github-crossteam', connectionId);
+		await seedRepo('secret-org/other-team', connectionId, otherTeamProjectId);
 
 		const result = (await callTool('remove_connector', {
 			project: projectId,
-			id: 'github-crossproject',
+			id: 'github-crossteam',
 		})) as { error?: string };
 
-		expect(result.error).toContain('hezo-ai/elsewhere');
+		expect(result.error).toBeDefined();
 		expect(await connectorExists(connectorId)).toBe(true);
+		expect(result.error).not.toContain('secret-org/other-team');
+		// The count stays instance-wide even though the naming does not. Deriving it
+		// from the scoped list printed "0 linked repo(s) ()", which reads as the
+		// guard misfiring and invites exactly the "it must be broken" conclusion
+		// this whole change exists to stop.
+		expect(result.error).toContain('1 linked repo(s)');
+		expect(result.error).toContain('not named here');
+	});
+
+	it('names a repo in the caller own team', async () => {
+		const connectionId = await seedConnection('sameteam', null);
+		await seedConnector('github-sameteam', connectionId);
+		await seedRepo('hezo-ai/ours', connectionId, projectId);
+
+		const result = (await callTool('remove_connector', {
+			project: projectId,
+			id: 'github-sameteam',
+		})) as { error?: string };
+
+		expect(result.error).toContain('hezo-ai/ours');
 	});
 });
 
@@ -233,10 +267,12 @@ describe('the human delete path stays unguarded', () => {
 });
 
 describe('list_connectors carries the linkage that explains the refusal', () => {
-	it('reports linked_repos across projects, and empty for an unlinked connector', async () => {
+	it('reports this team repos, hides another team, and is empty when unlinked', async () => {
 		const linkedConnection = await seedConnection('listing', null);
 		await seedConnector('github-listing', linkedConnection);
-		await seedRepo('hezo-ai/listed', linkedConnection, otherProjectId);
+		await seedRepo('hezo-ai/listed', linkedConnection, projectId);
+		// Same global connection, a repo in a team this agent's JWT cannot reach.
+		await seedRepo('secret-org/hidden', linkedConnection, otherTeamProjectId);
 		await seedConnector('github-listing-bare', null);
 
 		const result = (await callTool('list_connectors', { project: projectId })) as {
@@ -252,11 +288,15 @@ describe('list_connectors carries the linkage that explains the refusal', () => 
 	});
 });
 
-describe('revoke and disconnect are scoped to owned rows', () => {
-	it('refuses to revoke a global connector from a project surface', async () => {
-		// Revoke deletes the underlying OAuth connection, and that nulls
-		// `repos.oauth_connection_id` with no project filter - so a project revoking
-		// a global row stripped git auth from every other project's repos.
+describe('revoke and disconnect stay reachable for a global row', () => {
+	it('revokes a global connector from a project surface', async () => {
+		// Requiring ownership here was tried and reverted. It scoped on
+		// `mcp_connections.project_id` while the destruction happens in
+		// `oauth_connections`, whose scope is a different column that
+		// `PATCH /api/connectors/:id {project_id}` moves independently - so it did
+		// not close the cross-project blast radius it was written for, and it left a
+		// global connection unrevokable from anywhere. The protection is the dialog
+		// naming the repos, the same call the delete path makes.
 		const connectionId = await seedConnection('globalrevoke', null);
 		const connectorId = await seedConnector('github-globalrevoke', connectionId, null);
 
@@ -264,13 +304,7 @@ describe('revoke and disconnect are scoped to owned rows', () => {
 			method: 'POST',
 			headers: authHeader(token),
 		});
-		expect(res.status).toBe(404);
-
-		const still = await db.query<{ c: number }>(
-			`SELECT count(*)::int AS c FROM oauth_connections WHERE id = $1`,
-			[connectionId],
-		);
-		expect(still.rows[0].c).toBe(1);
+		expect(res.status).toBe(200);
 	});
 
 	it('still revokes a connector the project owns', async () => {
@@ -284,20 +318,25 @@ describe('revoke and disconnect are scoped to owned rows', () => {
 		expect(res.status).toBe(200);
 	});
 
-	it('refuses to disconnect a global oauth connection from a project surface', async () => {
+	it('disconnects a global oauth connection, the only route that can', async () => {
+		// `DELETE /projects/:p/oauth-connections/:id` is the ONLY route anywhere that
+		// deletes an `oauth_connections` row - the admin connector delete removes the
+		// `mcp_connections` row and leaves the connection behind. Refusing a global
+		// row here made global connections undeletable instance-wide while the UI
+		// went on offering a Disconnect button that always 404'd.
 		const connectionId = await seedConnection('globaldisconnect', null);
 
 		const res = await app.request(`/api/projects/${projectId}/oauth-connections/${connectionId}`, {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
-		expect(res.status).toBe(404);
+		expect(res.status).toBe(200);
 
-		const still = await db.query<{ c: number }>(
+		const gone = await db.query<{ c: number }>(
 			`SELECT count(*)::int AS c FROM oauth_connections WHERE id = $1`,
 			[connectionId],
 		);
-		expect(still.rows[0].c).toBe(1);
+		expect(gone.rows[0].c).toBe(0);
 	});
 
 	it('still disconnects a connection the project owns', async () => {
@@ -308,5 +347,25 @@ describe('revoke and disconnect are scoped to owned rows', () => {
 			headers: authHeader(token),
 		});
 		expect(res.status).toBe(200);
+	});
+});
+
+describe('the admin surface still sees every team', () => {
+	it('does not team-filter linked_repos on GET /api/connectors', async () => {
+		// The admin Connectors page is where a global connector is managed, so it is
+		// the one surface that must see the full blast radius. Team-filtering it
+		// "for consistency" would silently under-report exactly there.
+		const connectionId = await seedConnection('adminview', null);
+		await seedConnector('github-adminview', connectionId, null);
+		await seedRepo('secret-org/admin-visible', connectionId, otherTeamProjectId);
+
+		const res = await app.request('/api/connectors', { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		const rows = (await res.json()).data as Array<{
+			name: string;
+			linked_repos: Array<{ repo_identifier: string }>;
+		}>;
+		const row = rows.find((r) => r.name === 'github-adminview');
+		expect(row?.linked_repos.map((r) => r.repo_identifier)).toContain('secret-org/admin-visible');
 	});
 });

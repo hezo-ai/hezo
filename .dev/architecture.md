@@ -4645,8 +4645,10 @@ restore `createOrFetchConnector` performs for a re-requested agent connector.
 and a connector's MCP tools ride the same OAuth token but hang off different rows -
 `repos.oauth_connection_id` builds the git remote (`repo-sync.ts`), `mcp_connections.oauth_connection_id`
 puts the connector into a run - so deleting the connector leaves git working and strips every
-MCP tool it carried, silently: no run log records which connectors a run received. Two agent
-runs burned themselves diagnosing that as an upstream 404 before it was found. So:
+MCP tool it carried, silently. Nothing in a run log recorded which connectors a run received
+either, so the loss was invisible from inside; the `[runner] MCP connectors:` line added at
+the same time closes that half. Two agent runs burned themselves diagnosing this as an
+upstream 404 before it was found. So:
 
 - The three hand-written `DELETE FROM mcp_connections` statements are now one
   `deleteConnector` (`services/connectors/lifecycle.ts`), and its `guardLinkedRepos` option
@@ -4664,14 +4666,31 @@ runs burned themselves diagnosing that as an upstream 404 before it was found. S
   copy, because the consequences differ: Remove leaves git alone, Disconnect deletes the
   connection and nulls the repos' reference, degrading those remotes to anonymous clone.
 
-**Revoke and disconnect are scoped to owned rows.** Both used to accept a global row from a
-project surface (`WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`, and
-`connectionVisibleToProject`), while `deleteConnection`'s
-`UPDATE repos SET oauth_connection_id = NULL` carries no project filter - so one project
-could strip git auth from every other project's repos. Migration
-`018_scope_connections_per_project.sql` makes that the common case rather than a corner: a
-connection whose repos span more than one project is precisely the one left global. Both now
-require ownership and 404 otherwise; global rows are managed from the instance surface.
+**Revoke and disconnect stay open to any project that can see the row, and the dialog is the
+protection.** `deleteConnection`'s `UPDATE repos SET oauth_connection_id = NULL` carries no
+project filter, so one project disconnecting a shared connection does strip git auth from
+every other project's repos. Requiring ownership was tried and reverted, for two independent
+reasons. It did not work: the revoke guard scopes on `mcp_connections.project_id` while the
+destruction happens in `oauth_connections`, a different row whose scope
+`PATCH /api/connectors/:id {project_id}` moves on its own, so a project-owned connector
+pointing at a global connection still took every project's repos. And it broke more than it
+fixed: `DELETE /projects/:p/oauth-connections/:id` is the **only** route anywhere that deletes
+an `oauth_connections` row - the admin connector delete removes the `mcp_connections` row and
+leaves the connection behind - so refusing a global row there made global connections
+undeletable instance-wide while the UI went on offering a Disconnect button that 404'd with no
+error surfaced. The protection is therefore the same one the delete path uses: name every repo
+that breaks, in the confirmation, before the click.
+
+**`linked_repos` is team-scoped; the guard is not.** A global connector is visible from every
+project on the instance, other teams' included, so an unfiltered aggregate handed a project
+member - and, through `list_connectors`, an agent - the repo identifiers and project names of
+teams `requireProjectAccessMiddleware` answers 403 for. The disclosure carries
+`AND lp.team_id = $N` (`null` only on the `requireAdminEquivalent` surface). The DELETE guard
+deliberately does **not**: it counts every team's repos, so a connector still cannot be removed
+out from under a repo the caller cannot see. `remove_connector`'s refusal therefore reports an
+instance-wide count with a team-scoped name list, and says so when the two differ - deriving
+the count from the scoped list rendered "still authenticates 0 linked repo(s) ()", which reads
+as the guard misfiring.
 
 **Instance-address change self-heals.** A DCR client is bound at the Authorization Server to
 the exact `redirect_uri` it registered, so the cached `config.dcr` also records the callback

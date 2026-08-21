@@ -7262,6 +7262,10 @@ export function registerTools(
 				[...byName.values()]
 					.map((row) => row.oauth_connection_id)
 					.filter((id): id is string => id !== null),
+				// The run's own team. A global connector is visible from every project
+				// on the instance, so an unscoped read would hand an agent the repo
+				// identifiers and project names of teams its JWT cannot reach.
+				scope.teamId,
 			);
 			const connectors = [...byName.values()].map((row) => {
 				// oauth_status is the load-bearing signal for whether the connector is
@@ -7645,7 +7649,7 @@ export function registerTools(
 	tool(
 		server,
 		'remove_connector',
-		'Remove one of your project\'s registered MCP connections. Only connectors owned by your project can be removed - global "all projects" connectors and other projects\' are managed elsewhere. The next agent run will not see it.',
+		"Remove one of your project's registered MCP connections. Only connectors owned by your project can be removed - global \"all projects\" connectors and other projects' are managed elsewhere. Refused when the connector's OAuth connection still authenticates a linked git repo anywhere on the instance: that returns an error naming what blocks it and changes nothing. If you reached for this because a connector's tools were missing, read the run log's `[runner] MCP connectors:` line and list_connectors first - removing the connector is not how a missing tool is fixed. Otherwise the next agent run will not see it.",
 		{
 			project: projectArg(),
 			id: z
@@ -7657,30 +7661,42 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { deleteConnector } = await import('../services/connectors/lifecycle');
 			// `guardLinkedRepos` refuses a connector whose OAuth connection still
-			// authenticates this project's git remotes. Deleting it would not break
-			// git - `repos.oauth_connection_id` survives - but every MCP tool it
-			// carried would vanish from the next run, and nothing in the run log
-			// records which connectors a run received, so the loss is invisible.
-			// Removing a human-configured capability that way is not the agent's
-			// call to make; the human paths are unguarded.
+			// authenticates a linked git remote ANYWHERE on the instance, not just in
+			// this project - a shared connection's repos are exactly the ones a
+			// project-scoped check would miss. Deleting it would not break git
+			// (`repos.oauth_connection_id` survives) but every MCP tool it carried
+			// would vanish from the next run. Removing a human-configured capability
+			// that way is not the agent's call to make; the human paths are
+			// unguarded, and their dialogs name the repos first.
 			const outcome = await deleteConnector(db, args.id as string, {
 				matchName: true,
 				projectId: scope.projectId,
 				guardLinkedRepos: true,
+				// The guard counts every team's repos; only the naming is scoped.
+				discloseTeamId: scope.teamId,
 			});
 			if (outcome.outcome === 'not_found') return { error: 'MCP connection not found' };
 			if (outcome.outcome === 'backs_linked_repos') {
-				const names = outcome.repos.map((r) => r.repo_identifier).join(', ');
+				// The count is instance-wide because the guard is; the names are only
+				// the ones this team may be told about, and can be empty while the
+				// refusal stands. Say so rather than printing an empty list, which
+				// would read as the guard misfiring.
+				const visible = outcome.repos.map((r) => r.repo_identifier);
+				const named =
+					visible.length > 0
+						? ` (${visible.join(', ')})`
+						: ' (none of them in your team, so they are not named here)';
 				return {
-					error: `connector ${outcome.name} still authenticates ${outcome.repos.length} linked repo(s) (${names}); removing it would leave git working but strip its MCP tools from every run`,
+					error: `connector ${outcome.name} still authenticates ${outcome.totalRepoCount} linked repo(s)${named}; removing it would leave git working but strip its MCP tools from every run`,
 					connector_id: outcome.id,
 					hint: 'Unlink the repo on the project Git page first if you really want this connector gone, or ask an admin to remove it on the Connectors page. If you were trying to fix missing tools, call list_connectors and read tools_this_run before removing anything.',
 				};
 			}
-			// Both REST deletes record the removal and tell open tabs about it, and
-			// `register_connector` emits the matching `mcp_connection.created`. This
-			// path emitted neither, so an agent-initiated delete left no audit trail
-			// and no UI update - the row simply vanished from a page on next refetch.
+			// Both REST deletes record the removal in the audit log (the project route
+			// also tells open tabs), and `register_connector` emits the matching
+			// `mcp_connection.created`. This path emitted neither, so an
+			// agent-initiated delete left no audit trail and no UI update - the row
+			// simply vanished from a page on next refetch.
 			events?.emit({
 				type: 'mcp_connection.deleted',
 				teamId: scope.teamId,

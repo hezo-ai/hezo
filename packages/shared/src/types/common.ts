@@ -2368,8 +2368,9 @@ export type PromptDelivery = 'stdin' | 'arg' | 'file';
  * AGENTS.md says to reach for a structural signal first - but the one case here
  * has no structural lever: Codex exposes its own account-level app tools
  * alongside the MCP servers Hezo configures, and its config file offers no way
- * to suppress them (see the `enabledTools` comment in the Codex adapter, which
- * hits the same wall). Telling the agent which one is which is all that is left.
+ * to suppress them. (The Codex adapter's `enabledTools` comment is about a
+ * different wall - no per-server tool filter for Hezo's OWN servers - so it is
+ * not evidence for this one.) Telling the agent which is which is what is left.
  *
  * A note here earns its place only by carrying something the agent cannot work
  * out from its tool list. State the discriminator, not the warning.
@@ -2390,9 +2391,12 @@ export const RUNTIME_PROMPT_NOTES: Partial<Record<AgentRuntime, string>> = {
 	// heuristic is actively wrong here. A Hezo connector's tools are prefixed with
 	// `safeName(mcp_connections.name)` - operator-chosen text, which need not
 	// mention the service - while Codex's own family is literally `codex_apps`
-	// with `github` in the tool name. So an agent following SHARED_INSTRUCTIONS'
-	// "use the `github` MCP tools" and scanning for `github` finds exactly one
-	// match, and it is the wrong one. Naming `list_connectors` as the mapping and
+	// with `github` in the tool name. So an agent following the repository block's
+	// "use the `github` MCP tools" (`buildRepositoryBlock` in
+	// `services/template-resolver.ts`, present whenever the project has a linked
+	// repo - exactly when GitHub work happens) and scanning its tool list for
+	// `github` finds one match, and it is the wrong one. Naming `list_connectors`
+	// as the mapping and
 	// `codex_apps` as the exclusion is what makes the note usable rather than
 	// merely true.
 	[AgentRuntime.Codex]:

@@ -178,6 +178,8 @@
 	"connection.retrying": "Opnieuw proberen…",
 	"connection.unreachable": "De server is niet bereikbaar.",
 	"connection.unreachableHint": "Zodra de server terug is, maken we automatisch opnieuw verbinding.",
+	"connectors.action.disconnect": "Verbreken",
+	"connectors.action.remove": "Verwijderen",
 	"connectors.banner.action": "Connectoren bekijken",
 	"connectors.banner.many": "{count} connectoren werken niet meer. Verbind ze opnieuw zodat je agents ze weer kunnen gebruiken.",
 	"connectors.banner.one": "{name} werkt niet meer. Verbind opnieuw zodat je agents het weer kunnen gebruiken.",

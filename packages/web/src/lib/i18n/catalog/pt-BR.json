@@ -178,6 +178,8 @@
 	"connection.retrying": "Tentando novamente…",
 	"connection.unreachable": "Não foi possível acessar o servidor.",
 	"connection.unreachableHint": "Vamos reconectar automaticamente assim que o servidor voltar.",
+	"connectors.action.disconnect": "Desconectar",
+	"connectors.action.remove": "Remover",
 	"connectors.banner.action": "Ver conectores",
 	"connectors.banner.many": "{count} conectores pararam de funcionar. Reconecte-os para que seus agentes possam usá-los de novo.",
 	"connectors.banner.one": "{name} parou de funcionar. Reconecte para que seus agentes possam usá-lo de novo.",

@@ -570,8 +570,56 @@ describe('runAgent', () => {
 		expect(run.rows[0].log_text).toContain('[runner] MCP connectors:');
 		// This project has none registered, and the line has to say that rather than
 		// stay silent - silence is what it is replacing.
-		expect(run.rows[0].log_text).toContain('none');
-		expect(run.rows[0].log_text).toContain('Connectors page');
+		expect(run.rows[0].log_text).toContain('none reached this run');
+		expect(run.rows[0].log_text).toContain('list_connectors');
+		// It must NOT guess why. `loadConnectorDescriptors` also drops an `api`
+		// connector and any local one still `pending`, so naming a cause tells the
+		// agent a configured-but-broken connector was never configured.
+		expect(run.rows[0].log_text).not.toContain('none is registered');
+	});
+
+	it('names each connector the run received, marking the restricted ones', async () => {
+		// The non-empty branch is the actual feature and was shipped untested: the
+		// case above seeds no connectors, so it only ever exercised the "none" arm.
+		const mk = async (name: string, enabled: string[] | null) => {
+			await db.query(
+				`INSERT INTO mcp_connections
+				     (name, kind, config, install_status, project_id, probed_at, probe_error, enabled_methods)
+				 VALUES ($1, 'saas', $2::jsonb, 'installed', $3, now(), NULL, $4::jsonb)`,
+				[
+					name,
+					JSON.stringify({ url: `https://${name}.example/mcp` }),
+					projectId,
+					enabled ? JSON.stringify(enabled) : null,
+				],
+			);
+		};
+		await mk('open-connector', null);
+		await mk('narrow-connector', ['read_thing']);
+
+		const deps: RunnerDeps = {
+			db,
+			docker: createMockDocker(),
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+		const result = await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		const run = await db.query<{ log_text: string }>(
+			`SELECT ${runLogTextSql('heartbeat_runs.id')} AS log_text FROM heartbeat_runs WHERE id = $1`,
+			[result.heartbeatRunId],
+		);
+		const log = run.rows[0].log_text;
+		expect(log).toContain('open-connector');
+		// A method allowlist means tools the agent expects are absent on purpose.
+		// Saying which rows are narrowed is what stops that reading as a fault.
+		expect(log).toContain('narrow-connector (restricted)');
+		expect(log).not.toContain('open-connector (restricted)');
+		expect(log).not.toContain('none reached this run');
+
+		await db.query(`DELETE FROM mcp_connections WHERE project_id = $1`, [projectId]);
 	});
 
 	it('fails a clean exit that produced no output', async () => {

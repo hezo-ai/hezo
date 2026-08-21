@@ -178,6 +178,8 @@
 	"connection.retrying": "Nouvelle tentative…",
 	"connection.unreachable": "Le serveur est injoignable.",
 	"connection.unreachableHint": "La connexion sera rétablie automatiquement dès le retour du serveur.",
+	"connectors.action.disconnect": "Déconnecter",
+	"connectors.action.remove": "Supprimer",
 	"connectors.banner.action": "Voir les connecteurs",
 	"connectors.banner.many": "{count} connecteurs ne fonctionnent plus. Reconnectez-les pour que vos agents puissent les utiliser à nouveau.",
 	"connectors.banner.one": "{name} ne fonctionne plus. Reconnectez-le pour que vos agents puissent l'utiliser à nouveau.",

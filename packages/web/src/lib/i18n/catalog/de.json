@@ -178,6 +178,8 @@
 	"connection.retrying": "Wird erneut versucht…",
 	"connection.unreachable": "Der Server ist nicht erreichbar.",
 	"connection.unreachableHint": "Sobald der Server wieder erreichbar ist, wird die Verbindung automatisch hergestellt.",
+	"connectors.action.disconnect": "Trennen",
+	"connectors.action.remove": "Entfernen",
 	"connectors.banner.action": "Konnektoren anzeigen",
 	"connectors.banner.many": "{count} Konnektoren funktionieren nicht mehr. Stellen Sie die Verbindungen wieder her, damit Ihre Agenten sie nutzen können.",
 	"connectors.banner.one": "{name} funktioniert nicht mehr. Stellen Sie die Verbindung wieder her, damit Ihre Agenten den Konnektor nutzen können.",

@@ -22,12 +22,15 @@ import {
 } from '../hooks/use-oauth-connections';
 import { useCreateRepo, useDeleteRepo, useRepos } from '../hooks/use-repos';
 import { repoWebUrl } from '../lib/github';
+import { Trans, useI18n } from '../lib/i18n';
 import { queryKeys } from '../lib/query-keys';
 import { ConnectorDeviceFlowDialog } from './connector-device-flow-dialog';
+import { LinkedReposWarning } from './linked-repos-warning';
 import { RepoGitStatePanel } from './repo-git-state-panel';
 import { RepoPickerModal } from './repo-picker-modal';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { ConfirmDialog } from './ui/confirm-dialog';
 import { Tooltip } from './ui/tooltip';
 
 interface GitHubSectionProps {
@@ -43,6 +46,12 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 	const retryRepo = useCreateRepo(projectId);
 	const deleteConnection = useDeleteOAuthConnection(projectId);
 	const queryClient = useQueryClient();
+	const { t } = useI18n();
+	// This is the Git page: the repos that lose their credential are listed a few
+	// rows below this button. A `window.confirm` could not name them, which made
+	// this the one disconnect surface that stayed silent about its own blast
+	// radius while sitting directly above the evidence.
+	const [disconnectOpen, setDisconnectOpen] = useState(false);
 
 	const githubConnection = connections.find((c) => c.provider === 'github') ?? null;
 	const githubConnector = connectors.find((c) => c.name === 'github') ?? null;
@@ -161,20 +170,34 @@ export function GitHubSection({ projectId }: GitHubSectionProps) {
 						variant="ghost"
 						size="sm"
 						disabled={deleteConnection.isPending}
-						onClick={() => {
-							if (
-								window.confirm(
-									`Disconnect GitHub account ${githubConnection.provider_account_label}?`,
-								)
-							) {
-								deleteConnection.mutate(githubConnection.id);
-							}
-						}}
+						onClick={() => setDisconnectOpen(true)}
 						data-testid="github-disconnect"
 					>
 						<Trash2 className="size-3.5 mr-1" />
 						{deleteConnection.isPending ? 'Disconnecting…' : 'Disconnect'}
 					</Button>
+					<ConfirmDialog
+						open={disconnectOpen}
+						onOpenChange={setDisconnectOpen}
+						title={t('connectors.disconnectGithub.title')}
+						description={
+							<Trans
+								k="connectors.disconnectGithub.body"
+								vars={{
+									name: (
+										<span className="font-mono">{githubConnection.provider_account_label}</span>
+									),
+								}}
+							/>
+						}
+						confirmLabel={t('connectors.action.disconnect')}
+						variant="danger"
+						onConfirm={async () => {
+							await deleteConnection.mutateAsync(githubConnection.id);
+						}}
+					>
+						<LinkedReposWarning repos={githubConnection.linked_repos} kind="connection" />
+					</ConfirmDialog>
 				</div>
 			)}
 

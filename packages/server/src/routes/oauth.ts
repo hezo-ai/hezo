@@ -678,6 +678,10 @@ oauthRoutes.get('/projects/:projectId/oauth-connections', async (c) => {
 	const linked = await linkedReposByConnection(
 		db,
 		list.map((conn) => conn.id),
+		// Scoped to the caller's team: a global connection is visible from every
+		// project on the instance, and naming another team's repos here would walk
+		// around the 403 `requireProjectAccessMiddleware` gives for those projects.
+		c.get('teamId') as string,
 	);
 
 	return ok(
@@ -723,14 +727,13 @@ oauthRoutes.delete('/projects/:projectId/oauth-connections/:id', async (c) => {
 	const id = c.req.param('id');
 
 	const conn = await getConnection({ db, masterKeyManager }, id);
-	// Ownership, not visibility. A project can SEE a global connection (it may
-	// link a repo through one), but deleting it runs `deleteConnection`, whose
-	// `UPDATE repos SET oauth_connection_id = NULL` carries no project filter - so
-	// disconnecting a global connection from one project's page strips git auth
-	// from every other project's repos too. A global connection is by construction
-	// the shared one (`018_scope_connections_per_project.sql`), so this was the
-	// common case. Global connections are disconnected from the instance surface.
-	if (!conn || conn.projectId !== projectId) {
+	// Visibility, not ownership. Requiring ownership was tried and reverted: this
+	// is the ONLY route that deletes an `oauth_connections` row, so refusing a
+	// global one left it undeletable from every surface, and the UI went on
+	// offering a Disconnect button that always 404'd. `deleteConnection` still
+	// nulls `repos.oauth_connection_id` across every project - the protection is
+	// the dialog naming those repos first, not a refusal.
+	if (!conn || !connectionVisibleToProject(conn, projectId)) {
 		return err(c, 'NOT_FOUND', 'oauth connection not found', 404);
 	}
 

@@ -125,10 +125,9 @@ describe('POST /projects/:projectId/connectors — success arms', () => {
 describe('POST /projects/:projectId/connectors/:id/revoke — oauth-attached arm', () => {
 	it('revokes a connector that has an oauth connection and deletes the oauth row', async () => {
 		const oauthId = await seedOauthConnection();
-		// Project-scoped, not global. A project surface may only revoke a row it
-		// owns: revoke deletes the OAuth connection, and `deleteConnection` nulls
-		// `repos.oauth_connection_id` with no project filter, so revoking a shared
-		// row from one project would strip git auth from every other project.
+		// Project-scoped rather than global, so this arm exercises the ordinary case.
+		// A project surface may revoke a global row too - see
+		// connector-linked-repos-guard.test.ts, which covers that path.
 		const project = await db.query<{ id: string }>(`SELECT id FROM projects WHERE slug = $1`, [
 			projectSlug,
 		]);

@@ -497,7 +497,7 @@ function GitHubRow({ projectId, connection, optional = false }: GitHubRowProps) 
 							}}
 						/>
 					}
-					confirmLabel="Disconnect"
+					confirmLabel={t('connectors.action.disconnect')}
 					variant="danger"
 					onConfirm={async () => {
 						await deleteConn.mutateAsync(connection.id);
@@ -857,7 +857,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						}}
 					/>
 				}
-				confirmLabel="Disconnect"
+				confirmLabel={t('connectors.action.disconnect')}
 				variant="danger"
 				onConfirm={doRevoke}
 			>
@@ -878,7 +878,7 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 						}}
 					/>
 				}
-				confirmLabel="Remove"
+				confirmLabel={t('connectors.action.remove')}
 				variant="danger"
 				onConfirm={doRemove}
 			>

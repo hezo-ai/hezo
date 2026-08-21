@@ -425,7 +425,7 @@ function InstanceConnectorRow({
 						}}
 					/>
 				}
-				confirmLabel="Remove"
+				confirmLabel={t('connectors.action.remove')}
 				variant="danger"
 				onConfirm={async () => {
 					await deleteConnector.mutateAsync(connector.id);

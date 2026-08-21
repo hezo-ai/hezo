@@ -178,6 +178,8 @@
 	"connection.retrying": "再試行しています…",
 	"connection.unreachable": "サーバーに接続できません。",
 	"connection.unreachableHint": "サーバーが復旧し次第、自動的に再接続します。",
+	"connectors.action.disconnect": "接続を解除",
+	"connectors.action.remove": "削除",
 	"connectors.banner.action": "コネクタを表示",
 	"connectors.banner.many": "コネクタ {count} 件が使用できなくなりました。エージェントが再び利用できるよう、接続し直してください。",
 	"connectors.banner.one": "{name} が使用できなくなりました。エージェントが再び利用できるよう、接続し直してください。",

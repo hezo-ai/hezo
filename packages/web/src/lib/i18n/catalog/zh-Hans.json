@@ -178,6 +178,8 @@
 	"connection.retrying": "正在重试…",
 	"connection.unreachable": "无法连接到服务器。",
 	"connection.unreachableHint": "服务器恢复后将自动重新连接。",
+	"connectors.action.disconnect": "断开连接",
+	"connectors.action.remove": "移除",
 	"connectors.banner.action": "查看连接器",
 	"connectors.banner.many": "{count} 个连接器已停止工作。请重新连接，让智能体可以继续使用。",
 	"connectors.banner.one": "{name} 已停止工作。请重新连接，让智能体可以继续使用。",

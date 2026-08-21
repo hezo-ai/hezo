@@ -388,26 +388,44 @@ export async function getConnector(db: Db, connectorId: string): Promise<Connect
 }
 
 /**
- * The repos riding a connector's OAuth connection, across every project.
+ * The repos riding a connector's OAuth connection, across every project of one
+ * team.
  *
- * Deliberately not project-filtered: a global connection is, by construction,
- * the one whose repos span more than one project (see
- * `018_scope_connections_per_project.sql`), so scoping this to the caller's
- * project would under-report exactly the case with the widest blast radius.
+ * Not PROJECT-filtered, deliberately: a connection can back repos in more than
+ * one project (migration `018_scope_connections_per_project.sql` leaves exactly
+ * those global), so scoping this to the caller's project would under-report the
+ * case with the widest blast radius. The converse does not hold - a global
+ * connection may back one project's repos or none - so do not read "global" as
+ * "shared".
+ *
+ * It IS team-filtered, which is a different boundary. A global connector is
+ * visible from every project on the instance, other teams' included, so an
+ * unfiltered query hands the caller repo identifiers and project names from
+ * teams that `requireProjectAccessMiddleware` answers 403 for. Pass `null` only
+ * for an admin surface that is meant to see every team.
+ *
+ * This is disclosure scoping, not protection scoping: the delete guard in
+ * `deleteConnector` counts repos in EVERY team, so a connector still cannot be
+ * removed out from under a repo the caller cannot see. It only changes which of
+ * them may be named back.
  *
  * The join is null-safe - a connector with no `oauth_connection_id` matches
  * nothing, because `NULL = NULL` is not true - so no special case is needed.
  * Indexed by `idx_repos_oauth_connection`.
  */
-export async function linkedReposForConnector(db: Db, connectorId: string): Promise<LinkedRepo[]> {
+export async function linkedReposForConnector(
+	db: Db,
+	connectorId: string,
+	teamId: string | null,
+): Promise<LinkedRepo[]> {
 	const result = await db.query<LinkedRepo>(
 		`SELECT r.id, r.repo_identifier, r.project_id, p.name AS project_name
 		   FROM repos r
 		   JOIN mcp_connections mc ON mc.oauth_connection_id = r.oauth_connection_id
 		   JOIN projects p ON p.id = r.project_id
-		  WHERE mc.id = $1
+		  WHERE mc.id = $1${teamId ? ' AND p.team_id = $2' : ''}
 		  ORDER BY p.name ASC, r.repo_identifier ASC`,
-		[connectorId],
+		teamId ? [connectorId, teamId] : [connectorId],
 	);
 	return result.rows;
 }
@@ -422,6 +440,7 @@ export async function linkedReposForConnector(db: Db, connectorId: string): Prom
 export async function linkedReposByConnection(
 	db: Db,
 	connectionIds: readonly string[],
+	teamId: string | null,
 ): Promise<Map<string, LinkedRepo[]>> {
 	const out = new Map<string, LinkedRepo[]>();
 	if (connectionIds.length === 0) return out;
@@ -430,9 +449,9 @@ export async function linkedReposByConnection(
 		        r.oauth_connection_id
 		   FROM repos r
 		   JOIN projects p ON p.id = r.project_id
-		  WHERE r.oauth_connection_id = ANY($1::uuid[])
+		  WHERE r.oauth_connection_id = ANY($1::uuid[])${teamId ? ' AND p.team_id = $2' : ''}
 		  ORDER BY p.name ASC, r.repo_identifier ASC`,
-		[connectionIds as string[]],
+		teamId ? [connectionIds as string[], teamId] : [connectionIds as string[]],
 	);
 	for (const row of result.rows) {
 		const list = out.get(row.oauth_connection_id);
@@ -464,12 +483,33 @@ export interface DeleteConnectorOptions {
 	 * codebase already makes for asset deletion ("hard deletion is admin-only").
 	 */
 	guardLinkedRepos?: boolean;
+	/**
+	 * Whose team may be NAMED in a `backs_linked_repos` refusal. Disclosure
+	 * scoping only - the guard itself counts every team's repos, so a connector
+	 * is never removed out from under a repo the caller cannot see. `null` is the
+	 * admin surface, which may see all of them. Required whenever
+	 * `guardLinkedRepos` is set; ignored otherwise.
+	 */
+	discloseTeamId?: string | null;
 }
 
 export type DeleteConnectorResult =
 	| { outcome: 'deleted'; id: string; name: string }
 	| { outcome: 'not_found' }
-	| { outcome: 'backs_linked_repos'; id: string; name: string; repos: LinkedRepo[] };
+	| {
+			outcome: 'backs_linked_repos';
+			id: string;
+			name: string;
+			/**
+			 * The repos the caller is allowed to be told about. May be EMPTY while the
+			 * refusal still stands, when every blocking repo sits in another team -
+			 * so never derive the count from this array. `totalRepoCount` is what the
+			 * guard actually counted.
+			 */
+			repos: LinkedRepo[];
+			/** Every repo the guard counted, across all teams. */
+			totalRepoCount: number;
+	  };
 
 /**
  * Delete a connector row, optionally refusing when it still backs linked repos.
@@ -513,11 +553,20 @@ export async function deleteConnector(
 	);
 	const row = existing.rows[0];
 	if (!row) return { outcome: 'not_found' };
+	// Two reads, deliberately: the guard is instance-wide, so the COUNT must be
+	// too, while the names are scoped to what the caller may see. Deriving the
+	// count from the scoped list produced "still authenticates 0 linked repo(s)"
+	// on a cross-team block, which reads as the guard misfiring.
+	const [repos, total] = await Promise.all([
+		linkedReposForConnector(db, row.id, opts.discloseTeamId ?? null),
+		linkedReposForConnector(db, row.id, null).then((all) => all.length),
+	]);
 	return {
 		outcome: 'backs_linked_repos',
 		id: row.id,
 		name: row.name,
-		repos: await linkedReposForConnector(db, row.id),
+		repos,
+		totalRepoCount: total,
 	};
 }
 

@@ -915,12 +915,12 @@ describe('oauth-connections list / scope-status / delete routes', () => {
 		expect(gone.rows.length).toBe(0);
 	});
 
-	it('404s delete of a GLOBAL connection from a project surface', async () => {
-		// A project can SEE a global connection - it may link a repo through one -
-		// but deleting it runs `deleteConnection`, whose
-		// `UPDATE repos SET oauth_connection_id = NULL` carries no project filter.
-		// Allowing this let one project strip git auth from every other project's
-		// repos. Global connections are disconnected from the instance surface.
+	it('deletes a GLOBAL connection from a project surface, the only route that can', async () => {
+		// This is the only route anywhere that deletes an `oauth_connections` row -
+		// the admin connector delete removes the `mcp_connections` row and leaves the
+		// connection behind. Refusing a global row here was tried and reverted: it
+		// made global connections undeletable instance-wide, and the UI went on
+		// offering a Disconnect button that always 404'd with no error surfaced.
 		const global = await createConnection(
 			{ db, masterKeyManager },
 			{
@@ -936,8 +936,8 @@ describe('oauth-connections list / scope-status / delete routes', () => {
 			method: 'DELETE',
 			headers: authHeader(token),
 		});
-		expect(del.status).toBe(404);
-		const still = await db.query(`SELECT id FROM oauth_connections WHERE id = $1`, [global.id]);
-		expect(still.rows.length).toBe(1);
+		expect(del.status).toBe(200);
+		const gone = await db.query(`SELECT id FROM oauth_connections WHERE id = $1`, [global.id]);
+		expect(gone.rows.length).toBe(0);
 	});
 });
