@@ -201,6 +201,61 @@ describe('recheckRejectedConnector', () => {
 		}
 	});
 
+	/**
+	 * A real Codex run hit `secret_not_allowed_in_body` on a healthy GitHub
+	 * connector and was told to "check the secret's allowed hosts" - the one thing
+	 * already known to be correct, since the allowlist named the host it was
+	 * calling. Every `substitution_failed` reason shared that sentence, so the
+	 * notice named a setting that could not be the cause. The reason is on the
+	 * event; read it.
+	 */
+	it('names the body rule, not the allowed hosts, for a body-placeholder refusal', async () => {
+		const healthy = await startTestMcpHttpServer({ tools: TOOLS });
+		try {
+			const id = await seedConnector(`http://127.0.0.1:${healthy.port}/mcp`, 'oauth');
+			const { wsManager } = recordingWs();
+			const line = await recheckRejectedConnector(
+				{ db, masterKeyManager: ctx.masterKeyManager, wsManager },
+				event({
+					connectorId: id,
+					kind: 'substitution_failed',
+					status: 0,
+					reason: 'secret_not_allowed_in_body',
+					detail: 'Secret X appears in the JSON body at params.arguments.body.',
+				}),
+				{ label: 'test', teamId, projectId },
+			);
+			expect(line).toContain('request body');
+			expect(line).toContain('allowed hosts are not the problem');
+			// The old wording, which sent a run to the wrong setting.
+			expect(line).not.toContain("check the secret's allowed hosts");
+		} finally {
+			await healthy.close();
+		}
+	});
+
+	it('still points at the allowed hosts when that IS the reason', async () => {
+		const healthy = await startTestMcpHttpServer({ tools: TOOLS });
+		try {
+			const id = await seedConnector(`http://127.0.0.1:${healthy.port}/mcp`, 'oauth');
+			const { wsManager } = recordingWs();
+			const line = await recheckRejectedConnector(
+				{ db, masterKeyManager: ctx.masterKeyManager, wsManager },
+				event({
+					connectorId: id,
+					kind: 'substitution_failed',
+					status: 0,
+					reason: 'secret_not_allowed_for_host',
+					detail: 'Secret X is not permitted for host y.',
+				}),
+				{ label: 'test', teamId, projectId },
+			);
+			expect(line).toContain('allowed-hosts list');
+		} finally {
+			await healthy.close();
+		}
+	});
+
 	it('calls out a runtime that dropped a working credential as a Hezo defect', async () => {
 		const healthy = await startTestMcpHttpServer({ tools: TOOLS });
 		try {

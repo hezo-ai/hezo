@@ -1,4 +1,4 @@
-import { hostMatchesAllowedHosts } from '@hezo/shared';
+import { credentialPlaceholder, hostMatchesAllowedHosts } from '@hezo/shared';
 import { decrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
@@ -51,6 +51,21 @@ export type SubstitutionFailure =
 			 * different mistake from meaning to send the credential in the payload,
 			 * and a different remedy. */
 			deliveredElsewhere: boolean;
+			/**
+			 * Where in the body the placeholder sits, as dotted JSON paths.
+			 *
+			 * Without this the refusal says only "in the JSON body", which is
+			 * unactionable when the caller did not write the body - an MCP client
+			 * assembles its own JSON-RPC envelope, so an agent told to "remove that
+			 * literal text" has nothing to remove and no way to find out what does.
+			 * Paths are safe to report: a placeholder is not the secret, and no
+			 * surrounding body content is included.
+			 *
+			 * Empty when the body is not JSON; `byteOffsets` then locates it instead.
+			 */
+			bodyPaths: string[];
+			/** Byte offsets of each occurrence, for a body that is not valid JSON. */
+			byteOffsets: number[];
 	  }
 	| { kind: 'secrets_unavailable' };
 
@@ -200,6 +215,58 @@ async function readAndDecryptVault(
 	return out;
 }
 
+/**
+ * Where a placeholder for `name` occurs in a request body.
+ *
+ * Returns dotted JSON paths when the body parses (`params.arguments.token`), and
+ * byte offsets otherwise. Reports position only - never the surrounding content,
+ * which may hold anything the caller was sending.
+ *
+ * This exists because "somewhere in the JSON body" is not actionable for a body
+ * the caller never wrote. An MCP client builds its own JSON-RPC envelope, so a
+ * refusal that cannot name the field leaves an agent - and whoever reads the run
+ * log - guessing at which layer put it there.
+ */
+export function locatePlaceholder(
+	body: string,
+	name: string,
+): { bodyPaths: string[]; byteOffsets: number[] } {
+	const needle = credentialPlaceholder(name);
+
+	const byteOffsets: number[] = [];
+	for (let i = body.indexOf(needle); i !== -1; i = body.indexOf(needle, i + 1)) {
+		byteOffsets.push(Buffer.byteLength(body.slice(0, i), 'utf8'));
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(body);
+	} catch {
+		return { bodyPaths: [], byteOffsets };
+	}
+
+	const bodyPaths: string[] = [];
+	const walk = (node: unknown, path: string): void => {
+		if (typeof node === 'string') {
+			if (node.includes(needle)) bodyPaths.push(path || '(root)');
+			return;
+		}
+		if (Array.isArray(node)) {
+			node.forEach((item, i) => {
+				walk(item, `${path}[${i}]`);
+			});
+			return;
+		}
+		if (node !== null && typeof node === 'object') {
+			for (const [key, value] of Object.entries(node)) {
+				walk(value, path ? `${path}.${key}` : key);
+			}
+		}
+	};
+	walk(parsed, '');
+	return { bodyPaths, byteOffsets };
+}
+
 export function substituteRequest(
 	input: RequestInputs,
 	secrets: Map<string, ResolvedSecret>,
@@ -228,10 +295,14 @@ export function substituteRequest(
 			// `secretsUsed` already tells us whether this credential is on the wire
 			// by a route the proxy does support. Structural, so it stays true for a
 			// payload no phrase-matcher would recognise.
+			// Position is filled in by the caller, which is the only scope holding the
+			// body; empty here means "not located yet", never "not present".
 			return {
 				kind: 'secret_not_allowed_in_body',
 				name,
 				deliveredElsewhere: secretsUsed.has(name),
+				bodyPaths: [],
+				byteOffsets: [],
 			};
 		}
 		return null;
@@ -270,7 +341,14 @@ export function substituteRequest(
 	let bodyChanged = false;
 	if (typeof input.body === 'string') {
 		const bodyOut = applyToString(input.body, secrets, secretsUsed, checkBodyAccess);
-		if (bodyOut.failure) failure ??= bodyOut.failure;
+		if (bodyOut.failure) {
+			// Locate it here rather than inside the check: this is the only scope
+			// holding both the body and the name that refused.
+			failure ??=
+				bodyOut.failure.kind === 'secret_not_allowed_in_body'
+					? { ...bodyOut.failure, ...locatePlaceholder(input.body, bodyOut.failure.name) }
+					: bodyOut.failure;
+		}
 		body = bodyOut.value;
 		bodyChanged = bodyOut.changed;
 	}

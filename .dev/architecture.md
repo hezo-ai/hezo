@@ -4405,6 +4405,20 @@ already-sent-in-a-header ("remove the literal text"), or not-sent-at-all ("ask a
 enable body substitution"). The code and the 403 are unchanged, since
 `reportConnectorRunRejection` keys off the code.
 
+**It also says WHERE.** `locatePlaceholder` (`substitution.ts`) walks the parsed body and
+reports the dotted JSON path of every occurrence (`params.arguments.body`), falling back to
+byte offsets when the body is not JSON. Position only - a placeholder is not the secret, and
+no surrounding content is ever included. This exists because the caller often did not write
+the body: an MCP client assembles its own JSON-RPC envelope, so "remove that literal text
+from the body" names nothing an agent can act on and gives no way to learn which layer put
+it there. A real Codex run lost itself to exactly that.
+
+**And the run notice reads the reason.** `substitution_failed` covers several unrelated
+rules, so `describeRecheck` routes through `substitutionRemedy(event.reason)` rather than
+offering one suggestion for all of them. The single old sentence told every case to check
+the secret's allowed hosts, which for the body rule is the one thing already known to be
+correct - the same run above was sent to a setting that could not be its cause.
+
 **Destination guard** (`services/egress/net-guard.ts`). The proxy runs in the **host's**
 network namespace and will dial whatever an authenticated caller names, so it refuses
 targets that resolve to loopback / unspecified / link-local (incl. `169.254.169.254`) /

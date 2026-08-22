@@ -3,6 +3,7 @@ import { encrypt } from '../src/crypto/encryption';
 import {
 	invalidateSecretsVault,
 	loadAllSecrets,
+	locatePlaceholder,
 	type ResolvedSecret,
 	substituteRequest,
 } from '../src/services/egress/substitution';
@@ -315,6 +316,9 @@ describe('substituteRequest', () => {
 				kind: 'secret_not_allowed_in_body',
 				name: 'UMAMI_PW',
 				deliveredElsewhere: false,
+				// Naming the field is what makes the refusal fixable.
+				bodyPaths: ['password'],
+				byteOffsets: [13],
 			});
 			expect(result.body).toBe('{"password":"__HEZO_SECRET_UMAMI_PW__"}');
 			expect(result.bodyChanged).toBe(false);
@@ -343,6 +347,12 @@ describe('substituteRequest', () => {
 				kind: 'secret_not_allowed_in_body',
 				name: 'MCP_GITHUB',
 				deliveredElsewhere: true,
+				// The JSON-RPC envelope an MCP client builds itself. Without this path
+				// the refusal says "in the JSON body" about a body the agent never
+				// wrote, which is the report that sent a real run chasing its
+				// allowed-hosts list instead.
+				bodyPaths: ['params.arguments.body'],
+				byteOffsets: [54],
 			});
 			// The header pass still ran and still counted, so the discriminator is a
 			// fact about this request rather than a guess about the payload.
@@ -524,5 +534,64 @@ describe('decrypted vault cache', () => {
 		await ctx.db.query(`DELETE FROM secrets WHERE name = 'CACHED_FOUR'`);
 		const after = await loadAllSecrets(scope());
 		expect(after.has('CACHED_FOUR')).toBe(false);
+	});
+});
+
+/**
+ * A refusal that cannot say WHERE is unactionable for a body the caller never
+ * wrote. A real Codex run hit this: the GitHub MCP call failed with
+ * `secret_not_allowed_in_body`, the run log suggested checking the secret's
+ * allowed hosts (which were correct), and nothing said which field carried the
+ * placeholder or which layer had put it there. Position is safe to report - a
+ * placeholder is not the secret, and no surrounding content is included.
+ */
+describe('locatePlaceholder', () => {
+	it('names the JSON path of every occurrence', () => {
+		const body = JSON.stringify({
+			jsonrpc: '2.0',
+			method: 'tools/call',
+			params: {
+				name: 'pull_request_read',
+				arguments: { owner: 'hezo-ai', repo: 'website' },
+				_meta: { headers: { Authorization: 'Bearer __HEZO_SECRET_OAUTH_GITHUB_E0D11568__' } },
+			},
+		});
+		const found = locatePlaceholder(body, 'OAUTH_GITHUB_E0D11568');
+		expect(found.bodyPaths).toEqual(['params._meta.headers.Authorization']);
+		expect(found.byteOffsets.length).toBe(1);
+	});
+
+	it('walks arrays and reports every hit', () => {
+		const body = JSON.stringify({
+			messages: [{ text: 'fine' }, { text: 'see __HEZO_SECRET_TOK__' }],
+			trailer: '__HEZO_SECRET_TOK__',
+		});
+		const found = locatePlaceholder(body, 'TOK');
+		expect(found.bodyPaths).toEqual(['messages[1].text', 'trailer']);
+		expect(found.byteOffsets.length).toBe(2);
+	});
+
+	it('falls back to byte offsets when the body is not JSON', () => {
+		const body = 'grant_type=password&secret=__HEZO_SECRET_TOK__';
+		const found = locatePlaceholder(body, 'TOK');
+		expect(found.bodyPaths).toEqual([]);
+		expect(found.byteOffsets).toEqual([body.indexOf('__HEZO_SECRET_TOK__')]);
+	});
+
+	it('reports nothing when the placeholder is absent', () => {
+		const found = locatePlaceholder('{"ok":true}', 'TOK');
+		expect(found.bodyPaths).toEqual([]);
+		expect(found.byteOffsets).toEqual([]);
+	});
+
+	it('counts byte offsets in bytes, not UTF-16 units', () => {
+		// A multi-byte prefix must not shift the reported position: the offset is
+		// meant to index the bytes the proxy actually buffered.
+		const body = `{"note":"日本語","tok":"__HEZO_SECRET_TOK__"}`;
+		const found = locatePlaceholder(body, 'TOK');
+		expect(found.bodyPaths).toEqual(['tok']);
+		expect(found.byteOffsets).toEqual([
+			Buffer.byteLength(body.slice(0, body.indexOf('__HEZO_SECRET_TOK__')), 'utf8'),
+		]);
 	});
 });

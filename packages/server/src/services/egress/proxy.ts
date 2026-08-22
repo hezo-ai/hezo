@@ -1480,8 +1480,8 @@ function describeFailure(failure: SubstitutionFailure): FailureDescription {
 				statusCode: 403,
 				code: 'secret_not_allowed_in_body',
 				message: failure.deliveredElsewhere
-					? `Secret ${failure.name} was already substituted into this request's headers, so the credential has been sent. The text __HEZO_SECRET_${failure.name}__ also appears in the JSON body, and Hezo does not substitute secrets into request bodies. Remove that literal text from the body content.`
-					: `A __HEZO_SECRET_${failure.name}__ placeholder appears in this JSON request body. Hezo substitutes secrets into headers and the URL, never into a body unless an admin has enabled body substitution on that credential. If you meant to send the credential in the payload, ask an admin to enable it. If the placeholder is literal text you are trying to write, it cannot be sent through the proxy.`,
+					? `Secret ${failure.name} was already substituted into this request's headers, so the credential has been sent. The text __HEZO_SECRET_${failure.name}__ also appears in the JSON body${describeBodyLocation(failure)}, and Hezo does not substitute secrets into request bodies. Remove that literal text from the body content.`
+					: `A __HEZO_SECRET_${failure.name}__ placeholder appears in this JSON request body${describeBodyLocation(failure)}. Hezo substitutes secrets into headers and the URL, never into a body unless an admin has enabled body substitution on that credential. If you meant to send the credential in the payload, ask an admin to enable it. If the placeholder is literal text you are trying to write, it cannot be sent through the proxy.`,
 			};
 		case 'secrets_unavailable':
 			return {
@@ -1490,6 +1490,30 @@ function describeFailure(failure: SubstitutionFailure): FailureDescription {
 				message: 'Secrets store is locked.',
 			};
 	}
+}
+
+/**
+ * Where the placeholder sits, appended to the refusal.
+ *
+ * "In the JSON body" alone is unactionable when the caller did not write the
+ * body: an MCP client assembles its own JSON-RPC envelope, so an agent told to
+ * remove literal text has nothing to remove and no way to learn which layer put
+ * it there. Naming the field turns that into a fixable report. Positions only -
+ * never the surrounding content.
+ */
+function describeBodyLocation(failure: { bodyPaths: string[]; byteOffsets: number[] }): string {
+	if (failure.bodyPaths.length > 0) {
+		// Bounded: a pathological body should not produce an unbounded message.
+		const shown = failure.bodyPaths.slice(0, 5);
+		const more = failure.bodyPaths.length - shown.length;
+		return ` at ${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''}`;
+	}
+	if (failure.byteOffsets.length > 0) {
+		const shown = failure.byteOffsets.slice(0, 5);
+		const more = failure.byteOffsets.length - shown.length;
+		return ` at byte offset ${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''} (the body is not valid JSON)`;
+	}
+	return '';
 }
 
 function respondEarly(

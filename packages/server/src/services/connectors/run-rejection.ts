@@ -59,6 +59,27 @@ export async function reportConnectorRunRejection(
 	await sink.verdict(await recheckRejectedConnector(deps, event, ctx));
 }
 
+/**
+ * What to actually do about a substitution failure, by its reason code.
+ *
+ * The proxy already knows which rule refused; carrying that through is what stops
+ * the notice naming a setting that is not the problem.
+ */
+function substitutionRemedy(reason: string): string {
+	switch (reason) {
+		case 'secret_not_allowed_in_body':
+			return "the credential's placeholder also appeared in the request body, which Hezo never substitutes into. The allowed hosts are not the problem: remove the placeholder from the body, or send it as a header.";
+		case 'secret_not_allowed_for_host':
+			return "the host is not on that secret's allowed-hosts list.";
+		case 'unknown_secret':
+			return 'the run has no secret by that name - it may have been deleted or renamed.';
+		case 'secrets_unavailable':
+			return 'the vault was locked at request time.';
+		default:
+			return `the proxy refused it (${reason}).`;
+	}
+}
+
 /** The observed refusal, as a sentence: what the run saw, and what Hezo is doing about it. */
 export function describeConnectorRejection(
 	event: ConnectorRunRejection,
@@ -156,7 +177,12 @@ function describeRecheck(event: ConnectorRunRejection, verdict: RecheckVerdict):
 			case 'unreachable':
 				return `${name}: Hezo's re-check could not reach it either.`;
 			default:
-				return `${name}: Hezo's re-check reached it, so the request failed only because its credential could not be substituted - check the secret's allowed hosts.`;
+				// `substitution_failed` covers several unrelated reasons, and the
+				// remedy differs per reason. Sending every one of them to "check the
+				// allowed hosts" was actively wrong for the body case: a connector
+				// whose allowlist is correct still fails there, so the one suggestion
+				// offered was the one thing already known to be fine. Read the reason.
+				return `${name}: Hezo's re-check reached it, so the request failed only because its credential could not be substituted - ${substitutionRemedy(event.reason)}`;
 		}
 	}
 	// upstream_rejected
