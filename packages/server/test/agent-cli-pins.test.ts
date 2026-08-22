@@ -9,6 +9,13 @@
  * `npm install -g <pkg>` with no version is indistinguishable from a pinned one
  * at a glance and produces a different image every rebuild.
  *
+ * It also guards that every pinned *binary* artifact is pinned once per
+ * architecture. The image is published multi-arch (amd64 + arm64), but only the
+ * release build builds arm64 - so a URL hardcoding one architecture installs a
+ * binary the other leg cannot exec, and nothing says so until a release is
+ * already blocked on it. Worse, the failure reads as `agy: not found` (the
+ * missing x86-64 ELF loader in an arm64 rootfs), not as an architecture error.
+ *
  * This is a text check over the Dockerfile on purpose: it must fail in an
  * ordinary shard, with no Docker daemon and no image pull, or it would only run
  * where the image already exists.
@@ -78,14 +85,63 @@ describe('agent CLI pins', () => {
 		// also carries an opaque build id after the version, so the URL cannot be
 		// rebuilt from AGY_VERSION - it has to be recorded, and then the download
 		// needs its own integrity check because nothing else verifies it.
-		expect(/ARG AGY_URL=https:\/\/\S+/.test(dockerfile)).toBe(true);
-		expect(/ARG AGY_SHA512=[0-9a-f]{100,}/.test(dockerfile)).toBe(true);
+		expect(/ARG AGY_URL_AMD64=https:\/\/\S+/.test(dockerfile)).toBe(true);
+		expect(/ARG AGY_URL_ARM64=https:\/\/\S+/.test(dockerfile)).toBe(true);
+		expect(/ARG AGY_SHA512_AMD64=[0-9a-f]{100,}/.test(dockerfile)).toBe(true);
+		expect(/ARG AGY_SHA512_ARM64=[0-9a-f]{100,}/.test(dockerfile)).toBe(true);
 		expect(joined).toContain('sha512sum -c -');
 		// The version and the URL are two facts that can disagree; this is what
 		// makes a mismatched pair fail the build rather than ship mislabelled.
 		expect(joined).toContain('agy --version | grep -q "${AGY_VERSION}"');
 		// Piping the installer would silently reintroduce "latest".
 		expect(joined).not.toMatch(/antigravity\.google\/cli\/install\.sh\s*\|/);
+	});
+
+	it('carries the pinned Antigravity version in both artifact URLs', () => {
+		// A bump that updates one arch and forgets the other is the likely next
+		// mistake: the build still passes on amd64, and the arm64 leg only runs at
+		// release. Both URLs carry the version in their path, so this catches it.
+		const version = dockerfile.match(/^ARG AGY_VERSION=(\S+)/m)?.[1];
+		expect(version, 'ARG AGY_VERSION has no default').toBeTruthy();
+
+		for (const arch of ['AMD64', 'ARM64']) {
+			const url = dockerfile.match(new RegExp(`^ARG AGY_URL_${arch}=(\\S+)`, 'm'))?.[1] ?? '';
+			expect(
+				url.includes(`/${version}-`),
+				`AGY_URL_${arch} (${url}) does not carry AGY_VERSION ${version} - a half-finished bump`,
+			).toBe(true);
+		}
+	});
+
+	it('pins every architecture-specific download once per architecture', () => {
+		// The image ships multi-arch, but only the release build builds arm64, so a
+		// URL that names one architecture is a release-time failure with no earlier
+		// signal. Every such pin is an ARG pair, selected at build time.
+		const archToken = /(?:^|[^a-z0-9])(x64|x86[_-]?64|amd64|aarch64|arm64)(?:[^a-z0-9]|$)/i;
+		const args = [...dockerfile.matchAll(/^ARG ([A-Z0-9_]+)=(\S+)$/gm)];
+		const names = new Set(args.map(([, name]) => name));
+
+		for (const [, name, value] of args) {
+			if (!value.startsWith('https://') || !archToken.test(value)) continue;
+
+			const suffix = name.match(/_(AMD64|ARM64)$/)?.[1];
+			expect(
+				suffix,
+				`ARG ${name} downloads an architecture-specific artifact but is not arch-suffixed. Split it into ${name}_AMD64 / ${name}_ARM64 and select on TARGETARCH.`,
+			).toBeTruthy();
+
+			const sibling = `${name.slice(0, -suffix!.length)}${suffix === 'AMD64' ? 'ARM64' : 'AMD64'}`;
+			expect(names.has(sibling), `${name} has no ${sibling} counterpart`).toBe(true);
+		}
+	});
+
+	it('selects the architecture-specific artifact at build time', () => {
+		// An ARG pair nothing reads is a pin that does not apply. BuildKit fills
+		// TARGETARCH in per target platform; declaring it is what makes it arrive.
+		expect(/^ARG TARGETARCH$/m.test(dockerfile), 'TARGETARCH is not declared').toBe(true);
+		for (const arg of ['AGY_URL_AMD64', 'AGY_URL_ARM64', 'AGY_SHA512_AMD64', 'AGY_SHA512_ARM64']) {
+			expect(joined, `${arg} is declared but never read`).toContain(`\${${arg}}`);
+		}
 	});
 
 	it('verifies each pinned CLI actually runs', () => {
