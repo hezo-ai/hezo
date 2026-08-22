@@ -98,6 +98,40 @@ jobs:
         if: steps.publishable.outputs.value == 'true'
         run: echo "value=true" >> "$GITHUB_OUTPUT"
 
+  # The arm64 half of the multi-arch image, built (never pushed) so an
+  # architecture-specific break is caught here rather than in release-publish.yml
+  # - the only other place arm64 is built, and where a failure blocks a release
+  # that has already merged. That is exactly how a hardcoded x64 Antigravity
+  # artifact URL reached 0.53.0: every run above builds amd64 only, so the arm64
+  # leg first ran when the release PR merged, and it failed as `agy: not found`.
+  #
+  # Deliberately push-only: an emulated arm64 build costs runner minutes and
+  # nothing here gates a merge. Nothing `needs:` this job and no required check
+  # names it - a red X on main is the whole signal, and it lands well before a
+  # release PR is cut. It also warms the arm64 layer cache release-publish.yml
+  # reads, so the release build is no longer cold.
+  verify-agent-image-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker
+          file: docker/Dockerfile.agent-base
+          platforms: linux/arm64
+          push: false
+          # Its own cache scope: the default scope holds the amd64 layers
+          # build-agent-image writes, and two jobs writing one scope overwrite
+          # each other's manifest.
+          cache-from: type=gha,scope=agent-base-arm64
+          cache-to: type=gha,mode=max,scope=agent-base-arm64
+
   test-backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
