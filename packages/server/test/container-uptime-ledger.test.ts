@@ -276,9 +276,14 @@ describe('aggregation', () => {
 			 VALUES (NULL, 'c-orphan', now() - interval '1 hour', now(), 'docker')`,
 		);
 		const byProject = await containerHoursByProject(db, HoursBucket.Day);
-		const orphan = byProject.find((r) => r.project_id === null);
-		expect(orphan?.project_name).toBe('Deleted projects');
-		expect(orphan?.seconds).toBe(3600);
+		// The seeded hour may straddle a UTC day boundary and split across two
+		// bucket rows - the clipping module's documented behaviour - so the claim
+		// is the heading on every row and the sum, never one row's figure. A
+		// single-row assertion fails for the first hour of every UTC day.
+		const orphanRows = byProject.filter((r) => r.project_id === null);
+		expect(orphanRows.length).toBeGreaterThan(0);
+		for (const row of orphanRows) expect(row.project_name).toBe('Deleted projects');
+		expect(orphanRows.reduce((sum, row) => sum + row.seconds, 0)).toBe(3600);
 	});
 
 	it('counts only the part of an interval that falls inside this month', async () => {

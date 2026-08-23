@@ -3,6 +3,7 @@ import { encrypt } from '../src/crypto/encryption';
 import {
 	invalidateSecretsVault,
 	loadAllSecrets,
+	locatePlaceholder,
 	type ResolvedSecret,
 	substituteRequest,
 } from '../src/services/egress/substitution';
@@ -314,7 +315,9 @@ describe('substituteRequest', () => {
 			expect(result.failure).toEqual({
 				kind: 'secret_not_allowed_in_body',
 				name: 'UMAMI_PW',
-				deliveredElsewhere: false,
+				// Naming the field is what makes the refusal fixable.
+				bodyPaths: ['password'],
+				byteOffsets: [13],
 			});
 			expect(result.body).toBe('{"password":"__HEZO_SECRET_UMAMI_PW__"}');
 			expect(result.bodyChanged).toBe(false);
@@ -323,9 +326,43 @@ describe('substituteRequest', () => {
 
 		// The MCP shape: the connector's credential rides the Authorization header
 		// the runtime configured, and the same placeholder turns up in the tool-call
-		// arguments because the agent is writing that literal text somewhere. The
-		// credential is already on the wire, so the body occurrence is content.
-		it('reports a body placeholder as already delivered when the header carried it', () => {
+		// arguments because the agent quoted that literal text in content it is
+		// sending - a GitHub comment citing connector config, a review quoting an
+		// error. The credential is already on the wire, so the body occurrence is
+		// quotation and the request forwards with the literal untouched. Refusing
+		// here was a live production failure: every runtime tripped it, clustered on
+		// the tasks whose threads quoted the placeholder.
+		it('forwards a body placeholder unchanged when the header carried the credential', () => {
+			const secrets = new Map([
+				['MCP_GITHUB', makeSecret('MCP_GITHUB', 'gho_real', ['api.githubcopilot.com'])],
+			]);
+			const body =
+				'{"method":"tools/call","params":{"arguments":{"body":"__HEZO_SECRET_MCP_GITHUB__"}}}';
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'api.githubcopilot.com',
+					url: 'https://api.githubcopilot.com/mcp/',
+					headers: { authorization: 'Bearer __HEZO_SECRET_MCP_GITHUB__' },
+					body,
+				},
+				secrets,
+			);
+			expect(result.failure).toBeNull();
+			// The header pass still ran and still counted, so the discriminator is a
+			// fact about this request rather than a guess about the payload.
+			expect(result.headers.authorization).toBe('Bearer gho_real');
+			expect([...result.secretsUsed]).toEqual(['MCP_GITHUB']);
+			// The literal is text, never the secret: forwarded exactly as written.
+			expect(result.body).toBe(body);
+			expect(result.bodyChanged).toBe(false);
+		});
+
+		// Order matters for the discriminator: the body occurrence counts as
+		// quotation only when a supported route of the SAME request delivered the
+		// credential. A body-only request still refuses, whatever earlier requests
+		// carried.
+		it('still rejects a body-only placeholder for a secret another route never carried', () => {
 			const secrets = new Map([
 				['MCP_GITHUB', makeSecret('MCP_GITHUB', 'gho_real', ['api.githubcopilot.com'])],
 			]);
@@ -334,21 +371,18 @@ describe('substituteRequest', () => {
 					...baseRequest,
 					host: 'api.githubcopilot.com',
 					url: 'https://api.githubcopilot.com/mcp/',
-					headers: { authorization: 'Bearer __HEZO_SECRET_MCP_GITHUB__' },
-					body: '{"method":"tools/call","params":{"arguments":{"body":"__HEZO_SECRET_MCP_GITHUB__"}}}',
+					body: '{"params":{"arguments":{"note":"__HEZO_SECRET_MCP_GITHUB__"}}}',
 				},
 				secrets,
 			);
 			expect(result.failure).toEqual({
 				kind: 'secret_not_allowed_in_body',
 				name: 'MCP_GITHUB',
-				deliveredElsewhere: true,
+				bodyPaths: ['params.arguments.note'],
+				byteOffsets: [32],
 			});
-			// The header pass still ran and still counted, so the discriminator is a
-			// fact about this request rather than a guess about the payload.
-			expect(result.headers.authorization).toBe('Bearer gho_real');
-			expect([...result.secretsUsed]).toEqual(['MCP_GITHUB']);
 			expect(result.bodyChanged).toBe(false);
+			expect(result.secretsUsed.size).toBe(0);
 		});
 
 		it('still enforces allowed_hosts on body placeholders', () => {
@@ -524,5 +558,64 @@ describe('decrypted vault cache', () => {
 		await ctx.db.query(`DELETE FROM secrets WHERE name = 'CACHED_FOUR'`);
 		const after = await loadAllSecrets(scope());
 		expect(after.has('CACHED_FOUR')).toBe(false);
+	});
+});
+
+/**
+ * A refusal that cannot say WHERE is unactionable for a body the caller never
+ * wrote. A real Codex run hit this: the GitHub MCP call failed with
+ * `secret_not_allowed_in_body`, the run log suggested checking the secret's
+ * allowed hosts (which were correct), and nothing said which field carried the
+ * placeholder or which layer had put it there. Position is safe to report - a
+ * placeholder is not the secret, and no surrounding content is included.
+ */
+describe('locatePlaceholder', () => {
+	it('names the JSON path of every occurrence', () => {
+		const body = JSON.stringify({
+			jsonrpc: '2.0',
+			method: 'tools/call',
+			params: {
+				name: 'pull_request_read',
+				arguments: { owner: 'hezo-ai', repo: 'website' },
+				_meta: { headers: { Authorization: 'Bearer __HEZO_SECRET_OAUTH_GITHUB_E0D11568__' } },
+			},
+		});
+		const found = locatePlaceholder(body, 'OAUTH_GITHUB_E0D11568');
+		expect(found.bodyPaths).toEqual(['params._meta.headers.Authorization']);
+		expect(found.byteOffsets.length).toBe(1);
+	});
+
+	it('walks arrays and reports every hit', () => {
+		const body = JSON.stringify({
+			messages: [{ text: 'fine' }, { text: 'see __HEZO_SECRET_TOK__' }],
+			trailer: '__HEZO_SECRET_TOK__',
+		});
+		const found = locatePlaceholder(body, 'TOK');
+		expect(found.bodyPaths).toEqual(['messages[1].text', 'trailer']);
+		expect(found.byteOffsets.length).toBe(2);
+	});
+
+	it('falls back to byte offsets when the body is not JSON', () => {
+		const body = 'grant_type=password&secret=__HEZO_SECRET_TOK__';
+		const found = locatePlaceholder(body, 'TOK');
+		expect(found.bodyPaths).toEqual([]);
+		expect(found.byteOffsets).toEqual([body.indexOf('__HEZO_SECRET_TOK__')]);
+	});
+
+	it('reports nothing when the placeholder is absent', () => {
+		const found = locatePlaceholder('{"ok":true}', 'TOK');
+		expect(found.bodyPaths).toEqual([]);
+		expect(found.byteOffsets).toEqual([]);
+	});
+
+	it('counts byte offsets in bytes, not UTF-16 units', () => {
+		// A multi-byte prefix must not shift the reported position: the offset is
+		// meant to index the bytes the proxy actually buffered.
+		const body = `{"note":"日本語","tok":"__HEZO_SECRET_TOK__"}`;
+		const found = locatePlaceholder(body, 'TOK');
+		expect(found.bodyPaths).toEqual(['tok']);
+		expect(found.byteOffsets).toEqual([
+			Buffer.byteLength(body.slice(0, body.indexOf('__HEZO_SECRET_TOK__')), 'utf8'),
+		]);
 	});
 });
