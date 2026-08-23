@@ -266,11 +266,13 @@ describe('EgressProxy', () => {
 
 	// An MCP `tools/call` over Streamable HTTP is a POST of small fixed-length
 	// application/json, so it lands inside the body-buffering window and every
-	// tool-call payload gets scanned. An agent writing the literal placeholder
-	// text into a tool argument therefore trips the body gate even though its
-	// credential is already being delivered by the header the runtime configured.
-	// The refusal is right; the message has to name which mistake it is.
-	it('tells an agent the credential was already sent when an mcp tool-call body repeats it', async () => {
+	// tool-call payload gets scanned. An agent quoting the placeholder into a
+	// tool argument - a GitHub comment citing connector config, a review quoting
+	// an error - used to trip the body gate even though its credential was
+	// already delivered by the header the runtime configured. That refusal was a
+	// recurring production failure across every runtime, so quotation forwards:
+	// the placeholder is text, not the secret, and the credential is on the wire.
+	it('forwards an mcp tool-call body that repeats the delivered placeholder', async () => {
 		const runId = `run-${Date.now()}-body-mcp`;
 		await insertSecret('MCP_GITHUB_DELIVERED', 'gho-never-leaked', ['127.0.0.1']);
 		const allocated = await proxy.allocateRunProxy(runId, { teamId, agentId });
@@ -294,14 +296,12 @@ describe('EgressProxy', () => {
 					},
 				}),
 			});
-			expect(res.status).toBe(403);
-			const parsed = JSON.parse(res.body);
-			// The code is load-bearing for `reportRejection`, so only the prose moves.
-			expect(parsed.error).toBe('secret_not_allowed_in_body');
-			expect(parsed.message).toContain('already substituted into this request');
-			expect(parsed.message).toContain('Remove that literal text from the body content.');
-			// The old message sent the agent after an admin-only toggle it did not need.
-			expect(parsed.message).not.toContain('ask an admin to enable it');
+			expect(res.status).toBe(200);
+			const lastReq = upstreamRequests.at(-1);
+			// The header credential substituted; the quoted body text untouched; the
+			// real value nowhere in the payload.
+			expect(lastReq?.headers.authorization).toBe('Bearer gho-never-leaked');
+			expect(lastReq?.body).toContain('__HEZO_SECRET_MCP_GITHUB_DELIVERED__');
 			for (const req of upstreamRequests) {
 				expect(req.body.includes('gho-never-leaked')).toBe(false);
 			}
@@ -326,8 +326,11 @@ describe('EgressProxy', () => {
 			expect(res.status).toBe(403);
 			const parsed = JSON.parse(res.body);
 			expect(parsed.error).toBe('secret_not_allowed_in_body');
-			expect(parsed.message).toContain('ask an admin to enable it');
-			expect(parsed.message).not.toContain('already substituted into this request');
+			expect(parsed.message).toContain('ask an admin to enable body substitution');
+			expect(parsed.message).toContain('no other part of this request carries that credential');
+			// Agents quote error text into comments and threads, so the refusal must
+			// not spell the delimited literal that would seed the next refusal.
+			expect(parsed.message).not.toContain('__HEZO_SECRET_');
 			for (const req of upstreamRequests) {
 				expect(req.body.includes('never-leaked-bodyonly')).toBe(false);
 			}

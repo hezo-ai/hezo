@@ -75,18 +75,32 @@ jobs:
 
             // Antigravity has no version API - its manifest carries the current
             // release only, which is exactly why it is pinned by URL + checksum.
+            // Both architectures are pinned separately (the image ships multi-arch
+            // and the artifact is a native ELF), so both manifests are read: a bump
+            // needs the url + sha512 from each, and they must agree on the version.
             try {
-              const res = await fetch(
-                'https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json',
-              );
-              const m = await res.json();
+              const manifests = {};
+              for (const arch of ['amd64', 'arm64']) {
+                const res = await fetch(
+                  `https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_${arch}.json`,
+                );
+                manifests[arch] = await res.json();
+              }
               const pinned = argOf('AGY_VERSION');
+              const split = manifests.amd64.version !== manifests.arm64.version;
+              const behind = split || pinned !== manifests.amd64.version;
               rows.push({
                 name: 'agy (Antigravity)',
                 pinned: pinned ?? '(no ARG found)',
-                latest: m.version,
-                behind: pinned !== m.version,
-                extra: m.version !== pinned ? `url: ${m.url}\nsha512: ${m.sha512}` : '',
+                latest: split
+                  ? `${manifests.amd64.version} (amd64) / ${manifests.arm64.version} (arm64) - upstream is mid-rollout, wait for both`
+                  : manifests.amd64.version,
+                behind,
+                extra: behind
+                  ? ['amd64', 'arm64']
+                      .map((a) => `ARG AGY_URL_${a.toUpperCase()}=${manifests[a].url}\nARG AGY_SHA512_${a.toUpperCase()}=${manifests[a].sha512}`)
+                      .join('\n')
+                  : '',
               });
             } catch (e) {
               rows.push({ name: 'agy (Antigravity)', pinned: argOf('AGY_VERSION'), latest: `lookup failed: ${e.message}`, behind: false });

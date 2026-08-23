@@ -74,33 +74,54 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
 #
 # Pinned by artifact URL + checksum rather than by version, because the upstream
 # installer offers no way to choose one: it accepts only `-d` and `-h`, and the
-# manifest it reads (`/manifests/linux_amd64.json`) exposes the current release
-# only. The artifact path carries an opaque build id after the version
+# manifest it reads exposes the current release only. The artifact path carries
+# an opaque build id after the version
 # (`.../1.1.17-5084709148033024/...`), so it cannot be rebuilt from AGY_VERSION
 # alone - the full URL has to be recorded.
 #
-# To bump: fetch
+# One URL + checksum PER ARCHITECTURE. Upstream publishes a separate artifact per
+# arch and the tarball is a native ELF, so a single x64 URL installs a binary the
+# arm64 leg of the multi-arch release build cannot exec - and it fails as
+# `agy: not found` (the missing x86-64 loader), not as an obvious arch error.
+#
+# To bump: fetch both manifests -
 # https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
-# and copy `version`, `url` and `sha512` across. The `agy --version` check below
-# compares against AGY_VERSION, so a URL and a version that disagree fail the
-# build instead of shipping a mislabelled binary.
+# https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json
+# - and copy `version`, `url` and `sha512` across from each. Both must report the
+# same `version`. The `agy --version` check below compares against AGY_VERSION, so
+# a URL and a version that disagree fail the build instead of shipping a
+# mislabelled binary.
 ARG AGY_VERSION=1.1.17
-ARG AGY_URL=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.17-5084709148033024/linux-x64/cli_linux_x64.tar.gz
-ARG AGY_SHA512=5c6047a19e80025ea7cecc8152fb263a7f14e80591ee75bdf1ca10191cc0cd1639b5b5ebdce4d1c9d43b14bd2446f038a457821694579f4392b6ca9736512936
+ARG AGY_URL_AMD64=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.17-5084709148033024/linux-x64/cli_linux_x64.tar.gz
+ARG AGY_SHA512_AMD64=5c6047a19e80025ea7cecc8152fb263a7f14e80591ee75bdf1ca10191cc0cd1639b5b5ebdce4d1c9d43b14bd2446f038a457821694579f4392b6ca9736512936
+ARG AGY_URL_ARM64=https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.17-5084709148033024/linux-arm/cli_linux_arm64.tar.gz
+ARG AGY_SHA512_ARM64=ad871538fc8bbd0cf96e11b85e388dadde5cd02164c2921cf7cd30646e343c90a63ef5224f6420612ad6f91fe06f260e332e307968082f3a1f54e53933be847f
+# BuildKit fills TARGETARCH in per target platform. The classic builder leaves it
+# unset, and Hezo's own host-side fallback build shells out to `docker build`, so
+# fall back to the build container's own architecture - which is the target
+# architecture on every builder, emulated or not.
+ARG TARGETARCH
 # The archive holds a single member named `antigravity`; upstream's installer
 # renames it to `agy` on the way in, and then hands off to `agy install --dir`
 # for its own shell setup. Both steps are reproduced here so replacing the
 # installer changes only WHICH build lands, not what the image ends up with.
 # `agy install` is tolerant by design (upstream absorbs its exit), so it must not
 # fail the build.
-RUN curl -fsSL "${AGY_URL}" -o /tmp/agy.tar.gz \
-    && echo "${AGY_SHA512}  /tmp/agy.tar.gz" | sha512sum -c - \
-    && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity \
-    && install -m 0755 /tmp/antigravity /usr/local/bin/agy \
-    && rm -f /tmp/agy.tar.gz /tmp/antigravity \
-    && (agy install --dir /usr/local/bin || true) \
-    && agy --version \
-    && agy --version | grep -q "${AGY_VERSION}"
+RUN set -eu; \
+    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$arch" in \
+      amd64) url="${AGY_URL_AMD64}"; sha="${AGY_SHA512_AMD64}" ;; \
+      arm64) url="${AGY_URL_ARM64}"; sha="${AGY_SHA512_ARM64}" ;; \
+      *) echo "No pinned Antigravity artifact for architecture ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "$url" -o /tmp/agy.tar.gz; \
+    echo "${sha}  /tmp/agy.tar.gz" | sha512sum -c -; \
+    tar -xzf /tmp/agy.tar.gz -C /tmp antigravity; \
+    install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
+    rm -f /tmp/agy.tar.gz /tmp/antigravity; \
+    (agy install --dir /usr/local/bin || true); \
+    agy --version; \
+    agy --version | grep -q "${AGY_VERSION}"
 
 # Moonshot Kimi Code (`kimi`) — the `kimi` provider's native-CLI option, alongside
 # (not instead of) its default Claude Code path above. Pinned

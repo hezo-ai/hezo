@@ -4409,8 +4409,10 @@ except a narrowly-gated path for secrets a human has opted into body substitutio
 substituted, and is forwarded with a recomputed `Content-Length`. Everything else — larger,
 non-JSON, compressed, chunked, or streaming bodies (SSE, Streamable-HTTP MCP) — streams
 through untouched, so long-lived connections are never held in memory. Body substitution
-still enforces `allowed_hosts`, and a body placeholder for a secret without the opt-in is
-rejected, not leaked. This exists for APIs that take credentials in the body, such as a login
+still enforces `allowed_hosts`. A body placeholder for a secret without the opt-in is
+never substituted: it forwards as literal text when the same credential already rides a
+header or the URL of the request (the placeholder quoted as content), and is rejected when
+the body is its only route. This exists for APIs that take credentials in the body, such as a login
 POST that returns a token (the agent then uses that token via the `Authorization` header).
 Failures are explicit HTTP errors returned to the agent: `unknown_secret` (400),
 `secret_not_allowed_for_host` (403), `secret_not_allowed_in_body` (403), `body_too_large`
@@ -4418,17 +4420,33 @@ Failures are explicit HTTP errors returned to the agent: `unknown_secret` (400),
 
 **An MCP `tools/call` sits inside that buffering window**, being a POST of small
 fixed-length `application/json` - so every tool-call payload an agent sends is scanned,
-and a placeholder written into a *tool argument* as literal text (a doc, a test fixture,
-a code comment about the grammar) is refused exactly like a credential the agent meant to
-send. The refusal stays: the proxy cannot read intent, and forwarding instead would ship
-an inert placeholder that 401s upstream with nothing naming the cause. What it does do is
-tell the two apart structurally rather than by inspecting the prose - headers and the URL
-are substituted **before** the body, so `secretsUsed` already records whether this same
-secret is on the wire by a route the proxy supports. `secret_not_allowed_in_body` carries
-that as `deliveredElsewhere`, and `describeFailure` picks one of two messages from it:
-already-sent-in-a-header ("remove the literal text"), or not-sent-at-all ("ask an admin to
-enable body substitution"). The code and the 403 are unchanged, since
-`reportConnectorRunRejection` keys off the code.
+and a placeholder written into a *tool argument* as literal text (a GitHub comment quoting
+connector config, a doc, a test fixture) looks identical to a credential the agent meant
+to send. The two are told apart structurally rather than by inspecting the prose - headers
+and the URL are substituted **before** the body, so `secretsUsed` already records whether
+this same secret is on the wire by a route the proxy supports. Already delivered means the
+body occurrence is quotation, and it **forwards unchanged**: a placeholder is not the
+secret, and refusing here turned agents documenting their own connector setup into
+recurring 403s that read as infrastructure failures (production hit it across every
+runtime, clustered on the tasks whose threads quoted the placeholder). Not delivered means
+the body is the request's only route for the credential, which still refuses loudly -
+forwarding would ship an inert placeholder that 401s upstream with nothing naming the
+cause. Neither refusal message spells the delimited placeholder: agents quote error text
+into comments and threads, so a message carrying the literal seeds the next refusal.
+
+**It also says WHERE.** `locatePlaceholder` (`substitution.ts`) walks the parsed body and
+reports the dotted JSON path of every occurrence (`params.arguments.body`), falling back to
+byte offsets when the body is not JSON. Position only - a placeholder is not the secret, and
+no surrounding content is ever included. This exists because the caller often did not write
+the body: an MCP client assembles its own JSON-RPC envelope, so "remove that literal text
+from the body" names nothing an agent can act on and gives no way to learn which layer put
+it there. A real Codex run lost itself to exactly that.
+
+**And the run notice reads the reason.** `substitution_failed` covers several unrelated
+rules, so `describeRecheck` routes through `substitutionRemedy(event.reason)` rather than
+offering one suggestion for all of them. The single old sentence told every case to check
+the secret's allowed hosts, which for the body rule is the one thing already known to be
+correct - the same run above was sent to a setting that could not be its cause.
 
 **Destination guard** (`services/egress/net-guard.ts`). The proxy runs in the **host's**
 network namespace and will dial whatever an authenticated caller names, so it refuses

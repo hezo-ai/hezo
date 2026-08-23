@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.53.0 - 2026-08-22
+
+### Features
+
+- **mcp:** send the registry conventions as initialize instructions ([#1029](https://github.com/hezo-ai/hezo/pull/1029))
+- **web:** one revision-history viewer for every versioned surface ([#1030](https://github.com/hezo-ai/hezo/pull/1030))
+- **web:** crumb takes the task name only once the heading leaves, and scrolls sideways ([#1026](https://github.com/hezo-ai/hezo/pull/1026))
+- **git-state:** start the container from Refresh, not a dead-end notice ([#1025](https://github.com/hezo-ai/hezo/pull/1025))
+
+### Bug Fixes
+
+- **ci:** pin the Antigravity CLI per architecture so the arm64 release build works ([#1037](https://github.com/hezo-ai/hezo/pull/1037))
+- **connectors:** stop removal silently orphaning repos, and tell Codex which GitHub tools are ours ([#1032](https://github.com/hezo-ai/hezo/pull/1032))
+- **egress:** tell a literal body placeholder apart from a credential ([#1027](https://github.com/hezo-ai/hezo/pull/1027))
+- **runs:** drop Claude Code's unrecognized-model noise on gateway providers ([#1024](https://github.com/hezo-ai/hezo/pull/1024))
+
+### Documentation
+
+- **readme:** rework for star conversion, and correct the runtime table ([#1033](https://github.com/hezo-ai/hezo/pull/1033))
+- **mcp:** record that Claude Code does surface initialize instructions ([#1034](https://github.com/hezo-ai/hezo/pull/1034))
+
+### Other
+
+- Update README by removing subtext and pronunciation
+- bound the docs manifest, span-edit the Custom Prompt, version chat memory, cap what reaches every run ([#1031](https://github.com/hezo-ai/hezo/pull/1031))
+- move the container tier off the backend shards ([#1028](https://github.com/hezo-ai/hezo/pull/1028))
+- Bill every container-uptime stretch, and re-queue a run the shutdown drain killed ([#1023](https://github.com/hezo-ai/hezo/pull/1023))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.52.0...0.53.0
+
+## 0.53.0 - 2026-08-21
+
+### Features
+
+- **mcp:** send the registry conventions as initialize instructions ([#1029](https://github.com/hezo-ai/hezo/pull/1029))
+- **web:** one revision-history viewer for every versioned surface ([#1030](https://github.com/hezo-ai/hezo/pull/1030))
+- **web:** crumb takes the task name only once the heading leaves, and scrolls sideways ([#1026](https://github.com/hezo-ai/hezo/pull/1026))
+- **git-state:** start the container from Refresh, not a dead-end notice ([#1025](https://github.com/hezo-ai/hezo/pull/1025))
+
+### Bug Fixes
+
+- **connectors:** stop removal silently orphaning repos, and tell Codex which GitHub tools are ours ([#1032](https://github.com/hezo-ai/hezo/pull/1032))
+- **egress:** tell a literal body placeholder apart from a credential ([#1027](https://github.com/hezo-ai/hezo/pull/1027))
+- **runs:** drop Claude Code's unrecognized-model noise on gateway providers ([#1024](https://github.com/hezo-ai/hezo/pull/1024))
+
+### Documentation
+
+- **readme:** rework for star conversion, and correct the runtime table ([#1033](https://github.com/hezo-ai/hezo/pull/1033))
+- **mcp:** record that Claude Code does surface initialize instructions ([#1034](https://github.com/hezo-ai/hezo/pull/1034))
+
+### Other
+
+- bound the docs manifest, span-edit the Custom Prompt, version chat memory, cap what reaches every run ([#1031](https://github.com/hezo-ai/hezo/pull/1031))
+- move the container tier off the backend shards ([#1028](https://github.com/hezo-ai/hezo/pull/1028))
+- Bill every container-uptime stretch, and re-queue a run the shutdown drain killed ([#1023](https://github.com/hezo-ai/hezo/pull/1023))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.52.0...0.53.0
+
 ## 0.52.0 - 2026-08-20
 
 ### Breaking Changes

@@ -21,10 +21,6 @@
 </p>
 
 <p align="center">
-  <sub>One binary. Your machine, your model keys, your data. Agents never see your real secrets.</sub>
-</p>
-
-<p align="center">
   <code>curl -fsSL https://hezo.ai/install.sh | sh</code>
 </p>
 
@@ -56,8 +52,6 @@ manage goals and projects, not twenty terminal tabs.
 Because those agents run real, often AI-written code, Hezo is **secure by design**: agents
 never see your real secrets, everything sensitive is encrypted behind a key only you hold,
 and every project runs sandboxed in its own container.
-
-<sub><em>Hezo</em> (say it <em>huh-zwo</em>) is a play on <em>hezuo</em> (合作), Mandarin for "to collaborate".</sub>
 
 ## Quickstart
 

@@ -25,14 +25,16 @@ jobs:
   # ghcr.io/hezo-ai/agent-base:<version> at provision time instead of building it
   # locally (packages/server/src/services/image-registry.ts) — so the GHCR package
   # must be public for the server's anonymous pull. Multi-arch so amd64 and arm64
-  # hosts both pull rather than fall back to a local build; arm64 compiles git from
-  # source under QEMU emulation, hence the long timeout.
+  # hosts both pull rather than fall back to a local build; the arm64 leg builds
+  # under QEMU emulation, hence the long timeout.
   #
   # This runs BEFORE the GitHub Release is published (the `publish` job `needs` it):
   # a released version advertises binaries that pull agent-base:<version> at
   # provision time, so cutting the Release before the image is pushed would hand
-  # users a version that can't provision if this build fails. cache-from reuses the
-  # amd64 layers ci.yml warms on main; arm64 builds cold.
+  # users a version that can't provision if this build fails. cache-from reuses
+  # both layer sets ci.yml warms on main - amd64 from build-agent-image, arm64
+  # from verify-agent-image-arm64, which builds the same Dockerfile on every push
+  # so an arm64 break never first surfaces here.
   publish-agent-image:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -76,7 +78,9 @@ jobs:
           tags: |
             ghcr.io/hezo-ai/agent-base:${{ steps.meta.outputs.version }}
             ghcr.io/hezo-ai/agent-base:latest
-          cache-from: type=gha
+          cache-from: |
+            type=gha
+            type=gha,scope=agent-base-arm64
           # ignore-error keeps an optional cache-export problem from cancelling the
           # GHCR push this release gates on — the downstream publish job needs this
           # image live before it tags and cuts the Release.

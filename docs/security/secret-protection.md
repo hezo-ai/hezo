@@ -55,8 +55,11 @@ into **body substitution**. When you do, the proxy will substitute that secret's
 placeholder into a small JSON request body (a single `application/json` request up to
 8 KB) - still only for the secret's allowed hosts. You enable it per secret, either by
 ticking the box when you provide the credential the agent asked for, or by editing the
-secret on the **Credentials** settings page. It stays **off** until you turn it on, and
-a placeholder in a body for a secret without it is blocked just like a disallowed host.
+secret on the **Credentials** settings page. It stays **off** until you turn it on. For a
+secret without it, a body placeholder is never substituted: when the same credential
+already travels in a header or the URL of that request, the body text passes through
+unchanged (an agent quoting the placeholder in a comment or document it sends out), and
+when the body is the request's only route for the credential, the request is blocked.
 After such a login, the agent uses the returned token via the normal `Authorization`
 header, so the credential itself only ever travels in that one login request.
 
