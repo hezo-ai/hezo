@@ -174,3 +174,18 @@ class StubIntersectionObserver {
 (
 	globalThis as unknown as { IntersectionObserver: typeof StubIntersectionObserver }
 ).IntersectionObserver = StubIntersectionObserver;
+
+// happy-dom follows a clicked link, fetching the href over the real network and
+// logging the response into stderr - a third party voting on the run, and noise
+// in an otherwise quiet log. No component spec asserts on where an external link
+// went (the href is the assertion), so swallow the navigation for the
+// new-tab links that carry one.
+document.addEventListener(
+	'click',
+	(event) => {
+		const target = event.target;
+		if (!(target instanceof Element)) return;
+		if (target.closest('a[target="_blank"][href]')) event.preventDefault();
+	},
+	true,
+);

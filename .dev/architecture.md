@@ -4591,6 +4591,19 @@ impossible) and a redirect flow would need a per-host registered callback. The s
 is data-driven via `packages/shared/src/types/connector-capabilities.ts`; generic OAuth
 machinery is in `services/oauth/*`, GitHub REST helpers in `services/github.ts`.
 
+**Every device sign-in renders through one component.** `DeviceCodeSteps`
+(`packages/web/src/components/ui/device-code-steps.tsx`) draws the numbered rail - copy the
+one-time code, open the provider's page and enter it there, and where a flow hands a code
+back, paste it home - for all three surfaces that have this shape: the connector device flow
+(`ConnectorDeviceFlowDialog`), the generic OAuth broker (`ConnectorOAuthBrokerForm`) and the
+AI-provider guided sign-in (`SubscriptionLoginPanel`, § Guided sign-in above). It is
+presentational: each caller keeps its own transport and feeds a resolved `DeviceCodeState`,
+and the rail adapts to what that state carries - no `userCode` drops the copy step, a
+`returnCode` adds a third, and the ordinals follow. The provider's page opens from an anchor
+the operator clicks, never an automatic `window.open`: a tab fired before the code is on
+screen arrives asking for something the operator has not seen, and is pop-up blocked often
+enough that the code was all they had left.
+
 **Storage.** `oauth_connections` is **project-scoped** via `project_id` (non-NULL = private
 to that project so two projects hold separate accounts; NULL = the global "all projects"
 scope), keyed per-scope on `(project_id, provider, provider_account_id)`. Tokens have no

@@ -20,9 +20,9 @@ is never written into the container where agent code runs, wherever that contain
 ## Connect GitHub once
 
 To give a project access to GitHub, you connect a GitHub account once from the project's
-**Connections** page using GitHub's **device flow**: Hezo shows you a short code, you
-enter it on GitHub, and you're done - there's no OAuth app to pre-register and no redirect
-URL to configure. On connect, the project's public key is **automatically registered** on
+**Connections** page using GitHub's **device flow**: Hezo shows you a short code to copy,
+then a link to open, and you enter the code there. There's no OAuth app to pre-register
+and no redirect URL to configure. On connect, the project's public key is **automatically registered** on
 your GitHub account as a *signing* key, so commits show the Verified badge. Subsequent
 repositories reuse that connection, and the same connection is what authenticates clones,
 fetches and pushes.
