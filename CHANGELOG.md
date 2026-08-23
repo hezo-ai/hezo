@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.53.1 - 2026-08-23
+
+### Bug Fixes
+
+- **egress:** forward quoted body placeholders, pinpoint the refusals that remain ([#1039](https://github.com/hezo-ai/hezo/pull/1039))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.53.0...0.53.1
+
 ## 0.53.0 - 2026-08-22
 
 ### Features
