@@ -15,6 +15,9 @@ import { refreshExpiringTokens } from '../oauth/token-resolver';
  * `allow_body_substitution` may also be substituted into a small JSON request
  * body (gated by the proxy to ≤ 8 KB `application/json` requests) — for APIs
  * that take a credential in the body, such as a login that returns a token.
+ * Without that opt-in, a body occurrence forwards as literal text when the same
+ * credential already rides a header or the URL of the request (the placeholder
+ * quoted as content), and is refused when the body is its only route.
  *
  * The match grammar is the SINGLE canonical one shared with
  * `request_credential` and the admin secrets route (see
@@ -43,14 +46,12 @@ export type SubstitutionFailure =
 	| { kind: 'unknown_secret'; name: string }
 	| { kind: 'secret_not_allowed_for_host'; name: string; host: string }
 	| {
+			/** Fires only when the body is the sole route carrying this secret: a
+			 * body occurrence whose credential was already substituted into a header
+			 * or the URL of the same request is treated as the placeholder quoted as
+			 * literal text and forwarded unchanged, never refused. */
 			kind: 'secret_not_allowed_in_body';
 			name: string;
-			/** Whether this same secret was already substituted into a header or the
-			 * URL of this request. When it was, the credential is already on its way
-			 * and the body occurrence is the placeholder used as literal text - a
-			 * different mistake from meaning to send the credential in the payload,
-			 * and a different remedy. */
-			deliveredElsewhere: boolean;
 			/**
 			 * Where in the body the placeholder sits, as dotted JSON paths.
 			 *
@@ -283,24 +284,28 @@ export function substituteRequest(
 		}
 		return null;
 	};
-	// Body substitution is gated on a per-secret opt-in on top of the host check:
-	// a placeholder in the body for a secret without `allow_body_substitution`
-	// fails loudly rather than leaking the literal placeholder into the payload.
-	const checkBodyAccess = (name: string): SubstitutionFailure | null => {
+	// Body substitution is gated on a per-secret opt-in on top of the host check.
+	// Without the opt-in, a body occurrence splits on whether the same credential
+	// already went out by a supported route: headers and the URL are substituted
+	// before the body (below), so `secretsUsed` records that structurally, and it
+	// stays true for a payload no phrase-matcher would recognise. Already
+	// delivered means the body occurrence is the placeholder quoted as literal
+	// text - an agent citing its own config in a comment or document it sends
+	// upstream - and a placeholder is not the secret, so it forwards unchanged.
+	// Not delivered means this request's only route for the credential is one the
+	// proxy does not substitute into, which fails loudly rather than shipping an
+	// inert placeholder that 401s upstream with nothing naming the cause.
+	const checkBodyAccess = (name: string): AccessVerdict => {
 		const hostFailure = checkAccess(name);
 		if (hostFailure) return hostFailure;
 		const secret = secrets.get(name);
 		if (!secret?.allowBodySubstitution) {
-			// Headers and the URL are substituted before the body (below), so
-			// `secretsUsed` already tells us whether this credential is on the wire
-			// by a route the proxy does support. Structural, so it stays true for a
-			// payload no phrase-matcher would recognise.
+			if (secretsUsed.has(name)) return 'forward_literal';
 			// Position is filled in by the caller, which is the only scope holding the
 			// body; empty here means "not located yet", never "not present".
 			return {
 				kind: 'secret_not_allowed_in_body',
 				name,
-				deliveredElsewhere: secretsUsed.has(name),
 				bodyPaths: [],
 				byteOffsets: [],
 			};
@@ -371,11 +376,15 @@ interface ApplyResult {
 	failure: SubstitutionFailure | null;
 }
 
+/** What an access check decides for one placeholder: substitute (`null`), leave
+ * the literal text in place with no error (`'forward_literal'`), or refuse. */
+type AccessVerdict = SubstitutionFailure | 'forward_literal' | null;
+
 function applyToString(
 	input: string,
 	secrets: Map<string, ResolvedSecret>,
 	secretsUsed: Set<string>,
-	checkAccess: (name: string) => SubstitutionFailure | null,
+	checkAccess: (name: string) => AccessVerdict,
 ): ApplyResult {
 	if (!PLACEHOLDER_PROBE_REGEX.test(input)) {
 		return { value: input, changed: false, failure: null };
@@ -383,6 +392,7 @@ function applyToString(
 	let failure: SubstitutionFailure | null = null;
 	const result = input.replace(createPlaceholderRegex(), (match, name: string) => {
 		const access = checkAccess(name);
+		if (access === 'forward_literal') return match;
 		if (access) {
 			failure ??= access;
 			return match;
@@ -423,7 +433,7 @@ function applyToAuthorization(
 	raw: string,
 	secrets: Map<string, ResolvedSecret>,
 	secretsUsed: Set<string>,
-	checkAccess: (name: string) => SubstitutionFailure | null,
+	checkAccess: (name: string) => AccessVerdict,
 ): ApplyResult {
 	const basic = decodeBasicCredential(raw);
 	// Not Basic, not valid base64, or carrying no placeholder: the ordinary

@@ -1466,22 +1466,34 @@ function describeFailure(failure: SubstitutionFailure): FailureDescription {
 				message: `No secret named ${failure.name} is available to this run.`,
 			};
 		case 'secret_not_allowed_for_host':
+			// Two-sided because the refusal cannot read intent: a credential aimed at
+			// a genuinely new endpoint wants the allowlist widened, while a
+			// placeholder quoted as text wants the text reworded - and widening the
+			// allowlist to "fix" a quotation would make substitution send the real
+			// value into that content.
 			return {
 				statusCode: 403,
 				code: 'secret_not_allowed_for_host',
-				message: `Secret ${failure.name} is not permitted for host ${failure.host}.`,
+				message:
+					`Secret ${failure.name} is not permitted for host ${failure.host}. ` +
+					`If this request should deliver that credential, an admin can add the host to the secret's allowed hosts. ` +
+					`If the placeholder is only quoted as text, describe the credential in words instead - do not add the host for that, or substitution would send the real value into this content.`,
 			};
 		case 'secret_not_allowed_in_body':
-			// Two very different mistakes share this code. Telling them apart matters:
-			// the old single message sent an agent that had merely written the
-			// placeholder as literal text off to enable body substitution on a
-			// credential it never meant to send, which is also not its call to make.
+			// Fires only when the body is the request's sole route for the secret: a
+			// body occurrence whose credential already rides a header or the URL is
+			// forwarded as quoted text and never reaches here. Deliberately avoids
+			// spelling the delimited placeholder: agents quote error text into
+			// comments and task threads, and a message carrying the literal seeds
+			// the next refusal.
 			return {
 				statusCode: 403,
 				code: 'secret_not_allowed_in_body',
-				message: failure.deliveredElsewhere
-					? `Secret ${failure.name} was already substituted into this request's headers, so the credential has been sent. The text __HEZO_SECRET_${failure.name}__ also appears in the JSON body${describeBodyLocation(failure)}, and Hezo does not substitute secrets into request bodies. Remove that literal text from the body content.`
-					: `A __HEZO_SECRET_${failure.name}__ placeholder appears in this JSON request body${describeBodyLocation(failure)}. Hezo substitutes secrets into headers and the URL, never into a body unless an admin has enabled body substitution on that credential. If you meant to send the credential in the payload, ask an admin to enable it. If the placeholder is literal text you are trying to write, it cannot be sent through the proxy.`,
+				message:
+					`A placeholder for secret ${failure.name} appears in this JSON request body${describeBodyLocation(failure)}, and no other part of this request carries that credential. ` +
+					`Hezo substitutes secrets into headers and the URL, never into a body unless an admin has enabled body substitution on that credential. ` +
+					`Send the credential in a header, or ask an admin to enable body substitution. ` +
+					`A placeholder quoted as literal text is forwarded unchanged only when the same credential is already delivered in a header or the URL.`,
 			};
 		case 'secrets_unavailable':
 			return {

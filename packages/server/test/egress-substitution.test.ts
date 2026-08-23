@@ -315,7 +315,6 @@ describe('substituteRequest', () => {
 			expect(result.failure).toEqual({
 				kind: 'secret_not_allowed_in_body',
 				name: 'UMAMI_PW',
-				deliveredElsewhere: false,
 				// Naming the field is what makes the refusal fixable.
 				bodyPaths: ['password'],
 				byteOffsets: [13],
@@ -327,9 +326,43 @@ describe('substituteRequest', () => {
 
 		// The MCP shape: the connector's credential rides the Authorization header
 		// the runtime configured, and the same placeholder turns up in the tool-call
-		// arguments because the agent is writing that literal text somewhere. The
-		// credential is already on the wire, so the body occurrence is content.
-		it('reports a body placeholder as already delivered when the header carried it', () => {
+		// arguments because the agent quoted that literal text in content it is
+		// sending - a GitHub comment citing connector config, a review quoting an
+		// error. The credential is already on the wire, so the body occurrence is
+		// quotation and the request forwards with the literal untouched. Refusing
+		// here was a live production failure: every runtime tripped it, clustered on
+		// the tasks whose threads quoted the placeholder.
+		it('forwards a body placeholder unchanged when the header carried the credential', () => {
+			const secrets = new Map([
+				['MCP_GITHUB', makeSecret('MCP_GITHUB', 'gho_real', ['api.githubcopilot.com'])],
+			]);
+			const body =
+				'{"method":"tools/call","params":{"arguments":{"body":"__HEZO_SECRET_MCP_GITHUB__"}}}';
+			const result = substituteRequest(
+				{
+					...baseRequest,
+					host: 'api.githubcopilot.com',
+					url: 'https://api.githubcopilot.com/mcp/',
+					headers: { authorization: 'Bearer __HEZO_SECRET_MCP_GITHUB__' },
+					body,
+				},
+				secrets,
+			);
+			expect(result.failure).toBeNull();
+			// The header pass still ran and still counted, so the discriminator is a
+			// fact about this request rather than a guess about the payload.
+			expect(result.headers.authorization).toBe('Bearer gho_real');
+			expect([...result.secretsUsed]).toEqual(['MCP_GITHUB']);
+			// The literal is text, never the secret: forwarded exactly as written.
+			expect(result.body).toBe(body);
+			expect(result.bodyChanged).toBe(false);
+		});
+
+		// Order matters for the discriminator: the body occurrence counts as
+		// quotation only when a supported route of the SAME request delivered the
+		// credential. A body-only request still refuses, whatever earlier requests
+		// carried.
+		it('still rejects a body-only placeholder for a secret another route never carried', () => {
 			const secrets = new Map([
 				['MCP_GITHUB', makeSecret('MCP_GITHUB', 'gho_real', ['api.githubcopilot.com'])],
 			]);
@@ -338,27 +371,18 @@ describe('substituteRequest', () => {
 					...baseRequest,
 					host: 'api.githubcopilot.com',
 					url: 'https://api.githubcopilot.com/mcp/',
-					headers: { authorization: 'Bearer __HEZO_SECRET_MCP_GITHUB__' },
-					body: '{"method":"tools/call","params":{"arguments":{"body":"__HEZO_SECRET_MCP_GITHUB__"}}}',
+					body: '{"params":{"arguments":{"note":"__HEZO_SECRET_MCP_GITHUB__"}}}',
 				},
 				secrets,
 			);
 			expect(result.failure).toEqual({
 				kind: 'secret_not_allowed_in_body',
 				name: 'MCP_GITHUB',
-				deliveredElsewhere: true,
-				// The JSON-RPC envelope an MCP client builds itself. Without this path
-				// the refusal says "in the JSON body" about a body the agent never
-				// wrote, which is the report that sent a real run chasing its
-				// allowed-hosts list instead.
-				bodyPaths: ['params.arguments.body'],
-				byteOffsets: [54],
+				bodyPaths: ['params.arguments.note'],
+				byteOffsets: [32],
 			});
-			// The header pass still ran and still counted, so the discriminator is a
-			// fact about this request rather than a guess about the payload.
-			expect(result.headers.authorization).toBe('Bearer gho_real');
-			expect([...result.secretsUsed]).toEqual(['MCP_GITHUB']);
 			expect(result.bodyChanged).toBe(false);
+			expect(result.secretsUsed.size).toBe(0);
 		});
 
 		it('still enforces allowed_hosts on body placeholders', () => {

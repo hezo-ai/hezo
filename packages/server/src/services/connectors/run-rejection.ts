@@ -68,9 +68,9 @@ export async function reportConnectorRunRejection(
 function substitutionRemedy(reason: string): string {
 	switch (reason) {
 		case 'secret_not_allowed_in_body':
-			return "the credential's placeholder also appeared in the request body, which Hezo never substitutes into. The allowed hosts are not the problem: remove the placeholder from the body, or send it as a header.";
+			return "the request body was the only route carrying the credential's placeholder, and Hezo substitutes into a body only when body substitution is enabled on that secret. The allowed hosts are not the problem: send the credential as a header, or ask an operator to enable body substitution. A placeholder quoted as text forwards unchanged once the credential also rides a header.";
 		case 'secret_not_allowed_for_host':
-			return "the host is not on that secret's allowed-hosts list.";
+			return "the host is not on that secret's allowed-hosts list. If the placeholder was only quoted as text rather than delivering the credential, reword the text to describe it - widening the allowlist for that would make substitution send the real value into the content.";
 		case 'unknown_secret':
 			return 'the run has no secret by that name - it may have been deleted or renamed.';
 		case 'secrets_unavailable':

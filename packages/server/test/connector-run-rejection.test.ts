@@ -227,6 +227,9 @@ describe('recheckRejectedConnector', () => {
 			);
 			expect(line).toContain('request body');
 			expect(line).toContain('allowed hosts are not the problem');
+			// The refusal only fires when the body was the credential's sole route,
+			// so the remedy names the two real fixes.
+			expect(line).toContain('send the credential as a header');
 			// The old wording, which sent a run to the wrong setting.
 			expect(line).not.toContain("check the secret's allowed hosts");
 		} finally {
@@ -251,6 +254,11 @@ describe('recheckRejectedConnector', () => {
 				{ label: 'test', teamId, projectId },
 			);
 			expect(line).toContain('allowed-hosts list');
+			// A quoted placeholder also lands here (the host check runs before the
+			// body check), and "add the host" is the one fix that must not be
+			// suggested unconditionally - substitution would then send the real
+			// value into the quoted content.
+			expect(line).toContain('quoted as text');
 		} finally {
 			await healthy.close();
 		}
