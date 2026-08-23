@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, Copy, ExternalLink, Loader2, Plug } from 'lucide-react';
+import { Plug } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
 	type DeviceFlowStart,
@@ -7,8 +7,8 @@ import {
 	pollDeviceFlow,
 	useDeviceStart,
 } from '../hooks/use-oauth-connections';
-import { copyToClipboard } from '../lib/clipboard';
-import { Button } from './ui/button';
+import { useI18n } from '../lib/i18n';
+import { type DeviceCodeState, DeviceCodeSteps } from './ui/device-code-steps';
 import { DialogContent } from './ui/dialog';
 
 interface ConnectorDeviceFlowDialogProps {
@@ -23,9 +23,11 @@ interface ConnectorDeviceFlowDialogProps {
 
 /**
  * Drives the OAuth device flow (RFC 8628) for a connector: requests a device
- * code, shows the user code + verification URL, then polls until the user
- * authorizes. Provider-agnostic — works for any connector whose capability
- * declares `deviceAuth`.
+ * code, then polls until the user authorizes. Provider-agnostic — works for any
+ * connector whose capability declares `deviceAuth`.
+ *
+ * Transport only. The code, the link and the sequence between them are
+ * `DeviceCodeSteps`, shared with the AI-provider subscription sign-in.
  */
 export function ConnectorDeviceFlowDialog({
 	open,
@@ -35,11 +37,11 @@ export function ConnectorDeviceFlowDialog({
 	providerLabel,
 	onSuccess,
 }: ConnectorDeviceFlowDialogProps) {
+	const { t } = useI18n();
 	const startDeviceFlow = useDeviceStart(projectId);
 	const [deviceFlow, setDeviceFlow] = useState<DeviceFlowStart | null>(null);
-	const [statusMessage, setStatusMessage] = useState('');
 	const [errorMessage, setErrorMessage] = useState('');
-	const [codeCopied, setCodeCopied] = useState(false);
+	const [attempt, setAttempt] = useState(0);
 	const stopRef = useRef(false);
 	const startedRef = useRef(false);
 
@@ -52,48 +54,33 @@ export function ConnectorDeviceFlowDialog({
 	const onSuccessRef = useRef(onSuccess);
 	onSuccessRef.current = onSuccess;
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` is the retry trigger - bumping it is what restarts a flow the dialog never closed
 	useEffect(() => {
 		if (!open) {
 			startedRef.current = false;
 			stopRef.current = true;
 			setDeviceFlow(null);
-			setStatusMessage('');
 			setErrorMessage('');
-			setCodeCopied(false);
 			return;
 		}
 		if (startedRef.current) return;
 		startedRef.current = true;
 
-		setStatusMessage('Requesting a device code…');
 		startDeviceFlowRef.current
 			.mutateAsync(connectorIdRef.current)
-			.then((flow) => {
-				setDeviceFlow(flow);
-				if (!flow.verification_uri) return; // never open a blank tab
-				try {
-					window.open(flow.verification_uri, '_blank', 'noopener');
-				} catch {
-					/* pop-up blocked — user can copy verification_uri */
-				}
-			})
-			.catch((e: Error) => {
-				setErrorMessage(e.message);
-				setStatusMessage('');
-			});
-	}, [open]);
+			.then(setDeviceFlow)
+			.catch((e: Error) => setErrorMessage(e.message));
+	}, [open, attempt]);
 
 	useEffect(() => {
 		if (!deviceFlow) return;
 		stopRef.current = false;
-		setStatusMessage('Waiting for you to authorize…');
 
 		(async () => {
 			while (!stopRef.current) {
 				try {
 					const result = await pollDeviceFlow(projectId, connectorId, deviceFlow.flow_id);
 					if (result.status === 'success') {
-						setStatusMessage(`Connected ${result.connection.provider_account_label}.`);
 						onSuccessRef.current?.(result.connection);
 						setDeviceFlow(null);
 						onOpenChangeRef.current(false);
@@ -104,7 +91,6 @@ export function ConnectorDeviceFlowDialog({
 					);
 				} catch (e) {
 					setErrorMessage((e as Error).message);
-					setStatusMessage('');
 					setDeviceFlow(null);
 					return;
 				}
@@ -116,89 +102,48 @@ export function ConnectorDeviceFlowDialog({
 		};
 	}, [deviceFlow, projectId, connectorId]);
 
-	const handleCopyCode = async () => {
-		if (!deviceFlow) return;
-		if (await copyToClipboard(deviceFlow.user_code)) {
-			setCodeCopied(true);
-			setTimeout(() => setCodeCopied(false), 2000);
-		}
-	};
+	// `expires_in` is a duration the server measured at issue time; the countdown
+	// wants a deadline, so pin one the moment the code lands.
+	const expiresAt = deviceFlow
+		? new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString()
+		: null;
+
+	const state: DeviceCodeState = errorMessage
+		? { status: 'failed', title: errorMessage }
+		: deviceFlow
+			? {
+					status: 'awaiting',
+					url: deviceFlow.verification_uri,
+					userCode: deviceFlow.user_code,
+					expiresAt,
+				}
+			: { status: 'starting' };
 
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
-			<DialogContent size="md" data-testid="connector-device-flow-dialog">
-				<Dialog.Title className="text-base font-semibold mb-1 pr-8 flex items-center gap-2">
-					<Plug className="size-4" />
-					Connect {providerLabel}
+			{/* The steps carry their own heading and subtitle, so the dialog names
+			    itself for assistive tech and opts out of a second description. */}
+			<DialogContent
+				size="md"
+				aria-describedby={undefined}
+				data-testid="connector-device-flow-dialog"
+			>
+				<Dialog.Title className="sr-only">
+					{t('deviceSignIn.connectTitle', { provider: providerLabel })}
 				</Dialog.Title>
-				<Dialog.Description className="text-sm text-text-2 mb-4">
-					Authorize Hezo on {providerLabel} by entering the code below on the page that just opened.
-				</Dialog.Description>
-
-				{errorMessage && (
-					<div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger mb-4">
-						{errorMessage}
-					</div>
-				)}
-
-				{!deviceFlow && !errorMessage && (
-					<div className="flex items-center gap-2 text-sm text-text-2">
-						<Loader2 className="size-4 animate-spin" />
-						{statusMessage || 'Starting…'}
-					</div>
-				)}
-
-				{deviceFlow && (
-					<div className="space-y-3">
-						<p className="text-sm">
-							Open{' '}
-							<a
-								href={deviceFlow.verification_uri}
-								target="_blank"
-								rel="noopener"
-								className="underline inline-flex items-center gap-1"
-							>
-								{deviceFlow.verification_uri}
-								<ExternalLink className="size-3" />
-							</a>{' '}
-							and enter this code:
-						</p>
-						<div className="flex flex-wrap items-center gap-2">
-							<div
-								className="font-mono text-2xl tracking-widest select-all"
-								data-testid="connector-device-code"
-							>
-								{deviceFlow.user_code}
-							</div>
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								onClick={handleCopyCode}
-								aria-label="Copy device code"
-							>
-								{codeCopied ? (
-									<>
-										<Check className="size-4 mr-1.5" />
-										Copied
-									</>
-								) : (
-									<>
-										<Copy className="size-4 mr-1.5" />
-										Copy
-									</>
-								)}
-							</Button>
-						</div>
-						<p className="text-xs text-text-3">{statusMessage}</p>
-					</div>
-				)}
-
-				<div className="flex justify-end mt-6">
-					<Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
-						Cancel
-					</Button>
-				</div>
+				<DeviceCodeSteps
+					testId="connector-device-flow-steps"
+					title={t('deviceSignIn.connectTitle', { provider: providerLabel })}
+					providerLabel={providerLabel}
+					icon={<Plug className="size-4" />}
+					state={state}
+					onRetry={() => {
+						setErrorMessage('');
+						startedRef.current = false;
+						setAttempt((n) => n + 1);
+					}}
+					onCancel={() => onOpenChange(false)}
+				/>
 			</DialogContent>
 		</Dialog.Root>
 	);

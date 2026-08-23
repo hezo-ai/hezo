@@ -1,7 +1,5 @@
 import {
 	ArrowUpRight,
-	Check,
-	Copy,
 	ExternalLink,
 	Info,
 	KeyRound,
@@ -18,8 +16,9 @@ import {
 	useBrokerDeviceStart,
 	useOAuthProviders,
 } from '../hooks/use-oauth-connections';
-import { copyToClipboard } from '../lib/clipboard';
+import { useI18n } from '../lib/i18n';
 import { Button } from './ui/button';
+import { type DeviceCodeState, DeviceCodeSteps } from './ui/device-code-steps';
 
 const CUSTOM = '__custom__';
 
@@ -103,6 +102,7 @@ export function ConnectorOAuthBrokerForm({
 	onSuccess,
 	onCancel,
 }: ConnectorOAuthBrokerFormProps) {
+	const { t } = useI18n();
 	const { data: providers = [] } = useOAuthProviders();
 	const brokerStart = useBrokerDeviceStart(projectId);
 
@@ -115,9 +115,7 @@ export function ConnectorOAuthBrokerForm({
 	const [allowedHostsCsv, setAllowedHostsCsv] = useState('');
 
 	const [deviceFlow, setDeviceFlow] = useState<DeviceFlowStart | null>(null);
-	const [statusMessage, setStatusMessage] = useState('');
 	const [errorMessage, setErrorMessage] = useState('');
-	const [codeCopied, setCodeCopied] = useState(false);
 	const stopRef = useRef(false);
 
 	const onSuccessRef = useRef(onSuccess);
@@ -134,14 +132,12 @@ export function ConnectorOAuthBrokerForm({
 	useEffect(() => {
 		if (!deviceFlow) return;
 		stopRef.current = false;
-		setStatusMessage('Waiting for you to authorize…');
 
 		(async () => {
 			while (!stopRef.current) {
 				try {
 					const result = await pollBrokerDeviceFlow(projectId, connectorId, deviceFlow.flow_id);
 					if (result.status === 'success') {
-						setStatusMessage(`Connected ${result.connection.provider_account_label}.`);
 						onSuccessRef.current?.(result.connection);
 						setDeviceFlow(null);
 						return;
@@ -151,7 +147,6 @@ export function ConnectorOAuthBrokerForm({
 					);
 				} catch (e) {
 					setErrorMessage((e as Error).message);
-					setStatusMessage('');
 					setDeviceFlow(null);
 					return;
 				}
@@ -181,7 +176,6 @@ export function ConnectorOAuthBrokerForm({
 			setErrorMessage('Custom provider needs a device code URL and a token URL.');
 			return;
 		}
-		setStatusMessage('Requesting a device code…');
 		brokerStart.mutate(
 			{
 				connectorId,
@@ -194,29 +188,12 @@ export function ConnectorOAuthBrokerForm({
 				allowed_hosts: isCustom && allowedHostsCsv.trim() ? csvToList(allowedHostsCsv) : undefined,
 			},
 			{
-				onSuccess: (flow) => {
-					setDeviceFlow(flow);
-					if (!flow.verification_uri) return; // never open a blank tab
-					try {
-						window.open(flow.verification_uri, '_blank', 'noopener');
-					} catch {
-						/* pop-up blocked — user can copy verification_uri */
-					}
-				},
+				onSuccess: setDeviceFlow,
 				onError: (err: unknown) => {
 					setErrorMessage(err instanceof Error ? err.message : 'Failed to start the device flow');
-					setStatusMessage('');
 				},
 			},
 		);
-	};
-
-	const handleCopyCode = async () => {
-		if (!deviceFlow) return;
-		if (await copyToClipboard(deviceFlow.user_code)) {
-			setCodeCopied(true);
-			setTimeout(() => setCodeCopied(false), 2000);
-		}
 	};
 
 	const secretLabel =
@@ -233,63 +210,24 @@ export function ConnectorOAuthBrokerForm({
 				: 'Only needed if your provider issues a secret for its device-flow client.';
 
 	if (deviceFlow) {
+		const state: DeviceCodeState = {
+			status: 'awaiting',
+			url: deviceFlow.verification_uri,
+			userCode: deviceFlow.user_code,
+			// `expires_in` is a duration measured when the code was issued; the
+			// countdown wants a deadline, so pin one as it lands.
+			expiresAt: new Date(Date.now() + deviceFlow.expires_in * 1000).toISOString(),
+		};
 		return (
 			<div className={layout === 'dialog' ? 'space-y-4' : 'space-y-3'}>
-				<p className="text-sm text-text-2">
-					Open{' '}
-					<a
-						href={deviceFlow.verification_uri}
-						target="_blank"
-						rel="noopener"
-						className="text-accent underline inline-flex items-center gap-1"
-					>
-						{deviceFlow.verification_uri}
-						<ExternalLink className="size-3" />
-					</a>{' '}
-					(it should have opened automatically) and enter this code:
-				</p>
-				<div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface-2/60 px-4 py-3">
-					<div
-						className="font-mono text-2xl tracking-widest text-text-1 select-all"
-						data-testid="broker-device-code"
-					>
-						{deviceFlow.user_code}
-					</div>
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						onClick={handleCopyCode}
-						aria-label="Copy device code"
-					>
-						{codeCopied ? (
-							<>
-								<Check className="size-4 mr-1.5" />
-								Copied
-							</>
-						) : (
-							<>
-								<Copy className="size-4 mr-1.5" />
-								Copy
-							</>
-						)}
-					</Button>
-				</div>
-				<p className="text-xs text-text-3 flex items-center gap-2">
-					<Loader2 className="size-3.5 animate-spin" />
-					{statusMessage}
-				</p>
-				<p className="text-xs text-text-3">
-					Keep this open - it finishes as soon as you approve. The code expires in a few minutes; if
-					it lapses, cancel and start again.
-				</p>
-				{onCancel && (
-					<div className="flex justify-end">
-						<Button variant="secondary" size="sm" onClick={onCancel}>
-							Cancel
-						</Button>
-					</div>
-				)}
+				<DeviceCodeSteps
+					testId="broker-device-flow-steps"
+					title={t('deviceSignIn.connectTitle', { provider: connectorLabel })}
+					providerLabel={connectorLabel}
+					icon={<KeyRound className="size-4" />}
+					state={state}
+					onCancel={onCancel}
+				/>
 			</div>
 		);
 	}

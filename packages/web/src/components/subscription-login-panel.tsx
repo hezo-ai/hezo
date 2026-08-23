@@ -1,6 +1,6 @@
 import { type AgentRuntime, AI_PROVIDER_INFO, type AiProvider } from '@hezo/shared';
-import { Check, Copy, ExternalLink, Loader2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { KeyRound } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import {
 	cancelSubscriptionLogin,
 	invalidateAiProviders,
@@ -9,10 +9,8 @@ import {
 	startSubscriptionLogin,
 	submitSubscriptionLoginCode,
 } from '../hooks/use-ai-providers';
-import { copyToClipboard } from '../lib/clipboard';
 import { useI18n } from '../lib/i18n';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
+import { type DeviceCodeState, DeviceCodeSteps } from './ui/device-code-steps';
 
 /** How often the flow is polled while the operator is signing in elsewhere. */
 const POLL_MS = 1500;
@@ -42,6 +40,9 @@ interface SubscriptionLoginPanelProps {
  * Mounted only once the operator has chosen subscription auth and clicked sign
  * in, so starting a flow (which creates a container) is always something they
  * asked for rather than a side effect of opening a dialog.
+ *
+ * Transport only. The code, the link and the sequence between them are
+ * `DeviceCodeSteps`, shared with the connector device flow.
  */
 export function SubscriptionLoginPanel({
 	provider,
@@ -54,9 +55,8 @@ export function SubscriptionLoginPanel({
 	const { t } = useI18n();
 	const info = AI_PROVIDER_INFO[provider];
 	const [state, setState] = useState<SubscriptionLoginState>({ status: 'starting' });
-	const [code, setCode] = useState('');
 	const [submitting, setSubmitting] = useState(false);
-	const [copied, setCopied] = useState(false);
+	const [attempt, setAttempt] = useState(0);
 	const flowIdRef = useRef<string | null>(null);
 	const stopRef = useRef(false);
 
@@ -67,6 +67,7 @@ export function SubscriptionLoginPanel({
 	doneRef.current = onDone;
 	unavailableRef.current = onUnavailable;
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` is the retry trigger - bumping it abandons the failed flow and starts a fresh one
 	useEffect(() => {
 		stopRef.current = false;
 
@@ -116,24 +117,14 @@ export function SubscriptionLoginPanel({
 			// than leaving it to the flow's own 16-minute expiry.
 			if (flowIdRef.current) void cancelSubscriptionLogin(flowIdRef.current);
 		};
-	}, [provider, label, runtime]);
+	}, [provider, label, runtime, attempt]);
 
-	const handleCopy = useCallback(async () => {
-		if (state.status !== 'awaiting_user' || !state.user_code) return;
-		if (await copyToClipboard(state.user_code)) {
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
-		}
-	}, [state]);
-
-	async function handleSubmitCode(e: React.FormEvent) {
-		e.preventDefault();
+	async function handleSubmitCode(code: string) {
 		const flowId = flowIdRef.current;
-		if (!flowId || !code.trim()) return;
+		if (!flowId) return;
 		setSubmitting(true);
 		try {
-			await submitSubscriptionLoginCode(flowId, code.trim());
-			setCode('');
+			await submitSubscriptionLoginCode(flowId, code);
 		} finally {
 			setSubmitting(false);
 		}
@@ -145,106 +136,41 @@ export function SubscriptionLoginPanel({
 		onCancel();
 	}
 
-	if (state.status === 'starting') {
-		return (
-			<div className="flex flex-col gap-4" data-testid="subscription-login-panel">
-				<div className="flex flex-col items-center gap-2 py-10 text-center">
-					<Loader2 className="w-5 h-5 animate-spin text-text-3" />
-					<p className="text-sm text-text-2">
-						{t('settings.provider.signIn.starting', { cli: info.runtimeLabel })}
-					</p>
-				</div>
-				<div className="flex justify-end">
-					<Button type="button" variant="ghost" onClick={handleCancel}>
-						{t('common.cancel')}
-					</Button>
-				</div>
-			</div>
-		);
-	}
-
-	if (state.status === 'failed') {
-		return (
-			<div className="flex flex-col gap-4" data-testid="subscription-login-panel">
-				<p className="text-[13px] text-danger">{state.error}</p>
-				<div className="flex justify-end gap-2">
-					<Button type="button" variant="ghost" onClick={handleCancel}>
-						{t('common.cancel')}
-					</Button>
-					<Button type="button" onClick={onUnavailable}>
-						{t('settings.provider.signIn.manual')}
-					</Button>
-				</div>
-			</div>
-		);
-	}
-
+	// The parent swaps this panel out on success; rendering a second confirmation
+	// under the one it shows would be a duplicate.
 	if (state.status === 'succeeded') return null;
 
-	const needsCode = state.completion === 'code';
+	const stepsState: DeviceCodeState =
+		state.status === 'failed'
+			? { status: 'failed', title: state.error }
+			: state.status === 'awaiting_user'
+				? {
+						status: 'awaiting',
+						url: state.url,
+						userCode: state.user_code,
+						expiresAt: state.expires_at,
+					}
+				: { status: 'starting' };
 
 	return (
-		<div className="flex flex-col gap-3" data-testid="subscription-login-panel">
-			<p className="text-sm font-medium text-text-1">
-				{needsCode
-					? t('settings.provider.signIn.openLinkCode')
-					: t('settings.provider.signIn.openLink')}
-			</p>
-
-			<a
-				href={state.url}
-				target="_blank"
-				rel="noreferrer"
-				className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 hover:border-border-strong"
-			>
-				<span className="truncate font-mono text-xs text-text-1">{state.url}</span>
-				<ExternalLink className="w-3.5 h-3.5 shrink-0 text-text-3" />
-			</a>
-
-			{state.user_code && (
-				<>
-					<div className="rounded-md border border-dashed border-border-strong bg-surface-2 px-3 py-4 text-center">
-						<div className="text-eyebrow text-text-3 mb-1.5">
-							{t('settings.provider.signIn.oneTimeCode')}
-						</div>
-						{/* Tabular so the digits do not shift while it is read aloud off a phone. */}
-						<div className="font-mono text-2xl font-bold tracking-[0.11em] tabular-nums text-text-1">
-							{state.user_code}
-						</div>
-					</div>
-					<Button type="button" variant="secondary" onClick={handleCopy}>
-						{copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-						{t(copied ? 'common.copied' : 'common.copy')}
-					</Button>
-				</>
-			)}
-
-			{needsCode ? (
-				<form onSubmit={handleSubmitCode} className="flex flex-col gap-2">
-					<Input
-						label={t('settings.provider.signIn.codePrompt', { provider: info.name })}
-						value={code}
-						onChange={(e) => setCode(e.target.value)}
-						autoComplete="off"
-						spellCheck={false}
-					/>
-					<Button type="submit" disabled={!code.trim() || submitting}>
-						{submitting && <Loader2 className="w-4 h-4 animate-spin" />}
-						{t('common.continue')}
-					</Button>
-				</form>
-			) : (
-				<div className="flex items-center gap-2 text-[13px] text-text-2">
-					<Loader2 className="w-3.5 h-3.5 animate-spin" />
-					{t('settings.provider.signIn.waiting')}
-				</div>
-			)}
-
-			<div className="flex justify-end">
-				<Button type="button" variant="ghost" onClick={handleCancel}>
-					{t('common.cancel')}
-				</Button>
-			</div>
-		</div>
+		<DeviceCodeSteps
+			testId="subscription-login-panel"
+			title={t('settings.provider.signIn.heading', { provider: info.name })}
+			providerLabel={info.name}
+			icon={<KeyRound className="size-4" />}
+			state={stepsState}
+			returnCode={
+				state.status === 'awaiting_user' && state.completion === 'code'
+					? { submitting, onSubmit: handleSubmitCode }
+					: undefined
+			}
+			onRetry={() => {
+				setState({ status: 'starting' });
+				flowIdRef.current = null;
+				setAttempt((n) => n + 1);
+			}}
+			onCancel={handleCancel}
+			fallback={{ label: t('settings.provider.signIn.manual'), onSelect: onUnavailable }}
+		/>
 	);
 }

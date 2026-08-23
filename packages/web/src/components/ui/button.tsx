@@ -24,6 +24,28 @@ const sizes = {
 	lg: 'h-[38px] px-4 text-sm rounded-md gap-2',
 } as const;
 
+const shape =
+	'inline-flex items-center justify-center whitespace-nowrap border font-medium transition-colors cursor-pointer outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent disabled:opacity-45 disabled:pointer-events-none';
+
+/**
+ * The class string behind `Button`, for the rare control that must render as an
+ * `<a>` rather than a `<button>` — an external link that has to be a real
+ * anchor (middle-click, "open in new tab", never pop-up blocked) while reading
+ * as the surface's primary action. Everything else uses `Button`.
+ */
+export function buttonClassName({
+	variant = 'primary',
+	size = 'md',
+	className = '',
+}: {
+	variant?: keyof typeof variants;
+	size?: keyof typeof sizes;
+	className?: string;
+} = {}): string {
+	const sizeCls = variant === 'link' ? 'gap-1.5' : sizes[size];
+	return `${shape} ${variants[variant]} ${sizeCls} ${className}`;
+}
+
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 	variant?: keyof typeof variants;
 	size?: keyof typeof sizes;
@@ -51,7 +73,6 @@ export function Button({
 	...props
 }: ButtonProps) {
 	const ref = useRef<HTMLButtonElement>(null);
-	const sizeCls = variant === 'link' ? 'gap-1.5' : sizes[size];
 	const kbdCls = variant === 'link' ? kbdSizeClass.md : kbdSizeClass[size];
 
 	useShortcut(shortcut && shortcutFire ? shortcut : undefined, () => ref.current?.click(), {
@@ -62,7 +83,7 @@ export function Button({
 		<button
 			ref={ref}
 			aria-keyshortcuts={shortcut ? ariaKeyshortcuts(shortcut, isMacPlatform()) : undefined}
-			className={`inline-flex items-center justify-center whitespace-nowrap border font-medium transition-colors cursor-pointer outline-none focus-visible:ring-[3px] focus-visible:ring-ring focus-visible:border-accent disabled:opacity-45 disabled:pointer-events-none ${variants[variant]} ${sizeCls} ${className}`}
+			className={buttonClassName({ variant, size, className })}
 			{...props}
 		>
 			{children}

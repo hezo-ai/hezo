@@ -829,7 +829,6 @@ test('GitHub Connect drives the device flow to a connected OAuth connection', as
 		}
 	};
 
-	const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
 	let slug = '';
 	const { findByText, findByTestId, getByTestId, queryByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -849,13 +848,24 @@ test('GitHub Connect drives the device flow to a connected OAuth connection', as
 	connectBtn.click();
 
 	// The device-flow dialog mounts (in a portal on document.body) and renders the
-	// user code returned by the simulator.
+	// user code returned by the simulator as step one of the rail.
 	const dialog = await findByTestId('connector-device-flow-dialog');
 	expect(dialog).toBeTruthy();
-	const code = await findByTestId('connector-device-code');
+	const code = await findByTestId('device-code-value');
 	expect(code.textContent).toMatch(/^USR-/);
-	// The verification URI was opened in a new tab.
-	await waitFor(() => expect(openSpy).toHaveBeenCalled());
+	// Step one is copying; the page is not opened until the operator asks for it,
+	// so no link to the provider is on screen yet.
+	expect(getByTestId('device-code-step-copy').getAttribute('data-state')).toBe('active');
+	expect(getByTestId('device-code-step-open').getAttribute('data-state')).toBe('pending');
+	expect(queryByTestId('device-code-open')).toBeNull();
+
+	// Copying advances the rail, and step two offers the verification URI as a
+	// real anchor rather than a pop-up fired behind the operator's back.
+	getByTestId('device-code-copy').click();
+	const openLink = await findByTestId('device-code-open');
+	expect(openLink.getAttribute('href')).toContain('/login/device');
+	expect(openLink.getAttribute('target')).toBe('_blank');
+	expect(getByTestId('device-code-step-copy').getAttribute('data-state')).toBe('done');
 
 	// Approve the flow; the next poll finalizes the connection and the dialog
 	// closes itself. Waiting for that close guarantees the polling loop has

@@ -126,8 +126,10 @@ but Hezo cannot yet bring its keyring-only sign-in into a run container.
 ### Signing in to a subscription
 
 For **OpenAI** and **Anthropic**, Hezo runs the sign-in for you. Choose the subscription
-option, select **Sign in**, and Hezo shows you a link and a short one-time code. Open the
-link on any device - your phone is fine - sign in to that account, and enter the code.
+option, select **Sign in**, and Hezo walks you through it a step at a time. First it shows
+a short one-time code and a **Copy code** button. Then it offers the link: open it on any
+device - your phone is fine - sign in to that account, and enter the code. Hezo shows how
+long the code has left, and waits while you finish.
 
 - **OpenAI (Codex)** finishes on its own once you complete the sign-in. Nothing to bring
   back.

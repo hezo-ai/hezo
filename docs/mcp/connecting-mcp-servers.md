@@ -126,8 +126,9 @@ Add the REST API connector (name, base URL, allowed hosts), then press **Complet
 connection** on its row. Pick a bundled provider (Google/YouTube is built in) or choose
 **Custom…** and paste the device-code and token endpoints yourself, then enter the OAuth
 **client ID** (and **client secret**, if the provider's device-flow client needs one).
-Hezo shows a short code and a verification link: open the link on any device, enter the
-code, and approve. That's it - no redirect back to your instance.
+Hezo then walks you through two steps: copy the short code it shows, then open the
+verification link and enter the code there. Approve, and that's it - no redirect back to
+your instance.
 
 When an **agent** sets up the connector it pre-selects the provider for you, so there's
 no picker to choose - you just paste the client ID it asked for. The same completion
