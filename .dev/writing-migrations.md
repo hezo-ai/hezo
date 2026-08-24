@@ -2,7 +2,7 @@
 
 The contributor guide for authoring a migration and its data-preservation test. The rules that bind before you start — never edit a shipped migration, every migration preserves data and ships a test, extend an unshipped one rather than stacking — are in `AGENTS.md`; this is the how. For how migrations fit the release and upgrade story, see `architecture.md` § 12.
 
-Migrations are real, tracked, append-only and data-preserving. Real instances hold real user data, so a migration that drops or corrupts it is a production incident. `packages/server/migrations/001_initial_schema.sql` is the **frozen baseline** — it was collapsed to a single fresh `001` at the v1.0 launch, a one-time reset done while all deployments were reset to fresh databases; from there the append-only rule holds and `001` stays frozen.
+`AGENTS.md` states what binds: append-only, never edit a shipped migration, every migration preserves data and ships a test proving it. This is how to satisfy that. `packages/server/migrations/001_initial_schema.sql` is the **frozen baseline** — it was collapsed to a single fresh `001` at the v1.0 launch, a one-time reset done while all deployments were reset to fresh databases; from there the append-only rule holds and `001` stays frozen.
 
 ## Before you create a file
 

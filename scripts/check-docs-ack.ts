@@ -1,6 +1,6 @@
 // Commit-msg guard: every commit that touches a doc-bearing surface must carry
 // a `Docs-Checked:` trailer acknowledging the docs-alignment pass (AGENTS.md
-// § Keeping docs in sync with code). Hand-written prose (docs/**, READMEs,
+// § Commit gates). Hand-written prose (docs/**, READMEs,
 // and the internal `.dev/` docs — architecture.md and the design notes) has no
 // drift test, so the acknowledgment is the record that a human or agent
 // actually re-read the affected pages — a commit without it is rejected by
@@ -41,7 +41,7 @@ export const DOCS_ACK_RULE: AckRule = {
 	emptyMessage: (value) =>
 		`Docs-Checked value "${value}" is not a meaningful acknowledgment — state which docs you updated or verified, or why none apply.`,
 	guidance: [
-		'Every code commit must acknowledge the docs-alignment pass (AGENTS.md § Keeping docs in sync with code).',
+		'Every code commit must acknowledge the docs-alignment pass (AGENTS.md § Commit gates).',
 		'Re-read the doc pages describing what you changed — the user-facing docs/ tree AND the',
 		'internal .dev/ docs (.dev/architecture.md must be updated in the same PR for any',
 		'architecture-altering change) — then add a trailer, e.g.:\n',

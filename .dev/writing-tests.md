@@ -81,7 +81,7 @@ Root `playwright.config.ts` auto-starts server (:3101) and web (:5174). `bun run
 
 **Any test that starts the server via the CLI (`src/index.ts`) MUST pass `--no-open`** (or `HEZO_OPEN=0`) so the desktop browser auto-open never fires.
 
-**Keep the e2e server hermetic — every outbound call is a third party voting on your test run.** `HEZO_SKIP_PRICING_REFRESH`, `HEZO_TELEMETRY_ENABLED=0` and `HEZO_SKIP_UPDATE_CHECK=1` are in the webServer env for this. **Gate any new feature that calls out from the server in that env block, in the same change** — and if it can render shell chrome, assume it will re-measure the whole suite's geometry.
+**Keep the e2e server hermetic — every outbound call is a third party voting on your test run.** `HEZO_SKIP_PRICING_REFRESH` and `HEZO_SKIP_UPDATE_CHECK=1` are in the webServer env for this. **Gate any new feature that calls out from the server in that env block, in the same change** — and if it can render shell chrome, assume it will re-measure the whole suite's geometry.
 
 ### No spurious `[error]`/`[warn]` in test output
 

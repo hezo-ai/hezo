@@ -71,7 +71,7 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   budget/pricing math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
 - **`packages/server`** imports from `shared` and embeds `web` at build time.
-- **`agents/`** holds role prose by team (`app-dev/`, `blank/`), the two
+- **`agents/`** holds role prose by team (`app-dev/`, `blank/`, `influencer/`, `investment/`), the two
   instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable `_partials/`.
   The build bakes only `blank/` + `_instance/` into `agents-bundle.json` (the DB seed reads
   them at startup); marketplace team dirs (those with a `team.json`) are compiled into
@@ -83,7 +83,7 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
 
 ## 3. Data model (distilled)
 
-PGlite holds ~50 tables. They group by domain; the load-bearing **design decisions**
+PGlite holds ~64 tables. They group by domain; the load-bearing **design decisions**
 matter more than the column lists.
 
 **Identity & membership.** A unified **`members`** base table is the single identity for
@@ -95,6 +95,8 @@ runtime/effort, budgets, heartbeat, org chart, `touches_code`, optional
 see § Agent identity) and `member_users` (role, `role_title`, `permissions_text`,
 `project_ids`). Global human identity lives in `users` + `user_auth_methods` (OAuth
 login links — no password, no email column).
+
+### Teams, projects & repos
 
 **Teams, templates, projects.** `teams` is the tenant; a **project owns exactly one
 team** (`projects.team_id → teams.id`, `UNIQUE` — the 1:1 invariant in § 4). `agent_types`
@@ -174,6 +176,8 @@ Git settings page and as a per-repo read-only note in the agent's Repository pro
 key and one account-wide OAuth token serve every linked repo — so this column is the only
 place a genuine per-repo write restriction is represented.
 
+### Tasks & threads
+
 **Tasks & threads.** `tasks` are Linear-style tickets with a frozen `identifier`
 (`<task_prefix>-<n>`, e.g. `IN-42`), a required `assignee_id → members.id`, `rules`, and
 an agent-maintained `progress_summary`. `progress_summary` is agent-only on the write side:
@@ -245,9 +249,11 @@ that parent's `children_closed` wakeup via `wakeTaskIfChildrenClosed` — the sa
 would have cleared. The terminal-parent rule is deliberately **not** applied on the create
 path, where filing a follow-up sub-task under a closed parent remains legal.
 
+### Goals & progress
+
 **Goals.** `goals` are per-project objectives the Captain tracks (`project_id NOT NULL`;
 the `is_internal` HQ project has none, enforced in the service). Each carries a SMART
-`title`/`description`, a `target_date`, a `check_frequency` enum (`daily`/`weekly`/`monthly`,
+`title`, a `measurement`, its `actions`, a `target_date`, a `check_frequency` enum (`daily`/`weekly`/`monthly`,
 default daily), an admin-set `archived_at` (NULL = active; there is **no** achieved status),
 and the Captain-maintained snapshot — `progress_percent` (0–100), a `goal_health` enum
 (`pending`/`on_track`/`at_risk`/`off_track`), a `status_blurb`, and `last_checked_at`. The
@@ -309,6 +315,8 @@ the candidate lists handed to the run prompt: actioned ranks open tickets by
 `cancelled` is excluded from the page entirely. Migration 049 adds the column plus the partial
 indexes each candidate window needs.
 
+### Secrets, OAuth & connectors
+
 **Secrets, OAuth, connectors.** `secrets` stores AES-256-GCM ciphertext gated by
 `allowed_hosts` (§ 7). `oauth_connections` records connected GitHub/SaaS accounts; their
 tokens *ride the `secrets` table* (no token column). `mcp_connections` is the catalog of
@@ -325,6 +333,8 @@ task's project**: the project's own rows plus global ones, a project row shadowi
 of the same name. `team_ssh_keys` is separate — one Ed25519 key **per team**
 (`UNIQUE(team_id)`, and therefore per project given the 1:1), encrypted on the team row,
 never in the vault (§ 8).
+
+### Runs, wakeups & sessions
 
 **Runs, wakeups, sessions.** `agent_wakeup_requests` is the trigger queue, with
 idempotency keys and `coalesced_count` merging (§ 5). `heartbeat_runs` is one row per
@@ -371,6 +381,8 @@ the same, and a message an `author_member_id` (the responding agent). `chat_mess
 links files sent through the chatbox to their message (stored in the HQ asset library
 under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
 automatically-maintained long-term memory (§ 4).
+
+### Chat conversations & channels
 
 **Multi-thread conversations, one home surface per thread.** The CEO chat is
 **multi-threaded**, and every thread has exactly **one home surface**: a web thread, a
@@ -547,6 +559,8 @@ client down if another holder takes it — the guard against double-answering wh
 server instances share a database. Discord threads carry their own `channel_id`, so they
 become separate conversations with no extra handling.
 
+### Costs, budgets & container hours
+
 **Costs & budgets.** `cost_entries` is the immutable per-run spend ledger, attributed to
 the AI provider config that produced it — **never** team-scoped. `model_pricing` holds
 per-model token rates from a single source: the pricepertoken.com MCP catalog
@@ -644,6 +658,8 @@ ran bills a full bucket of uptime. Enforcement is a monthly allowance
 memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
 project with a spare container is exempt from both. The cap read short-circuits before the
 ledger is scanned, so an instance with no cap pays nothing on the dispatch path.
+
+### Docs, skills & assets
 
 **Docs, skills, assets.** `documents` is one table backing three Markdown kinds by
 `type` (`project_doc`, `team_preferences`, `agent_system_prompt`), each with partial
@@ -1104,7 +1120,8 @@ only offered while a reply is actually running (`streaming && !sending`) — dur
 window there is no turn to abort, so the control queues and says so.
 
 **Automatic, agent-driven chat memory.** Each turn's prompt carries the agent's **long-term
-memory** (`chat_memories`, one markdown row per member, no revision history) plus the full
+memory** (`chat_memories`, one markdown row per member, with prior content kept in
+`chat_memory_revisions`) plus the full
 **active window** — the non-compacted `chat_messages`, which *is* the short-term memory. The
 window is bounded by a byte cap (`max_chat_history_size`, default 40 KB, in `system_meta`,
 operator-set under Settings → Chatbox). When a reply settles and the window exceeds the cap,
@@ -1565,7 +1582,7 @@ Three shared pieces sit alongside it so the two implementations cannot drift:
   previous figure alone; reporting an unmeasurable container as empty would defeat the
   pool's recycle rung, which had no input at all before this and so could never fire.
 
-**The Daytona adapter** is three files and absorbs four API differences entirely within
+**The Daytona adapter** is four files and absorbs four API differences entirely within
 itself: create also *starts* the sandbox (so `startContainer` is a no-op on one already
 running); there is no per-exec user; there is no image store, because a custom image
 arrives as **Dockerfile text** Daytona builds and caches by a hash of that text (which is
@@ -1861,7 +1878,7 @@ and had nothing to print. It is deliberately last: it speaks only when nothing b
 Reaching that rung less often is a parser concern, not a runner one. `getTerminalError()`
 is what carries a runtime's own explanation onto the row, and a parser that returns null
 there sends every failure to the backstop. Claude Code, Grok and Kimi always reported one;
-Codex, Gemini and the generic (OpenCode) parser computed the text, rendered it to the log
+Codex, Antigravity and the generic (OpenCode) parser computed the text, rendered it to the log
 and threw it away, which is why a rejected provider credential on those runtimes surfaced as
 a bare exit code. All six now retain it, classified through `classifyRuntimeError` so a 401
 or 402 reads as an actionable sentence rather than the upstream's own wording.
@@ -2004,6 +2021,8 @@ the field is capped at **10 networks**, while "the public internet minus the pri
 is 51 CIDRs, so an attempt to send it fails the create outright - which would have broken
 every remote run rather than hardening it. What protects a secret remains that the secret
 only ever exists on the Hezo side.
+
+### The container pool & memory budget
 
 **Pool members are reconciled against the engine, because nothing else revisits them.** The
 acquire path repairs a stale member on two rungs - `reuse` verifies the container still runs,
@@ -2274,6 +2293,8 @@ to 2, and that drop is entirely the two reserves - the host itself, and the chat
 the old formula pretended did not exist - not a discount on its swap. Instances that have
 explicitly set the value keep it; only the computed default moves.
 
+### Orphans, teardown & backend switching
+
 **The orphan sweep** (`sandbox/orphan-reaper.ts`, run every 10 minutes by `JobManager`)
 destroys containers this instance created that Hezo no longer references anywhere. Boot
 fails every in-flight run and never reattaches, so a crash, a hard kill or a lost provider
@@ -2401,6 +2422,8 @@ the delay is visible.
 
 Work reaches an agent through the **wakeup → job-manager → agent-runner** pipeline.
 
+### Wakeups & dispatch
+
 **Wakeups.** Every trigger is an `agent_wakeup_requests` row. Sources: `heartbeat`
 (scheduled fallback tick), `timer` (recovery: orphan detector, retry), `assignment`,
 `mention`, `reply`, `comment` (a system-posted comment wake; user comments wake agents
@@ -2501,6 +2524,8 @@ runs the **pre-run budget gate** (`activateAgent`; over-budget skips the run wit
 absorbs sibling queued wakeups for the same task → marks the run terminal → reconciles
 task blockers (waking dependents when the last blocker clears) → fires task automations.
 Instance agents (CEO/Coach) select work across *all* teams here.
+
+### Run-state recovery: stranded, parked, handed back
 
 **Stranded-run recovery.** A `heartbeat_runs` row is inserted `queued` and only flips to
 `running` (stamping `started_at`) once a credential is resolved and the credential lock
@@ -2727,6 +2752,8 @@ relationship so neither can be moved without meeting the assumption. The run's `
 carries the tail of its own log, so the detail page says *why* it never started rather than
 only that it did not.
 
+### Running the agent: exec, logs & tool pairing
+
 **Run.** `agent-runner.ts` builds the run context (provider/runtime resolution, MCP
 descriptors, egress proxy, ssh-agent socket, container env), starts a `heartbeat_runs`
 row, and drives a streaming `docker exec` of the runtime CLI. The long-lived Docker streams
@@ -2773,7 +2800,7 @@ same reason - its result would have no call to belong to.
 
 **Only Claude Code reports a tool count.** Its `system`/`init` event lists the tools, so its
 session line carries `tools=N`. Codex's `thread.started` carries only a thread id and
-Gemini's `init` names no count, so their session lines omit the token entirely and the
+Antigravity's `init` names no count, so their session lines omit the token entirely and the
 viewer hides the count rather than printing a zero nobody measured. Codex names no model
 anywhere in its stream either, so - exactly as for OpenCode - `createAgentStreamParser`
 seeds its parser with the run's own model as a pricing floor, without which every Codex run
@@ -2830,6 +2857,8 @@ trimmed log beats no log.
 Sockets carry a `backpressureLimit` with `closeOnBackpressureLimit`, so a client that falls
 irrecoverably behind is dropped and recovers through the existing reconnect-and-resubscribe
 path instead of growing an unbounded send queue.
+
+### Prompt composition
 
 **System prompt composition.** The agent's stored template (its `agent_system_prompt`
 document, loaded from its **home** team) holds the **role body alone**. `services/template-resolver.ts`
@@ -2937,6 +2966,8 @@ quotes the triggering comment verbatim: `## Mention Handoff` (`mention`), `## Re
 one comment source that surfaced no reference to what triggered it). The Coach's `task_done`
 review is the one path that instead embeds the **full** comment history (both share
 `loadCommentHistory`/`renderCommentHistory`).
+
+### Workspaces, worktrees & git
 
 **Containers & worktrees.** One container per project, **run on demand**: the container is
 not required to be up between runs. `runAgent` establishes it at the start of every run via
@@ -3099,6 +3130,8 @@ its abort handler on the *response* stream's end, never on the `ClientRequest`'s
 (which Bun emits prematurely, mid-body) — otherwise the timeout would fire against a handler
 that had already been detached.
 
+### Container hardening & host ownership
+
 **Container hardening.** Each project container is created with a hardened `HostConfig`
 (`provisionContainer`): a memory ceiling (`Memory`=`MemorySwap`= the per-project
 `memory_limit_gib` override when set, else the instance-wide
@@ -3164,6 +3197,8 @@ so the **`hezo uninstall`** subcommand (`runUninstall`, `cli.ts`) is the support
 it refuses while a live server holds the instance lock, requires an explicit `--yes`, best-effort
 stops+removes every `hezo.team`-labelled container (their ids live in the DB it is about to
 delete), then `forceRmRecursive`s the data dir and the per-run socket dir.
+
+### Commit durability & recovery bundles
 
 Repo sync (`ensureProjectRepos`, `services/repo-sync.ts`) does **not trust a bare `.git`
 marker** in a repo's reserved workspace directory: an agent may have run `git init` there
@@ -3363,6 +3398,8 @@ commit, and A is destroyed when it goes idle. Nothing fails at pool size 1, whic
 `git-recovery-bundle.test.ts` **destroys the source clone** between saving and restoring rather than
 re-running against the same one.
 
+### Admin git-state & recovery
+
 **Admin git-state & recovery (superuser).** Because a clone's live state lives only in the
 container, the project Git settings page exposes a per-repo, **superuser-only** panel to inspect
 and repair it. `GET /api/projects/:projectId/repos/:repoId/git-state` reads it — the clone's
@@ -3399,6 +3436,8 @@ mutates the shared `.git` a live worktree prep also touches, and reclone deletes
 may hold — and `discard_local`/`prune_worktrees` additionally require a running container. Every
 read and reset runs under the same per-project git lock (`withProjectGitLock`, extracted to
 `lib/git-lock.ts`) as run-time worktree prep, so they never interleave on the shared `.git`.
+
+### Abort, timeout & the success gate
 
 **Aborting actually kills the process.** Docker exposes no API to signal an exec'd process, and
 disconnecting from the exec attach stream (what aborting the run's signal does) leaves the agent
@@ -3511,7 +3550,7 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 **Providers → runtimes is one-to-MANY.** `AiProvider` has **ten** values — `anthropic`, `openai`,
 `google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
-`AgentRuntime` has **six** — `claude_code`, `codex`, `gemini`, `opencode`, `grok`, `kimi`. A
+`AgentRuntime` has **six** — `claude_code`, `codex`, `antigravity`, `opencode`, `grok`, `kimi`. The dead `gemini` label is retained in the DB enum for stored rows only. A
 provider
 declares the CLI it runs on **by default** plus, optionally, the other CLIs it can be driven by;
 the operator picks per credential and the choice is stored on
@@ -3530,7 +3569,7 @@ task-level `runtime_type` pin searches.
 Defaults: Anthropic + DeepSeek + Z.ai + Kimi → `claude_code` (DeepSeek/Z.ai/Kimi
 inject `ANTHROPIC_BASE_URL` + model defaults to point Claude Code at their Anthropic-compatible
 gateway — Kimi at `api.moonshot.ai/anthropic`, model `KIMI_DEFAULT_MODEL`), OpenAI → `codex`,
-Google → `gemini`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
+Google → `antigravity`, OpenRouter → `opencode`, xAI → `grok` (its own first-party Grok Build CLI,
 `XAI_API_KEY` direct to `api.x.ai`, model `grok-4.5`), Ollama + LM Studio → `claude_code`
 (local runners, see below). Alternates: Kimi additionally declares `kimi` (Moonshot's own CLI,
 see below), so it is the one provider that offers a choice. Every other provider offers exactly
@@ -3656,7 +3695,7 @@ one), `POST …/:flowId/code` writes the operator's code to the CLI's stdin FIFO
 (`@hezo/shared`, read by the web to decide whether to offer the button) paired with
 `SUBSCRIPTION_LOGIN_DRIVERS` (the server's argv, output parsers and harvest shape); a test
 asserts the two agree. Codex uses its device flow and needs nothing back; Claude Code needs
-one pasted code; Gemini has no driver and stays on manual paste. **The credential never
+one pasted code; Google has no subscription auth at all (API key only). **The credential never
 reaches the browser** — on success the poll route stores it via `storeAiProviderKey` and
 returns only the config id, coalescing concurrent polls so overlapping requests insert once.
 Every exit path releases the container through `finish`, and `sweepLoginContainers` collects
@@ -3747,14 +3786,14 @@ failed open.
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
 global `medium`. Each runtime maps it natively: `claude_code` appends
-`think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `gemini`
+`think`/`think hard`/`ultrathink`; `codex` passes `-c model_reasoning_effort=`; `antigravity`
 sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has no
 `minimal`, which maps to `low`); `opencode` writes `reasoning.effort` onto the run's model in
 its per-run `opencode.json` (see below); `grok` steers effort through the portable prompt
 directive alone. It's also exposed as `HEZO_AGENT_EFFORT`.
 
 **Per-runtime wiring** lives in the runtime adapters (`services/runtime-adapters/`, six
-adapters in `index.ts`: ClaudeCode, Codex, Gemini, OpenCode, Grok, Kimi). Each builds the
+adapters in `index.ts`: ClaudeCode, Codex, Antigravity, OpenCode, Grok, Kimi). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
 servers, and wires the stop-hook.
 
@@ -3765,13 +3804,13 @@ absent for most runtimes:
 
 | Member | Answers | Declared by |
 |---|---|---|
-| `constantEnv` | env this CLI needs whatever provider drives it | Claude Code (telemetry off, background-wait ceiling lifted), Gemini (workspace trusted) |
+| `constantEnv` | env this CLI needs whatever provider drives it | Claude Code only (telemetry off, background-wait ceiling lifted) |
 | `staticEnvValue` | rewrite one provider-table env value for this run | Claude Code (subagent tracks the run model on a third-party endpoint), Kimi (model name + its context window) |
 | `credentialEnv` | env implied by the credential rather than a table | Claude Code (a local provider's per-install endpoint, plus blanking the key it would otherwise prefer) |
 | `modelArg` | the form this CLI's `--model` accepts | Claude Code, OpenCode |
 | `extraArgs` | argv no shared table can express | Grok (`--debug-file` inside its own home) |
 | `recoverUsage` | usage for a CLI whose stream reports none | Grok, Kimi |
-| `applyEffort` | how this CLI is asked to reason harder | Claude Code, Codex, Gemini, Kimi |
+| `applyEffort` | how this CLI is asked to reason harder | Claude Code, Codex, Antigravity, Kimi |
 | `terminatesBackgroundWork` | can it exit 0 having killed unfinished work | Claude Code |
 
 An absent member means "nothing extra", never "unsupported" - the caller has a defined
@@ -3847,7 +3886,7 @@ connectors' tools arrived; the run log's `[runner] MCP connectors:` line is what
 instead.
 
 **Prompt delivery** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE`) has three
-modes. `stdin` redirects the prompt file into the CLI — Claude Code, Codex, Gemini and
+modes. `stdin` redirects the prompt file into the CLI — Claude Code, Codex, Antigravity and
 OpenCode, the last of which reads stdin to EOF whenever it is not a TTY and needs no flag for
 it. `file` has the CLI open the file itself: Grok's `--prompt-file <path>`, which triggers
 headless mode on its own (`-p`/`--single` is the same flag under another name, so it is
@@ -3955,9 +3994,8 @@ legitimately long agent/background work; every runtime is relaxed at its own con
 `tool_timeout_sec`/`startup_timeout_sec`; its built-in `openai` provider's per-stream knobs
 (`stream_idle_timeout_ms`) are **not** tunable while going direct (config/`-c` overrides of a
 built-in provider are silently ignored by Codex's vacant-only merge) and only drive a
-reconnect/retry, not a kill, so they're left at default. **Gemini** (`settings.json`) sets
-`tools.shell.inactivityTimeout = 0` (disables the 5-min kill of a silent shell command) and a
-per-MCP-server `timeout`. **OpenCode** (`opencode.json`) raises the per-MCP-server `timeout`
+reconnect/retry, not a kill, so they're left at default. **Antigravity** sets no timeouts at
+all. **OpenCode** (`opencode.json`) raises the per-MCP-server `timeout`
 from its 5 s (!) default to 10 min; its bash tool has a non-configurable 10-min hard cap. The
 same file carries the run's reasoning effort, since the CLI exposes no flag or env var for it:
 `provider.<key>.models.<id>.options.reasoning.effort`, keyed on the run's own model with the
@@ -3994,8 +4032,8 @@ non-terminal; the admin's reply or resolution auto-wakes the agent (a hire resol
 a `hire-resolved:<id>` wakeup for the requester), so it need not spin re-reporting no work.
 The rule body (`STOP_HOOK_RULES` in `stop-hook-prompt.ts`) is identical across runtimes;
 each provider has a judge-model constant (Anthropic `claude-sonnet-4-6` / DeepSeek
-`deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi `kimi-k2.7-code` / OpenAI `gpt-4o-mini` /
-Google `gemini-1.5-flash`). For the third-party Anthropic-compatible Claude Code providers
+`deepseek-v4-pro` / Z.ai `GLM-4.7` / Kimi (its default model) / OpenAI `gpt-4o-mini`). There is
+no Google constant - Antigravity ships without a judge. For the third-party Anthropic-compatible Claude Code providers
 (DeepSeek/Z.ai/Kimi) the judge — and the Claude Code subagent default
 (`CLAUDE_CODE_SUBAGENT_MODEL`) — instead track the run's live-selected model
 (`judgeModelForProvider` / `claudeCodeProviderUsesCustomEndpoint`), falling back to the constant
@@ -4003,10 +4041,10 @@ only when the run pins none, so a provider model upgrade (e.g. Kimi `kimi-k2.7-c
 needs no code change; Anthropic keeps its stable, cheaper Sonnet constant. Wiring differs by
 runtime's native hook: Claude Code uses a `type: "prompt"` `Stop` hook (makes the judge call
 itself, resolving the model via `judgeModelForProvider` over `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`);
-Codex/Gemini/Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
+Codex and Kimi Code use command scripts (`buildJudgeScriptForRuntime` over `JUDGE_SPECS`) that
 call the provider API. Every runtime's judge short-circuits on `stop_hook_active` — allow
 the stop once the turn has already been continued once — so a persistent verdict can't loop
-the same headless exec: the Codex/Gemini scripts guard it in code, and the Claude Code prompt
+the same headless exec: the Codex and Kimi scripts guard it in code, and the Claude Code prompt
 hook now instructs the judge to do the same.
 
 **Kimi Code needs two substitutes to run the same judge.** Its `Stop` hook *is* blockable
@@ -4629,6 +4667,8 @@ the operator clicks, never an automatic `window.open`: a tab fired before the co
 screen arrives asking for something the operator has not seen, and is pop-up blocked often
 enough that the code was all they had left.
 
+### Connector storage & OAuth flows
+
 **Storage.** `oauth_connections` is **project-scoped** via `project_id` (non-NULL = private
 to that project so two projects hold separate accounts; NULL = the global "all projects"
 scope), keyed per-scope on `(project_id, provider, provider_account_id)`. Tokens have no
@@ -4706,6 +4746,8 @@ public / header-authenticated MCPs (`__HEZO_SECRET_*__` placeholders), which eit
 can add. When OAuth *is* advertised, the UI opens the authorize popup automatically on add,
 and every non-active SaaS row keeps a **Connect**/Retry button.
 
+### Connector lifecycle: add, revoke, remove
+
 **User-added connectors (project page).** The per-project Connectors page has the same
 **Add** affordance (name + MCP URL → `POST /api/projects/:projectId/connectors`,
 implicitly this-project-scoped), then auto-probes via the project auth-start exactly as the
@@ -4715,6 +4757,7 @@ without an agent having asked for one first.
 **Revoked → reconnect restores in place.** Revoking clears the token/API-key secret and
 stamps `revoked_at` but keeps the row. Pressing **Connect** or **API key** on a revoked
 connector does **not** error — `startConnectorAuthCode` (OAuth) and the api-key route both
+
 call `restoreRevokedConnector` (equivalently, `markApiKeyActive` clears `revoked_at`),
 which nulls the revocation and every auth artifact (`oauth_connection_id`,
 `api_key_secret_id`, `activated_at`, `auth_error`) while preserving `config` — including any
@@ -4787,6 +4830,8 @@ redirect_uri straight through to upstream Clerk). Registrations cached before th
 `redirect_uri` field existed carry none, so they miss the reuse check and re-register on the
 next connect — an address change no longer needs delete-and-recreate.
 
+### Run exclusion, probing & health
+
 **Run exclusion.** `loadConnectorsForRun(db, projectId)` returns the run's project's own
 connectors plus global ones (a project connector shadows a global of the same name). It
 skips revoked rows, and enforces one invariant on hosted servers:
@@ -4856,6 +4901,8 @@ after a run's request to the connector was refused (trigger `run`, from
 connector on no timer at all, since the sweep skips those. All three `DO UPDATE SET` clauses
 that can re-point a connector also reset `probed_at` / `probe_error`, or a row proven public at
 one URL would stay "proven" at another.
+
+### Reaching connector tools from a run
 
 **Connector tools are reached through an in-container CLI, not the runtime's MCP config.**
 A connector's descriptors used to be handed to the coding CLI alongside Hezo's own server,
@@ -4985,6 +5032,7 @@ registry (`services/connector-registry.json`, zod-validated in `connector-regist
 holds connection **patterns** (hosted-MCP-first, direct-api, static-credential,
 oauth-hostside, …), per-service **recipes** (~48 documentation-verified providers, each
 with transport `mcp`|`api`, endpoint, credential kind(s) + `allowed_hosts`, docs URL),
+
 and the **`oauthProviders`** descriptors the generic OAuth broker's
 `resolveBrokerDescriptor` resolves (google-youtube, github). All consumers go through the
 single accessor `resolveConnectorRegistry()` — the seam a future fetched-registry
@@ -5002,10 +5050,12 @@ skill via `create_skill` (same-slug+scope upsert keeps it a living document), sc
 match the connector's reach, checking skills.sh / vendor skill files for an existing
 public skill first.
 
+### Connector auth through the egress proxy
+
 **Connector auth must traverse the egress proxy.** Because connector auth is a placeholder,
 each coding CLI's MCP-startup HTTP MUST go through the per-run proxy or the placeholder ships
 unsubstituted and 401s (a fail-closed usability miss, never a leak — § 7). All five runtimes
-do: Claude Code & Gemini install their own global undici proxy dispatcher from `HTTPS_PROXY`
+do: Claude Code & Antigravity install their own global undici proxy dispatcher from `HTTPS_PROXY`
 (and trust `NODE_EXTRA_CA_CERTS`); OpenCode runs on bundled **Bun**, whose `fetch` reads the
 proxy env natively (single-cert `NODE_EXTRA_CA_CERTS` trusted); Codex and Grok are **Rust**
 binaries that honor the proxy env by default and trust the egress CA via the system store that
@@ -5015,8 +5065,8 @@ HTTP to `host.docker.internal`, so it needs no CA trust regardless). The runner 
 dispatcher.
 At run build, `loadConnectorDescriptors` merges connectors after the built-in `hezo`
 MCP, and each of the five runtime adapters translates the descriptors into the spawn
-artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Gemini
-`.gemini/settings.json`, etc.).
+artifacts its CLI expects (Claude Code `--mcp-config`, Codex `config.toml`, Antigravity
+`.gemini/antigravity-cli/settings.json`, etc.).
 
 **Method access (per-connector allowlist).** A hosted MCP server ships its read and write
 tools in one connection, so a connector carries an allowlist of the methods agents may
@@ -5074,9 +5124,9 @@ Enforcement has two legs, split because the coding CLIs are installed unpinned a
 config keys can drift:
 
 - **Runtime config filtering is the UX leg** — descriptors carry `enabledTools` and
-  `disabledTools` (both views, since Claude Code takes a deny list while Gemini/OpenCode
-  take allowlists), and each adapter emits its own key: Gemini `includeTools`, OpenCode
-  top-level `tools`, Claude Code `permissions.deny`. An agent never sees a tool it cannot
+  `disabledTools` (both views, since Claude Code takes a deny list while Kimi and OpenCode
+  take allowlists), and each filter-capable adapter emits its own key. Codex, Grok and
+  Antigravity emit none. An agent never sees a tool it cannot
   call. Best-effort and degrades safely: an unrestricted connector emits a byte-identical
   config to before, and Claude Code's deny list is only as complete as the last
   `tools/list`. **Codex and Grok emit no filter** — no per-server tool-filter key could be
@@ -5689,7 +5739,6 @@ so a unit test that imports a service without booting the server needs no arrang
 resolver (`resolveSubcommandTargets`), replacing four near-duplicate pickers that had drifted
 - one of them let an empty value win where the others treated empty as unset.
 
-
 **Author-run generators.** Two build steps are **not** wired into `bun run build` or CI, because
 their output is committed and regenerating them requires a tool the ordinary build must not
 depend on: `build:marketplace` (recompiles `marketplace/teams/*.json`, also run by `bun run dev`)
@@ -5801,7 +5850,7 @@ real bytes freed in `log_compaction:last`, and clears the marker.
 `GET /api/database-info/run-log-usage` reports live sizes (`pg_database_size`,
 `pg_total_relation_size` over both tables — cheap, no detoast) plus the
 reclaimable/backlog estimate and status for the panel, embedded-only figures degrading to
-null/0 elsewhere. Deploy-time knobs: `HEZO_LOG_COMPACTION_CRON`, `_BATCH`, `_MAX_PER_TICK`,
+null/0 elsewhere. Deploy-time knobs: the `logCompaction` config block (`cron`, `batch`, `maxPerTick`,
 `_PRESERVED_BYTES`. The trimmed detail is unrecoverable, so the UI confirms first.
 Migration `041` (which moved logs from the old `heartbeat_runs.log_text` blob into chunks
 and dropped the column) leaves the legacy dead-TOAST graveyard behind — a one-time,
@@ -5870,7 +5919,7 @@ are 1:1 with projects so nothing team-scoped appears in a key, and a blob is imm
 asset id since overwrites mint a new id). Drivers live in `src/assets/drivers/` and are
 constructed only by `src/assets/open.ts:openAssetStorage()` at startup: **local** (default;
 `<dataDir>/assets/<projectId>/<assetId>`) and **s3** (`--asset-storage-url` /
-`HEZO_ASSET_STORAGE_URL`, one `s3://KEY:SECRET@endpoint/bucket[/prefix]?region=…&pathStyle=…&tls=…`
+the `assetStorageUrl` config key, one `s3://KEY:SECRET@endpoint/bucket[/prefix]?region=…&pathStyle=…&tls=…`
 URL) — a thin SigV4 client over `aws4fetch` (`src/assets/s3-client.ts`, exactly
 PutObject/GetObject/DeleteObject/ListObjectsV2/DeleteObjects; deliberately S3-compatible-only,
 no provider-native drivers) with a ListObjectsV2 preflight + bounded retry at startup and a
@@ -6074,13 +6123,13 @@ abandoned by a worker crash/restart is re-attempted rather than wedging staging 
 runs from `GET /api/updates/status`
 (fire-and-forget on every status poll from the banner or settings section, gated on
 `isSupervisedWorker()`) and the daily
-`update-check` cron (`HEZO_UPDATE_CHECK_CRON`), so a running instance usually stages a new
+`update-check` cron (`jobs.updateCheckCron`), so a running instance usually stages a new
 release within seconds. `POST /api/updates/download` (superuser) is the same download path on
 demand; `POST /api/updates/apply` (superuser) gracefully shuts the worker down and exits with
 the sentinel via `exitToApplyUpdate()` (`runtime-control.ts`, which also wires `shutdownRuntime`
-to signals). **Auto-install** (`--auto-install-updates` / `HEZO_AUTO_INSTALL_UPDATES`, off by
+to signals). **Auto-install** (`--auto-install-updates` / `updates.autoInstall`, off by
 default) makes the install itself unattended: JobManager registers an `auto-install-update` cron
-(`HEZO_AUTO_INSTALL_CRON`, every 5 min; registered only when the flag is set on a supervised
+(`jobs.autoInstallCron`, every 5 min; registered only when the flag is set on a supervised
 worker) that reads `state.json` — no network — and, when a verified update is `Staged` and no
 agent runs are in flight (`runningTasks` empty; busy instances defer to the next tick), calls
 the same `exitToApplyUpdate()` path as the operator button.
@@ -6117,9 +6166,9 @@ input/output token sums over the last 24h, and the per-provider run mix — plus
 `os`/`arch`. It carries a random per-install id persisted in `system_meta.instance_id`
 (generated lazily via `getOrCreateInstanceId`, `ON CONFLICT DO NOTHING` so it is stable). It
 deliberately excludes every name, prompt/content field, repo detail, user identity, and any
-`cost_cents`/monetary figure. The `JobManager` `telemetry` cron (`HEZO_TELEMETRY_CRON`, default
+`cost_cents`/monetary figure. The `JobManager` `telemetry` cron (`jobs.telemetryCron`, default
 `0 0 5 * * *`) is registered only when `config.telemetry.enabled` (opt-out — on by default,
-disabled by `--disable-telemetry` / `HEZO_TELEMETRY_ENABLED=0`). `reportTelemetry` POSTs the JSON
+disabled by `--disable-telemetry` / `telemetry.enabled: false`). `reportTelemetry` POSTs the JSON
 to `config.telemetry.endpoint` (default `https://hezo.ai/api/telemetry`) with a direct `fetch` +
 5s timeout — like the update check, server-originated outbound calls do **not** route through the
 agent egress proxy — and fails soft (warn + swallow) so it never disrupts a run. The collector
@@ -6132,13 +6181,13 @@ upserts one row per `(instance_id, UTC day)`; aggregates are shown at `hezo.ai/s
 
 A JSON-over-HTTP REST API on the same Hono process/port as the MCP and WebSocket
 endpoints. Every response is `{ "data": … }` or `{ "error": { code, message } }`;
-timestamps ISO 8601, ids UUID, money in cents. This is a **map** of the ~36 route modules
+timestamps ISO 8601, ids UUID, money in cents. This is a **map** of the 47 route modules
 mounted in `startup.ts` — read the modules under `packages/server/src/routes/` for exact
 shapes.
 
 - **Auth & identity** — `auth` (challenge-response, § 10), `me`, `api-keys`,
   `instance-settings` (incl. `PATCH /instance-settings/locale` — self-authenticating: open
-  pre-onboarding, superuser after; § 11), `preferences`, `ui-state`.
+  pre-onboarding, superuser after; § 11), `ui-state`.
 - **Projects & teams** — `projects` (creation/intake, the 1:1 team reached *through* the
   project — there is no bare `GET /teams`; includes `GET …/dashboard` for the per-project
   at-a-glance aggregate), `team-templates`, `agent-types`, `repos`,
@@ -6207,13 +6256,11 @@ the overlap rare, and the merge would cost an interval sweep per agent per read.
 (`idx_runs_team_started_task`, from `049`) is partial on `task_id IS NOT NULL` and so
 cannot serve a query that counts task-less runs.
 
-**The Activity page itself** is three web routes — `activity/route.tsx` (heading + tab
-strip + `Outlet`), `activity/index.tsx` (the Log tab, the audit feed) and
-`activity/hours.tsx`. Tabs are route-mode, so each carries its own URL; the Log tab sets
-`exact` on its `TabItem` because it is the index route and a fuzzy match would claim
-`/activity/hours` too, lighting both tabs at once. It is a **top-level** project page,
-placed after Settings — nested under Settings it only rendered once Settings was the active
-route, so it was unreachable from every other page.
+**Activity is one flat route** (`activity.tsx`) carrying the audit feed. The tabbed
+three-route shape - `route.tsx` with a tab strip and `Outlet`, an index tab and an hours tab -
+belongs to **Budget**, where per-agent wall clock now sits beside each agent's spend. Both are
+**top-level** project pages: nested under Settings a page renders only while Settings is the
+active route, which made it unreachable from everywhere else.
 
 One non-REST surface shares the port: the **MCP endpoint** (`POST /mcp`, Streamable
 HTTP), whose tools mirror the REST surface and enforce the same authorization. It is the

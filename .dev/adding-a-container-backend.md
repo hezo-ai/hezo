@@ -6,7 +6,7 @@ The contributor guide for authoring a `ContainerEngine` adapter. For what the se
 
 Every backend sits behind one seam, `ContainerEngine` (`services/sandbox/types.ts`); every caller above it talks only to that interface.
 
-**Nothing above the seam may learn which backend is in use** — no provider name in a conditional, no provider-shaped field on a shared type, no "if remote". Each adapter is one directory of three files:
+**Nothing above the seam may learn which backend is in use** — no provider name in a conditional, no provider-shaped field on a shared type, no "if remote". Each adapter is one directory of four files:
 
 - **`sandbox/<provider>/client.ts`** — a hand-rolled REST/SDK client (not the vendor SDK, so the dependency stays out of the single-binary build) exporting the narrow port interface the engine drives, so tests supply a complete fake rather than a partial cast through `unknown`.
 - **`sandbox/<provider>/command.ts`** — a pure renderer turning an exec into what the provider accepts (argv-to-string, user-switching, stream separation).

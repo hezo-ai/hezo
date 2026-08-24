@@ -6,27 +6,20 @@ bind before you start - a string is not changed until it is changed in all twelv
 never "ticket" in any language, no em or en dash anywhere, one term per concept - are in
 `AGENTS.md`; this is the how.
 
-
+## The catalogs
 `packages/web/src/lib/i18n/catalog/*.json` are hand-authored source files. `en.json` is the source of truth; the other eleven are written against it and reviewed like any other code.
 
-### A string change cascades to every language
-
-**A user-facing string is not changed until it is changed in all twelve languages.**
-
-- **New string** → add to `en.json` and author it in all eleven non-English catalogs.
-- **Reworded string** → retranslate everywhere. Nothing flags a changed English source with stale translations underneath.
-- **Renamed key** → rename in all twelve. **Deleted string** → delete from all twelve.
-- **New hardcoded literal in a component** → a missing catalog key, not a shortcut. Wire it through `t()`.
+## Carrying a sentence that contains a node
 
 **A sentence containing a link or other node still goes through the catalog — use `<Trans>`, not a literal.** `t()` can't carry a `ReactNode`; `<Trans k="..." vars={{ source: <Link …/> }} />` splits the same `{name}` template and interleaves nodes, keeping the whole sentence as one entry. **Do not split a sentence into a key per fragment** — that hard-codes English word order into all twelve languages. See the `task_link`, `status_change`, `parent_change`, `run_failed` and `repo_designated` branches in `comment-renderers/system-comment.tsx`. Branches still reading a server-baked `content.text` (`title_change`, `assignee_change`, `description_change`) are not translated — localizing those means rebuilding each sentence from its structured payload first. `TASK_STATUS_LABELS` (`@hezo/shared`) is not localized, so a translated status sentence still reads its status words in English.
+
+## What the guard checks
 
 `i18n-catalog.test.ts` fails on a key missing from a catalog, an empty value, a value identical to its English source outside the `IDENTICAL_TO_ENGLISH_OK` allowlist, a dropped `{placeholder}`, an em/en dash, the word "ticket", a value carrying another language's script (hangul outside `ko`, kana outside `ja`), and **a key referenced nowhere in `packages/web/src/`**.
 
 - **Adding an allowlist entry to quiet the identical-to-English check is the mistake it exists to prevent** — every entry claims the two really are the same word.
 - **The unreferenced-key check has no allowlist, deliberately.** An unreferenced key almost always means the component still renders the English word inline. Wire the key up, or delete it from all twelve catalogs.
 - A typo'd `t()` key is already a compile error (`MessageKey = keyof typeof en`), so `bun run typecheck` covers that direction.
-
-The suite can't tell you whether a translation is *right*, or notice English copy that never became a key — that judgement is the pass this section asks for.
 
 **`Translations-Checked:` is enforced at commit time.** Any commit staging `packages/web/src/` or `packages/shared/src/` is rejected without the trailer. Bare values under 10 characters are rejected:
 

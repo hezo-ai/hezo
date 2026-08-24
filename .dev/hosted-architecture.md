@@ -1,5 +1,10 @@
 # Hosted Hezo — Architecture
 
+**Status (2026-08).** Written 2026-05/06 (#397, #594) and not built: none of the
+*Hezo-core changes* below exists in the tree. The analysis still holds - every seam it
+names still resolves - so this remains the design of record for hosted, not a historical
+note.
+
 This document is the single reference for the hosted, click-to-signup version of
 Hezo: the tenant topology, storage, SSO/unlock design, the control plane at
 `app.hezo.ai`, DigitalOcean provisioning, the (small) set of Hezo-core changes,
@@ -40,7 +45,7 @@ Hezo is single-tenant by design at three independent layers:
    (`packages/shared/src/constants.ts`, `packages/server/migrations/001_initial_schema.sql`):
    fixed `DEFAULT_TEAM_ID`, singleton CEO/Coach/HQ (`ensureInstanceCeo` /
    `ensureInstanceCoach` in `services/team-template-apply.ts`), a singleton
-   `ceo_sessions` index, and global `UNIQUE` constraints with no `tenant_id`
+   `chat_sessions` index, and global `UNIQUE` constraints with no `tenant_id`
    anywhere (`projects.slug`, `secrets.name`, `mcp_connections.name`,
    `skills.slug`, `ai_provider_configs(provider, label)`, `api_keys.prefix`).
    A per-instance master key roots the JWT signing key and the AES-256-GCM
@@ -376,7 +381,7 @@ other tenant's hostname.
 |---|---|---|
 | `HEZO_PORT` | `3100` | behind local Caddy |
 | `HEZO_DATA_DIR` | `/var/lib/hezo` | scratch only — DB and assets are external |
-| `HEZO_DATABASE_URL` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § Storage): encrypted, certificate not verified — accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
+| `HEZO_DATABASE_URL` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § 12 (*External TLS (`sslmode`)*)): encrypted, certificate not verified — accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
 | `HEZO_DATABASE_POOL_SIZE` | `4` | keeps cluster connection math sane |
 | `HEZO_ASSET_STORAGE_URL` | `s3://<KEY>:<SECRET>@<region>.digitaloceanspaces.com/hezo-t-<shortid>?region=…` | per-bucket key |
 | `HEZO_WEB_URL` | `https://<sub>.app.hezo.ai` | also the SSO `aud` |

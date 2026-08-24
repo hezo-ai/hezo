@@ -37,7 +37,7 @@ The rules are here; the detail is there. Prefer reading the guide over rediscove
 | Looking up where a helper lives | `seam-registry.md` |
 | Checking what else a change must touch | `mirrored-surfaces.md` |
 
-Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `grok-build-support.md`, `mcp-cli-efficiency.md`.
+Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `mcp-cli-efficiency.md`.
 
 ## Commands
 
@@ -45,6 +45,9 @@ Plus point-in-time decision notes and measurements, not rules: `hosted-architect
 
 - **CI is the canonical check, not a local full run.** A dev box runs the suites serially against one database and fails some for reasons unrelated to your change. Iterate on a subset, keep `typecheck` in the loop, and let CI answer.
 - **A run needing a live account or a paid key never runs in CI, and bills real money when you run it.** Supply only the credentials you mean to spend.
+- **A required check names a rollup, never a bare matrix job** - a sharded job's name is not stable, so requiring it silently stops gating when the shard count changes.
+- **No required check may need a write-scoped token**, or every fork PR fails on a permission it cannot be granted.
+- **A suite needing the agent image runs in the container tier**, not on the general shards, which do not build it.
 
 Flags, CI topology, running one file, diagnosing a failure: `.dev/ci-and-commands.md`.
 

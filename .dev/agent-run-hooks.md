@@ -45,7 +45,7 @@ A runtime is reachable by any credential configured onto it, not only by the pro
 
 **`RUNTIME_SYSTEM_PROMPT_FILE`** names, per runtime, an instructions file inside the per-run home that the CLI auto-loads; when set, the resolved system prompt is written there by that runtime's MCP injector and the prompt carries the task body alone. Only Kimi Code uses it (`$KIMI_CODE_HOME/AGENTS.md`), because it is the only runtime with no file or stdin route for the prompt. Kimi Code additionally gets **no auto-approve flag** — `--yolo`/`--auto`/`--plan` are mutually exclusive with `--prompt`; `-p` already applies the `auto` permission policy and the injected `[permission.rules]` covers the rest.
 
-## Cost: always priced from the table
+## Recovering usage and cost
 
 Per-run cost is computed in `agent-stream-parser.ts` **always** from the `model_pricing` table (`price()` via `PricingService`), using the token buckets each runtime reports (regular input, cache read, cache creation, output). Runtimes' own dollar figures (`total_cost_usd` and similar) are **ignored in every parser** — they are client-side estimates from the CLI's built-in rate card, which for third-party Anthropic-compatible endpoints belongs to the wrong provider entirely. The CLIs' only job in cost accounting is accurate token counts. An unknown model prices to $0 — fail-low, never fail-high. The local providers (Ollama, LM Studio) have no pricing rows by design; $0 is correct there.
 
