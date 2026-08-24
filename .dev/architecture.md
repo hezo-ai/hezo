@@ -1371,21 +1371,18 @@ plus a pointer to `--sandbox-backend` as the alternative to a local daemon.
 `HEZO_SKIP_DOCKER` (the same flag that swaps in the in-process fake docker for dev/tests)
 bypasses it by taking the fake branch in `startup()` before the backend is opened.
 
-*Not installed* additionally throws the narrower `DockerNotInstalledError`, and the reason is
-Windows-specific: launched from Explorer the binary owns its console window, which closes with
-the process, so `process.exit(1)` destroys the window the guidance was just printed to and the
-operator sees a flash of black and nothing else. On that platform the fatal-exit path in
-`index.ts` therefore stops for a native dialog first (`lib/docker-desktop-prompt.ts`:
-`powershell.exe` driving a WinForms message box, answer carried back as the exit code since
-stdio is ignored). The copy is `SANDBOX_RATIONALE` verbatim - the same security answer the
-console gives, since "install Docker" alone reads as an arbitrary dependency - and OK opens
-`ms-windows-store://pdp/?productid=XP8CBJ40XLBWKX` through the existing `openBrowser`
-launcher. The wait is deliberate (it holds the process open so the dialog stays on screen) but
-bounded at 120s, because nothing in `browserAvailable` proves a human is present and an
-unbounded wait on a service account is an invisible hang. Gated on Windows + `config.open` +
-`browserAvailable`, so `--no-open`, CI, SSH and containers never see it.
-*Installed-but-stopped* is deliberately excluded: the fix there is to start the runtime
-already on the machine, not to install another.
+*Not installed* additionally throws the narrower `DockerNotInstalledError`, which on Windows
+routes the fatal exit through a native dialog first: launched from Explorer the binary owns its
+console window, so `process.exit(1)` destroys the window the guidance was just printed to.
+`lib/docker-desktop-prompt.ts` drives a WinForms message box from `powershell.exe`, the answer
+carried back as the exit code since stdio is ignored. The copy is `SANDBOX_RATIONALE` verbatim -
+"install Docker" alone reads as an arbitrary dependency - and OK opens
+`ms-windows-store://pdp/?productid=XP8CBJ40XLBWKX` through the existing `openBrowser` launcher.
+The wait holds the process open so the dialog stays on screen, bounded at 120s because nothing
+in `browserAvailable` proves a human is present and an unbounded wait on a service account is an
+invisible hang. Gated on Windows + `config.open` + `browserAvailable`, so `--no-open`, CI, SSH
+and containers never see it. *Installed-but-stopped* is deliberately excluded: the fix there is
+to start the runtime already on the machine, not to install another.
 
 **Any Docker-compatible runtime qualifies, and the socket is resolved rather than assumed.**
 The client speaks the Engine API over a Unix socket (Bun `fetch({unix})` for one-shot calls,
@@ -1415,23 +1412,19 @@ is asked of whichever backend is in use, and what it does is that backend's
 business: `DockerClient` extracts the embedded agent-base build context, prunes stale bundled
 images, refreshes the published tag and probes its bind mounts, while `DaytonaEngine`
 implements it as an explicit no-op - a sandbox is built from Dockerfile text on the provider's
-machines and has no host image store or binds to touch. `startup()` used to carry two
-`initialEngine instanceof DockerClient` branches doing that work inline, which is the
-capability-branch-above-a-seam the design forbids, and it had already failed silently once:
-callers hold the backend holder's **proxy**, against which `instanceof` is always false, so
-introducing the holder turned the image setup into dead code with nothing logged.
+machines and has no host image store or binds to touch. Doing that work inline behind an
+`initialEngine instanceof DockerClient` branch is forbidden twice over: it is the
+capability-branch-above-a-seam the design rejects, and callers hold the backend holder's
+**proxy**, against which `instanceof` is always false, so such a branch is silently dead code.
 
 **It rides with an engine becoming current, and the holder owns that.** `SandboxBackendHolder`
 carries the data directory and calls `prepareHost` from `swap()`, so the deferred open's
 unlock and a runtime backend switch both prepare the incoming engine without asking. Sitting
-at each call site instead meant every site that made an engine current had to remember, and
-two of the three did not: a switch never prepared its destination at all, so an instance that
-booted on a managed provider and moved to the local daemon reached it with no extracted build
-context, no bundled-image prune and no bind-mount probe; and startup asked the **pending**
-engine, whose every member throws by design, which exited the boot of every locked instance
-on a vault-backed backend with an error reading as an unreachable provider. Startup is the
-one caller that still asks explicitly (`holder.prepareHost()`, the path that constructs the
-holder rather than swapping into it) and the one that skips it while the open is deferred -
+at each call site instead means every site that makes an engine current has to remember, and a
+site that forgets leaves its destination with no extracted build context, no bundled-image
+prune and no bind-mount probe. Startup is the one caller that still asks explicitly
+(`holder.prepareHost()`, the path that constructs the holder rather than swapping into it)
+and the one that skips it while the open is deferred -
 a lifecycle question, "is a backend current yet?", not the capability question the seam
 forbids.
 
@@ -1451,12 +1444,11 @@ exiting would take down the UI the operator needs. Opt out with `containers.skip
 **A vault-backed credential defers the open to unlock, and only then.** The provider API
 key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
 an instance, which comes back **locked** after every restart, cannot read it at the moment
-the backend is chosen. Making that fatal meant a managed backend could not survive a
-restart at all: a stored key read back as "no API key is configured", and a
-`containers.daytona.apiKey` supplied at launch threw "the instance is locked" from
-`storeDaytonaApiKey`. Both aborted startup on every boot, and the only workaround was
-passing the master key on the command line — the one thing Hezo never asks an operator to
-persist.
+the backend is chosen. Making that fatal aborts startup on every boot — a stored key reads
+back as "no API key is configured" and a launch-supplied `containers.daytona.apiKey` throws
+"the instance is locked" from `storeDaytonaApiKey` — so a managed backend could not survive a
+restart at all, workable only by passing the master key on the command line, the one thing
+Hezo never asks an operator to persist.
 
 So `resolveStartupBackend` returns `deferred` when (and only when) the backend needs a
 credential, none is in hand, the vault is locked, and `hasDaytonaApiKey` says one is on
@@ -1489,14 +1481,12 @@ provider selected with no credential anywhere is a misconfiguration that unlocki
 fix, so it still aborts startup. And a deferred open that fails leaves the pending engine
 in place rather than falling back to Docker, so every container operation reports it.
 
-There is deliberately **no** earlier gate at the top of `index.ts`. One used to sit there,
-before the database was open, which meant it could only read the *launch flag* — while the
-**stored** setting is what actually selects the backend (`resolveStartupBackend`). An
-instance switched to Daytona from the Containers page and restarted on a host without
-Docker therefore exited 1, printing Docker install guidance for a backend it would never
-use. Moving the check behind backend resolution also gave the **runtime switch** a
-preflight it never had: `switchSandboxBackend` destroys every container before swapping, so
-a destination that cannot be reached has to be caught before anything is torn down.
+There is deliberately **no** earlier gate at the top of `index.ts`: before the database is
+open only the *launch flag* is readable, while the **stored** setting is what actually selects
+the backend (`resolveStartupBackend`), so such a gate exits 1 with Docker install guidance for
+a backend the instance would never use. Behind backend resolution the check also serves the
+**runtime switch**: `switchSandboxBackend` destroys every container before swapping, so a
+destination that cannot be reached has to be caught before anything is torn down.
 
 ### The container-engine seam
 
@@ -1654,13 +1644,11 @@ were once assumed to be), mounting one at `/mnt/vault` on a running sandbox:
 | `chmod` | ❌ `Operation not permitted` - every file stays `0666` owned by `nobody` |
 | `git init --bare` | ❌ `could not write config file …: Function not implemented` |
 
-Two things about *how* this was measured are worth keeping, because both produced a wrong
-answer first. **Exit codes lie on this mount**: a first pass chaining `cmd && echo ok`
-reported append, rename, chmod and `git init --bare` as all succeeding, and every one of
-them is false - the failures only appear when the data is read back. Assert on read-back,
-never on the exit status. And **writes are not always immediately visible**: a file written
-and `cat`ed in the same breath can read as absent, which made an early probe look like
-`mkdir` did not persist when it does.
+Two things about *how* this is measured bind any re-measurement. **Exit codes lie on this
+mount**: chaining `cmd && echo ok` reports append, rename, chmod and `git init --bare` as all
+succeeding and every one of them is false, the failures appearing only when the data is read
+back - so assert on read-back, never on the exit status. And **writes are not always
+immediately visible**: a file written and `cat`ed in the same breath can read as absent.
 
 This is what makes the whole-file bundle the only workable shape on a volume, and why the
 recovery vault does not use one (§ Agent runtime, Recovery bundles).
@@ -1700,16 +1688,13 @@ marker kill and teardown. Four findings are worth carrying:
 - **A digest-pinned `agent-base` is pullable anonymously**, so Daytona builds it with no
   registry credential - the `buildInfo` Dockerfile is `FROM …@sha256:…` and nothing else.
 
-**The tunnel has since been driven end to end**, from a network that permits WebSocket
-upgrades (the earlier pass could not reach it at all, which is why three defects lived in it -
-see the PTY section above and the readiness contract in § Container tunnel). A real agent run
-now completes on Daytona: DeepSeek through Claude Code, `tools=97` in the session line,
-`create_comment` and `update_task` landing over MCP, run `succeeded`, tokens priced from the
-table. Run logs stream over the WebSocket, suspend/resume preserves the filesystem, the pool
-serves concurrent runs one-per-container, the wall-clock kill leaves no marked process behind,
-and deleting the project destroys every sandbox it owned. On a network that blocks WebSocket
-upgrades none of that is reachable - a property of such a network, not of the adapter, since
-every HTTP path (control plane, exec, streaming logs, files) works through the same one.
+**The tunnel needs a network that permits WebSocket upgrades**, and driven end to end from
+one a whole agent run works on Daytona: run logs streaming over the WebSocket, suspend/resume
+preserving the filesystem, the pool serving concurrent runs one-per-container, the wall-clock
+kill leaving no marked process behind, and deleting the project destroying every sandbox it
+owned. Where upgrades are blocked none of that is reachable - a property of such a network,
+not of the adapter, since every HTTP path (control plane, exec, streaming logs, files) works
+through the same one.
 
 Two further quota facts were measured, and both bear on the pool:
 
@@ -1932,13 +1917,12 @@ framing and multiplexing above it stay shared - the plan's "one transport for bo
 holds for the protocol, not for the channel underneath it.
 
 **Four things on that channel would each desynchronise the framing on byte one**, and all four
-are absorbed in `openPty` (measured against the live API; the first was handled from the start
-and the rest were found by driving a real agent run over it):
+are absorbed in `openPty` (measured against the live API):
 
 1. the opening `{"status":"connected","type":"control"}` JSON frame, which is not shell output;
 2. the PTY's **echo of `stty raw -echo`** - sent to turn echo off, and echoed back because echo
-   is still on. The decoder read `stty` as a type and stream id and `raw ` as a 1918990112-byte
-   length, and the mux closed the channel before any payload existed;
+   is still on, so the decoder reads `stty` as a type and stream id and `raw ` as a
+   1918990112-byte length and the mux closes the channel before any payload exists;
 3. bash's **bracketed-paste sequences** (`ESC[?2004h` / `ESC[?2004l`), emitted around every
    command it accepts **even with echo off** - so raw mode does not remove them;
 4. the shell **prompt** printed when the launched command exits.
@@ -1947,7 +1931,7 @@ So the launch is folded into `openPty` as one line - `stty raw -echo`, print a p
 sentinel, then **`exec`** the command - and nothing reaches the caller until that sentinel.
 `exec` replaces the shell, which removes (3) and (4) structurally rather than filtering them.
 The sentinel is emitted from **two halves** (`printf '%s%s' 'a' 'b'`) so the still-echoed command
-line does not contain it: printed whole, the sync fired on the echoed copy and forwarded the real
+line does not contain it: printed whole, the sync fires on the echoed copy and forwards the real
 one, moving the corruption one step later instead of removing it.
 
 **Closing the socket does not end the session or kill what runs on it** - measured: a process
@@ -2065,17 +2049,15 @@ that has claimed no container is not on the dead one**, so the in-memory half le
 alone: it is parked - on the credential lock or on capacity - holding nothing, and its row is
 still `queued`, which the DB half never touches (a `running` row always carries its
 container, stamped by `markHeartbeatRunRunning`; the DB half's `container_id IS NULL` arm
-exists for rows recorded before 049 and nothing else). The in-memory half used to take
-unclaimed runs too, on the reasoning that nothing could show them executing elsewhere - which
-is how the surplus-idle pass suspending a project's *spare* container killed the run that was
-only waiting for a credential in that project: on a managed backend the stop takes seconds,
-the status sync saw the engine say stopped while the row still said running, and the
-resulting transition swept the waiter in on the null arm. That sync-versus-graceful-stop
-race still produces a transition (a stopped container is a fact whoever stopped it), and it
-is harmless now for the reason above: nothing live is on an idle container. Handling a
-container's death by *project* is the shared-fate blast radius the pool exists to remove,
-and it is not hypothetical - it is how an idle member being auto-stopped killed a run
-executing in a healthy sibling container. Two sources emit transitions in this one shape:
+exists for rows recorded before 049 and nothing else). Taking unclaimed runs there kills a run
+merely waiting for a credential whenever the surplus-idle pass suspends its project's *spare*
+container: on a managed backend the stop takes seconds, the status sync sees the engine say
+stopped while the row still says running, and the transition sweeps the waiter in on the null
+arm. That sync-versus-graceful-stop race still produces a transition (a stopped container is a
+fact whoever stopped it), and it is harmless for the reason above: nothing live is on an idle
+container. Handling a container's death by *project* is the shared-fate blast radius the pool
+exists to remove - by project, an idle member being auto-stopped kills a run executing in a
+healthy sibling container. Two sources emit transitions in this one shape:
 `syncAllContainerStatuses` answers for the container `projects.container_id` names, and
 `reconcilePoolMembers` answers for every other member, which that sync cannot see at all.
 
@@ -2203,20 +2185,20 @@ invisible and harmless while a queued chat turn is a person watching a spinner. 
 front rather than subtracting when a session opens keeps task-run capacity a **stable**
 number - opening the chat never silently slows the fleet.
 
-**The reservation is taken at the point of use, not baked into the default**, and that is
-the correction: `computeDefaultMaxContainerMemoryGb` used to subtract a container's worth
-itself, so only an *automatic* budget reserved. An operator who set the number by hand got
-no reservation at all, and a 12 GB budget with a 4 GB cap therefore admitted three task
-containers *and* a chat container - 16 GB consumed against a figure that said 12, which on a
-local Docker host is memory the machine actually has to find. Now the auto default returns
-the whole usable total (floored at `minTotalContainerMemoryGb`, two caps, so it can never
+**The reservation is taken at the point of use, not baked into the default.** Subtracting a
+container's worth inside `computeDefaultMaxContainerMemoryGb` reserves only for an *automatic*
+budget, so an operator who sets the number by hand gets none at all and a 12 GB budget with a
+4 GB cap admits three task containers *and* a chat container - 16 GB consumed against a figure
+that says 12, which on a local Docker host is memory the machine actually has to find. The
+auto default therefore returns the whole usable total (floored at
+`minTotalContainerMemoryGb`, two caps, so it can never
 compute a total that admits nothing) and `getActiveContainers` derives the task share from
 whatever the effective total is. Auto-computed instances land on exactly the capacity they
 had before; an explicitly-set one loses a container's worth, which is the point. The exemption is enforced on **both** sides:
 the budget reserves for it, and `getActiveContainers` excludes a `reserved_for_chat` member
 from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projects` row are
-two records of one container). Charging it in both places reserved the same memory twice,
-so an instance sized for three containers dispatched two whenever the chat was open.
+two records of one container). Charging it in both places reserves the same memory twice, and
+an instance sized for three containers then dispatches two whenever the chat is open.
 
 **The chat takes its container through the same ladder a run does**, with
 `acquireRunContainer(..., 'chat')` - the workload changes four things and nothing else: it
@@ -2227,14 +2209,13 @@ session already holds is checked *before* the ladder, since `selectPoolMember` e
 reserved members by design. It also points `projects.container_id` at what it took, that
 column being the operator's view of the project's container.
 
-Routing it through the ladder is the whole point. The chat used to read
-`projects.container_id` directly, which names the most recently provisioned or resumed
-container - under a pool, possibly one mid-run. It pinned that and executed its turns on it:
-two workloads on one memory cap, which is exactly the shared-fate failure the pool exists to
-remove, reached from the one direction the pool was not guarding. Resume had the mirror
-problem, comparing `ensureProjectContainerRunning`'s answer against the container the session
-parked on, so once task runs had moved the project's named container a healthy parked session
-read as "the container was replaced" and was torn down.
+Routing it through the ladder is the whole point. Reading `projects.container_id` directly
+names the most recently provisioned or resumed container - under a pool, possibly one mid-run
+- so pinning that and executing turns on it puts two workloads on one memory cap, exactly the
+shared-fate failure the pool exists to remove, reached from the one direction the pool was not
+guarding. Resume has the mirror problem: compared against `ensureProjectContainerRunning`'s
+answer, a healthy parked session reads as "the container was replaced" once task runs have
+moved the project's named container.
 
 **The backend is a setting, not launch configuration.** It used to be chosen once at
 startup and fixed for the process; it is now switchable from Settings -> Containers, with
@@ -2485,15 +2466,15 @@ parks the task, including one inside a routine status update. It is marked `comp
 same query because migration 061's frozen comment names `noWorkCooldownActive` and that file,
 so neither can be renamed to cover both.
 
-**The container-start fan-out, and the loop it used to close.** `provisionContainer` ends by
-nudging the project's agents (`wakeAgentsWithPendingWork`) so work queued while the container
-was still coming up starts without waiting for a heartbeat. That is right for a provision
+**The container-start fan-out.** `provisionContainer` ends by nudging the project's agents
+(`wakeAgentsWithPendingWork`) so work queued while the container was still coming up starts
+without waiting for a heartbeat. That is right for a provision
 nobody is waiting on - startup self-heal, project creation - and wrong for one the run path
 asked for: `acquireRunContainer`'s pool ladder provisions on its `create` rung, so a run is
-already starting and will do the work. Waking then billed a second run for it, which on a cold
-pool provisioned again and woke again, sustaining itself at container-start cadence no matter
-what the agent's heartbeat said. The policy is therefore the caller's to state
-(`ProvisionWakePolicy`), since only the caller knows whether a run is in flight.
+already starting and will do the work, and waking bills a second run that on a cold pool
+provisions again and wakes again, sustaining itself at container-start cadence whatever the
+agent's heartbeat says. The policy is therefore the caller's to state (`ProvisionWakePolicy`),
+since only the caller knows whether a run is in flight.
 
 Two things keep the fan-out honest wherever it does fire. It **names the task** on each wakeup:
 a task-less payload slips past every dedup guard in the dispatch path - `shouldDeferWakeupForBlockers`
@@ -2570,10 +2551,10 @@ indefinitely.
 
 **The second rung's bound only exists because two halves travel together**: it increments
 `process_loss_retry_count` *and* names its lineage under `previous_failure.run_id`, the one
-key `RUN_LINEAGE_SOURCES` gives `inheritsLossBudget`. An earlier revision spent the strike
-but named `previous_run_id`, which does not inherit - so `createHeartbeatRun` handed every
-replacement a count of zero, the increment landed on a terminal row nothing reads again, and
-the ceiling was unreachable through its own lineage however many times it lapped. A test
+key `RUN_LINEAGE_SOURCES` gives `inheritsLossBudget`. Spending the strike while naming
+`previous_run_id`, which does not inherit, hands every replacement a count of zero from
+`createHeartbeatRun`, lands the increment on a terminal row nothing reads again, and leaves
+the ceiling unreachable through its own lineage however many times the chain laps. A test
 that hand-sets the counter cannot see that; `the never-started chain actually climbs, lap by
 lap` drives real laps and asserts the count reaching the ceiling. The first rung stays
 unbounded by design - the wakeup is intact and the dispatcher owns it - which is what `main`
@@ -2637,23 +2618,22 @@ Everything from here to *The CEO chat* describes what happens **when a rule matc
 the CLI rewrites the token file whenever it likes and the rotated value is read back during
 teardown - so a waiter queues behind a complete run, not behind a token read.
 
-Two properties follow from that, and both were learned the hard way. The wait is **bounded**
-and gives up through the same `finalizeRequeue`,
-because an unbounded promise chain had no way for a waiter to leave: a holder that never
-returned parked every later run on that credential permanently, and nothing - not the orphan
-pass, not the run timeout, not an operator Terminate - could recover it short of a restart.
-**Its ceiling is `credentialWaitMaxMs`, not the capacity park's**, though it used to be both.
+Two properties follow from that. The wait is **bounded** and gives up through the same
+`finalizeRequeue`, because an unbounded promise chain gives a waiter no way to leave: a holder
+that never returns parks every later run on that credential permanently, and nothing - not the
+orphan pass, not the run timeout, not an operator Terminate - recovers it short of a restart.
+**Its ceiling is `credentialWaitMaxMs`, not the capacity park's.**
 The two look alike and are not the same judgement: the park waits for a container slot the
 idle-reclaim cron frees, so it resolves in seconds and giving up early costs nothing, while
 this queues behind a *whole other run* bounded by that run's `run_timeout_min` (60 minutes
-by default). At the park's 180 s a second run on a rotating credential gave up, re-queued,
-redispatched 5 s later and gave up again until the holder finished: a thrash loop that never
-converged. So it is derived from the waiting run's own timeout with headroom (80%, capped
+by default) - at the park's 180 s a waiter on a rotating credential gives up, re-queues,
+redispatches 5 s later and gives up again until the holder finishes, a thrash loop that never
+converges. So it is derived from the waiting run's own timeout with headroom (80%, capped
 at 15 minutes) - headroom because running to `run_timeout_min` itself lets `launchTask`'s
 wall-clock timer finalize the run `timed_out`, trading one errored row for another, which is
-the same reason the park does not use it raw. **Deliberately unfloored**: an earlier revision
-floored it at the park's 180 s, which inverted that invariant for any `run_timeout_min` of 3
-or less (settable to 1), where a 180 s wait outlives a 60 s timer. And the cap is not
+the same reason the park does not use it raw. **Deliberately unfloored**: flooring it at the
+park's 180 s inverts that invariant for any `run_timeout_min` of 3 or less (settable to 1),
+where a 180 s wait outlives a 60 s timer. And the cap is not
 cosmetic - a dispatch with no spare container takes a `pendingContainerStarts` reservation
 *before* `launchTask` and holds it until the run settles, so every minute of this wait is a
 minute of instance memory budget charged for a container that has not been asked for. FIFO on the
@@ -2715,14 +2695,12 @@ the row `Cancelled`, hands the *original* wakeup back to the queue (`claimed` �
 and spends no strike of the lost-run escalation, so the
 work is redispatched rather than lost or reported as a failure the operator must act on.
 **A clean shutdown hands the work back too, and has to - nothing downstream can.** The
-drain (`drainRunningRuns`) aborts every in-flight run with `server_shutdown`, and that abort
-used to finalize the row `Failed` and settle its wakeup `failed`, both before the process
-exited. Every recovery predicate in the codebase - `reconcileDatabaseOnStartup`,
-`detectOrphanedRuns`, `healStaleRunState`, `requeueContainerKilledRuns` - looks for a run
-left `running` or `queued`, so a *hard crash* recovered and an *orderly drain* dropped the
-work outright: the better the shutdown behaved, the more certainly the task stopped, while
-the row's own message promised a re-queue nothing delivered. The abort now routes through
-`finalizeRequeue` at all three points a shutdown can land (the phase checkpoints, the exec
+drain (`drainRunningRuns`) aborts every in-flight run with `server_shutdown`. Every recovery
+predicate in the codebase - `reconcileDatabaseOnStartup`, `detectOrphanedRuns`,
+`healStaleRunState`, `requeueContainerKilledRuns` - looks for a run left `running` or
+`queued`, so finalizing the row `Failed` on that abort drops the work outright where a *hard
+crash* would have recovered it. The abort routes through `finalizeRequeue` at all three points
+a shutdown can land (the phase checkpoints, the exec
 rejection, the setup window), so the wakeup returns to `queued` while the process is still
 up and the 5 s cron dispatches it when Hezo is next running. The boot pass still covers the
 crash and the drain-deadline overrun, which are the cases that genuinely leave a row
@@ -2737,10 +2715,9 @@ up stamping `instance_at_capacity` on handbacks that had nothing to do with capa
 seam reports `handback_failed` rather than a bare boolean, and **both callers act on it**:
 each records the outcome on the run row through `recordHandbackOutcome`
 (`services/run-handback.ts`) only once the answer is in, mapping a failed handback to
-`abandoned` plus a thread notice. An earlier revision fixed this on the sweeper alone and
-left `finalizeRequeue` stamping `handed_back` before attempting the handback - reproducing,
-on the completion path, the very defect the sweeper was restructured to remove. That
-recorder is also where first-writer-wins lives: it declines to write over a `cancel_reason`
+`abandoned` plus a thread notice - stamping `handed_back` before attempting the handback
+reproduces the defect on whichever path skips it. That recorder is also where
+first-writer-wins lives: it declines to write over a `cancel_reason`
 somebody else already set, so a human's Terminate is never relabelled as something the
 instance did. A never-started handback is stamped `run_never_started` and the
 credential give-up `credential_busy`; `BUSY_PROJECTS_SQL` excludes only the two *capacity*
@@ -2848,12 +2825,11 @@ ten full logs into one socket on tab open); the pending batch is drained first, 
 snapshot replaces the client's buffer and a line arriving after it would render twice. The
 full log stays available from the REST run endpoint, which is what the run view seeds from -
 and a cut snapshot is flagged `trimmed`, because "replaces the client's buffer" and "seeds
-from REST" are in direct conflict otherwise. The run view loaded the whole log, joined the
-room, and had it replaced by its own last 256 KB, rendering "earlier output trimmed - open the
-run to see the full log" on the very view that had the rest, until the next event happened to
-re-seed it and it silently came back. `useLogStream` now drops a `trimmed` replace-snapshot
-when it is already holding lines; a client with nothing buffered still applies it, since a
-trimmed log beats no log.
+from REST" are in direct conflict otherwise: a view that loaded the whole log and then joined
+the room would have it replaced by its own last 256 KB and render "earlier output trimmed -
+open the run to see the full log" on the one view holding the rest. `useLogStream` drops a
+`trimmed` replace-snapshot when it is already holding lines; a client with nothing buffered
+still applies it, since a trimmed log beats no log.
 Sockets carry a `backpressureLimit` with `closeOnBackpressureLimit`, so a client that falls
 irrecoverably behind is dropped and recovers through the existing reconnect-and-resubscribe
 path instead of growing an unbounded send queue.
@@ -3289,9 +3265,9 @@ The tracking refs alone are correct for four shapes (current, behind, merged to 
 under another name, never pushed) and **wrong for a fifth**: pushed, and then the remote branch
 deleted or the work squash-merged. Deleting a remote branch prunes its tracking ref locally, and a
 squash puts the content on the default branch under a commit that shares no history with the
-originals — so re-fetching cannot recover the fact either. That read the whole branch as stranded
-and failed the run, firing hardest on the tidiest workflow: merge the pull request, delete the
-branch. The marker answers it, because "did `origin` ever accept this commit" is the durability
+originals — so re-fetching cannot recover the fact either, and the whole branch reads as
+stranded and fails the run, hardest on the tidiest workflow: merge the pull request, delete
+the branch. The marker answers it, because "did `origin` ever accept this commit" is the durability
 question and a remote cannot retract the answer.
 
 **The merge guard.** What the marker cannot see on its own is the other way a branch leaves the
@@ -3345,10 +3321,9 @@ store, and `sandbox/recovery.ts` is the seam between them.
   container-writes-host-reads and is implemented on every backend. The vault is therefore
   **backend-agnostic**: no volume mount and nothing per-adapter to keep in step, and the copy lands
   under `<dataDir>/git-recovery/<projectId>/`, where the operator's backups already are.
-- **Why the instance's disk and not a provider volume.** The original design put the shared store
-  on a Daytona volume plus a Docker bind mount. Measured against the live API with a
-  volume-scoped key, that would be **the same bundle design and strictly worse**, so it was not
-  built:
+- **Why the instance's disk and not a provider volume.** Measured against the live API with a
+  volume-scoped key, a Daytona volume plus a Docker bind mount is **the same bundle design and
+  strictly worse**:
   - A volume holds whole files only, so it could not hold a bare repo or a live working tree. A
     volume-backed store would therefore also be a bundle store — no architectural gain over the
     seam that already exists.
@@ -3576,13 +3551,13 @@ see below), so it is the one provider that offers a choice. Every other provider
 one CLI and the UI omits the picker for it — for Ollama and LM Studio the Advanced disclosure
 then holds only the optional API key.
 
-**Off-registry model ids are the price of that gateway, and the run log paid it.** Claude Code
+**Off-registry model ids are the price of that gateway.** Claude Code
 resolves every model id against its own built-in registry and writes
 `[claude-code:unrecognized_model] {"model":…,"query_source":…}` to stderr for each one it cannot
 place - the run's own model (`query_source: sdk`), plus the haiku-slot id
 (`ANTHROPIC_DEFAULT_HAIKU_MODEL`) it uses for session titles and subagents. Pointed at a
-third-party gateway every id is off-registry by construction, so those lines were guaranteed
-noise on every run. The Claude Code stream parser now drops them for exactly the providers
+third-party gateway every id is off-registry by construction, so every such line is noise on
+every run. The Claude Code stream parser drops them for exactly the providers
 `claudeCodeProviderUsesCustomEndpoint` covers - the third-party gateways above and the two local
 runners - and relays them untouched on Anthropic, where an id the CLI cannot resolve is a real
 signal, and when the parser is built without a provider at all. That is the predicate's third
@@ -3614,15 +3589,13 @@ deleted and re-added — same account, same API key, same models, different harn
 credential (the CLI picker), per agent (`member_agents.model_override_provider`) or per task
 (`tasks.runtime_type`).
 
-This was two providers (`kimi`, `kimi_code`) up to migration `054`, back when the runtime was
-pinned to the provider. `054` re-points every `kimi_code` row onto `kimi` with an explicit
+Migration `054` re-points every `kimi_code` provider row onto `kimi` with an explicit
 `runtime = 'kimi'` — explicit because those rows carried `NULL`, and `NULL` under `kimi` means
 Claude Code, which would silently move a working credential onto a different CLI. Postgres
-cannot drop an enum label, so `'kimi_code'` survives in `ai_provider` as an unreachable value.
-The `AgentRuntime.Kimi` value likewise reuses the `kimi` label that has existed in
-`agent_runtime` since `001_initial_schema.sql`: it was the original standalone Kimi runtime,
-retired by migration `010` when Kimi moved onto Claude Code, so the runtime needed no enum
-change (only the `kimi_code` provider did, in `048`).
+cannot drop an enum label, so `'kimi_code'` survives in `ai_provider` as an unreachable value,
+and `AgentRuntime.Kimi` reuses the `kimi` label `agent_runtime` has carried since
+`001_initial_schema.sql` (the original standalone Kimi runtime, retired by migration `010`;
+only the provider enum needed a change, in `048`).
 
 Three things make this runtime unlike the Claude-Code-driven providers:
 
@@ -3744,10 +3717,10 @@ pin, **the designated default decides**: the `is_default` row is read on its own
 that is not `verified` (or names a provider this binary dropped) fails the run with a reason
 naming it, rather than passing the run to the next credential in line. Only when *no* row
 carries the flag does the oldest verified config stand in. The failing branch is the point:
-ordering `is_default DESC` across all rows made an unusable default fall through silently, so
-an operator who moved the star watched every agent keep billing the previous provider with
-nothing anywhere saying why — the substitution appeared in no log, no run error and no
-settings badge. `agent-runner` and the chat session both surface `reason` verbatim.
+ordering `is_default DESC` across all rows lets an unusable default fall through silently, so
+every agent keeps billing the previous provider with the substitution appearing in no log, no
+run error and no settings badge. `agent-runner` and the chat session both surface `reason`
+verbatim.
 
 An agent's `model_override_*` (or the config's `default_model`) selects the run's model.
 **How that reaches the CLI is per
@@ -3778,10 +3751,9 @@ model or jump price tier; version comparison reads `.` and `-` alike and drops d
 suffixes, so `claude-haiku-4-5-20251001` cannot outrank a later release on a date. The refresh
 **never touches an existing row** — it moves only the default offered to the next config
 added — and holds the previous pin on an unreachable provider, a rejected key or a family that
-matched nothing. Providers with no spec (the local runners) get no pin at all. Why it exists:
-a hardcoded id cannot notice its own retirement, which is how `gemini-1.5-flash` stayed the
-Google stop-hook judge long after Google withdrew it, 404ing on every run while the hook
-failed open.
+matched nothing. Providers with no spec (the local runners) get no pin at all. It exists
+because a hardcoded id cannot notice its own retirement: a withdrawn one — once
+`gemini-1.5-flash`, the Google stop-hook judge — 404s on every run while the hook fails open.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
@@ -3835,15 +3807,15 @@ switched off outright: `codexAdapter.build` writes `features.apps = false` as a 
 in `config.toml`. Codex surfaces the apps connected to the signed-in ChatGPT account as tools
 in a `codex_apps` namespace, beside the MCP servers Hezo configures. They are the wrong tenant
 - authorized against that account rather than the project's connection, so they answer 404 on
-the project's own repos, which reads to an agent as the resource not existing. Two runs
-diagnosed exactly that as a Hezo connector fault. Codex also documents that app and connector
+the project's own repos, which reads to an agent as the resource not existing and diagnoses as
+a Hezo connector fault. Codex also documents that app and connector
 traffic "is not controlled by the sandboxed-command network proxy or its domain allowlist", so
 they are an uncontrolled egress path on top of being the wrong credentials.
 
-An earlier revision claimed no structural lever existed and solved this with the prompt alone.
-That was wrong: `features.apps` and `apps._default.enabled` are both documented keys.
-`features.apps` is preferred - it is the feature gate rather than a per-app default, it stays a
-top-level key so the "top-level before any `[table]`" ordering is undisturbed, and it does not
+`features.apps` and `apps._default.enabled` are both documented keys, so the prompt is not
+the only lever. `features.apps` is preferred - it is the feature gate rather than a per-app
+default, it stays a top-level key so the "top-level before any `[table]`" ordering is
+undisturbed, and it does not
 touch the `mcp_servers.*` tree. openai/codex#17588 reported `apps.<id>.enabled` being ignored,
 but under a `[profiles.*]` section; Hezo writes top-level keys, so that report does not apply -
 and it is the reason a short note is kept rather than deleted.
@@ -3864,10 +3836,10 @@ into a lookup.
 `mcp__<connector>__<tool>`, where `<connector>` is `mcp_connections.name` put through **two**
 sanitizers: Hezo's `safeName` (`toml.ts`) maps to `[A-Za-z0-9_-]`, then Codex's own
 `sanitize_responses_api_tool_name` replaces everything outside `[A-Za-z0-9_]` - hyphens
-included (openai/codex#14605, shipped v0.116.0). Stating either half alone is wrong, and wrong
-in the direction that matters: `register_connector` slugs are hyphenated by construction
-(`tools.ts`, `.replace(/[^a-z0-9]+/g, '-')`), so a rule that keeps hyphens misdescribes exactly
-the connectors agents create. The name is also operator-chosen or slug-derived and need not
+included (openai/codex#14605, shipped v0.116.0). Both halves have to be stated:
+`register_connector` slugs are hyphenated by construction (`tools.ts`,
+`.replace(/[^a-z0-9]+/g, '-')`), so a rule that keeps hyphens misdescribes exactly the
+connectors agents create. The name is also operator-chosen or slug-derived and need not
 mention the service - a GitHub connector may be called "Marketing" - so the note names
 `list_connectors` as the mapping and `codex_apps` as the exclusion. The
 `mcp__<connector_name>__<tool>` convention is already stated to agents in
@@ -3955,11 +3927,10 @@ Moonshot bearer.
 assistant text as `text` deltas with no `result` event, so the parser accumulates them and the
 flush is the only place `finalMessage` can be captured. Consecutive `text` events are deltas of
 one message, but a run has many: the next turn opens with `thought`, and tool activity arrives as
-event types this parser renders nothing for. Flushing only on `end` therefore ran the whole run's
-narration into one buffer and made `finalMessage` the concatenation of every turn - sentences
-abutting with no separator, since deltas are appended raw. The handoff net posts that value
-verbatim, so an entire run's thinking went out as one comment. Anything that is not another
-`text` delta now ends the message.
+event types this parser renders nothing for. Flushing only on `end` therefore makes
+`finalMessage` the concatenation of every turn - sentences abutting with no separator, since
+deltas are appended raw - which the handoff net posts verbatim as one comment. Anything that
+is not another `text` delta ends the message.
 
 **OpenCode reports a tool only once, when it has finished.** Its `--format json` stream carries
 no pending/running tool states: one `tool_use` event per call, arriving at completion with the
@@ -3979,10 +3950,10 @@ summary from `flush()` if no `[done]` was reached, rather than losing it with th
 CLI's own diagnostics on **stderr**, leaving stdout pure JSON; the runner already relays
 stderr verbatim, so this needs no parser work and costs a healthy run almost nothing. It buys
 the provider and model behind a failure, which the JSON `error` event does not name and whose
-message is sometimes only `Unexpected server error`. The auto-approve flag is `--auto`: the
-table previously held Claude Code's `--dangerously-skip-permissions`, which OpenCode's parser
-accepts and ignores rather than rejecting, so the intent went unapplied for every run and
-would have become a hard failure the day OpenCode started refusing unknown arguments.
+message is sometimes only `Unexpected server error`. The auto-approve flag is `--auto`, never
+Claude Code's `--dangerously-skip-permissions`, which OpenCode's parser accepts and ignores
+rather than rejecting - the intent goes silently unapplied, and becomes a hard failure the day
+OpenCode starts refusing unknown arguments.
 
 **Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
 legitimately long agent/background work; every runtime is relaxed at its own config surface
@@ -4115,10 +4086,10 @@ parser (`getFinalAssistantMessage()`).
 **A run that called `report_no_work` is excluded outright.** Every form below is a *handoff* the
 run failed to deliver, and an agent that declared it had nothing to do handed nothing over - its
 final message is a status note, and an `@admin` inside it is narration, not an ask. Delivering it
-anyway posted a comment the agent had explicitly decided not to write, fanned it to the admin
-inbox on every idle wake, and set `produced_output`, which graded the no-op a productive run and
-hid it from the no-work backoff above. On Grok that fired on every idle tick, because Grok has no
-judge and the net is its only guardrail.
+anyway posts a comment the agent explicitly decided not to write, fans it to the admin inbox on
+every idle wake, and sets `produced_output`, which grades the no-op a productive run and hides
+it from the no-work backoff above - on Grok, which has no judge and for which the net is the
+only guardrail, on every idle tick.
 
 Three stranded forms are handled, differently:
 (1) an **active `@`-mention** (`extractMentionSlugs`) the run never posted as a comment is
@@ -4149,11 +4120,9 @@ trap. Both detectors skip a slug that is also actively `@`-mentioned (it already
 **except on the leading-line branch**, which asks whether the address is *marked* correctly
 rather than whether anyone was notified, so only an active mention that is itself an address
 (`hasActiveAddressingMention`, the same four shapes applied to the active spelling) excuses it.
-Without that carve-out a throwaway back-reference silenced the branch on the line carrying the
-ask — `@@admin — <directive>` plus `… the earlier @admin ZIP request …` two sentences later put
-the muted mark on the handoff and the live one on a mention that asks for nothing, and because
-the stray mention lands a real inbox row the wake receipt and the no-wake exit check both read
-clean. The net does **not** rewrite the
+Without that carve-out any throwaway back-reference elsewhere in the comment silences the
+branch on the line carrying the ask, and because the stray mention lands a real inbox row the
+wake receipt and the no-wake exit check both read clean. The net does **not** rewrite the
 agent's words or auto-deliver it (guessing intent to force a wake overreaches). `create_comment`
 already warns the agent interactively when it posts such a comment; the final-message path skips
 that check, so the runner surfaces the **same warning in the run log** and leaves the handoff
@@ -4205,10 +4174,8 @@ fire-and-forget, because this check reads it back at the end of the same run.
 
 The aggregate is **per task, not per run**. A run comments on whatever tasks it touches, so answered
 run-wide the question lets a run that woke a teammate on its own task strand a handoff in a comment
-on a *different* task and still pass clean - the shape of the incident this scoping came from, where
-a review verdict written from a run on a sibling task named its approver passively and no layer
-anywhere reported it. Each task the run commented on is judged on its own comments, its own wakes
-and its own status, and the warning names that task. The run's own task is always judged, since a
+on a *different* task and still pass clean. Each task the run commented on is judged on its
+own comments, its own wakes and its own status, and the warning names that task. The run's own task is always judged, since a
 handoff stranded in the final message has no comment behind it; conversely the final message counts
 as outward-facing on that task only, being addressed to no other task's thread. Every touched task
 is read in one query, and `resolveWarnableSlugs` is memoized per distinct `team_id` - one call in
@@ -4278,20 +4245,20 @@ warn alike rather than the `@@` spelling being a way around the check. Those thr
 paths, not the whole check**: underneath them sits a **position-independent** gate - any `@@slug`
 whose *own sentence* reads as a directed ask (`readsAsAsk`) and does not merely cite the teammate
 (`isPurelyReferential`) is flagged wherever the token sits. That general rule is what keeps this
-detector off the treadmill it was on, where each incident added another *position* (an unbounded
-set) and the ask signal was only ever consulted *after* one matched - so a mid-paragraph
-`@@equity-analyst — please mark INV-86 done.` warned nowhere while the strongest signal in the
-vocabulary sat four characters away. It is safe for the passive form specifically because `@@slug`
+detector off a treadmill of *positions* - an unbounded set, and one consulted ahead of the ask
+signal, so a mid-paragraph `@@equity-analyst — please mark INV-86 done.` warns nowhere while
+the strongest signal in the vocabulary sits four characters away. It is safe for the passive
+form specifically because `@@slug`
 is deliberate mention syntax naming exactly one teammate: there is no "the word happened to
 appear" failure mode, so position proves nothing the token has not already proved. A **bare** name
 does have that failure mode, which is why `detectUnlinkedTeammateAsks` still requires an address
 position. The gate subsumed the former emphasised-`**@@slug**` branch at a tighter scope
 (sentence, not paragraph, so a `you` in an unrelated sentence can no longer pull an attribution
-into an ask). `isPurelyReferential` is the one place spending vocabulary is principled, and the
-asymmetry is the point: the ways to *ask* are unbounded, but the ways to merely *refer* are few
-and grammatically marked - a preposition in front (`per`/`as`/`by`/`from`/`via`), a possessive, or
-a past-tense reporting verb behind. Enumerating the safe set is finite work; enumerating the
-unsafe set is not. `SHARED_INSTRUCTIONS` teaches the matching rules: an active
+into an ask). `isPurelyReferential` is the one place spending vocabulary is principled: the
+ways to *ask* are unbounded, but the ways to merely *refer* are few and grammatically marked -
+a preposition in front (`per`/`as`/`by`/`from`/`via`), a possessive, or a past-tense reporting
+verb behind - so enumerating the safe set is finite work where enumerating the unsafe set is
+not. `SHARED_INSTRUCTIONS` teaches the matching rules: an active
 mention's shape is a line opening `@<slug> - ` then the ask, several recipients get one such line
 each, a line never opens with `@@<slug> - `, and a baton-passing handoff ("ready for review") is
 an ask however stative its grammar.
@@ -4372,14 +4339,13 @@ certs and is **written into every container through `SandboxFiles`** at provisio
 installed into the trust store by `update-ca-certificates` and additionally handed to Node
 via `NODE_EXTRA_CA_CERTS`.
 
-It used to arrive as a `host:container` **bind**, which is a Docker primitive: a managed
-backend has no host to bind from, and Daytona's adapter can only render a file bind as
-"create its parent directory" - so the directory appeared, the cert did not,
-`NODE_EXTRA_CA_CERTS` named a missing file and `update-ca-certificates` installed nothing.
-The blast radius was wider than Node: curl, git, Codex and Grok read only the system store
-(see the `CURL_CA_BUNDLE` note below), so every proxied TLS call failed on an unknown
-issuer, on one backend, with nothing naming the cause. Anything a container needs the
-*bytes* of goes through the file seam; a bind can only ever mean "this directory exists".
+Anything a container needs the *bytes* of goes through that file seam; a `host:container`
+**bind** is a Docker primitive that can only ever mean "this directory exists" - a managed
+backend has no host to bind from, and Daytona's adapter renders a file bind as its parent
+directory alone, leaving `NODE_EXTRA_CA_CERTS` naming a missing file and
+`update-ca-certificates` installing nothing. The blast radius is wider than Node: curl, git,
+Codex and Grok read only the system store (see the `CURL_CA_BUNDLE` note below), so every
+proxied TLS call fails on an unknown issuer, on one backend, with nothing naming the cause.
 
 **`CURL_CA_BUNDLE` and `GIT_SSL_CAINFO` are deliberately not set**, for the same reason
 `SSL_CERT_FILE` is not: they **replace** the trust bundle rather than adding to it.
@@ -4430,13 +4396,12 @@ the tunnel: the TLS/SSH handshake (small packets) completes, but a bulk transfer
 ships `iproute2`; `/sys` is read-only in a container so netlink, not a `/sys` write, is
 required). Normal (≥1500) hosts are untouched — no capability, no MTU change.
 
-**No connectivity preflight, and no run-time connectivity gate.** Both existed to cover one
-failure: a container that could not reach the host's egress proxy, which on native-Linux
-Docker meant a silently-dropped bridge→host path. There is no such path any more - the proxy
-is on Hezo's own loopback and the container reaches it through the tunnel - so the ~490-line
-probe, its auto-rebind of the bind host, and the run/chat abort gate it fed were all deleted
-along with `--container-bind-host`. A tunnel that cannot be established fails the run
-directly, with the error from the exec channel.
+**No connectivity preflight, and no run-time connectivity gate.** Both covered one failure: a
+container that could not reach the host's egress proxy over a bridge→host path native-Linux
+Docker silently dropped. There is no such path - the proxy is on Hezo's own loopback and the
+container reaches it through the tunnel - so there is no probe, no auto-rebind of the bind
+host, no run/chat abort gate and no `--container-bind-host`. A tunnel that cannot be
+established fails the run directly, with the error from the exec channel.
 
 For each request the proxy terminates TLS, matches placeholders **in the URL, the headers,
 and - whenever it buffered one - the request body**, loads the named secret, verifies the
@@ -4500,15 +4465,11 @@ Because the dial target is then an address, the upstream request restates `Host`
 original name and passes it as `servername`, so TLS still validates against the name.
 
 That is deliberately **not** the request's `lookup` option, which is the obvious way to
-write it and is broken on Bun: a request carrying a **body** never delivers that body, so
-the upstream answers as though it received an empty one. A `GET` is unaffected, which is
-why it stayed hidden - a proxied `git` clone fetched its ref advertisement normally and
-then hung on `POST /git-upload-pack` (`RPC failed; curl 28`, `expected flush after ref
-listing`), while every agent's POSTed API and MCP call was silently sent empty. It was
-production-only because the guard is skipped when `allowPrivateTargets` is set, and every
-suite in the repo set it; `conformance/git.ts` now exempts its loopback fixture by
-`selfEndpoint` instead, so its real-host legs run the guarded path. See
-oven-sh/bun#28396 for the wider set of `node:http` proxy defects.
+write it and is unusable on Bun (`.dev/bun-issues.md`, which owns the symptoms and the
+open reports). Such a defect is production-only because the guard is skipped when
+`allowPrivateTargets` is set, which every suite in the repo used to set; `conformance/git.ts`
+exempts its loopback fixture by `selfEndpoint` instead, so its real-host legs run the guarded
+path.
 
 CONNECT and plain requests also take a
 synchronous pre-check on IP literals and `localhost`, so a blocked tunnel never mints a
@@ -4536,12 +4497,11 @@ values are never written to logs regardless — including the **substituted** re
 A placeholder in a query string becomes a live credential in `upstreamPath`, so the
 failure logger is handed the **pre-substitution** path instead (`UpstreamTarget.path`),
 which still carries `__HEZO_SECRET_<NAME>__` and is inert. Guarded by a Bun-tier test that
-forces an upstream failure with the placeholder in the query string. Earlier builds wrote one `egress_request`
-`audit_log` row per substitution (surfaced on an "Outbound traffic" tab, and the source of
-the per-credential "last used"/"use count" stats on the Credentials page); that logging was
-removed because it flooded the project Activity feed with per-request noise. The tab and the
-usage stats are gone, and any `egress_request` rows left in older databases are filtered out
-of the activity-log reads (`routes/audit-log.ts`) rather than deleted.
+forces an upstream failure with the placeholder in the query string. There is no "Outbound
+traffic" tab and no per-credential "last used"/"use count" stat on the Credentials page: one
+`egress_request` `audit_log` row per substitution floods the project Activity feed with
+per-request noise. Any `egress_request` rows left in older databases are filtered out of the
+activity-log reads (`routes/audit-log.ts`) rather than deleted.
 
 **One structural signal, not an audit.** The proxy is the only thing that sees both a run's
 request to a hosted connector and the upstream's answer, so it reports one thing:
@@ -4792,17 +4752,17 @@ upstream 404 before it was found. So:
 **Revoke and disconnect stay open to any project that can see the row, and the dialog is the
 protection.** `deleteConnection`'s `UPDATE repos SET oauth_connection_id = NULL` carries no
 project filter, so one project disconnecting a shared connection does strip git auth from
-every other project's repos. Requiring ownership was tried and reverted, for two independent
-reasons. It did not work: the revoke guard scopes on `mcp_connections.project_id` while the
-destruction happens in `oauth_connections`, a different row whose scope
-`PATCH /api/connectors/:id {project_id}` moves on its own, so a project-owned connector
-pointing at a global connection still took every project's repos. And it broke more than it
-fixed: `DELETE /projects/:p/oauth-connections/:id` is the **only** route anywhere that deletes
-an `oauth_connections` row - the admin connector delete removes the `mcp_connections` row and
-leaves the connection behind - so refusing a global row there made global connections
-undeletable instance-wide while the UI went on offering a Disconnect button that 404'd with no
-error surfaced. The protection is therefore the same one the delete path uses: name every repo
-that breaks, in the confirmation, before the click.
+every other project's repos. Scoping it on ownership neither works nor is safe. It does not
+work: the revoke guard scopes on `mcp_connections.project_id` while the destruction happens in
+`oauth_connections`, a different row whose scope `PATCH /api/connectors/:id {project_id}`
+moves on its own, so a project-owned connector pointing at a global connection still takes
+every project's repos. And it breaks more than it fixes:
+`DELETE /projects/:p/oauth-connections/:id` is the **only** route anywhere that deletes an
+`oauth_connections` row - the admin connector delete removes the `mcp_connections` row and
+leaves the connection behind - so refusing a global row there makes global connections
+undeletable instance-wide while the UI goes on offering a Disconnect button that 404s. The
+protection is therefore the same one the delete path uses: name every repo that breaks, in the
+confirmation, before the click.
 
 **`linked_repos` is team-scoped; the guard is not.** A global connector is visible from every
 project on the instance, other teams' included, so an unfiltered aggregate handed a project
@@ -4824,9 +4784,9 @@ since — a new hostname, an `http`↔`https` flip from the reverse proxy in fro
 first registration done from a different address — it re-runs discovery + DCR to mint a fresh
 client bound to the current origin and overwrites the cache. Without this, the stale client
 sends the AS a redirect_uri it never registered and the authorize is rejected with
-"redirect_uri does not match any of the OAuth 2.0 Client's pre-registered redirect urls"
-(observed against Higgsfield, whose `mcp.higgsfield.ai` broker forwards the DCR client_id and
-redirect_uri straight through to upstream Clerk). Registrations cached before the
+"redirect_uri does not match any of the OAuth 2.0 Client's pre-registered redirect urls" -
+including behind a broker, which forwards the DCR client_id and redirect_uri straight through
+to the upstream authorization server. Registrations cached before the
 `redirect_uri` field existed carry none, so they miss the reuse check and re-register on the
 next connect — an address change no longer needs delete-and-recreate.
 
@@ -4857,10 +4817,10 @@ carrying a `restriction` only for the ones with an allowlist. An operator who re
 handed a descriptor for it, so withholding the descriptor must not also withhold the rule.
 
 This replaced three *guesses* at the same fact — agent-requested (`created_by_task_id`), a
-cached `config.dcr`, a recorded `auth_error` — with one measurement. None of the three caught
-an operator-added row that quietly wanted auth: on a production instance three such rows
-(Higgsfield, Typefully, GitHub Copilot) were handed to every run and failed `initialize`
-inside the container, where nothing on the server side could see it, on every run forever.
+cached `config.dcr`, a recorded `auth_error` — with one measurement. None of the three catches
+an operator-added row that quietly wants auth: such a row is handed to every run and fails
+`initialize` inside the container, where nothing on the server side can see it, on every run
+forever.
 
 **Probe evidence** lives on two `mcp_connections` columns (migration 063) and is written by
 exactly one function, `discoverConnectorMethods` (`services/connectors/method-discovery.ts`):
