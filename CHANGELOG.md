@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.54.0 - 2026-08-24
+
+### Features
+
+- **mcp-cli:** reach connector tools on demand, validated end to end ([#1035](https://github.com/hezo-ai/hezo/pull/1035))
+- **web:** one device sign-in component, with the steps made visible ([#1041](https://github.com/hezo-ai/hezo/pull/1041))
+
+### Tests
+
+- **web:** cover the broker form's device-flow view ([#1042](https://github.com/hezo-ai/hezo/pull/1042))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.53.1...0.54.0
+
 ## 0.53.1 - 2026-08-23
 
 ### Bug Fixes

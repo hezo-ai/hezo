@@ -417,15 +417,25 @@ describe('run log tools', () => {
 		expect(res.log).toBe('TAILEND'); // the last 7 chars
 	});
 
-	it('trips the result-size guard when a huge slice is requested', async () => {
+	it('shrinks a huge requested slice to fit instead of tripping the size guard', async () => {
+		// A request larger than the admission cap used to come back as
+		// result_too_large - a discarded-whole answer an agent can only retry.
+		// The tool now trims the loaded slice until the serialized result fits,
+		// so an oversized ask degrades to a smaller window, never to an error.
 		const log = 'x'.repeat(100_000);
 		const runId = await seedRun({ team: teamId, member: engineerId, task: taskId, log });
 		const res = (await callToolAs(adminToken, 'get_run_log', {
 			project: projectSlug,
 			run_id: runId,
 			excerpt_chars: 100_000,
-		})) as { error?: string };
-		expect(res.error).toBe('result_too_large');
+		})) as { error?: string; log: string; length: number; truncated: boolean };
+		expect(res.error).toBeUndefined();
+		expect(res.log.length).toBeGreaterThan(0);
+		expect(res.log.length).toBeLessThan(100_000);
+		expect(log.endsWith(res.log)).toBe(true);
+		expect(res.length).toBe(log.length);
+		expect(res.truncated).toBe(true);
+		expect(Buffer.byteLength(JSON.stringify(res), 'utf8')).toBeLessThanOrEqual(64_000);
 	});
 
 	it('rejects a malformed run_id and a run from another team', async () => {

@@ -37,7 +37,7 @@ The rules are here; the detail is there. Prefer reading the guide over rediscove
 | Looking up where a helper lives | `seam-registry.md` |
 | Checking what else a change must touch | `mirrored-surfaces.md` |
 
-Plus point-in-time decision notes, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `grok-build-support.md`.
+Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `grok-build-support.md`, `mcp-cli-efficiency.md`.
 
 ## Commands
 

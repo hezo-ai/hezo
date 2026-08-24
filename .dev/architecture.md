@@ -1810,6 +1810,31 @@ cover the rest of the run:
   `typefully=connected(25)` on a DeepSeek run - showed the tools had been there all along.
   Before assuming a connector is broken, read this field.
 
+  **Offered is not called, and `tool_call_counts` records the second**
+  (migration 073). The same parser tallies every tool the run actually invoked, keyed by the
+  name the runtime puts on the wire (`mcp__hezo__create_comment`, `Bash`), exposed as
+  `getToolCallCounts()`. The tally is per parser instance, never module-level, or concurrent
+  runs would pool their calls.
+
+  Unlike `mcp_tool_counts` this is written **once at the end**, folded into
+  `updateHeartbeatRun`'s terminal `UPDATE` as a `COALESCE`d bind rather than given a write of
+  its own: the tally only completes when the stream does, and updating per call would leave a
+  dead tuple behind every tool the agent used. The abort path persists it too - the calls a
+  run made before it died are still the truth about what it reached for.
+
+  `formatToolUse` takes the tally as a required argument, so recording and rendering cannot
+  separate; a runtime added without wiring it is a compile error rather than a silent zero.
+  Four of six runtimes report: Claude Code, Codex, OpenCode and Kimi Code. **Grok and
+  Antigravity return NULL** - Grok's tool calls arrive as a type its parser drops, and
+  Antigravity's handles only `init`/`step_update`/`result`. Neither can be instrumented
+  without first teaching its parser to render tool calls, so both read as "not instrumented"
+  rather than as runs that called nothing.
+
+  This exists to answer whether a tool earns the context its schema occupies on every
+  request. Hezo's own surface measures 82 tools at ~136 KB, 71.4% of it prose, and a real
+  instance carries ~337 tools across six MCP servers - so which of them are ever called is
+  the figure any decision to defer a tool has to be made against, and nothing recorded it.
+
 The runner also orders these: a signal kill outranks a captured terminal error, which in
 turn outranks "produced no output" on the run row - each is the cause of the one below it,
 and reporting the symptom first sends the reader after the wrong thing. A process a signal
@@ -4831,6 +4856,48 @@ after a run's request to the connector was refused (trigger `run`, from
 connector on no timer at all, since the sweep skips those. All three `DO UPDATE SET` clauses
 that can re-point a connector also reset `probed_at` / `probe_error`, or a row proven public at
 one URL would stay "proven" at another.
+
+**Connector tools are reached through an in-container CLI, not the runtime's MCP config.**
+A connector's descriptors used to be handed to the coding CLI alongside Hezo's own server,
+which put every tool of every connector in the model's context on every request - ~255 tools
+at roughly 1.4 KB of schema each on a real instance. `agent-runner.ts` now passes only the
+`hezo` descriptor to `buildMcpInjection` and writes the connectors into a manifest instead
+(`services/mcp-cli/manifest.ts`), alongside the `hezo-mcp` client itself
+(`services/mcp-cli/cli-source.ts`). The agent runs `hezo-mcp search` / `describe` / `call`,
+so a connector tool's schema costs tokens only when it is asked for. The bare command
+resolves because the same pass writes a `/usr/local/bin/hezo-mcp` wrapper execing the
+per-run script - the script itself lives in a dir on no shell's PATH - and chowns the
+mcp-cli dir to the run user so the CLI's per-run schema cache is writable.
+
+**Below the runtime, not inside it.** `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` is false for Codex,
+Grok and Antigravity, and none of the three defers tools natively either, so any mechanism
+built on a runtime feature would cover half the fleet. Every runtime has a shell, so a CLI is
+runtime-agnostic by construction and needs no capability branch.
+
+**The credential path is untouched**, which is what makes this compatible with the § 7 red
+line. The manifest carries the descriptor's `__HEZO_SECRET_*__` placeholders verbatim; the
+call still originates in the container, still traverses the egress proxy, and is still
+substituted there scoped by `allowed_hosts`. Hezo never makes the outbound call, so no
+credential is resolved host-side against an agent-named destination.
+
+Three consequences worth knowing before touching this area:
+
+- **`mcp-method-guard.ts` is now the sole enforcement point** for a method allowlist. The CLI
+  hides disabled tools from `search`, but it is written into the container and the agent has a
+  shell, so nothing there is a boundary. HTTP connectors are genuinely enforced at the proxy;
+  a stdio connector's allowlist is advisory, as it always was - an agent could always have
+  spawned the server itself.
+- **`tools_this_run` is permanently `null` for a connector.** It counts what the *runtime*
+  loaded, and connectors are no longer in that list. The guidance that pointed agents at it
+  moved to `hezo-mcp search --server <name>` in the same change; leaving it would have turned
+  the expected reading into a standing false alarm.
+- **The manifest is written on every run, connectors or not.** The CLI answering "no MCP
+  servers are configured for this run" is a fact an agent can act on; a missing command is
+  indistinguishable from a broken image, which is the ambiguity that has already cost this
+  codebase two incidents (the Typefully claim, and the orphaned-connector 404 diagnosis).
+
+Paths root at `CONTAINER_SUBSCRIPTION_BASE`, not a per-run home dir: Antigravity declares
+`requiresHomeDir: false`, so a home-rooted CLI would be missing on exactly one of the six.
 
 **MCP connections** (`mcp_connections`, see § 3 scoping). `kind='saas'` carries
 `{ url, headers, apiKey? }`. Connector auth is **always emitted as a `__HEZO_SECRET_*__`

@@ -1,13 +1,16 @@
 /**
  * The enforcement leg of per-connector MCP method access.
  *
- * Runtime config filtering (the per-adapter `includeTools` / `permissions.deny`
- * keys) hides disabled tools so an agent never sees one it cannot call — but it
- * is best-effort. The coding CLIs are installed unpinned, two of them (Codex,
- * Grok) expose no per-server tool filter at all, and Claude Code's deny list is
- * only as complete as the last `tools/list`. So the restriction is *also*
- * enforced here, on the way out of the container, where it holds regardless of
- * which runtime made the call or what its config understood.
+ * A disabled method is also hidden from `hezo-mcp search`, so an agent never sees
+ * one it cannot call — but that is advisory. The CLI is written into the
+ * container and an agent has a shell, so nothing there can be a boundary. The
+ * restriction is therefore enforced here, on the way out of the container, where
+ * it holds regardless of what made the call.
+ *
+ * This is the sole enforcement point since connectors left the runtimes' MCP
+ * config. It used to share the job with per-adapter `includeTools` /
+ * `permissions.deny` keys, which covered only the three runtimes that have such
+ * a key at all.
  *
  * This module is the decision alone — no I/O, no proxy state — so the rules can
  * be tested directly.

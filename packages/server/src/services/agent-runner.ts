@@ -129,6 +129,19 @@ import {
 import { ContainerGitExecutor, type GitExecutor } from './git-executor';
 import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
+import { HEZO_MCP_CLI_SOURCE } from './mcp-cli/cli-source';
+import {
+	CONTAINER_MCP_CLI_BIN_DIR,
+	CONTAINER_MCP_CLI_DIR,
+	CONTAINER_MCP_CLI_MANIFEST,
+	MCP_CLI_BIN_NAME,
+	MCP_CLI_DIR,
+	MCP_CLI_MANIFEST_ENV,
+	MCP_CLI_MANIFEST_FILENAME,
+	MCP_CLI_SCRIPT_FILENAME,
+	MCP_CLI_WRAPPER_SOURCE,
+	renderMcpCliManifest,
+} from './mcp-cli/manifest';
 import { retryOrEscalateLostRun, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
@@ -721,6 +734,17 @@ export async function buildRuntimeInvocation(
 			)
 		: null;
 
+	// Only Hezo's own server goes into the runtime's MCP config. A connector's
+	// tools used to be loaded here too, which put every tool of every connector in
+	// the model's context on every request - ~255 of them on a real instance, at
+	// roughly 1.4 KB of schema each. They now travel in a manifest the in-container
+	// `hezo-mcp` CLI reads, so a connector tool's schema costs tokens only when the
+	// agent asks for it.
+	//
+	// Below the runtime rather than inside it on purpose: three of the six runtimes
+	// (Codex, Grok, Antigravity) support no per-server tool filter and no native
+	// tool-search deferral, so anything built on a runtime feature would cover half
+	// the fleet. Every runtime has a shell.
 	const mcpDescriptors: McpDescriptor[] = [
 		{
 			kind: 'http',
@@ -728,7 +752,6 @@ export async function buildRuntimeInvocation(
 			url: `${endpoints.hezoBaseUrl}/mcp`,
 			bearerToken: agentJwt,
 		},
-		...connectorDescriptors,
 	];
 
 	// Active project-doc filenames, baked into the runtime's doc-write guard so it
@@ -767,6 +790,39 @@ export async function buildRuntimeInvocation(
 			dirMode: SUBSCRIPTION_DIR_MODE,
 		});
 	}
+
+	// The `hezo-mcp` CLI and the manifest it reads. Written through the same
+	// SandboxFiles as everything else here, so they reach a container that is not
+	// on this machine by the engine's own file transport rather than a bind mount.
+	//
+	// Written on every run even when the run has no connectors: the CLI answering
+	// "no MCP servers are configured for this run" is a fact the agent can act on,
+	// whereas a missing command is indistinguishable from a broken image - which is
+	// the class of ambiguity that has already cost this codebase two incidents.
+	await runtimeFiles.write(`${MCP_CLI_DIR}/${MCP_CLI_SCRIPT_FILENAME}`, HEZO_MCP_CLI_SOURCE, {
+		mode: 0o755,
+		dirMode: SUBSCRIPTION_DIR_MODE,
+	});
+	await runtimeFiles.write(
+		`${MCP_CLI_DIR}/${MCP_CLI_MANIFEST_FILENAME}`,
+		renderMcpCliManifest(connectorDescriptors),
+		{ mode: 0o644, dirMode: SUBSCRIPTION_DIR_MODE },
+	);
+
+	// The prompts name the bare `hezo-mcp` command and the script lives in a
+	// per-run dir no shell's PATH covers, so a wrapper on PATH connects the two.
+	await deps.docker
+		.files(containerId, CONTAINER_MCP_CLI_BIN_DIR)
+		.write(MCP_CLI_BIN_NAME, MCP_CLI_WRAPPER_SOURCE, { mode: 0o755 });
+
+	// The CLI caches fetched tool schemas beside its manifest, and the host just
+	// wrote that dir root-owned - hand it to the run user, or every cache write
+	// fails silently and every search/describe/call re-pays the tools/list fetch.
+	// Recursive so a stale root-owned cache from a run before the chown existed
+	// cannot keep the dir unwritable in a reused container.
+	await chownToRunUser(deps.docker, containerId, runUser, [CONTAINER_MCP_CLI_DIR], {
+		recursive: true,
+	});
 
 	// The host (root in production) just wrote the per-run config dir + files at
 	// restrictive modes; give the container's non-root run-user ownership so the
@@ -809,6 +865,7 @@ export async function buildRuntimeInvocation(
 		`HEZO_AGENT_EFFORT=${effort}`,
 		`HEZO_PROMPT_FILE=${promptContainerPath}`,
 		`HEZO_PROMPT_MODE=${RUNTIME_PROMPT_DELIVERY[runtimeType]}`,
+		`${MCP_CLI_MANIFEST_ENV}=${CONTAINER_MCP_CLI_MANIFEST}`,
 		...extraEnv,
 		...effortApplication.extraEnv,
 		...buildProviderEnv(provider, credential, modelOverride),
@@ -2955,6 +3012,10 @@ export async function runAgent(
 					// The stream ran to its terminal event, so this usage is final, not a
 					// mid-run snapshot — clear the partial flag any earlier flush set.
 					usagePartial: false,
+					// Written here rather than mid-run like mcp_tool_counts: the tally only
+					// completes when the stream does, and updating it per call would leave a
+					// dead tuple behind every tool the agent used.
+					toolCallCounts: parser.getToolCallCounts(),
 				},
 				runBroadcast,
 			);
@@ -3012,6 +3073,10 @@ export async function runAgent(
 					// Persist whatever the parser captured before the throw/abort; leave
 					// usage_partial as the last flush set it (true once any usage landed).
 					usage: parser.getUsage(),
+					// Partial by nature - the calls made before the run died are still the
+					// truth about what it reached for, and a died-early run is exactly the
+					// case worth being able to inspect.
+					toolCallCounts: parser.getToolCallCounts(),
 				},
 				runBroadcast,
 			);
@@ -4852,6 +4917,12 @@ async function updateHeartbeatRun(
 		 * as the last periodic flush set it (true once any usage landed).
 		 */
 		usagePartial?: boolean | null;
+		/**
+		 * Which tools the run called and how many times, from the parser's tally.
+		 * Null when the runtime's parser renders no tool events (Grok, Antigravity),
+		 * which the column reads as "not instrumented" rather than "called nothing".
+		 */
+		toolCallCounts?: Record<string, number> | null;
 	},
 	broadcast: HeartbeatRunBroadcast,
 ): Promise<void> {
@@ -4874,7 +4945,8 @@ async function updateHeartbeatRun(
 		     cost_cents = COALESCE($6, cost_cents),
 		     cache_read_tokens = COALESCE($11, cache_read_tokens),
 		     cache_creation_tokens = COALESCE($12, cache_creation_tokens),
-		     usage_partial = COALESCE($7, usage_partial)
+		     usage_partial = COALESCE($7, usage_partial),
+		     tool_call_counts = COALESCE($13::jsonb, tool_call_counts)
 		     -- cancel_reason is deliberately absent from this SET list. A cancel
 		     -- attribution says WHO stopped the run, and this finalizer is never that
 		     -- party: terminateHeartbeatRun backfills operator_terminated while the
@@ -4902,6 +4974,8 @@ async function updateHeartbeatRun(
 			// value lands in the wrong column.
 			update.usage?.buckets?.cacheReadTokens ?? null,
 			update.usage?.buckets?.cacheCreationTokens ?? null,
+			// $13, appended for the same reason as $11/$12 above.
+			update.toolCallCounts ? JSON.stringify(update.toolCallCounts) : null,
 		],
 	);
 	if (applied.rows.length > 0) {

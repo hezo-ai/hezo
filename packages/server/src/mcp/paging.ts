@@ -262,3 +262,43 @@ export function windowContent<T>(opts: {
 	}
 	return result;
 }
+
+/**
+ * Trim an already-loaded text window until the serialized result fits `limit`.
+ *
+ * The character-based sibling of `windowContent`'s byte loop, for tools that
+ * window in storage by character offset and never hold the full body -
+ * `get_run_log` reads only the requested slice from the chunk store, so the
+ * shrink has to run on that slice rather than on the whole text. The loop is
+ * what stands between an escape-dense window and the `result_too_large` guard:
+ * JSON escaping can inflate a log several-fold past its character count, and a
+ * discarded-whole result on a tool's DEFAULT parameters leaves the caller no
+ * working spelling at all - the failure mode that once had a reviewer repeat
+ * the same rejected call thousands of times.
+ *
+ * `keep` names which end survives: a tail keeps its end, a forward window its
+ * start. `build` wraps the kept text in the tool's own result shape and is
+ * measured with the same serialization the admission guard uses. Terminates
+ * because the kept length strictly shrinks; an empty window that still does not
+ * fit falls through to the guard, which is the honest answer at that point.
+ */
+export function fitSerializedWindow<T>(opts: {
+	text: string;
+	keep: 'start' | 'end';
+	/** Effective byte cap for the whole serialized result. */
+	limit: number;
+	/** Wrap the kept text in the calling tool's result shape. */
+	build: (kept: string) => T;
+}): T {
+	let kept = opts.text;
+	let result = opts.build(kept);
+	while (
+		kept.length > 0 &&
+		Buffer.byteLength(JSON.stringify(result, null, 2), 'utf8') > opts.limit
+	) {
+		const next = Math.max(0, Math.floor(kept.length * 0.9) - 1);
+		kept = opts.keep === 'start' ? kept.slice(0, next) : kept.slice(kept.length - next);
+		result = opts.build(kept);
+	}
+	return result;
+}

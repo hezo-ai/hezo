@@ -1,0 +1,24 @@
+-- Which tools a run actually called, and how many times each, parsed from the
+-- runtime's own stream in services/agent-stream-parser.ts. Stored as a jsonb
+-- object keyed by the name the runtime puts on the wire:
+--   {"mcp__hezo__create_comment": 4, "Bash": 11, "mcp__typefully__list_drafts": 1}
+--
+-- Deliberately a different question from mcp_tool_counts (migration 056), which
+-- records how many tools each server *offered*. Offered and called diverge, and
+-- only the second says whether a tool is earning the context its schema occupies
+-- on every request. Deferring a tool behind on-demand loading is a decision that
+-- has to be made against calls, not against offers, and nothing recorded calls.
+--
+-- NULL = not instrumented, and stays distinct from a recorded zero for the same
+-- reason it does on mcp_tool_counts: "we do not know" and "it called nothing"
+-- lead to different conclusions and only the second is actionable. NULL is the
+-- correct reading for every run predating this migration, and for the two
+-- runtimes whose parsers render no tool events at all - Grok (its tool calls
+-- arrive as a type the parser drops) and Antigravity (handles init/step_update/
+-- result only). Claude Code, Codex, OpenCode and Kimi Code report.
+--
+-- No index: reached by primary key when reading one run, and by full scan when
+-- aggregating across runs offline. Neither wants a jsonb index, and an unused
+-- index on a table this size is a write cost paid on every run.
+ALTER TABLE heartbeat_runs
+  ADD COLUMN IF NOT EXISTS tool_call_counts jsonb DEFAULT NULL;

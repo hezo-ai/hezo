@@ -218,6 +218,7 @@ import {
 	type ContentWindow,
 	DEFAULT_LIST_LIMIT,
 	decodeCursor,
+	fitSerializedWindow,
 	type KeysetRow,
 	keysetOrderBy,
 	keysetPredicate,
@@ -3423,38 +3424,59 @@ export function registerTools(
 			};
 			// Either read is a window over storage rather than an aggregate of the
 			// whole log: a run's log reaches 10 MB and either mode returns ~12 KB.
+			// Both paths then shrink the loaded slice until the serialized result
+			// fits the admission cap - a log full of escaped JSON inflates several-
+			// fold when serialized, and without the shrink even this tool's default
+			// parameters can produce only `result_too_large`, with no spelling that
+			// ever succeeds.
 			const offset = args.offset as number | undefined;
 			if (offset !== undefined) {
 				const max = (args.max_bytes as number | undefined) ?? 12_000;
 				const w = await readRunLogWindow(db, run.id, offset, max);
-				return {
-					...meta,
-					log: w.text,
-					offset: w.offset,
-					returned_chars: w.text.length,
-					length: w.length,
-					next_offset: w.nextOffset,
-					truncated: w.offset > 0 || w.nextOffset !== null,
-					...(w.nextOffset !== null
-						? {
-								paging_hint: `Log is larger than one read. Returned characters ${w.offset}-${w.offset + w.text.length} of ${w.length}. Call get_run_log again with offset: ${w.nextOffset}; repeat until next_offset is null.`,
-							}
-						: {}),
-				};
+				return fitSerializedWindow({
+					text: w.text,
+					keep: 'start',
+					limit: MCP_RESULT_BYTE_LIMIT,
+					build: (kept) => {
+						const nextOffset = w.offset + kept.length < w.length ? w.offset + kept.length : null;
+						return {
+							...meta,
+							log: kept,
+							offset: w.offset,
+							returned_chars: kept.length,
+							length: w.length,
+							next_offset: nextOffset,
+							truncated: w.offset > 0 || nextOffset !== null,
+							...(nextOffset !== null
+								? {
+										paging_hint: `Log is larger than one read. Returned characters ${w.offset}-${w.offset + kept.length} of ${w.length}. Call get_run_log again with offset: ${nextOffset}; repeat until next_offset is null.`,
+									}
+								: {}),
+						};
+					},
+				});
 			}
 			const max = (args.excerpt_chars as number | undefined) ?? 12_000;
 			const tail = await readRunLogTail(db, run.id, max);
-			return {
-				...meta,
-				log: tail.text,
-				length: tail.length,
-				truncated: tail.truncated,
-				...(tail.truncated
-					? {
-							paging_hint: `This is the last ${tail.text.length} of ${tail.length} characters. Earlier output was NOT returned - if the run failed early, call get_run_log again with offset: 0 and page forward with next_offset to reach the start.`,
-						}
-					: {}),
-			};
+			return fitSerializedWindow({
+				text: tail.text,
+				keep: 'end',
+				limit: MCP_RESULT_BYTE_LIMIT,
+				build: (kept) => {
+					const truncated = tail.truncated || kept.length < tail.text.length;
+					return {
+						...meta,
+						log: kept,
+						length: tail.length,
+						truncated,
+						...(truncated
+							? {
+									paging_hint: `This is the last ${kept.length} of ${tail.length} characters. Earlier output was NOT returned - if the run failed early, call get_run_log again with offset: 0 and page forward with next_offset to reach the start.`,
+								}
+							: {}),
+					};
+				},
+			});
 		},
 		db,
 	);
@@ -3856,7 +3878,7 @@ export function registerTools(
 			instructions: z
 				.string()
 				.describe(
-					'Human-facing prose explaining why you need this credential and how the human can obtain it. Tell the human to set the minimal scope and the shortest expiry the provider supports (e.g. "I need a GitHub PAT with only `repo` scope to push branches, ideally expiring in 7 days. Create one at https://github.com/settings/tokens").',
+					'Human-facing prose explaining why you need this credential and how the human can obtain it. Tell the human to set the minimal scope and the shortest expiry the provider supports (e.g. "I need a GitHub PAT with only `repo` scope to push branches, ideally expiring in 7 days. Create one at https://github.com/settings/tokens"). Make the link the page where a human CREATES the credential (the provider\'s settings/dashboard URL) - the API host belongs in allowed_hosts, not as the link the human is expected to click.',
 				),
 			input_type: credentialInputTypeSchema
 				.optional()

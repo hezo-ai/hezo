@@ -163,7 +163,7 @@ export function buildConnectorRecipesSkill(
 		'- An "agent skill file" is markdown a vendor publishes describing how to use their MCP. Try in order: the vendor\'s docs page (often the skill file content IS the docs page); common GitHub paths like `https://raw.githubusercontent.com/<vendor>/mcp-server/{main,master}/{AGENTS,SKILL,README}.md`; then the server\'s own `tools/list` once the connector is active.',
 	);
 	lines.push(
-		"- `fetch_skill_file` is not mandatory. If you cannot find one, register the connector anyway: the MCP server's `tools/list` is the authoritative source of what tools exist, and once auth completes those tools appear as `mcp__<connector_name>__<tool>`.",
+		"- `fetch_skill_file` is not mandatory. If you cannot find one, register the connector anyway: the MCP server's `tools/list` is the authoritative source of what tools exist, and once auth completes you reach them with `hezo-mcp search <term>`.",
 	);
 	lines.push('');
 
@@ -176,7 +176,7 @@ export function buildConnectorRecipesSkill(
 	lines.push('| `oauth_status` | Meaning | What to do |');
 	lines.push('| --- | --- | --- |');
 	lines.push(
-		'| `active` | Connected, or a public server Hezo probed and found answering with no credential; tools appear as `mcp__<connector_name>__<tool>` | Use them. Active but no tools at all is a bug worth flagging, not a reason to re-ask the human to connect |',
+		'| `active` | Connected, or a public server Hezo probed and found answering with no credential; reach its tools with `hezo-mcp` | Use them. Active but `hezo-mcp search --server <name>` finding nothing is a bug worth flagging, not a reason to re-ask the human to connect |',
 	);
 	lines.push(
 		'| `pending` | Not reaching runs yet: the human has not clicked Connect, or no probe has yet found the server answering without a credential | Do not repost the ask; the connect_required comment is still live |',
@@ -194,10 +194,10 @@ export function buildConnectorRecipesSkill(
 		'- **A hosted server carrying no credential reaches runs only while Hezo can reach it.** `probed_at` is when it was last checked and `probe_error` is why that check failed (`auth_required`, `unreachable`), or null when it answered. A server that starts demanding auth drops out of runs at the next check rather than failing inside one. A connector whose auth is a `__HEZO_SECRET_<NAME>__` header is exempt: the egress proxy substitutes it at request time, which no server-side check can reproduce.',
 	);
 	lines.push(
-		"- **Before reporting that a connector's tools are missing, check `tools_this_run` on its `list_connectors` row.** It measures *your own run* - how many of that connector's tools the runtime handed you - rather than guessing. A non-zero count means they are present, so search your tool list again under the `mcp__<connector_name>__<tool>` naming, which is not always what the vendor's docs call them. `0` means it connected and contributed nothing callable, a real fault worth escalating. `null` means nothing measured it.",
+		"- **Before reporting that a connector's tools are missing, run `hezo-mcp search --server <name>`.** Connector tools are not in your tool list; you reach them through that CLI. Output means they are present, and the vendor's own names are not always what its docs call them. No output on an `active` connector is a real fault worth escalating. `tools_this_run` on a `list_connectors` row counts only what the runtime loaded directly, so it is `null` for every connector and tells you nothing here.",
 	);
 	lines.push(
-		'- **Never assert a connector is broken without reading `tools_this_run` or calling `test_connector` first.** An unverified claim, once written into a progress summary, gets repeated by later runs as established fact and the team works around a problem that was never there.',
+		'- **Never assert a connector is broken without running `hezo-mcp search --server <name>` or calling `test_connector` first.** An unverified claim, once written into a progress summary, gets repeated by later runs as established fact and the team works around a problem that was never there.',
 	);
 	lines.push(
 		'- If the tools are missing while `oauth_status` is `active`, call `test_connector(connector_id)`. It resolves the stored token server-side and pings the MCP URL directly, bypassing the container, and tells you whether the token is still valid against the provider or the fault is in the container/proxy chain.',
