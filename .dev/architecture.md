@@ -3523,6 +3523,8 @@ agents back to `idle` once a window rolls over or a limit is raised.
 
 ## 6. AI providers, runtimes & the completeness stop-hook
 
+### Providers and runtimes
+
 **Providers → runtimes is one-to-MANY.** `AiProvider` has **ten** values — `anthropic`, `openai`,
 `google`, `deepseek`, `z_ai`, `openrouter`, `kimi`, `x_ai`, `ollama`, `lmstudio` — and
 `AgentRuntime` has **six** — `claude_code`, `codex`, `antigravity`, `opencode`, `grok`, `kimi`. The dead `gemini` label is retained in the DB enum for stored rows only. A
@@ -3637,6 +3639,8 @@ Claude Code subagent default track the run's selected model — the only workabl
 the models an operator has pulled are unknowable here. With no `model_pricing` rows, local
 runs price at `$0`, which for local inference is correct rather than the usual fail-low.
 
+### Provider config & guided sign-in
+
 **Provider config.** `ai_provider_configs` is instance-level (shared across teams), one
 row per `(provider, label)`, each inlining an encrypted credential. `auth_method`
 distinguishes an **API key** (injected as env at run start) from a **subscription** blob
@@ -3696,6 +3700,8 @@ by the Codex refresh-token write-back, which must not touch `status` or `metadat
 `is_default` flag — a single global default enforced by a partial-unique index
 (`ai_provider_configs_single_default`); the first config added to the instance auto-takes
 it, and `setDefaultAiProvider` moves it atomically.
+
+### Model selection, pinning & effort
 
 **Choosing the default model.** One component, `ModelPicker` (`packages/web/src/components/`),
 serves all three surfaces: the providers-table cell, the Edit dialog and the last step of the
@@ -3764,6 +3770,8 @@ sets `GEMINI_REASONING_EFFORT`; `kimi` sets `KIMI_MODEL_THINKING_EFFORT` (it has
 its per-run `opencode.json` (see below); `grok` steers effort through the portable prompt
 directive alone. It's also exposed as `HEZO_AGENT_EFFORT`.
 
+### Runtime adapters
+
 **Per-runtime wiring** lives in the runtime adapters (`services/runtime-adapters/`, six
 adapters in `index.ts`: ClaudeCode, Codex, Antigravity, OpenCode, Grok, Kimi). Each builds the
 CLI invocation (headless prefix, prompt delivery, stream/auto-approve args), injects MCP
@@ -3796,6 +3804,8 @@ question being asked rather than a branch in generic flow.
 The same rule covers AI providers, which have no per-provider module: their quirks live as
 rows in a per-provider table (`PROVIDER_RUNTIME_ADAPTERS`, `SUBSCRIPTION_VALIDATORS`,
 `PROVIDER_MODEL_READERS`, `CLAUDE_CODE_JUDGE_MODEL_BY_PROVIDER`) rather than as branches.
+
+### Per-runtime prompt notes
 
 **Per-runtime prompt notes** (`RUNTIME_PROMPT_NOTES`, `@hezo/shared`) append a short addendum
 to the task prompt for a CLI quirk the agent cannot discover from its own tool list. Composed
@@ -3857,6 +3867,8 @@ implements `getMcpToolCounts` - Codex's session event carries no tool list, so
 connectors' tools arrived; the run log's `[runner] MCP connectors:` line is what it has
 instead.
 
+### Prompt delivery
+
 **Prompt delivery** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE`) has three
 modes. `stdin` redirects the prompt file into the CLI — Claude Code, Codex, Antigravity and
 OpenCode, the last of which reads stdin to EOF whenever it is not a TTY and needs no flag for
@@ -3915,6 +3927,9 @@ whose per-server tool filter maps one-to-one onto the descriptor (`enabledTools`
 enforces that no token reaches a file. Kimi Code's `[[hooks]]` entries accept **exactly four
 keys** (`event`, `matcher`, `command`, `timeout`) and the CLI refuses to load a config
 carrying any other, which would break every run on that runtime rather than just the hook.
+
+### Stream parsing per runtime
+
 **Grok and Kimi Code report no token usage on their streams** — for Grok the runner points at
 a per-run `--debug-file` and parses the `process_conversation_turn` tracing spans
 (`extractGrokUsageFromDebugLog`); for Kimi Code it reads the per-session `wire.jsonl` under
@@ -3955,6 +3970,8 @@ Claude Code's `--dangerously-skip-permissions`, which OpenCode's parser accepts 
 rather than rejecting - the intent goes silently unapplied, and becomes a hard failure the day
 OpenCode starts refusing unknown arguments.
 
+### Runtime timeout hardening
+
 **Runtime timeout hardening.** Each CLI ships default timeouts that would cut off Hezo's
 legitimately long agent/background work; every runtime is relaxed at its own config surface
 (no exact cross-runtime env analog exists for Claude Code's `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`).
@@ -3983,6 +4000,8 @@ resulting reasoning parts on the `--format json` stream for the log.
 60 s defaults; these are set per-server rather than through the global
 `KIMI_MCP_*_TIMEOUT_MS` env vars so one slow connector can't be masked by a blanket override.
 All values live as named constants in each `runtime-adapters/*.ts` adapter.
+
+### The completeness stop-hook
 
 **Completeness stop-hook.** Every run is gated by a judge that fires when the agent tries
 to end its turn and **blocks** it (keeping the same headless exec alive) when it's bailing
@@ -4077,6 +4096,8 @@ and the handoff-delivery net are:
   file's relationship to the doc is a guess, and guessing wrong overwrites real work. This leg
   reaches every runtime, including OpenCode and Grok, which have no blockable turn-end hook.
 
+### The handoff-delivery net
+
 **Handoff-delivery net.** The stop-hook judge is best-effort — an LLM, model-dependent, and it
 blocks at most once per run (the `stop_hook_active` ceiling) — so a stranded handoff is *also*
 caught **deterministically** at run completion, independent of any judge. In `agent-runner.ts`,
@@ -4140,6 +4161,8 @@ active mention, so an auto-delivered comment can never produce a `Mention` wakeu
 `fireCommentWakeups` will at most fire an explicit *reply* wakeup on it, which arrives as
 `Reply`-authored-by-an-agent and is skipped. Two agents therefore cannot auto-deliver back and
 forth. Runs on **every** runtime including OpenCode and Grok (neither of which can host a judge).
+
+### No-wake exit check & wake receipt
 
 **No-wake exit check.** The net above and the advisories below all classify *text*, so each new
 phrasing that strands a handoff needs new vocabulary. Sitting after the net is one check that
