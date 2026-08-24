@@ -6177,37 +6177,23 @@ upserts one row per `(instance_id, UTC day)`; aggregates are shown at `hezo.ai/s
 
 ---
 
-## 13. API surface (summarized)
+## 13. MCP transport & tool registry
 
 A JSON-over-HTTP REST API on the same Hono process/port as the MCP and WebSocket
 endpoints. Every response is `{ "data": … }` or `{ "error": { code, message } }`;
-timestamps ISO 8601, ids UUID, money in cents. This is a **map** of the 47 route modules
-mounted in `startup.ts` — read the modules under `packages/server/src/routes/` for exact
-shapes.
+timestamps ISO 8601, ids UUID, money in cents.
 
-- **Auth & identity** — `auth` (challenge-response, § 10), `me`, `api-keys`,
-  `instance-settings` (incl. `PATCH /instance-settings/locale` — self-authenticating: open
-  pre-onboarding, superuser after; § 11), `ui-state`.
-- **Projects & teams** — `projects` (creation/intake, the 1:1 team reached *through* the
-  project — there is no bare `GET /teams`; includes `GET …/dashboard` for the per-project
-  at-a-glance aggregate), `team-templates`, `agent-types`, `repos`,
-  `project-docs`.
-- **Agents & runs** — `agents` (hire/fire/pause/resume, system-prompt revisions),
-  `execution-locks`, `queued-wakeups`, `chat` (live realtime chat session — today the CEO).
-- **Tasks & collaboration** — `tasks`, `goals` (CRUD + `/goals/runs` + `/goals/:id/history`),
-  `comments`, `mentions`, `assets`, `inbox`, `search` (full-text over tasks, comments,
-  project docs, assets and skills).
-- **Money & governance** — `costs` (project-scoped, `group_by=day` for charts),
-  `model-pricing`, `approvals`, `audit-log` (**keyset**-paginated, see below),
-  `agent-hours` (the Activity page's Hours tab — see below).
-- **Integrations & secrets** — `ai-providers`, `secrets`, `connectors`, `oauth`
-  (connectors: ensure / auth-start — project-scoped and instance-admin
-  (`/connectors/:id/auth-start`) / device / callbacks), `skills`.
-- **Ops** — `health`, `updates`, `preview` (HMAC-signed file URLs), public assets,
-  `containers` (global, superuser-only: `GET /containers`, `GET /containers/:containerId`,
-  `DELETE /containers/:containerId` — one row per real container across every project,
-  unioning both representations; no start, stop or rebuild).
+The 47 route modules under `packages/server/src/routes/` are mounted in `startup.ts`, and
+they are the reference for exact shapes - grouped roughly as auth and identity, projects and
+teams, agents and runs, tasks and collaboration, money and governance, integrations and
+secrets, and ops. Two of them are worth knowing without opening: a team is reached *through*
+its project (there is no bare `GET /teams`), and `containers` is global and superuser-only,
+with no start, stop or rebuild. Authorization for every route is § 10.
 
+The **MCP tool surface** is documented tool-by-tool in the generated
+`docs/reference/mcp-api.md` (84 tools; `mcp-reference.test.ts` fails if it drifts), with
+`GET /SKILL.md` and `GET /llms.txt` as the machine on-ramps. What follows is the part that
+is not in either place: the transport, the registry conventions, and the two ceilings.
 **Request-body ceiling.** `/api/*` carries a global `bodyLimit` at `API_BODY_MAX_BYTES`
 (32 MB). Only the handful of upload routes were capped before, so a JSON body had no bound
 at all and one request could ask the process to buffer arbitrarily much before a handler
@@ -6237,7 +6223,7 @@ with a "Load older activity" control; the global view previously fetched a fixed
 slice with no way to reach anything older.
 
 **Agent hours** (`routes/agent-hours.ts`, `GET /projects/:projectId/agent-hours?bucket=`).
-The other half of the project's Activity page: wall-clock time per agent, summed as
+The hours tab of the project's Budget page: wall-clock time per agent, summed as
 `finished_at - started_at` over finished `heartbeat_runs`, bucketed by `date_trunc` to
 day/week/month. It is a **bounded aggregate, not a list** — its row count is
 `HOURS_BUCKET_SPAN[bucket]` (30/12/12) times the roster — so it neither pages nor needs to;
@@ -6388,28 +6374,10 @@ and would otherwise prevent requests from ever overlapping.
 
 ## 14. Testing
 
-Five tiers (full guidance — when to use each, how to run one file, how to diagnose
-failures — is in `AGENTS.md` › Testing, which is authoritative):
-
-- **Server unit/integration** (`packages/server/test/**/*.test.ts`, vitest/Node) — API
-  handlers, DB queries, services, MCP tools; each test boots a fresh PGlite + Hono app via
-  `createTestContext()`. The default home for backend work.
-- **Web component** (`packages/web/test/**/*.test.{ts,tsx}`, vitest/happy-dom) — the React
-  tree against an in-process Hono + PGlite backend via `renderApp()`. Covers ~80% of what
-  would otherwise be a browser test (forms, mutations, refetches, navigation, rendering).
-- **Shared pure-logic** (`packages/shared/test/**/*.test.ts`, vitest/Node) — the pure
-  functions in `@hezo/shared`: crypto/auth, mnemonic, mention parsing, budget/pricing math,
-  enum guards. No DB, no DOM.
-- **Playwright browser** (`test/browser/**/*.spec.ts`) — the thin slice that genuinely
-  needs Chromium: real CSS layout, viewport-conditional behavior, native input events,
-  windowed-list virtualization, real WebSocket streams, the master-key gate.
-- **Bun-native runtime** (`packages/server/test/bun/**/*.bun.test.ts`, `bun test`) — code
-  whose behavior diverges between Node and Bun, exercised on the production Bun runtime.
-  Reach here only when the assertion depends on `node:` runtime behavior (TLS, `net`,
-  `crypto`, `child_process`) that a Node-only test would get wrong: the egress proxy's TLS
-  MITM path and its streaming (§ 7), the docker exec/log frame transport, the node-postgres
-  driver, the S3 asset client's SigV4 over the runtime's own `fetch`/`crypto.subtle`, and
-  the updater / shutdown / unlock-handoff paths.
+Five tiers - server unit/integration, web component, shared pure-logic, Playwright browser,
+and a Bun-native tier that runs on the production runtime rather than the main runner's.
+Which tier a test belongs in, what harness each gives you and the traps in each:
+`.dev/writing-tests.md`. Running the suite and chasing one failure: `.dev/ci-and-commands.md`.
 
 **Backend conformance** cuts across those tiers rather than being one of them. The
 `ContainerEngine` and `SandboxFiles` contracts have more than one implementation, and the

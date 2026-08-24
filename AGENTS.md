@@ -27,8 +27,7 @@ The rules are here; the detail is there. Prefer reading the guide over rediscove
 | Writing or changing a test | `writing-tests.md` |
 | Running the suite, reading CI, chasing one failure | `ci-and-commands.md` |
 | Writing a migration | `writing-migrations.md` |
-| Writing agent-facing prose | `writing-agent-prompts.md` |
-| Authoring a marketplace team | `authoring-a-marketplace-team.md` |
+| Writing agent-facing prose, or authoring a marketplace team | `writing-agent-prompts.md` |
 | Translating a string | `writing-translations.md` |
 | Changing how a run is judged, delivered or priced | `agent-run-hooks.md` |
 | Adding a container backend | `adding-a-container-backend.md` |

@@ -8,8 +8,6 @@ in `AGENTS.md`; this is the how.
 
 ## The five tiers
 
-All changes ship with tests exercising functionality, not "code runs without throwing". Prefer integration over heavily-mocked unit tests. Five tiers:
-
 | Tier | Where | Cost | What it tests | When to use |
 |---|---|---|---|---|
 | Server unit/integration | `packages/server/test/**/*.test.ts` | ~ms | API handlers, DB queries, services, MCP tools, agent run plumbing. Fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |

@@ -3,7 +3,7 @@
 **Status (2026-08).** The team-template half of this plan shipped: all three teams are live
 in `marketplace/teams/` (#713), were renamed to **Social Media Marketing** and **Investment
 Portfolio** (#820), and the App Team slug became `app-dev` (#1011). Goal suggestions shipped
-with them. Authoring a team is now `authoring-a-marketplace-team.md`; the seeding procedure
+with them. Authoring a team is now `writing-agent-prompts.md`; the seeding procedure
 this document originally prescribed no longer exists.
 
 What remains unbuilt is the website half, below — it lives in the `hezo-ai/website` repo.

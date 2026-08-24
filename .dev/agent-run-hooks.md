@@ -6,10 +6,11 @@ that need no vocabulary, prompt delivery, and how a run's cost is recovered. For
 architectural view see `architecture.md` § 6; the rules that bind before you get here are in
 `AGENTS.md` § *AI runtime hooks*.
 
-
 Every agent run is gated by a completeness judge firing when the assistant ends its turn. It **blocks the stop** when the agent is bailing on failing tests, calling problems "out of scope", deferring without filing a sub-task or self-comment, abandoning a plan it announced in the task thread without revising it there, ending with a handoff or active @-mention never posted to the thread, marking a task done on its own review while a required approval (the admin's final approval or a named approver's sign-off, inherited across a rework or detour) was never granted, or otherwise stopping with unfinished work. A block keeps the same headless exec alive for another turn; the run-completion path (`HeartbeatRunStatus.Succeeded` on exit 0) is unchanged.
 
 A run legitimately parked on input it can't obtain itself — an `@admin` question, a `request_credential`, a filed hire proposal or pending approval, with the task left non-terminal — is **allowed** to stop; the admin's reply or resolution auto-wakes it. Every judge short-circuits on `stop_hook_active` so a persistent verdict can't loop the same exec (command-script runtimes guard it in code, the Claude Code prompt carries the same instruction). The judge LLM runs inside the container against the team's primary-provider credential, through the normal egress path. The hook is on for every runtime exposing a block-and-continue turn-end hook, with no per-team or per-agent opt-out.
+
+## The completeness judge
 
 **The judge is for task runs only — the CEO chat passes `stopJudge: false`** (`buildRuntimeInvocation` → `McpAdapterContext`), and an adapter honouring it drops the hook and its judge script together. Every rule the judge carries is about abandoning task work, and it reads only the final message; a chat turn has no task, and its final message is the reply already delivered to the operator. **Do not add a judge to a new non-task execution path** on the assumption it can only help: it costs a round trip per turn and, on a block, a whole extra turn spent on a task that does not exist. What such a path can genuinely strand — a handoff in a comment it posted — belongs to the structural layers below, which do run for chat.
 
@@ -24,6 +25,8 @@ Wiring lives in `services/runtime-adapters/<runtime>.ts`, specs in `JUDGE_SPECS`
 | Grok | **none** | Its hooks block only on pre-tool-use; Stop is a passive notification. Fails open. |
 | Antigravity | **none** | agy's Stop hook does not fire in headless (`--print`) mode. Fails open. |
 
+## Structural signals
+
 **Two structural layers sit alongside it, and neither reads prose.** Every text-classifying check above needs new vocabulary for each new phrasing that strands a handoff, which is how `lib/mentions.ts` accumulated one positional branch per incident. The two below need none, and are the preferred place to strengthen this area:
 
 - **The wake receipt.** `create_comment` / `update_comment` always return `wake: { woke, named_not_woken }` — who the write actually notified, and which roster teammates it names without notifying (a passive `@@slug`, or a bare/bold name in an addressing position). It is built inside `fireCommentWakeups` at the points wakeups are created, so it can never drift from the delivery it describes. It is a **fact about the write, not an advisory that fires when a heuristic guessed right**, so it stays true for phrasings no detector recognises; `SHARED_INSTRUCTIONS` tells agents to check it after any comment that hands work over. This is parity with the web composer's long-standing "Wake:" preview for human authors.
@@ -35,11 +38,15 @@ A newly selected judge model needs a `model_pricing` row or its runs price to $0
 
 A runtime is reachable by any credential configured onto it, not only by the providers that *default* to it (`ai_provider_configs.runtime` — see the provider-runtime rule in **Mirrored surfaces**). So a Moonshot credential reaches Claude Code or Kimi Code depending on the operator's choice, and anything deciding judge behaviour from the provider must take the **resolved** runtime — `claudeCodeProviderUsesCustomEndpoint` and `judgeModelForProvider` both accept it for exactly this reason.
 
+## The handoff-delivery net
+
 **Deterministic handoff-delivery net (independent of the judge).** At run completion `agent-runner.ts` reads the run's final assistant message and handles three stranded forms. It runs on **every** runtime, including those with no judge, and skips anything the run already posted (checked against that run's own comments), so an echoed handoff isn't delivered twice.
 
 1. **An active `@`-mention** the run never posted is **delivered verbatim** as a real comment via `postAgentComment` (`comment-wakeups.ts`) — the same insert + broadcast + wakeup path `create_comment` uses, detected with the same extractor, so it matches exactly who would be woken. Flips an otherwise no-op run to success.
 2. **A name-only address that reads as an ask** — the unlinked bold/leading-line form or the passive one, matched against the run team's roster + HQ + `@admin` and gated on directed-ask intent so a name written for emphasis is never touched — is **not** rewritten or auto-delivered; guessing intent to force a wake overreaches. The runner logs the same warning `create_comment` gives interactively and leaves the handoff undelivered.
 3. **A plain direct answer** to a human who addressed this agent: when the run was woken by a reply or mention from a human (not another agent) and posted no comment of its own, the final message is delivered verbatim, threaded under the waking comment.
+
+## Prompt delivery
 
 **Prompt delivery has three modes** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE` and acted on by `PROMPT_DELIVERY_SH` and its twin in `docker/scripts/hezo-run-with-bridge`): `stdin` (`< $HEZO_PROMPT_FILE`), `file` (the CLI opens the path itself - Grok's `--prompt-file`, whose **value `buildRuntimeInvocation` puts in argv**, so the wrapper appends nothing), and `arg` (the prompt's text becomes one argv element - Kimi Code's `-p`). **`arg` is capped at 128 KiB by Linux's `MAX_ARG_STRLEN`, per argument, and a Hezo prompt clears that on its own** - so `arg` is only viable for a runtime whose system prompt travels out of band, and `assertPromptDeliverable` fails the run by name rather than letting the exec die as `Argument list too long`. The `< /dev/null` on both non-stdin branches is load-bearing: an exec's stdin is a pipe nothing closes, and a CLI that reads it hangs with no output. **A new mode or runtime needs both shell copies updated** - `agent-prompt-delivery.test.ts` runs them through the same cases, extracting the bridge's block between its `# hezo:prompt-delivery:{start,end}` markers.
 
