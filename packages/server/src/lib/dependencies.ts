@@ -250,9 +250,16 @@ export async function wakeIfReady(
 	// Releasing a parked wakeup notifies the assignee without writing a row, so
 	// the run that cleared the blocker is credited here too - otherwise the one
 	// routing that creates nothing is the one the exit check cannot see.
+	//
+	// `created_at` is re-stamped to the release: the row now stands for the
+	// unblock event, not the original assignment. Kept at its original time, the
+	// dispatcher's already-served staleness check measures against a moment
+	// before the blocker cleared, and any run that touched the task while it was
+	// still blocked retires the released wake as stale - the assignee is never
+	// woken and the unblocked task strands until a human nudges it.
 	const flipped = await db.query<{ id: string }>(
 		`UPDATE agent_wakeup_requests
-		 SET status = $1::wakeup_status, claimed_at = NULL,
+		 SET status = $1::wakeup_status, claimed_at = NULL, created_at = now(),
 		     created_by_run_id = COALESCE($5::uuid, created_by_run_id)
 		 WHERE member_id = $2
 		   AND status = $3::wakeup_status
