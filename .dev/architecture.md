@@ -4004,7 +4004,7 @@ judge** (OpenCode's plugin API can't block-and-continue headless; Grok's hooks a
 `blockingEvents: ["pre_tool_use"]` only, so its `Stop` hook is passive and can't keep the loop
 alive), so both run fail-open. File-mount subscription runtimes fail open (no API key in
 env); Anthropic subscription still fires via `CLAUDE_CODE_OAUTH_TOKEN`. Full per-runtime
-detail is in `AGENTS.md` › AI runtime hooks.
+detail is in `.dev/agent-run-hooks.md`.
 
 **The CEO chat gets no judge.** `buildRuntimeInvocation` takes a `stopJudge` flag (default true,
 threaded to `McpAdapterContext`); `chat-session-manager.ts` passes false, and each of the four
@@ -4506,7 +4506,7 @@ the runtime dropping a configured header, logged at error server-side as well.
 **explicitly-allocated** loopback port (never read back from `server.address()`, which
 collapses under Bun). Long-lived streams (SSE, Streamable-HTTP MCP) are tracked and
 severed on run teardown. These divergences are why the egress proxy has a Bun-native test
-tier. Full rationale: `AGENTS.md` › Bun-native runtime rules.
+tier. Full rationale: `.dev/writing-tests.md` § Bun-native runtime rules.
 
 ---
 
@@ -5151,6 +5151,11 @@ Global endpoints still check the resource's team. WebSocket subscriptions verify
 membership. MCP tool handlers enforce the same checks as their REST equivalents. Human
 team members hold `MembershipRole` `admin` (full authority — the "board") or `member`
 (scoped by `project_ids`); the first user is the instance superuser.
+
+**Known gap: no general API rate limiting.** The REST, MCP and WebSocket surfaces are
+unthrottled. The one exception is password auth - `routes/auth.ts` keeps an in-memory
+brute-force counter (5 attempts, then a 60s lockout with exponential backoff capped at
+1h, HTTP 429) on the password-verify and password-change paths.
 
 ---
 

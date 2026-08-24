@@ -15,7 +15,7 @@ Every duplicated rule is a rule that will one day be updated in one place only.
 
 ## Where a rule goes
 
-Decide reach first, then write. This is `AGENTS.md` § *Where guidance goes* turned into a writing step:
+Decide reach first, then write. This is `AGENTS.md` § *Layout* (where guidance goes, by reach) turned into a writing step:
 
 | Audience | Home |
 |---|---|

@@ -5,18 +5,23 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = join(import.meta.dirname, '../../..');
 
 /**
- * AGENTS.md is paid for by every agent that works in this repository, on every
- * task, the same way `SHARED_INSTRUCTIONS` is paid for by every agent run. Its own
- * preamble says so - "This file reached 150K by accreting them", "Edit every entry
- * down after writing it" - and nothing enforced it, so the discipline it asks for
- * was honour-system while the cost was not.
+ * AGENTS.md is the contributor-guidelines file for working on this repo - what a
+ * human or coding agent reads before changing this codebase. It is not part of
+ * Hezo's product runtime: nothing in it is injected into Hezo's agents when they
+ * run tasks for users (that is `SHARED_INSTRUCTIONS`, a separate surface with its
+ * own ceiling). The cost this guards is comprehension, not tokens - a rules file
+ * too long to hold while working is a rules file that stops being followed.
  *
- * This is a ratchet, not a target. The number is set just above the file's size
- * when it was introduced: a genuinely new rule fits, sustained growth does not.
+ * This is a ratchet, not a target. It was introduced at 100_000, just above the
+ * file's size at the time. The extraction pass that moved the specialized areas
+ * into `.dev/` guides landed it near 33_000, so the number came down with it. Each
+ * such pass re-ratchets to roughly the landed size plus a little room: enough that
+ * a genuinely new rule fits, not enough for a section to accrete.
+ *
  * Raising it is a decision to make deliberately, in a commit that says why, rather
  * than the automatic outcome of adding a paragraph.
  */
-const AGENTS_MD_BUDGET_BYTES = 100_000;
+const AGENTS_MD_BUDGET_BYTES = 36_000;
 
 /**
  * The relief valve the routing table at the top of AGENTS.md already names, so a
