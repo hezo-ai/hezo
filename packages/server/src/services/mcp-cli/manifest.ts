@@ -41,6 +41,19 @@ export const CONTAINER_MCP_CLI_SCRIPT = `${CONTAINER_MCP_CLI_DIR}/${MCP_CLI_SCRI
 /** Env var naming the manifest, read by the CLI. */
 export const MCP_CLI_MANIFEST_ENV = 'HEZO_MCP_MANIFEST';
 
+/** Where the wrapper that makes `hezo-mcp` a command lands - on every shell's PATH. */
+export const CONTAINER_MCP_CLI_BIN_DIR = '/usr/local/bin';
+export const MCP_CLI_BIN_NAME = 'hezo-mcp';
+
+/**
+ * Agents are told to run `hezo-mcp`, and the script lives in a per-run dir no
+ * shell's PATH covers - this wrapper connects the two. A file write rather than
+ * a symlink or a PATH edit because the engine file transport is the one delivery
+ * mechanism every backend already has, and the runtimes' own shells rebuild
+ * PATH however they like.
+ */
+export const MCP_CLI_WRAPPER_SOURCE = `#!/bin/sh\nexec node ${CONTAINER_MCP_CLI_SCRIPT} "$@"\n`;
+
 export interface McpCliManifestServer {
 	name: string;
 	transport: 'http' | 'stdio';

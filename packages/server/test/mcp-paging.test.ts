@@ -7,6 +7,7 @@ import type { Env } from '../src/lib/types';
 import {
 	decodeCursor,
 	encodeCursor,
+	fitSerializedWindow,
 	keysetOrderBy,
 	keysetPredicate,
 	MAX_LIST_LIMIT,
@@ -432,6 +433,96 @@ describe('get_run_log reaches the start of a log, not only its tail', () => {
 		const w = await readRunLogWindow(db, runId, 9_999, 100);
 		expect(w.text).toBe('');
 		expect(w.nextOffset).toBeNull();
+	});
+
+	// A log dense with escaped JSON serializes several-fold larger than its
+	// character count. Without shrink-to-fit, the DEFAULT tail read exceeded the
+	// admission cap and was discarded whole - with remedies that also exceeded
+	// it, leaving no working spelling: a reviewer once repeated the identical
+	// rejected call 18k+ times. Every escape-dense case below must return
+	// content, never result_too_large.
+	const escapeDense = () => '{\\"key\\": \\"va\\\\lue\\"}\n'.repeat(3_000);
+	// An ANSI escape byte serializes as a six-character `\\u001b` sequence, the
+	// worst realistic inflation a terminal log produces.
+	const ansiDense = () => `${'\x1b'.repeat(58)}\n`.repeat(600);
+
+	it('shrinks an escape-dense tail to fit instead of discarding it whole', async () => {
+		const runId = await seedRun(ansiDense());
+		const res = (await callTool('get_run_log', { project: projectId, run_id: runId })) as {
+			error?: string;
+			log: string;
+			truncated: boolean;
+			paging_hint?: string;
+		};
+		expect(res.error).toBeUndefined();
+		expect(res.log.length).toBeGreaterThan(0);
+		// Smaller than the 12k default proves the shrink actually ran.
+		expect(res.log.length).toBeLessThan(12_000);
+		expect(res.truncated).toBe(true);
+		expect(res.paging_hint).toContain('offset: 0');
+		expect(Buffer.byteLength(JSON.stringify(res), 'utf8')).toBeLessThanOrEqual(64_000);
+	});
+
+	it('shrinks an escape-dense window and keeps paging gapless', async () => {
+		const text = escapeDense();
+		const runId = await seedRun(text);
+		let offset: number | null = 0;
+		const parts: string[] = [];
+		for (let i = 0; i < 40 && offset !== null; i++) {
+			const res = (await callTool('get_run_log', {
+				project: projectId,
+				run_id: runId,
+				offset,
+				max_bytes: 64_000,
+			})) as { error?: string; log: string; next_offset: number | null };
+			expect(res.error).toBeUndefined();
+			expect(res.log.length).toBeGreaterThan(0);
+			parts.push(res.log);
+			offset = res.next_offset;
+		}
+		expect(offset).toBeNull();
+		expect(parts.join('')).toBe(text);
+	});
+});
+
+describe('fitSerializedWindow', () => {
+	it('returns the full text untouched when it already fits', () => {
+		const out = fitSerializedWindow({
+			text: 'hello',
+			keep: 'start',
+			limit: 64_000,
+			build: (kept) => ({ log: kept }),
+		});
+		expect(out.log).toBe('hello');
+	});
+
+	it('keeps the end of a tail and the start of a window', () => {
+		const text = 'abcdefghij'.repeat(2_000);
+		const tail = fitSerializedWindow({
+			text,
+			keep: 'end',
+			limit: 4_000,
+			build: (kept) => ({ log: kept }),
+		});
+		expect(tail.log.length).toBeLessThan(text.length);
+		expect(text.endsWith(tail.log)).toBe(true);
+		const win = fitSerializedWindow({
+			text,
+			keep: 'start',
+			limit: 4_000,
+			build: (kept) => ({ log: kept }),
+		});
+		expect(text.startsWith(win.log)).toBe(true);
+	});
+
+	it('trims to empty rather than looping when even nothing fits', () => {
+		const out = fitSerializedWindow({
+			text: 'x'.repeat(100),
+			keep: 'start',
+			limit: 1,
+			build: (kept) => ({ log: kept, padding: 'y'.repeat(50) }),
+		});
+		expect(out.log).toBe('');
 	});
 });
 

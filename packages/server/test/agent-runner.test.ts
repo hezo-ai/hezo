@@ -733,7 +733,46 @@ describe('runAgent', () => {
 		const cli = await staged.read('mcp-cli/hezo-mcp.mjs');
 		expect(cli).toContain('#!/usr/bin/env node');
 
+		// The command every prompt names: a wrapper on PATH execing the per-run
+		// script, so the bare `hezo-mcp` resolves in any shell.
+		const wrapper = await engine.files('container-123', '/usr/local/bin').read('hezo-mcp');
+		expect(wrapper.startsWith('#!/bin/sh\n')).toBe(true);
+		expect(wrapper).toContain('exec node /workspace/.hezo/subscription/mcp-cli/hezo-mcp.mjs "$@"');
+
 		await db.query(`DELETE FROM mcp_connections WHERE project_id = $1`, [projectId]);
+	});
+
+	it('hands the mcp-cli dir to the run user so the schema cache is writable', async () => {
+		// The CLI caches tools/list results beside its manifest. The host writes
+		// that dir root-owned, so without this chown every cache write fails
+		// silently and every search/describe/call re-pays the full fetch.
+		const inner = createMockDocker();
+		const chowns: string[] = [];
+		const docker = {
+			...inner,
+			execCreate: async (
+				containerId: string,
+				config: Parameters<ContainerEngine['execCreate']>[1],
+			) => {
+				const script = config?.Cmd?.[2] ?? '';
+				if (config?.Cmd?.[0] === 'sh' && script.startsWith('chown ')) chowns.push(script);
+				return inner.execCreate(containerId, config);
+			},
+		} as ContainerEngine;
+		const deps: RunnerDeps = {
+			db,
+			docker,
+			masterKeyManager,
+			serverPort: 3000,
+			dataDir: testDataDir,
+			logs: new LogStreamBroker(),
+		};
+
+		await runAgent(deps, makeAgent(), makeTask(), makeProject());
+
+		expect(
+			chowns.some((s) => s.includes('-R') && s.includes('/workspace/.hezo/subscription/mcp-cli')),
+		).toBe(true);
 	});
 
 	it('writes a manifest even when the run has no connectors', async () => {

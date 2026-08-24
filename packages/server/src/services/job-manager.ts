@@ -1810,9 +1810,13 @@ export class JobManager {
 	 */
 	private async releaseSatisfiedDeferrals(): Promise<void> {
 		const { db } = this.deps;
+		// `created_at = now()`: the released row stands for the precondition being
+		// met, not the original enqueue - measured from its original time, the
+		// already-served staleness check retires it against any run that happened
+		// while it was still parked (same rationale as `wakeIfReady`'s release).
 		const released = await db.query<{ id: string; slug: string }>(
 			`UPDATE agent_wakeup_requests w
-			    SET status = $1::wakeup_status, claimed_at = NULL
+			    SET status = $1::wakeup_status, claimed_at = NULL, created_at = now()
 			   FROM tasks t
 			   JOIN projects p ON p.id = t.project_id
 			  WHERE w.id IN (

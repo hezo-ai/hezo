@@ -131,11 +131,15 @@ import { buildGitIdentityEnv } from './git-identity';
 import type { LogStreamBroker } from './log-stream-broker';
 import { HEZO_MCP_CLI_SOURCE } from './mcp-cli/cli-source';
 import {
+	CONTAINER_MCP_CLI_BIN_DIR,
+	CONTAINER_MCP_CLI_DIR,
 	CONTAINER_MCP_CLI_MANIFEST,
+	MCP_CLI_BIN_NAME,
 	MCP_CLI_DIR,
 	MCP_CLI_MANIFEST_ENV,
 	MCP_CLI_MANIFEST_FILENAME,
 	MCP_CLI_SCRIPT_FILENAME,
+	MCP_CLI_WRAPPER_SOURCE,
 	renderMcpCliManifest,
 } from './mcp-cli/manifest';
 import { retryOrEscalateLostRun, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
@@ -804,6 +808,21 @@ export async function buildRuntimeInvocation(
 		renderMcpCliManifest(connectorDescriptors),
 		{ mode: 0o644, dirMode: SUBSCRIPTION_DIR_MODE },
 	);
+
+	// The prompts name the bare `hezo-mcp` command and the script lives in a
+	// per-run dir no shell's PATH covers, so a wrapper on PATH connects the two.
+	await deps.docker
+		.files(containerId, CONTAINER_MCP_CLI_BIN_DIR)
+		.write(MCP_CLI_BIN_NAME, MCP_CLI_WRAPPER_SOURCE, { mode: 0o755 });
+
+	// The CLI caches fetched tool schemas beside its manifest, and the host just
+	// wrote that dir root-owned - hand it to the run user, or every cache write
+	// fails silently and every search/describe/call re-pays the tools/list fetch.
+	// Recursive so a stale root-owned cache from a run before the chown existed
+	// cannot keep the dir unwritable in a reused container.
+	await chownToRunUser(deps.docker, containerId, runUser, [CONTAINER_MCP_CLI_DIR], {
+		recursive: true,
+	});
 
 	// The host (root in production) just wrote the per-run config dir + files at
 	// restrictive modes; give the container's non-root run-user ownership so the

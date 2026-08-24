@@ -4851,7 +4851,10 @@ at roughly 1.4 KB of schema each on a real instance. `agent-runner.ts` now passe
 `hezo` descriptor to `buildMcpInjection` and writes the connectors into a manifest instead
 (`services/mcp-cli/manifest.ts`), alongside the `hezo-mcp` client itself
 (`services/mcp-cli/cli-source.ts`). The agent runs `hezo-mcp search` / `describe` / `call`,
-so a connector tool's schema costs tokens only when it is asked for.
+so a connector tool's schema costs tokens only when it is asked for. The bare command
+resolves because the same pass writes a `/usr/local/bin/hezo-mcp` wrapper execing the
+per-run script - the script itself lives in a dir on no shell's PATH - and chowns the
+mcp-cli dir to the run user so the CLI's per-run schema cache is writable.
 
 **Below the runtime, not inside it.** `RUNTIME_SUPPORTS_MCP_TOOL_FILTER` is false for Codex,
 Grok and Antigravity, and none of the three defers tools natively either, so any mechanism

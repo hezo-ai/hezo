@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { HEZO_MCP_CLI_SOURCE } from '../src/services/mcp-cli/cli-source';
 import {
 	buildMcpCliManifest,
+	CONTAINER_MCP_CLI_BIN_DIR,
 	CONTAINER_MCP_CLI_MANIFEST,
 	CONTAINER_MCP_CLI_SCRIPT,
+	MCP_CLI_BIN_NAME,
+	MCP_CLI_WRAPPER_SOURCE,
 	renderMcpCliManifest,
 } from '../src/services/mcp-cli/manifest';
 import type { McpDescriptor } from '../src/services/runtime-adapters/types';
@@ -83,6 +86,15 @@ describe('buildMcpCliManifest', () => {
 		// missing on exactly one of the six runtimes.
 		expect(CONTAINER_MCP_CLI_MANIFEST).toBe('/workspace/.hezo/subscription/mcp-cli/manifest.json');
 		expect(CONTAINER_MCP_CLI_SCRIPT).toBe('/workspace/.hezo/subscription/mcp-cli/hezo-mcp.mjs');
+	});
+
+	it('ships a PATH wrapper that execs the per-run script by its container path', () => {
+		// The prompts name the bare `hezo-mcp` command; the wrapper is what makes it
+		// resolve. It must exec the script's container path and forward arguments.
+		expect(MCP_CLI_WRAPPER_SOURCE).toBe(
+			'#!/bin/sh\nexec node /workspace/.hezo/subscription/mcp-cli/hezo-mcp.mjs "$@"\n',
+		);
+		expect(`${CONTAINER_MCP_CLI_BIN_DIR}/${MCP_CLI_BIN_NAME}`).toBe('/usr/local/bin/hezo-mcp');
 	});
 });
 
