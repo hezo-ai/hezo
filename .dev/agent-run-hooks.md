@@ -1,0 +1,64 @@
+# Agent run hooks
+
+How a run is stopped, judged and made to deliver what it promised: the completeness judge and
+its per-runtime wiring, the deterministic handoff-delivery net, the two structural signals
+that need no vocabulary, prompt delivery, and how a run's cost is recovered. For the
+architectural view see `architecture.md` § 6; the rules that bind before you get here are in
+`AGENTS.md` § *AI runtime hooks*.
+
+Every agent run is gated by a completeness judge firing when the assistant ends its turn. It **blocks the stop** when the agent is bailing on failing tests, calling problems "out of scope", deferring without filing a sub-task or self-comment, abandoning a plan it announced in the task thread without revising it there, ending with a handoff or active @-mention never posted to the thread, marking a task done on its own review while a required approval (the admin's final approval or a named approver's sign-off, inherited across a rework or detour) was never granted, or otherwise stopping with unfinished work. A block keeps the same headless exec alive for another turn; the run-completion path (`HeartbeatRunStatus.Succeeded` on exit 0) is unchanged.
+
+A run legitimately parked on input it can't obtain itself — an `@admin` question, a `request_credential`, a filed hire proposal or pending approval, with the task left non-terminal — is **allowed** to stop; the admin's reply or resolution auto-wakes it. Every judge short-circuits on `stop_hook_active` so a persistent verdict can't loop the same exec (command-script runtimes guard it in code, the Claude Code prompt carries the same instruction). The judge LLM runs inside the container against the team's primary-provider credential, through the normal egress path. The hook is on for every runtime exposing a block-and-continue turn-end hook, with no per-team or per-agent opt-out.
+
+## The completeness judge
+
+**The judge is for task runs only — the CEO chat passes `stopJudge: false`** (`buildRuntimeInvocation` → `McpAdapterContext`), and an adapter honouring it drops the hook and its judge script together. Every rule the judge carries is about abandoning task work, and it reads only the final message; a chat turn has no task, and its final message is the reply already delivered to the operator. **Do not add a judge to a new non-task execution path** on the assumption it can only help: it costs a round trip per turn and, on a block, a whole extra turn spent on a task that does not exist. What such a path can genuinely strand — a handoff in a comment it posted — belongs to the structural layers below, which do run for chat.
+
+Wiring lives in `services/runtime-adapters/<runtime>.ts`, specs in `JUDGE_SPECS`, the shared prompt body in `STOP_HOOK_RULES` (`stop-hook-prompt.ts`) — one body, so a rule change reaches every runtime. Where a runtime's native hook can run the judge itself the injector writes a prompt hook; otherwise it writes a helper script that calls the provider API. What you must know per runtime is only the constraint that bites:
+
+| Runtime | Judge | Constraint |
+|---|---|---|
+| Claude Code | native prompt hook | Judge model **tracks the run's own selected model** for every provider `claudeCodeProviderUsesCustomEndpoint` covers, falling back to the per-provider constant only when the run pins no model. Anthropic is excluded and keeps its cheaper constant. The same run model overrides `CLAUDE_CODE_SUBAGENT_MODEL` for those providers. |
+| Codex | helper script | Its `type: "prompt"` is parsed-but-skipped — the hook must be `type: "command"`. |
+| Kimi Code | helper script | `[[hooks]]` entries accept **exactly four keys** (`event`, `matcher`, `command`, `timeout`) — any other makes the CLI refuse the whole config, breaking every run on the runtime. Block via exit code **2**; any other non-zero reads as a broken script and fails open. Its stdin payload carries neither the final assistant message nor `stop_hook_active`, so the spec opts into a session-log lookup and an on-disk loop-guard marker. |
+| OpenCode | **none** | Its plugin API can't block-and-continue in headless mode. Fails open. |
+| Grok | **none** | Its hooks block only on pre-tool-use; Stop is a passive notification. Fails open. |
+| Antigravity | **none** | agy's Stop hook does not fire in headless (`--print`) mode. Fails open. |
+
+## Structural signals
+
+**Two structural layers sit alongside it, and neither reads prose.** Every text-classifying check above needs new vocabulary for each new phrasing that strands a handoff, which is how `lib/mentions.ts` accumulated one positional branch per incident. The two below need none, and are the preferred place to strengthen this area:
+
+- **The wake receipt.** `create_comment` / `update_comment` always return `wake: { woke, named_not_woken }` — who the write actually notified, and which roster teammates it names without notifying (a passive `@@slug`, or a bare/bold name in an addressing position). It is built inside `fireCommentWakeups` at the points wakeups are created, so it can never drift from the delivery it describes. It is a **fact about the write, not an advisory that fires when a heuristic guessed right**, so it stays true for phrasings no detector recognises; `SHARED_INSTRUCTIONS` tells agents to check it after any comment that hands work over. This is parity with the web composer's long-standing "Wake:" preview for human authors.
+- **The no-wake exit check** (`detectNoWakeExits` in `comment-wakeups.ts`, called by `agent-runner.ts` after the net and by the chat's `runTurn`). An execution that ends having woken **nobody**, on a task left **non-terminal**, while **naming a teammate** in a form that notifies no one, gets a warning — a run-log line for a task run, a `system` chat message for a chat turn (the operator sees it, and the CEO reads it back next turn). A chat turn judges only the comments it posted, never its reply: the reply is delivered, so nothing is stranded there. That combination is what a stranded handoff *is*, whatever words carried it, and it covers the hole the net cannot reach — the net only inspects the **final message** and `create_comment` only inspects **one comment at a time**, so nothing else looks at what a run achieved in aggregate. **The aggregate is per task, not per run.** Each task the run commented on is judged on its own comments, wakes and status; the run's own task is always judged, and the final message counts only there. **A teammate the run notified structurally — an assignment, a reassignment, a blocker it released — is credited run-wide and never reported as stranded**, read from `created_by_run_id` on the wakeup; mention and reply wakes are excluded from that credit, since the per-task rule already covers them.
+
+**When this area needs strengthening again, reach for a structural signal before a phrase.** A new regex branch is the last resort, not the first: prefer reporting what the system did (the receipt), or asking a question answerable from its own state (the exit check). If a phrase genuinely is needed, it belongs as one row in `DIRECTED_ASK_RES` — the single shared ask vocabulary every gate in `lib/mentions.ts` reads — never as a new positional branch on a detector.
+
+A newly selected judge model needs a `model_pricing` row or its runs price to $0. For the file-mount subscription provider (Codex) the helper script has no API key and fails open silently. **Anthropic subscription is the exception** — it runs via `CLAUDE_CODE_OAUTH_TOKEN`, so the native prompt judge still fires.
+
+A runtime is reachable by any credential configured onto it, not only by the providers that *default* to it (`ai_provider_configs.runtime` — see the provider-runtime rule in **Mirrored surfaces**). So a Moonshot credential reaches Claude Code or Kimi Code depending on the operator's choice, and anything deciding judge behaviour from the provider must take the **resolved** runtime — `claudeCodeProviderUsesCustomEndpoint` and `judgeModelForProvider` both accept it for exactly this reason.
+
+## The handoff-delivery net
+
+**Deterministic handoff-delivery net (independent of the judge).** At run completion `agent-runner.ts` reads the run's final assistant message and handles three stranded forms. It runs on **every** runtime, including those with no judge, and skips anything the run already posted (checked against that run's own comments), so an echoed handoff isn't delivered twice.
+
+1. **An active `@`-mention** the run never posted is **delivered verbatim** as a real comment via `postAgentComment` (`comment-wakeups.ts`) — the same insert + broadcast + wakeup path `create_comment` uses, detected with the same extractor, so it matches exactly who would be woken. Flips an otherwise no-op run to success.
+2. **A name-only address that reads as an ask** — the unlinked bold/leading-line form or the passive one, matched against the run team's roster + HQ + `@admin` and gated on directed-ask intent so a name written for emphasis is never touched — is **not** rewritten or auto-delivered; guessing intent to force a wake overreaches. The runner logs the same warning `create_comment` gives interactively and leaves the handoff undelivered.
+3. **A plain direct answer** to a human who addressed this agent: when the run was woken by a reply or mention from a human (not another agent) and posted no comment of its own, the final message is delivered verbatim, threaded under the waking comment.
+
+## Prompt delivery
+
+**Prompt delivery has three modes** (`RUNTIME_PROMPT_DELIVERY`, threaded as `HEZO_PROMPT_MODE` and acted on by `PROMPT_DELIVERY_SH` and its twin in `docker/scripts/hezo-run-with-bridge`): `stdin` (`< $HEZO_PROMPT_FILE`), `file` (the CLI opens the path itself - Grok's `--prompt-file`, whose **value `buildRuntimeInvocation` puts in argv**, so the wrapper appends nothing), and `arg` (the prompt's text becomes one argv element - Kimi Code's `-p`). **`arg` is capped at 128 KiB by Linux's `MAX_ARG_STRLEN`, per argument, and a Hezo prompt clears that on its own** - so `arg` is only viable for a runtime whose system prompt travels out of band, and `assertPromptDeliverable` fails the run by name rather than letting the exec die as `Argument list too long`. The `< /dev/null` on both non-stdin branches is load-bearing: an exec's stdin is a pipe nothing closes, and a CLI that reads it hangs with no output. **A new mode or runtime needs both shell copies updated** - `agent-prompt-delivery.test.ts` runs them through the same cases, extracting the bridge's block between its `# hezo:prompt-delivery:{start,end}` markers.
+
+**`RUNTIME_SYSTEM_PROMPT_FILE`** names, per runtime, an instructions file inside the per-run home that the CLI auto-loads; when set, the resolved system prompt is written there by that runtime's MCP injector and the prompt carries the task body alone. Only Kimi Code uses it (`$KIMI_CODE_HOME/AGENTS.md`), because it is the only runtime with no file or stdin route for the prompt. Kimi Code additionally gets **no auto-approve flag** — `--yolo`/`--auto`/`--plan` are mutually exclusive with `--prompt`; `-p` already applies the `auto` permission policy and the injected `[permission.rules]` covers the rest.
+
+## Recovering usage and cost
+
+Per-run cost is computed in `agent-stream-parser.ts` **always** from the `model_pricing` table (`price()` via `PricingService`), using the token buckets each runtime reports (regular input, cache read, cache creation, output). Runtimes' own dollar figures (`total_cost_usd` and similar) are **ignored in every parser** — they are client-side estimates from the CLI's built-in rate card, which for third-party Anthropic-compatible endpoints belongs to the wrong provider entirely. The CLIs' only job in cost accounting is accurate token counts. An unknown model prices to $0 — fail-low, never fail-high. The local providers (Ollama, LM Studio) have no pricing rows by design; $0 is correct there.
+
+**Grok and Kimi Code report no token usage on stdout**, so the runner recovers it from a file in the per-run home and **scrubs that file after parsing** — each can carry the provider credential in plaintext. Everything downstream is identical to any other runtime. Three rules for that parsing, each a trap that otherwise prices runs silently wrong:
+
+- **Dedup by request id** — both logs repeat records per turn.
+- **Cumulative vs turn-scoped.** Where a log carries session-scoped totals, sum the turn-scoped records when they exist and otherwise take the *last* session record — never the sum.
+- **Know whether the input bucket already excludes cache.** Kimi's does, so unlike Codex/Grok the cached portion is **not** subtracted out. Probe field names in both camelCase and snake_case: upstream ships two engine generations with duplicated logging paths, and a spelling change would price every run at $0.
+

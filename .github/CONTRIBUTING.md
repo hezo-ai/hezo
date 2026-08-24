@@ -62,7 +62,10 @@ packages/
   shared/    — Shared TypeScript types, enums, and constants (@hezo/shared)
 agents/      — Agent system prompts (source of truth for seeded roles)
 docs/        — User-facing documentation (rendered by the website)
-.dev/        — Architecture reference (architecture.md)
+.dev/        — Internal engineering docs: architecture.md (the descriptive
+               reference), the contributor guides for tests, migrations,
+               translations, prompts, CI and adapters, two lookup registries,
+               and dated decision notes. AGENTS.md carries a map of all of them.
 ```
 
 ## Key URLs (dev)

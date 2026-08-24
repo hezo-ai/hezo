@@ -586,7 +586,7 @@ jobs:
   # combined line+branch total ~6 points below its true value. Runs regardless of
   # test outcome (if:always) so a failed shard still finalizes partial coverage.
   # Not a required check — coverage reports on the PR but never blocks a merge.
-  # Requires the repo to be enabled on Coveralls (see AGENTS.md).
+  # Requires the repo to be enabled on Coveralls (see .dev/ci-and-commands.md).
   coverage-merge:
     if: always()
     needs: [test-backend, test-containers, test-integration, test-shared]
