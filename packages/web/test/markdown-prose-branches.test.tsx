@@ -145,7 +145,7 @@ test('@admin in a CEO reply (instance scope, no project) links to /home/inbox', 
 		},
 	});
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	// The harness backend has no ChatSessionManager, so the reply is seeded into

@@ -165,21 +165,14 @@ test.describe('Agent executions — mobile layout (390px)', () => {
 		});
 		expect(overflow).toBeLessThanOrEqual(1);
 
-		// Scrolled to the bottom, the last row clears the chat launcher rather than
-		// passing under it. Asserted as a box intersection so it holds wherever the
-		// (draggable) launcher sits.
+		// Scrolled to the bottom, the last row is fully inside the viewport - no
+		// floating corner button overlays the list any more (the chat launcher
+		// moved into the app header), so the row just has to be reachable.
 		await page.evaluate(() => {
 			document.querySelector('main')?.scrollTo({ top: 999_999, behavior: 'instant' });
 		});
-		const launcher = page.getByTestId('chat-launcher');
-		await expect(launcher).toBeVisible();
-		const launcherBox = (await launcher.boundingBox())!;
 		const lastRowBox = (await rows.last().boundingBox())!;
-		const overlaps =
-			lastRowBox.x < launcherBox.x + launcherBox.width &&
-			lastRowBox.x + lastRowBox.width > launcherBox.x &&
-			lastRowBox.y < launcherBox.y + launcherBox.height &&
-			lastRowBox.y + lastRowBox.height > launcherBox.y;
-		expect(overlaps).toBe(false);
+		const viewport = page.viewportSize()!;
+		expect(lastRowBox.y + lastRowBox.height).toBeLessThanOrEqual(viewport.height + 1);
 	});
 });
