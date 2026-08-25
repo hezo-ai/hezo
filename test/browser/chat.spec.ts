@@ -307,24 +307,31 @@ test.describe('chat dock — composer auto-grow', () => {
 		const heightOf = async () => (await input.boundingBox())?.height ?? 0;
 
 		// A long line with no explicit newlines wraps to several visual rows inside
-		// the ~420px anchored panel.
+		// the ~420px anchored panel - long enough to re-wrap measurably at the
+		// narrower mobile width, short enough to stay under the composer's
+		// max-height cap there (past the cap it scrolls by design, which would
+		// read as "clipped" and fail the guard for the wrong reason).
 		await input.fill(
-			'This is a long single-line message with no explicit newlines that wraps across multiple visual rows inside the narrow anchored composer panel, and then keeps going a little further still.',
+			'This is a long single-line message with no explicit newlines that wraps across multiple visual rows inside the narrow anchored composer panel.',
 		);
 		await expect.poll(heightOf).toBeGreaterThan(60);
 		const desktopHeight = await heightOf();
 		expect(await isClipped()).toBe(false);
 
 		// The mobile sheet is narrower (~359px): the same text re-wraps to more
-		// rows, so the box must grow — without the re-fit the top line would clip.
+		// rows, so the box must re-fit — without it the top line clips, which is
+		// exactly what `isClipped` catches (a stale height leaves scrollHeight
+		// above clientHeight). The clip check, not a row-count delta, is the
+		// assertion: how many extra rows the re-wrap costs depends on font
+		// metrics, so a numeric height bound would flake across renderers.
 		await page.setViewportSize({ width: 375, height: 800 });
 		await expect(page.getByTestId('chat-panel')).toBeVisible();
-		await expect.poll(heightOf).toBeGreaterThan(desktopHeight + 4);
+		await expect.poll(heightOf).toBeGreaterThanOrEqual(desktopHeight);
 		expect(await isClipped()).toBe(false);
 
-		// Back to desktop: wider again, fewer rows, the box shrinks back.
+		// Back to desktop: wider again, the box re-fits down and still fits.
 		await page.setViewportSize({ width: 1280, height: 800 });
-		await expect.poll(heightOf).toBeLessThan(desktopHeight + 4);
+		await expect.poll(heightOf).toBeLessThanOrEqual(desktopHeight + 1);
 		expect(await isClipped()).toBe(false);
 	});
 });

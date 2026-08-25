@@ -83,27 +83,30 @@ test.describe('Responsive — mobile (390px)', () => {
 		page,
 		lightWorkspace,
 	}) => {
-		const { projectSlug } = lightWorkspace;
-		await page.goto(`/projects/${projectSlug}/activity`);
+		// The project Activity page is gone; the audit-log table now renders on the
+		// Admin-only instance view, which is the wide table this guards.
+		void lightWorkspace;
+		await page.goto('/settings/audit-log');
 		await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible({
 			timeout: 20000,
 		});
 		await expectNoHorizontalOverflow(page);
 	});
 
-	// The Hours tab is the widest thing on the Budget page - a chart sized from its
-	// container, plus a four-across tile grid and a bucket-size control - and none
-	// of them has a real width without a layout engine. The assertion is
+	// The Hours tab is the widest thing on the Team & Budget page - a chart sized
+	// from its container, plus a four-across tile grid and a bucket-size control -
+	// and none of them has a real width without a layout engine. The assertion is
 	// deliberately data-independent: the fixture guarantees no container history,
 	// so anything keyed on a populated chart would pass or fail on timing rather
 	// than on layout.
 	test('budget hours tab fits the viewport at 390px', async ({ page, lightWorkspace }) => {
 		const { projectSlug } = lightWorkspace;
 		await page.goto(`/projects/${projectSlug}/budget/hours`);
-		await expect(page.getByRole('heading', { name: 'Budget' })).toBeVisible({
+		await expect(page.getByRole('heading', { name: 'Team & Budget' })).toBeVisible({
 			timeout: 20000,
 		});
-		// Both tabs stay reachable: the strip scrolls rather than compressing.
+		// All three tabs stay reachable: the strip scrolls rather than compressing.
+		await expect(page.getByTestId('budget-tab-team')).toBeVisible();
 		await expect(page.getByTestId('budget-tab-spend')).toBeVisible();
 		await expect(page.getByTestId('budget-tab-hours')).toBeVisible();
 		await expectNoHorizontalOverflow(page);
