@@ -37,7 +37,7 @@ A normal project dashboard shows, top to bottom:
 - **Team snapshot** - open-task count, last activity, and any agents currently running.
 - **Goals** - the top goals by health.
 - **Spend** - Today / This week / This month / All time, with the same calendar budget
-  windows and caps as the [budget page](/docs/concepts/budgets-and-costs).
+  windows and caps as the [Team & Budget page](/docs/concepts/budgets-and-costs).
 
 Status and action items stay at the top. The four below them are yours to arrange: drag a
 widget by the handle that appears at its top-left on hover, and the new order is saved for
@@ -86,7 +86,7 @@ marketplace arrives addressed entirely by role.
 
 An agent can also have a **name**, like Max or Priya. Giving it one is your call, not
 something the team decides for you: open the agent's **Settings** and set it. From then on
-the name is what shows everywhere, with the role alongside it - on the team page the role
+the name is what shows everywhere, with the role alongside it - on the Team tab the role
 sits beneath the name, and hovering a name anywhere shows both plus what the role does.
 Clear the name to go back to the role.
 

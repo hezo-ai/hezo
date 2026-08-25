@@ -1,9 +1,9 @@
 import { type AdminMentionItem, ApprovalStatus, ApprovalType } from '@hezo/shared';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Building2, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
+import { CeoLandingChat } from '../../components/chat/ceo-landing';
 import { CreateProjectWithTeamDialog } from '../../components/create-project-with-team-dialog';
-import { HqContainerNotice } from '../../components/hq-container-notice';
 import { ProjectIntakeHomePanel } from '../../components/project-intake-home-panel';
 import { Avatar, getInitials } from '../../components/ui/avatar';
 import { Badge } from '../../components/ui/badge';
@@ -12,13 +12,8 @@ import { Card } from '../../components/ui/card';
 import { RelativeTime } from '../../components/ui/relative-time';
 import { useAllAdminMentions } from '../../hooks/use-admin-mentions';
 import { type Approval, useAllApprovals } from '../../hooks/use-approvals';
-import { useContainerHealth } from '../../hooks/use-container-health';
 import { useProjectIntake } from '../../hooks/use-project-intake';
-import {
-	type ProjectWithTeam,
-	useAllVisibleProjects,
-	useHqProject,
-} from '../../hooks/use-projects';
+import { type ProjectWithTeam, useAllVisibleProjects } from '../../hooks/use-projects';
 import { agentAvatarUrl } from '../../lib/agent-avatar';
 import { inboxRowKind, inboxRowLead } from '../../lib/inbox-row-kind';
 
@@ -244,45 +239,6 @@ function NeedsYouMention({ mention }: { mention: AdminMentionItem }) {
 	);
 }
 
-function WelcomeCard({ onCreate }: { onCreate: () => void }) {
-	const hq = useHqProject();
-	const hqHealth = useContainerHealth(hq);
-	// Project scoping is CEO-driven, but a stopped (or never-provisioned) HQ
-	// container is no blocker — the first use lazy-starts it. Only errors and
-	// in-flight transitions surface a wait here.
-	const blockedHealth =
-		hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped' ? hqHealth : null;
-
-	return (
-		<Card className="mb-6 p-0 overflow-hidden" data-testid="home-welcome-card">
-			{hq && blockedHealth ? (
-				<HqContainerNotice
-					health={blockedHealth}
-					description="Setting up Hezo. You can create your first project once the HQ container is running."
-				/>
-			) : (
-				<div
-					className="flex flex-col items-center gap-3 px-4 py-8 text-center"
-					data-testid="home-welcome"
-				>
-					<Building2 className="w-8 h-8 text-text-2 shrink-0" />
-					<div>
-						<h1 className="text-base font-semibold text-text-1">Get started with Hezo</h1>
-						<p className="text-[13px] text-text-2 mt-1 max-w-md">
-							Create your first project. Each one gets its own team - spin it up from a template, or
-							let the CEO scope it with you first.
-						</p>
-					</div>
-					<Button onClick={onCreate} data-testid="home-welcome-create">
-						<Plus className="w-4 h-4" />
-						New project
-					</Button>
-				</div>
-			)}
-		</Card>
-	);
-}
-
 function ActiveProjectCard({
 	project,
 	needsYou,
@@ -450,7 +406,7 @@ function HomePage() {
 				<h1 className="text-[22px] md:text-[28px] font-semibold tracking-[-0.02em]">Home</h1>
 			</div>
 
-			{showWelcome && <WelcomeCard onCreate={() => setCreateOpen(true)} />}
+			{showWelcome && <CeoLandingChat onCreateProject={() => setCreateOpen(true)} />}
 
 			{hasIntake && intake && (
 				<div className="mb-6" data-testid="home-project-intake-section">

@@ -113,7 +113,16 @@ describe('message catalogs', () => {
 	 * keep the reason obvious.
 	 */
 	const IDENTICAL_TO_ENGLISH_OK: Record<string, readonly string[]> = {
-		'nav.budget': ['de', 'fr', 'it', 'nl', 'sv'],
+		// "Team" and "Budget" are both the German words, ampersand and all; the
+		// other languages differ at least in case or conjunction (Team & budget,
+		// Team e budget, Équipe et budget, ...).
+		'nav.budget': ['de'],
+		// "Team" is the ordinary loanword in all four; French (Équipe), Spanish
+		// (Equipo), Polish (Zespół) and the rest differ.
+		'budget.tab.team': ['de', 'it', 'nl', 'sv'],
+		// "Budget" genuinely is the word in these five, as `nav.budget` recorded
+		// before it was reworded to "Team & Budget".
+		'budget.tab.spend': ['de', 'fr', 'it', 'nl', 'sv'],
 		'nav.documents': ['fr'],
 		'nav.home': ['it'],
 		'theme.system': ['de', 'sv'],

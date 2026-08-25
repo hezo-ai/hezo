@@ -41,8 +41,8 @@ test('Hire agent opens the chooser instead of dropping straight into the form', 
 	expect(document.body.querySelector('[data-testid="hire-chooser"]')?.textContent).toContain(
 		'Storefront',
 	);
-	// Picking nothing has not navigated anywhere.
-	expect(router.state.location.pathname).toBe(`/projects/${project.slug}/agents`);
+	// Picking nothing has not navigated anywhere (past the Team-tab redirect).
+	expect(router.state.location.pathname).toBe(`/projects/${project.slug}/budget/team`);
 });
 
 test('"Write the role yourself" opens the form, whose back link returns to the chooser', async () => {
@@ -68,10 +68,10 @@ test('"Write the role yourself" opens the form, whose back link returns to the c
 		expect(router.state.location.pathname).toBe(`/projects/${project.slug}/agents/hire`);
 	});
 
-	// Back to the fork rather than to the team page: a wrong turn costs one click.
+	// Back to the fork rather than to the Team tab: a wrong turn costs one click.
 	await user.click(await findByTestId('hire-back-to-chooser'));
 	await waitFor(() => {
-		expect(router.state.location.pathname).toBe(`/projects/${project.slug}/agents`);
+		expect(router.state.location.pathname).toBe(`/projects/${project.slug}/budget/team`);
 	});
 	// `?hire` is what reopens it, so the operator lands back on the three options.
 	await waitFor(() => {

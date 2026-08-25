@@ -16,7 +16,7 @@ test('selecting a team visibly highlights only the chosen card', async () => {
 		seed: async () => {},
 	});
 
-	const create = await findByTestId('home-welcome-create', undefined, { timeout: 15_000 });
+	const create = await findByTestId('ceo-landing-create-project', undefined, { timeout: 15_000 });
 	await user.click(create);
 
 	// The team cards live behind "View all teams" — the entry step opens on the

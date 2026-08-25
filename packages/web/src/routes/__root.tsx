@@ -26,6 +26,7 @@ import { Button } from '../components/ui/button';
 import { PageLogo } from '../components/ui/page-logo';
 import { Tooltip } from '../components/ui/tooltip';
 import { UpdateBanner } from '../components/update-banner';
+import { ChatDockOpenContext } from '../contexts/chat-dock-context';
 import { type ChatLaunch, ChatLaunchContext } from '../contexts/chat-launch-context';
 import { ScrollContentContext } from '../contexts/scroll-content-context';
 import { SocketProvider } from '../contexts/socket-context';
@@ -251,14 +252,16 @@ function ShellLayout() {
 
 	return (
 		<ChatLaunchContext.Provider value={launchChat}>
-			<ShellChrome
-				drawerOpen={drawerOpen}
-				setDrawerOpen={setDrawerOpen}
-				chatOpen={chatOpen}
-				onToggleChat={() => setChatOpen((v) => !v)}
-			/>
-			<ChatWidget open={chatOpen} onOpenChange={setChatOpen} launch={chatLaunch} />
-			<PwaInstallPrompt />
+			<ChatDockOpenContext.Provider value={chatOpen}>
+				<ShellChrome
+					drawerOpen={drawerOpen}
+					setDrawerOpen={setDrawerOpen}
+					chatOpen={chatOpen}
+					onToggleChat={() => setChatOpen((v) => !v)}
+				/>
+				<ChatWidget open={chatOpen} onOpenChange={setChatOpen} launch={chatLaunch} />
+				<PwaInstallPrompt />
+			</ChatDockOpenContext.Provider>
 		</ChatLaunchContext.Provider>
 	);
 }

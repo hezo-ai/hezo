@@ -3,12 +3,12 @@ import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
 
 /**
- * The Budget page's two tabs, and what became of the Activity page's.
+ * The Team & Budget page's three tabs.
  *
- * Spend and Hours answer different questions - what the agents cost in tokens,
- * and what the containers cost in uptime - so the thing worth pinning is that
- * each tab owns its own URL and its own selected state. Activity, which used to
- * carry a tab strip of its own, is asserted to have none.
+ * Team, Budget and Hours answer different questions - who is on the team, what
+ * the agents cost in tokens, and what the containers cost in uptime - so the
+ * thing worth pinning is that each tab owns its own URL and its own selected
+ * state, and that the old team-page URL still lands on the roster.
  */
 
 /** A closed uptime interval of `minutes`, ending now. */
@@ -33,7 +33,7 @@ async function seedRun(teamId: string, memberId: string, minutes: number): Promi
 	);
 }
 
-test('Budget opens on Spend, with only that tab selected', async () => {
+test('the budget index opens on the Budget tab, with only that tab selected', async () => {
 	let slug = '';
 	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
@@ -46,15 +46,18 @@ test('Budget opens on Spend, with only that tab selected', async () => {
 
 	await router.navigate({ to: '/projects/$projectId/budget', params: { projectId: slug } });
 
+	const team = await findByTestId('budget-tab-team');
 	const spend = await findByTestId('budget-tab-spend');
 	const hours = await findByTestId('budget-tab-hours');
 	// The active tab merges into the panel below it (`bg-bg`); an inactive one
 	// stays recessed (`bg-surface-2`). Spend is the index route, so a fuzzy match
-	// would claim `/hours` too - both tabs reading as selected is the bug this
-	// asserts against.
+	// would claim its siblings too - several tabs reading as selected is the bug
+	// this asserts against.
 	expect(spend.className).toContain('bg-bg');
-	expect(hours.className).toContain('bg-surface-2');
-	expect(hours.className).not.toContain('bg-bg');
+	for (const inactive of [team, hours]) {
+		expect(inactive.className).toContain('bg-surface-2');
+		expect(inactive.className).not.toContain('bg-bg');
+	}
 });
 
 test('the Hours tab reports container uptime, split into task and chat time', async () => {
@@ -143,9 +146,34 @@ test("the Spend tab carries each agent's run time beside its spend", async () =>
 	expect(runTime.textContent).toContain('45m');
 });
 
-test('Activity renders its log with no tab strip', async () => {
+test('the Team tab holds the roster: org chart, member cards with chat shortcuts, hire card', async () => {
 	let slug = '';
-	const { findByText, router } = await renderApp({
+	let agentSlug = '';
+	const { findByTestId, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			agentSlug = ws.agents[0].slug;
+		},
+	});
+
+	await router.navigate({ to: '/projects/$projectId/budget/team', params: { projectId: slug } });
+
+	await findByTestId('team-org-chart');
+	const grid = await findByTestId('team-member-grid');
+	expect(grid.querySelector(`[data-testid="member-card-${agentSlug}"]`)).toBeTruthy();
+	// Roster cards carry a chat shortcut into that agent's DM; the dashed hire
+	// card closes the grid on staffable teams.
+	expect(grid.querySelector(`[data-testid="member-card-chat-${agentSlug}"]`)).toBeTruthy();
+	expect(grid.querySelector('[data-testid="team-hire-card"]')).toBeTruthy();
+	// The strip marks Team selected.
+	expect((await findByTestId('budget-tab-team')).className).toContain('bg-bg');
+});
+
+test('the old team-page URL redirects onto the Team tab', async () => {
+	let slug = '';
+	const { findByTestId, router } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -153,10 +181,8 @@ test('Activity renders its log with no tab strip', async () => {
 		},
 	});
 
-	await router.navigate({ to: '/projects/$projectId/activity', params: { projectId: slug } });
+	await router.navigate({ to: '/projects/$projectId/agents', params: { projectId: slug } });
 
-	await findByText('Everything that happened on this project, newest first.');
-	// The per-agent hours tab is gone, so the strip that switched to it is too.
-	expect(document.querySelector('[data-testid="activity-tab-log"]')).toBeNull();
-	expect(document.querySelector('[data-testid="activity-tab-hours"]')).toBeNull();
+	await findByTestId('team-org-chart');
+	expect(router.state.location.pathname).toBe(`/projects/${slug}/budget/team`);
 });

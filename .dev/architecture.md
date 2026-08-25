@@ -390,45 +390,47 @@ beside the clean body), and the `budget_exceeded` / `capacity_wait` /
 
 ### Chat conversations & channels
 
-**Multi-thread conversations, one home surface per thread.** The CEO chat is
-**multi-threaded**, and every thread has exactly **one home surface**: a web thread, a
-Telegram DM, a topic in the operator's designated Topics supergroup, a Slack DM, a Slack
-channel, a Discord DM, a Discord channel — each is its own `chat_conversations` row.
+**One live web stream per member, one home surface per conversation.** The CEO's web
+chat is a **single continuous DM** (decision: single-stream): the "default" web
+conversation resolves to the member's most recently active open web thread
+(`ORDER BY last_activity_at DESC`), there is no thread-creation route
+(`POST /api/chat/conversations` is gone), and migration 074 closed all but the most
+recently active open web thread per member — older ones stay fully readable as
+**History**. Every conversation still has exactly **one home surface**: the web stream,
+a Telegram DM, a topic in the operator's designated Topics supergroup, a Slack DM, a
+Slack channel, a Discord DM, a Discord channel — each its own `chat_conversations` row.
 There is **no mirroring**: nothing started on one surface ever creates or posts into a
-thread on another. The conversation row's `channel` + `external_thread_id` **is the
-inbound routing key** — `findConversationByOrigin(channel, externalThreadId)` resolves an
-open conversation or a new one is created (so closing a thread from the web and DMing
-again starts a fresh thread; there is no bindings table). **The web view is the hub**:
-`listConversations` returns **all** kinds with their `channel` + `kind`, so the chatbox
-lists every thread from every surface, badged by origin — assistant threads fully
-interactive, coworker threads read-only (`POST /api/chat/messages` 409s on them, as it
-does on any closed thread — `CLOSED`, naming the continuing task when there is one).
+conversation on another. The row's `channel` + `external_thread_id` **is the inbound
+routing key** — `findConversationByOrigin(channel, externalThreadId)` resolves an open
+conversation or a new one is created (so closing a conversation from the web and DMing
+again starts a fresh one; there is no bindings table). **The web view is the hub**:
+`listConversations` returns **all** kinds with their `channel` + `kind`, so the dock's
+room switcher lists every conversation from every surface, badged by origin — assistant
+conversations fully interactive, coworker conversations read-only
+(`POST /api/chat/messages` 409s on them, as it does on any closed thread — `CLOSED`,
+naming the continuing task when there is one).
 
-**Convert-to-task.** A web assistant thread can be converted into a task
-(`POST /api/chat/conversations/:id/convert-to-task {project_id, title?}` →
-`ChatSessionManager.convertConversationToTask`): the active window's transcript
-(`loadActiveWindow` + `chatTranscriptLine`, byte-capped with head truncation noted)
-becomes the description of a task created via the normal `createTask` service in the
-**target project's team**, assigned to the CEO by member id (the run-team split — the
-assignment wakeup carries the target team). In-flight work is aborted first
-(`abortConversationRuntime`, shared with close; a partial reply settles as
-`interrupted`), the task is created, and then — atomically — a `system`-role
-`chat_messages` row naming the task is inserted and the row gets
-`converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`. The system row
+**Convert-to-task is gone; breadcrumbs replaced it.** Whole-thread convert-and-close
+(`POST /api/chat/conversations/:id/convert-to-task`) was removed with single-stream:
+the CEO files tasks mid-conversation instead, and the server posts breadcrumb system
+rows (`task_created` from `create_task`/`create_tasks` via the task's
+`origin_chat_conversation_id`, `task_completed` / `task_blocked` from the status
+automations) into the originating conversation. Rows converted under the old model keep
+their record: `converted_task_id` (FK to `tasks`, `ON DELETE SET NULL`) + `closed_at`
+mark a readable History entry whose meta message and banner link the task. The system row
 carries `system_kind = 'converted_task'` (`chat_messages.system_kind`, migration 058; the
 CHECK list is widened by 067 for `connector_refused`, the chat's twin of a task run's connector
-refusal warning, and by 068 for `credential_wait`, the twin of a waiting run's
-`[runner] Waiting for …` line): which
+refusal warning, by 068 for `credential_wait`, the twin of a waiting run's
+`[runner] Waiting for …` line, and by 074 for the budget/capacity/breadcrumb kinds): which
 marker a system row is has to be a property of the **message**, since the chatbox would otherwise
 choose by the thread's `converted_task_id` and render a handoff warning written before the
 conversion as the converted-task link. Converted
-threads **stay listed**: the default listing predicate is `closed_at IS NULL OR
-converted_task_id IS NOT NULL`, with a joined `converted_task {identifier, title,
-project_slug}` reference for the switcher marker, locked-composer banner and the meta
-message's link; deleting the task demotes the thread to ordinarily-closed. Lifecycle
-changes (close, convert, auto-title) broadcast `ChatConversationUpdated` with the
-changed fields. The route deliberately has **no MCP twin** — chat is a human-only
-surface; agents create tasks via `create_task`.
+threads **stay listed**: the web listing takes `include_closed=true`, with a joined
+`converted_task {identifier, title, project_slug}` reference for the History marker,
+locked-composer banner and the meta message's link; deleting the task demotes the
+thread to ordinarily-closed. Lifecycle changes (close, auto-title) broadcast
+`ChatConversationUpdated` with the changed fields. The chat routes deliberately have
+**no MCP twins** — chat is a human-only surface; agents create tasks via `create_task`.
 Delivery is **reply-where-asked**: `finalize` delivers a completed reply to the **turn's
 origin surface** (`ConversationContext.channel`, captured per turn) — a web-composed turn
 into a Telegram-DM thread answers on web only, a Telegram message answers in Telegram —

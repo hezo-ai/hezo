@@ -23,7 +23,7 @@ import { useI18n } from '../../lib/i18n';
  */
 type MetricTarget =
 	| '/projects/$projectId/inbox'
-	| '/projects/$projectId/agents'
+	| '/projects/$projectId/budget/team'
 	| '/projects/$projectId/tasks'
 	| '/projects/$projectId/goals'
 	| '/projects/$projectId/budget';
@@ -119,7 +119,7 @@ export function DashboardMetrics({
 			key="active-agents"
 			testId="dashboard-metric-active-agents"
 			projectId={projectId}
-			to="/projects/$projectId/agents"
+			to="/projects/$projectId/budget/team"
 			label={t('dashboard.metric.activeAgents')}
 			value={String(running)}
 			detail={t('dashboard.metric.ofRoster', { count: roster.length })}

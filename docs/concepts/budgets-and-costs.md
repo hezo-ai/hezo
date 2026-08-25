@@ -9,9 +9,10 @@ section: Concepts
 Autonomous agents can run up a model bill quickly. Hezo tracks every run's cost and
 lets you cap spend at both the agent and the project level.
 
-A project's **Budget** page has two tabs, because there are two different bills:
+The money tabs live on a project's **Team & Budget** page, beside the **Team** tab that
+holds the roster. There are two of them, because there are two different bills:
 
-- **Spend** - what the agents cost in model tokens.
+- **Budget** - what the agents cost in model tokens.
 - **Hours** - what the containers cost in uptime.
 
 ## Cost tracking
@@ -83,7 +84,7 @@ Three things are worth knowing about the figure:
   share. Its container stops on its own 15 minutes after the last message.
 - **It is not the same as agent run time.** Run time is per agent and ignores the
   build, the warm-idle tail, and the fact that concurrent runs share one container.
-  Each agent's run time for the month is shown on the **Spend** tab, beside its spend.
+  Each agent's run time for the month is shown on the **Budget** tab, beside its spend.
 
 On a local Docker daemon an hour of uptime costs nothing, so the Hours tab is there to
 show you what the fleet is doing rather than to budget against.
@@ -91,7 +92,7 @@ show you what the fleet is doing rather than to budget against.
 ### The monthly allowance
 
 Where container hours do cost money, you can set a **monthly allowance** from HQ's
-Budget page. Once it is spent:
+Hours tab (under **Team & Budget**). Once it is spent:
 
 - No new container starts - the assistant chat's included, so an exhausted allowance
   pauses the chat too until the month turns or the allowance is raised.

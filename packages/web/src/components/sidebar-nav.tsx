@@ -19,6 +19,9 @@ interface SidebarNavItem {
 	/** An inline "+" affordance rendered to the right of the row (e.g. create a
 	 *  task next to the Tasks link). Clicking it never follows the row's link. */
 	action?: SidebarNavItemAction;
+	/** Route to fuzzy-match for the active state when it is wider than `to` -
+	 *  a link landing on one tab of a page while the row owns the whole page. */
+	matchTo?: string;
 }
 
 // A small bordered "+" chip, used both as an inline suffix to a row label (Tasks)
@@ -129,7 +132,7 @@ export function SidebarNav({ sections }: SidebarNavProps) {
 						// only the row the user is actually on reads as active.
 						const isActive = subActive
 							? !!matchRoute({ to: item.to, params: item.params })
-							: !!matchRoute({ to: item.to, params: item.params, fuzzy: true });
+							: !!matchRoute({ to: item.matchTo ?? item.to, params: item.params, fuzzy: true });
 						const paddingClass = section.title ? 'pl-4 pr-2 py-0.5' : 'px-2.5 py-1';
 						const key = `${item.to}-${JSON.stringify(item.params)}`;
 						const link = (
