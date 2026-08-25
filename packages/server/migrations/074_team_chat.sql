@@ -60,3 +60,10 @@ CREATE TABLE chat_conversation_reads (
 -- The PK covers (user_id, conversation_id) lookups; this covers the join the
 -- other way round when a conversation fans a new-message event to its readers.
 CREATE INDEX idx_chat_conversation_reads_convo ON chat_conversation_reads(conversation_id);
+
+-- Task<->chat breadcrumbs: a task created by a chat turn remembers the
+-- conversation it came from, and that conversation receives created /
+-- completed / blocked receipts. Read only by primary key at status-change
+-- time, so no index.
+ALTER TABLE tasks
+    ADD COLUMN origin_chat_conversation_id UUID REFERENCES chat_conversations(id) ON DELETE SET NULL;

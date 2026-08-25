@@ -17,6 +17,7 @@ import {
 	DEFAULT_TEAM_ID,
 	effectiveRuntime,
 	PROVIDER_RUNTIME_ADAPTERS,
+	parseSuggestedReplies,
 	RUNTIME_SYSTEM_PROMPT_FILE,
 	type WsChatServerMessage,
 	WsMessageType,
@@ -831,7 +832,16 @@ export class ChatSessionManager {
 			sessionId: session?.sessionId ?? null,
 			completed: false,
 		});
-		this.broadcastStart(conversationId, assistantMessageId, ChatMessageRole.Assistant, channel, '');
+		this.broadcastStart(
+			conversationId,
+			assistantMessageId,
+			ChatMessageRole.Assistant,
+			channel,
+			'',
+			undefined,
+			undefined,
+			session?.memberId ?? undefined,
+		);
 
 		const abort = new AbortController();
 		const promise = session
@@ -1195,6 +1205,9 @@ export class ChatSessionManager {
 			ChatMessageRole.Assistant,
 			ctx.channel,
 			'',
+			undefined,
+			undefined,
+			input.memberId,
 		);
 
 		const abort = new AbortController();
@@ -2440,9 +2453,11 @@ export class ChatSessionManager {
 			);
 			// Reply-where-asked: a completed reply posts back to the surface the turn
 			// came from (web turns already streamed over WebSocket). An
-			// interrupted/failed partial is never delivered to a platform.
+			// interrupted/failed partial is never delivered to a platform. The
+			// suggested-replies trailer is a web affordance, so the delivered copy
+			// is the clean body.
 			if (status === ChatMessageStatus.Complete) {
-				await this.deliverReplyToOrigin(ctx, accumulated.text);
+				await this.deliverReplyToOrigin(ctx, parseSuggestedReplies(accumulated.text).body);
 			}
 		};
 
@@ -3460,6 +3475,14 @@ export class ChatSessionManager {
 				input.systemKind ?? null,
 			],
 		);
+		// The denormalized tail pointer unread badges compare against - written
+		// with the message so a badge can never point past what exists.
+		await this.deps.db
+			.query(
+				`UPDATE chat_conversations SET last_message_id = $2, last_activity_at = now() WHERE id = $1`,
+				[input.conversationId, r.rows[0].id],
+			)
+			.catch(() => undefined);
 		return r.rows[0].id;
 	}
 
@@ -3471,10 +3494,18 @@ export class ChatSessionManager {
 		usage: AgentRunUsage | null,
 		error?: string,
 	): Promise<void> {
+		// A completed reply may end with the suggested-replies trailer; the body
+		// is stored clean and the options ride the row and the complete event. A
+		// malformed trailer is stripped and offers nothing (parseSuggestedReplies).
+		const parsed =
+			status === ChatMessageStatus.Complete
+				? parseSuggestedReplies(content)
+				: { body: content, replies: null };
+		content = parsed.body;
 		await this.deps.db.query(
 			`UPDATE chat_messages
 			 SET status = $2::chat_message_status, content = $3, input_tokens = $4, output_tokens = $5,
-			     cost_cents = $6, error = $7, completed_at = now()
+			     cost_cents = $6, error = $7, suggested_replies = $8::jsonb, completed_at = now()
 			 WHERE id = $1`,
 			[
 				messageId,
@@ -3484,6 +3515,7 @@ export class ChatSessionManager {
 				usage?.outputTokens ?? 0,
 				usage?.costCents ?? 0,
 				error ?? null,
+				parsed.replies ? JSON.stringify(parsed.replies) : null,
 			],
 		);
 		if (this.live) {
@@ -3504,6 +3536,7 @@ export class ChatSessionManager {
 			outputTokens: usage?.outputTokens ?? 0,
 			costCents: usage?.costCents ?? 0,
 			error: error ?? null,
+			...(parsed.replies ? { suggestedReplies: parsed.replies } : {}),
 		});
 	}
 
@@ -3515,6 +3548,7 @@ export class ChatSessionManager {
 		content: string,
 		attachments?: CommentAttachment[],
 		systemKind?: ChatSystemMessageKind,
+		authorMemberId?: string,
 	): void {
 		this.broadcastChat(conversationId, {
 			type: WsMessageType.ChatMessageStart,
@@ -3526,6 +3560,7 @@ export class ChatSessionManager {
 			createdAt: new Date().toISOString(),
 			...(attachments && attachments.length > 0 ? { attachments } : {}),
 			...(systemKind ? { systemKind } : {}),
+			...(authorMemberId ? { authorMemberId } : {}),
 		});
 	}
 

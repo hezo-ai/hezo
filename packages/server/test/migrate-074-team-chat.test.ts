@@ -138,6 +138,29 @@ describe('074_team_chat migration', () => {
 		expect(byId.get(seeded[1])).toEqual(['Yes, go ahead', 'Not yet']);
 	});
 
+	it('links a task to its originating conversation, severed if the thread goes', async () => {
+		const team = await h.db.query<{ id: string; project: string }>(
+			`SELECT t.id, p.id AS project FROM teams t JOIN projects p ON p.team_id = t.id LIMIT 1`,
+		);
+		const task = await h.db.query<{ id: string }>(
+			`INSERT INTO tasks (team_id, project_id, number, identifier, title, origin_chat_conversation_id)
+			 VALUES ($1, $2, 1, 'HQ-1', 'From chat', $3) RETURNING id`,
+			[team.rows[0].id, team.rows[0].project, emptyConversationId],
+		);
+		const row = await h.db.query<{ origin: string | null }>(
+			`SELECT origin_chat_conversation_id AS origin FROM tasks WHERE id = $1`,
+			[task.rows[0].id],
+		);
+		expect(row.rows[0].origin).toBe(emptyConversationId);
+		// ON DELETE SET NULL: losing the conversation never cascades into tasks.
+		await h.db.query(`DELETE FROM chat_conversations WHERE id = $1`, [emptyConversationId]);
+		const after = await h.db.query<{ origin: string | null }>(
+			`SELECT origin_chat_conversation_id AS origin FROM tasks WHERE id = $1`,
+			[task.rows[0].id],
+		);
+		expect(after.rows[0].origin).toBeNull();
+	});
+
 	it('upserts the reads watermark only on real change', async () => {
 		await h.db.query(
 			`INSERT INTO chat_conversation_reads (user_id, conversation_id, last_read_message_id)

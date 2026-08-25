@@ -137,6 +137,7 @@ import {
 } from '../services/agent-system-prompts';
 import { broadcastApprovalChange } from '../services/approval-broadcast';
 import { resolveApproval } from '../services/approval-resolve';
+import { recordChatTaskOrigin } from '../services/chat-breadcrumbs';
 import { upsertChatMemory } from '../services/chat-memory';
 import {
 	buildWakeReceipt,
@@ -1556,6 +1557,10 @@ export function registerTools(
 				if (e instanceof CreateTaskError) return { error: e.message };
 				throw e;
 			}
+			// A task filed by a live chat turn leaves a receipt in its conversation
+			// and remembers where it came from, so completion and blocked receipts
+			// can find their way back. No-op for every other caller.
+			await recordChatTaskOrigin(db, wsManager, auth, created);
 			return withBacktickWarning(
 				db,
 				auth,
@@ -1847,6 +1852,10 @@ export function registerTools(
 				events,
 			);
 			if (auth.type !== AuthType.Agent) return results;
+			// Same receipt a single create_task leaves - one per created item.
+			for (const r of results) {
+				if (r.ok) await recordChatTaskOrigin(db, wsManager, auth, r.task);
+			}
 			// Per-item advisory: flag a created task whose own description backticked
 			// a real entity. Keyed by the result index back to the source item.
 			return Promise.all(

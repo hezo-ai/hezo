@@ -67,6 +67,7 @@ import { mentionsRoutes } from './routes/mentions';
 import { modelPricingRoutes } from './routes/model-pricing';
 import { oauthRoutes } from './routes/oauth';
 import { previewRoutes } from './routes/preview';
+import { projectChatRoutes } from './routes/project-chat';
 import { projectDocsRoutes } from './routes/project-docs';
 import { projectsRoutes, publicProjectsRoutes } from './routes/projects';
 import { queuedWakeupsRoutes } from './routes/queued-wakeups';
@@ -865,6 +866,7 @@ export function buildApp(
 	app.route('/api', searchRoutes);
 	app.route('/api', buildUpdatesRoutes({ autoUnlock: config.autoUnlock ?? false }));
 	app.route('/api', chatRoutes);
+	app.route('/api', projectChatRoutes);
 	app.route('/api', chatChannelRoutes);
 
 	// Frontend (SPA) serving. The compiled binary serves from the in-memory

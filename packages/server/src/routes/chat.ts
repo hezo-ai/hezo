@@ -25,8 +25,9 @@ import { readUploadForm, storeUploadedAsset } from './assets';
 
 export const chatRoutes = new Hono<Env>();
 
-const MESSAGE_COLUMNS = `id, conversation_id, role, channel, status, content, author_user_id,
-	input_tokens, output_tokens, cost_cents, error, system_kind, created_at, completed_at`;
+export const MESSAGE_COLUMNS = `id, conversation_id, role, channel, status, content, author_user_id,
+	author_member_id, suggested_replies, input_tokens, output_tokens, cost_cents, error, system_kind,
+	created_at, completed_at`;
 
 /**
  * The CEO chat is instance-wide (one global conversation), so these are global
@@ -58,7 +59,10 @@ async function resolveConversationId(
 	if (!manager) return null;
 	if (explicit) {
 		const convo = await manager.getConversation(explicit);
-		return convo ? convo.id : null;
+		// The global routes are the CEO/HQ surface only: a project DM lives under
+		// its own `/api/projects/:projectId/chat/*` routes and their per-project
+		// authorization, so an HQ-authorized read must not reach it from here.
+		return convo && convo.team_id === DEFAULT_TEAM_ID ? convo.id : null;
 	}
 	return manager.getConversationId();
 }
@@ -210,6 +214,11 @@ chatRoutes.post('/chat/messages', async (c) => {
 	// the write surface.
 	if (conversationId) {
 		const convo = await manager.getConversation(conversationId);
+		// Project DMs are not sendable from the global surface - see
+		// resolveConversationId.
+		if (convo && convo.team_id !== DEFAULT_TEAM_ID) {
+			return err(c, 'NOT_FOUND', 'conversation not found', 404);
+		}
 		if (convo?.kind === ChatConversationKind.Coworker) {
 			return err(
 				c,
@@ -256,7 +265,7 @@ chatRoutes.post('/chat/messages', async (c) => {
 });
 
 /** Hard cap on a single turn's queued-message batch. */
-const MAX_BATCH_MESSAGES = 20;
+export const MAX_BATCH_MESSAGES = 20;
 
 /**
  * Normalize a send body into an ordered batch of user messages. Accepts the
@@ -264,7 +273,7 @@ const MAX_BATCH_MESSAGES = 20;
  * (`messages: [{ text, attachment_ids }]`). Returns null when nothing sendable
  * is present — every message needs text or at least one attachment.
  */
-function parseMessageBatch(
+export function parseMessageBatch(
 	body: Record<string, unknown>,
 ): Array<{ text: string; attachmentIds: string[] }> | null {
 	const ids = (raw: unknown): string[] =>
@@ -326,6 +335,12 @@ chatRoutes.post('/chat/conversations/:id/convert-to-task', async (c) => {
 	const title = typeof body.title === 'string' && body.title.trim() ? body.title.trim() : undefined;
 
 	const db = c.get('db');
+	// The whole-thread convert is a CEO-surface affordance; a project DM never
+	// reaches it (and has no convert of its own in this phase).
+	const source = await manager.getConversation(c.req.param('id'));
+	if (!source || source.team_id !== DEFAULT_TEAM_ID) {
+		return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	}
 	const project = await resolveProject(db, projectRef);
 	if (!project) return err(c, 'NOT_FOUND', 'project not found', 404);
 
@@ -375,9 +390,52 @@ chatRoutes.post('/chat/conversations/:id/close', async (c) => {
 	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
 	const id = c.req.param('id');
 	const convo = await manager.getConversation(id);
-	if (!convo) return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	if (!convo || convo.team_id !== DEFAULT_TEAM_ID) {
+		return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	}
 	await manager.closeConversation(id);
 	return ok(c, { closed: true });
+});
+
+// Mark a conversation read up to a message: the server-side unread watermark,
+// per (user, conversation), multi-device correct. Global rather than
+// per-project because it spans both surfaces; it authorizes against the
+// conversation's own team, and writes only on real change so a repeated mark
+// costs no row. Admin (human) callers only - agents have no unread.
+chatRoutes.post('/chat/conversations/:id/read', async (c) => {
+	const auth = c.get('auth');
+	if (auth.type !== AuthType.Admin || !auth.userId) {
+		return err(c, 'FORBIDDEN', 'reads are per-user', 403);
+	}
+	const db = c.get('db');
+	const id = c.req.param('id');
+	const convo = await db.query<{ team_id: string }>(
+		`SELECT team_id FROM chat_conversations WHERE id = $1`,
+		[id],
+	);
+	if (!convo.rows[0]) return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	const access = await requireTeamAccessForResource(db, c, convo.rows[0].team_id);
+	if (access instanceof Response) return access;
+
+	const body = await c.req.json().catch(() => ({}));
+	const lastRead = typeof body.last_read_message_id === 'string' ? body.last_read_message_id : null;
+	if (!lastRead) return err(c, 'BAD_REQUEST', 'last_read_message_id is required', 400);
+	// The watermark must name a message of this conversation, or a crafted id
+	// could park the pointer on another thread's message.
+	const message = await db.query<{ id: string }>(
+		`SELECT id FROM chat_messages WHERE id = $1 AND conversation_id = $2`,
+		[lastRead, id],
+	);
+	if (!message.rows[0]) return err(c, 'BAD_REQUEST', 'message not in this conversation', 400);
+	await db.query(
+		`INSERT INTO chat_conversation_reads (user_id, conversation_id, last_read_message_id)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (user_id, conversation_id) DO UPDATE
+		    SET last_read_message_id = EXCLUDED.last_read_message_id, updated_at = now()
+		  WHERE chat_conversation_reads.last_read_message_id IS DISTINCT FROM EXCLUDED.last_read_message_id`,
+		[auth.userId, id, lastRead],
+	);
+	return ok(c, { read: true });
 });
 
 chatRoutes.post('/chat/session/restart', async (c) => {

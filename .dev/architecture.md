@@ -2268,6 +2268,32 @@ State/Team/Teammates stay; effort is the agent's configured default via `resolve
 of `chat:global`, which stays HQ/CEO-only; deltas stream only on the per-conversation room
 either way.
 
+**The DM route surface** lives under `/api/projects/:projectId/chat/*` behind
+`requireProjectAccessMiddleware`, and every query still binds `project_id` AND `team_id` in
+its WHERE - the params are resolved, never trusted. `GET .../chat/conversations` is the
+roster-shaped DM list (one row per enabled agent, the conversation when one exists, a
+140-char preview of the newest message, and the caller's unread bit); `GET/POST
+.../chat/agents/:agentSlug/{conversation,messages}` mirror the CEO read/send shapes;
+`POST .../chat/assets` stores uploads in that project's own library. The legacy
+`/api/chat/*` routes are constrained to HQ conversations (`team_id = DEFAULT_TEAM_ID` on
+every explicit-id resolution), so an HQ authorization can no longer reach a project DM
+from the global surface. None of these routes have MCP twins. **Server-side unread** is
+the `chat_conversation_reads` watermark: `POST /api/chat/conversations/:id/read` (global,
+authorized against the conversation's own team, admin callers only) upserts
+`last_read_message_id` only on real change and only to a message of that conversation;
+unread = the conversation's denormalized `last_message_id` differs from the watermark and
+the newest message is not the user's own - never a COUNT. **Suggested quick replies**
+ride a structured trailer (`[[suggest: a | b]]`, `parseSuggestedReplies` in
+`@hezo/shared`): parsed at message-complete, stripped from the stored body and the
+external-channel delivery, validated (max 3, each <=80 chars, malformed = dropped whole)
+and stored on `chat_messages.suggested_replies`, carried live on the complete event.
+**Task<->chat breadcrumbs** (`services/chat-breadcrumbs.ts`): the MCP `create_task` /
+`create_tasks` handlers stamp a task filed by a chat turn with the acting conversation
+(resolved structurally - the streaming reply under the caller's session) and drop a
+`task_created` receipt there; `triggerStatusAutomations` posts `task_completed` /
+`task_blocked` receipts back to that conversation, so the REST close and the MCP
+update_task path both emit them.
+
 Routing it through the ladder is the whole point. Reading `projects.container_id` directly
 names the most recently provisioned or resumed container - under a pool, possibly one mid-run
 - so pinning that and executing turns on it puts two workloads on one memory cap, exactly the

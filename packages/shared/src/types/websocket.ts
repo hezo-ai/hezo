@@ -150,6 +150,8 @@ export interface WsChatMessageStartMessage {
 	attachments?: CommentAttachment[];
 	/** Set on a `system` row: which marker it is, so it renders right without a refetch. */
 	systemKind?: ChatSystemMessageKind;
+	/** The replying agent, on assistant rows - author bubbles need the identity live. */
+	authorMemberId?: string;
 }
 
 /** Incremental assistant text appended to the bubble keyed by `messageId`. */
@@ -189,6 +191,12 @@ export interface WsChatMessageCompleteMessage {
 	costCents: number;
 	/** Set on a failed message: the reason, in the words the server recorded. */
 	error: string | null;
+	/**
+	 * Up to three one-tap replies the agent offered, parsed out of the reply's
+	 * trailer at completion (the stored body is already clean). Absent when the
+	 * reply offered none.
+	 */
+	suggestedReplies?: string[];
 }
 
 /**
