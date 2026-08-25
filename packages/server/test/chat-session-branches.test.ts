@@ -324,6 +324,53 @@ describe('ChatSessionManager — lifecycle branches', () => {
 		expect(true).toBe(true);
 	});
 
+	test('streaming deltas reach only the conversation room, coalesced ahead of Complete', async () => {
+		const { manager, wsManager } = makeManager(ctx, replyDocker());
+		// Two mock sockets: one on the thread's own room, one on the global room.
+		const mkSocket = () => {
+			const sent: string[] = [];
+			return {
+				data: { auth: { type: 'admin' }, rooms: new Set<string>() },
+				send(msg: string) {
+					sent.push(msg);
+				},
+				_sent: sent,
+			};
+		};
+		const convoId = await manager.getConversationId();
+		const inRoom = mkSocket();
+		const global = mkSocket();
+		wsManager.subscribe(inRoom, wsRoom.chatConversation(convoId));
+		wsManager.subscribe(global, wsRoom.chat());
+
+		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+
+		const types = (s: { _sent: string[] }) =>
+			s._sent.map((m) => JSON.parse(m) as { type: string; text?: string });
+		const inRoomTypes = types(inRoom);
+		const globalTypes = types(global);
+
+		// The thread room saw the delta; the global room never does.
+		const deltas = inRoomTypes.filter((m) => m.type === 'chat_message_delta');
+		expect(deltas.length).toBeGreaterThanOrEqual(1);
+		expect(deltas.map((d) => d.text).join('')).toBe('Hi there');
+		expect(globalTypes.some((m) => m.type === 'chat_message_delta')).toBe(false);
+		// Boundary events fan to both.
+		expect(globalTypes.some((m) => m.type === 'chat_message_complete')).toBe(true);
+		// Ordering: in the thread room, every delta lands before the Complete.
+		const lastDelta = inRoomTypes.map((m) => m.type).lastIndexOf('chat_message_delta');
+		const complete = inRoomTypes.map((m) => m.type).indexOf('chat_message_complete');
+		expect(complete).toBeGreaterThan(lastDelta);
+		await manager.stop();
+	});
+
 	test('getConversationId creates the conversation row once, then returns it', async () => {
 		const { manager } = makeManager(ctx, replyDocker());
 		const a = await manager.getConversationId();
@@ -362,7 +409,10 @@ describe('ChatSessionManager — broadcast wiring', () => {
 		await seedProvider(ctx);
 	});
 
-	test('broadcasts start, delta, and complete to the ceo room over a single turn', async () => {
+	test('broadcasts start and complete boundary events to the global room over a single turn', async () => {
+		// Deltas deliberately do NOT fan to the global room any more - they stream
+		// only to the thread's own room (see the coalescing test in the lifecycle
+		// suite). The global room carries the boundary events the list renders.
 		const { manager, wsManager } = makeManager(ctx, replyDocker());
 		const events: Array<Record<string, unknown>> = [];
 		wsManager.subscribe(
@@ -383,7 +433,7 @@ describe('ChatSessionManager — broadcast wiring', () => {
 		});
 
 		expect(events.some((e) => e.type === 'chat_message_start')).toBe(true);
-		expect(events.some((e) => e.type === 'chat_message_delta' && e.text === 'Hi there')).toBe(true);
+		expect(events.some((e) => e.type === 'chat_message_delta')).toBe(false);
 		expect(events.some((e) => e.type === 'chat_message_complete')).toBe(true);
 		await manager.stop();
 	});

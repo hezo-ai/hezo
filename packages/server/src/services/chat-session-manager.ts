@@ -93,6 +93,14 @@ const log = logger.child('chat-session');
 const CHAT_WORKING_DIR = '/workspace';
 
 /**
+ * How long streaming deltas batch before one frame goes out per in-flight
+ * message. Short enough that typing still reads live (a token stream repaints
+ * ~7x a second), long enough to collapse the per-line frame bursts some
+ * runtimes emit into an order of magnitude fewer sends.
+ */
+const DELTA_FLUSH_MS = 150;
+
+/**
  * How the chat names itself as a credential holder. No link: a chat turn has no
  * page of its own for a waiting run to point at.
  */
@@ -452,6 +460,12 @@ export class ChatSessionManager {
 	// the `ChatChannel` enum value; the registry resolves the adapter. This is the
 	// seam that keeps delivery and close channel-agnostic (a new channel touches no manager code).
 	private channelHooks: ChannelHooks | null = null;
+	// Pending coalesced delta text per streaming message, flushed on one shared
+	// short timer (see broadcastDelta). Bounded by construction: entries only
+	// exist between a delta arriving and the next flush, at most one per
+	// in-flight assistant message.
+	private deltaBuffers = new Map<string, { conversationId: string; text: string }>();
+	private deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(private readonly deps: CeoSessionDeps) {}
 
@@ -495,6 +509,7 @@ export class ChatSessionManager {
 			clearInterval(this.healthTimer);
 			this.healthTimer = null;
 		}
+		this.flushDeltas();
 		await this.shutdown();
 	}
 
@@ -2657,22 +2672,50 @@ export class ChatSessionManager {
 		});
 	}
 
+	/**
+	 * Streaming deltas coalesce on a short timer and go ONLY to the thread's own
+	 * room. Some runtimes emit per-line frames, so raw fan-out multiplied frames
+	 * nobody rendered - the list surfaces on the global room show no delta text,
+	 * and the open thread repaints just as live from a 150ms batch. The timer is
+	 * shared across messages; each flush sends one frame per in-flight message.
+	 */
 	private broadcastDelta(conversationId: string, messageId: string, text: string): void {
-		this.broadcastChat(conversationId, {
-			type: WsMessageType.ChatMessageDelta,
-			conversationId,
-			messageId,
-			text,
-		});
+		const buf = this.deltaBuffers.get(messageId);
+		if (buf) buf.text += text;
+		else this.deltaBuffers.set(messageId, { conversationId, text });
+		if (this.deltaFlushTimer === null) {
+			this.deltaFlushTimer = setTimeout(() => this.flushDeltas(), DELTA_FLUSH_MS);
+		}
+	}
+
+	private flushDeltas(): void {
+		if (this.deltaFlushTimer !== null) {
+			clearTimeout(this.deltaFlushTimer);
+			this.deltaFlushTimer = null;
+		}
+		if (this.deltaBuffers.size === 0) return;
+		for (const [messageId, buf] of this.deltaBuffers) {
+			this.deps.wsManager.broadcast(wsRoom.chatConversation(buf.conversationId), {
+				type: WsMessageType.ChatMessageDelta,
+				conversationId: buf.conversationId,
+				messageId,
+				text: buf.text,
+			});
+		}
+		this.deltaBuffers.clear();
 	}
 
 	/**
 	 * Fan a chat event out to the thread's own room (the open chatbox for that
 	 * conversation) and the global signal room (the conversation list, for activity
 	 * badges). The web client subscribes to the per-conversation room for the thread
-	 * it's viewing and to the global room for the list.
+	 * it's viewing and to the global room for the list. Streaming deltas do NOT come
+	 * through here - they coalesce in {@link broadcastDelta} and reach only the
+	 * per-conversation room; flushing them first keeps ordering (a Complete must
+	 * never overtake the text it completes).
 	 */
 	private broadcastChat(conversationId: string, message: WsChatServerMessage): void {
+		this.flushDeltas();
 		this.deps.wsManager.broadcast(wsRoom.chatConversation(conversationId), { ...message });
 		this.deps.wsManager.broadcast(wsRoom.chat(), { ...message });
 	}

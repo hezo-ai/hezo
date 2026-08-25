@@ -447,10 +447,14 @@ settled yet, which is what made the post-reply wait read as the chat being stuck
 **A session survives its container being suspended.** Because it holds no long-lived
 process — each turn is its own exec and continuity lives in `chat_conversations` /
 `chat_messages` — a container that stops with its filesystem intact takes nothing the
-session needs. `checkHealth` therefore separates two events it used to conflate. A
-**different** container (id changed, or the project has none) means the filesystem is
-gone, so the session is torn down as before. The **same** container, stopped, is a
-suspend: `ChatSessionStatus.Suspended` parks the row, the host-side allocations are
+session needs. `checkHealth` therefore separates two events it used to conflate, and it
+reads them off the session's **own pool-member row** — the one the chat workload pinned —
+never `projects.container_id`, which names the project's most recently provisioned
+container and is rewritten by every task run (keying health off it tore the live session
+down whenever HQ served an ordinary task). A member row that is gone, unpinned or errored
+means the container is out from under the session, so it is torn down as before. A member
+the pool **suspended** (state `suspended`, filesystem intact) is a suspend:
+`ChatSessionStatus.Suspended` parks the row, the host-side allocations are
 released, and the next turn resumes into it via `resumeSession` rather than starting
 over, keeping the session id that anchors its messages. This is what makes a managed
 backend usable at all — it suspends sandboxes on its own idle timer, so tearing down

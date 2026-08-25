@@ -291,6 +291,18 @@ export function useChat(active: boolean, conversationId?: string) {
 		return () => leaveRoom(room);
 	}, [joinRoom, leaveRoom]);
 
+	// Also join the resolved thread's own room: streaming deltas go ONLY there
+	// (the global room carries boundary events for the list and badges), so an
+	// open thread without this subscription would render replies only on
+	// completion, never live.
+	const resolvedConversationId = query.data?.conversation_id ?? conversationId ?? null;
+	useEffect(() => {
+		if (!resolvedConversationId) return;
+		const room = wsRoom.chatConversation(resolvedConversationId);
+		joinRoom(room);
+		return () => leaveRoom(room);
+	}, [joinRoom, leaveRoom, resolvedConversationId]);
+
 	useEffect(() => {
 		const patch = (fn: (messages: ChatMessage[]) => ChatMessage[]) => {
 			queryClient.setQueryData<ConversationData>(
