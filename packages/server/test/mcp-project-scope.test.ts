@@ -228,6 +228,7 @@ describe('MCP cross-team CEO — instance-wide discovery', () => {
 			DEFAULT_TEAM_ID,
 			session.rows[0].id,
 			hqProject.rows[0].id,
+			{ crossProject: true, crossTeam: true },
 		);
 	});
 

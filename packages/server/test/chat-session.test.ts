@@ -14,7 +14,12 @@ import {
 } from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { decrypt, encrypt } from '../src/crypto/encryption';
-import { signChatSessionJwt, verifyToken } from '../src/middleware/auth';
+import {
+	canAuthAccessTeam,
+	signChatSessionJwt,
+	verifyToken,
+	WORKER_SESSION_JWT_TTL_SECONDS,
+} from '../src/middleware/auth';
 import { acquireCredentialLock } from '../src/services/agent-runner';
 import { type CeoSessionDeps, ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
@@ -1370,6 +1375,7 @@ describe('CEO session auth', () => {
 			DEFAULT_TEAM_ID,
 			sessionId,
 			project.rows[0].id,
+			{ crossProject: true, crossTeam: true },
 		);
 
 		const auth = await verifyToken(token, ctx.db, ctx.masterKeyManager);
@@ -1383,5 +1389,51 @@ describe('CEO session auth', () => {
 		await ctx.db.query(`UPDATE chat_sessions SET status = 'stopped' WHERE id = $1`, [sessionId]);
 		const denied = await verifyToken(token, ctx.db, ctx.masterKeyManager);
 		expect(denied).toBeNull();
+	});
+
+	test('a worker-scoped session token carries no cross-project or cross-team power', async () => {
+		// The claim matrix: worker/Captain chat sessions are bound to their own
+		// project team. verifyToken must derive the scope from the payload - it
+		// used to hardcode crossProject:true for every session principal, which
+		// would have handed each worker DM the CEO's reach.
+		const team = await ctx.db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Growth', 'growth-auth-test') RETURNING id`,
+		);
+		const teamId = team.rows[0].id;
+		const project = await ctx.db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'Growth', 'growth-auth-test', 'GRW') RETURNING id`,
+			[teamId],
+		);
+		const member = await ctx.db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'agent', 'Maya') RETURNING id`,
+			[teamId],
+		);
+		const session = await ctx.db.query<{ id: string }>(
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
+			 VALUES ($1, $2, $3, 'claude_code', 'running') RETURNING id`,
+			[member.rows[0].id, teamId, project.rows[0].id],
+		);
+		const token = await signChatSessionJwt(
+			ctx.masterKeyManager,
+			member.rows[0].id,
+			teamId,
+			session.rows[0].id,
+			project.rows[0].id,
+			{ crossProject: false, crossTeam: false, ttlSeconds: WORKER_SESSION_JWT_TTL_SECONDS },
+		);
+
+		const auth = await verifyToken(token, ctx.db, ctx.masterKeyManager);
+		expect(auth?.type).toBe(AuthType.Agent);
+		if (auth?.type !== AuthType.Agent) throw new Error('expected agent auth');
+		expect(auth.crossProject).toBe(false);
+		expect(auth.crossTeam).toBe(false);
+		expect(auth.teamId).toBe(teamId);
+		expect(auth.projectId).toBe(project.rows[0].id);
+
+		// The team gate honours the scope: its own team yes, HQ no.
+		expect(await canAuthAccessTeam(ctx.db, auth, teamId)).toBe(true);
+		expect(await canAuthAccessTeam(ctx.db, auth, DEFAULT_TEAM_ID)).toBe(false);
 	});
 });

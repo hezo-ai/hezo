@@ -1511,6 +1511,7 @@ export class ChatSessionManager {
 				DEFAULT_TEAM_ID,
 				sessionId,
 				inputs.projectId,
+				{ crossProject: true, crossTeam: true },
 			);
 
 			// Max thinking — the CEO chat runs at the highest reasoning effort.

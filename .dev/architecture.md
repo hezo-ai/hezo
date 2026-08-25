@@ -5238,6 +5238,12 @@ password** while signed in).
   on every call against the **`heartbeat_runs` row** (`id=run_id`, member/team match,
   status `running`); when the run finalizes the token is rejected on the next call —
   revocation for free, no token store.
+- **Chat-session JWT** — minted per chat session (`signChatSessionJwt`), validated against
+  the **`chat_sessions` row** (live statuses only; `suspended` is rejected). Its scope is
+  stated at mint time (`ChatSessionScope`) and `verifyToken` derives the claims from the
+  payload, never assumes them: the CEO session is `cross_project`/`cross_team` true (its
+  job is instance-wide coordination, 30d TTL); a worker or Captain chat session is bound
+  to its own project team, both false, with a 24h TTL re-minted on resume.
 
 By surface: **REST** is the human/browser API (user JWT only). **MCP** accepts the **agent
 JWT** (internal per-run) and the **API key** (external, instance-scoped). The API key is the

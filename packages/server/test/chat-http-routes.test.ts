@@ -423,6 +423,7 @@ describe('CEO chat HTTP routes', () => {
 				DEFAULT_TEAM_ID,
 				session.rows[0].id,
 				hqProjectId,
+				{ crossProject: true, crossTeam: true },
 			);
 
 			const res = await app.request('/api/chat/messages', {
