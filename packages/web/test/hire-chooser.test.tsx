@@ -137,14 +137,38 @@ test('"Ask the CEO" opens a new thread with the message written but not sent', a
 	let sends = 0;
 	const THREAD_ID = 'hire-thread-1';
 
-	// The component harness runs no ChatSessionManager, so the chat endpoints 503.
-	// Answer just the thread-creation call and seed the history cache the widget
-	// reads (staleTime Infinity, so a seeded thread never refetches).
+	// The harness runs a real ChatSessionManager now, so the chat endpoints
+	// answer - with the backend's own threads, not this test's. Intercept the
+	// thread-creation call AND the reads, so a background refetch cannot swap
+	// the stubbed thread out from under the assertion.
 	const passthrough = globalThis.fetch;
+	const threadRow = () => ({
+		id: THREAD_ID,
+		channel: 'web',
+		external_thread_id: null,
+		kind: 'assistant',
+		title: 'Hire for Storefront',
+		last_activity_at: new Date().toISOString(),
+		closed_at: null,
+	});
 	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 		const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 		const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
 		if (method === 'POST' && url.includes('/api/chat/messages')) sends += 1;
+		if (method === 'GET' && url.includes('/api/chat/conversations')) {
+			return new Response(JSON.stringify({ data: { conversations: [threadRow()] } }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+		if (method === 'GET' && url.includes('/api/chat/conversation?')) {
+			return new Response(
+				JSON.stringify({
+					data: { conversation_id: THREAD_ID, messages: [], compacted_count: 0 },
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } },
+			);
+		}
 		if (method === 'POST' && url.includes('/api/chat/conversations')) {
 			created.push(JSON.parse(String(init?.body ?? '{}')));
 			return new Response(

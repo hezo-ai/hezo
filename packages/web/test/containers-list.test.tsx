@@ -75,6 +75,9 @@ async function addMember(projectId: string, containerId: string, o: MemberOpts =
  */
 async function clearSeededContainers() {
 	const { db } = getTestContext();
+	// Both representations: the harness seeds a pool member for HQ as well as
+	// the project-row pointer, and the listing reads the union of the two.
+	await db.query('DELETE FROM container_pool_members');
 	await db.query('UPDATE projects SET container_id = NULL, container_status = NULL');
 }
 
