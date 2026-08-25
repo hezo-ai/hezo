@@ -539,9 +539,9 @@ test('project badge and metadata label both link to the project page', async () 
 	}
 });
 
-test('project menu Team section lists the team agents', async () => {
+test('project menu closes with a chat card per roster agent', async () => {
 	const seeded = { projectSlug: '' };
-	const { router, container } = await renderApp({
+	const { router, findByTestId } = await renderApp({
 		initialPath: '/',
 		seed: async () => {
 			const ws = await seedWorkspace();
@@ -555,14 +555,9 @@ test('project menu Team section lists the team agents', async () => {
 		params: { projectId: seeded.projectSlug },
 	});
 
-	// The project menu's Team section lists each agent once it finishes loading.
-	// Runtime status now shows as a dot indicator (pulsing for running, none for
-	// idle) rather than a text suffix, so wait on an agent name to confirm load.
-	await waitFor(
-		() => {
-			const nav = container.querySelector('nav[aria-label="Sidebar"]');
-			expect(nav?.textContent ?? '').toContain('Captain');
-		},
-		{ timeout: 15_000 },
-	);
+	// The Team link section is gone (the roster lives on Team & Budget's Team
+	// tab); the menu's roster surface is now the chat launcher cards, one per
+	// agent, named by the agent.
+	const cards = await findByTestId('project-sidebar-chat', undefined, { timeout: 15_000 });
+	await waitFor(() => expect(cards.textContent ?? '').toContain('Captain'), { timeout: 15_000 });
 });
