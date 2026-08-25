@@ -234,6 +234,9 @@ function ShellLayout() {
 		chatLaunchSeq.current += 1;
 		setChatLaunch({ ...launch, nonce: chatLaunchSeq.current });
 		setChatOpen(true);
+		// A launch from inside the mobile drawer (the menu's chat cards) opens the
+		// dock over the page; the drawer must not stay parked on top of it.
+		setDrawerOpen(false);
 	}, []);
 
 	// The drawer is shell chrome, not route content: it renders outside the
@@ -248,7 +251,12 @@ function ShellLayout() {
 
 	return (
 		<ChatLaunchContext.Provider value={launchChat}>
-			<ShellChrome drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
+			<ShellChrome
+				drawerOpen={drawerOpen}
+				setDrawerOpen={setDrawerOpen}
+				chatOpen={chatOpen}
+				onToggleChat={() => setChatOpen((v) => !v)}
+			/>
 			<ChatWidget open={chatOpen} onOpenChange={setChatOpen} launch={chatLaunch} />
 			<PwaInstallPrompt />
 		</ChatLaunchContext.Provider>
@@ -258,9 +266,11 @@ function ShellLayout() {
 interface ShellChromeProps {
 	drawerOpen: boolean;
 	setDrawerOpen: (open: boolean) => void;
+	chatOpen: boolean;
+	onToggleChat: () => void;
 }
 
-function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
+function ShellChrome({ drawerOpen, setDrawerOpen, chatOpen, onToggleChat }: ShellChromeProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
 	// Also shell chrome, and also a full-screen modal. Picking a result closes the
 	// palette on its own way out (`search-results.tsx` calls `onSelect` from the
@@ -422,6 +432,8 @@ function ShellChrome({ drawerOpen, setDrawerOpen }: ShellChromeProps) {
 			<AppHeader
 				onOpenDrawer={() => setDrawerOpen(true)}
 				onOpenSearch={() => setSearchOpen(true)}
+				chatOpen={chatOpen}
+				onToggleChat={onToggleChat}
 			/>
 			<GlobalSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
 			<UpdateBanner />

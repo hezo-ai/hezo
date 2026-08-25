@@ -70,6 +70,16 @@ export const queryKeys = {
 	],
 	/** The list of CEO chat conversation threads (the switcher). */
 	chatConversations: () => ['chat', 'conversations'],
+	/** A project's DM room list (menu chat cards + dock switcher), by route slug. */
+	projectChatRooms: (projectId: string) => ['projects', projectId, 'chat', 'rooms'],
+	/** One agent DM's history, keyed by route slugs so socket invalidation matches. */
+	agentChatRoom: (projectId: string, agentSlug: string) => [
+		'projects',
+		projectId,
+		'chat',
+		'agents',
+		agentSlug,
+	],
 	/** Global full-text search (Cmd/Ctrl+K palette), keyed by query + scope. */
 	search: (q: string, scope: string) => ['search', q, scope],
 	/** Bundled OAuth-provider descriptors for the generic OAuth-broker form. */

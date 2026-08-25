@@ -122,6 +122,8 @@ describe('message catalogs', () => {
 		// el chat, la chat, de chat, o chat. French (Discussion), Polish (Czat) and
 		// Swedish (Chatt) all differ, as `settings.chatbox` already records for de.
 		'settings.chat': ['de', 'es', 'it', 'nl', 'pt-BR'],
+		// Same loanword, same five languages, as `settings.chat` above records.
+		'chat.section.title': ['de', 'es', 'it', 'nl', 'pt-BR'],
 		// Both catalogs already write "agent" for the singular throughout
 		// (`agents.hire.action`), so the plural heading is the same word too.
 		'settings.groups.agents': ['fr', 'nl'],
@@ -161,9 +163,6 @@ describe('message catalogs', () => {
 		// category list does differ (Bilder, Imágenes, Archiwa, Ljud, ...).
 		'attachments.category.audio': ['de', 'es', 'it', 'nl'],
 		'attachments.category.video': ['de', 'it', 'nl', 'sv'],
-		// Dutch writes the same loanword, capital and all (German/Polish/Swedish
-		// spell it Projekt, so only nl coincides).
-		'chat.convert.projectLabel': ['nl'],
 		// Dutch "week" is spelt exactly like the English; Dag and Maand beside it
 		// differ, as does every other language (Woche, Semaine, Settimana, ...).
 		// The per-agent hours table that carried four more of these is gone - its

@@ -8,13 +8,13 @@ import { ApiError, api } from '../lib/api';
 import type { CommentAttachment } from './use-comments';
 
 /**
- * Uploads a file for the realtime chatbox (CEO chat). The file lands in the HQ
- * project's asset library under `uploads/chat/`; the returned asset id is
- * later sent with the message via `attachment_ids`. Mirrors
- * {@link useUploadAttachment} but targets the global CEO assets endpoint, so it
- * takes no project/task.
+ * Uploads a file for the chat dock. With `projectSlug` set the file lands in
+ * that project's asset library (agent DMs); with `null` it targets the global
+ * CEO endpoint and lands under HQ. Either way the destination is
+ * `uploads/chat/` and the returned asset id is later sent with the message via
+ * `attachment_ids`. Mirrors {@link useUploadAttachment} but takes no task.
  */
-export function useUploadChatAttachment() {
+export function useUploadChatAttachment(projectSlug: string | null) {
 	return useMutation<CommentAttachment, ApiError, File>({
 		mutationFn: async (file) => {
 			if (!isAllowedAttachmentExtension(file.name)) {
@@ -31,7 +31,8 @@ export function useUploadChatAttachment() {
 
 			const fd = new FormData();
 			fd.set('file', file, file.name);
-			return api.postForm<CommentAttachment>('/api/chat/assets', fd);
+			const path = projectSlug ? `/api/projects/${projectSlug}/chat/assets` : '/api/chat/assets';
+			return api.postForm<CommentAttachment>(path, fd);
 		},
 	});
 }

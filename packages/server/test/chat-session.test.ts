@@ -29,7 +29,7 @@ import type { PricingService } from '../src/services/pricing/pricing-service';
 import { getWorkspacePath } from '../src/services/workspace';
 import type { WsSocket } from '../src/services/ws';
 import { WebSocketManager } from '../src/services/ws';
-import { createStubDocker, seedProjectContainer } from './helpers/app';
+import { createStubDocker, seedCeoWebConversation, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -974,7 +974,7 @@ describe('ChatSessionManager', () => {
 	test('does not overwrite an existing thread title', async () => {
 		const { docker } = makeChatDocker(ctx.dataDir, projectId);
 		const { manager } = makeManager(ctx, docker);
-		const titled = await manager.createWebConversation('Roadmap planning');
+		const titled = await seedCeoWebConversation(ctx.db, 'Roadmap planning');
 
 		const { assistantMessageId } = await manager.sendTurn({
 			text: 'Hello',

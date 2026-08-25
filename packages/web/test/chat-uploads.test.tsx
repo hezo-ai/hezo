@@ -13,14 +13,14 @@ const pngFile = () =>
 
 test('the paperclip attach control renders in the composer', async () => {
 	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 	expect(getByTestId('chat-attach')).toBeTruthy();
 });
 
 test('attaching a file shows a pending chip and enables send with no text', async () => {
 	const { findByTestId, getByTestId, user } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	const send = getByTestId('chat-send') as HTMLButtonElement;

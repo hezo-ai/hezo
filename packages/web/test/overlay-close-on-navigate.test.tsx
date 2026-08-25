@@ -119,7 +119,7 @@ test('the mobile nav drawer closes when a rail link navigates', async () => {
 	await waitFor(() => expect(screen.queryByTestId('mobile-nav-drawer')).toBeNull());
 });
 
-test('the anchored CEO chat survives navigation', async () => {
+test('the anchored chat dock survives navigation', async () => {
 	// The deliberate exclusion, worth pinning so nobody "fixes" it later: the
 	// anchored desktop corner panel does not cover the page, so it stays open
 	// across a navigation. happy-dom reports a 1024px viewport, so this tier is
@@ -132,42 +132,11 @@ test('the anchored CEO chat survives navigation', async () => {
 		},
 	});
 
-	await user.click(await findByTestId('chat-launcher', undefined, { timeout: 15_000 }));
+	await user.click(await findByTestId('app-header-chat', undefined, { timeout: 15_000 }));
 	const panel = await findByTestId('chat-panel');
 	await user.click(await within(panel).findByTestId('hq-container-notice-link'));
 
 	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/containers'));
-	expect(screen.getByTestId('chat-panel')).toBeTruthy();
-	expect(screen.getByTestId('chat-panel').getAttribute('data-expanded')).toBe('false');
-});
-
-test('the expanded CEO chat collapses to anchored on navigation rather than closing', async () => {
-	// Expanded, the panel takes the viewport and carries the backdrop at every
-	// width, so it blocks the page like any modal. Expanding is a view mode rather
-	// than a session, so it collapses back to the anchored panel — the page is
-	// unblocked and the thread is still there.
-	const { findByTestId, user, router } = await renderApp({
-		initialPath: '/home',
-		seed: async (ctx) => {
-			await blockHqContainer(ctx.db);
-		},
-	});
-
-	await user.click(await findByTestId('chat-launcher', undefined, { timeout: 15_000 }));
-	const panel = await findByTestId('chat-panel');
-	await user.click(within(panel).getByTestId('chat-expand'));
-	await waitFor(() =>
-		expect(screen.getByTestId('chat-panel').getAttribute('data-expanded')).toBe('true'),
-	);
-
-	await user.click(
-		within(screen.getByTestId('chat-panel')).getByTestId('hq-container-notice-link'),
-	);
-
-	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/containers'));
-	await waitFor(() =>
-		expect(screen.getByTestId('chat-panel').getAttribute('data-expanded')).toBe('false'),
-	);
 	expect(screen.getByTestId('chat-panel')).toBeTruthy();
 });
 

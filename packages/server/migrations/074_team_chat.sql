@@ -67,3 +67,18 @@ CREATE INDEX idx_chat_conversation_reads_convo ON chat_conversation_reads(conver
 -- time, so no index.
 ALTER TABLE tasks
     ADD COLUMN origin_chat_conversation_id UUID REFERENCES chat_conversations(id) ON DELETE SET NULL;
+
+-- Single-stream DMs: each agent's web chat is ONE continuous conversation.
+-- Close every open web assistant thread but each member's most recently
+-- active one. Data-preserving: nothing is deleted - closed threads keep every
+-- message and stay readable as History; converted threads keep their receipts.
+UPDATE chat_conversations c
+   SET closed_at = now()
+ WHERE c.channel = 'web' AND c.external_thread_id IS NULL
+   AND c.kind = 'assistant' AND c.closed_at IS NULL
+   AND c.id NOT IN (
+     SELECT DISTINCT ON (member_id) id FROM chat_conversations
+      WHERE channel = 'web' AND external_thread_id IS NULL
+        AND kind = 'assistant' AND closed_at IS NULL
+      ORDER BY member_id, last_activity_at DESC, created_at DESC
+   );

@@ -138,6 +138,23 @@ describe('074_team_chat migration', () => {
 		expect(byId.get(seeded[1])).toEqual(['Yes, go ahead', 'Not yet']);
 	});
 
+	it('closes all but the most recently active open web thread per member', async () => {
+		// Single-stream: the survivor is the live DM; the older thread stays fully
+		// readable as History, nothing deleted.
+		const rows = await h.db.query<{ id: string; closed_at: string | null }>(
+			`SELECT id, closed_at FROM chat_conversations WHERE id = ANY($1::uuid[])`,
+			[[conversationId, emptyConversationId]],
+		);
+		const byId = new Map(rows.rows.map((r) => [r.id, r.closed_at]));
+		expect(byId.get(emptyConversationId)).toBeNull();
+		expect(byId.get(conversationId)).not.toBeNull();
+		const kept = await h.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM chat_messages WHERE conversation_id = $1`,
+			[conversationId],
+		);
+		expect(kept.rows[0].n).toBeGreaterThan(0);
+	});
+
 	it('links a task to its originating conversation, severed if the thread goes', async () => {
 		const team = await h.db.query<{ id: string; project: string }>(
 			`SELECT t.id, p.id AS project FROM teams t JOIN projects p ON p.team_id = t.id LIMIT 1`,

@@ -6,6 +6,7 @@ import {
 	buildLoginMessage,
 	buildUnlockMessage,
 	CAPTAIN_AGENT_SLUG,
+	DEFAULT_TEAM_ID,
 	deriveAuthKeyPair,
 	derivePasswordKeyPair,
 	deriveUnlockKey,
@@ -617,6 +618,30 @@ export async function projectSlugFor(db: Db, teamId: string): Promise<string> {
  * `memoryGb` defaults to the instance-wide cap, which is what a container
  * provisioned by a project that never overrode it actually gets.
  */
+/**
+ * Seed an extra open CEO web conversation directly. The UI no longer creates
+ * parallel web threads (the CEO chat is single-stream), but the per-thread
+ * machinery - routing, listing, titling - still needs exercising against more
+ * than one, and the DB carries them fine (older threads are History).
+ */
+export async function seedCeoWebConversation(db: Db, title?: string): Promise<string> {
+	const ceo = await db.query<{ id: string }>(
+		`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
+		 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
+		[DEFAULT_TEAM_ID],
+	);
+	const proj = await db.query<{ id: string }>(
+		`SELECT id FROM projects WHERE team_id = $1 AND is_internal = true`,
+		[DEFAULT_TEAM_ID],
+	);
+	const created = await db.query<{ id: string }>(
+		`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, title)
+		 VALUES ($1, $2, $3, 'web', $4) RETURNING id`,
+		[ceo.rows[0].id, DEFAULT_TEAM_ID, proj.rows[0].id, title ?? null],
+	);
+	return created.rows[0].id;
+}
+
 export async function seedProjectContainer(
 	db: Db,
 	projectId: string,

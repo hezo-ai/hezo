@@ -2,8 +2,10 @@ import { AgentAdminStatus } from '@hezo/shared';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { AlertTriangle, ChevronsLeft, Globe, Info } from 'lucide-react';
 import { useState } from 'react';
+import { useLaunchChat } from '../contexts/chat-launch-context';
 import { useActiveProject } from '../hooks/use-active-project';
 import { useAgents } from '../hooks/use-agents';
+import { type ProjectChatRoomSummary, useProjectChatRooms } from '../hooks/use-chat';
 import { useContainerHealth } from '../hooks/use-container-health';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
@@ -40,6 +42,9 @@ export function ProjectSidebar({
 	const health = useContainerHealth(project);
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
 	const { data: agents } = useAgents(projectId);
+	// The project's DM launcher cards. HQ answers with an empty list (its chat
+	// surface is the CEO stream behind the header monogram), so no gate needed.
+	const { rooms: chatRooms } = useProjectChatRooms(projectId || null, true);
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
 	const [hireOpen, setHireOpen] = useState(false);
 	// Goals are a project concept only (HQ has none). Use the open_goal_count carried on the
@@ -340,6 +345,7 @@ export function ProjectSidebar({
 			</div>
 			<div className="flex-1 min-h-0 overflow-y-auto">
 				<SidebarNav sections={sections} />
+				{chatRooms.length > 0 && <ProjectChatCards projectId={projectId} rooms={chatRooms} />}
 			</div>
 			<CreateTaskDialog
 				projectId={projectId}
@@ -349,6 +355,76 @@ export function ProjectSidebar({
 			{!isInternal && (
 				<HireAgentChooserDialog projectId={projectId} open={hireOpen} onOpenChange={setHireOpen} />
 			)}
+		</div>
+	);
+}
+
+/**
+ * The project menu's chat launcher cards: one bordered card per roster agent,
+ * unread first. An unread card grows a one-line preview and a stronger border;
+ * clicking a card opens the dock on that agent's DM (no navigation - chat lives
+ * in rooms, not routes).
+ */
+function ProjectChatCards({
+	projectId,
+	rooms,
+}: {
+	projectId: string;
+	rooms: ProjectChatRoomSummary[];
+}) {
+	const { t } = useI18n();
+	const launchChat = useLaunchChat();
+	// Unread first, then server order (roster order, which is stable and matches
+	// the Team section above).
+	const sorted = [...rooms.filter((r) => r.unread), ...rooms.filter((r) => !r.unread)];
+	return (
+		<div className="px-2.5 pt-2.5 pb-1" data-testid="project-sidebar-chat">
+			<div className="uppercase text-[11px] text-text-3 font-medium tracking-wide pb-1">
+				{t('chat.section.title')}
+			</div>
+			<div className="flex flex-col gap-1.5">
+				{sorted.map((room) => (
+					<button
+						key={room.member_id}
+						type="button"
+						data-testid={`chat-card-${room.slug}`}
+						onClick={() =>
+							launchChat({
+								room: {
+									kind: 'agent',
+									projectSlug: projectId,
+									agentSlug: room.slug,
+									title: room.title,
+								},
+								draft: '',
+							})
+						}
+						className={`w-full rounded-md border px-2 py-1.5 text-left transition-colors hover:bg-surface-2 ${
+							room.unread ? 'border-border-strong' : 'border-border'
+						}`}
+					>
+						<span className="flex min-w-0 items-center gap-1.5">
+							<span className="truncate text-[12px] font-medium text-text-1">
+								{room.display_name}
+							</span>
+							<span className="min-w-0 truncate text-[11px] text-text-3">{room.title}</span>
+							{room.unread && (
+								<span
+									className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-info"
+									data-testid={`chat-card-unread-${room.slug}`}
+									aria-label={t('chat.card.unread')}
+									role="img"
+								/>
+							)}
+						</span>
+						{room.unread && room.last_message_preview && (
+							<span className="mt-0.5 block truncate text-[11px] text-text-2">
+								{room.last_message_preview}
+							</span>
+						)}
+					</button>
+				))}
+			</div>
 		</div>
 	);
 }

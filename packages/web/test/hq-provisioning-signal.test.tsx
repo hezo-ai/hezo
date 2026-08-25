@@ -41,7 +41,7 @@ test('the CEO chat unblocks in situ when HQ finishes provisioning', async () => 
 	});
 
 	const panel = async () => await findByTestId('chat-panel');
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 
 	// Provisioning: the notice replaces the composer.
 	const notice = await waitFor(async () => {

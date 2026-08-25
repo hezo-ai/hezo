@@ -26,22 +26,28 @@ function seedConversation(messages: ChatMessage[], compactedCount = 0) {
 	});
 }
 
-test('CEO chat launcher opens the panel and composer', async () => {
-	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
+test('the header CEO monogram opens the dock and composer', async () => {
+	const { findByTestId, getByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });
 
-	const launcher = await findByTestId('chat-launcher');
+	// The dock renders nothing while closed - the header monogram is the launcher.
+	expect(queryByTestId('chat-panel')).toBeNull();
+	const launcher = await findByTestId('app-header-chat');
 	launcher.click();
 
 	const panel = await findByTestId('chat-panel');
 	expect(panel).toBeTruthy();
 	expect(getByTestId('chat-input')).toBeTruthy();
 	expect(getByTestId('chat-send')).toBeTruthy();
+
+	// The monogram toggles: clicking it again closes the dock.
+	launcher.click();
+	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
 });
 
 test('composer enables send when text is entered and clears on submit', async () => {
 	const { findByTestId, getByTestId, user } = await renderApp({ initialPath: '/home' });
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
 	const send = getByTestId('chat-send') as HTMLButtonElement;
 
@@ -58,7 +64,7 @@ test('shows the user message optimistically and disables send while in flight', 
 	const { findByTestId, getByTestId, getByText, queryByText, user } = await renderApp({
 		initialPath: '/home',
 	});
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
 	const sendBtn = getByTestId('chat-send') as HTMLButtonElement;
 
@@ -97,7 +103,7 @@ test('surfaces a failed CEO send as an error toast', async () => {
 	const errorSpy = vi.spyOn(toast, 'error');
 	try {
 		const { findByTestId, getByTestId, user } = await renderApp({ initialPath: '/home' });
-		(await findByTestId('chat-launcher')).click();
+		(await findByTestId('app-header-chat')).click();
 		const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
 		// After the tree settled (the SetupGate has already seen a provider), so
 		// only the send is affected.
@@ -116,19 +122,19 @@ test('surfaces a failed CEO send as an error toast', async () => {
 
 test('shows the empty state once history loads', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
-	expect(await findByText(/Say hello to the CEO/i)).toBeTruthy();
+	(await findByTestId('app-header-chat')).click();
+	expect(await findByText(/Ask the CEO anything, across every project/i)).toBeTruthy();
 });
 
 test('the header identifies the CEO with the HQ badge and the composer invites cross-project questions', async () => {
 	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	const panel = await findByTestId('chat-panel');
 
 	// Header reads "CEO" alongside the HQ team badge (the CEO lives in HQ). Scope
-	// to the chat panel: with no project created the HQ project menu now also
-	// renders on /home (its italic "HQ" name), so a document-wide query is ambiguous.
-	expect(within(panel).getByText('CEO')).toBeTruthy();
+	// to the room title / the panel: the switcher's pinned option also says
+	// "CEO · HQ", so a document-wide text query is ambiguous.
+	expect(within(panel).getByTestId('chat-room-title').textContent).toBe('CEO');
 	expect(within(panel).getByText('HQ')).toBeTruthy();
 	// The placeholder reflects the global, every-project scope of the chat.
 	const input = getByTestId('chat-input') as HTMLTextAreaElement;
@@ -151,7 +157,7 @@ test('blocks the composer and links to the container page when the HQ container 
 		},
 	});
 
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	const panel = await findByTestId('chat-panel');
 
 	// The container-state notice replaces the composer inside the chat panel.
@@ -172,7 +178,7 @@ test('blocks the composer and links to the container page when the HQ container 
 
 test('each message carries its role eyebrow — "You" for the operator, "CEO · HQ" for the CEO', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -195,12 +201,14 @@ test('each message carries its role eyebrow — "You" for the operator, "CEO · 
 	]);
 
 	expect(await findByText('You')).toBeTruthy();
-	expect(await findByText('CEO · HQ')).toBeTruthy();
+	// Scope to the thread: the switcher's pinned option also reads "CEO · HQ".
+	const messagesEl = await findByTestId('chat-messages');
+	await waitFor(() => expect(within(messagesEl).getByText('CEO · HQ')).toBeTruthy());
 });
 
 test('shows the "chat compacted" marker at the top once older messages are compacted', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	// The retained tail plus a positive compacted_count (older messages summarized
@@ -225,7 +233,7 @@ test('shows the "chat compacted" marker at the top once older messages are compa
 
 test('shows no compaction marker when nothing has been compacted', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -243,16 +251,16 @@ test('shows no compaction marker when nothing has been compacted', async () => {
 	expect(queryByTestId('chat-compacted-banner')).toBeNull();
 });
 
-test('the closed launcher button exposes a "Chat with CEO" tooltip on hover', async () => {
-	const { findByTestId, getAllByText, user } = await renderApp({ initialPath: '/home' });
-	const launcher = await findByTestId('chat-launcher');
-	await user.hover(launcher);
-	await waitFor(() => expect(getAllByText('Chat with CEO').length).toBeGreaterThan(0));
+test('the header monogram names its purpose for hover and assistive tech', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	const launcher = await findByTestId('app-header-chat');
+	expect(launcher.getAttribute('title')).toBe('Chat with the CEO');
+	expect(launcher.getAttribute('aria-label')).toBe('Chat with the CEO');
 });
 
 test('streaming with no text yet shows the typing indicator, not an empty bubble', async () => {
 	const { findByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -276,7 +284,7 @@ test('streaming with text shows the reply plus trailing dots, not the standalone
 	const { findByTestId, findByText, getByTestId, queryByTestId } = await renderApp({
 		initialPath: '/home',
 	});
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -300,7 +308,7 @@ test('streaming with text shows the reply plus trailing dots, not the standalone
 
 test('a completed reply shows no typing dots', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -325,7 +333,7 @@ test('a completed reply shows no typing dots', async () => {
 // indicators, whether or not any text has landed yet.
 test('the header shows processing dots while the CEO is composing with no text yet', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -344,7 +352,7 @@ test('the header shows processing dots while the CEO is composing with no text y
 
 test('the header keeps the processing dots while a reply is still streaming text', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -365,7 +373,7 @@ test('the header keeps the processing dots while a reply is still streaming text
 
 test('the header drops the processing dots once the reply settles', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -385,7 +393,7 @@ test('the header drops the processing dots once the reply settles', async () => 
 
 test('a CEO reply renders its markdown as formatted HTML, not raw text', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -414,128 +422,66 @@ test('a CEO reply renders its markdown as formatted HTML, not raw text', async (
 	expect(body.textContent ?? '').not.toContain('**');
 });
 
-// The unread badge is client-tracked in localStorage (the CEO conversation has
+// The CEO unread badge is client-tracked in localStorage (the CEO stream has
 // no server read state) and the WS-driven increment can't run here (sockets are
 // stubbed), so these drive the persisted path: a seeded count renders the
-// overlay, and opening the chat clears both the badge and the stored tally.
-test('the minimized launcher shows an unread overlay for unseen CEO replies', async () => {
+// overlay on the header monogram, and opening the dock clears both the badge
+// and the stored tally.
+test('the header monogram shows an unread overlay for unseen CEO replies', async () => {
 	localStorage.setItem('hezo_chat_unread', '3');
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
 
-	const badge = await findByTestId('chat-unread-badge');
+	const badge = await findByTestId('app-header-chat-badge');
 	expect(badge.textContent).toBe('3');
-	// The accessible name surfaces the count too, not just the visual dot.
-	const launcher = await findByTestId('chat-launcher');
-	expect(launcher.getAttribute('aria-label')).toBe('Chat with the CEO (3 unread)');
 });
 
 test('opening the chat clears the unread overlay and its persisted count', async () => {
 	localStorage.setItem('hezo_chat_unread', '2');
 	const { findByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });
 
-	// Visible on the closed launcher…
-	expect(await findByTestId('chat-unread-badge')).toBeTruthy();
+	// Visible while the dock is closed…
+	expect(await findByTestId('app-header-chat-badge')).toBeTruthy();
 
 	// …open (reads it) then close again.
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 	(await findByTestId('chat-close')).click();
 
-	// Back on the launcher the badge is gone and the stored tally is wiped.
-	await findByTestId('chat-launcher');
-	await waitFor(() => expect(queryByTestId('chat-unread-badge')).toBeNull());
+	// Back closed, the badge is gone and the stored tally is wiped.
+	await waitFor(() => expect(queryByTestId('app-header-chat-badge')).toBeNull());
 	expect(localStorage.getItem('hezo_chat_unread')).toBeNull();
 });
 
-test('the expand toggle fills the viewport below the nav, then restores the anchored panel', async () => {
-	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+test('the dock is an anchored corner panel with a mobile-only scrim', async () => {
+	const { findByTestId } = await renderApp({ initialPath: '/home' });
+	(await findByTestId('app-header-chat')).click();
 	const panel = await findByTestId('chat-panel');
 
-	// Default: anchored desktop panel, clear of the 48px header (top-16).
-	expect(panel.getAttribute('data-expanded')).toBe('false');
+	// Anchored desktop panel, clear of the 48px header; near-full-screen below md.
 	expect(panel.className).toContain('md:w-[420px]');
 	expect(panel.className).toContain('top-16');
-
-	const expand = getByTestId('chat-expand');
-	expect(expand.getAttribute('aria-label')).toBe('Expand chat');
-	expand.click();
-
-	// Expanded: fills the viewport (no fixed desktop width) but still below the nav.
-	await waitFor(() => expect(panel.getAttribute('data-expanded')).toBe('true'));
-	expect(panel.className).toContain('md:inset-x-4');
-	expect(panel.className).not.toContain('md:w-[420px]');
-	expect(panel.className).toContain('top-16');
-	expect(getByTestId('chat-expand').getAttribute('aria-label')).toBe('Collapse chat');
-
-	// Collapse restores the anchored panel.
-	getByTestId('chat-expand').click();
-	await waitFor(() => expect(panel.getAttribute('data-expanded')).toBe('false'));
-	expect(panel.className).toContain('md:w-[420px]');
+	// The scrim is scoped to mobile (`md:hidden`) - the desktop corner panel is a
+	// persistent companion that leaves the rest of the page interactive. There is
+	// no expand mode: the dock is the whole desktop chat surface.
+	const overlay = await findByTestId('chat-overlay');
+	expect(overlay.className).toContain('md:hidden');
 });
 
-test('expanded mode lays a modal backdrop that dismisses the chat when clicked', async () => {
-	const { findByTestId, queryByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
-	await findByTestId('chat-panel');
-
-	// Anchored: the scrim is rendered but scoped to mobile (`md:hidden`), so the
-	// desktop corner panel leaves the rest of the page interactive.
-	const anchoredOverlay = await findByTestId('chat-overlay');
-	expect(anchoredOverlay.className).toContain('md:hidden');
-
-	// Expanding makes it modal on desktop too: the scrim drops `md:hidden`.
-	getByTestId('chat-expand').click();
-	await waitFor(() => expect(getByTestId('chat-overlay').className).not.toContain('md:hidden'));
-	const overlay = getByTestId('chat-overlay');
-
-	// Clicking the backdrop dismisses the chat entirely.
-	overlay.click();
-	await findByTestId('chat-launcher');
-	expect(queryByTestId('chat-panel')).toBeNull();
-	expect(queryByTestId('chat-overlay')).toBeNull();
-});
-
-test('collapsing out of expanded reverts the backdrop to mobile-only but keeps the chat open', async () => {
-	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
-	await findByTestId('chat-panel');
-
-	getByTestId('chat-expand').click();
-	await waitFor(() => expect(getByTestId('chat-overlay').className).not.toContain('md:hidden'));
-
-	// The collapse toggle exits desktop-modal mode: the scrim goes back to
-	// mobile-only (`md:hidden`), panel still open.
-	getByTestId('chat-expand').click();
-	await waitFor(() => expect(getByTestId('chat-overlay').className).toContain('md:hidden'));
-	expect(getByTestId('chat-panel')).toBeTruthy();
-});
-
-test('Escape closes the chat from both the anchored and the expanded view', async () => {
+test('Escape closes the dock', async () => {
 	const { findByTestId, queryByTestId, user } = await renderApp({
 		initialPath: '/home',
 	});
 
-	// Anchored → Escape closes back to the launcher.
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 	await user.keyboard('{Escape}');
-	await findByTestId('chat-launcher');
-	expect(queryByTestId('chat-panel')).toBeNull();
-
-	// Expanded (modal) → Escape closes it too, scrim and all.
-	(await findByTestId('chat-launcher')).click();
-	(await findByTestId('chat-expand')).click();
-	await findByTestId('chat-overlay');
-	await user.keyboard('{Escape}');
-	await findByTestId('chat-launcher');
-	expect(queryByTestId('chat-panel')).toBeNull();
+	await waitFor(() => expect(queryByTestId('chat-panel')).toBeNull());
 	expect(queryByTestId('chat-overlay')).toBeNull();
 });
 
 test('a user message is shown as typed, not parsed as markdown', async () => {
 	const { findByTestId, findByText } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -557,7 +503,7 @@ test('a user message is shown as typed, not parsed as markdown', async () => {
 
 test('the copy button writes the whole conversation to the clipboard, labelled by speaker', async () => {
 	const { findByTestId, user } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -606,7 +552,7 @@ test('the copy button writes the whole conversation to the clipboard, labelled b
 
 test('the copy button is disabled until the conversation has a message', async () => {
 	const { findByTestId, getByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	// Empty conversation → nothing to copy yet.
@@ -628,7 +574,7 @@ test('the copy button is disabled until the conversation has a message', async (
 
 test('each message has its own copy button that copies only that message', async () => {
 	const { findByTestId, findAllByTestId, user } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -682,7 +628,7 @@ test('each message has its own copy button that copies only that message', async
 
 test('a streaming reply shows no per-message copy button until it settles', async () => {
 	const { findByTestId, findByText, queryAllByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -704,7 +650,7 @@ test('a streaming reply shows no per-message copy button until it settles', asyn
 
 test('a handoff warning renders as its own meta row, wrapping rather than as a bubble', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	const warning =
@@ -742,7 +688,7 @@ test('a handoff warning renders as its own meta row, wrapping rather than as a b
 
 test('a connector refusal renders as the same warning row, keyed by its own kind', async () => {
 	const { findByTestId, findByText, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	const warning =
@@ -777,7 +723,7 @@ test('a connector refusal renders as the same warning row, keyed by its own kind
 
 test('a credential wait renders as a quiet notice with the holding run linked', async () => {
 	const { findByTestId, queryByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([
@@ -821,7 +767,7 @@ test('a credential wait renders as a quiet notice with the holding run linked', 
 
 test('a failed reply shows the reason the server recorded, not a generic message', async () => {
 	const { findByTestId } = await renderApp({ initialPath: '/home' });
-	(await findByTestId('chat-launcher')).click();
+	(await findByTestId('app-header-chat')).click();
 	await findByTestId('chat-panel');
 
 	seedConversation([

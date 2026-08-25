@@ -1612,11 +1612,14 @@ export class ChatSessionManager {
 			);
 			return { id: created.rows[0].id, kind };
 		}
+		// Single-stream: the CEO's web chat is ONE continuous DM. The most recent
+		// open web thread is the live stream (older ones were closed by migration
+		// and remain readable as History); nothing creates a second one.
 		const existing = await this.deps.db.query<{ id: string }>(
 			`SELECT id FROM chat_conversations
 			 WHERE member_id = $1 AND channel = 'web'
 			   AND external_thread_id IS NULL AND closed_at IS NULL
-			 ORDER BY created_at ASC LIMIT 1`,
+			 ORDER BY last_activity_at DESC, created_at DESC LIMIT 1`,
 			[memberId],
 		);
 		if (existing.rows[0]) return { id: existing.rows[0].id, kind: ChatConversationKind.Assistant };
@@ -1683,18 +1686,6 @@ export class ChatSessionManager {
 		return r.rows.map(toConversationSummary);
 	}
 
-	/** Create a fresh web conversation thread (the new-thread button). */
-	async createWebConversation(title?: string): Promise<string> {
-		const memberId = await this.resolveCeoMemberId();
-		const projectId = await this.resolveHqProjectId();
-		const created = await this.deps.db.query<{ id: string }>(
-			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, title)
-			 VALUES ($1, $2, $3, 'web', $4) RETURNING id`,
-			[memberId, DEFAULT_TEAM_ID, projectId, title ?? null],
-		);
-		return created.rows[0].id;
-	}
-
 	/**
 	 * Close a conversation: mark it closed, abort + evict its in-flight turn, and
 	 * close the platform thread on its home surface when the adapter supports it
@@ -1743,125 +1734,6 @@ export class ChatSessionManager {
 			await rt.titling?.catch(() => undefined);
 		}
 		this.convos.delete(conversationId);
-	}
-
-	/**
-	 * Convert an open web assistant conversation into a task: the active window's
-	 * transcript becomes the task description, the CEO is assigned (waking it in
-	 * the target project's team — the run-team split), a system-role meta message
-	 * records the task in the thread, and the conversation closes but stays
-	 * listed (converted threads remain in the switcher as a read-only record).
-	 *
-	 * Ordering is failure-safe: the task is created first and the close commits
-	 * atomically with the meta message, so a failure can leave a task without a
-	 * closed thread (visible, retryable — a second convert of a still-open thread
-	 * is legal) but never a closed thread pointing at nothing.
-	 */
-	async convertConversationToTask(input: {
-		conversationId: string;
-		/** Target project (resolved UUID) and its backing team. */
-		projectId: string;
-		projectTeamId: string;
-		title?: string;
-		caller: CreateTaskCaller;
-		events?: DomainEventBus;
-	}): Promise<{ task: TaskRow; conversation: ConversationSummary }> {
-		const convo = await this.getConversation(input.conversationId);
-		if (!convo) throw new ChatConvertError('NOT_FOUND', 'conversation not found');
-		if (convo.kind === ChatConversationKind.Coworker) {
-			throw new ChatConvertError(
-				'READ_ONLY',
-				'Team-channel conversations cannot be converted from the web view',
-			);
-		}
-		// External assistant DMs are excluded for now — relax this guard (and close
-		// the platform thread via channelHooks.closeThread) to support them.
-		if (convo.channel !== ChatChannel.Web) {
-			throw new ChatConvertError('INVALID_REQUEST', 'Only web conversations can be converted');
-		}
-		if (convo.converted_task_id) {
-			throw new ChatConvertError('ALREADY_CONVERTED', 'Conversation was already converted');
-		}
-		if (convo.closed_at) throw new ChatConvertError('CLOSED', 'Conversation is closed');
-
-		// Quiesce first so a partial reply settles as `interrupted` and makes the
-		// transcript; the cost of a later failure is that interrupt, nothing more.
-		await this.abortConversationRuntime(input.conversationId, 'converted');
-
-		const window = await loadActiveWindow(this.deps.db, input.conversationId);
-		if (window.length === 0) {
-			throw new ChatConvertError('INVALID_REQUEST', 'Conversation has no messages to convert');
-		}
-		const compacted = await this.deps.db.query<{ count: number }>(
-			`SELECT COUNT(*)::int AS count FROM chat_messages
-			 WHERE conversation_id = $1 AND compacted_at IS NOT NULL`,
-			[input.conversationId],
-		);
-		const description = buildConversationTaskDescription({
-			messages: window,
-			compactedCount: compacted.rows[0]?.count ?? 0,
-		});
-		const title =
-			input.title?.trim() || convo.title?.trim() || firstUserLine(window) || 'Chat conversation';
-
-		// The CEO must be assigned by id: slug resolution is scoped to the target
-		// team and the CEO lives in HQ (same pattern as marketplace team setup).
-		const memberId = await this.resolveCeoMemberId();
-		const task = await createTask(
-			this.deps.db,
-			input.projectTeamId,
-			{
-				project_id: input.projectId,
-				title,
-				description,
-				assignee_id: memberId,
-			},
-			input.caller,
-			this.deps.wsManager,
-			input.events,
-		);
-
-		// Meta message + close commit together: the thread never reads as closed
-		// without its pointer, and never carries the pointer while still open.
-		const messageContent = `Conversation converted to task ${task.identifier}: ${title}`;
-		let messageId = '';
-		await withTransaction(this.deps.db, async () => {
-			messageId = await this.insertMessage({
-				conversationId: input.conversationId,
-				role: ChatMessageRole.System,
-				channel: ChatChannel.Web,
-				status: ChatMessageStatus.Complete,
-				content: messageContent,
-				systemKind: ChatSystemMessageKind.ConvertedTask,
-				completed: true,
-			});
-			await this.deps.db.query(
-				`UPDATE chat_conversations
-				 SET converted_task_id = $2, closed_at = now(), last_activity_at = now()
-				 WHERE id = $1`,
-				[input.conversationId, task.id],
-			);
-		});
-
-		this.broadcastStart(
-			input.conversationId,
-			messageId,
-			ChatMessageRole.System,
-			ChatChannel.Web,
-			messageContent,
-			undefined,
-			ChatSystemMessageKind.ConvertedTask,
-		);
-		this.broadcastChat(input.conversationId, {
-			type: WsMessageType.ChatConversationUpdated,
-			conversationId: input.conversationId,
-			closedAt: new Date().toISOString(),
-			convertedTaskId: task.id as string,
-		});
-
-		const conversation = await this.getConversation(input.conversationId);
-		if (!conversation) throw new ChatConvertError('NOT_FOUND', 'conversation not found');
-		return { task, conversation };
 	}
 
 	/** Close the conversation living on an external thread (inbound topic-closed). */
@@ -3647,23 +3519,6 @@ export interface ConversationSummary {
 	converted_task: ConvertedTaskRef | null;
 }
 
-export type ChatConvertErrorCode =
-	| 'NOT_FOUND'
-	| 'READ_ONLY'
-	| 'CLOSED'
-	| 'ALREADY_CONVERTED'
-	| 'INVALID_REQUEST';
-
-/** Typed failure for convert-to-task, mapped to a 4xx by the route. */
-export class ChatConvertError extends Error {
-	readonly code: ChatConvertErrorCode;
-	constructor(code: ChatConvertErrorCode, message: string) {
-		super(message);
-		this.code = code;
-		this.name = 'ChatConvertError';
-	}
-}
-
 // Conversation projection shared by getConversation/listConversations: the row
 // plus the converted-task reference (identifier/title/project slug) joined in,
 // so the switcher and the meta message can link the task without extra reads.
@@ -3701,12 +3556,4 @@ function toConversationSummary(row: ConversationRow): ConversationSummary {
 				}
 			: null;
 	return { ...rest, converted_task };
-}
-
-/** Default task title fallback: the first user message, trimmed to one line. */
-function firstUserLine(window: WindowMessage[]): string | null {
-	const first = window.find((m) => m.role === ChatMessageRole.User && m.content.trim() !== '');
-	if (!first) return null;
-	const line = first.content.trim().split('\n')[0];
-	return line.length > 80 ? `${line.slice(0, 77)}…` : line;
 }
