@@ -448,6 +448,44 @@ describe('convert a chat conversation to a task', () => {
 		expect(convo.rows[0].closed_at).toBeNull();
 	});
 
+	test('authorization: an HQ member without target-team access cannot convert into it', async () => {
+		// HQ access authorizes the chat surface, but the task lands in the target
+		// project's team - a non-superuser HQ member must not be able to file work
+		// into a team they don't belong to.
+		const convoId = await seedConversation();
+		const user = await ctx.db.query<{ id: string }>(
+			`INSERT INTO users (display_name, is_superuser) VALUES ('HQ Board', false) RETURNING id`,
+		);
+		const member = await ctx.db.query<{ id: string }>(
+			`INSERT INTO members (team_id, member_type, display_name)
+			 VALUES ($1, 'user', 'HQ Board') RETURNING id`,
+			[DEFAULT_TEAM_ID],
+		);
+		await ctx.db.query(`INSERT INTO member_users (id, user_id) VALUES ($1, $2)`, [
+			member.rows[0].id,
+			user.rows[0].id,
+		]);
+		const token = await signAdminJwt(ctx.masterKeyManager, user.rows[0].id);
+
+		const denied = await convert(
+			convoId,
+			{ project_id: 'website' },
+			{ ...authHeader(token), 'Content-Type': 'application/json' },
+		);
+		expect(denied.status).toBe(403);
+		// Nothing happened: thread open, no task in the target team.
+		const convo = await ctx.db.query<{ closed_at: string | null }>(
+			`SELECT closed_at FROM chat_conversations WHERE id = $1`,
+			[convoId],
+		);
+		expect(convo.rows[0].closed_at).toBeNull();
+		const tasks = await ctx.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM tasks WHERE team_id = $1`,
+			[targetTeamId],
+		);
+		expect(tasks.rows[0].n).toBe(0);
+	});
+
 	test('a compacted history is noted in the description, not silently missing', async () => {
 		const convoId = await seedConversation();
 		await seedMessage({ conversationId: convoId, content: 'old context', compacted: true });

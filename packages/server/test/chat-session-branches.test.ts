@@ -232,7 +232,7 @@ describe('ChatSessionManager — lifecycle branches', () => {
 		expect(true).toBe(true);
 	});
 
-	test('the health timer tears the session down when the HQ container disappears', async () => {
+	test('the health timer tears the session down when the pool member is gone or unpinned', async () => {
 		const { manager } = makeManager(ctx, replyDocker());
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
 		await poll(async () => {
@@ -243,14 +243,11 @@ describe('ChatSessionManager — lifecycle branches', () => {
 			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
-		// Container vanishes; checkHealth should notice the mismatch and teardown.
-		await ctx.db.query(
-			`UPDATE projects SET container_status = 'stopped', container_id = NULL
-			 WHERE team_id = $1 AND is_internal = true`,
-			[DEFAULT_TEAM_ID],
-		);
-		// checkHealth is private; drive it via the public start() timer would be slow,
-		// so invoke through restart's sibling: call the internal check by reaching in.
+		// The pool reclaimed the member out from under the session; checkHealth
+		// should notice the missing row and tear down.
+		await ctx.db.query(`DELETE FROM container_pool_members`);
+		// checkHealth is private; driving it via the public start() timer would be
+		// slow, so invoke the internal check by reaching in.
 		await (manager as unknown as { checkHealth(): Promise<void> }).checkHealth();
 
 		const live = await ctx.db.query<{ n: number }>(
@@ -258,6 +255,58 @@ describe('ChatSessionManager — lifecycle branches', () => {
 			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(live.rows[0].n).toBe(0);
+		await manager.stop();
+	});
+
+	test('checkHealth survives task provisioning rewriting projects.container_id', async () => {
+		// The regression this health check re-keying exists for: the session's
+		// container is the pinned pool member, and `projects.container_id` names
+		// whatever container the project provisioned most recently. A task run
+		// rewriting it must NOT read as "the chat container is gone".
+		const { manager } = makeManager(ctx, replyDocker());
+		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+
+		await ctx.db.query(
+			`UPDATE projects SET container_id = 'task-run-container'
+			 WHERE team_id = $1 AND is_internal = true`,
+			[DEFAULT_TEAM_ID],
+		);
+		await (manager as unknown as { checkHealth(): Promise<void> }).checkHealth();
+
+		const live = await ctx.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
+			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
+		);
+		expect(live.rows[0].n).toBe(1);
+		await manager.stop();
+	});
+
+	test('checkHealth suspends the session when its pool member is suspended', async () => {
+		const { manager } = makeManager(ctx, replyDocker());
+		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+
+		await ctx.db.query(`UPDATE container_pool_members SET state = 'suspended'`);
+		await (manager as unknown as { checkHealth(): Promise<void> }).checkHealth();
+
+		const suspended = await ctx.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status = $1`,
+			[ChatSessionStatus.Suspended],
+		);
+		expect(suspended.rows[0].n).toBe(1);
 		await manager.stop();
 	});
 

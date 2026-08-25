@@ -2242,17 +2242,26 @@ export class ChatSessionManager {
 	private async checkHealth(): Promise<void> {
 		const live = this.live;
 		if (!live || this.suspended) return;
-		const proj = await this.deps.db.query<{
-			container_id: string | null;
-			container_status: string | null;
-		}>(`SELECT container_id, container_status FROM projects WHERE id = $1`, [live.projectId]);
-		const row = proj.rows[0];
-		if (!row || !row.container_id || row.container_id !== live.containerId) {
-			log.warn('HQ container replaced or gone; tearing down CEO chat session');
+		// The session's container is a pool member pinned by the chat workload
+		// (`reserved_for_chat`), so its member row is the authoritative health
+		// record. `projects.container_id` names the project's most recently
+		// provisioned container - task provisioning rewrites it - so keying health
+		// off it tore this session down whenever HQ served an ordinary task run.
+		const member = await this.deps.db.query<{
+			state: string;
+			reserved_for_chat: boolean;
+		}>(
+			`SELECT state, reserved_for_chat FROM container_pool_members
+			  WHERE container_id = $1 AND project_id = $2`,
+			[live.containerId, live.projectId],
+		);
+		const row = member.rows[0];
+		if (!row || !row.reserved_for_chat || row.state === 'error') {
+			log.warn('HQ chat container replaced or gone; tearing down CEO chat session');
 			await this.teardown(ChatSessionStatus.Stopped);
 			return;
 		}
-		if (row.container_status !== 'running') {
+		if (row.state === 'suspended') {
 			await this.suspend();
 		}
 	}

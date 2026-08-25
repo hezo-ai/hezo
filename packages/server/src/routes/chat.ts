@@ -329,6 +329,12 @@ chatRoutes.post('/chat/conversations/:id/convert-to-task', async (c) => {
 	const project = await resolveProject(db, projectRef);
 	if (!project) return err(c, 'NOT_FOUND', 'project not found', 404);
 
+	// HQ access authorized the chat surface; the task lands in the TARGET
+	// project's team, so the caller needs access there too - without this, any
+	// HQ member could file tasks into teams they don't belong to.
+	const targetAccess = await requireTeamAccessForResource(db, c, project.teamId);
+	if (targetAccess instanceof Response) return targetAccess;
+
 	const auth = c.get('auth');
 	const caller = {
 		actorType: actorTypeFromAuth(auth),
