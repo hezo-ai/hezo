@@ -15,7 +15,7 @@ import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
 import { WebSocketManager } from '../src/services/ws';
 import { buildApp } from '../src/startup';
-import { authHeader, createStubDocker, seedProjectContainer } from './helpers/app';
+import { authHeader, createStubDocker, createTestApp, seedProjectContainer } from './helpers/app';
 import { createTestContext, destroyTestContext, type ServerTestContext } from './helpers/context';
 
 const claudeLine = (obj: unknown) => `${JSON.stringify(obj)}\n`;
@@ -153,19 +153,21 @@ describe('CEO chat HTTP routes', () => {
 	}
 
 	describe('when no ChatSessionManager is wired', () => {
-		// ctx.app is the stock test app, built without a manager → every CEO chat
-		// endpoint reports 503 UNAVAILABLE rather than crashing.
+		// The stock test app now carries a real manager; build one explicitly
+		// without it to reproduce the pre-init state → every CEO chat endpoint
+		// reports 503 UNAVAILABLE rather than crashing.
 		test('all four endpoints return 503 UNAVAILABLE', async () => {
-			const h = { ...authHeader(ctx.token), 'Content-Type': 'application/json' };
-			const conv = await ctx.app.request('/api/chat/conversation', { headers: h });
+			const bare = await createTestApp({ chat: false });
+			const h = { ...authHeader(bare.token), 'Content-Type': 'application/json' };
+			const conv = await bare.app.request('/api/chat/conversation', { headers: h });
 			expect(conv.status).toBe(503);
 			expect((await conv.json()).error.code).toBe('UNAVAILABLE');
 
-			const msgs = await ctx.app.request('/api/chat/messages', { headers: h });
+			const msgs = await bare.app.request('/api/chat/messages', { headers: h });
 			expect(msgs.status).toBe(503);
 			expect((await msgs.json()).error.code).toBe('UNAVAILABLE');
 
-			const post = await ctx.app.request('/api/chat/messages', {
+			const post = await bare.app.request('/api/chat/messages', {
 				method: 'POST',
 				headers: h,
 				body: JSON.stringify({ text: 'hello' }),
@@ -173,7 +175,7 @@ describe('CEO chat HTTP routes', () => {
 			expect(post.status).toBe(503);
 			expect((await post.json()).error.code).toBe('UNAVAILABLE');
 
-			const restart = await ctx.app.request('/api/chat/session/restart', {
+			const restart = await bare.app.request('/api/chat/session/restart', {
 				method: 'POST',
 				headers: h,
 			});

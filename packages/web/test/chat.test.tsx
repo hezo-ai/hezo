@@ -4,7 +4,7 @@ import { queryClient } from '@hezo/web/lib/query-client';
 import { queryKeys } from '@hezo/web/lib/query-keys';
 import { fireEvent, waitFor, within } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
-import { renderApp } from './helpers/render';
+import { getTestContext, renderApp } from './helpers/render';
 
 // The component harness builds the backend without a ChatSessionManager (the chat
 // endpoints return 503) and stubs WebSocket, so this tier covers the widget
@@ -64,7 +64,7 @@ test('shows the user message optimistically and disables send while in flight', 
 
 	await user.type(input, 'i just enabled markdown assets');
 	// fireEvent (synchronous) so we can observe the optimistic state before the
-	// harness's 503 lands and clears it.
+	// send settles and the real rows take over.
 	fireEvent.click(sendBtn);
 
 	// The user's message renders immediately (optimistic), before any WS round-trip…
@@ -74,21 +74,41 @@ test('shows the user message optimistically and disables send while in flight', 
 	// …and the send button is disabled so an impatient re-click can't spawn duplicates.
 	expect(sendBtn.disabled).toBe(true);
 
-	// Once the (failed) send settles, the optimistic placeholder is dropped.
-	await waitFor(() => expect(queryByText('i just enabled markdown assets')).toBeNull());
+	// Once the send settles the message survives as its real stored row (the
+	// harness manager persists it and answers with a canned reply). The live
+	// re-render rides WS events the component harness stubs, so settle is
+	// observed on the store, then a refetch is forced to see the stored row
+	// replace the optimistic placeholder.
+	await waitFor(async () => {
+		const rows = await getTestContext().db.query(
+			`SELECT id FROM chat_messages WHERE content = 'i just enabled markdown assets'`,
+		);
+		expect((rows as { rows: unknown[] }).rows.length).toBe(1);
+	});
+	await queryClient.invalidateQueries({ queryKey: ['chat'] });
+	await waitFor(() => expect(queryByText('i just enabled markdown assets')).toBeTruthy());
 });
 
 test('surfaces a failed CEO send as an error toast', async () => {
-	// The harness backend has no ChatSessionManager, so POST /api/chat/messages
-	// returns 503 — the send mutation's onError must surface the server message.
+	// The harness wires a real ChatSessionManager, so force a deterministic
+	// failure instead: with no verified provider credential the turn cannot
+	// start, POST /api/chat/messages answers 503, and the send mutation's
+	// onError must surface the server's message.
 	const errorSpy = vi.spyOn(toast, 'error');
 	try {
 		const { findByTestId, getByTestId, user } = await renderApp({ initialPath: '/home' });
 		(await findByTestId('chat-launcher')).click();
 		const input = (await findByTestId('chat-input')) as HTMLTextAreaElement;
+		// After the tree settled (the SetupGate has already seen a provider), so
+		// only the send is affected.
+		await getTestContext().db.query('DELETE FROM ai_provider_configs');
 		await user.type(input, 'why is everything stuck?');
 		await user.click(getByTestId('chat-send') as HTMLButtonElement);
-		await waitFor(() => expect(errorSpy).toHaveBeenCalledWith('CEO chat is not available'));
+		await waitFor(() =>
+			expect(errorSpy).toHaveBeenCalledWith(
+				expect.stringContaining('No verified AI provider credential'),
+			),
+		);
 	} finally {
 		errorSpy.mockRestore();
 	}

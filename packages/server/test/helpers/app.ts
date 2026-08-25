@@ -28,6 +28,7 @@ import { toSlug, uniqueSlug } from '../../src/lib/slug';
 import { getDefaultRamCapPerContainerGb } from '../../src/lib/system-meta';
 import type { Env } from '../../src/lib/types';
 import { signAdminJwt, signAgentJwt } from '../../src/middleware/auth';
+import { ChatSessionManager } from '../../src/services/chat-session-manager';
 import { ContainerLogStreamer } from '../../src/services/container-logs';
 import { createFakeDockerClient } from '../../src/services/fake-docker';
 import { JobManager } from '../../src/services/job-manager';
@@ -39,7 +40,7 @@ import {
 } from '../../src/services/project-create';
 import type { SandboxFiles } from '../../src/services/sandbox/files';
 import { SandboxBackendHolder } from '../../src/services/sandbox/holder';
-import type { ContainerEngine } from '../../src/services/sandbox/types';
+import type { ContainerEngine, ExecLogChunk } from '../../src/services/sandbox/types';
 import { type CreatedTeamRow, createTeam, seedDefaultTeam } from '../../src/services/teams';
 import { WebSocketManager } from '../../src/services/ws';
 import { buildApp } from '../../src/startup';
@@ -277,6 +278,12 @@ export async function createTestApp(
 		 */
 		docker?: ContainerEngine;
 		sandboxBackendInfo?: SandboxBackendInfo;
+		/**
+		 * Wire a real ChatSessionManager over the stub engine (the production
+		 * boot always has one, so this is the default). `false` reproduces the
+		 * pre-init state where every chat endpoint answers 503 UNAVAILABLE.
+		 */
+		chat?: boolean;
 	} = {},
 ) {
 	const db = await createTestDbWithMigrations();
@@ -307,6 +314,53 @@ export async function createTestApp(
 		logs,
 		containerLogStreamer,
 	});
+	// A real manager over a scripted stub engine, not a hand-rolled partial:
+	// the chat routes then behave in tests exactly as they do on a booted
+	// instance, and the "complete test double" rule applies to the manager as
+	// much as to docker. Sessions only spin up when a test actually sends a
+	// chat turn. Built via createStubDocker so the tunnel-readiness wrapper
+	// still answers port probes; its agent execs answer with one canned reply
+	// (the app docker's execCreate deliberately throws - run tests must script
+	// their own - which here would fail every turn and spray teardown noise
+	// into green runs).
+	const chatSessionManager =
+		opts.chat === false
+			? undefined
+			: new ChatSessionManager({
+					db,
+					docker: createStubDocker(
+						{
+							execCreate: async () => `chat-exec-${Math.random().toString(36).slice(2)}`,
+							execStart: async (
+								_id: string,
+								execOpts: { onChunk?: (c: ExecLogChunk) => void | Promise<void> } = {},
+							) => {
+								const onChunk = execOpts.onChunk ?? (() => undefined);
+								await onChunk({
+									stream: 'stdout',
+									text: `${JSON.stringify({
+										type: 'assistant',
+										message: {
+											role: 'assistant',
+											content: [{ type: 'text', text: 'Canned CEO reply (test harness)' }],
+										},
+									})}\n`,
+								});
+								await onChunk({
+									stream: 'stdout',
+									text: `${JSON.stringify({ type: 'result', usage: { input_tokens: 1, output_tokens: 1 } })}\n`,
+								});
+								return { stdout: '', stderr: '' };
+							},
+						},
+						{ db, dataDir },
+					),
+					masterKeyManager,
+					serverPort: 0,
+					dataDir,
+					wsManager,
+					logs,
+				});
 	const app = buildApp(
 		db,
 		masterKeyManager,
@@ -327,7 +381,7 @@ export async function createTestApp(
 		null,
 		containerLogStreamer,
 		events,
-		undefined,
+		chatSessionManager,
 		undefined,
 		opts.assetStore,
 	);
@@ -370,6 +424,7 @@ export async function createTestApp(
 		dataDir,
 		password,
 		passwordSalt,
+		chatSessionManager,
 	};
 }
 

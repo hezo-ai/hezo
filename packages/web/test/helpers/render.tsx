@@ -1,4 +1,4 @@
-import { createTestApp } from '@hezo/server/test/helpers/app';
+import { createTestApp, encrypt, seedProjectContainer } from '@hezo/server/test/helpers/app';
 import { Toaster } from '@hezo/web/components/ui/toast';
 import { api } from '@hezo/web/lib/api';
 import { I18nProvider } from '@hezo/web/lib/i18n';
@@ -99,6 +99,7 @@ beforeEach(async () => {
 		db: test.db,
 		masterKeyManager: test.masterKeyManager,
 		dataDir: test.dataDir,
+		chatSessionManager: test.chatSessionManager,
 	} as unknown as TestAppContext;
 
 	// Auth: drop the token into localStorage AND push it into the api singleton
@@ -107,30 +108,32 @@ beforeEach(async () => {
 	localStorage.setItem('hezo_token', test.token);
 	api.setToken(test.token);
 
-	// Seed an AI-provider config so the SetupGate doesn't park the tree on the
-	// onboarding wizard. Mirrors the e2e ensureAiProviderConfigured helper.
-	await apiBase('/api/ai-providers', {
-		method: 'POST',
-		headers: {
-			Authorization: `Bearer ${test.token}`,
-			'Content-Type': 'application/json',
-		},
-		body: JSON.stringify({
-			provider: 'anthropic',
-			api_key: 'sk-ant-test-key',
-			label: 'test-default',
-		}),
-	});
+	// Seed a verified AI-provider config so the SetupGate doesn't park the tree
+	// on the onboarding wizard and the chat manager can start a session. A
+	// direct row, not POST /api/ai-providers: that route live-validates the key
+	// against the provider, which no test environment can satisfy.
+	{
+		const key = test.masterKeyManager.getKey();
+		if (key) {
+			await test.db.query(
+				`INSERT INTO ai_provider_configs (provider, auth_method, label, encrypted_credential, is_default, status, default_model)
+				 VALUES ('anthropic', 'api_key', 'test-default', $1, true, 'verified', 'claude-sonnet-4-6')`,
+				[encrypt('sk-ant-test-key', key)],
+			);
+		}
+	}
 
 	// A booted instance has its HQ container running; the harness skips real
 	// container provisioning, so reflect the healthy steady state by default.
+	// Through the server helper, so the pool-member row exists too - the chat
+	// manager acquires through the pool, and without an idle member a CEO send
+	// would fall to the slow create rung instead of claiming instantly.
 	// Specs exercising the container-down/rebuilding gates set the status
 	// explicitly (via DB or a fetch override of the projects index).
-	await test.db.query(
-		`UPDATE projects SET container_status = 'running',
-		        container_id = COALESCE(container_id, 'test-hq-container')
-		 WHERE is_internal = true`,
-	);
+	const hq = await test.db.query(`SELECT id FROM projects WHERE is_internal = true`);
+	for (const row of (hq as { rows: Array<{ id: string }> }).rows) {
+		await seedProjectContainer(test.db, row.id, 'test-hq-container');
+	}
 
 	// Reroute fetch through the in-process Hono app. Bypasses the real network
 	// entirely; matches the way the dev Vite proxy forwards /api, /oauth, /mcp,
@@ -216,6 +219,16 @@ afterEach(async () => {
 	singletonQueryClient.clear();
 	localStorage.clear();
 	api.clearToken();
+	// Stop the app's chat manager before the db goes: a session a test spun up
+	// writes its teardown rows, and racing the PGlite close below turns that
+	// into "PGlite is closing" noise.
+	try {
+		await (
+			activeContext as unknown as { chatSessionManager?: { stop(): Promise<void> } }
+		)?.chatSessionManager?.stop();
+	} catch {
+		// Same rule as the db close: teardown noise must not fail the test.
+	}
 	if (activeContext?.db) {
 		try {
 			await activeContext.db.close();
