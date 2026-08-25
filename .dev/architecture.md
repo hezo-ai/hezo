@@ -379,14 +379,21 @@ chat) — generically named so the schema is first-class for a chat with any age
 a conversation carries `member_id` (the agent) + `team_id` + `project_id`, a session
 the same, and a message an `author_member_id` (the responding agent). `chat_message_attachments`
 links files sent through the chatbox to their message (stored in the HQ asset library
-under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
-automatically-maintained long-term memory (§ 4). Migration 074 adds the team-chat
-phase-1 columns: `chat_conversations.last_message_id` (denormalized so unread badges
-never count rows), the `chat_conversation_reads` per-(user, conversation) watermark
-table behind server-side unread, `chat_messages.suggested_replies` (up to three short
-one-tap replies an agent reply offers, parsed from a structured trailer and stored
-beside the clean body), and the `budget_exceeded` / `capacity_wait` /
-`task_created` / `task_completed` / `task_blocked` system-row kinds.
+under `uploads/chat/`), and `chat_memories` holds automatically-maintained long-term
+memory in exactly one scope per row (`chat_memories_one_scope`): `member_id` for an
+agent's DM memory (§ 4), `conversation_id` for a group room's shared memory.
+Migration 074 adds the team-chat columns: `chat_conversations.last_message_id`
+(denormalized so unread badges never count rows), the `chat_conversation_reads`
+per-(user, conversation) watermark table behind server-side unread,
+`chat_messages.suggested_replies` (up to three short one-tap replies an agent reply
+offers, parsed from a structured trailer and stored beside the clean body), the
+`budget_exceeded` / `capacity_wait` / `task_created` / `task_completed` /
+`task_blocked` system-row kinds, and the group-room DDL: the recreated
+`chat_conversation_kind` enum gains `'group'` (recreate, not `ADD VALUE` — the new
+value is used in the same transaction), `member_id` goes nullable for groups only
+(`chat_conversations_member_scope`), `is_general` marks each project's built-in room
+(partial unique index, one per project), and `chat_conversation_participants` holds
+room membership.
 
 ### Chat conversations & channels
 
@@ -409,6 +416,36 @@ room switcher lists every conversation from every surface, badged by origin — 
 conversations fully interactive, coworker conversations read-only
 (`POST /api/chat/messages` 409s on them, as it does on any closed thread — `CLOSED`,
 naming the continuing task when there is one).
+
+**Group rooms are mention-driven, and only the operator summons turns.** A
+`kind='group'` conversation has no `member_id`; its roster is
+`chat_conversation_participants`, validated on create/edit against the project team's
+enabled agents (team scoping structurally excludes CEO/Coach). The built-in General
+room is provisioned lazily by the room-list read and its membership synced to the
+roster there — no hire/fire hook, upgrade-safe, and every statement no-ops when
+nothing changed. A send resolves its responders server-side
+(`resolveGroupResponders`): active `@slug` mentions (`extractActiveAgentMentionSlugs`,
+the sole extractor) intersected with the enabled participants, mention order, capped
+at `GROUP_TURN_MENTION_CAP` (3); with no mention, the conversational locus — the last
+agent whose completed reply is in the room; with neither, no turn fires and the
+client shows a local nudge off the empty `pending_member_ids`. The queue runs
+sequentially (`runGroupQueue`), each entry an ordinary worker turn under the acting
+agent's identity — own budget gate, `chat-turn` pool claim, cost rows, no-wake check
+— with `author_member_id` + a denormalized `author_label` on the reply. The queue's
+identity is its preemption token: a newer operator message installs a new queue (DM
+semantics — newest wins), and `ChatGroupPendingTurns` broadcasts render the
+cancellable pending strip (`cancel-turn` flips an unstarted entry). Replies never
+summon teammates — an agent reply naming one only grows a client-side "Ask @x" chip
+that drafts the mention for the operator to send. Group compaction targets the
+room's `chat_memories.conversation_id` row via `update_chat_memory`'s `conversation`
+argument (participant-validated; no revision history — the revisions surface is
+per-member), and the eviction gate checks the ROOM row advanced, so a compaction
+that wrote the wrong scope evicts nothing. Message-level convert
+(`POST …/chat/conversations/:id/convert`, and `convert-message` on the CEO stream
+with an explicit target project authorized against the target team) files one
+message as a task — assignee defaulting to the DM partner, the Captain in a room —
+stamps `origin_chat_conversation_id`, and drops the created receipt; the
+conversation survives.
 
 **Convert-to-task is gone; breadcrumbs replaced it.** Whole-thread convert-and-close
 (`POST /api/chat/conversations/:id/convert-to-task`) was removed with single-stream:

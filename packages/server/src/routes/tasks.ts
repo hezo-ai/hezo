@@ -83,7 +83,10 @@ const LATEST_RUN_LOG_TAIL_CHARS = 64 * 1024;
  */
 const LAST_RUN_ERROR_MAX_CHARS = 400;
 
-async function buildCreateTaskCaller(c: Context<Env>, teamId: string): Promise<CreateTaskCaller> {
+export async function buildCreateTaskCaller(
+	c: Context<Env>,
+	teamId: string,
+): Promise<CreateTaskCaller> {
 	const auth = c.get('auth');
 	const actorMemberId = await resolveAuthActorMemberId(c.get('db'), auth, teamId);
 	const caller: CreateTaskCaller = {

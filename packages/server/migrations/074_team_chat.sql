@@ -82,3 +82,51 @@ UPDATE chat_conversations c
         AND kind = 'assistant' AND closed_at IS NULL
       ORDER BY member_id, last_activity_at DESC, created_at DESC
    );
+
+-- ============================================================================
+-- Group chats (Phase 2 of the same feature, extending this unshipped file).
+-- ============================================================================
+
+-- Widen the conversation kind with 'group'. Recreate rather than ALTER TYPE
+-- ADD VALUE: a value added inside this transaction could not be used by the
+-- statements below it.
+ALTER TYPE chat_conversation_kind RENAME TO chat_conversation_kind_old;
+CREATE TYPE chat_conversation_kind AS ENUM ('assistant', 'coworker', 'group');
+ALTER TABLE chat_conversations
+    ALTER COLUMN kind DROP DEFAULT,
+    ALTER COLUMN kind TYPE chat_conversation_kind
+        USING kind::text::chat_conversation_kind,
+    ALTER COLUMN kind SET DEFAULT 'assistant';
+DROP TYPE chat_conversation_kind_old;
+
+-- A group speaks for several agents, so it has no single member; every other
+-- kind keeps exactly one.
+ALTER TABLE chat_conversations ALTER COLUMN member_id DROP NOT NULL;
+ALTER TABLE chat_conversations ADD CONSTRAINT chat_conversations_member_scope
+    CHECK (member_id IS NOT NULL OR kind = 'group');
+
+-- The built-in General room: one per project, roster-synced, not closeable.
+ALTER TABLE chat_conversations ADD COLUMN is_general BOOLEAN NOT NULL DEFAULT false;
+CREATE UNIQUE INDEX idx_chat_conversations_general
+    ON chat_conversations(project_id) WHERE is_general;
+
+-- Who is in a group. Participants are validated against the project team's
+-- roster at write time; the rows only record the outcome.
+CREATE TABLE chat_conversation_participants (
+    conversation_id UUID NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+    member_id       UUID NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    added_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (conversation_id, member_id)
+);
+-- "Which groups is this agent in" - the roster-sync sweep on hire/fire.
+CREATE INDEX idx_chat_participants_member ON chat_conversation_participants(member_id);
+
+-- Group compaction memory lives on the CONVERSATION, not fanned into each
+-- participant's personal memory (which stays out of groups entirely). A memory
+-- row now carries exactly one scope: a member (DM long-term memory, unchanged)
+-- or a conversation (a group's shared memory).
+ALTER TABLE chat_memories
+    ADD COLUMN conversation_id UUID UNIQUE REFERENCES chat_conversations(id) ON DELETE CASCADE;
+ALTER TABLE chat_memories ALTER COLUMN member_id DROP NOT NULL;
+ALTER TABLE chat_memories ADD CONSTRAINT chat_memories_one_scope
+    CHECK ((member_id IS NULL) <> (conversation_id IS NULL));

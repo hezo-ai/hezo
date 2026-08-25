@@ -104,6 +104,46 @@ export async function upsertChatMemory(
 	});
 }
 
+/** A group room's shared memory (`chat_memories.conversation_id` scope), or null when none yet. */
+export async function getConversationChatMemory(
+	db: Db,
+	conversationId: string,
+): Promise<ChatMemory | null> {
+	const r = await db.query<ChatMemory>(
+		`SELECT content, updated_at FROM chat_memories WHERE conversation_id = $1`,
+		[conversationId],
+	);
+	return r.rows[0] ?? null;
+}
+
+/**
+ * Overwrite a group room's shared memory — the conversation-scoped sibling of
+ * {@link upsertChatMemory}, minus the revision snapshot: room memory carries the
+ * room's own settled gist, not operator-authored standing preferences, and the
+ * revision list/restore surface is per-member. `updated_at` always advances
+ * (like the member upsert) because it is the compaction eviction gate.
+ */
+export async function upsertConversationChatMemory(
+	db: Db,
+	conversationId: string,
+	content: string,
+): Promise<ChatMemory> {
+	const prior = await db.query<{ content: string }>(
+		'SELECT content FROM chat_memories WHERE conversation_id = $1',
+		[conversationId],
+	);
+	const tooLarge = checkInjectedTextCap('chat_memory', content, prior.rows[0]?.content.length);
+	if (tooLarge) throw new InjectedTextCapError(tooLarge.error);
+	const r = await db.query<ChatMemory>(
+		`INSERT INTO chat_memories (conversation_id, content, updated_at)
+		 VALUES ($1, $2, now())
+		 ON CONFLICT (conversation_id) DO UPDATE SET content = $2, updated_at = now()
+		 RETURNING content, updated_at`,
+		[conversationId, content],
+	);
+	return r.rows[0];
+}
+
 /** An agent's chat-memory revisions, newest first. */
 export async function listChatMemoryRevisions(
 	db: Db,

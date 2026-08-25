@@ -1,9 +1,13 @@
 import { Link } from '@tanstack/react-router';
-import { AlertTriangle, ChevronsLeft, Info } from 'lucide-react';
+import { AlertTriangle, ChevronsLeft, Info, Users } from 'lucide-react';
 import { useState } from 'react';
 import { useLaunchChat } from '../contexts/chat-launch-context';
 import { useActiveProject } from '../hooks/use-active-project';
-import { type ProjectChatRoomSummary, useProjectChatRooms } from '../hooks/use-chat';
+import {
+	type ProjectChatGroupSummary,
+	type ProjectChatRoomSummary,
+	useProjectChatRooms,
+} from '../hooks/use-chat';
 import { useContainerHealth } from '../hooks/use-container-health';
 import { useInboxUnreadCount } from '../hooks/use-inbox-count';
 import { useProjectMeta } from '../hooks/use-projects';
@@ -36,7 +40,7 @@ export function ProjectSidebar({
 	const { data: inboxCount } = useInboxUnreadCount(projectId);
 	// The project's DM launcher cards. HQ answers with an empty list (its chat
 	// surface is the CEO stream behind the header monogram), so no gate needed.
-	const { rooms: chatRooms } = useProjectChatRooms(projectId || null, true);
+	const { rooms: chatRooms, groups: chatGroups } = useProjectChatRooms(projectId || null, true);
 	const [createTaskOpen, setCreateTaskOpen] = useState(false);
 	// Goals are a project concept only (HQ has none). Use the open_goal_count carried on the
 	// project index payload (the same source as open_task_count) rather than a separate per-page
@@ -277,7 +281,9 @@ export function ProjectSidebar({
 			</div>
 			<div className="flex-1 min-h-0 overflow-y-auto">
 				<SidebarNav sections={sections} />
-				{chatRooms.length > 0 && <ProjectChatCards projectId={projectId} rooms={chatRooms} />}
+				{chatRooms.length > 0 && (
+					<ProjectChatCards projectId={projectId} rooms={chatRooms} groups={chatGroups} />
+				)}
 			</div>
 			<CreateTaskDialog
 				projectId={projectId}
@@ -289,29 +295,76 @@ export function ProjectSidebar({
 }
 
 /**
- * The project menu's chat launcher cards: one bordered card per roster agent,
- * unread first. An unread card grows a one-line preview and a stronger border;
- * clicking a card opens the dock on that agent's DM (no navigation - chat lives
- * in rooms, not routes).
+ * The project menu's chat launcher cards: the group rooms (General first),
+ * then one bordered card per roster agent - unread first within each half. An
+ * unread card grows a one-line preview and a stronger border; clicking a card
+ * opens the dock on that room (no navigation - chat lives in rooms, not
+ * routes).
  */
 function ProjectChatCards({
 	projectId,
 	rooms,
+	groups,
 }: {
 	projectId: string;
 	rooms: ProjectChatRoomSummary[];
+	groups: readonly ProjectChatGroupSummary[];
 }) {
 	const { t } = useI18n();
 	const launchChat = useLaunchChat();
 	// Unread first, then server order (roster order, which is stable and matches
 	// the Team section above).
 	const sorted = [...rooms.filter((r) => r.unread), ...rooms.filter((r) => !r.unread)];
+	const sortedGroups = [...groups.filter((g) => g.unread), ...groups.filter((g) => !g.unread)];
 	return (
 		<div className="px-2.5 pt-2.5 pb-1" data-testid="project-sidebar-chat">
 			<div className="uppercase text-[11px] text-text-3 font-medium tracking-wide pb-1">
 				{t('chat.section.title')}
 			</div>
 			<div className="flex flex-col gap-1.5">
+				{sortedGroups.map((group) => {
+					const title = group.title?.trim() || t('chat.group.untitled');
+					return (
+						<button
+							key={group.id}
+							type="button"
+							data-testid={`chat-card-group-${group.id}`}
+							onClick={() =>
+								launchChat({
+									room: {
+										kind: 'group',
+										projectSlug: projectId,
+										conversationId: group.id,
+										title,
+										isGeneral: group.is_general,
+									},
+									draft: '',
+								})
+							}
+							className={`w-full rounded-md border px-2 py-1.5 text-left transition-colors hover:bg-surface-2 ${
+								group.unread ? 'border-border-strong' : 'border-border'
+							}`}
+						>
+							<span className="flex min-w-0 items-center gap-1.5">
+								<Users className="h-3 w-3 shrink-0 text-text-3" aria-hidden="true" />
+								<span className="truncate text-[12px] font-medium text-text-1">{title}</span>
+								{group.unread && (
+									<span
+										className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-info"
+										data-testid={`chat-card-group-unread-${group.id}`}
+										aria-label={t('chat.card.unread')}
+										role="img"
+									/>
+								)}
+							</span>
+							{group.unread && group.last_message_preview && (
+								<span className="mt-0.5 block truncate text-[11px] text-text-2">
+									{group.last_message_preview}
+								</span>
+							)}
+						</button>
+					);
+				})}
 				{sorted.map((room) => (
 					<button
 						key={room.member_id}

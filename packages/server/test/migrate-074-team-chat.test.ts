@@ -5,17 +5,24 @@ import { createDataPreservationHarness, type DataPreservationHarness } from './h
 const TARGET = '074_team_chat.sql';
 
 // Seeds two conversations at schema 073 - one with messages of every kind the
-// old CHECK admitted, one empty - applies the migration, and asserts: every
-// seeded row and its kind survived, `last_message_id` was backfilled to each
-// conversation's newest message (and left NULL on the empty one), the new
-// kinds insert while an unknown one still fails, the reads watermark table
-// accepts and upserts rows, and - the drift guard - every value of the shared
-// enum inserts, so the enum and the constraint cannot part ways silently.
+// old CHECK admitted, one empty - plus a member memory row, applies the
+// migration, and asserts: every seeded row, kind and memory survived,
+// `last_message_id` was backfilled to each conversation's newest message (and
+// left NULL on the empty one), the new kinds insert while an unknown one
+// still fails, the reads watermark table accepts and upserts rows, and - the
+// drift guard - every value of the shared enum inserts, so the enum and the
+// constraint cannot part ways silently. The Phase-2 half: the recreated
+// conversation-kind enum admits 'group' (memberless, one General per
+// project), participants dedupe and die with their room, and a memory row
+// carries exactly one scope.
 describe('074_team_chat migration', () => {
 	let h: DataPreservationHarness;
 	let conversationId: string;
 	let emptyConversationId: string;
 	let userId: string;
+	let teamId: string;
+	let projectId: string;
+	let memberId: string;
 	let seeded: string[];
 
 	beforeAll(async () => {
@@ -25,25 +32,30 @@ describe('074_team_chat migration', () => {
 		const team = await h.db.query<{ id: string }>(
 			`INSERT INTO teams (name, slug) VALUES ('HQ', 'hq-team') RETURNING id`,
 		);
-		const teamId = team.rows[0].id;
+		teamId = team.rows[0].id;
 		const project = await h.db.query<{ id: string }>(
 			`INSERT INTO projects (team_id, name, slug, task_prefix, is_internal)
 			 VALUES ($1, 'HQ', 'hq', 'HQ', true) RETURNING id`,
 			[teamId],
 		);
+		projectId = project.rows[0].id;
 		const member = await h.db.query<{ id: string }>(
 			`INSERT INTO members (team_id, member_type, display_name) VALUES ($1, 'agent', 'CEO') RETURNING id`,
 			[teamId],
 		);
+		memberId = member.rows[0].id;
 		const user = await h.db.query<{ id: string }>(
 			`INSERT INTO users (display_name, is_superuser) VALUES ('Operator', true) RETURNING id`,
 		);
 		userId = user.rows[0].id;
+		await h.db.query(`INSERT INTO chat_memories (member_id, content) VALUES ($1, 'the plan')`, [
+			memberId,
+		]);
 		const convo = async (): Promise<string> => {
 			const r = await h.db.query<{ id: string }>(
 				`INSERT INTO chat_conversations (member_id, team_id, project_id, channel)
 				 VALUES ($1, $2, $3, 'web') RETURNING id`,
-				[member.rows[0].id, teamId, project.rows[0].id],
+				[memberId, teamId, projectId],
 			);
 			return r.rows[0].id;
 		};
@@ -176,6 +188,113 @@ describe('074_team_chat migration', () => {
 			[task.rows[0].id],
 		);
 		expect(after.rows[0].origin).toBeNull();
+	});
+
+	it('keeps kinds and the default through the enum recreate, and admits memberless groups', async () => {
+		const kind = await h.db.query<{ kind: string }>(
+			`SELECT kind::text AS kind FROM chat_conversations WHERE id = $1`,
+			[conversationId],
+		);
+		expect(kind.rows[0].kind).toBe('assistant');
+		const dflt = await h.db.query<{ kind: string }>(
+			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel)
+			 VALUES ($1, $2, $3, 'web') RETURNING kind::text AS kind`,
+			[memberId, teamId, projectId],
+		);
+		expect(dflt.rows[0].kind).toBe('assistant');
+		const group = await h.db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (team_id, project_id, channel, kind, title)
+			 VALUES ($1, $2, 'web', 'group', 'Launch room') RETURNING id`,
+			[teamId, projectId],
+		);
+		expect(group.rows[0].id).toBeDefined();
+		// The scope CHECK: a memberless conversation is only legal as a group.
+		await expect(
+			h.db.query(
+				`INSERT INTO chat_conversations (team_id, project_id, channel) VALUES ($1, $2, 'web')`,
+				[teamId, projectId],
+			),
+		).rejects.toThrow();
+		// And an unknown kind still fails after the type swap.
+		await expect(
+			h.db.query(
+				`INSERT INTO chat_conversations (team_id, project_id, channel, kind) VALUES ($1, $2, 'web', 'party')`,
+				[teamId, projectId],
+			),
+		).rejects.toThrow();
+	});
+
+	it('enforces one General room per project', async () => {
+		await h.db.query(
+			`INSERT INTO chat_conversations (team_id, project_id, channel, kind, is_general, title)
+			 VALUES ($1, $2, 'web', 'group', true, 'General')`,
+			[teamId, projectId],
+		);
+		await expect(
+			h.db.query(
+				`INSERT INTO chat_conversations (team_id, project_id, channel, kind, is_general, title)
+				 VALUES ($1, $2, 'web', 'group', true, 'General')`,
+				[teamId, projectId],
+			),
+		).rejects.toThrow();
+	});
+
+	it('tracks participants per room, deduplicated, and gone with the room', async () => {
+		const room = await h.db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (team_id, project_id, channel, kind, title)
+			 VALUES ($1, $2, 'web', 'group', 'Standup') RETURNING id`,
+			[teamId, projectId],
+		);
+		const roomId = room.rows[0].id;
+		await h.db.query(
+			`INSERT INTO chat_conversation_participants (conversation_id, member_id) VALUES ($1, $2)`,
+			[roomId, memberId],
+		);
+		await expect(
+			h.db.query(
+				`INSERT INTO chat_conversation_participants (conversation_id, member_id) VALUES ($1, $2)`,
+				[roomId, memberId],
+			),
+		).rejects.toThrow();
+		await h.db.query(`DELETE FROM chat_conversations WHERE id = $1`, [roomId]);
+		const left = await h.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM chat_conversation_participants WHERE conversation_id = $1`,
+			[roomId],
+		);
+		expect(left.rows[0].n).toBe(0);
+	});
+
+	it('keeps member memories and admits room-scoped ones, exactly one scope each', async () => {
+		const kept = await h.db.query<{ content: string }>(
+			`SELECT content FROM chat_memories WHERE member_id = $1`,
+			[memberId],
+		);
+		expect(kept.rows[0].content).toBe('the plan');
+		const room = await h.db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (team_id, project_id, channel, kind, title)
+			 VALUES ($1, $2, 'web', 'group', 'Retro') RETURNING id`,
+			[teamId, projectId],
+		);
+		const roomId = room.rows[0].id;
+		await h.db.query(`INSERT INTO chat_memories (conversation_id, content) VALUES ($1, 'gist')`, [
+			roomId,
+		]);
+		await expect(
+			h.db.query(
+				`INSERT INTO chat_memories (member_id, conversation_id, content) VALUES ($1, $2, 'both')`,
+				[memberId, roomId],
+			),
+		).rejects.toThrow();
+		await expect(
+			h.db.query(`INSERT INTO chat_memories (content) VALUES ('neither')`),
+		).rejects.toThrow();
+		// Room memory dies with its room; the member row is untouched.
+		await h.db.query(`DELETE FROM chat_conversations WHERE id = $1`, [roomId]);
+		const gone = await h.db.query<{ n: number }>(
+			`SELECT COUNT(*)::int AS n FROM chat_memories WHERE conversation_id = $1`,
+			[roomId],
+		);
+		expect(gone.rows[0].n).toBe(0);
 	});
 
 	it('upserts the reads watermark only on real change', async () => {

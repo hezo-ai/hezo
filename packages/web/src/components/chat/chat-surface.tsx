@@ -3,6 +3,7 @@ import {
 	ChatMessageStatus,
 	ChatSystemMessageKind,
 	displayToolName,
+	extractActiveAgentMentionSlugs,
 	HQ_PROJECT_NAME,
 } from '@hezo/shared';
 import { Link } from '@tanstack/react-router';
@@ -51,6 +52,7 @@ import { HqContainerNotice } from '../hq-container-notice';
 import { MarkdownProse } from '../markdown-prose';
 import { RunLinkedText } from '../run-linked-text';
 import { Tooltip } from '../ui/tooltip';
+import { ConvertMessageDialog } from './convert-message-dialog';
 
 /**
  * System-message kinds rendered as a full-sentence row rather than a marker,
@@ -143,10 +145,17 @@ export function ChatSurface({
 		enqueue,
 		dequeue,
 		toolActivity,
+		participants,
+		pendingTurns,
+		cancelPendingTurn,
+		groupNudge,
+		conversationId,
 	} = useChat(active, room);
 	const { t } = useI18n();
 	// The room's own project scopes labels and uploads; the CEO scope is HQ.
-	const roomProjectMeta = useProjectMeta(room.kind === 'agent' ? room.projectSlug : '');
+	const isProjectRoom = room.kind === 'agent' || room.kind === 'group';
+	const roomProjectSlug = isProjectRoom ? room.projectSlug : null;
+	const roomProjectMeta = useProjectMeta(roomProjectSlug ?? '');
 	const hq = useHqProject();
 	const hqHealth = useContainerHealth(hq);
 	// A stopped HQ container is no blocker — sending a message lazy-starts it.
@@ -154,13 +163,15 @@ export function ChatSurface({
 	// container state. CEO-scope rooms only; a DM's capacity states surface as
 	// system rows in the thread instead.
 	const blockedHealth =
-		room.kind !== 'agent' && hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped'
+		!isProjectRoom && hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped'
 			? hqHealth
 			: null;
 	const [draft, setDraft] = useState('');
 	const [copied, setCopied] = useState(false);
 	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
-	const uploadAttachment = useUploadChatAttachment(room.kind === 'agent' ? room.projectSlug : null);
+	// The message the operator is converting into a task, while the dialog is up.
+	const [convertMessage, setConvertMessage] = useState<ChatMessage | null>(null);
+	const uploadAttachment = useUploadChatAttachment(roomProjectSlug);
 	const {
 		isDragActive,
 		visibleAttachments,
@@ -218,10 +229,20 @@ export function ChatSurface({
 	const convertedTask = thread?.converted_task ?? null;
 	const threadTitle = thread?.title?.trim() || t('chat.thread.untitled');
 
-	// Who the replying agent is, for the bubbles and the transcript labels.
+	// Who the replying agent is, for the bubbles and the transcript labels. A
+	// group room labels each reply by its own author instead (see labelFor).
 	const assistantLabel = room.kind === 'agent' ? room.title : 'CEO';
-	const assistantScope =
-		room.kind === 'agent' ? (roomProjectMeta?.name ?? room.projectSlug) : HQ_PROJECT_NAME;
+	const assistantScope = isProjectRoom
+		? (roomProjectMeta?.name ?? room.projectSlug)
+		: HQ_PROJECT_NAME;
+	// Group author lookup: the live roster first, then the label stored on the
+	// message (an agent since removed keeps the name the room saw).
+	const participantByMember = new Map(participants.map((p) => [p.member_id, p]));
+	const labelFor = (m: ChatMessage): string => {
+		if (room.kind !== 'group') return assistantLabel;
+		const p = m.author_member_id ? participantByMember.get(m.author_member_id) : undefined;
+		return p ? p.display_name || p.title : (m.author_label ?? t('chat.group.formerMember'));
+	};
 
 	// The room is busy from the moment a send leaves until its reply settles.
 	const busy = sending || streaming;
@@ -287,6 +308,28 @@ export function ChatSurface({
 			? (tail.suggested_replies ?? null)
 			: null;
 
+	// "Ask @x" handoff chips: teammates the latest group reply named. A chip
+	// only prefills the composer with the mention — the operator confirms by
+	// sending, which is what keeps handoffs loop-safe.
+	const tailAuthorSlug =
+		tail?.author_member_id != null
+			? participantByMember.get(tail.author_member_id)?.slug
+			: undefined;
+	const askChips =
+		room.kind === 'group' &&
+		!busy &&
+		pendingTurns.length === 0 &&
+		tail?.role === 'assistant' &&
+		tail.status === ChatMessageStatus.Complete
+			? extractActiveAgentMentionSlugs(tail.content).filter(
+					(slug) => slug !== tailAuthorSlug && participants.some((p) => p.slug === slug),
+				)
+			: [];
+	const askTeammate = (slug: string) => {
+		setDraft((prev) => (prev.trim() === '' ? `@${slug} ` : `${prev} @${slug} `));
+		inputRef.current?.focus();
+	};
+
 	// Copy the whole conversation as plain text, each turn labelled by speaker.
 	const copyConversation = async () => {
 		const transcript = messages
@@ -294,7 +337,7 @@ export function ChatSurface({
 			.map((m) => {
 				const speaker =
 					m.role === 'assistant'
-						? `${assistantLabel} · ${assistantScope}`
+						? `${labelFor(m)} · ${assistantScope}`
 						: m.role === 'system'
 							? 'System'
 							: 'You';
@@ -362,7 +405,9 @@ export function ChatSurface({
 									<p className="px-1 py-6 text-center text-[13px] text-text-2">
 										{room.kind === 'agent'
 											? t('chat.empty.agent', { name: room.title })
-											: t('chat.empty.ceo')}
+											: room.kind === 'group'
+												? t('chat.empty.group')
+												: t('chat.empty.ceo')}
 									</p>
 								))}
 							{loaded && compactedCount > 0 && (
@@ -383,13 +428,51 @@ export function ChatSurface({
 								<MessageBubble
 									key={m.id}
 									message={m}
-									assistantLabel={assistantLabel}
+									assistantLabel={labelFor(m)}
 									assistantScope={assistantScope}
-									projectSlug={room.kind === 'agent' ? room.projectSlug : hq?.slug}
+									projectSlug={roomProjectSlug ?? hq?.slug}
 									convertedTask={convertedTask}
 									toolActivity={toolActivity}
+									onConvert={
+										!composerLocked &&
+										m.role !== 'system' &&
+										m.status === ChatMessageStatus.Complete &&
+										m.content.trim().length > 0
+											? () => setConvertMessage(m)
+											: undefined
+									}
 								/>
 							))}
+							{room.kind === 'group' && pendingTurns.length > 0 && (
+								<PendingTurnsStrip pending={pendingTurns} onCancel={cancelPendingTurn} />
+							)}
+							{room.kind === 'group' && groupNudge && pendingTurns.length === 0 && (
+								<div
+									data-testid="chat-group-nudge"
+									className="flex items-center gap-2 px-1 py-1 text-[11px] text-text-3"
+								>
+									<span className="h-px flex-1 bg-border" />
+									<span className="inline-flex shrink-0 items-center rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
+										{t('chat.group.nudge')}
+									</span>
+									<span className="h-px flex-1 bg-border" />
+								</div>
+							)}
+							{askChips.length > 0 && (
+								<div className="flex flex-wrap justify-end gap-1.5" data-testid="chat-ask-chips">
+									{askChips.map((slug) => (
+										<button
+											key={slug}
+											type="button"
+											data-testid="chat-ask-chip"
+											onClick={() => askTeammate(slug)}
+											className="rounded-full border border-border px-3 py-1.5 text-[12px] text-text-2 hover:border-border-strong hover:text-text-1 transition-colors"
+										>
+											{t('chat.group.ask', { slug: `@${slug}` })}
+										</button>
+									))}
+								</div>
+							)}
 							{queue.length > 0 && <QueuedMessages queue={queue} onRemove={dequeue} />}
 							{suggestedReplies && suggestedReplies.length > 0 && (
 								<div
@@ -502,7 +585,9 @@ export function ChatSurface({
 														? 'Queue your next message…'
 														: room.kind === 'agent'
 															? t('chat.composer.agentPlaceholder', { name: room.title })
-															: 'Ask the CEO anything, across every project…'
+															: room.kind === 'group'
+																? t('chat.composer.groupPlaceholder')
+																: 'Ask the CEO anything, across every project…'
 									}
 									data-testid="chat-input"
 									className="max-h-32 min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
@@ -553,7 +638,59 @@ export function ChatSurface({
 					</FileDropZone>
 				)}
 			</div>
+
+			{convertMessage && (
+				<ConvertMessageDialog
+					room={room}
+					conversationId={room.kind === 'group' ? room.conversationId : (conversationId ?? null)}
+					message={convertMessage}
+					participants={participants}
+					onClose={() => setConvertMessage(null)}
+				/>
+			)}
 		</>
+	);
+}
+
+/**
+ * The replies still queued behind the latest group message: one cancellable
+ * chip per agent, in the order they will speak. Server state, mirrored from
+ * the pending-turns broadcasts — cancelling asks the server and the strip
+ * updates when the queue actually changes.
+ */
+function PendingTurnsStrip({
+	pending,
+	onCancel,
+}: {
+	pending: readonly import('../../hooks/use-chat').GroupPendingTurn[];
+	onCancel: (memberId: string) => void;
+}) {
+	const { t } = useI18n();
+	return (
+		<div className="flex flex-col gap-1.5" data-testid="chat-pending-turns">
+			<span className="text-eyebrow px-1 text-text-3">{t('chat.group.pendingLabel')}</span>
+			<div className="flex flex-wrap gap-1.5">
+				{pending.map((turn) => (
+					<span
+						key={turn.memberId}
+						data-testid="chat-pending-turn"
+						className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[12px] text-text-2"
+					>
+						<Dots />
+						{turn.label}
+						<button
+							type="button"
+							onClick={() => onCancel(turn.memberId)}
+							aria-label={t('chat.group.cancelTurn', { name: turn.label })}
+							data-testid="chat-pending-turn-cancel"
+							className="flex h-4 w-4 items-center justify-center rounded-full text-text-3 hover:text-text-1"
+						>
+							<X className="h-3 w-3" />
+						</button>
+					</span>
+				))}
+			</div>
+		</div>
 	);
 }
 
@@ -643,6 +780,7 @@ function MessageBubble({
 	projectSlug,
 	convertedTask,
 	toolActivity,
+	onConvert,
 }: {
 	message: ChatMessage;
 	/** Who the replying agent is in this room ("CEO", or the agent's title). */
@@ -655,6 +793,8 @@ function MessageBubble({
 	convertedTask?: ChatConvertedTaskRef | null;
 	/** Tool the in-flight reply is working with; only ever set on the streaming row. */
 	toolActivity?: string | null;
+	/** Opens the convert-to-task dialog for this message; absent when it cannot convert. */
+	onConvert?: () => void;
 }) {
 	const isAssistant = message.role === 'assistant';
 	const interrupted = message.status === ChatMessageStatus.Interrupted;
@@ -742,7 +882,10 @@ function MessageBubble({
 				</div>
 				{streaming && <StreamingDots label={assistantLabel} tool={toolActivity} />}
 				{!streaming && message.content.length > 0 && (
-					<MessageCopyButton text={message.content} align="start" />
+					<span className="flex items-center gap-0.5 self-start">
+						<MessageCopyButton text={message.content} align="start" />
+						{onConvert && <MessageConvertButton onConvert={onConvert} />}
+					</span>
 				)}
 			</div>
 		);
@@ -763,7 +906,12 @@ function MessageBubble({
 			{message.attachments && message.attachments.length > 0 && (
 				<SentAttachments attachments={message.attachments} projectSlug={projectSlug} />
 			)}
-			{message.content.length > 0 && <MessageCopyButton text={message.content} align="end" />}
+			{message.content.length > 0 && (
+				<span className="flex items-center gap-0.5 self-end">
+					{onConvert && <MessageConvertButton onConvert={onConvert} />}
+					<MessageCopyButton text={message.content} align="end" />
+				</span>
+			)}
 		</div>
 	);
 }
@@ -819,6 +967,27 @@ function SentAttachments({
 				),
 			)}
 		</div>
+	);
+}
+
+/**
+ * The per-message convert affordance, beside the copy button: one message
+ * becomes one task, and the conversation survives. The dialog does the rest.
+ */
+function MessageConvertButton({ onConvert }: { onConvert: () => void }) {
+	const { t } = useI18n();
+	return (
+		<Tooltip content={t('chat.convert.action')} side="top">
+			<button
+				type="button"
+				onClick={onConvert}
+				aria-label={t('chat.convert.action')}
+				data-testid="chat-message-convert"
+				className="flex h-6 w-6 items-center justify-center rounded-md text-text-3 opacity-100 transition-opacity hover:bg-surface-2 hover:text-text-1 focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 group-hover:opacity-100"
+			>
+				<SquareCheckBig className="h-3 w-3" />
+			</button>
+		</Tooltip>
 	);
 }
 

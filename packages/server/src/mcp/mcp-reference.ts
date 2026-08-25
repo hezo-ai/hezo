@@ -267,8 +267,8 @@ export const TOOL_DOC_META: Record<string, ToolDocMeta> = {
 	update_chat_memory: {
 		category: 'Agent prompts & context',
 		returns:
-			"`{ written: true, updated_at }`. Overwrites the calling agent's long-term chat memory wholesale (no append; no revision history).",
-		auth: 'An agent updating its own memory only.',
+			"`{ written: true, updated_at }`, or `{ error }` when `conversation` is not a group room the caller participates in. Overwrites the calling agent's long-term chat memory wholesale (no append) - or, with `conversation`, that group room's shared memory. Member memory keeps revision history; room memory does not.",
+		auth: "An agent updating its own memory, or the shared memory of a group room it participates in (its own team's only).",
 	},
 	get_agent_system_prompt: {
 		category: 'Agent prompts & context',

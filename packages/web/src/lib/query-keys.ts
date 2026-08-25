@@ -70,6 +70,8 @@ export const queryKeys = {
 	],
 	/** The list of CEO chat conversation threads (the switcher). */
 	chatConversations: () => ['chat', 'conversations'],
+	/** The caller's HQ ui-state settings blob (home of the landing preference). */
+	landingPreference: () => ['ui-state', 'landing'],
 	/** A project's DM room list (menu chat cards + dock switcher), by route slug. */
 	projectChatRooms: (projectId: string) => ['projects', projectId, 'chat', 'rooms'],
 	/** One agent DM's history, keyed by route slugs so socket invalidation matches. */
@@ -79,6 +81,14 @@ export const queryKeys = {
 		'chat',
 		'agents',
 		agentSlug,
+	],
+	/** One group room's history. Rooms have no slug; the conversation id is their identity. */
+	groupChatRoom: (projectId: string, conversationId: string) => [
+		'projects',
+		projectId,
+		'chat',
+		'groups',
+		conversationId,
 	],
 	/** Global full-text search (Cmd/Ctrl+K palette), keyed by query + scope. */
 	search: (q: string, scope: string) => ['search', q, scope],

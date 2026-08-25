@@ -14,8 +14,9 @@ have a project spun up, or talk a piece of work through with the teammate who ow
 
 Chat opens in the **dock** - a compact panel anchored to the bottom-right corner (near
 full-screen on a phone). The dropdown at the top of the dock switches rooms: the CEO
-is pinned on top, the current project's agents follow, then conversations from
-connected chat apps and, under **History**, closed conversations that remain readable.
+is pinned on top, the current project's agents follow, then the project's **group
+rooms**, conversations from connected chat apps and, under **History**, closed
+conversations that remain readable.
 
 ## Chat thinks, tasks work
 
@@ -42,6 +43,9 @@ stay readable under **History** in the room switcher.
 The CEO works across every project: it can answer for the whole org, file tasks into
 any project, and set up new projects with you. On a fresh instance, the home page IS
 the CEO conversation - tell it what you want to build and it takes it from there.
+Once projects exist the home page becomes the dashboard; if you'd rather keep landing
+in the chat (or pin the dashboard outright), set **Landing view** under
+**Settings → Appearance**.
 
 ## Talking to a project agent
 
@@ -51,6 +55,38 @@ project. A DM is one continuous conversation per agent. Agents answer questions,
 discuss approach and coordinate; anything needing a run becomes a task on the project,
 with the same receipts as above. An unread reply marks the agent's card and shows a
 one-line preview.
+
+## Group rooms
+
+A **group room** puts you and several project agents in one conversation. Every
+project has a built-in **General** room that always contains the whole roster (it
+follows hires and departures on its own, and can be renamed but not closed), and the
+**+** beside the dock's room switcher creates rooms of your own - pick a name and the
+teammates in it.
+
+Who replies is always your call:
+
+- **Mention someone** - `@designer` - and they reply. Mention several and they reply
+  one at a time, in the order you named them (at most three per message); the queue
+  shows as chips you can cancel before a reply starts.
+- **Mention nobody** and the last teammate who spoke replies - the conversation stays
+  with whoever you were already talking to. Before anyone has spoken, an untagged
+  message just posts, with a hint to tag someone.
+- **Agents never trigger each other.** A reply that says a teammate should weigh in
+  grows an **Ask @name** chip - tapping it drafts the mention for you, and nothing is
+  sent until you send it.
+
+A room keeps its own shared memory of settled decisions, maintained automatically the
+same way the CEO's is. It belongs to the room: nothing from any agent's private DM
+memory appears there, and room chatter is never folded into a DM memory.
+
+## Turning a message into a task
+
+Any message in a DM, group room or the CEO chat can become a task: the convert button
+beside the message opens a small dialog with the title filled in. In a DM the task
+defaults to that agent; in a group room to the Captain, who triages; from the CEO
+chat you pick the project. The conversation stays exactly as it was, and the usual
+receipts (created, completed, blocked) flow back into it.
 
 ## Suggested replies
 

@@ -4,6 +4,8 @@ import {
 	type ChatMessageRole,
 	ChatMessageStatus,
 	type ChatSystemMessageKind,
+	type WsChatGroupPendingTurn,
+	type WsChatGroupPendingTurnsMessage,
 	type WsChatMessageCompleteMessage,
 	type WsChatMessageDeltaMessage,
 	type WsChatMessageStartMessage,
@@ -28,11 +30,20 @@ import { toast } from './use-toast';
  *   external DM, or a read-only team channel.
  * - `agent` — a project agent's DM, addressed by project + agent slug the way
  *   every project surface is.
+ * - `group` — a project group room (several agents, mention-driven turns).
+ *   Rooms have no slug, so the conversation id is their identity.
  */
 export type ChatRoom =
 	| { kind: 'ceo' }
 	| { kind: 'thread'; id: string }
-	| { kind: 'agent'; projectSlug: string; agentSlug: string; title: string };
+	| { kind: 'agent'; projectSlug: string; agentSlug: string; title: string }
+	| {
+			kind: 'group';
+			projectSlug: string;
+			conversationId: string;
+			title: string;
+			isGeneral?: boolean;
+	  };
 
 export const CEO_ROOM: ChatRoom = { kind: 'ceo' };
 
@@ -40,6 +51,7 @@ export const CEO_ROOM: ChatRoom = { kind: 'ceo' };
 export function chatRoomKey(room: ChatRoom): string {
 	if (room.kind === 'ceo') return 'ceo';
 	if (room.kind === 'thread') return `thread:${room.id}`;
+	if (room.kind === 'group') return `group:${room.projectSlug}:${room.conversationId}`;
 	return `agent:${room.projectSlug}:${room.agentSlug}`;
 }
 
@@ -58,6 +70,8 @@ export interface ChatMessage {
 	error?: string | null;
 	/** The replying agent, on assistant rows — drives the author label. */
 	author_member_id?: string | null;
+	/** Denormalized author name on group replies — the label the room saw at the time. */
+	author_label?: string | null;
 	/** Up to three one-tap replies the agent offered with this reply. */
 	suggested_replies?: string[] | null;
 }
@@ -67,6 +81,10 @@ interface ConversationData {
 	messages: ChatMessage[];
 	/** How many older messages have been compacted into long-term memory. */
 	compacted_count: number;
+	/** Group rooms only: the room's own metadata and roster. */
+	title?: string | null;
+	is_general?: boolean;
+	participants?: GroupParticipant[];
 }
 
 /**
@@ -168,7 +186,12 @@ export function readStoredRoom(): ChatRoom | undefined {
 		const raw = localStorage.getItem(CHAT_ROOM_KEY);
 		if (!raw) return undefined;
 		const parsed = JSON.parse(raw) as ChatRoom;
-		if (parsed && (parsed.kind === 'thread' || parsed.kind === 'agent')) return parsed;
+		if (
+			parsed &&
+			(parsed.kind === 'thread' || parsed.kind === 'agent' || parsed.kind === 'group')
+		) {
+			return parsed;
+		}
 		return undefined;
 	} catch {
 		return undefined;
@@ -223,6 +246,31 @@ export interface ProjectChatRoomSummary {
 	unread: boolean;
 }
 
+/** One participant of a group room (also the author-label lookup for its bubbles). */
+export interface GroupParticipant {
+	member_id: string;
+	slug: string;
+	title: string;
+	display_name: string;
+}
+
+/** One group room row in a project's room list. The built-in General room leads. */
+export interface ProjectChatGroupSummary {
+	id: string;
+	title: string | null;
+	is_general: boolean;
+	last_activity_at: string | null;
+	last_message_id: string | null;
+	last_message_preview: string | null;
+	last_message_role: string | null;
+	last_message_author: string | null;
+	unread: boolean;
+	participants: GroupParticipant[];
+}
+
+/** A reply still queued behind a group message (the pending strip's chips). */
+export type GroupPendingTurn = WsChatGroupPendingTurn;
+
 /**
  * The CEO-scope conversation list: the live stream, external DMs, team
  * channels, and closed threads (History). Refetched on conversation-updated
@@ -264,9 +312,10 @@ export function useProjectChatRooms(projectSlug: string | null | undefined, acti
 	const query = useQuery({
 		queryKey: queryKeys.projectChatRooms(projectSlug ?? ''),
 		queryFn: () =>
-			api.get<{ conversations: ProjectChatRoomSummary[] }>(
-				`/api/projects/${projectSlug}/chat/conversations`,
-			),
+			api.get<{
+				conversations: ProjectChatRoomSummary[];
+				groups?: ProjectChatGroupSummary[];
+			}>(`/api/projects/${projectSlug}/chat/conversations`),
 		enabled,
 	});
 	// Any boundary event for one of this project's conversations changes its
@@ -286,13 +335,20 @@ export function useProjectChatRooms(projectSlug: string | null | undefined, acti
 	}, [enabled, projectSlug, subscribe, queryClient]);
 	return {
 		rooms: query.data?.conversations ?? [],
+		groups: query.data?.groups ?? EMPTY_GROUPS,
 		loaded: !query.isPending,
 	};
 }
 
+/** Stable identity for "no groups" so it never re-triggers effects. */
+const EMPTY_GROUPS: readonly ProjectChatGroupSummary[] = Object.freeze([]);
+
 function conversationUrl(room: ChatRoom): string {
 	if (room.kind === 'agent') {
 		return `/api/projects/${encodeURIComponent(room.projectSlug)}/chat/agents/${encodeURIComponent(room.agentSlug)}/conversation`;
+	}
+	if (room.kind === 'group') {
+		return `/api/projects/${encodeURIComponent(room.projectSlug)}/chat/groups/${encodeURIComponent(room.conversationId)}`;
 	}
 	if (room.kind === 'thread') {
 		return `/api/chat/conversation?conversation_id=${encodeURIComponent(room.id)}`;
@@ -301,9 +357,9 @@ function conversationUrl(room: ChatRoom): string {
 }
 
 function roomQueryKey(room: ChatRoom): readonly unknown[] {
-	return room.kind === 'agent'
-		? queryKeys.agentChatRoom(room.projectSlug, room.agentSlug)
-		: queryKeys.chatConversation(room.kind === 'thread' ? room.id : undefined);
+	if (room.kind === 'agent') return queryKeys.agentChatRoom(room.projectSlug, room.agentSlug);
+	if (room.kind === 'group') return queryKeys.groupChatRoom(room.projectSlug, room.conversationId);
+	return queryKeys.chatConversation(room.kind === 'thread' ? room.id : undefined);
 }
 
 /**
@@ -320,7 +376,9 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	const queryClient = useQueryClient();
 	// The server-resolved id of the conversation this hook is showing. Used to
 	// filter WS events so another room's stream never lands in this cache entry.
-	const resolvedIdRef = useRef<string | null>(room.kind === 'thread' ? room.id : null);
+	const resolvedIdRef = useRef<string | null>(
+		room.kind === 'thread' ? room.id : room.kind === 'group' ? room.conversationId : null,
+	);
 	// In-flight send: the user's messages are shown optimistically (with a pending
 	// assistant placeholder) while the server warms the container, so the operator
 	// gets immediate feedback instead of a blank. Cleared when the real user
@@ -337,9 +395,23 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	const [toolActivity, setToolActivity] = useState<{ messageId: string; tool: string } | null>(
 		null,
 	);
+	// Group rooms: the replies still queued behind the latest message (the
+	// pending strip), fed by the server's pending-turns broadcasts.
+	const [pendingTurns, setPendingTurns] = useState<GroupPendingTurn[]>([]);
+	// Group rooms: the last send summoned nobody (no mention, no locus) — the
+	// local nudge to tag a teammate. Never a server round trip.
+	const [groupNudge, setGroupNudge] = useState(false);
 	const queueKey = chatRoomKey(room);
 	const queue = queues[queueKey] ?? EMPTY_QUEUE;
 	const queryKey = roomQueryKey(room);
+
+	// Room-scoped transient state: a switched-to room starts with no strip and
+	// no nudge — both belong to the room they happened in.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset on room identity change
+	useEffect(() => {
+		setPendingTurns([]);
+		setGroupNudge(false);
+	}, [queueKey]);
 
 	const query = useQuery({
 		queryKey,
@@ -349,7 +421,9 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		refetchOnWindowFocus: false,
 	});
 	// Track the server-resolved conversation id so WS events can be filtered.
-	resolvedIdRef.current = query.data?.conversation_id ?? (room.kind === 'thread' ? room.id : null);
+	resolvedIdRef.current =
+		query.data?.conversation_id ??
+		(room.kind === 'thread' ? room.id : room.kind === 'group' ? room.conversationId : null);
 
 	// Join the resolved conversation's own room: streaming deltas go ONLY there
 	// (signal rooms carry boundary events for lists and badges), so an open room
@@ -463,12 +537,20 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 			if (!forThisRoom(m.conversationId)) return;
 			queryClient.invalidateQueries({ queryKey });
 		});
+		// Group rooms: the server's pending-turn queue, replacing the strip whole
+		// each time it changes so every open view of the room agrees.
+		const offPending = subscribe(WsMessageType.ChatGroupPendingTurns, (raw) => {
+			const m = raw as WsChatGroupPendingTurnsMessage;
+			if (!forThisRoom(m.conversationId)) return;
+			setPendingTurns(m.pending);
+		});
 		return () => {
 			offStart();
 			offDelta();
 			offToolActivity();
 			offComplete();
 			offCompacted();
+			offPending();
 		};
 	}, [subscribe, queryClient, queueKey]);
 
@@ -488,10 +570,24 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 					body,
 				);
 			}
+			if (room.kind === 'group') {
+				return api.post<{ pending_member_ids: string[] }>(
+					`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/groups/${encodeURIComponent(room.conversationId)}/messages`,
+					body,
+				);
+			}
 			return api.post('/api/chat/messages', {
 				...body,
 				...(room.kind === 'thread' ? { conversation_id: room.id } : {}),
 			});
+		},
+		onSuccess: (data) => {
+			// A group send that summoned nobody (no mention, no locus) gets the
+			// local "tag a teammate" nudge; anything else clears it.
+			if (room.kind === 'group') {
+				const pendingIds = (data as { pending_member_ids?: string[] })?.pending_member_ids;
+				setGroupNudge(Array.isArray(pendingIds) && pendingIds.length === 0);
+			}
 		},
 		onError: (error: { message?: string }) => {
 			toast.error(error?.message ?? 'Failed to send message');
@@ -502,9 +598,24 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		onSettled: () => setPending(null),
 	});
 
+	// Cancel one still-queued group reply (a chip on the pending strip). The
+	// server broadcasts the updated queue, which is what removes the chip - a
+	// security-irrelevant but server-owned state, so no optimistic removal.
+	const cancelTurnMutation = useMutation({
+		mutationFn: (memberId: string) => {
+			if (room.kind !== 'group') return Promise.resolve({});
+			return api.post(
+				`/api/projects/${encodeURIComponent(room.projectSlug)}/chat/groups/${encodeURIComponent(room.conversationId)}/cancel-turn`,
+				{ member_id: memberId },
+			);
+		},
+	});
+
 	const serverMessages = query.data?.messages ?? [];
 	// Append the optimistic user bubbles + a pending assistant "thinking"
-	// placeholder while a send is in flight.
+	// placeholder while a send is in flight. A group room skips the assistant
+	// placeholder: who replies (or that nobody does) is the server's call, and
+	// the pending strip is that answer.
 	const messages: ChatMessage[] =
 		pending !== null
 			? [
@@ -518,14 +629,18 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 						created_at: pending.at,
 						attachments: m.attachments,
 					})),
-					{
-						id: 'optimistic-assistant',
-						role: 'assistant' as ChatMessageRole,
-						channel: 'web' as ChatChannel,
-						status: 'streaming' as ChatMessageStatus,
-						content: '',
-						created_at: pending.at,
-					},
+					...(room.kind === 'group'
+						? []
+						: [
+								{
+									id: 'optimistic-assistant',
+									role: 'assistant' as ChatMessageRole,
+									channel: 'web' as ChatChannel,
+									status: 'streaming' as ChatMessageStatus,
+									content: '',
+									created_at: pending.at,
+								},
+							]),
 				]
 			: serverMessages;
 	const streaming = messages.some((m) => m.role === 'assistant' && m.status === 'streaming');
@@ -535,6 +650,7 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	const sendBatch = useCallback(
 		(batch: OutboundChatMessage[]) => {
 			if (batch.length === 0) return Promise.resolve();
+			setGroupNudge(false);
 			setPending({ at: new Date().toISOString(), messages: batch });
 			return mutateAsync(batch);
 		},
@@ -610,5 +726,16 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		conversationId: query.data?.conversation_id ?? undefined,
 		// >0 once older messages have been compacted into long-term memory.
 		compactedCount: query.data?.compacted_count ?? 0,
+		// Group rooms: the roster (author-label lookup), the pending strip, its
+		// cancel, and the local "tag a teammate" nudge. Inert everywhere else.
+		participants: query.data?.participants ?? EMPTY_PARTICIPANTS,
+		pendingTurns,
+		cancelPendingTurn: (memberId: string) => {
+			cancelTurnMutation.mutate(memberId);
+		},
+		groupNudge,
 	};
 }
+
+/** Stable identity for "no participants" so it never re-triggers effects. */
+const EMPTY_PARTICIPANTS: readonly GroupParticipant[] = Object.freeze([]);

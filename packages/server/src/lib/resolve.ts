@@ -4,6 +4,15 @@ import type { AuthInfo } from './types';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Is this string shaped like a UUID? The guard callers apply before binding an
+ * externally supplied id to a uuid column, where a non-UUID would surface as an
+ * opaque "invalid input syntax for type uuid" internal error.
+ */
+export function isUuid(value: string): boolean {
+	return UUID_RE.test(value);
+}
+
 export async function resolveActorMemberId(
 	db: Db,
 	auth: AuthInfo,

@@ -12,6 +12,7 @@ import { Card } from '../../components/ui/card';
 import { RelativeTime } from '../../components/ui/relative-time';
 import { useAllAdminMentions } from '../../hooks/use-admin-mentions';
 import { type Approval, useAllApprovals } from '../../hooks/use-approvals';
+import { useLandingPreference } from '../../hooks/use-landing-preference';
 import { useProjectIntake } from '../../hooks/use-project-intake';
 import { type ProjectWithTeam, useAllVisibleProjects } from '../../hooks/use-projects';
 import { agentAvatarUrl } from '../../lib/agent-avatar';
@@ -366,6 +367,7 @@ function ProjectsDashboard({
 function HomePage() {
 	const { projects, isLoading: projectsLoading } = useAllVisibleProjects();
 	const [createOpen, setCreateOpen] = useState(false);
+	const { preference: landingPreference, loaded: landingLoaded } = useLandingPreference();
 
 	const projectSlugs = projects.map((p) => p.slug);
 	const { data: approvals } = useAllApprovals(projectSlugs);
@@ -399,6 +401,11 @@ function HomePage() {
 	const hasProject = projects.length > 0;
 	const hasIntake = !!intake;
 	const showWelcome = !hasProject && !hasIntake;
+	// The per-user preference pins one side of the adaptive transition: 'chat'
+	// keeps the full-page CEO room after projects exist; 'dashboard'/'adaptive'
+	// keep the shipped behaviour (the fresh instance still lands in the chat -
+	// an empty dashboard helps nobody).
+	const chatLanding = showWelcome || (landingLoaded && landingPreference === 'chat');
 
 	return (
 		<div className="max-w-7xl mx-auto w-full px-4 py-4 md:px-6 md:py-5 lg:px-8 lg:py-6">
@@ -406,7 +413,7 @@ function HomePage() {
 				<h1 className="text-[22px] md:text-[28px] font-semibold tracking-[-0.02em]">Home</h1>
 			</div>
 
-			{showWelcome && <CeoLandingChat onCreateProject={() => setCreateOpen(true)} />}
+			{chatLanding && <CeoLandingChat onCreateProject={() => setCreateOpen(true)} />}
 
 			{hasIntake && intake && (
 				<div className="mb-6" data-testid="home-project-intake-section">
@@ -414,7 +421,7 @@ function HomePage() {
 				</div>
 			)}
 
-			{hasProject && (
+			{hasProject && !chatLanding && (
 				<>
 					<NeedsYouSection projectSlugs={projectSlugs} />
 					{projectsLoading ? (

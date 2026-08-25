@@ -1,19 +1,26 @@
 import {
 	ATTACHMENT_MAX_BYTES,
 	AuthType,
+	CAPTAIN_AGENT_SLUG,
 	CHAT_UPLOADS_FOLDER,
 	ChatChannel,
 	ChatConversationKind,
+	ChatMessageRole,
+	ChatSystemMessageKind,
 	DEFAULT_TEAM_ID,
 } from '@hezo/shared';
 import { type Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Db } from '../db/database';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
+import { isUuid, resolveProject } from '../lib/resolve';
 import { err, ok } from '../lib/response';
 import type { Env } from '../lib/types';
 import { requireAdminEquivalent, requireTeamAccessForResource } from '../middleware/auth';
+import { postChatSystemMessage } from '../services/chat-breadcrumbs';
+import { CreateTaskError, createTask } from '../services/tasks';
 import { readUploadForm, storeUploadedAsset } from './assets';
+import { buildCreateTaskCaller } from './tasks';
 
 export const chatRoutes = new Hono<Env>();
 
@@ -350,6 +357,122 @@ chatRoutes.post('/chat/conversations/:id/read', async (c) => {
 		[auth.userId, id, lastRead],
 	);
 	return ok(c, { read: true });
+});
+
+/** Bound on the convert preamble's quoted message; the origin breadcrumb links the rest. */
+const CONVERT_MESSAGE_MAX_BYTES = 16 * 1024;
+
+/**
+ * Title + description for a task converted from one chat message: the explicit
+ * title, else the message's first line; the description quotes the message
+ * (bounded) under a short preamble. Shared by the project-chat and CEO
+ * converts so the two produce identical tasks.
+ */
+export function deriveConvertTaskFields(
+	message: { content: string; role: string; author_label: string | null },
+	bodyTitle: unknown,
+): { title: string; description: string } | null {
+	const content = message.content;
+	const firstLine = content.split('\n')[0]?.trim() ?? '';
+	const title =
+		typeof bodyTitle === 'string' && bodyTitle.trim() !== ''
+			? bodyTitle.trim()
+			: firstLine.length > 80
+				? `${firstLine.slice(0, 79)}…`
+				: firstLine;
+	if (!title) return null;
+	const speaker =
+		message.role === ChatMessageRole.User ? 'Operator' : (message.author_label ?? 'Agent');
+	const quoted =
+		Buffer.byteLength(content, 'utf8') > CONVERT_MESSAGE_MAX_BYTES
+			? `${content.slice(0, CONVERT_MESSAGE_MAX_BYTES)}\n\n[Message truncated]`
+			: content;
+	return {
+		title,
+		description: `This task was created from a chat message.\n\n---\n\n${speaker}: ${quoted}`,
+	};
+}
+
+// Convert one CEO-chat message into a task in any project the caller can
+// reach. The CEO stream spans every project, so the target arrives explicitly
+// (the picker); authorization runs against the TARGET team, not just HQ.
+// Assignee defaults to that project's Captain. The stream survives - this is
+// the message-level convert, not the old close-the-thread conversion.
+chatRoutes.post('/chat/conversations/:id/convert-message', async (c) => {
+	const access = await authorize(c);
+	if (access instanceof Response) return access;
+	const manager = c.get('chatSessionManager');
+	if (!manager) return err(c, 'UNAVAILABLE', 'CEO chat is not available', 503);
+	const db = c.get('db');
+	const conversationId = c.req.param('id');
+	const convo = await manager.getConversation(conversationId);
+	if (!convo || convo.team_id !== DEFAULT_TEAM_ID) {
+		return err(c, 'NOT_FOUND', 'conversation not found', 404);
+	}
+
+	const body = await c.req.json().catch(() => ({}));
+	const messageId = typeof body.message_id === 'string' ? body.message_id : '';
+	if (!isUuid(messageId)) return err(c, 'BAD_REQUEST', 'message_id is required', 400);
+	const message = await db.query<{ content: string; role: string; author_label: string | null }>(
+		`SELECT content, role::text AS role, author_label FROM chat_messages
+		 WHERE id = $1 AND conversation_id = $2`,
+		[messageId, conversationId],
+	);
+	if (!message.rows[0]) return err(c, 'BAD_REQUEST', 'message not in this conversation', 400);
+
+	const projectRef = typeof body.project === 'string' ? body.project : '';
+	if (!projectRef) return err(c, 'BAD_REQUEST', 'project is required', 400);
+	const target = await resolveProject(db, projectRef);
+	if (!target) return err(c, 'NOT_FOUND', 'project not found', 404);
+	const targetAccess = await requireTeamAccessForResource(db, c, target.teamId);
+	if (targetAccess instanceof Response) return targetAccess;
+
+	const fields = deriveConvertTaskFields(message.rows[0], body.title);
+	if (!fields) return err(c, 'BAD_REQUEST', 'A task title is required', 400);
+	const assigneeSlug =
+		typeof body.assignee_slug === 'string' && body.assignee_slug !== ''
+			? body.assignee_slug
+			: CAPTAIN_AGENT_SLUG;
+
+	const caller = await buildCreateTaskCaller(c, target.teamId);
+	let task: Awaited<ReturnType<typeof createTask>>;
+	try {
+		task = await createTask(
+			db,
+			target.teamId,
+			{
+				project_id: target.projectId,
+				title: fields.title,
+				description: fields.description,
+				assignee_slug: assigneeSlug,
+			},
+			caller,
+			c.get('wsManager'),
+			c.get('events'),
+		);
+	} catch (e) {
+		if (e instanceof CreateTaskError) {
+			const status = e.code === 'NOT_FOUND' ? 404 : e.code === 'FORBIDDEN' ? 403 : 400;
+			return err(c, e.code, e.message, status);
+		}
+		throw e;
+	}
+	await db.query(`UPDATE tasks SET origin_chat_conversation_id = $2 WHERE id = $1`, [
+		task.id,
+		conversationId,
+	]);
+	const projectName = await db.query<{ name: string }>(`SELECT name FROM projects WHERE id = $1`, [
+		target.projectId,
+	]);
+	const where = projectName.rows[0]?.name ? ` in ${projectName.rows[0].name}` : '';
+	await postChatSystemMessage(
+		db,
+		c.get('wsManager'),
+		conversationId,
+		ChatSystemMessageKind.TaskCreated,
+		`Created task ${task.identifier}${where}: ${fields.title}`,
+	);
+	return ok(c, task, 201);
 });
 
 chatRoutes.post('/chat/session/restart', async (c) => {

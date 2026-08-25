@@ -144,6 +144,12 @@ describe('message catalogs', () => {
 		'settings.groups.maintenance': ['fr'],
 		'settings.instance': ['fr'],
 		'taskView.conversation': ['fr'],
+		// Dutch writes "Project" identically, as containers.column.project below
+		// records; every other language differs (Projekt, Proyecto, Projet, ...).
+		'chat.convert.projectLabel': ['nl'],
+		// "Dashboard" is the ordinary loanword in these three; the others differ
+		// (Panel, Tableau de bord, Pulpit, Painel, Översikt, ...).
+		'appearance.landing.dashboard': ['de', 'it', 'nl'],
 		// Dutch really does write "containers" - the loanword, plural and all.
 		// Every other language differs (Container, Conteneurs, Contêineres, ...).
 		'settings.concurrency': ['nl'],

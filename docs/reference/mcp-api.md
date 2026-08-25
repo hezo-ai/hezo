@@ -1037,17 +1037,18 @@ Read the stored team-relationships context for MULTIPLE agents in one call (max 
 
 _Write tool._
 
-Replace your long-term chat memory - the durable notes carried into every turn of your live operator chat. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/task/roster state). Memory is compacted automatically when the conversation window fills - you'll be handed the window and asked to fold it in via this tool - but you may also call it any time to record something standing.
+Replace a long-term chat memory - the durable notes carried into every turn of a live chat. Without `conversation` it is YOUR memory, carried into your operator DM; with `conversation` (a group room's conversation id, given to you by that room's compaction instructions) it is that room's shared memory instead. Pass the FULL revised markdown; it overwrites the stored memory wholesale (there is no append). Record durable, standing knowledge only: operator preferences, decisions, and a rough gist of off-project threads. Do NOT store live data you can re-fetch each turn (project/task/roster state). Memory is compacted automatically when the conversation window fills - you'll be handed the window and asked to fold it in via this tool - but you may also call it any time to record something standing.
 
 **Parameters:**
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `content` | `string` | Yes | The full long-term memory markdown (replaces existing memory) |
+| `conversation` | `string` | No | Group room conversation id whose shared memory to replace. Omit for your own DM memory. Only a room you participate in; the room's compaction instructions carry the id. |
 
-**Returns:** `{ written: true, updated_at }`. Overwrites the calling agent's long-term chat memory wholesale (no append; no revision history).
+**Returns:** `{ written: true, updated_at }`, or `{ error }` when `conversation` is not a group room the caller participates in. Overwrites the calling agent's long-term chat memory wholesale (no append) - or, with `conversation`, that group room's shared memory. Member memory keeps revision history; room memory does not.
 
-**Authorization:** An agent updating its own memory only.
+**Authorization:** An agent updating its own memory, or the shared memory of a group room it participates in (its own team's only).
 
 ## Approvals
 

@@ -1269,6 +1269,8 @@ export function isChatChannel(value: string): value is ChatChannel {
 export const ChatConversationKind = {
 	Assistant: 'assistant',
 	Coworker: 'coworker',
+	/** A multi-agent room: several roster agents, mention-driven turns. */
+	Group: 'group',
 } as const;
 export type ChatConversationKind = (typeof ChatConversationKind)[keyof typeof ChatConversationKind];
 
