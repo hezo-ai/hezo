@@ -70,7 +70,11 @@ export type PoolDecision =
 export interface PoolCapacity {
 	/** Memory already promised to running containers instance-wide, in GB. */
 	usedMemoryGb: number;
-	/** Total memory all running containers may consume. Host memory locally; a spend guard remotely. */
+	/**
+	 * The admission ceiling for the requesting workload, in GB. Task runs state
+	 * the total less the floating chat lane; chat workloads state the full total.
+	 * Host memory locally; a spend guard remotely.
+	 */
 	budgetGb: number;
 	/** What one more container in *this* project would consume, in GB. */
 	requestMemoryGb: number;
@@ -130,9 +134,9 @@ export interface PoolCapacity {
  *
  * `requiredMemoryBytes` is separate from `capacity.requestMemoryGb` because they
  * answer different questions. The capacity figure is what a *new* container
- * costs the budget, and the chat workload deliberately states zero there to
- * exempt itself; this is what every container must have been built to, which is
- * the project's cap for every workload alike.
+ * costs the budget the requesting workload admits against; this is what every
+ * container must have been built to, which is the project's cap for every
+ * workload alike.
  */
 export function selectPoolMember(
 	taskId: string | null,
@@ -295,8 +299,10 @@ export function planIdleShutdown(members: readonly PoolMember[]): IdleRetirement
  *
  * `staleMemberIds` are the members the caller has established sat idle past the
  * window - the clock lives in SQL, where it can be indexed, so this stays pure.
- * The chat's pinned member is never touched: it is excluded from the memory
- * budget already, so retiring it frees nothing and only interrupts a session.
+ * The chat's pinned member is never touched: it counts against the budget, but
+ * a session is parked on that filesystem, and this pass must not trade a
+ * person's conversation for surplus. The whole-project idle pass is the one
+ * that suspends it, once its session has gone quiet.
  */
 export function planSurplusIdleRetirement(
 	members: readonly PoolMember[],

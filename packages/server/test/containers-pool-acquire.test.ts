@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '../src/db/database';
-import { setMaxContainerMemoryGb } from '../src/lib/system-meta';
+import { setMaxContainerMemoryGb, setMonthlyContainerHours } from '../src/lib/system-meta';
 import {
 	acquireRunContainer,
 	type ContainerDeps,
 	PoolCapacityError,
+	PoolHoursExhaustedError,
 } from '../src/services/containers';
 import { listAllContainers } from '../src/services/sandbox/pool-db';
 import type { ContainerConfig, ContainerEngine } from '../src/services/sandbox/types';
@@ -702,7 +703,7 @@ describe('acquireRunContainer for the chat', () => {
 
 	it('pins rather than claims, so the container reads idle and reserved', async () => {
 		// That pair is what "the chat's container" means: `usable` then skips it in
-		// the ladder, and `getActiveContainers` stops charging it to the budget.
+		// the ladder, so no task run can take it out from under the session.
 		const project = await chatProject();
 		const chat = await acquireRunContainer(deps(provisioningDocker()), project, null, 'chat');
 		expect(await poolRow(chat.containerId)).toMatchObject({ state: 'idle' });
@@ -744,23 +745,6 @@ describe('acquireRunContainer for the chat', () => {
 		expect(await poolRow(chat.containerId)).toMatchObject({ state: 'idle' });
 	});
 
-	it('is not refused when the budget is full, because chat is exempt', async () => {
-		// A queued task run is invisible and harmless; a queued chat turn is a
-		// person watching a spinner. The budget already holds a container's worth
-		// back for it up front, so charging it again would reserve twice.
-		const project = await chatProject();
-		const docker = provisioningDocker();
-		const run = await acquireRunContainer(deps(docker), project, CHAT_TASK);
-		await setMaxContainerMemoryGb(db, 3);
-		try {
-			const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
-			expect(chat.containerId).not.toBe(run.containerId);
-		} finally {
-			await setMaxContainerMemoryGb(db, 40);
-			await run.release();
-		}
-	});
-
 	it('points the project row at the container the chat took', async () => {
 		// `container_id` is the operator's view - the Container page, the sync loop,
 		// `container_error`. The chat's is the long-lived container they are most
@@ -772,5 +756,190 @@ describe('acquireRunContainer for the chat', () => {
 			[project],
 		);
 		expect(row.rows[0].container_id).toBe(chat.containerId);
+	});
+});
+
+/**
+ * Wipe pool state, so a describe can reason about the instance-wide memory
+ * arithmetic without every container the cases above left behind. Used only by
+ * the describes below, which run after everything that relies on that state.
+ */
+async function resetPool(): Promise<void> {
+	await db.query(`DELETE FROM container_pool_members`);
+	await db.query(`UPDATE projects SET container_id = NULL WHERE container_id IS NOT NULL`);
+}
+
+/**
+ * The floating chat lane: `usedMemoryGb` charges every container, chat
+ * included, and what chat gets instead of an exemption is a higher admission
+ * ceiling - the full total, where task runs stop one container's worth short.
+ */
+describe('the chat lane', () => {
+	beforeEach(resetPool);
+
+	it('admits a chat container from the lane the task ceiling holds back', async () => {
+		// A queued task run is invisible and harmless; a queued chat turn is a
+		// person watching a spinner. So a 4 GB total with a 2 GB cap is one thing
+		// to a task run (a 2 GB ceiling, already full here) and another to chat
+		// (the full 4): the container's worth between them is the floating lane,
+		// reachable by chat and never by tasks.
+		const project = await freshProject('Chat Lane');
+		const docker = provisioningDocker();
+		const run = await acquireRunContainer(deps(docker), project, randomUUID());
+		await setMaxContainerMemoryGb(db, 4);
+		try {
+			await expect(acquireRunContainer(deps(docker), project, randomUUID())).rejects.toThrow(
+				PoolCapacityError,
+			);
+			const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
+			expect(chat.containerId).not.toBe(run.containerId);
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
+			await run.release();
+		}
+	});
+
+	it('refuses a chat container when even the full total cannot fit it', async () => {
+		// Chat is metered, not exempt: the lane guarantees it a slot ahead of task
+		// runs, never past the operator's own total.
+		const project = await freshProject('Chat Full');
+		const docker = provisioningDocker();
+		const run = await acquireRunContainer(deps(docker), project, randomUUID());
+		await setMaxContainerMemoryGb(db, 3);
+		try {
+			await expect(acquireRunContainer(deps(docker), project, null, 'chat')).rejects.toThrow(
+				PoolCapacityError,
+			);
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
+			await run.release();
+		}
+	});
+});
+
+/**
+ * The third workload: a worker DM turn. Held exactly like a task run - claimed
+ * busy for one exec, released after, never pinned - but admitted like chat,
+ * against the full total rather than the task ceiling.
+ */
+describe('acquireRunContainer for a chat turn', () => {
+	beforeEach(resetPool);
+
+	it('claims busy, never pins, and releases like a task run', async () => {
+		const project = await freshProject('Turn Hold');
+		const turn = await acquireRunContainer(deps(provisioningDocker()), project, null, 'chat-turn');
+		expect(await poolRow(turn.containerId)).toMatchObject({ state: 'busy' });
+		const pinned = await db.query(
+			`SELECT 1 FROM container_pool_members WHERE project_id = $1 AND reserved_for_chat`,
+			[project],
+		);
+		expect(pinned.rows).toHaveLength(0);
+		await turn.release();
+		expect(await poolRow(turn.containerId)).toMatchObject({ state: 'idle' });
+	});
+
+	it("never takes the chat session's pinned container", async () => {
+		// The pinned member is the CEO session's parked filesystem and holds its
+		// credential context; a worker turn sharing it is the crossover the design
+		// rejects, so the ladder's `usable` must exclude it for this workload too.
+		const project = await freshProject('Turn Pin');
+		const docker = provisioningDocker();
+		const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
+		const turn = await acquireRunContainer(deps(docker), project, null, 'chat-turn');
+		try {
+			expect(turn.containerId).not.toBe(chat.containerId);
+		} finally {
+			await turn.release();
+		}
+	});
+
+	it('admits from the lane a task run cannot reach', async () => {
+		const project = await freshProject('Turn Lane');
+		const docker = provisioningDocker();
+		const run = await acquireRunContainer(deps(docker), project, randomUUID());
+		await setMaxContainerMemoryGb(db, 4);
+		try {
+			await expect(acquireRunContainer(deps(docker), project, randomUUID())).rejects.toThrow(
+				PoolCapacityError,
+			);
+			const turn = await acquireRunContainer(deps(docker), project, null, 'chat-turn');
+			expect(turn.containerId).not.toBe(run.containerId);
+			await turn.release();
+		} finally {
+			await setMaxContainerMemoryGb(db, 40);
+			await run.release();
+		}
+	});
+});
+
+/**
+ * The monthly hours allowance, enforced in the ladder for every workload alike:
+ * chat is metered, not exempt, so an exhausted allowance pauses it too. Memory
+ * clears when a container is released; hours only when the calendar or the cap
+ * changes, which is why the refusal is its own error type.
+ */
+describe('the hours allowance in the acquire ladder', () => {
+	beforeEach(resetPool);
+
+	const SPENT_ID = 'hours-spent-ledger-row';
+
+	/** A 10-hour cap, already fully spent this calendar month. */
+	async function exhaustAllowance(): Promise<void> {
+		await setMonthlyContainerHours(db, 10);
+		await db.query(
+			`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+			 VALUES ($1, date_trunc('month', now() AT TIME ZONE 'UTC'),
+			         date_trunc('month', now() AT TIME ZONE 'UTC') + interval '10 hours', 'docker')`,
+			[SPENT_ID],
+		);
+	}
+
+	afterEach(async () => {
+		await setMonthlyContainerHours(db, 0);
+		await db.query(`DELETE FROM container_uptime_entries WHERE container_id = $1`, [SPENT_ID]);
+	});
+
+	it('refuses to create a container for any workload once the allowance is spent', async () => {
+		const project = await freshProject('Hours Create');
+		await exhaustAllowance();
+		const docker = provisioningDocker();
+		await expect(acquireRunContainer(deps(docker), project, randomUUID())).rejects.toThrow(
+			PoolHoursExhaustedError,
+		);
+		await expect(acquireRunContainer(deps(docker), project, null, 'chat')).rejects.toThrow(
+			PoolHoursExhaustedError,
+		);
+		await expect(acquireRunContainer(deps(docker), project, null, 'chat-turn')).rejects.toThrow(
+			PoolHoursExhaustedError,
+		);
+	});
+
+	it('still reuses a warm idle container, whose hours are already being spent', async () => {
+		// Matching the dispatch gate: a warm container starts nothing, so blocking
+		// it would idle a container the instance is paying for regardless.
+		const project = await freshProject('Hours Warm');
+		const docker = provisioningDocker();
+		const first = await acquireRunContainer(deps(docker), project, randomUUID());
+		await first.release();
+		await exhaustAllowance();
+		const again = await acquireRunContainer(deps(docker), project, randomUUID());
+		expect(again.containerId).toBe(first.containerId);
+		await again.release();
+	});
+
+	it("refuses to resume the chat's suspended pinned container", async () => {
+		// The pin-reuse rung sits above the ladder, so it carries its own check - a
+		// resume opens new uptime just as surely from there.
+		const project = await freshProject('Hours Resume');
+		const docker = provisioningDocker();
+		const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
+		await db.query(
+			`UPDATE container_pool_members SET state = 'suspended' WHERE container_id = $1`,
+			[chat.containerId],
+		);
+		await exhaustAllowance();
+		await expect(acquireRunContainer(deps(docker), project, null, 'chat')).rejects.toThrow(
+			PoolHoursExhaustedError,
+		);
 	});
 });

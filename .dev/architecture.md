@@ -471,9 +471,10 @@ session still blocks a second one, and a process restart reclaims it as crashed 
 other live row. It is deliberately **not** accepted by `authMiddleware` — a parked
 session has no host-side half, so no exec of it can legitimately be calling. In the
 container pool the chat's container is pinned (`reserved_for_chat`), which suspend keeps
-and teardown releases: chat is exempt from the container cap, and the pin is the other
-half of that, since a task run taking the container out from under a live session is the
-same interruption by a different route.
+and teardown releases: the pin means no task run may take the container out from under a
+live session, and suspending rather than tearing down is what keeps the parked
+filesystem. The pinned member is metered like any other - its memory counts in
+`usedMemoryGb` while it is up, and suspend is what gives that memory back.
 **A session's provider is re-checked before every turn.** `startSession` resolves the
 provider, CLI, credential row and model once, and bakes all four into the container env,
 the exec command and the runtime config files — so a session that outlives an operator
@@ -660,8 +661,11 @@ ran bills a full bucket of uptime. Enforcement is a monthly allowance
 (`monthly_container_hours` in `system_meta`, 0 = unlimited) read through
 `hoursQuotaExhausted` in `run-concurrency.ts`: it gates container **starts**, ahead of the
 memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
-project with a spare container is exempt from both. The cap read short-circuits before the
-ledger is scanned, so an instance with no cap pays nothing on the dispatch path.
+project with a spare container is exempt from both. The same answer gates the acquire
+ladder itself for every workload, chat included (`PoolHoursExhaustedError` on a create,
+resume or reclaim decision, and on the chat-pin resume rung above the ladder). The cap
+read short-circuits before the ledger is scanned, so an instance with no cap pays nothing
+on the dispatch path.
 
 ### Docs, skills & assets
 
@@ -2184,34 +2188,45 @@ so they are not - one project raising its cap to 4 GB took one "slot" but twice 
 of the 2 GB containers the host was sized for. There is deliberately no derived container
 count anywhere, not even for display: how many fit depends on the mix of their sizes.
 
-The CEO chat's container is **exempt** from the budget, because a queued task run is
-invisible and harmless while a queued chat turn is a person watching a spinner. Reserving up
-front rather than subtracting when a session opens keeps task-run capacity a **stable**
-number - opening the chat never silently slows the fleet.
+Chat containers are **metered, not exempt**: every running container - the CEO chat's
+pinned one included - counts in `usedMemoryGb`, burns the monthly hours allowance, and
+suspends to give its memory back. What chat gets instead is a **lane**: task runs admit
+only up to `budgetGb` (the configured total less one container's worth,
+`taskContainerMemoryBudgetGb`) while chat workloads (`'chat'`, `'chat-turn'`) admit
+against the full `totalBudgetGb`. The gap is the floating chat lane - a queued task run
+is invisible and harmless while a queued chat turn is a person watching a spinner, so
+however busy the tasks are, one container's worth of budget is always reachable by chat
+and never by them. Holding the lane back from task admission rather than excluding chat
+from the count keeps task-run capacity a **stable** number (opening the chat never
+silently shrinks the fleet mid-flight) and makes chat spend visible where every other
+spend is: the Hours tab, the memory arithmetic, `cost_entries`.
 
-**The reservation is taken at the point of use, not baked into the default.** Subtracting a
-container's worth inside `computeDefaultMaxContainerMemoryGb` reserves only for an *automatic*
-budget, so an operator who sets the number by hand gets none at all and a 12 GB budget with a
-4 GB cap admits three task containers *and* a chat container - 16 GB consumed against a figure
-that says 12, which on a local Docker host is memory the machine actually has to find. The
+**The lane is taken at the point of use, not baked into the default.** Subtracting a
+container's worth inside `computeDefaultMaxContainerMemoryGb` holds a lane only for an
+*automatic* budget, so an operator who sets the number by hand would get none at all. The
 auto default therefore returns the whole usable total (floored at
-`minTotalContainerMemoryGb`, two caps, so it can never
-compute a total that admits nothing) and `getActiveContainers` derives the task share from
-whatever the effective total is. Auto-computed instances land on exactly the capacity they
-had before; an explicitly-set one loses a container's worth, which is the point. The exemption is enforced on **both** sides:
-the budget reserves for it, and `getActiveContainers` excludes a `reserved_for_chat` member
-from `usedMemoryGb` (on both arms of its UNION - the pool member and the `projects` row are
-two records of one container). Charging it in both places reserves the same memory twice, and
-an instance sized for three containers then dispatches two whenever the chat is open.
+`minTotalContainerMemoryGb`, two caps, so it can never compute a total that admits
+nothing) and `getActiveContainers` derives the task ceiling from whatever the effective
+total is, returning both figures (`budgetGb`, `totalBudgetGb`). The default flat budget
+(`DEFAULT_MAX_CONTAINER_MEMORY_GB`, managed backends and unreadable hosts) is 12 GB: six
+2 GB containers - the pinned chat member, up to five task runs, with the sixth
+container's worth floating as the lane whenever the chat is suspended. The **hours**
+allowance is enforced in the acquire ladder for every workload alike
+(`PoolHoursExhaustedError`, a `PoolCapacityError` subclass so capacity-parking callers
+behave unmodified): any decision that would open new uptime - create, resume, reclaim,
+and the chat-pin resume rung that sits above the ladder - is refused when the month's
+allowance is spent; reuse of a warm member stays allowed, matching the dispatch gate.
 
-**The chat takes its container through the same ladder a run does**, with
-`acquireRunContainer(..., 'chat')` - the workload changes four things and nothing else: it
-is not gated on the budget (already reserved above), it **pins** the member
-(`reserved_for_chat`) rather than claiming it busy, its release is a no-op because the
-session holds the container across every turn until `teardown` clears the pin, and a pin the
-session already holds is checked *before* the ladder, since `selectPoolMember` excludes
-reserved members by design. It also points `projects.container_id` at what it took, that
-column being the operator's view of the project's container.
+**The chat session takes its container through the same ladder a run does**, with
+`acquireRunContainer(..., 'chat')` - the workload changes three things and nothing else:
+it **pins** the member (`reserved_for_chat`) rather than claiming it busy, its release is
+a no-op because the session holds the container across every turn until `teardown` clears
+the pin, and a pin the session already holds is checked *before* the ladder, since
+`selectPoolMember` excludes reserved members by design. It also points
+`projects.container_id` at what it took, that column being the operator's view of the
+project's container. Worker DM turns use the third workload, `'chat-turn'`: held exactly
+like a task run (claimed busy for one exec, released after, never the pinned member) but
+admitted against the full total like chat.
 
 Routing it through the ladder is the whole point. Reading `projects.container_id` directly
 names the most recently provisioned or resumed container - under a pool, possibly one mid-run
@@ -3009,8 +3024,9 @@ the old test held no slot for a container it was about to create, and two such d
 could fit themselves into the same headroom. Dispatch
 drains FIFO by `created_at` with no per-project fair-share — a deep backlog in one project
 consumes freed slots first; that scheduler is the hook if this ever needs fairness. The chat
-path is *not* gated: its container is exempt from the budget rather than charged against it
-(reserved up front instead), and starting a chat is never refused — busy agents must not lock the operator out of the control surface. Both
+path skips this dispatch gate and admits in the acquire ladder instead, against the full
+total rather than the task ceiling - the held-back lane is what keeps that admission from
+queueing behind busy agents, who must not lock the operator out of the control surface. Both
 knobs (memory budget, per-container RAM cap) live on the global Settings → Containers
 page (`GET/PATCH /api/instance-settings`; `PATCH {max_container_memory_gb: null}` resets to the
 computed default), which also hosts the backend switcher. The project's

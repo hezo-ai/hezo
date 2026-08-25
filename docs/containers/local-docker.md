@@ -29,12 +29,13 @@ running on:
 **(RAM + swap), less 1 GB always kept free for the operating system and Hezo itself.**
 
 Swap counts in full, because a container sits idle between runs rather than working
-continuously. That total is what all containers share, and one container's worth of it is
-held back for the assistant chat so it never waits behind a run. The Containers page shows
-the split, and the reservation applies whether the total was computed or you typed it in. A run whose
-container will not fit in what is left waits in the queue and starts as memory frees up;
-the assistant chat always starts. No project can hold a share of that budget it is not
-using - see [how the budget is shared](/docs/containers/overview#how-much-can-run-at-once).
+continuously. That total is what all containers share, the assistant chat's included, and
+one container's worth of it is off limits to task runs and kept for chat, so a chat turn
+never waits behind background work. The Containers page shows the split, and the held-back
+lane applies whether the total was computed or you typed it in. A run whose container will
+not fit in what is left waits in the queue and starts as memory frees up. No project can
+hold a share of that budget it is not using - see
+[how the budget is shared](/docs/containers/overview#how-much-can-run-at-once).
 
 You can set the total explicitly in **Settings -> Containers** if you would rather keep
 more headroom, and a project that needs a bigger container than the 2 GB default can raise

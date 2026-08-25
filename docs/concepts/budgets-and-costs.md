@@ -88,7 +88,8 @@ show you what the fleet is doing rather than to budget against.
 Where container hours do cost money, you can set a **monthly allowance** from HQ's
 Budget page. Once it is spent:
 
-- No new container starts.
+- No new container starts - the assistant chat's included, so an exhausted allowance
+  pauses the chat too until the month turns or the allowance is raised.
 - Runs that land on a container **already up** carry on - they spend no new hours, and
   stopping them would idle a container you are paying for anyway.
 - Runs that need a new container queue, and say so.
