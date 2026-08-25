@@ -26,6 +26,7 @@ export const PROMPT_BEARING_PATTERNS: RegExp[] = [
 	/^skills\//,
 	/^marketplace\//,
 	/^packages\/server\/src\/services\/template-resolver\.ts$/,
+	/^packages\/server\/src\/services\/chat-session-manager\.ts$/,
 ];
 
 export const PROMPTS_ACK_RULE: AckRule = {

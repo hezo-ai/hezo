@@ -2246,6 +2246,28 @@ project's container. Worker DM turns use the third workload, `'chat-turn'`: held
 like a task run (claimed busy for one exec, released after, never the pinned member) but
 admitted against the full total like chat.
 
+**Worker DM sessions** (`sendWorkerTurn`) generalize the manager without a second pipeline:
+the CEO's persistent session and a worker's per-turn one share the `TurnSession` shape, so
+`runTurn`, compaction, prompt composition, the credential lock, the no-wake check (now per
+acting member) and cost recording never ask which kind they serve. What differs is
+lifecycle: a worker turn claims a `'chat-turn'` container (parking on capacity like the
+CEO's turns), builds the whole host-side half (ssh, egress, tunnel, JWT) for that one
+exec, and gives everything back after - between turns only the `chat_sessions` row
+survives (one non-terminal row per member, the singleton index; JWTs re-mint per turn on
+the 24h worker TTL with `cross_project/cross_team` false, asserted at mint against team
+membership + `admin_status = 'enabled'`). The DM stream is one open web conversation per
+(member, project), created lazily; compaction runs while the turn's container is still
+held, under the shared member-memory lock; there is no auto-title (a DM is named by its
+agent) and no suspend/resume (nothing is held to park). Worker prompts resolve on the
+**chat diet** (`ctx.chatSlim` in the template resolver): the slim
+`CHAT_SHARED_INSTRUCTIONS` replaces the ~80 KB task-run block, the run manifest, the
+repository block and the container-environment block are dropped, and Project
+State/Team/Teammates stay; effort is the agent's configured default via `resolveEffort`
+(Captain/CEO stay Max). Boundary events for a project DM fan to `chat:team:<teamUuid>`
+(gated `canAccessTeam`, resolved through the manager's per-conversation scope map) instead
+of `chat:global`, which stays HQ/CEO-only; deltas stream only on the per-conversation room
+either way.
+
 Routing it through the ladder is the whole point. Reading `projects.container_id` directly
 names the most recently provisioned or resumed container - under a pool, possibly one mid-run
 - so pinning that and executing turns on it puts two workloads on one memory cap, exactly the

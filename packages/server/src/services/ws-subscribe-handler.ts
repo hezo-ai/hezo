@@ -30,6 +30,17 @@ export async function handleWsSubscribe(
 		return;
 	}
 
+	// A team's chat signal room: boundary events for every DM in that team's
+	// project, for list ordering and unread badges. Ahead of the conversation
+	// match below, whose UUID shape would not take `chat:team:<uuid>` anyway.
+	const chatTeamMatch = room.match(/^chat:team:(.+)$/);
+	if (chatTeamMatch) {
+		const allowed = await deps.canAccessTeam(ws.data.auth, chatTeamMatch[1]);
+		if (!allowed) return;
+		deps.wsManager.subscribe(ws, room);
+		return;
+	}
+
 	// One conversation's live stream - message start/delta/complete for that
 	// thread alone (streaming deltas go ONLY here, never to the global room).
 	// Authorized against the conversation's owning team, so this branch already

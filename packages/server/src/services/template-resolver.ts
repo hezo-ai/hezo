@@ -43,6 +43,14 @@ interface ResolveContext {
 	 * prompt previews, which don't need ~13k tokens of docs every turn.
 	 */
 	embedDocs?: boolean;
+	/**
+	 * The chat-turn diet (worker DMs): swap the task-run `SHARED_INSTRUCTIONS`
+	 * for the slim chat guidance and drop the run-scoped machinery a chat turn
+	 * must not use - the run manifest, the repository block, the container
+	 * toolchain notes. Project State, Team and Teammates stay: a DM is exactly
+	 * where an agent is asked about its project's live state.
+	 */
+	chatSlim?: boolean;
 }
 
 /**
@@ -283,6 +291,34 @@ const SHARED_INSTRUCTIONS = `
  * check can never drift from what agents actually receive.
  */
 export const SHARED_INSTRUCTIONS_TEXT = SHARED_INSTRUCTIONS;
+
+/**
+ * The chat-turn replacement for {@link SHARED_INSTRUCTIONS} (`ctx.chatSlim`).
+ * A DM turn thinks and coordinates rather than working a task, so the task-run
+ * guidance - worktrees, comments discipline, standing tasks, connector
+ * recipes, container tooling - would be dead weight resolved into every reply.
+ * What survives is the part a conversational turn still needs: how references
+ * and mentions work, and the credential red line. The chat-specific conduct
+ * (the chat/task boundary, cross-posting, memory) lives in the chat guides the
+ * session manager composes above the conversation.
+ */
+const CHAT_SHARED_INSTRUCTIONS = `
+
+---
+
+## Shared Guidance (chat)
+
+### References & @-Mentions
+- Refer to every Hezo entity — projects, tasks, teams, docs, teammates — by its bare slug, identifier, or name (the project todo6, task TO-1, prd.md). Never paste raw UUIDs, and never wrap a reference in backticks: bare references render as clickable links, backticked ones go inert.
+- Name a teammate as \`@@<slug>\` (passive) by default — for attribution, plans, and summaries. Use a single \`@<slug>\` only in a task comment where you need that teammate woken to act; a mention in this chat wakes nobody.
+
+### Credentials
+- Never ask anyone to paste a token, key or password into this chat, and never quote one back. A secret reaches Hezo only through the \`request_credential\` paste form, which routes it to the encrypted vault without it passing through the conversation.
+- Reference a stored secret only by its \`__HEZO_SECRET_<NAME>__\` placeholder, only where it is delivered (a header or URL); the egress proxy substitutes the real value at request time.
+
+### Formatting
+- Replies render as GFM markdown. Separate paragraphs with a blank line, use bullet lists for enumerable points, and \`inline code\` only for literal code tokens — never for a Hezo reference.
+`;
 
 /** Placeholder expanding to the machine-checked half of the writing register. */
 export const PROMPT_STYLE_RULES_PLACEHOLDER = '{{prompt_style_rules}}';
@@ -565,7 +601,10 @@ export async function resolveSystemPrompt(
 		return resolved;
 	}
 
-	if (ctx.mode !== 'preview') {
+	if (ctx.mode !== 'preview' && !ctx.chatSlim) {
+		// Run-scoped machinery a chat turn must not use: the run manifest frames a
+		// task run, and the repository block invites exactly the in-container work
+		// the chat/task boundary files as a task instead.
 		resolved += await buildRunContextBlock(db, ctx);
 		if (!ctx.crossTeam) {
 			resolved += await buildRepositoryBlock(db, ctx);
@@ -578,12 +617,15 @@ export async function resolveSystemPrompt(
 	if (!ctx.crossTeam) {
 		resolved += await buildTeammatesBlock(db, ctx);
 	}
-	resolved += SHARED_INSTRUCTIONS;
-	// Beside SHARED_INSTRUCTIONS, and for the same reason: it has to reach every
-	// agent on every run, including one hired at runtime. Unlike the rest it is
-	// resolved per run, because the container service is a setting an operator can
-	// change - so it is a block rather than prose.
-	resolved += await buildContainerEnvironmentBlock(db);
+	resolved += ctx.chatSlim ? CHAT_SHARED_INSTRUCTIONS : SHARED_INSTRUCTIONS;
+	if (!ctx.chatSlim) {
+		// Beside SHARED_INSTRUCTIONS, and for the same reason: it has to reach every
+		// agent on every run, including one hired at runtime. Unlike the rest it is
+		// resolved per run, because the container service is a setting an operator can
+		// change - so it is a block rather than prose. A chat turn gets neither: its
+		// container is a borrowed pool member it must not install into or work in.
+		resolved += await buildContainerEnvironmentBlock(db);
+	}
 
 	return resolved;
 }

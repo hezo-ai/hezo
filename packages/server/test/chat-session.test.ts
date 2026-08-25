@@ -71,14 +71,11 @@ interface ChatDocker {
  * (mirrors a turn interrupted by a newer message). Captures each turn's prompt
  * by reading the host-mapped prompt file at exec time.
  */
-function makeChatDocker(dataDir: string, projectId: string): ChatDocker {
+function makeChatDocker(dataDir: string, projectId: string, teamId = DEFAULT_TEAM_ID): ChatDocker {
 	const prompts: string[] = [];
 	const scenario = { mode: 'reply' as 'reply' | 'block', entered: false };
 	const toHostPath = (containerPath: string) =>
-		join(
-			getWorkspacePath(dataDir, DEFAULT_TEAM_ID, projectId),
-			containerPath.replace(/^\/workspace\//, ''),
-		);
+		join(getWorkspacePath(dataDir, teamId, projectId), containerPath.replace(/^\/workspace\//, ''));
 
 	const docker = createStubDocker({
 		execCreate: async (_id: string, config: { Env?: string[] }) => {
@@ -1003,6 +1000,180 @@ describe('ChatSessionManager', () => {
 	 * used to take no lock and keep no write-back, so a turn overlapping a task run
 	 * invalidated that run's token and dropped whatever the CLI left behind.
 	 */
+	describe('worker DM turns', () => {
+		let n = 0;
+		/** A project team with one enabled worker agent and a warm pool container. */
+		async function seedWorker(): Promise<{
+			teamId: string;
+			projectId: string;
+			memberId: string;
+			containerId: string;
+		}> {
+			n += 1;
+			const team = await ctx.db.query<{ id: string }>(
+				`INSERT INTO teams (name, slug) VALUES ($1, $1) RETURNING id`,
+				[`worker-co-${n}`],
+			);
+			const teamId = team.rows[0].id;
+			const project = await ctx.db.query<{ id: string }>(
+				`INSERT INTO projects (team_id, name, slug, task_prefix)
+				 VALUES ($1, $2, $2, $3) RETURNING id`,
+				[teamId, `storefront-${n}`, `ST${n}`],
+			);
+			const projectId = project.rows[0].id;
+			const member = await ctx.db.query<{ id: string }>(
+				`INSERT INTO members (team_id, member_type, display_name)
+				 VALUES ($1, 'agent', 'Dev') RETURNING id`,
+				[teamId],
+			);
+			const memberId = member.rows[0].id;
+			await ctx.db.query(
+				`INSERT INTO member_agents (id, title, slug) VALUES ($1, 'Developer', 'dev')`,
+				[memberId],
+			);
+			const containerId = `worker-container-${n}`;
+			await seedProjectContainer(ctx.db, projectId, containerId);
+			return { teamId, projectId, memberId, containerId };
+		}
+
+		test('runs a DM turn end to end in the worker’s own scope', async () => {
+			const w = await seedWorker();
+			const chat = makeChatDocker(ctx.dataDir, w.projectId, w.teamId);
+			const pricing = { costCents: () => 2 } as unknown as PricingService;
+			const { manager } = makeManager(ctx, chat.docker, { pricing });
+			const res = await manager.sendWorkerTurn({
+				memberId: w.memberId,
+				teamId: w.teamId,
+				projectId: w.projectId,
+				text: 'how is the storefront going?',
+			});
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					`SELECT status::text AS status FROM chat_messages WHERE id = $1`,
+					[res.assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Complete;
+			});
+
+			// The conversation is the worker's own DM in its project, not an HQ thread.
+			const convo = await ctx.db.query<{
+				member_id: string;
+				team_id: string;
+				project_id: string;
+			}>(`SELECT member_id, team_id, project_id FROM chat_conversations WHERE id = $1`, [
+				res.conversationId,
+			]);
+			expect(convo.rows[0]).toEqual({
+				member_id: w.memberId,
+				team_id: w.teamId,
+				project_id: w.projectId,
+			});
+
+			// The reply is authored by the worker, and its prompt got the worker
+			// guide on the chat diet - not the CEO's briefing, not the 80 KB task-run
+			// shared instructions.
+			const author = await ctx.db.query<{ author_member_id: string }>(
+				`SELECT author_member_id FROM chat_messages WHERE id = $1`,
+				[res.assistantMessageId],
+			);
+			expect(author.rows[0].author_member_id).toBe(w.memberId);
+			const prompt = chat.prompts.find((p) => p.includes('in your own role'));
+			expect(prompt).toBeDefined();
+			expect(prompt).toContain('Chat thinks, tasks work');
+			expect(prompt).toContain('Shared Guidance (chat)');
+			expect(prompt).not.toContain('Reply to the latest operator message as the CEO.');
+
+			// The session row is the worker's, scoped to its team; the container went
+			// back to the pool when the turn ended (released, never pinned).
+			const session = await ctx.db.query<{ member_id: string; team_id: string; status: string }>(
+				`SELECT member_id, team_id, status::text AS status FROM chat_sessions
+				 WHERE member_id = $1`,
+				[w.memberId],
+			);
+			expect(session.rows[0]).toMatchObject({
+				member_id: w.memberId,
+				team_id: w.teamId,
+				status: ChatSessionStatus.Running,
+			});
+			await poll(async () => {
+				const r = await ctx.db.query<{ state: string; reserved: boolean }>(
+					`SELECT state::text AS state, reserved_for_chat AS reserved
+					 FROM container_pool_members WHERE container_id = $1`,
+					[w.containerId],
+				);
+				return r.rows[0]?.state === 'idle' && r.rows[0]?.reserved === false;
+			});
+
+			// The spend landed under the worker and its project.
+			const cost = await ctx.db.query<{ member_id: string; project_id: string }>(
+				`SELECT member_id, project_id FROM cost_entries WHERE description = 'Chat turn'`,
+			);
+			expect(cost.rows).toHaveLength(1);
+			expect(cost.rows[0]).toEqual({ member_id: w.memberId, project_id: w.projectId });
+
+			await manager.stop();
+			// stop() closes the worker session row so its JWTs stop validating.
+			const after = await ctx.db.query<{ status: string }>(
+				`SELECT status::text AS status FROM chat_sessions WHERE member_id = $1`,
+				[w.memberId],
+			);
+			expect(after.rows[0].status).toBe(ChatSessionStatus.Stopped);
+			await ctx.db.query(`DELETE FROM cost_entries`);
+		});
+
+		test('gates the turn on the worker’s own budget, not HQ’s', async () => {
+			const w = await seedWorker();
+			const chat = makeChatDocker(ctx.dataDir, w.projectId, w.teamId);
+			const { manager } = makeManager(ctx, chat.docker);
+			await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 1 WHERE id = $1`, [
+				w.memberId,
+			]);
+			await ctx.db.query(
+				`INSERT INTO cost_entries (member_id, amount_cents, description) VALUES ($1, 5, 'prior')`,
+				[w.memberId],
+			);
+			try {
+				const res = await manager.sendWorkerTurn({
+					memberId: w.memberId,
+					teamId: w.teamId,
+					projectId: w.projectId,
+					text: 'hello?',
+				});
+				const rows = await ctx.db.query<{ role: string; system_kind: string | null }>(
+					`SELECT role::text AS role, system_kind FROM chat_messages
+					 WHERE conversation_id = $1 ORDER BY created_at ASC`,
+					[res.conversationId],
+				);
+				expect(rows.rows.map((r) => r.role)).toEqual(['user', 'system']);
+				expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
+				expect(chat.scenario.entered).toBe(false);
+			} finally {
+				await ctx.db.query(`DELETE FROM cost_entries WHERE member_id = $1`, [w.memberId]);
+				await manager.stop();
+			}
+		});
+
+		test('refuses an explicit conversation belonging to someone else', async () => {
+			const w = await seedWorker();
+			const { manager } = makeManager(
+				ctx,
+				makeChatDocker(ctx.dataDir, w.projectId, w.teamId).docker,
+			);
+			// The CEO's default HQ thread is not this worker's to write into.
+			const foreign = await manager.getConversationId();
+			await expect(
+				manager.sendWorkerTurn({
+					memberId: w.memberId,
+					teamId: w.teamId,
+					projectId: w.projectId,
+					conversationId: foreign,
+					text: 'hi',
+				}),
+			).rejects.toThrow('conversation not found');
+			await manager.stop();
+		});
+	});
+
 	describe('credential rotation', () => {
 		const ROTATED = JSON.stringify({
 			tokens: {

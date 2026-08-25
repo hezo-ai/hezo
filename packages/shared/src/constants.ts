@@ -575,10 +575,19 @@ export const wsRoom = {
 	/**
 	 * Global CEO chat signal room. Every chat surface subscribes here for
 	 * conversation-list level activity (a new thread, cross-thread badges).
+	 * HQ/CEO conversations only - a project team's chat signals on
+	 * {@link wsRoom.chatTeam}, gated on that team's access.
 	 */
 	chat: () => 'chat:global',
 	/**
-	 * Per-conversation CEO chat room. Message start/delta/complete for a single
+	 * Per-team chat signal room: boundary events (message start/complete,
+	 * conversation updates) for every DM in that team's project, for list
+	 * ordering and unread badges. Deltas never come here - they stream only on
+	 * the per-conversation room.
+	 */
+	chatTeam: (teamId: string) => `chat:team:${teamId}`,
+	/**
+	 * Per-conversation chat room. Message start/delta/complete for a single
 	 * thread stream here, so an open thread only receives its own deltas.
 	 */
 	chatConversation: (conversationId: string) => `chat:${conversationId}`,
