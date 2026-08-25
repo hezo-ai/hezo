@@ -721,8 +721,12 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
 		await waitComplete(ctx, assistantMessageId);
 
-		// Same project, different container id → the session's exec target is gone.
+		// The session's container replaced: its pinned member row is gone and the
+		// project names a rebuilt container. Health is keyed off the member row -
+		// `projects.container_id` alone moves with every task provisioning - so
+		// this is the state that means "the exec target no longer exists".
 		// (The teardown warn is the asserted behavior here.)
+		await ctx.db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
 		await ctx.db.query(`UPDATE projects SET container_id = 'rebuilt-container' WHERE id = $1`, [
 			projectId,
 		]);
@@ -763,10 +767,12 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			const before = await sessionRow();
 			expect(before.status).toBe(ChatSessionStatus.Running);
 
-			// Same container id, no longer running: a suspend, not a replacement.
-			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
-				projectId,
-			]);
+			// Same container, member row suspended: a suspend, not a replacement.
+			// Health reads the pool member - the pin survives a suspend by design.
+			await ctx.db.query(
+				`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`,
+				[projectId],
+			);
 			await health(manager);
 
 			const after = await sessionRow();
@@ -784,16 +790,15 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			await waitComplete(ctx, first.assistantMessageId);
 			const before = await sessionRow();
 
-			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
-				projectId,
-			]);
+			await ctx.db.query(
+				`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`,
+				[projectId],
+			);
 			await health(manager);
 			expect((await sessionRow()).status).toBe(ChatSessionStatus.Suspended);
 
-			// ensureProjectContainerRunning brings the same container back up.
-			await ctx.db.query(`UPDATE projects SET container_status = 'running' WHERE id = $1`, [
-				projectId,
-			]);
+			// The next turn resumes through the pin-reuse rung: the suspended member
+			// is started in place and the session keeps its container and its row.
 			const second = await manager.sendTurn({ text: 'still there?' });
 			await waitComplete(ctx, second.assistantMessageId);
 
@@ -815,9 +820,10 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			await waitComplete(ctx, first.assistantMessageId);
 			const before = await sessionRow();
 
-			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
-				projectId,
-			]);
+			await ctx.db.query(
+				`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`,
+				[projectId],
+			);
 			await health(manager);
 
 			// A different container: the filesystem this session was parked on is gone,
@@ -851,9 +857,10 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			const { manager } = makeManager(ctx, chat.docker);
 			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
 			await waitComplete(ctx, assistantMessageId);
-			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
-				projectId,
-			]);
+			await ctx.db.query(
+				`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`,
+				[projectId],
+			);
 			await health(manager);
 
 			const ceoId = await ceoMemberId(ctx);

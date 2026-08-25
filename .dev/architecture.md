@@ -380,7 +380,13 @@ a conversation carries `member_id` (the agent) + `team_id` + `project_id`, a ses
 the same, and a message an `author_member_id` (the responding agent). `chat_message_attachments`
 links files sent through the chatbox to their message (stored in the HQ asset library
 under `uploads/chat/`), and `chat_memories` holds each chat-enabled agent's
-automatically-maintained long-term memory (§ 4).
+automatically-maintained long-term memory (§ 4). Migration 074 adds the team-chat
+phase-1 columns: `chat_conversations.last_message_id` (denormalized so unread badges
+never count rows), the `chat_conversation_reads` per-(user, conversation) watermark
+table behind server-side unread, `chat_messages.suggested_replies` (up to three short
+one-tap replies an agent reply offers, parsed from a structured trailer and stored
+beside the clean body), and the `budget_exceeded` / `capacity_wait` /
+`task_created` / `task_completed` / `task_blocked` system-row kinds.
 
 ### Chat conversations & channels
 
@@ -1161,8 +1167,20 @@ contends with the reply's exec. It persists idempotently (`UPDATE … SET title 
 so a manual/already-set title is never clobbered) and broadcasts `ChatConversationUpdated` on the
 `chat:global` room, so every open thread switcher/sidebar refetches and updates its label live. One
 title run is in flight per thread at a time (`ConversationRuntime.titling`); a new turn or a close
-preempts it (`titlingAbort`) and — while still untitled — the next turn re-kicks it. Its exec's
-tokens are not separately priced (matching compaction).
+preempts it (`titlingAbort`) and — while still untitled — the next turn re-kicks it.
+
+**Chat spend is metered like a run's.** Every chat exec — the reply turn, compaction, the
+auto-title run — bills its parser usage to `cost_entries` via `recordRunCost` (member = the
+session's agent, project = its project, `task_id` NULL, descriptions `Chat turn` /
+`Chat memory compaction` / `Chat auto-title`), broadcast to the team room so the Budget page
+refreshes live. `sendTurn` gates **before** the turn: the operator's message persists first
+(a refusal never eats what they typed), then `checkOverBudget` on the session's member +
+project refuses with a `budget_exceeded` system row; an exhausted container-hours allowance
+surfacing from the acquire (`PoolHoursExhaustedError`) maps to the same row, while a full
+memory budget (`PoolCapacityError`) **parks** the turn instead — a `capacity_wait` system
+row, then background acquire retries on the runner's 5s cadence until a container frees or
+the park deadline fails the turn. The budget check fails open on infrastructure errors: a
+broken gate must not brick the operator's control surface.
 
 HQ also exposes the standard **assets library** — the one internal-project surface that
 isn't hidden in the UI (Budget/Settings still are). Files the CEO produces for the operator

@@ -14,6 +14,7 @@ import {
 } from '@hezo/shared';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { decrypt, encrypt } from '../src/crypto/encryption';
+import { setMonthlyContainerHours } from '../src/lib/system-meta';
 import {
 	canAuthAccessTeam,
 	signChatSessionJwt,
@@ -24,6 +25,7 @@ import { acquireCredentialLock } from '../src/services/agent-runner';
 import { type CeoSessionDeps, ChatSessionManager } from '../src/services/chat-session-manager';
 import type { ExecLogChunk } from '../src/services/docker';
 import { LogStreamBroker } from '../src/services/log-stream-broker';
+import type { PricingService } from '../src/services/pricing/pricing-service';
 import { getWorkspacePath } from '../src/services/workspace';
 import type { WsSocket } from '../src/services/ws';
 import { WebSocketManager } from '../src/services/ws';
@@ -245,6 +247,115 @@ describe('ChatSessionManager', () => {
 		await ctx.db.query('DELETE FROM chat_conversations');
 		await ctx.db.query('DELETE FROM ai_provider_configs');
 		projectId = await seedProviderAndContainer(ctx);
+	});
+
+	const ceoId = async (): Promise<string> => {
+		const r = await ctx.db.query<{ id: string }>(
+			`SELECT m.id FROM members m JOIN member_agents ma ON ma.id = m.id
+			 WHERE ma.slug = 'ceo' AND m.team_id = $1`,
+			[DEFAULT_TEAM_ID],
+		);
+		return r.rows[0].id;
+	};
+
+	test('refuses a turn over budget: the message stands, a system row says why, no exec runs', async () => {
+		// Chat is metered, so the pre-turn gate mirrors a run's. The operator's
+		// message is persisted before the gate - a refusal must never eat it.
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, chat.docker);
+		const ceo = await ceoId();
+		await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 1 WHERE id = $1`, [ceo]);
+		await ctx.db.query(
+			`INSERT INTO cost_entries (member_id, amount_cents, description) VALUES ($1, 5, 'prior')`,
+			[ceo],
+		);
+		try {
+			const res = await manager.sendTurn({ text: 'hello?' });
+			const rows = await ctx.db.query<{
+				id: string;
+				role: string;
+				system_kind: string | null;
+				content: string;
+			}>(
+				`SELECT id, role::text AS role, system_kind, content FROM chat_messages
+				 WHERE conversation_id = $1 ORDER BY created_at ASC`,
+				[res.conversationId],
+			);
+			expect(rows.rows.map((r) => r.role)).toEqual(['user', 'system']);
+			expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
+			expect(rows.rows[1].content).toContain('daily budget');
+			expect(res.assistantMessageId).toBe(rows.rows[1].id);
+			expect(chat.scenario.entered).toBe(false);
+		} finally {
+			await ctx.db.query(`UPDATE member_agents SET daily_budget_cents = 0 WHERE id = $1`, [ceo]);
+			await ctx.db.query(`DELETE FROM cost_entries WHERE member_id = $1`, [ceo]);
+			await manager.stop();
+		}
+	});
+
+	test('maps an exhausted hours allowance to the budget-exceeded row', async () => {
+		// Decision-level: an exhausted container-hours cap pauses the CEO chat too.
+		// No container to reuse and no project pointer to adopt, so the acquire
+		// must create - which is exactly what the spent allowance refuses.
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, chat.docker);
+		await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
+		await ctx.db.query(`UPDATE projects SET container_id = NULL WHERE id = $1`, [projectId]);
+		await setMonthlyContainerHours(ctx.db, 10);
+		await ctx.db.query(
+			`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
+			 VALUES ('spent-chat-test', date_trunc('month', now() AT TIME ZONE 'UTC'),
+			         date_trunc('month', now() AT TIME ZONE 'UTC') + interval '10 hours', 'docker')`,
+		);
+		try {
+			const res = await manager.sendTurn({ text: 'hello?' });
+			const rows = await ctx.db.query<{ role: string; system_kind: string | null }>(
+				`SELECT role::text AS role, system_kind FROM chat_messages
+				 WHERE conversation_id = $1 ORDER BY created_at ASC`,
+				[res.conversationId],
+			);
+			expect(rows.rows.map((r) => r.role)).toEqual(['user', 'system']);
+			expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
+		} finally {
+			await setMonthlyContainerHours(ctx.db, 0);
+			await ctx.db.query(
+				`DELETE FROM container_uptime_entries WHERE container_id = 'spent-chat-test'`,
+			);
+			await manager.stop();
+		}
+	});
+
+	test('bills a completed turn to cost_entries under the CEO and HQ', async () => {
+		const chat = makeChatDocker(ctx.dataDir, projectId);
+		const pricing = { costCents: () => 3 } as unknown as PricingService;
+		const { manager } = makeManager(ctx, chat.docker, { pricing });
+		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				`SELECT status::text AS status FROM chat_messages WHERE id = $1`,
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Complete;
+		});
+		await poll(async () => {
+			const r = await ctx.db.query<{ n: number }>(
+				`SELECT COUNT(*)::int AS n FROM cost_entries WHERE description = 'Chat turn'`,
+			);
+			return r.rows[0].n === 1;
+		});
+		const entry = await ctx.db.query<{
+			member_id: string;
+			project_id: string | null;
+			task_id: string | null;
+			amount_cents: number;
+		}>(`SELECT member_id, project_id, task_id, amount_cents FROM cost_entries
+		    WHERE description = 'Chat turn'`);
+		expect(entry.rows[0].member_id).toBe(await ceoId());
+		expect(entry.rows[0].project_id).toBe(projectId);
+		expect(entry.rows[0].task_id).toBeNull();
+		expect(entry.rows[0].amount_cents).toBe(3);
+		await manager.stop();
+		await ctx.db.query(`DELETE FROM cost_entries`);
 	});
 
 	test('points a file-delivery runtime at the turn its prompt was written for', async () => {

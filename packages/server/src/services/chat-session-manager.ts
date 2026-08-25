@@ -25,6 +25,7 @@ import {
 import { runtimeConfig } from '../config/runtime';
 import type { DomainEventBus } from '../events/bus';
 import { trackBackground } from '../lib/background';
+import { broadcastRowChange } from '../lib/broadcast';
 import { loadChatMessageAttachments } from '../lib/chat-attachments';
 import { KeyedLockTimeoutError } from '../lib/keyed-lock';
 import { withTransaction } from '../lib/sql';
@@ -35,6 +36,7 @@ import {
 	acquireCredentialLock,
 	assertPromptDeliverable,
 	buildRuntimeInvocation,
+	CAPACITY_PARK_MAX_MS,
 	CREDENTIAL_WAIT_CAP_MS,
 	type CredentialLockHolder,
 	credentialLockHolder,
@@ -57,6 +59,7 @@ import {
 	getProviderCredentialAndModel,
 	selectProviderConfig,
 } from './ai-provider-keys';
+import { checkOverBudget, type OverBudgetBlock, recordRunCost } from './budget';
 import {
 	buildConversationTaskDescription,
 	chatTranscriptLine,
@@ -71,7 +74,12 @@ import { loadConnectorDescriptors } from './connectors/connections';
 import { reportConnectorRunRejection } from './connectors/run-rejection';
 import type { ContainerLogStreamer } from './container-logs';
 import { type ContainerRunUser, resolveContainerRunUser } from './container-user';
-import { acquireRunContainer, type ContainerDeps } from './containers';
+import {
+	acquireRunContainer,
+	type ContainerDeps,
+	PoolCapacityError,
+	PoolHoursExhaustedError,
+} from './containers';
 import { getAgentSystemPrompt } from './documents';
 import type { EffortRuntimeApplication } from './effort';
 import type { ConnectorRunRejection } from './egress';
@@ -110,6 +118,37 @@ const DELTA_FLUSH_MS = 150;
  * page of its own for a waiting run to point at.
  */
 const CHAT_CREDENTIAL_HOLDER: CredentialLockHolder = { label: 'the CEO chat', link: null };
+
+/**
+ * How often a capacity-parked chat turn retries the acquire. The runner's
+ * cadence, for the runner's reason: nothing is event-driven on container
+ * release, so polling is the only signal, and the pass that frees capacity runs
+ * on the job manager's 5s clock.
+ */
+const CHAT_CAPACITY_POLL_MS = 5_000;
+
+/**
+ * The turn was refused before it ran: a spend budget is exhausted. Rendered as
+ * the budget-exceeded system row; the chat resumes when the window rolls over
+ * or the operator raises the figure.
+ */
+export function chatBudgetExceededNotice(block: OverBudgetBlock): string {
+	const scope = block.scope === 'agent' ? 'This agent has' : 'This project has';
+	return (
+		`${scope} spent its ${block.period} budget, so chat is paused. ` +
+		'It resumes when the window rolls over, or when the budget is raised on the Budget page.'
+	);
+}
+
+/** The hours half of the same refusal - decision-level twin of the spend notice. */
+export const CHAT_HOURS_EXHAUSTED_NOTICE =
+	'This chat cannot start a container: the instance has spent its monthly container-hours ' +
+	'allowance. It resumes when the month turns, or when the allowance is raised on the Budget page.';
+
+/** The turn is parked on the instance memory budget; said in the thread at once. */
+export const CHAT_CAPACITY_WAIT_NOTICE =
+	'Waiting for capacity: every container the memory budget allows is in use. ' +
+	'This turn starts as soon as one frees.';
 
 /**
  * A chat exec gave up waiting for the provider credential. The message names
@@ -627,7 +666,6 @@ export class ChatSessionManager {
 		assistantMessageId: string;
 		conversationId: string;
 	}> {
-		const session = await this.ensureSession();
 		const { conversationId, channel } = ctx;
 		const isCoworker = ctx.kind === ChatConversationKind.Coworker;
 		const convo = this.getConvoRuntime(conversationId);
@@ -658,8 +696,96 @@ export class ChatSessionManager {
 			await convo.current.promise.catch(() => undefined);
 		}
 
-		// One turn can carry several user messages (a flushed chatbox queue). Each is
-		// its own row and its own bubble; a single reply below answers all of them.
+		// The operator's message is persisted BEFORE anything that can refuse the
+		// turn - the budget gate, the container acquire - so a refusal never eats
+		// what they typed: the message stands in the thread and the refusal appears
+		// under it as a system row.
+		const userMessageIds = await this.persistUserBatch(input, ctx);
+		const userMessageId = userMessageIds[userMessageIds.length - 1];
+		await this.touchConversation(conversationId);
+
+		// Pre-turn spend gate: chat is metered like any run, so an exhausted agent
+		// or project budget refuses the turn up front rather than billing past it.
+		const gate = await this.checkChatBudget();
+		if (gate) {
+			const noticeId = await this.postSystemMessage(
+				ctx,
+				ChatSystemMessageKind.BudgetExceeded,
+				chatBudgetExceededNotice(gate),
+			);
+			return { userMessageId, userMessageIds, assistantMessageId: noticeId, conversationId };
+		}
+
+		// The session (and with it the container acquire) can refuse for two
+		// capacity-shaped reasons, told apart because they clear on different
+		// clocks: exhausted hours wait for the calendar or the operator (refuse
+		// now, like the budget gate), while a full memory budget clears when any
+		// container frees (park the turn and keep trying in the background - the
+		// send itself never hard-fails on it).
+		let session: LiveSession | null = null;
+		try {
+			session = await this.ensureSession();
+		} catch (e) {
+			if (e instanceof PoolHoursExhaustedError) {
+				const noticeId = await this.postSystemMessage(
+					ctx,
+					ChatSystemMessageKind.BudgetExceeded,
+					CHAT_HOURS_EXHAUSTED_NOTICE,
+				);
+				return { userMessageId, userMessageIds, assistantMessageId: noticeId, conversationId };
+			}
+			if (!(e instanceof PoolCapacityError)) throw e;
+		}
+
+		const assistantMessageId = await this.insertMessage({
+			conversationId,
+			role: ChatMessageRole.Assistant,
+			channel,
+			status: ChatMessageStatus.Streaming,
+			content: '',
+			authorMemberId: session?.ceoMemberId ?? (await this.resolveCeoMemberId()),
+			sessionId: session?.sessionId ?? null,
+			completed: false,
+		});
+		this.broadcastStart(conversationId, assistantMessageId, ChatMessageRole.Assistant, channel, '');
+
+		const abort = new AbortController();
+		const promise = session
+			? this.runTurn(session, ctx, assistantMessageId, abort, input.injectedContext)
+			: this.runTurnAfterCapacityWait(ctx, assistantMessageId, abort, input.injectedContext);
+		convo.current = { assistantMessageId, abort, promise, ctx };
+		// Title the thread as early as possible: kick off title generation from the
+		// first user message *in parallel* with the reply (off its own prompt file, so
+		// the two execs never collide), so the switcher/rail label flips from "New
+		// thread" while the CEO is still typing instead of only after the reply settles.
+		// Compaction still waits for the reply — it rewrites the window this turn feeds.
+		// Coworker threads skip both: they're titled at creation and never compact
+		// (compaction would fold group chatter into the operator's shared memory —
+		// COWORKER_WINDOW_MAX_MESSAGES bounds their prompt instead).
+		if (!isCoworker) {
+			trackBackground(this.maybeAutoTitle(ctx));
+			trackBackground(promise.then(() => this.maybeCompact(ctx)));
+		}
+
+		return { userMessageId, userMessageIds, assistantMessageId, conversationId };
+	}
+
+	/**
+	 * Persist one turn's user messages (a single message or a flushed queue
+	 * batch), link their attachments, and broadcast each bubble. Each message is
+	 * its own row and its own bubble; a single reply answers all of them.
+	 */
+	private async persistUserBatch(
+		input: {
+			text: string;
+			authorUserId?: string | null;
+			attachmentIds?: string[];
+			messages?: Array<{ text: string; attachmentIds?: string[] }>;
+			authorLabel?: string | null;
+		},
+		ctx: ConversationContext,
+	): Promise<string[]> {
+		const { conversationId, channel } = ctx;
 		const batch =
 			input.messages && input.messages.length > 0
 				? input.messages
@@ -707,38 +833,136 @@ export class ChatSessionManager {
 				userAttachments,
 			);
 		}
-		const userMessageId = userMessageIds[userMessageIds.length - 1];
-		await this.touchConversation(conversationId);
+		return userMessageIds;
+	}
 
-		const assistantMessageId = await this.insertMessage({
-			conversationId,
-			role: ChatMessageRole.Assistant,
-			channel,
-			status: ChatMessageStatus.Streaming,
-			content: '',
-			authorMemberId: session.ceoMemberId,
-			sessionId: session.sessionId,
-			completed: false,
-		});
-		this.broadcastStart(conversationId, assistantMessageId, ChatMessageRole.Assistant, channel, '');
-
-		const abort = new AbortController();
-		const promise = this.runTurn(session, ctx, assistantMessageId, abort, input.injectedContext);
-		convo.current = { assistantMessageId, abort, promise, ctx };
-		// Title the thread as early as possible: kick off title generation from the
-		// first user message *in parallel* with the reply (off its own prompt file, so
-		// the two execs never collide), so the switcher/rail label flips from "New
-		// thread" while the CEO is still typing instead of only after the reply settles.
-		// Compaction still waits for the reply — it rewrites the window this turn feeds.
-		// Coworker threads skip both: they're titled at creation and never compact
-		// (compaction would fold group chatter into the operator's shared memory —
-		// COWORKER_WINDOW_MAX_MESSAGES bounds their prompt instead).
-		if (!isCoworker) {
-			trackBackground(this.maybeAutoTitle(ctx));
-			trackBackground(promise.then(() => this.maybeCompact(ctx)));
+	/**
+	 * The chat's pre-turn spend gate. Fail-open on an infrastructure error: a
+	 * broken check must not brick the operator's control surface, and the run
+	 * path's own gates still stand.
+	 */
+	private async checkChatBudget(): Promise<OverBudgetBlock | null> {
+		try {
+			const ceoMemberId = await this.resolveCeoMemberId();
+			const projectId = await this.resolveHqProjectId();
+			return await checkOverBudget(this.deps.db, ceoMemberId, projectId);
+		} catch (e) {
+			log.warn(`chat budget check failed; allowing the turn: ${String(e)}`);
+			return null;
 		}
+	}
 
-		return { userMessageId, userMessageIds, assistantMessageId, conversationId };
+	/**
+	 * A turn parked on the instance memory budget: say so in the thread once,
+	 * then retry the acquire on the runner's cadence until a container frees, the
+	 * park deadline passes, or the operator interrupts. Runs in the background -
+	 * the send already returned - so the person watches the parked state in the
+	 * thread rather than a hanging request.
+	 */
+	private async runTurnAfterCapacityWait(
+		ctx: ConversationContext,
+		assistantMessageId: string,
+		abort: AbortController,
+		injectedContext?: string,
+	): Promise<void> {
+		const convo = this.getConvoRuntime(ctx.conversationId);
+		const fail = async (error: string): Promise<void> => {
+			await this.finalizeMessage(
+				ctx.conversationId,
+				assistantMessageId,
+				ChatMessageStatus.Failed,
+				'',
+				null,
+				error,
+			);
+		};
+		try {
+			await this.postSystemMessage(
+				ctx,
+				ChatSystemMessageKind.CapacityWait,
+				CHAT_CAPACITY_WAIT_NOTICE,
+			);
+			const pollMs = this.deps.capacityPark?.pollMs ?? CHAT_CAPACITY_POLL_MS;
+			const deadline = Date.now() + (this.deps.capacityPark?.maxMs ?? CAPACITY_PARK_MAX_MS);
+			while (true) {
+				if (abort.signal.aborted) {
+					await this.finalizeMessage(
+						ctx.conversationId,
+						assistantMessageId,
+						ChatMessageStatus.Interrupted,
+						'',
+						null,
+					);
+					return;
+				}
+				let session: LiveSession;
+				try {
+					session = await this.ensureSession();
+				} catch (e) {
+					if (e instanceof PoolHoursExhaustedError) {
+						// The wait crossed into a spent allowance - a different clock, so a
+						// different message, and no amount of freed memory ends it.
+						await this.postSystemMessage(
+							ctx,
+							ChatSystemMessageKind.BudgetExceeded,
+							CHAT_HOURS_EXHAUSTED_NOTICE,
+						);
+						await fail(e.message);
+						return;
+					}
+					if (!(e instanceof PoolCapacityError)) {
+						await fail((e as Error).message);
+						return;
+					}
+					if (Date.now() >= deadline) {
+						await fail('No container capacity freed up in time. Send again to retry.');
+						return;
+					}
+					await new Promise((resolve) => setTimeout(resolve, pollMs));
+					continue;
+				}
+				await this.runTurn(session, ctx, assistantMessageId, abort, injectedContext);
+				return;
+			}
+		} finally {
+			if (convo.current?.assistantMessageId === assistantMessageId) convo.current = null;
+		}
+	}
+
+	/**
+	 * One chat exec's spend, recorded exactly as a run's is - a `cost_entries`
+	 * row under the session's member and project, broadcast so the Budget page
+	 * refreshes. Best-effort: a bookkeeping failure must not fail the reply the
+	 * operator already has.
+	 */
+	private async recordChatSpend(
+		session: LiveSession,
+		usage: AgentRunUsage | null,
+		description: string,
+	): Promise<void> {
+		if (!usage || usage.costCents <= 0) return;
+		try {
+			const entry = await recordRunCost(this.deps.db, {
+				memberId: session.ceoMemberId,
+				taskId: null,
+				projectId: session.projectId,
+				amountCents: usage.costCents,
+				description,
+				aiProviderConfigId: session.invocationInputs.credential.configId,
+				provider: session.invocationInputs.provider,
+			});
+			if (entry) {
+				broadcastRowChange(
+					this.deps.wsManager,
+					wsRoom.team(DEFAULT_TEAM_ID),
+					'cost_entries',
+					'INSERT',
+					entry,
+				);
+			}
+		} catch (e) {
+			log.error('failed to record chat spend', e);
+		}
 	}
 
 	/** Tear the live session down; the next turn re-allocates a fresh one. */
@@ -1750,8 +1974,11 @@ export class ChatSessionManager {
 				{ onWaiting: (holder) => this.postCredentialWait(ctx, holder) },
 			);
 			handle(parser.flush());
-			await finalize(ChatMessageStatus.Complete, parser.getUsage() ?? (await recoverUsage()));
-			// After the reply has settled, so the operator is never kept waiting on it.
+			const usage = parser.getUsage() ?? (await recoverUsage());
+			await finalize(ChatMessageStatus.Complete, usage);
+			// Chat is metered: the turn's spend lands in cost_entries like a run's,
+			// after the reply has settled so the operator is never kept waiting on it.
+			await this.recordChatSpend(session, usage, 'Chat turn');
 			await this.checkNoWakeExit(session, ctx, assistantMessageId);
 		} catch (err) {
 			if (abort.signal.aborted) {
@@ -1908,11 +2135,11 @@ export class ChatSessionManager {
 	 * knows what the silence is and where to look - and can stop the turn rather
 	 * than wait, if they would rather.
 	 */
-	private postCredentialWait(
+	private async postCredentialWait(
 		ctx: ConversationContext,
 		holder: CredentialLockHolder,
 	): Promise<void> {
-		return this.postSystemMessage(
+		await this.postSystemMessage(
 			ctx,
 			ChatSystemMessageKind.CredentialWait,
 			credentialWaitNotice(holder),
@@ -1924,7 +2151,7 @@ export class ChatSessionManager {
 		ctx: ConversationContext,
 		kind: ChatSystemMessageKind,
 		content: string,
-	): Promise<void> {
+	): Promise<string> {
 		const messageId = await this.insertMessage({
 			conversationId: ctx.conversationId,
 			role: ChatMessageRole.System,
@@ -1943,6 +2170,7 @@ export class ChatSessionManager {
 			undefined,
 			kind,
 		);
+		return messageId;
 	}
 
 	/**
@@ -2110,18 +2338,28 @@ export class ChatSessionManager {
 		const execScopeId = randomUUID();
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
 		await writePrompt(prompt);
+		// The reply text is irrelevant - the memory write is the real product,
+		// landed via the update_chat_memory MCP tool - but the exec still bills:
+		// the parser is here for its usage, and chat is metered.
+		const pricing = this.deps.pricing;
+		const parser = createAgentChatParser(
+			session.runtimeType,
+			pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
+		);
 		try {
-			// Drain output; the reply text is irrelevant — the memory write is the
-			// real product, landed via the update_chat_memory MCP tool.
 			await this.withCredentialLock(session, abort.signal, () =>
 				dockerSandboxHandle(this.deps.docker, session.containerId, session.runUser).exec({
 					cmd: execCmd,
 					env,
 					workingDir: CHAT_WORKING_DIR,
 					signal: abort.signal,
-					onChunk: () => undefined,
+					onChunk: (chunk) => {
+						if (chunk.stream === 'stdout') parser.onStdout(chunk.text);
+					},
 				}),
 			);
+			parser.flush();
+			await this.recordChatSpend(session, parser.getUsage(), 'Chat memory compaction');
 		} catch (e) {
 			// A new user turn preempts compaction — that's a clean stop, not a
 			// failure; nothing is evicted and it retries later.
@@ -2201,7 +2439,7 @@ export class ChatSessionManager {
 	 * short title, then persist it (only while the thread is still untitled) and tell
 	 * the open chatbox(es) to refetch the thread list. No `chat_message`, no
 	 * broadcast of a reply — the operator sees only the switcher label update. The
-	 * exec's tokens are not separately priced (matches `runCompaction`).
+	 * exec's tokens bill to cost_entries like every chat exec (matches `runCompaction`).
 	 */
 	private async runTitleGeneration(
 		session: LiveSession,
@@ -2230,7 +2468,11 @@ export class ChatSessionManager {
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
 		await writePrompt(prompt);
 
-		const parser = createAgentChatParser(session.runtimeType);
+		const pricing = this.deps.pricing;
+		const parser = createAgentChatParser(
+			session.runtimeType,
+			pricing ? (model, tokens) => pricing.costCents(model, tokens) : undefined,
+		);
 		let text = '';
 		try {
 			await this.withCredentialLock(session, abort.signal, () =>
@@ -2247,6 +2489,7 @@ export class ChatSessionManager {
 				}),
 			);
 			for (const ev of parser.flush()) if (ev.text) text += ev.text;
+			await this.recordChatSpend(session, parser.getUsage(), 'Chat auto-title');
 		} catch (e) {
 			// A new user turn preempts title generation — a clean stop, retried later.
 			if (abort.signal.aborted) {

@@ -20,6 +20,11 @@ Each agent run records what it cost, based on the tokens it used and the pricing
 the model it ran on. Costs roll up two ways (**per agent** and **per project**), so
 you can see exactly where spend is going from the budget view.
 
+**Chat turns are counted too.** A reply in the assistant chat bills its tokens the
+same way a run does, under the replying agent and its project, and an agent or
+project at its budget limit pauses in chat as well: the thread shows a notice, and
+the conversation resumes when the window rolls over or you raise the limit.
+
 Model pricing ships built in and refreshes daily from
 [pricepertoken.com](https://pricepertoken.com), so rates stay current without any
 setup. The catalog carries no cache rates, so Hezo derives them from each model's
