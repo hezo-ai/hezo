@@ -156,11 +156,26 @@ function makeTitleRoutingDocker(
 	return { docker, prompts };
 }
 
+/**
+ * Capture what an open chatbox receives: the global boundary-event room plus,
+ * lazily, each conversation's own room (deltas stream only there - the client
+ * joins a thread's room when it opens the thread). The lazy join keys off the
+ * conversationId on the first boundary event, mirroring the real client.
+ */
 function captureCeoRoom(wsManager: WebSocketManager): { events: Array<Record<string, unknown>> } {
 	const events: Array<Record<string, unknown>> = [];
+	const joined = new Set<string>();
 	const socket: WsSocket = {
 		data: { auth: { type: AuthType.Admin, isSuperuser: true }, rooms: new Set() },
-		send: (msg: string) => events.push(JSON.parse(msg)),
+		send: (msg: string) => {
+			const event = JSON.parse(msg) as Record<string, unknown>;
+			events.push(event);
+			const convoId = event.conversationId;
+			if (typeof convoId === 'string' && !joined.has(convoId)) {
+				joined.add(convoId);
+				wsManager.subscribe(socket, wsRoom.chatConversation(convoId));
+			}
+		},
 	};
 	wsManager.subscribe(socket, wsRoom.chat());
 	return { events };
@@ -337,8 +352,11 @@ describe('ChatSessionManager', () => {
 			return r.rows[0]?.status === ChatMessageStatus.Complete;
 		});
 
+		// A subscriber of both rooms receives each boundary event once per room;
+		// the client handles them idempotently, so distinctness is the contract.
 		const activity = captured.events.filter((e) => e.type === 'chat_message_tool_activity');
-		expect(activity.length).toBe(1);
+		expect(activity.length).toBeGreaterThanOrEqual(1);
+		expect(new Set(activity.map((a) => `${a.messageId}:${a.tool}`)).size).toBe(1);
 		expect(activity[0].tool).toBe('mcp__hezo__list_agents');
 		expect(activity[0].messageId).toBe(assistantMessageId);
 

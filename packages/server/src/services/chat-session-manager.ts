@@ -44,6 +44,7 @@ import {
 	getContainerPromptPath,
 	getPromptRelPath,
 	type RunnerDeps,
+	recoverOffStreamRunUsage,
 	type SubscriptionMount,
 } from './agent-runner';
 import {
@@ -75,7 +76,11 @@ import { getAgentSystemPrompt } from './documents';
 import type { EffortRuntimeApplication } from './effort';
 import type { ConnectorRunRejection } from './egress';
 import { applyEffortToRuntime } from './runtime-adapters';
-import { persistRotatedSubscriptionAuth, refreshSubscriptionMount } from './runtime-home';
+import {
+	persistRotatedSubscriptionAuth,
+	type RuntimeHomeMount,
+	refreshSubscriptionMount,
+} from './runtime-home';
 import { resolveRuntimeForTask } from './runtime-resolver';
 import { dockerSandboxHandle } from './sandbox/handle';
 import { setPoolMemberChatReservation } from './sandbox/pool-db';
@@ -277,6 +282,8 @@ interface LiveSession {
 	promptDirective: string | null;
 	/** See {@link HostSideAllocation.subscriptionMount}. */
 	subscriptionMount: SubscriptionMount | null;
+	/** See {@link HostSideAllocation.homeMount}. */
+	homeMount: RuntimeHomeMount | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
 	/** Tears down the session's tunnel. Idempotent; see {@link HostSideAllocation}. */
@@ -351,6 +358,12 @@ interface HostSideAllocation {
 	 * after every exec that could have rewritten it.
 	 */
 	subscriptionMount: SubscriptionMount | null;
+	/**
+	 * The per-session runtime home mount, when the runtime has one. Kept so a
+	 * turn can recover off-stream usage from the files some CLIs write there
+	 * (and scrub them - they can carry the provider credential).
+	 */
+	homeMount: RuntimeHomeMount | null;
 	releaseEgress: () => Promise<void>;
 	releaseSsh: () => Promise<void>;
 	/**
@@ -1551,6 +1564,7 @@ export class ChatSessionManager {
 				execCmd: invocation.execCmd,
 				promptDirective: effortApplication.promptDirective ?? null,
 				subscriptionMount: invocation.subscriptionMount,
+				homeMount: invocation.homeMount,
 				releaseEgress,
 				releaseSsh,
 				closeTunnel: () => tunnel?.close(),
@@ -1640,6 +1654,22 @@ export class ChatSessionManager {
 		const execScopeId = randomUUID();
 		env.push(`HEZO_EXEC_SCOPE_ID=${execScopeId}`);
 		const accumulated = { text: '' };
+		// Grok and Kimi Code emit no usage on their streams; recover it from the
+		// file each writes into the session's home mount, then scrub that file
+		// (both can carry the provider credential). Called on every turn end -
+		// including interrupted and failed ones, where the usage is discarded but
+		// the scrub still matters. Scrubbing per turn also keeps the next turn's
+		// parse from re-billing this one's records. Null for every other runtime.
+		const recoverUsage = async (): Promise<AgentRunUsage | null> => {
+			if (!session.homeMount) return null;
+			const pricingSvc = this.deps.pricing;
+			return recoverOffStreamRunUsage(
+				session.runtimeType,
+				this.deps.docker.files(session.containerId, session.homeMount.containerDir),
+				pricingSvc ? (model, tokens) => pricingSvc.costCents(model, tokens) : undefined,
+				(msg) => log.error(`CEO chat turn usage recovery: ${msg}`),
+			).catch(() => null);
+		};
 		let finalized = false;
 		const finalize = async (
 			status: ChatMessageStatus,
@@ -1719,7 +1749,7 @@ export class ChatSessionManager {
 				{ onWaiting: (holder) => this.postCredentialWait(ctx, holder) },
 			);
 			handle(parser.flush());
-			await finalize(ChatMessageStatus.Complete, parser.getUsage());
+			await finalize(ChatMessageStatus.Complete, parser.getUsage() ?? (await recoverUsage()));
 			// After the reply has settled, so the operator is never kept waiting on it.
 			await this.checkNoWakeExit(session, ctx, assistantMessageId);
 		} catch (err) {
@@ -1727,6 +1757,9 @@ export class ChatSessionManager {
 				// Aborting only tears down the attach stream — reap the abandoned
 				// in-container CLI by this exec's own scope marker.
 				this.killAbandonedExec(session, execScopeId);
+				// Usage on an interrupted turn is discarded, but the recovery's scrub
+				// side effect still removes the credential-bearing log.
+				await recoverUsage();
 				await finalize(ChatMessageStatus.Interrupted, null);
 			} else {
 				// A credential still held elsewhere is the instance being busy, not
@@ -1734,6 +1767,8 @@ export class ChatSessionManager {
 				if (err instanceof ChatCredentialBusyError)
 					log.warn(`CEO chat turn gave up: ${err.message}`);
 				else log.error('CEO chat turn failed', err);
+				// Discarded usage, kept scrub - same as the interrupted arm.
+				await recoverUsage();
 				await finalize(ChatMessageStatus.Failed, null, (err as Error).message);
 			}
 		} finally {
