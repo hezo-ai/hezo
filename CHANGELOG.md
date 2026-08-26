@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.54.1 - 2026-08-26
+
+### Documentation
+
+- **agents:** cut AGENTS.md to principles, move the specifics to .dev/ guides ([#1045](https://github.com/hezo-ai/hezo/pull/1045))
+
+### Other
+
+- Track H: what Hezo Cloud needs from this repo ([#1047](https://github.com/hezo-ai/hezo/pull/1047))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.54.0...0.54.1
+
 ## 0.54.0 - 2026-08-24
 
 ### Features
