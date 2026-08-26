@@ -15,7 +15,7 @@
 #   4. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
 #   5. installs systemd units (a first-boot unit that derives the public URL, then Hezo)
 #   6. exempts Hezo from needrestart's automatic restarts (it comes back locked)
-#   7. locks the firewall down (only 80/443 public; 3100 + egress ports stay host-local)
+#   7. locks the firewall down (only 80/443 public; the app port + egress ports stay host-local)
 #
 # It never sets the master key: that is generated in the browser on first run and
 # shown once, so it cannot be pre-seeded. After boot, open the printed URL and
@@ -45,6 +45,13 @@
 #                          Auto-shrinks to fit the disk when 6G plus headroom won't fit,
 #                          and is skipped when the host already has active swap.
 #   HEZO_RELEASE_TAG       pin a release tag (default: latest)
+#   BEHIND_GATEWAY         set to 1 when this host sits behind a shared gateway that
+#                          already terminates TLS for the domain. Installs no Caddy,
+#                          attempts no ACME, and opens no public 80/443 - the app port
+#                          is reachable from the private network only. Requires
+#                          HEZO_DOMAIN_OVERRIDE, since the gateway owns the name and
+#                          this host's own IP is not it. Unprefixed because the hezo
+#                          binary never reads it; only this script does.
 #   HEZO_IMAGE_BUILD       set to 1 when baking a machine image (e.g. the DigitalOcean
 #                          Marketplace Packer build). Installs and enables everything but
 #                          does NOT start the services or derive the public URL — that is
@@ -63,17 +70,29 @@ CONFIG_FILE="/etc/hezo/hezo.config.cjs"
 WEB_URL_FILE="/etc/hezo/web-url"
 DEPLOY_ENV="/etc/hezo/deploy.env"
 RELEASE_TAG="${HEZO_RELEASE_TAG:-latest}"
+# Hezo's own listening port. Named once so the reverse-proxy target and the
+# firewall rule cannot drift apart.
+APP_PORT=3100
 
 # Cloud-init can seed optional settings (managed database / asset storage, domain
 # override) into deploy.env before this script runs — pick them up. Explicit shell
 # environment still wins over the file.
 if [[ -f "${DEPLOY_ENV}" ]]; then
 	while IFS='=' read -r key value; do
-		[[ "${key}" =~ ^HEZO_[A-Z_]+$ ]] || continue
+		[[ "${key}" =~ ^(HEZO_[A-Z_]+|BEHIND_GATEWAY)$ ]] || continue
 		if [[ -z "${!key:-}" ]]; then
 			export "${key}=${value}"
 		fi
 	done <"${DEPLOY_ENV}"
+fi
+
+# Resolved once so every branch below reads the same answer, and so `set -u`
+# never trips on an unset optional flag.
+BEHIND_GATEWAY="${BEHIND_GATEWAY:-}"
+if [[ "${BEHIND_GATEWAY}" == "1" && -z "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
+	echo "BEHIND_GATEWAY=1 needs HEZO_DOMAIN_OVERRIDE: the gateway owns the host name," >&2
+	echo "and this machine's own address is not the one users reach it by." >&2
+	exit 1
 fi
 
 log() { echo "[hezo-provision] $*"; }
@@ -316,15 +335,22 @@ if [[ -n "${LEGACY_ENV_CARRIED}" && -f "${CONFIG_FILE}" && -f "${LEGACY_ENV}" ]]
 fi
 
 # Persist optional settings the first-boot unit reads (domain override, swap size).
-if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" || -n "${HEZO_SWAP_SIZE:-}" ]]; then
+if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" || -n "${HEZO_SWAP_SIZE:-}" || -n "${BEHIND_GATEWAY}" ]]; then
 	install -m 600 /dev/null "${DEPLOY_ENV}"
 	[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && echo "HEZO_DOMAIN_OVERRIDE=${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV}"
 	[[ -n "${HEZO_SWAP_SIZE:-}" ]] && echo "HEZO_SWAP_SIZE=${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV}"
+	[[ -n "${BEHIND_GATEWAY}" ]] && echo "BEHIND_GATEWAY=${BEHIND_GATEWAY}" >>"${DEPLOY_ENV}"
 fi
 
 # ---------------------------------------------------------------------------
 # 5. Caddy (reverse proxy, automatic HTTPS, WebSocket passthrough)
+#    Skipped entirely behind a shared gateway: that gateway already terminates
+#    TLS for the whole domain, so a second listener here would race it for
+#    port 80 and then try to solve an ACME challenge for a name it does not own.
 # ---------------------------------------------------------------------------
+if [[ "${BEHIND_GATEWAY}" == "1" ]]; then
+	log "Behind a gateway: skipping Caddy, ACME and public 80/443."
+else
 if ! command -v caddy >/dev/null 2>&1; then
 	log "Installing Caddy…"
 	apt-get update -y
@@ -338,13 +364,13 @@ if ! command -v caddy >/dev/null 2>&1; then
 fi
 
 # The site address is provided at runtime by hezo-firstboot via /etc/caddy/hezo.env.
-cat >/etc/caddy/Caddyfile <<'EOF'
+cat >/etc/caddy/Caddyfile <<EOF
 # Managed by Hezo provision.sh — the site address comes from HEZO_SITE_ADDRESS
 # (written to /etc/caddy/hezo.env by hezo-firstboot). Caddy provisions a
 # Let's Encrypt certificate for it automatically and passes WebSocket upgrades
 # (Hezo's /ws stream) straight through.
-{$HEZO_SITE_ADDRESS} {
-	reverse_proxy 127.0.0.1:3100
+{\$HEZO_SITE_ADDRESS} {
+	reverse_proxy 127.0.0.1:${APP_PORT}
 }
 EOF
 
@@ -360,6 +386,7 @@ EnvironmentFile=/etc/caddy/hezo.env
 EOF
 # Placeholder so caddy's EnvironmentFile exists before first-boot writes the real value.
 [[ -f /etc/caddy/hezo.env ]] || echo 'HEZO_SITE_ADDRESS=:80' >/etc/caddy/hezo.env
+fi
 
 # ---------------------------------------------------------------------------
 # 6. First-boot unit: derive the public URL, wire it into Caddy + Hezo
@@ -384,7 +411,16 @@ if [[ -x /usr/local/sbin/hezo-ensure-swap.sh ]]; then
 	HEZO_SWAP_SIZE="${HEZO_SWAP_SIZE:-}" /usr/local/sbin/hezo-ensure-swap.sh || true
 fi
 
-if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
+if [[ "${BEHIND_GATEWAY:-}" == "1" ]]; then
+	# The gateway owns the name and terminates TLS for it. Deriving one from this
+	# host's own address would produce a name nothing resolves to, so provision.sh
+	# refuses the combination and this is belt and braces.
+	if [[ -z "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
+		echo "hezo-firstboot: BEHIND_GATEWAY=1 without HEZO_DOMAIN_OVERRIDE; cannot derive a URL" >&2
+		exit 1
+	fi
+	DOMAIN="${HEZO_DOMAIN_OVERRIDE}"
+elif [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
 	DOMAIN="${HEZO_DOMAIN_OVERRIDE}"
 else
 	# DigitalOcean metadata first (exact public IP), then a provider-agnostic fallback.
@@ -397,7 +433,10 @@ else
 	DOMAIN="${IP}.sslip.io"
 fi
 
-echo "HEZO_SITE_ADDRESS=${DOMAIN}" >/etc/caddy/hezo.env
+# Only when Caddy is the one terminating TLS; behind a gateway it is not installed.
+if [[ "${BEHIND_GATEWAY:-}" != "1" ]]; then
+	echo "HEZO_SITE_ADDRESS=${DOMAIN}" >/etc/caddy/hezo.env
+fi
 # The config file reads this path for `webUrl`; a .cjs object cannot be appended to.
 [[ -s /etc/hezo/web-url ]] || echo "https://${DOMAIN}" >/etc/hezo/web-url
 
@@ -467,8 +506,10 @@ $nrconf{override_rc} = { qr(^hezo\.service$) => 0 };
 EOF
 
 # ---------------------------------------------------------------------------
-# 9. Firewall — only 80/443 public; keep 3100 and the egress range host-local,
-#    but let the Docker bridge reach the host (agents call back over docker0).
+# 9. Firewall — only 80/443 public; keep the app port and the egress range
+#    host-local, but let the Docker bridge reach the host (agents call back over
+#    docker0). Behind a gateway there is nothing public at all: the gateway
+#    reaches the app port over the private network instead.
 #    See docs/deployment/self-hosting.md § Networking & firewall.
 # ---------------------------------------------------------------------------
 if command -v ufw >/dev/null 2>&1; then
@@ -476,8 +517,16 @@ if command -v ufw >/dev/null 2>&1; then
 	ufw default deny incoming
 	ufw default allow outgoing
 	ufw allow OpenSSH
-	ufw allow 80/tcp
-	ufw allow 443/tcp
+	if [[ "${BEHIND_GATEWAY}" == "1" ]]; then
+		# Private ranges only. The provider's own firewall should narrow this
+		# further to the gateway itself; this is the half the host can enforce.
+		for cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do
+			ufw allow from "${cidr}" to any port "${APP_PORT}" proto tcp
+		done
+	else
+		ufw allow 80/tcp
+		ufw allow 443/tcp
+	fi
 	ufw allow in on docker0
 	ufw --force enable
 fi
@@ -493,14 +542,25 @@ if [[ "${HEZO_IMAGE_BUILD:-}" == "1" ]]; then
 	# absent, so it fires) which sets the real <ip>.sslip.io address, then Caddy and
 	# Hezo start. Guard against a baked sentinel/URL just in case.
 	rm -f /var/lib/hezo/.firstboot-done
-	systemctl enable hezo-firstboot.service caddy hezo
+	if [[ "${BEHIND_GATEWAY}" == "1" ]]; then
+		systemctl enable hezo-firstboot.service hezo
+	else
+		systemctl enable hezo-firstboot.service caddy hezo
+	fi
 	log "Image build: services enabled for first boot (not started). URL is derived on the user's first boot."
 else
 	systemctl enable --now hezo-firstboot.service
-	systemctl enable --now caddy
-	# Re-run Caddy now that the real site address exists.
-	systemctl restart caddy
+	if [[ "${BEHIND_GATEWAY}" != "1" ]]; then
+		systemctl enable --now caddy
+		# Re-run Caddy now that the real site address exists.
+		systemctl restart caddy
+	fi
 	systemctl enable --now hezo
-	log "Done. Once DNS + certificate settle (a few seconds), open the URL from:"
-	log "  cat /etc/hezo/hezo.config.cjs    # webUrl comes from /etc/hezo/web-url"
+	if [[ "${BEHIND_GATEWAY}" == "1" ]]; then
+		log "Done. Behind a gateway: no TLS here, and nothing public."
+		log "  Point the gateway at this host's private address on port ${APP_PORT}."
+	else
+		log "Done. Once DNS + certificate settle (a few seconds), open the URL from:"
+		log "  cat /etc/hezo/hezo.config.cjs    # webUrl comes from /etc/hezo/web-url"
+	fi
 fi
