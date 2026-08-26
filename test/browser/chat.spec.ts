@@ -94,20 +94,7 @@ test.describe('chat dock — responsive layout', () => {
 			};
 		});
 
-		// The dock swaps the scrollable message list for an HQ-container notice
-		// unless HQ is healthy. Force the instance (is_internal) project to
-		// "running" so the list renders regardless of the env's container state.
-		await page.route('**/api/projects', async (route) => {
-			if (route.request().method() !== 'GET') return route.fallback();
-			const response = await route.fetch();
-			const body = (await response.json()) as { data?: Array<Record<string, unknown>> };
-			const data = Array.isArray(body.data)
-				? body.data.map((p) => (p.is_internal ? { ...p, container_status: 'running' } : p))
-				: body.data;
-			await route.fulfill({ response, json: { ...body, data } });
-		});
-
-		// A real CEO reply needs the HQ container + a live LLM, so mock the read
+		// A real CEO reply needs a container + a live LLM, so mock the read
 		// endpoint to get a deterministic conversation that overflows the panel.
 		await page.route('**/api/chat/conversation', (route) =>
 			route.fulfill({ json: { data: { conversation_id: 'conv-seed', messages: seeded } } }),
@@ -344,27 +331,40 @@ test.describe('chat dock — composer auto-grow', () => {
 // packages/web/test/overlay-close-on-navigate.test.tsx); the mobile
 // full-screen sheet needs Chromium at a real mobile viewport.
 test.describe('chat dock — dismissal on navigation', () => {
-	test('mobile: following "View container" leaves no sheet over the page', async ({
+	test('mobile: following an in-chat link leaves no sheet over the page', async ({
 		sharedPage,
 		sharedWorkspace,
 	}) => {
 		const page = sharedPage;
 
-		// Put HQ mid-provision so the chat renders its blocked panel, whose only
-		// affordance is the link out to the container page.
-		await page.route('**/api/projects', async (route) => {
-			const res = await route.fetch();
-			const json = (await res.json()) as { data: Array<Record<string, unknown>> };
-			await route.fulfill({
-				response: res,
-				body: JSON.stringify({
-					...json,
-					data: json.data.map((p) =>
-						p.is_internal === true ? { ...p, container_status: 'creating' } : p,
-					),
-				}),
-			});
-		});
+		// A system row whose text names a run: RunLinkedText renders it as a
+		// client-side link - the in-sheet affordance that navigates. (The old HQ
+		// container gate is gone; a chat turn claims its own pool container, so
+		// nothing in the sheet blocks on container state any more.)
+		const seeded = [
+			{
+				id: 'seed-user',
+				conversation_id: 'conv-nav',
+				role: 'user',
+				channel: 'web',
+				status: 'complete',
+				content: 'Where did that run end up?',
+				created_at: new Date(Date.UTC(2026, 0, 1, 0, 0)).toISOString(),
+			},
+			{
+				id: 'seed-wait',
+				conversation_id: 'conv-nav',
+				role: 'system',
+				system_kind: 'credential_wait',
+				channel: 'web',
+				status: 'complete',
+				content: `Waiting for [growth-analyst/HM-336](/projects/${sharedWorkspace.projectSlug}/agents/growth-analyst/executions/run-nav-1).`,
+				created_at: new Date(Date.UTC(2026, 0, 1, 0, 1)).toISOString(),
+			},
+		];
+		await page.route('**/api/chat/conversation', (route) =>
+			route.fulfill({ json: { data: { conversation_id: 'conv-nav', messages: seeded } } }),
+		);
 
 		await page.setViewportSize({ width: 375, height: 800 });
 		await page.goto(`/projects/${sharedWorkspace.projectSlug}/tasks`);
@@ -376,11 +376,11 @@ test.describe('chat dock — dismissal on navigation', () => {
 
 		const panel = page.getByTestId('chat-panel');
 		await expect(panel).toBeVisible();
-		await panel.getByTestId('hq-container-notice-link').click();
+		await panel.getByTestId('run-link').click();
 
 		// The sheet and its scrim both go, and the page it navigated to is what the
 		// reader is actually left looking at.
-		await expect(page).toHaveURL(/\/settings\/containers$/);
+		await expect(page).toHaveURL(/\/executions\/run-nav-1$/);
 		await expect(panel).toBeHidden();
 		await expect(page.getByTestId('chat-overlay')).toBeHidden();
 		await expect(launcher).toBeVisible();

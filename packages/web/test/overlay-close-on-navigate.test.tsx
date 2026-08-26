@@ -125,16 +125,12 @@ test('the anchored chat dock survives navigation', async () => {
 	// across a navigation. happy-dom reports a 1024px viewport, so this tier is
 	// the desktop branch; the mobile full-screen sheet — which DOES strand the
 	// reader, and closes — is covered in test/browser/chat.spec.ts.
-	const { findByTestId, user, router } = await renderApp({
-		initialPath: '/home',
-		seed: async (ctx) => {
-			await blockHqContainer(ctx.db);
-		},
-	});
+	const { findByTestId, user, router } = await renderApp({ initialPath: '/home' });
 
 	await user.click(await findByTestId('app-header-chat', undefined, { timeout: 15_000 }));
-	const panel = await findByTestId('chat-panel');
-	await user.click(await within(panel).findByTestId('hq-container-notice-link'));
+	await findByTestId('chat-panel');
+
+	await router.navigate({ to: '/settings/containers' });
 
 	await waitFor(() => expect(router.state.location.pathname).toBe('/settings/containers'));
 	expect(screen.getByTestId('chat-panel')).toBeTruthy();
