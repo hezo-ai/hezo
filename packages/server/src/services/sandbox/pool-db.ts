@@ -23,7 +23,6 @@ import {
 	closeUptimeInterval,
 	closeUptimeIntervalsForMembers,
 	openUptimeInterval,
-	setUptimeIntervalChatReservation,
 } from './uptime-ledger';
 
 /**
@@ -145,10 +144,9 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 		disk_ceiling_bytes: string | number;
 		memory_bytes: string | number | null;
 		has_unpushed_commits: boolean;
-		reserved_for_chat: boolean;
 	}>(
 		`SELECT container_id, state::text AS state, last_task_id, disk_used_bytes,
-		        disk_ceiling_bytes, memory_bytes, has_unpushed_commits, reserved_for_chat
+		        disk_ceiling_bytes, memory_bytes, has_unpushed_commits
 		   FROM container_pool_members
 		  WHERE project_id = $1
 		  ORDER BY created_at ASC`,
@@ -172,7 +170,6 @@ export async function loadPoolMembers(db: Db, projectId: string): Promise<PoolMe
 			// Null stays null rather than becoming zero: "never recorded" is a
 			// distinct answer from any allocation, and the ladder recycles on it.
 			memoryBytes: row.memory_bytes === null ? null : Number(row.memory_bytes),
-			reservedForChat: row.reserved_for_chat,
 		});
 	}
 	return members;
@@ -497,7 +494,6 @@ export interface ContainerListing {
 	project_name: string;
 	/** Pool vocabulary, including the two states the ladder itself skips. */
 	state: 'creating' | 'idle' | 'busy' | 'suspended' | 'error';
-	reserved_for_chat: boolean;
 	has_unpushed_commits: boolean;
 	disk_used_bytes: number;
 	disk_ceiling_bytes: number;
@@ -568,7 +564,6 @@ interface ContainerListingRow {
 	project_slug: string;
 	project_name: string;
 	state: ContainerListing['state'];
-	reserved_for_chat: boolean;
 	has_unpushed_commits: boolean;
 	disk_used_bytes: string | number;
 	disk_ceiling_bytes: string | number;
@@ -601,7 +596,6 @@ const CONTAINER_LISTING_SQL = `
 	           ELSE 'suspended'
 	         END
 	       ) AS state,
-	       COALESCE(m.reserved_for_chat, false)    AS reserved_for_chat,
 	       COALESCE(m.has_unpushed_commits, false) AS has_unpushed_commits,
 	       COALESCE(m.disk_used_bytes, 0)          AS disk_used_bytes,
 	       COALESCE(m.disk_ceiling_bytes, ${DEFAULT_DISK_CEILING_SQL}) AS disk_ceiling_bytes,
@@ -768,31 +762,6 @@ export async function decidePoolAcquisition(
 		capacity,
 		requiredMemoryBytes,
 	);
-}
-
-/**
- * Mark (or release) the chat's pinned container, which `selectPoolMember` will
- * never hand to a task run and `planIdleShutdown` will never stop.
- *
- * Chat is exempt from the container cap because a queued task run is invisible and
- * harmless while a queued chat turn is a person watching a spinner; the memory
- * budget reserves for it up front instead. Reserving the member is the other half
- * of that: without it a task run could take the container out from under a live
- * chat session, which is the same interruption by a different route.
- */
-export async function setPoolMemberChatReservation(
-	db: Db,
-	containerId: string,
-	reserved: boolean,
-): Promise<void> {
-	await db.query(
-		`UPDATE container_pool_members
-		    SET reserved_for_chat = $2, updated_at = now()
-		  WHERE container_id = $1
-		    AND reserved_for_chat IS DISTINCT FROM $2`,
-		[containerId, reserved],
-	);
-	await setUptimeIntervalChatReservation(db, containerId, reserved);
 }
 
 /**

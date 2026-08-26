@@ -167,7 +167,6 @@ describe('message catalogs', () => {
 		// The singular differs ("1 rol"), and every other language does too
 		// (Rollen, rôles, ruoli, papéis, ...).
 		'marketplace.roleCountOther': ['es'],
-		'containers.badge.assistant': ['fr'],
 		'setup.step.password': ['it'],
 		// German writes "Name" for a person's name, identically. Dutch (Naam),
 		// Swedish (Namn) and the rest all differ.

@@ -141,14 +141,14 @@ test('the header identifies the CEO with the HQ badge and the composer invites c
 	expect(input.placeholder).toBe('Ask the CEO anything, across every project…');
 });
 
-test('blocks the composer and links to the container page when the HQ container is down', async () => {
+test('keeps the composer open when an HQ pool member has failed', async () => {
+	// No pinned CEO container any more: a turn claims any pool container when it
+	// is sent, so a failed member is no reason to gate the composer - the turn
+	// either finds another container or reports its refusal as a system row in
+	// the thread.
 	const { findByTestId } = await renderApp({
 		initialPath: '/home',
 		seed: async (ctx) => {
-			// A failed **pool member**, not `container_status = 'error'`: that column
-			// is a leftover of the one-container-per-project model and latches, so
-			// it no longer decides whether anything is wrong. See
-			// `use-container-health.ts`.
 			await ctx.db.query(
 				`INSERT INTO container_pool_members (project_id, container_id, state, last_error)
 				 SELECT id, 'failed-hq', 'error'::container_pool_state, 'pull access denied'
@@ -160,20 +160,10 @@ test('blocks the composer and links to the container page when the HQ container 
 	(await findByTestId('app-header-chat')).click();
 	const panel = await findByTestId('chat-panel');
 
-	// The container-state notice replaces the composer inside the chat panel.
-	const notice = await waitFor(() => {
-		const el = panel.querySelector('[data-testid="hq-container-notice"]');
-		if (!el) throw new Error('notice not yet rendered');
-		return el as HTMLElement;
+	await waitFor(() => {
+		if (!panel.querySelector('[data-testid="chat-input"]')) throw new Error('composer not ready');
 	});
-	expect(notice.textContent ?? '').toContain('error');
-	expect(panel.querySelector('[data-testid="chat-input"]')).toBeNull();
-
-	// It links to the global Containers page, where HQ's container is listed as
-	// itself with its own log - the project's own page holds only per-project
-	// settings and shows no container at all.
-	const link = notice.querySelector('[data-testid="hq-container-notice-link"]');
-	expect(link?.getAttribute('href')).toContain('/settings/containers');
+	expect(panel.querySelector('[data-testid="hq-container-notice"]')).toBeNull();
 });
 
 test('each message carries its role eyebrow — "You" for the operator, "CEO · HQ" for the CEO', async () => {

@@ -27,7 +27,6 @@ import {
 	reclaimBusyPoolMembers,
 	releasePoolMember,
 	removePoolMember,
-	setPoolMemberChatReservation,
 	setPoolMemberState,
 	upsertPoolMember,
 } from '../src/services/sandbox/pool-db';
@@ -182,14 +181,12 @@ describe('the ledger follows the pool through a container lifetime', () => {
 		expect(member.rows).toHaveLength(0);
 	});
 
-	it('carries the chat pin onto the stretch that is already running', async () => {
-		// The chat claims a container that already exists, so the pin lands after
-		// the interval opened. Without this the whole session bills as task time.
+	it('opens new stretches with the historical chat flag unset', async () => {
+		// `reserved_for_chat` on the ledger is recorded history from the pinned
+		// chat-container era. Nothing sets it any more - chat turns ride ordinary
+		// pool claims - but the column stays so old rows keep their attribution.
 		await upsertPoolMember(db, projectId, 'c-chat', 'idle', {});
 		expect((await intervals('c-chat'))[0].reserved_for_chat).toBe(false);
-
-		await setPoolMemberChatReservation(db, 'c-chat', true);
-		expect((await intervals('c-chat'))[0].reserved_for_chat).toBe(true);
 	});
 
 	it('opens nothing for a container the pool does not know', async () => {
@@ -247,7 +244,9 @@ describe('aggregation', () => {
 		expect(totals.open_intervals).toBe(1);
 	});
 
-	it('reports chat hours inside the total, not beside it', async () => {
+	it('counts pinned-era chat stretches inside the total like any other row', async () => {
+		// A historical row flagged reserved_for_chat is still an hour a container
+		// was up; the aggregation no longer reports it as a separate series.
 		await db.query(
 			`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, reserved_for_chat, backend)
 			 VALUES ($1, 'c-chat-h', now() - interval '1 hour', now(), true, 'docker'),
@@ -256,7 +255,6 @@ describe('aggregation', () => {
 		);
 		const totals = await containerHoursTotals(db, projectId);
 		expect(totals.month_seconds).toBe(2 * 3600);
-		expect(totals.month_chat_seconds).toBe(3600);
 	});
 
 	it('scopes a project read to that project and keeps the instance read whole', async () => {

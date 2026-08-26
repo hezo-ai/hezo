@@ -219,11 +219,6 @@ export interface LogCompactionConfig {
 	preservedBytes: number;
 }
 
-export interface ChatConfig {
-	/** Cadence of the live-chat container health check. */
-	healthIntervalMs: number;
-}
-
 /**
  * The fully resolved configuration: built-in defaults, overlaid with the
  * `--config` file, overlaid with the CLI flags actually passed.
@@ -294,7 +289,6 @@ export interface HezoConfig {
 	github: GithubConfig;
 	jobs: JobsConfig;
 	logCompaction: LogCompactionConfig;
-	chat: ChatConfig;
 	/**
 	 * Settings fixed by the deployer, or null when nothing is. Loaded from its own
 	 * file (`policyFile`) rather than the main config, so it can be reloaded on a
@@ -388,7 +382,5 @@ export const DEFAULT_CONFIG: HezoConfig = {
 		maxPerTick: 500,
 		preservedBytes: LOG_COMPACTION_PRESERVED_TAIL_BYTES,
 	},
-	chat: { healthIntervalMs: 10_000 },
-
 	reset: false,
 };

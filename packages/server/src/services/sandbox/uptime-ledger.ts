@@ -36,9 +36,9 @@ import { getStoredSandboxBackend } from './backend-store';
 /**
  * Start billing a container, from the member row that already describes it.
  *
- * `INSERT ... SELECT` rather than a read followed by a write: the shape,
- * ownership and chat pin all live on the member, and re-deriving them at the
- * call site is how the ledger would come to disagree with the pool it describes.
+ * `INSERT ... SELECT` rather than a read followed by a write: the shape and
+ * ownership live on the member, and re-deriving them at the call site is how
+ * the ledger would come to disagree with the pool it describes.
  * A container with no member row inserts nothing, which is the honest answer -
  * the pool does not believe that container exists.
  *
@@ -52,11 +52,13 @@ export async function openUptimeInterval(db: Db, containerId: string): Promise<v
 	// selects the backend at boot and what a runtime switch writes, so it is the
 	// same answer the holder would give and it keeps every caller unchanged.
 	const backend = (await getStoredSandboxBackend(db)) ?? SandboxBackend.Docker;
+	// `reserved_for_chat` stays on the ledger as recorded history from the era
+	// of the pinned assistant container; nothing pins any more, so every new
+	// interval records false and nothing reads the column.
 	await db.query(
 		`INSERT INTO container_uptime_entries
-		     (project_id, container_id, memory_bytes, disk_ceiling_bytes, reserved_for_chat, backend)
-		 SELECT m.project_id, m.container_id, m.memory_bytes, m.disk_ceiling_bytes,
-		        m.reserved_for_chat, $2
+		     (project_id, container_id, memory_bytes, disk_ceiling_bytes, backend)
+		 SELECT m.project_id, m.container_id, m.memory_bytes, m.disk_ceiling_bytes, $2
 		   FROM container_pool_members m
 		  WHERE m.container_id = $1
 		 ON CONFLICT (container_id) WHERE ended_at IS NULL DO NOTHING`,
@@ -110,28 +112,5 @@ export async function closeUptimeIntervalsForMembers(
 		    AND EXISTS (SELECT 1 FROM container_pool_members m
 		                 WHERE m.container_id = e.container_id)`,
 		[reason],
-	);
-}
-
-/**
- * Carry a container's chat pin onto its open interval.
- *
- * The pin is set *after* the container exists - the chat claims an idle member
- * rather than provisioning its own - so an interval opened at `creating` records
- * the pin as false and would keep saying so for the whole session. Chat hours
- * are metered like any other container's and reported separately, so a stretch
- * that misses the flag lands in the total under the wrong heading.
- */
-export async function setUptimeIntervalChatReservation(
-	db: Db,
-	containerId: string,
-	reserved: boolean,
-): Promise<void> {
-	await db.query(
-		`UPDATE container_uptime_entries
-		    SET reserved_for_chat = $2
-		  WHERE container_id = $1 AND ended_at IS NULL
-		    AND reserved_for_chat IS DISTINCT FROM $2`,
-		[containerId, reserved],
 	);
 }

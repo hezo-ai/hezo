@@ -74,22 +74,32 @@ interface ChatDocker {
 function makeChatDocker(dataDir: string, projectId: string, teamId = DEFAULT_TEAM_ID): ChatDocker {
 	const prompts: string[] = [];
 	const scenario = { mode: 'reply' as 'reply' | 'block', entered: false };
+	// Only prompt-bearing execs act out the scenario. Every turn now runs its own
+	// aux execs (run-user probe, chowns, tunnel setup) through the same stub, and
+	// blocking those in `block` mode would wedge the turn before its exec.
+	const kinds = new Map<string, 'prompt' | 'aux'>();
+	let seq = 0;
 	const toHostPath = (containerPath: string) =>
 		join(getWorkspacePath(dataDir, teamId, projectId), containerPath.replace(/^\/workspace\//, ''));
 
 	const docker = createStubDocker({
 		execCreate: async (_id: string, config: { Env?: string[] }) => {
+			const execId = `exec-${++seq}`;
 			const promptEntry = (config.Env ?? []).find((e) => e.startsWith('HEZO_PROMPT_FILE='));
 			if (promptEntry) {
 				const containerPath = promptEntry.slice('HEZO_PROMPT_FILE='.length);
 				prompts.push(readFileSync(toHostPath(containerPath), 'utf8'));
+				kinds.set(execId, 'prompt');
+			} else {
+				kinds.set(execId, 'aux');
 			}
-			return 'exec-1';
+			return execId;
 		},
 		execStart: async (
-			_execId: string,
+			execId: string,
 			opts: { signal?: AbortSignal; onChunk?: (c: ExecLogChunk) => void | Promise<void> },
 		) => {
+			if (kinds.get(execId) !== 'prompt') return { stdout: '', stderr: '' };
 			scenario.entered = true;
 			const onChunk = opts.onChunk ?? (() => undefined);
 			if (scenario.mode === 'reply') {
@@ -119,8 +129,13 @@ function makeTitleRoutingDocker(
 	dataDir: string,
 	projectId: string,
 	titleText: string,
-): { docker: ReturnType<typeof createStubDocker>; prompts: string[] } {
+): {
+	docker: ReturnType<typeof createStubDocker>;
+	prompts: string[];
+	flags: { replyEntered: boolean };
+} {
 	const prompts: string[] = [];
+	const flags = { replyEntered: false };
 	const toHostPath = (containerPath: string) =>
 		join(
 			getWorkspacePath(dataDir, DEFAULT_TEAM_ID, projectId),
@@ -129,7 +144,10 @@ function makeTitleRoutingDocker(
 	const docker = createStubDocker({
 		execCreate: async (_id: string, config: { Env?: string[] }) => {
 			const promptEntry = (config.Env ?? []).find((e) => e.startsWith('HEZO_PROMPT_FILE='));
-			if (!promptEntry) return 'exec-reply';
+			// Aux execs (run-user probe, chowns) return immediately - each turn runs
+			// its own through this stub, and blocking one wedges the turn before its
+			// exec.
+			if (!promptEntry) return 'exec-aux';
 			const prompt = readFileSync(
 				toHostPath(promptEntry.slice('HEZO_PROMPT_FILE='.length)),
 				'utf8',
@@ -143,11 +161,13 @@ function makeTitleRoutingDocker(
 			opts: { signal?: AbortSignal; onChunk?: (c: ExecLogChunk) => void | Promise<void> },
 		) => {
 			const onChunk = opts.onChunk ?? (() => undefined);
+			if (execId === 'exec-aux') return { stdout: '', stderr: '' };
 			if (execId === 'exec-title') {
 				await onChunk({ stream: 'stdout', text: assistantText(titleText) });
 				return { stdout: '', stderr: '' };
 			}
 			// Reply: emit a partial, then block until the turn is interrupted/torn down.
+			flags.replyEntered = true;
 			await onChunk({ stream: 'stdout', text: assistantText('working on it') });
 			await new Promise<void>((_resolve, reject) => {
 				opts.signal?.addEventListener('abort', () =>
@@ -157,7 +177,7 @@ function makeTitleRoutingDocker(
 			return { stdout: '', stderr: '' };
 		},
 	});
-	return { docker, prompts };
+	return { docker, prompts, flags };
 }
 
 /**
@@ -306,13 +326,22 @@ describe('ChatSessionManager', () => {
 		);
 		try {
 			const res = await manager.sendTurn({ text: 'hello?' });
+			// The refusal happens in the background turn: the reply bubble fails and
+			// the budget-exceeded system row lands beside it.
+			await poll(async () => {
+				const r = await ctx.db.query<{ status: string }>(
+					`SELECT status::text AS status FROM chat_messages WHERE id = $1`,
+					[res.assistantMessageId],
+				);
+				return r.rows[0]?.status === ChatMessageStatus.Failed;
+			});
 			const rows = await ctx.db.query<{ role: string; system_kind: string | null }>(
 				`SELECT role::text AS role, system_kind FROM chat_messages
 				 WHERE conversation_id = $1 ORDER BY created_at ASC`,
 				[res.conversationId],
 			);
-			expect(rows.rows.map((r) => r.role)).toEqual(['user', 'system']);
-			expect(rows.rows[1].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
+			expect(rows.rows.map((r) => r.role)).toEqual(['user', 'assistant', 'system']);
+			expect(rows.rows[2].system_kind).toBe(ChatSystemMessageKind.BudgetExceeded);
 		} finally {
 			await setMonthlyContainerHours(ctx.db, 0);
 			await ctx.db.query(
@@ -718,14 +747,12 @@ describe('ChatSessionManager', () => {
 			expect(execScopeIds).toContain(kill.value);
 		}
 
-		// Stopping the manager tears the session down and reaps session-wide: every
-		// exec of this session carried HEZO_HEARTBEAT_RUN_ID=<sessionId>.
+		// Nothing is held between turns, so stop() has no session-wide teardown to
+		// do: every reap this episode fired was scoped to one exec, never to the
+		// shared session id all of them carried.
 		await manager.stop();
-		expect(kills).toContainEqual({
-			containerId: 'hq-container',
-			name: 'HEZO_HEARTBEAT_RUN_ID',
-			value: sessionId,
-		});
+		expect(kills.every((k) => k.name === 'HEZO_EXEC_SCOPE_ID')).toBe(true);
+		expect(kills.every((k) => k.value !== sessionId)).toBe(true);
 	});
 
 	test('ensureSession is idempotent (one live session per CEO)', async () => {
@@ -810,14 +837,15 @@ describe('ChatSessionManager', () => {
 		expect(afterMove.length).toBeGreaterThan(0);
 		expect(afterMove.every((env) => env.includes(deepseekBaseUrl))).toBe(true);
 
-		// The old session was retired rather than mutated, so exactly one is live.
+		// Every turn resolves its provider fresh, so nothing had to be retired for
+		// the move to land: the same singleton session row serves both turns.
 		const sessions = await ctx.db.query<{ n: number }>(
 			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
 			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
 		);
 		expect(sessions.rows[0].n).toBe(1);
 		const all = await ctx.db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM chat_sessions`);
-		expect(all.rows[0].n).toBe(2);
+		expect(all.rows[0].n).toBe(1);
 
 		await manager.stop();
 	});
@@ -939,36 +967,28 @@ describe('ChatSessionManager', () => {
 		await manager.stop();
 	});
 
-	test('titles a new thread from the first message while the reply is still streaming', async () => {
-		// The reply exec blocks (never completes); only the parallel title exec returns.
-		// If titling still waited for the reply to settle, the thread would stay untitled.
-		const { docker } = makeTitleRoutingDocker(ctx.dataDir, projectId, 'Deploy Pipeline Setup');
-		const { manager, wsManager } = makeManager(ctx, docker);
-		const captured = captureCeoRoom(wsManager);
+	test('does not title while the reply streams, and skips titling an interrupted turn', async () => {
+		// Titling is post-reply upkeep in the turn's own held container now - one
+		// exec at a time per claim - so nothing can title while the reply exec is
+		// still running, and a turn that never completes never titles.
+		const { docker, flags } = makeTitleRoutingDocker(
+			ctx.dataDir,
+			projectId,
+			'Deploy Pipeline Setup',
+		);
+		const { manager } = makeManager(ctx, docker);
 
-		const { conversationId, assistantMessageId } = await manager.sendTurn({
+		const { conversationId } = await manager.sendTurn({
 			text: 'How do I set up the deploy pipeline?',
 		});
+		// The reply exec is running and blocked mid-turn.
+		await poll(async () => flags.replyEntered);
+		expect((await manager.getConversation(conversationId))?.title).toBeNull();
 
-		await poll(async () => {
-			const convo = await manager.getConversation(conversationId);
-			return convo?.title != null;
-		});
-		const convo = await manager.getConversation(conversationId);
-		expect(convo?.title).toBe('Deploy Pipeline Setup');
-		// The reply is still streaming when the title lands — titling ran in parallel.
-		const reply = await ctx.db.query<{ status: string }>(
-			'SELECT status FROM chat_messages WHERE id = $1',
-			[assistantMessageId],
-		);
-		expect(reply.rows[0].status).toBe(ChatMessageStatus.Streaming);
-		expect(
-			captured.events.some(
-				(e) => e.type === 'chat_conversation_updated' && e.title === 'Deploy Pipeline Setup',
-			),
-		).toBe(true);
-
+		// stop() interrupts the turn; an interrupted turn does no upkeep, so the
+		// thread stays untitled for the next turn to name.
 		await manager.stop();
+		expect((await manager.getConversation(conversationId))?.title).toBeNull();
 	});
 
 	test('does not overwrite an existing thread title', async () => {
@@ -1096,12 +1116,11 @@ describe('ChatSessionManager', () => {
 				status: ChatSessionStatus.Running,
 			});
 			await poll(async () => {
-				const r = await ctx.db.query<{ state: string; reserved: boolean }>(
-					`SELECT state::text AS state, reserved_for_chat AS reserved
-					 FROM container_pool_members WHERE container_id = $1`,
+				const r = await ctx.db.query<{ state: string }>(
+					`SELECT state::text AS state FROM container_pool_members WHERE container_id = $1`,
 					[w.containerId],
 				);
-				return r.rows[0]?.state === 'idle' && r.rows[0]?.reserved === false;
+				return r.rows[0]?.state === 'idle';
 			});
 
 			// The spend landed under the worker and its project.
@@ -1506,10 +1525,11 @@ describe('ChatSessionManager', () => {
 				return r.rows[0]?.status === ChatMessageStatus.Complete;
 			});
 			await parkedRun;
-			// Every chat exec (the session's own probe, the reply, the title) lands
-			// before the run that was queued first.
-			expect(order.at(-1)).toBe('run');
-			expect(order.filter((o) => o === 'chat').length).toBeGreaterThan(0);
+			// The reply lands before the run that was queued first - a person watching
+			// the chat outranks a parked run. Post-reply upkeep execs hold no such
+			// priority, so only the ordering of the first chat exec is the claim.
+			expect(order.indexOf('chat')).toBeGreaterThanOrEqual(0);
+			expect(order.indexOf('chat')).toBeLessThan(order.indexOf('run'));
 			await manager.stop();
 		});
 

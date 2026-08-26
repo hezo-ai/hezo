@@ -306,59 +306,6 @@ describe('container-idle-stop', () => {
 		expect((await runIdlePass()).stops).toEqual([]);
 	});
 
-	it('parks a live assistant session before taking its container down', async () => {
-		// Ordering, and it is the whole point: suspending first meant the session
-		// found out by its tunnel dying - the unrequested-death path - so it ended
-		// as `crashed` rather than parking as `suspended`, and the provider's PTY
-		// delete raced the sandbox already stopping and 400'd.
-		const parked: string[] = [];
-		const order: string[] = [];
-		const stops: string[] = [];
-		const manager = new JobManager({
-			db,
-			docker: createStubDocker({
-				ping: async () => true,
-				stopContainer: async (id: string) => {
-					order.push(`stop:${id}`);
-					stops.push(id);
-				},
-			}),
-			masterKeyManager,
-			serverPort: 3100,
-			dataDir,
-			wsManager: { broadcast: () => {} } as unknown as JobManagerDeps['wsManager'],
-			logs: new LogStreamBroker(),
-			containerLogStreamer: new ContainerLogStreamer(),
-		});
-		manager.setChatSessions({
-			parkForContainerSuspend: async (id: string) => {
-				order.push(`park:${id}`);
-				parked.push(id);
-			},
-		});
-
-		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
-		manager.shutdown();
-
-		expect(parked).toEqual([CONTAINER_ID]);
-		expect(order).toEqual([`park:${CONTAINER_ID}`, `stop:${CONTAINER_ID}`]);
-	});
-
-	it('retires the pool even when parking the assistant session fails', async () => {
-		// Best-effort: a park that throws must not strand a container that is
-		// otherwise idle, or one failure bills forever on a managed backend.
-		const stops: string[] = [];
-		const manager = createManager(stops);
-		manager.setChatSessions({
-			parkForContainerSuspend: async () => {
-				throw new Error('chat manager is wedged');
-			},
-		});
-		await (manager as unknown as { stopIdleContainers(): Promise<void> }).stopIdleContainers();
-		manager.shutdown();
-		expect(stops).toContain(CONTAINER_ID);
-	});
-
 	it('the in-memory dispatch recheck blocks a stop even before any run row exists', async () => {
 		const stops: string[] = [];
 		const manager = createManager(stops);
@@ -455,23 +402,15 @@ describe('surplus idle containers in a working project', () => {
 	const seedMember = async (
 		containerId: string,
 		state: 'idle' | 'busy' | 'suspended',
-		over: { unpushed?: boolean; chat?: boolean; idleMin?: number } = {},
+		over: { unpushed?: boolean; idleMin?: number } = {},
 	): Promise<void> => {
 		await db.query(
 			`INSERT INTO container_pool_members
 			   (project_id, container_id, state, memory_bytes, has_unpushed_commits,
-			    reserved_for_chat, last_released_at)
-			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6,
-			         now() - ($7 || ' minutes')::interval)`,
-			[
-				projectId,
-				containerId,
-				state,
-				CAP_BYTES,
-				over.unpushed ?? false,
-				over.chat ?? false,
-				over.idleMin ?? 60,
-			],
+			    last_released_at)
+			 VALUES ($1, $2, $3::container_pool_state, $4, $5,
+			         now() - ($6 || ' minutes')::interval)`,
+			[projectId, containerId, state, CAP_BYTES, over.unpushed ?? false, over.idleMin ?? 60],
 		);
 	};
 
@@ -541,19 +480,6 @@ describe('surplus idle containers in a working project', () => {
 		const { stops, removes } = await sweep();
 		expect(stops).toEqual(['risky']);
 		expect(removes).toEqual([]);
-	});
-
-	it('never touches the assistant’s pinned container', async () => {
-		// It is excluded from the memory budget already, so retiring it frees
-		// nothing and only interrupts somebody's session.
-		await seedMember('busy-1', 'busy');
-		await seedMember('chat', 'idle', { chat: true });
-		await startRun();
-
-		const { stops, removes } = await sweep();
-		expect(stops).toEqual([]);
-		expect(removes).toEqual([]);
-		expect(await remaining()).toEqual(['busy-1', 'chat']);
 	});
 
 	it('keeps exactly one member warm for a fully idle project', async () => {

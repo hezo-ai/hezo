@@ -77,6 +77,20 @@ describe('074_team_chat migration', () => {
 			await insert('system', 'Waiting for growth-analyst/HM-336.', 'credential_wait'),
 		];
 
+		// A pinned-era pool member and its uptime history, seeded before the pin
+		// flag is dropped: the member must survive the drop, the ledger row must
+		// keep its flag.
+		await h.db.query(
+			`INSERT INTO container_pool_members (project_id, container_id, state, reserved_for_chat)
+			 VALUES ($1, 'hq-pinned', 'idle', true)`,
+			[projectId],
+		);
+		await h.db.query(
+			`INSERT INTO container_uptime_entries (project_id, container_id, ended_at, end_reason, reserved_for_chat, backend)
+			 VALUES ($1, 'hq-pinned', now(), 'suspended', true, 'docker')`,
+			[projectId],
+		);
+
 		await h.applyTarget(TARGET);
 	});
 	afterAll(() => h.close());
@@ -295,6 +309,32 @@ describe('074_team_chat migration', () => {
 			[roomId],
 		);
 		expect(gone.rows[0].n).toBe(0);
+	});
+
+	it('drops the pool pin flag, keeps the member and the ledger history', async () => {
+		// The member row survives the column drop.
+		const member = await h.db.query<{ state: string }>(
+			`SELECT state::text AS state FROM container_pool_members WHERE container_id = 'hq-pinned'`,
+		);
+		expect(member.rows[0].state).toBe('idle');
+		// The pin column is gone from the pool - a missed read now fails loudly.
+		const poolCols = await h.db.query<{ column_name: string }>(
+			`SELECT column_name FROM information_schema.columns
+			 WHERE table_name = 'container_pool_members' AND column_name = 'reserved_for_chat'`,
+		);
+		expect(poolCols.rows).toHaveLength(0);
+		// 053's partial idle index died with the column; the recreate covers every
+		// member, predicate-free.
+		const idx = await h.db.query<{ indexdef: string }>(
+			`SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_container_pool_members_idle'`,
+		);
+		expect(idx.rows).toHaveLength(1);
+		expect(idx.rows[0].indexdef).not.toContain('WHERE');
+		// The uptime ledger keeps its recorded history from the pinned era.
+		const ledger = await h.db.query<{ reserved_for_chat: boolean }>(
+			`SELECT reserved_for_chat FROM container_uptime_entries WHERE container_id = 'hq-pinned'`,
+		);
+		expect(ledger.rows[0].reserved_for_chat).toBe(true);
 	});
 
 	it('upserts the reads watermark only on real change', async () => {

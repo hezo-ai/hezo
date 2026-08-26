@@ -69,11 +69,6 @@ function ContainersList() {
 			render: (row) => (
 				<div className="flex items-center gap-2 min-w-0">
 					<span className="truncate">{row.project_name}</span>
-					{row.reserved_for_chat && (
-						<Badge color="info" testId={`container-chat-${row.container_id}`}>
-							{t('containers.badge.assistant')}
-						</Badge>
-					)}
 					{row.has_unpushed_commits && (
 						<Badge color="warning" testId={`container-unpushed-${row.container_id}`}>
 							{t('containers.badge.unpushed')}
@@ -94,10 +89,10 @@ function ContainersList() {
 			render: (row) => (
 				<span className="inline-flex items-center gap-1.5">
 					<Badge
-						color={containerBadge(row.state, row.reserved_for_chat).tone}
+						color={containerBadge(row.state).tone}
 						testId={`container-state-${row.container_id}`}
 					>
-						{t(containerBadge(row.state, row.reserved_for_chat).label)}
+						{t(containerBadge(row.state).label)}
 					</Badge>
 					{row.last_error ? (
 						<AlertTriangle

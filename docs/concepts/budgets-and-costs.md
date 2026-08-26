@@ -80,8 +80,10 @@ Three things are worth knowing about the figure:
 
 - **Concurrent containers add up.** Two containers up for one hour is two container
   hours, which is what a provider charges for.
-- **The assistant chat is counted too**, and reported separately so you can see its
-  share. Its container stops on its own 15 minutes after the last message.
+- **Chat is counted too.** Chat replies run in the same containers as task runs -
+  each reply borrows one for its duration - so their uptime is part of the same
+  figure. A container a chat recently used stays warm for 15 minutes after the
+  last message, then stops on its own.
 - **It is not the same as agent run time.** Run time is per agent and ignores the
   build, the warm-idle tail, and the fact that concurrent runs share one container.
   Each agent's run time for the month is shown on the **Budget** tab, beside its spend.
@@ -94,8 +96,8 @@ show you what the fleet is doing rather than to budget against.
 Where container hours do cost money, you can set a **monthly allowance** from HQ's
 Hours tab (under **Team & Budget**). Once it is spent:
 
-- No new container starts - the assistant chat's included, so an exhausted allowance
-  pauses the chat too until the month turns or the allowance is raised.
+- No new container starts - chat replies included, so an exhausted allowance
+  pauses chat too until the month turns or the allowance is raised.
 - Runs that land on a container **already up** carry on - they spend no new hours, and
   stopping them would idle a container you are paying for anyway.
 - Runs that need a new container queue, and say so.

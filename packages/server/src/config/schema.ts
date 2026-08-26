@@ -96,8 +96,6 @@ const logCompactionSchema = z
 	})
 	.strict();
 
-const chatSchema = z.object({ healthIntervalMs: positiveInt.optional() }).strict();
-
 /**
  * The pinned-settings block. Also the shape of the standalone policy file, which
  * is why it is exported: one schema for both, so a file the deployer writes and
@@ -149,7 +147,6 @@ export const configFileSchema = z
 		github: githubSchema.optional(),
 		jobs: jobsSchema.optional(),
 		logCompaction: logCompactionSchema.optional(),
-		chat: chatSchema.optional(),
 		policy: policySchema.optional(),
 		policyFile: z.string().min(1).optional(),
 	})

@@ -153,10 +153,10 @@ export interface ContainerHostMemory {
 
 /**
  * The budget when there is no host memory to derive one from: a managed backend,
- * or a host whose memory is unreadable. Six 2 GB containers: the assistant's
- * pinned container among them, five rungs for task runs, and one container's
- * worth floating as the chat lane ({@link taskContainerMemoryBudgetGb}) so a
- * chat turn always has somewhere to go while tasks are busy.
+ * or a host whose memory is unreadable. Six 2 GB containers: five rungs for task
+ * runs, and one container's worth floating as the chat lane
+ * ({@link taskContainerMemoryBudgetGb}) so a chat turn always has somewhere to
+ * go while tasks are busy.
  *
  * Still a deliberate figure rather than a generous one. On a managed backend it
  * is a **spend guard**, and the cost of setting it too low is a queued run the

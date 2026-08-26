@@ -205,7 +205,7 @@ export async function getActiveContainers(
 				// global constant - the allocation is a setting now, and a project may
 				// override it, so two idle members can legitimately have different room.
 				`SELECT project_id FROM container_pool_members
-			  WHERE state = 'idle' AND NOT reserved_for_chat AND disk_used_bytes < disk_ceiling_bytes
+			  WHERE state = 'idle' AND disk_used_bytes < disk_ceiling_bytes
 			 UNION
 			 SELECT id AS project_id FROM projects
 			  WHERE container_status = $1::container_status
@@ -228,7 +228,7 @@ export async function getActiveContainers(
 				//
 				// Served by `idx_container_pool_members_idle`.
 				`SELECT project_id, memory_bytes FROM container_pool_members
-			  WHERE state = 'idle' AND NOT reserved_for_chat
+			  WHERE state = 'idle'
 			    AND last_released_at <= now() - ($1 * interval '1 second')`,
 				[CONTAINER_RECLAIM_MIN_IDLE_SEC],
 			),

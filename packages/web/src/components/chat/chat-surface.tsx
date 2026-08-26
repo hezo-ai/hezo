@@ -32,7 +32,6 @@ import {
 	type ChatRoom,
 	useChat,
 } from '../../hooks/use-chat';
-import { useContainerHealth } from '../../hooks/use-container-health';
 import { useCopyFeedback } from '../../hooks/use-copy-feedback';
 import { useFileAttachments } from '../../hooks/use-file-attachments';
 import { LONG_PRESS_MS, useLongPress } from '../../hooks/use-long-press';
@@ -48,7 +47,6 @@ import {
 	FileDropZone,
 	UploadButton,
 } from '../file-attachments';
-import { HqContainerNotice } from '../hq-container-notice';
 import { MarkdownProse } from '../markdown-prose';
 import { RunLinkedText } from '../run-linked-text';
 import { Tooltip } from '../ui/tooltip';
@@ -157,15 +155,6 @@ export function ChatSurface({
 	const roomProjectSlug = isProjectRoom ? room.projectSlug : null;
 	const roomProjectMeta = useProjectMeta(roomProjectSlug ?? '');
 	const hq = useHqProject();
-	const hqHealth = useContainerHealth(hq);
-	// A stopped HQ container is no blocker — sending a message lazy-starts it.
-	// Only genuine errors and in-flight transitions swap the chat body for the
-	// container state. CEO-scope rooms only; a DM's capacity states surface as
-	// system rows in the thread instead.
-	const blockedHealth =
-		!isProjectRoom && hqHealth && hqHealth.kind !== 'healthy' && hqHealth.kind !== 'stopped'
-			? hqHealth
-			: null;
 	const [draft, setDraft] = useState('');
 	const [copied, setCopied] = useState(false);
 	const [pendingAttachmentIds, setPendingAttachmentIds] = useState<string[]>([]);
@@ -367,276 +356,267 @@ export function ChatSurface({
 			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 				{beforeMessages}
 
-				{hq && blockedHealth ? (
+				{/* No container gate here for any room kind: a CEO turn claims a pool
+				    container per exec exactly like a DM's, so capacity and container
+				    states surface as system rows in the thread instead. */}
+				<FileDropZone
+					isDragActive={isDragActive}
+					dropZoneProps={dropZoneProps}
+					className="flex flex-1 flex-col overflow-hidden"
+					data-testid="chat-drop"
+					overlayTestId="chat-drop-overlay"
+				>
 					<div
+						ref={scrollRef}
 						data-testid="chat-messages"
-						className="flex flex-1 items-center justify-center overflow-y-auto"
+						className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
 					>
-						<HqContainerNotice
-							health={blockedHealth}
-							description="The CEO is unavailable until the HQ container is running."
-						/>
-					</div>
-				) : (
-					<FileDropZone
-						isDragActive={isDragActive}
-						dropZoneProps={dropZoneProps}
-						className="flex flex-1 flex-col overflow-hidden"
-						data-testid="chat-drop"
-						overlayTestId="chat-drop-overlay"
-					>
-						<div
-							ref={scrollRef}
-							data-testid="chat-messages"
-							className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 scroll-smooth"
-						>
-							{!loaded && (
-								<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
-									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-									Loading…
-								</div>
-							)}
-							{loaded &&
-								messages.length === 0 &&
-								compactedCount === 0 &&
-								(emptyState ? (
-									emptyState(sendText)
-								) : (
-									<p className="px-1 py-6 text-center text-[13px] text-text-2">
-										{room.kind === 'agent'
-											? t('chat.empty.agent', { name: room.title })
-											: room.kind === 'group'
-												? t('chat.empty.group')
-												: t('chat.empty.ceo')}
-									</p>
-								))}
-							{loaded && compactedCount > 0 && (
-								<div
-									data-testid="chat-compacted-banner"
-									className="flex items-center gap-2 px-1 pt-1 text-[11px] text-text-3"
-									title="Older messages were summarized into long-term memory and removed from the live chat."
-								>
-									<span className="h-px flex-1 bg-border" />
-									<span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
-										<History className="h-3 w-3" aria-hidden="true" />
-										Earlier messages compacted into memory
-									</span>
-									<span className="h-px flex-1 bg-border" />
-								</div>
-							)}
-							{messages.map((m) => (
-								<MessageBubble
-									key={m.id}
-									message={m}
-									assistantLabel={labelFor(m)}
-									assistantScope={assistantScope}
-									projectSlug={roomProjectSlug ?? hq?.slug}
-									convertedTask={convertedTask}
-									toolActivity={toolActivity}
-									onConvert={
-										!composerLocked &&
-										m.role !== 'system' &&
-										m.status === ChatMessageStatus.Complete &&
-										m.content.trim().length > 0
-											? () => setConvertMessage(m)
-											: undefined
-									}
-								/>
-							))}
-							{room.kind === 'group' && pendingTurns.length > 0 && (
-								<PendingTurnsStrip pending={pendingTurns} onCancel={cancelPendingTurn} />
-							)}
-							{room.kind === 'group' && groupNudge && pendingTurns.length === 0 && (
-								<div
-									data-testid="chat-group-nudge"
-									className="flex items-center gap-2 px-1 py-1 text-[11px] text-text-3"
-								>
-									<span className="h-px flex-1 bg-border" />
-									<span className="inline-flex shrink-0 items-center rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
-										{t('chat.group.nudge')}
-									</span>
-									<span className="h-px flex-1 bg-border" />
-								</div>
-							)}
-							{askChips.length > 0 && (
-								<div className="flex flex-wrap justify-end gap-1.5" data-testid="chat-ask-chips">
-									{askChips.map((slug) => (
-										<button
-											key={slug}
-											type="button"
-											data-testid="chat-ask-chip"
-											onClick={() => askTeammate(slug)}
-											className="rounded-full border border-border px-3 py-1.5 text-[12px] text-text-2 hover:border-border-strong hover:text-text-1 transition-colors"
-										>
-											{t('chat.group.ask', { slug: `@${slug}` })}
-										</button>
-									))}
-								</div>
-							)}
-							{queue.length > 0 && <QueuedMessages queue={queue} onRemove={dequeue} />}
-							{suggestedReplies && suggestedReplies.length > 0 && (
-								<div
-									className="flex flex-wrap justify-end gap-1.5"
-									data-testid="chat-suggested-replies"
-								>
-									{suggestedReplies.map((reply) => (
-										<button
-											key={reply}
-											type="button"
-											data-testid="chat-suggested-reply"
-											onClick={() => send(reply).catch(() => undefined)}
-											className="rounded-full border border-accent px-3 py-1.5 text-[12px] text-accent hover:bg-accent-solid hover:text-accent-solid-fg transition-colors"
-										>
-											{reply}
-										</button>
-									))}
-								</div>
-							)}
-						</div>
-
-						<div className="border-t border-border p-3">
-							{activeReadOnly && thread && (
-								<div
-									data-testid="chat-readonly-banner"
-									className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2"
-								>
-									<Lock aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3" />
-									<span>
-										This conversation lives in <b>{threadTitle}</b> on{' '}
-										{channelDisplayName(thread.channel)}. Hezo replies there when mentioned -
-										continue it by mentioning Hezo in the channel.
-									</span>
-								</div>
-							)}
-							{activeConverted && (
-								<div
-									data-testid="chat-converted-banner"
-									className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2"
-								>
-									<SquareCheckBig aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3" />
-									<span>
-										{convertedTask ? (
-											<Trans
-												k="chat.converted.banner"
-												vars={{ task: <ConvertedTaskLink task={convertedTask} /> }}
-											/>
-										) : (
-											t('chat.converted.bannerTaskGone')
-										)}
-									</span>
-								</div>
-							)}
-							{activeClosed && !activeConverted && !activeReadOnly && (
-								<div
-									data-testid="chat-history-banner"
-									className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2"
-								>
-									<History aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3" />
-									<span>{t('chat.history.banner')}</span>
-								</div>
-							)}
-							{hasAnyChip && (
-								<AttachmentChips
-									attachments={visibleAttachments}
-									uploading={uploading}
-									errors={errors}
-									onRemove={removeAttachment}
-									projectId={room.kind === 'agent' ? room.projectSlug : hq?.slug}
-									rowTestId="chat-attachment-row"
-									chipTestId="chat-attachment-chip"
-									previewTestId="chat-attachment-preview"
-									errorTestId="chat-attachment-error"
-								/>
-							)}
-							<div
-								className={`flex items-end gap-1 rounded-2xl border border-border bg-surface px-1.5 py-1 transition-colors focus-within:border-border-strong ${
-									composerLocked ? 'opacity-50' : ''
-								}`}
-							>
-								<UploadButton
-									onFiles={handleFiles}
-									accept={ATTACHMENT_ACCEPT}
-									iconOnly
-									label="Attach files"
-									data-testid="chat-attach"
-								/>
-								<textarea
-									ref={inputRef}
-									value={draft}
-									onChange={(e) => setDraft(e.target.value)}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' && !e.shiftKey) {
-											e.preventDefault();
-											submit(e.metaKey || e.ctrlKey);
-										}
-									}}
-									rows={1}
-									disabled={composerLocked}
-									placeholder={
-										activeConverted
-											? t('chat.converted.composerPlaceholder', {
-													identifier: convertedTask?.identifier ?? '',
-												})
-											: activeClosed && !activeReadOnly
-												? t('chat.history.composerPlaceholder')
-												: activeReadOnly
-													? `Read-only - reply from ${channelDisplayName(thread?.channel ?? '')}`
-													: busy
-														? 'Queue your next message…'
-														: room.kind === 'agent'
-															? t('chat.composer.agentPlaceholder', { name: room.title })
-															: room.kind === 'group'
-																? t('chat.composer.groupPlaceholder')
-																: 'Ask the CEO anything, across every project…'
-									}
-									data-testid="chat-input"
-									className="max-h-32 min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
-								/>
-								<Tooltip content={buttonHint} side="top">
-									<button
-										type="button"
-										{...longPress.handlers}
-										disabled={!canSubmit}
-										aria-label={buttonHint}
-										data-testid="chat-send"
-										data-mode={!busy ? 'send' : armed ? 'send-now' : 'queue'}
-										className={`relative flex h-9 shrink-0 items-center justify-center gap-1.5 overflow-hidden rounded-full text-[11px] font-semibold uppercase tracking-wide transition-colors disabled:opacity-40 ${
-											busy && !armed
-												? 'w-auto px-3 bg-purple-soft text-purple-soft-fg hover:bg-purple-soft/80'
-												: busy
-													? 'w-auto px-3 bg-accent-solid text-accent-solid-fg hover:bg-accent-hover'
-													: 'w-9 bg-accent-solid text-accent-solid-fg hover:bg-accent-hover'
-										}`}
-									>
-										{busy && !armed && longPress.pressing && (
-											<span
-												aria-hidden
-												data-testid="chat-send-sweep"
-												style={{ '--chat-hold-ms': `${LONG_PRESS_MS}ms` } as React.CSSProperties}
-												className="chat-hold-sweep absolute inset-0 bg-accent-solid/25"
-											/>
-										)}
-										<span className="relative flex items-center gap-1.5">
-											{!busy ? (
-												<ArrowRight className="h-4 w-4" />
-											) : armed ? (
-												<>
-													<StepForward className="h-3.5 w-3.5" />
-													Send now
-												</>
-											) : (
-												<>
-													<ListPlus className="h-3.5 w-3.5" />
-													Queue
-												</>
-											)}
-										</span>
-									</button>
-								</Tooltip>
+						{!loaded && (
+							<div className="flex items-center justify-center py-6 text-[13px] text-text-2">
+								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+								Loading…
 							</div>
+						)}
+						{loaded &&
+							messages.length === 0 &&
+							compactedCount === 0 &&
+							(emptyState ? (
+								emptyState(sendText)
+							) : (
+								<p className="px-1 py-6 text-center text-[13px] text-text-2">
+									{room.kind === 'agent'
+										? t('chat.empty.agent', { name: room.title })
+										: room.kind === 'group'
+											? t('chat.empty.group')
+											: t('chat.empty.ceo')}
+								</p>
+							))}
+						{loaded && compactedCount > 0 && (
+							<div
+								data-testid="chat-compacted-banner"
+								className="flex items-center gap-2 px-1 pt-1 text-[11px] text-text-3"
+								title="Older messages were summarized into long-term memory and removed from the live chat."
+							>
+								<span className="h-px flex-1 bg-border" />
+								<span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
+									<History className="h-3 w-3" aria-hidden="true" />
+									Earlier messages compacted into memory
+								</span>
+								<span className="h-px flex-1 bg-border" />
+							</div>
+						)}
+						{messages.map((m) => (
+							<MessageBubble
+								key={m.id}
+								message={m}
+								assistantLabel={labelFor(m)}
+								assistantScope={assistantScope}
+								projectSlug={roomProjectSlug ?? hq?.slug}
+								convertedTask={convertedTask}
+								toolActivity={toolActivity}
+								onConvert={
+									!composerLocked &&
+									m.role !== 'system' &&
+									m.status === ChatMessageStatus.Complete &&
+									m.content.trim().length > 0
+										? () => setConvertMessage(m)
+										: undefined
+								}
+							/>
+						))}
+						{room.kind === 'group' && pendingTurns.length > 0 && (
+							<PendingTurnsStrip pending={pendingTurns} onCancel={cancelPendingTurn} />
+						)}
+						{room.kind === 'group' && groupNudge && pendingTurns.length === 0 && (
+							<div
+								data-testid="chat-group-nudge"
+								className="flex items-center gap-2 px-1 py-1 text-[11px] text-text-3"
+							>
+								<span className="h-px flex-1 bg-border" />
+								<span className="inline-flex shrink-0 items-center rounded-full border border-border bg-surface-2 px-2.5 py-0.5">
+									{t('chat.group.nudge')}
+								</span>
+								<span className="h-px flex-1 bg-border" />
+							</div>
+						)}
+						{askChips.length > 0 && (
+							<div className="flex flex-wrap justify-end gap-1.5" data-testid="chat-ask-chips">
+								{askChips.map((slug) => (
+									<button
+										key={slug}
+										type="button"
+										data-testid="chat-ask-chip"
+										onClick={() => askTeammate(slug)}
+										className="rounded-full border border-border px-3 py-1.5 text-[12px] text-text-2 hover:border-border-strong hover:text-text-1 transition-colors"
+									>
+										{t('chat.group.ask', { slug: `@${slug}` })}
+									</button>
+								))}
+							</div>
+						)}
+						{queue.length > 0 && <QueuedMessages queue={queue} onRemove={dequeue} />}
+						{suggestedReplies && suggestedReplies.length > 0 && (
+							<div
+								className="flex flex-wrap justify-end gap-1.5"
+								data-testid="chat-suggested-replies"
+							>
+								{suggestedReplies.map((reply) => (
+									<button
+										key={reply}
+										type="button"
+										data-testid="chat-suggested-reply"
+										onClick={() => send(reply).catch(() => undefined)}
+										className="rounded-full border border-accent px-3 py-1.5 text-[12px] text-accent hover:bg-accent-solid hover:text-accent-solid-fg transition-colors"
+									>
+										{reply}
+									</button>
+								))}
+							</div>
+						)}
+					</div>
+
+					<div className="border-t border-border p-3">
+						{activeReadOnly && thread && (
+							<div
+								data-testid="chat-readonly-banner"
+								className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2"
+							>
+								<Lock aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3" />
+								<span>
+									This conversation lives in <b>{threadTitle}</b> on{' '}
+									{channelDisplayName(thread.channel)}. Hezo replies there when mentioned - continue
+									it by mentioning Hezo in the channel.
+								</span>
+							</div>
+						)}
+						{activeConverted && (
+							<div
+								data-testid="chat-converted-banner"
+								className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2"
+							>
+								<SquareCheckBig aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3" />
+								<span>
+									{convertedTask ? (
+										<Trans
+											k="chat.converted.banner"
+											vars={{ task: <ConvertedTaskLink task={convertedTask} /> }}
+										/>
+									) : (
+										t('chat.converted.bannerTaskGone')
+									)}
+								</span>
+							</div>
+						)}
+						{activeClosed && !activeConverted && !activeReadOnly && (
+							<div
+								data-testid="chat-history-banner"
+								className="mb-2 flex items-start gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-text-2"
+							>
+								<History aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-3" />
+								<span>{t('chat.history.banner')}</span>
+							</div>
+						)}
+						{hasAnyChip && (
+							<AttachmentChips
+								attachments={visibleAttachments}
+								uploading={uploading}
+								errors={errors}
+								onRemove={removeAttachment}
+								projectId={room.kind === 'agent' ? room.projectSlug : hq?.slug}
+								rowTestId="chat-attachment-row"
+								chipTestId="chat-attachment-chip"
+								previewTestId="chat-attachment-preview"
+								errorTestId="chat-attachment-error"
+							/>
+						)}
+						<div
+							className={`flex items-end gap-1 rounded-2xl border border-border bg-surface px-1.5 py-1 transition-colors focus-within:border-border-strong ${
+								composerLocked ? 'opacity-50' : ''
+							}`}
+						>
+							<UploadButton
+								onFiles={handleFiles}
+								accept={ATTACHMENT_ACCEPT}
+								iconOnly
+								label="Attach files"
+								data-testid="chat-attach"
+							/>
+							<textarea
+								ref={inputRef}
+								value={draft}
+								onChange={(e) => setDraft(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' && !e.shiftKey) {
+										e.preventDefault();
+										submit(e.metaKey || e.ctrlKey);
+									}
+								}}
+								rows={1}
+								disabled={composerLocked}
+								placeholder={
+									activeConverted
+										? t('chat.converted.composerPlaceholder', {
+												identifier: convertedTask?.identifier ?? '',
+											})
+										: activeClosed && !activeReadOnly
+											? t('chat.history.composerPlaceholder')
+											: activeReadOnly
+												? `Read-only - reply from ${channelDisplayName(thread?.channel ?? '')}`
+												: busy
+													? 'Queue your next message…'
+													: room.kind === 'agent'
+														? t('chat.composer.agentPlaceholder', { name: room.title })
+														: room.kind === 'group'
+															? t('chat.composer.groupPlaceholder')
+															: 'Ask the CEO anything, across every project…'
+								}
+								data-testid="chat-input"
+								className="max-h-32 min-h-[2.25rem] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-[13px] leading-5 text-text-1 outline-none placeholder:text-text-3"
+							/>
+							<Tooltip content={buttonHint} side="top">
+								<button
+									type="button"
+									{...longPress.handlers}
+									disabled={!canSubmit}
+									aria-label={buttonHint}
+									data-testid="chat-send"
+									data-mode={!busy ? 'send' : armed ? 'send-now' : 'queue'}
+									className={`relative flex h-9 shrink-0 items-center justify-center gap-1.5 overflow-hidden rounded-full text-[11px] font-semibold uppercase tracking-wide transition-colors disabled:opacity-40 ${
+										busy && !armed
+											? 'w-auto px-3 bg-purple-soft text-purple-soft-fg hover:bg-purple-soft/80'
+											: busy
+												? 'w-auto px-3 bg-accent-solid text-accent-solid-fg hover:bg-accent-hover'
+												: 'w-9 bg-accent-solid text-accent-solid-fg hover:bg-accent-hover'
+									}`}
+								>
+									{busy && !armed && longPress.pressing && (
+										<span
+											aria-hidden
+											data-testid="chat-send-sweep"
+											style={{ '--chat-hold-ms': `${LONG_PRESS_MS}ms` } as React.CSSProperties}
+											className="chat-hold-sweep absolute inset-0 bg-accent-solid/25"
+										/>
+									)}
+									<span className="relative flex items-center gap-1.5">
+										{!busy ? (
+											<ArrowRight className="h-4 w-4" />
+										) : armed ? (
+											<>
+												<StepForward className="h-3.5 w-3.5" />
+												Send now
+											</>
+										) : (
+											<>
+												<ListPlus className="h-3.5 w-3.5" />
+												Queue
+											</>
+										)}
+									</span>
+								</button>
+							</Tooltip>
 						</div>
-					</FileDropZone>
-				)}
+					</div>
+				</FileDropZone>
 			</div>
 
 			{convertMessage && (

@@ -12,14 +12,14 @@ import { seedProject, seedWorkspace } from './helpers/seed';
  */
 
 /** A closed uptime interval of `minutes`, ending now. */
-async function seedUptime(projectId: string, minutes: number, chat = false): Promise<void> {
+async function seedUptime(projectId: string, minutes: number): Promise<void> {
 	const { db } = getTestContext();
 	await db.query(
 		`INSERT INTO container_uptime_entries
-		     (project_id, container_id, started_at, ended_at, reserved_for_chat, backend)
+		     (project_id, container_id, started_at, ended_at, backend)
 		 VALUES ($1, 'ctr-' || gen_random_uuid()::text,
-		         now() - ($2::int * interval '1 minute'), now(), $3, 'docker')`,
-		[projectId, minutes, chat],
+		         now() - ($2::int * interval '1 minute'), now(), 'docker')`,
+		[projectId, minutes],
 	);
 }
 
@@ -60,7 +60,7 @@ test('the budget index opens on the Budget tab, with only that tab selected', as
 	}
 });
 
-test('the Hours tab reports container uptime, split into task and chat time', async () => {
+test('the Hours tab reports container uptime as one shared series', async () => {
 	let slug = '';
 	const { findByTestId, findByText, router } = await renderApp({
 		initialPath: '/',
@@ -69,17 +69,16 @@ test('the Hours tab reports container uptime, split into task and chat time', as
 			const project = await seedProject(ws, { name: 'Budget Hours' });
 			slug = project.slug;
 			await seedUptime(project.id, 90);
-			await seedUptime(project.id, 30, true);
+			await seedUptime(project.id, 30);
 		},
 	});
 
 	await router.navigate({ to: '/projects/$projectId/budget/hours', params: { projectId: slug } });
 
-	// 90m task + 30m chat = 2h on the month tile, with the chat share called out
-	// separately - it is inside the total, not beside it.
+	// 90m + 30m = 2h on the month tile. Containers are shared by task runs and
+	// chat turns alike, so there is no per-workload split to call out.
 	const tiles = await findByTestId('container-hours-tiles');
 	expect(tiles.textContent).toContain('2h');
-	expect(tiles.textContent).toContain('30m');
 	await findByTestId('container-hours-chart');
 	expect(await findByText('Container hours per bucket')).toBeTruthy();
 });

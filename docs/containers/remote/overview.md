@@ -81,8 +81,8 @@ one you set.
 memory limit as it is locally, but the automatic default is different. Locally Hezo sizes
 it from your machine's memory; with a managed backend the containers are not on your
 machine, so the default is a flat starting figure you adjust deliberately: **12 GB**, six
-containers at the default 2 GB cap - the assistant chat's container, up to five task
-runs, and one container's worth kept reachable for chat. Treat it as a spend limit
+containers at the default 2 GB cap - up to five task runs, with one container's worth
+always held back so a chat reply can start without waiting. Treat it as a spend limit
 rather than a share of your RAM: it is what a fully busy instance may hold on your
 provider plan at once. The Containers settings page names the service in use and shows
 which of the two rules applies.

@@ -68,7 +68,6 @@ describe('container capacity', () => {
 		containerId: string,
 		over: Partial<{
 			state: string;
-			reserved_for_chat: boolean;
 			disk_used_bytes: number;
 			disk_ceiling_bytes: number;
 			memory_bytes: number | null;
@@ -82,15 +81,14 @@ describe('container capacity', () => {
 	): Promise<void> {
 		await db.query(
 			`INSERT INTO container_pool_members
-			   (project_id, container_id, state, reserved_for_chat, disk_used_bytes,
+			   (project_id, container_id, state, disk_used_bytes,
 			    disk_ceiling_bytes, memory_bytes, last_released_at)
-			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7,
-			         now() - ($8 || ' minutes')::interval)`,
+			 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6,
+			         now() - ($7 || ' minutes')::interval)`,
 			[
 				projectId,
 				containerId,
 				over.state ?? 'idle',
-				over.reserved_for_chat ?? false,
 				over.disk_used_bytes ?? 0,
 				over.disk_ceiling_bytes ?? poolDiskCeilingBytes(DEFAULT_CONTAINER_DISK_GB),
 				over.memory_bytes === undefined ? 2 * 1024 ** 3 : over.memory_bytes,
@@ -126,23 +124,14 @@ describe('container capacity', () => {
 		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(2);
 	});
 
-	it("charges the chat's pinned container like any other", async () => {
+	it('charges a container held by a chat turn like any other busy one', async () => {
 		// Chat is metered, not exempt: its guarantee is the lane the task ceiling
-		// holds back, not an exclusion from the count. Excluding it here *and*
-		// holding the lane back would reserve the same memory twice.
+		// holds back, not an exclusion from the count. A chat turn's claim is an
+		// ordinary busy member, so it charges on the same arithmetic.
 		const project = await seedProject();
 		await addMember(project, 'ctr-run', { state: 'busy' });
-		await addMember(project, 'ctr-chat', { state: 'busy', reserved_for_chat: true });
+		await addMember(project, 'ctr-chat', { state: 'busy' });
 		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(4);
-	});
-
-	it('charges the chat container reached through the project row exactly once', async () => {
-		// `projects.container_id` is the other representation of the same container
-		// (migration 049 is additive): the pinned member must count on either arm of
-		// the UNION, and a container recorded in both must still deduplicate.
-		const project = await seedProject({ id: 'ctr-chat2', status: ContainerStatus.Running });
-		await addMember(project, 'ctr-chat2', { state: 'busy', reserved_for_chat: true });
-		expect((await getActiveContainers(db, engine)).usedMemoryGb).toBe(2);
 	});
 
 	it('charges what a container was built with, not what the cap now says', async () => {
@@ -194,22 +183,6 @@ describe('container capacity', () => {
 		const other = await seedProject();
 		await addMember(other, 'ctr-busy', { state: 'busy' });
 		expect(await isContainerCapacityBlockedInDb(db, engine, spare)).toBe(false);
-	});
-
-	it('never counts the chat’s container as spare for a task run', async () => {
-		// The pin means no task run may take the container out from under a live
-		// session - treating it as spare would be the same interruption by a
-		// different route.
-		//
-		// The busy member elsewhere fills the task ceiling together with the chat
-		// member's own charge (4 GB used against the 4 GB task share), so the
-		// project is unblocked only if its chat container counts as spare - which is
-		// exactly the claim under test.
-		const project = await seedProject();
-		await addMember(project, 'ctr-chat', { reserved_for_chat: true });
-		const other = await seedProject();
-		await addMember(other, 'ctr-busy', { state: 'busy' });
-		expect(await isContainerCapacityBlockedInDb(db, engine, project)).toBe(true);
 	});
 
 	it('never counts a container at its disk ceiling as spare', async () => {
@@ -395,22 +368,6 @@ describe('container capacity', () => {
 			const hoarder = await seedProject();
 			await addMember(hoarder, 'ctr-busy', { state: 'busy' });
 			await addMember(hoarder, 'ctr-fresh');
-
-			const starved = await seedProject();
-			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);
-		});
-
-		it('does not count the chat’s pinned container as reclaimable', async () => {
-			// It counts in `usedMemoryGb` now, so retiring it *would* free budget -
-			// but a session is parked on that filesystem, and reclaim must never trade
-			// a person's conversation for a task run.
-			//
-			// Seeded so the verdict flips on exactly this claim: 4 GB used against the
-			// 4 GB task share, so the starved project fits only if the chat member's
-			// 2 GB were offered as reclaimable headroom.
-			const hoarder = await seedProject();
-			await addMember(hoarder, 'ctr-busy-a', { state: 'busy' });
-			await addMember(hoarder, 'ctr-chat', { reserved_for_chat: true, idle_for_min: 10 });
 
 			const starved = await seedProject();
 			expect(await isContainerCapacityBlockedInDb(db, engine, starved)).toBe(true);

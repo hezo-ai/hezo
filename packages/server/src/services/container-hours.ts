@@ -62,11 +62,10 @@ function overlapsWindow(alias: string, from: string, to: string): string {
 	return `${alias}.started_at < ${to} AND COALESCE(${alias}.ended_at, now()) > ${from}`;
 }
 
-/** One bucket of the hours series. `chat_seconds` is the part the assistant chat held. */
+/** One bucket of the hours series. */
 export interface ContainerHoursBucket {
 	bucket: string;
 	seconds: number;
-	chat_seconds: number;
 }
 
 /** One project's share of the instance-wide series, for the stacked view. */
@@ -80,7 +79,6 @@ export interface ContainerHoursTotals {
 	today_seconds: number;
 	week_seconds: number;
 	month_seconds: number;
-	month_chat_seconds: number;
 	prev_month_seconds: number;
 	/** Stretches still open right now - containers currently accruing. */
 	open_intervals: number;
@@ -120,12 +118,10 @@ export async function containerHoursSeries(
 ): Promise<ContainerHoursBucket[]> {
 	const span = HOURS_BUCKET_SPAN[bucket];
 	const scope = projectId === null ? '' : 'AND e.project_id = $1';
-	const res = await db.query<{ bucket: string; seconds: number; chat_seconds: number }>(
+	const res = await db.query<{ bucket: string; seconds: number }>(
 		`WITH ${bucketGridSql(bucket, span)}
 		 SELECT b.bucket_start::date::text AS bucket,
-		        COALESCE(SUM(${clippedSeconds('e', 'b.bucket_start', 'b.bucket_end')}), 0)::int AS seconds,
-		        COALESCE(SUM(${clippedSeconds('e', 'b.bucket_start', 'b.bucket_end')})
-		          FILTER (WHERE e.reserved_for_chat), 0)::int AS chat_seconds
+		        COALESCE(SUM(${clippedSeconds('e', 'b.bucket_start', 'b.bucket_end')}), 0)::int AS seconds
 		   FROM buckets b
 		   LEFT JOIN container_uptime_entries e
 		     ON ${overlapsWindow('e', 'b.bucket_start', 'b.bucket_end')}
@@ -156,9 +152,7 @@ export async function containerHoursByProject(
 		        e.project_id,
 		        COALESCE(p.name, 'Deleted projects') AS project_name,
 		        p.slug AS project_slug,
-		        COALESCE(SUM(${clippedSeconds('e', 'b.bucket_start', 'b.bucket_end')}), 0)::int AS seconds,
-		        COALESCE(SUM(${clippedSeconds('e', 'b.bucket_start', 'b.bucket_end')})
-		          FILTER (WHERE e.reserved_for_chat), 0)::int AS chat_seconds
+		        COALESCE(SUM(${clippedSeconds('e', 'b.bucket_start', 'b.bucket_end')}), 0)::int AS seconds
 		   FROM buckets b
 		   -- INNER, unlike the series above: an empty bucket has no project to name,
 		   -- and a row of nulls would render as a phantom project in the legend.
@@ -191,8 +185,6 @@ export async function containerHoursTotals(
 		   COALESCE(SUM(${clippedSeconds('e', day, 'now()')}), 0)::int   AS today_seconds,
 		   COALESCE(SUM(${clippedSeconds('e', week, 'now()')}), 0)::int  AS week_seconds,
 		   COALESCE(SUM(${clippedSeconds('e', month, 'now()')}), 0)::int AS month_seconds,
-		   COALESCE(SUM(${clippedSeconds('e', month, 'now()')})
-		     FILTER (WHERE e.reserved_for_chat), 0)::int                 AS month_chat_seconds,
 		   COALESCE(SUM(${clippedSeconds('e', prevMonth, month)}), 0)::int AS prev_month_seconds,
 		   count(*) FILTER (WHERE e.ended_at IS NULL)::int              AS open_intervals
 		 FROM container_uptime_entries e
@@ -207,7 +199,6 @@ export async function containerHoursTotals(
 			today_seconds: 0,
 			week_seconds: 0,
 			month_seconds: 0,
-			month_chat_seconds: 0,
 			prev_month_seconds: 0,
 			open_intervals: 0,
 		}

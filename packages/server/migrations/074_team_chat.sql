@@ -130,3 +130,24 @@ ALTER TABLE chat_memories
 ALTER TABLE chat_memories ALTER COLUMN member_id DROP NOT NULL;
 ALTER TABLE chat_memories ADD CONSTRAINT chat_memories_one_scope
     CHECK ((member_id IS NULL) <> (conversation_id IS NULL));
+
+-- ============================================================================
+-- Remove the pinned chat container (same unshipped feature branch).
+-- ============================================================================
+
+-- The CEO no longer holds a standing reserved container: every chat turn - CEO
+-- and worker alike - claims a pool member busy for the turn and releases it.
+-- The pool-side pin flag therefore has no reader left; dropping it (rather
+-- than leaving it dead) makes any missed read fail loudly.
+--
+-- Dropping the column also drops 053's partial index, whose predicate named
+-- it. Recreate the index without the predicate: the idle-shutdown scan now
+-- covers every member, since no member is exempt from idling any more.
+DROP INDEX IF EXISTS idx_container_pool_members_idle;
+ALTER TABLE container_pool_members DROP COLUMN reserved_for_chat;
+CREATE INDEX idx_container_pool_members_idle
+    ON container_pool_members (state, last_released_at);
+
+-- container_uptime_entries.reserved_for_chat stays: those rows are recorded
+-- history from the pinned-container era, and a migration never discards user
+-- data. New rows simply default it to false.

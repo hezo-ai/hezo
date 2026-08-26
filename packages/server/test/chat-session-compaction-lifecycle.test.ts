@@ -9,7 +9,7 @@ import {
 	WsMessageType,
 	wsRoom,
 } from '@hezo/shared';
-import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { encrypt } from '../src/crypto/encryption';
 import { setMaxChatHistorySize } from '../src/lib/system-meta';
 import { getChatMemory, upsertChatMemory } from '../src/services/chat-memory';
@@ -510,7 +510,7 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		return { calls, proxy };
 	}
 
-	test('allocates the ssh bridge and egress proxy once, injects env, and releases both on stop', async () => {
+	test('allocates the ssh bridge and egress proxy per turn, injects env, and releases both after', async () => {
 		const chat = scriptedChatDocker(ctx.dataDir, projectId);
 		const ssh = fakeSsh();
 		const egress = fakeEgress();
@@ -530,25 +530,30 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		expect(session.rows[0].status).toBe(ChatSessionStatus.Running);
 		expect(ssh.calls.allocated).toEqual([sessionId]);
 		expect(egress.calls.allocated).toEqual([sessionId]);
+		// Nothing is held between turns: the host side is given back with the turn,
+		// not at stop. Finalize lands before teardown, so poll for the release.
+		await poll(async () => ssh.calls.released.length === 1);
+		expect(ssh.calls.released).toEqual([sessionId]);
+		await poll(async () => egress.calls.released.length === 1);
 
 		// The turn exec carries the warm-resource env: the per-session agent socket
 		// and the egress proxy plus its CA bundle pointers.
 		const env = chat.envByKind.get('turn') ?? [];
 		expect(env).toContain(`SSH_AUTH_SOCK=/run/hezo/${sessionId}.sock`);
 		// The chat reaches its egress proxy on container loopback through the
-		// session's own tunnel, exactly as an agent run does.
+		// turn's own tunnel, exactly as an agent run does.
 		expect(env.some((e: string) => /^HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+$/.test(e))).toBe(true);
 		expect(env).toContain('NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt');
 
-		// A second turn reuses the same session — no re-allocation.
+		// A second turn reuses the session ROW (same JWT anchor) but allocates its
+		// own host side and gives it back again.
 		const second = await manager.sendTurn({ text: 'again' });
 		await waitComplete(ctx, second.assistantMessageId);
-		expect(ssh.calls.allocated.length).toBe(1);
-		expect(egress.calls.allocated.length).toBe(1);
+		expect(ssh.calls.allocated).toEqual([sessionId, sessionId]);
+		await poll(async () => ssh.calls.released.length === 2);
+		await poll(async () => egress.calls.released.length === 2);
 
 		await manager.stop();
-		expect(ssh.calls.released).toEqual([sessionId]);
-		expect(egress.calls.released).toEqual([sessionId]);
 		const stopped = await ctx.db.query<{ status: string }>(
 			'SELECT status FROM chat_sessions WHERE id = $1',
 			[sessionId],
@@ -556,11 +561,11 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		expect(stopped.rows[0].status).toBe(ChatSessionStatus.Stopped);
 	});
 
-	test('a failed session start releases the already-allocated ssh bridge', async () => {
-		// The tunnel is the last thing session start stands up, and it is the leg
-		// that can genuinely fail (the container has to accept an exec channel).
-		// When it does, the catch arm must release the ssh socket and the egress
-		// proxy allocated before it rather than stranding either.
+	test('a failed turn build releases the already-allocated ssh bridge', async () => {
+		// The tunnel is the last thing the turn's host side stands up, and it is
+		// the leg that can genuinely fail (the container has to accept an exec
+		// channel). When it does, the catch arm must release the ssh socket and
+		// the egress proxy allocated before it rather than stranding either.
 		const chat = scriptedChatDocker(ctx.dataDir, projectId);
 		const ssh = fakeSsh();
 		const egress = fakeEgress();
@@ -574,17 +579,24 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			egressCAPath: '/tmp/hezo-test-ca.crt',
 		});
 
-		await expect(manager.sendTurn({ text: 'hello' })).rejects.toThrow(
-			/container refused the tunnel channel/,
+		// The send itself succeeds - the failure happens in the background turn and
+		// lands on the assistant bubble, like any other turn failure.
+		const { assistantMessageId } = await manager.sendTurn({ text: 'hello' });
+		await poll(async () => {
+			const r = await ctx.db.query<{ status: string }>(
+				'SELECT status FROM chat_messages WHERE id = $1',
+				[assistantMessageId],
+			);
+			return r.rows[0]?.status === ChatMessageStatus.Failed;
+		});
+		const row = await ctx.db.query<{ error: string | null }>(
+			'SELECT error FROM chat_messages WHERE id = $1',
+			[assistantMessageId],
 		);
+		expect(row.rows[0].error).toContain('container refused the tunnel channel');
 		expect(ssh.calls.allocated.length).toBe(1);
 		expect(ssh.calls.released).toEqual(ssh.calls.allocated);
 		expect(egress.calls.released).toEqual(egress.calls.allocated);
-		const session = await ctx.db.query<{ status: string; error: string }>(
-			'SELECT status, error FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
-		);
-		expect(session.rows[0].status).toBe(ChatSessionStatus.Crashed);
-		expect(session.rows[0].error).toContain('container refused the tunnel channel');
 	});
 
 	test('stop() interrupts an in-flight reply and finalizes the partial', async () => {
@@ -675,6 +687,9 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 	});
 
 	test('provisions the HQ container on demand when it is not running', async () => {
+		// No container in either representation: the turn's chat-turn claim walks
+		// the ordinary acquire ladder and provisions one.
+		await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
 		await ctx.db.query(
 			`UPDATE projects SET container_id = NULL, container_status = 'stopped'
 			 WHERE team_id = $1 AND is_internal = true`,
@@ -693,220 +708,6 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		expect(proj.rows[0].container_status).toBe('running');
 		expect(proj.rows[0].container_id).toBeTruthy();
 		await manager.stop();
-	});
-
-	test('the health interval fires and stop() clears it (idempotent start)', async () => {
-		vi.useFakeTimers();
-		try {
-			const chat = scriptedChatDocker(ctx.dataDir, projectId);
-			const { manager } = makeManager(ctx, chat.docker);
-			manager.start();
-			manager.start(); // second start is a no-op on the existing timer
-			// Fire the health tick with no live session — checkHealth early-returns.
-			await vi.advanceTimersByTimeAsync(10_001);
-			await manager.stop();
-			// A second stop with no timer takes the null-timer arm.
-			await manager.stop();
-		} finally {
-			vi.useRealTimers();
-		}
-		// No session rows were ever created by the idle health tick.
-		const rows = await ctx.db.query<{ n: number }>('SELECT COUNT(*)::int AS n FROM chat_sessions');
-		expect(rows.rows[0].n).toBe(0);
-	});
-
-	test('checkHealth tears the session down when the HQ container changes identity', async () => {
-		const chat = scriptedChatDocker(ctx.dataDir, projectId);
-		const { manager } = makeManager(ctx, chat.docker);
-		const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
-		await waitComplete(ctx, assistantMessageId);
-
-		// The session's container replaced: its pinned member row is gone and the
-		// project names a rebuilt container. Health is keyed off the member row -
-		// `projects.container_id` alone moves with every task provisioning - so
-		// this is the state that means "the exec target no longer exists".
-		// (The teardown warn is the asserted behavior here.)
-		await ctx.db.query(`DELETE FROM container_pool_members WHERE project_id = $1`, [projectId]);
-		await ctx.db.query(`UPDATE projects SET container_id = 'rebuilt-container' WHERE id = $1`, [
-			projectId,
-		]);
-		await (manager as unknown as { checkHealth(): Promise<void> }).checkHealth();
-
-		const live = await ctx.db.query<{ n: number }>(
-			`SELECT COUNT(*)::int AS n FROM chat_sessions WHERE status IN ($1, $2)`,
-			[ChatSessionStatus.Starting, ChatSessionStatus.Running],
-		);
-		expect(live.rows[0].n).toBe(0);
-		await manager.stop();
-	});
-
-	/**
-	 * A stopped container and a *different* container are not the same event, and
-	 * conflating them is what used to end a session for no reason. The chat holds no
-	 * long-lived process - each turn is its own exec, continuity is in the database -
-	 * so a container that stops with its filesystem intact takes nothing the session
-	 * needs. A managed backend suspends sandboxes on its own idle timer, so tearing
-	 * down there would end the operator's session every quiet period.
-	 */
-	describe('suspend and resume', () => {
-		const health = (manager: unknown) =>
-			(manager as { checkHealth(): Promise<void> }).checkHealth();
-
-		const sessionRow = async () => {
-			const r = await ctx.db.query<{ id: string; status: string }>(
-				'SELECT id, status::text FROM chat_sessions ORDER BY started_at DESC LIMIT 1',
-			);
-			return r.rows[0];
-		};
-
-		test('parks the session instead of ending it when the container stops', async () => {
-			const chat = scriptedChatDocker(ctx.dataDir, projectId);
-			const { manager } = makeManager(ctx, chat.docker);
-			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
-			await waitComplete(ctx, assistantMessageId);
-			const before = await sessionRow();
-			expect(before.status).toBe(ChatSessionStatus.Running);
-
-			// Same container, member row suspended: a suspend, not a replacement.
-			// Health reads the pool member - the pin survives a suspend by design.
-			await ctx.db.query(
-				`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`,
-				[projectId],
-			);
-			await health(manager);
-
-			const after = await sessionRow();
-			expect(after.status).toBe(ChatSessionStatus.Suspended);
-			// The same row: its id anchors this session's messages, so ending it and
-			// starting a new one would orphan them.
-			expect(after.id).toBe(before.id);
-			await manager.stop();
-		});
-
-		test('resumes into the same session on the next turn', async () => {
-			const chat = scriptedChatDocker(ctx.dataDir, projectId);
-			const { manager } = makeManager(ctx, chat.docker);
-			const first = await manager.sendTurn({ text: 'hi' });
-			await waitComplete(ctx, first.assistantMessageId);
-			const before = await sessionRow();
-
-			await ctx.db.query(
-				`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`,
-				[projectId],
-			);
-			await health(manager);
-			expect((await sessionRow()).status).toBe(ChatSessionStatus.Suspended);
-
-			// The next turn resumes through the pin-reuse rung: the suspended member
-			// is started in place and the session keeps its container and its row.
-			const second = await manager.sendTurn({ text: 'still there?' });
-			await waitComplete(ctx, second.assistantMessageId);
-
-			const after = await sessionRow();
-			expect(after.status).toBe(ChatSessionStatus.Running);
-			expect(after.id).toBe(before.id);
-			// One session across the whole episode — resume, not restart.
-			const count = await ctx.db.query<{ n: number }>(
-				'SELECT COUNT(*)::int AS n FROM chat_sessions',
-			);
-			expect(count.rows[0].n).toBe(1);
-			await manager.stop();
-		});
-
-		test('starts fresh when the container was replaced rather than restarted', async () => {
-			const chat = scriptedChatDocker(ctx.dataDir, projectId);
-			const { manager } = makeManager(ctx, chat.docker);
-			const first = await manager.sendTurn({ text: 'hi' });
-			await waitComplete(ctx, first.assistantMessageId);
-			const before = await sessionRow();
-
-			await ctx.db.query(
-				`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`,
-				[projectId],
-			);
-			await health(manager);
-
-			// A different container: the filesystem this session was parked on is gone,
-			// so there is nothing to resume into.
-			//
-			// Replacement is expressed as the pinned **member** disappearing, which is
-			// what it now means - the chat resolves its container through the pool, so
-			// moving `projects.container_id` alone leaves the pin (and therefore the
-			// session's own container) exactly where it was. This is the state the
-			// reconciler leaves behind when a container is removed out from under
-			// Hezo: the member row gone, and the project naming something else.
-			await ctx.db.query('DELETE FROM container_pool_members WHERE project_id = $1', [projectId]);
-			await ctx.db.query(
-				`UPDATE projects SET container_id = 'replaced-container', container_status = 'running'
-				 WHERE id = $1`,
-				[projectId],
-			);
-			const second = await manager.sendTurn({ text: 'hello again' });
-			await waitComplete(ctx, second.assistantMessageId);
-
-			const after = await sessionRow();
-			expect(after.status).toBe(ChatSessionStatus.Running);
-			expect(after.id).not.toBe(before.id);
-			await manager.stop();
-		});
-
-		test('a parked session still blocks a second one', async () => {
-			// It owns its row and its container, so the singleton guard has to keep
-			// counting it as live.
-			const chat = scriptedChatDocker(ctx.dataDir, projectId);
-			const { manager } = makeManager(ctx, chat.docker);
-			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
-			await waitComplete(ctx, assistantMessageId);
-			await ctx.db.query(
-				`UPDATE container_pool_members SET state = 'suspended' WHERE project_id = $1`,
-				[projectId],
-			);
-			await health(manager);
-
-			const ceoId = await ceoMemberId(ctx);
-			await expect(
-				ctx.db.query(
-					`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
-					 VALUES ($1, $2, $3, 'claude_code', 'starting')`,
-					[ceoId, DEFAULT_TEAM_ID, projectId],
-				),
-			).rejects.toThrow();
-			await manager.stop();
-		});
-
-		test('reserves the chat’s container in the pool and hands it back at teardown', async () => {
-			// Chat is exempt from the container cap, and the pin is the other half of
-			// that: without it a task run could take the container out from under a live
-			// session, which is the same interruption by a different route.
-			await ctx.db.query(
-				`INSERT INTO container_pool_members (project_id, container_id, state)
-				 VALUES ($1, 'hq-container', 'idle') ON CONFLICT (container_id) DO NOTHING`,
-				[projectId],
-			);
-			const reserved = async (): Promise<boolean> => {
-				const r = await ctx.db.query<{ reserved_for_chat: boolean }>(
-					'SELECT reserved_for_chat FROM container_pool_members WHERE container_id = $1',
-					['hq-container'],
-				);
-				return r.rows[0].reserved_for_chat;
-			};
-
-			const chat = scriptedChatDocker(ctx.dataDir, projectId);
-			const { manager } = makeManager(ctx, chat.docker);
-			const { assistantMessageId } = await manager.sendTurn({ text: 'hi' });
-			await waitComplete(ctx, assistantMessageId);
-			expect(await reserved()).toBe(true);
-
-			// Suspend keeps the pin — a parked session still owns its container.
-			await ctx.db.query(`UPDATE projects SET container_status = 'stopped' WHERE id = $1`, [
-				projectId,
-			]);
-			await health(manager);
-			expect(await reserved()).toBe(true);
-
-			await manager.stop();
-			expect(await reserved()).toBe(false);
-		});
 	});
 
 	test('reconcileOnStartup crashes orphaned sessions and settles orphaned messages', async () => {
@@ -945,6 +746,32 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 			[partial.rows[0].id],
 		);
 		expect(kept.rows[0].status).toBe(ChatMessageStatus.Interrupted);
+	});
+
+	test('reconcileOnStartup crashes a session left suspended by the pinned-era model', async () => {
+		// Upgrade safety: the previous release parked the CEO session as `suspended`
+		// across restarts. Nothing resumes that state any more, and a row left there
+		// would hold the per-member singleton forever - so boot repair crashes it.
+		const ceoId = await ceoMemberId(ctx);
+		await ctx.db.query(
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status)
+			 VALUES ($1, $2, $3, 'claude_code', 'suspended')`,
+			[ceoId, DEFAULT_TEAM_ID, projectId],
+		);
+		const chat = scriptedChatDocker(ctx.dataDir, projectId);
+		const { manager } = makeManager(ctx, chat.docker);
+
+		await manager.reconcileDatabaseOnStartup();
+
+		const session = await ctx.db.query<{ status: string }>(
+			'SELECT status FROM chat_sessions LIMIT 1',
+		);
+		expect(session.rows[0].status).toBe(ChatSessionStatus.Crashed);
+
+		// And the freed singleton admits a fresh turn.
+		const { assistantMessageId } = await manager.sendTurn({ text: 'back online' });
+		await waitComplete(ctx, assistantMessageId);
+		await manager.stop();
 	});
 
 	test('a member model override picks the provider without runtime resolution', async () => {

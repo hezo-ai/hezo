@@ -22,7 +22,6 @@ interface Seeded {
 
 interface MemberOpts {
 	state?: 'creating' | 'idle' | 'busy' | 'suspended' | 'error';
-	reservedForChat?: boolean;
 	hasUnpushedCommits?: boolean;
 	lastLogs?: string | null;
 	lastError?: string | null;
@@ -49,15 +48,14 @@ async function addMember(projectId: string, containerId: string, o: MemberOpts =
 	await db.query(
 		`INSERT INTO container_pool_members
 		   (project_id, container_id, state, disk_ceiling_bytes, disk_used_bytes,
-		    reserved_for_chat, has_unpushed_commits, last_logs, last_error, memory_bytes)
-		 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7, $8, $9, $10)`,
+		    has_unpushed_commits, last_logs, last_error, memory_bytes)
+		 VALUES ($1, $2, $3::container_pool_state, $4, $5, $6, $7, $8, $9)`,
 		[
 			projectId,
 			containerId,
 			o.state ?? 'idle',
 			20 * 1024 ** 3,
 			5 * 1024 ** 3,
-			o.reservedForChat ?? false,
 			o.hasUnpushedCommits ?? false,
 			o.lastLogs ?? null,
 			o.lastError ?? null,
@@ -81,14 +79,14 @@ async function clearSeededContainers() {
 	await db.query('UPDATE projects SET container_id = NULL, container_status = NULL');
 }
 
-test('the list shows every project’s containers, with the badges that explain a pinned one', async () => {
+test('the list shows every project’s containers, with the badge that explains a held one', async () => {
 	let seeded!: Seeded;
 	const { findByTestId } = await renderApp({
 		initialPath: '/settings/containers',
 		seed: async () => {
 			seeded = await seedTwoProjects();
 			await addMember(seeded.alpha.id, 'alpha-one', { state: 'busy' });
-			await addMember(seeded.alpha.id, 'alpha-chat', { reservedForChat: true });
+			await addMember(seeded.alpha.id, 'alpha-two');
 			await addMember(seeded.beta.id, 'beta-one', { hasUnpushedCommits: true });
 		},
 	});
@@ -105,9 +103,8 @@ test('the list shows every project’s containers, with the badges that explain 
 	expect((await findByTestId('container-state-alpha-one')).textContent).toBe('Running a task');
 	expect((await findByTestId('container-state-beta-one')).textContent).toBe('Idle');
 
-	// Both badges say why a container is not being recycled - the two reasons an
+	// The badge says why a container is not being recycled - the reason an
 	// operator would otherwise read as a leak.
-	await findByTestId('container-chat-alpha-chat');
 	await findByTestId('container-unpushed-beta-one');
 });
 
@@ -133,28 +130,6 @@ test('the list marks a container that reported an error, whatever its state says
 	await findByTestId('container-error-mark-alpha-one');
 	// And a healthy container is not marked, so the mark means something.
 	expect(queryByTestId('container-error-mark-beta-one')).toBeNull();
-});
-
-test('a container pinned to the assistant reads as the assistant’s, not as idle', async () => {
-	// The assistant *pins* its container and leaves it `idle` for the whole
-	// conversation, deliberately, so nothing recycles it out from under a turn.
-	// Rendering the raw state therefore labelled it "Idle" while the assistant was
-	// mid-turn in it. Naming the reservation says why it is held and why it is not
-	// being reclaimed.
-	let seeded!: Seeded;
-	const { findByTestId } = await renderApp({
-		initialPath: '/settings/containers',
-		seed: async () => {
-			seeded = await seedTwoProjects();
-			await addMember(seeded.alpha.id, 'alpha-chat', { reservedForChat: true });
-			await addMember(seeded.beta.id, 'beta-one');
-		},
-	});
-
-	await findByTestId('containers-list', undefined, { timeout: 20_000 });
-	expect((await findByTestId('container-state-alpha-chat')).textContent).toBe("Assistant's");
-	// An ordinary idle container is untouched, so the label still means something.
-	expect((await findByTestId('container-state-beta-one')).textContent).toBe('Idle');
 });
 
 test('an instance with nothing running says so rather than showing an empty table', async () => {

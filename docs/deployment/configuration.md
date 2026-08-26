@@ -169,12 +169,6 @@ drains once running. Nothing here starts a pass on its own.
 | `logCompaction.maxPerTick` | `500` | Runs compacted per tick before yielding to the next. |
 | `logCompaction.preservedBytes` | `12288` | Trailing bytes of each old run's log kept - the slice holding the end-of-run summary and the token/cost line. Everything before it is discarded. |
 
-### Live chat
-
-| Setting | Default | Description |
-|---|---|---|
-| `chat.healthIntervalMs` | `10000` | How often a live chat session verifies its container is still healthy. |
-
 ### Settings fixed by the deployer
 
 Where someone other than the person using an instance decides its limits - a

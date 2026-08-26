@@ -876,7 +876,6 @@ export function resolveConfig(
 		github: { oauthClientId: file.github?.oauthClientId ?? d.github.oauthClientId },
 		jobs: { ...d.jobs, ...file.jobs },
 		logCompaction: { ...d.logCompaction, ...file.logCompaction },
-		chat: { ...d.chat, ...file.chat },
 
 		// An inline block and a standalone file are the same shape; the file wins,
 		// because it is the one a deployment can rewrite without restarting.

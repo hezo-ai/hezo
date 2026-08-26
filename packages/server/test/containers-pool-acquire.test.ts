@@ -637,129 +637,6 @@ describe('acquireRunContainer against a changed memory cap', () => {
 });
 
 /**
- * The chat takes a container through the same ladder, which is what guarantees
- * the one it pins is not already serving a run.
- *
- * It used to read `projects.container_id` and use whatever that named. With one
- * container per project that was the same container either way; with a pool it
- * is the most recently provisioned or resumed one, which may be mid-run - so the
- * chat pinned a busy container and executed its turns on it, two workloads
- * sharing one memory cap. That is exactly the shared-fate failure the pool was
- * built to remove, reached from the one direction it was not guarding.
- */
-describe('acquireRunContainer for the chat', () => {
-	const CHAT_TASK = randomUUID();
-
-	async function chatProject(): Promise<string> {
-		const res = await createTestProject(db, teamId, { name: `Chat ${randomUUID().slice(0, 8)}` });
-		return (await res.json()).data.id;
-	}
-
-	async function pinned(projectId: string): Promise<string[]> {
-		const res = await db.query<{ container_id: string }>(
-			`SELECT container_id FROM container_pool_members
-			  WHERE project_id = $1 AND reserved_for_chat ORDER BY container_id`,
-			[projectId],
-		);
-		return res.rows.map((r) => r.container_id);
-	}
-
-	it('never takes a container a run is already using', async () => {
-		const project = await chatProject();
-		const docker = provisioningDocker();
-		const run = await acquireRunContainer(deps(docker), project, CHAT_TASK);
-		try {
-			const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
-			expect(chat.containerId).not.toBe(run.containerId);
-			// And the run keeps its own: pinning must not reach across to it.
-			expect(await poolRow(run.containerId)).toMatchObject({ state: 'busy' });
-			expect(await pinned(project)).toEqual([chat.containerId]);
-		} finally {
-			await run.release();
-		}
-	});
-
-	it('replaces its pinned container when the cap changes under it', async () => {
-		// The pin is checked ahead of the ladder, so the allocation check has to be
-		// repeated there or the chat is the one workload left running in a container
-		// built for a cap nobody set any more.
-		//
-		// Its own project rather than the shared one: this case changes the cap, and
-		// `chatProject()` hands back the *same* project every time (a team holds one
-		// project), so the change would follow every case after it.
-		const project = await freshProject('Chat Cap');
-		await db.query('UPDATE projects SET memory_limit_gib = 2 WHERE id = $1', [project]);
-		const docker = provisioningDocker();
-		const first = await acquireRunContainer(deps(docker), project, null, 'chat');
-
-		await db.query('UPDATE projects SET memory_limit_gib = 5 WHERE id = $1', [project]);
-		const second = await acquireRunContainer(deps(docker), project, null, 'chat');
-		expect(second.containerId).not.toBe(first.containerId);
-		// Exactly one pin: the replacement is pinned and the stale container is gone
-		// from the pool rather than left beside it.
-		expect(await pinned(project)).toEqual([second.containerId]);
-		expect(await poolRow(first.containerId)).toBeUndefined();
-	});
-
-	it('pins rather than claims, so the container reads idle and reserved', async () => {
-		// That pair is what "the chat's container" means: `usable` then skips it in
-		// the ladder, so no task run can take it out from under the session.
-		const project = await chatProject();
-		const chat = await acquireRunContainer(deps(provisioningDocker()), project, null, 'chat');
-		expect(await poolRow(chat.containerId)).toMatchObject({ state: 'idle' });
-		expect(await pinned(project)).toEqual([chat.containerId]);
-	});
-
-	it('hands a task run a different container than the chat holds', async () => {
-		// The mirror of the first case, and the property `usable` encodes.
-		const project = await chatProject();
-		const docker = provisioningDocker();
-		const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
-		const run = await acquireRunContainer(deps(docker), project, CHAT_TASK);
-		try {
-			expect(run.containerId).not.toBe(chat.containerId);
-		} finally {
-			await run.release();
-		}
-	});
-
-	it('gives the same container back to the session that already holds it', async () => {
-		// A session reconnecting must not be handed a second container beside the
-		// one it pinned - the ladder excludes reserved members by design, so this
-		// rung has to come before it.
-		const project = await chatProject();
-		const docker = provisioningDocker();
-		const first = await acquireRunContainer(deps(docker), project, null, 'chat');
-		const second = await acquireRunContainer(deps(docker), project, null, 'chat');
-		expect(second.containerId).toBe(first.containerId);
-		expect(await pinned(project)).toEqual([first.containerId]);
-	});
-
-	it('does not release the pin when the turn ends', async () => {
-		// The session holds its container across every turn; `teardown` is what
-		// clears the reservation. Releasing here would hand it back after turn one.
-		const project = await chatProject();
-		const chat = await acquireRunContainer(deps(provisioningDocker()), project, null, 'chat');
-		await chat.release();
-		expect(await pinned(project)).toEqual([chat.containerId]);
-		expect(await poolRow(chat.containerId)).toMatchObject({ state: 'idle' });
-	});
-
-	it('points the project row at the container the chat took', async () => {
-		// `container_id` is the operator's view - the Container page, the sync loop,
-		// `container_error`. The chat's is the long-lived container they are most
-		// likely to be looking at, so the column has to follow the ladder's choice.
-		const project = await chatProject();
-		const chat = await acquireRunContainer(deps(provisioningDocker()), project, null, 'chat');
-		const row = await db.query<{ container_id: string | null }>(
-			'SELECT container_id FROM projects WHERE id = $1',
-			[project],
-		);
-		expect(row.rows[0].container_id).toBe(chat.containerId);
-	});
-});
-
-/**
  * Wipe pool state, so a describe can reason about the instance-wide memory
  * arithmetic without every container the cases above left behind. Used only by
  * the describes below, which run after everything that relies on that state.
@@ -791,8 +668,9 @@ describe('the chat lane', () => {
 			await expect(acquireRunContainer(deps(docker), project, randomUUID())).rejects.toThrow(
 				PoolCapacityError,
 			);
-			const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
+			const chat = await acquireRunContainer(deps(docker), project, null, 'chat-turn');
 			expect(chat.containerId).not.toBe(run.containerId);
+			await chat.release();
 		} finally {
 			await setMaxContainerMemoryGb(db, 40);
 			await run.release();
@@ -807,7 +685,7 @@ describe('the chat lane', () => {
 		const run = await acquireRunContainer(deps(docker), project, randomUUID());
 		await setMaxContainerMemoryGb(db, 3);
 		try {
-			await expect(acquireRunContainer(deps(docker), project, null, 'chat')).rejects.toThrow(
+			await expect(acquireRunContainer(deps(docker), project, null, 'chat-turn')).rejects.toThrow(
 				PoolCapacityError,
 			);
 		} finally {
@@ -818,56 +696,33 @@ describe('the chat lane', () => {
 });
 
 /**
- * The third workload: a worker DM turn. Held exactly like a task run - claimed
- * busy for one exec, released after, never pinned - but admitted like chat,
+ * The chat-turn workload: a chat turn - CEO or worker DM alike. Held exactly
+ * like a task run - claimed busy for one exec, released after - but admitted
  * against the full total rather than the task ceiling.
  */
 describe('acquireRunContainer for a chat turn', () => {
 	beforeEach(resetPool);
 
-	it('claims busy, never pins, and releases like a task run', async () => {
+	it('claims busy and releases like a task run', async () => {
 		const project = await freshProject('Turn Hold');
 		const turn = await acquireRunContainer(deps(provisioningDocker()), project, null, 'chat-turn');
 		expect(await poolRow(turn.containerId)).toMatchObject({ state: 'busy' });
-		const pinned = await db.query(
-			`SELECT 1 FROM container_pool_members WHERE project_id = $1 AND reserved_for_chat`,
-			[project],
-		);
-		expect(pinned.rows).toHaveLength(0);
 		await turn.release();
 		expect(await poolRow(turn.containerId)).toMatchObject({ state: 'idle' });
 	});
 
-	it("never takes the chat session's pinned container", async () => {
-		// The pinned member is the CEO session's parked filesystem and holds its
-		// credential context; a worker turn sharing it is the crossover the design
-		// rejects, so the ladder's `usable` must exclude it for this workload too.
-		const project = await freshProject('Turn Pin');
+	it('hands two overlapping turns two containers, one exec per box', async () => {
+		// A claimed member is busy, so a second concurrent turn in the same
+		// project gets its own container rather than a shared exec target.
+		const project = await freshProject('Turn Overlap');
 		const docker = provisioningDocker();
-		const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
-		const turn = await acquireRunContainer(deps(docker), project, null, 'chat-turn');
+		const first = await acquireRunContainer(deps(docker), project, null, 'chat-turn');
+		const second = await acquireRunContainer(deps(docker), project, null, 'chat-turn');
 		try {
-			expect(turn.containerId).not.toBe(chat.containerId);
+			expect(second.containerId).not.toBe(first.containerId);
 		} finally {
-			await turn.release();
-		}
-	});
-
-	it('admits from the lane a task run cannot reach', async () => {
-		const project = await freshProject('Turn Lane');
-		const docker = provisioningDocker();
-		const run = await acquireRunContainer(deps(docker), project, randomUUID());
-		await setMaxContainerMemoryGb(db, 4);
-		try {
-			await expect(acquireRunContainer(deps(docker), project, randomUUID())).rejects.toThrow(
-				PoolCapacityError,
-			);
-			const turn = await acquireRunContainer(deps(docker), project, null, 'chat-turn');
-			expect(turn.containerId).not.toBe(run.containerId);
-			await turn.release();
-		} finally {
-			await setMaxContainerMemoryGb(db, 40);
-			await run.release();
+			await second.release();
+			await first.release();
 		}
 	});
 });
@@ -906,9 +761,6 @@ describe('the hours allowance in the acquire ladder', () => {
 		await expect(acquireRunContainer(deps(docker), project, randomUUID())).rejects.toThrow(
 			PoolHoursExhaustedError,
 		);
-		await expect(acquireRunContainer(deps(docker), project, null, 'chat')).rejects.toThrow(
-			PoolHoursExhaustedError,
-		);
 		await expect(acquireRunContainer(deps(docker), project, null, 'chat-turn')).rejects.toThrow(
 			PoolHoursExhaustedError,
 		);
@@ -927,18 +779,19 @@ describe('the hours allowance in the acquire ladder', () => {
 		await again.release();
 	});
 
-	it("refuses to resume the chat's suspended pinned container", async () => {
-		// The pin-reuse rung sits above the ladder, so it carries its own check - a
-		// resume opens new uptime just as surely from there.
+	it('refuses to resume a suspended container for a chat turn', async () => {
+		// A resume opens new uptime just as surely as a create, so the ladder's
+		// hours check gates the resume rung for chat turns too.
 		const project = await freshProject('Hours Resume');
 		const docker = provisioningDocker();
-		const chat = await acquireRunContainer(deps(docker), project, null, 'chat');
+		const turn = await acquireRunContainer(deps(docker), project, null, 'chat-turn');
+		await turn.release();
 		await db.query(
 			`UPDATE container_pool_members SET state = 'suspended' WHERE container_id = $1`,
-			[chat.containerId],
+			[turn.containerId],
 		);
 		await exhaustAllowance();
-		await expect(acquireRunContainer(deps(docker), project, null, 'chat')).rejects.toThrow(
+		await expect(acquireRunContainer(deps(docker), project, null, 'chat-turn')).rejects.toThrow(
 			PoolHoursExhaustedError,
 		);
 	});

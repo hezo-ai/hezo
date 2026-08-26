@@ -143,9 +143,11 @@ describe('the removed-variable table', () => {
 		expect(stillRead).toEqual([]);
 	});
 
-	it('gives every entry a replacement naming a config key or a flag', () => {
+	it('gives every entry a replacement naming a config key, a flag, or the removal', () => {
+		// A setting whose mechanism was removed outright has no key or flag to
+		// point at; its replacement must say the mechanism is gone instead.
 		for (const [name, spec] of Object.entries(REMOVED_ENV_VARS)) {
-			expect(spec.replacement, name).toMatch(/config-file key|--/);
+			expect(spec.replacement, name).toMatch(/config-file key|--|were removed|was removed/);
 		}
 	});
 
