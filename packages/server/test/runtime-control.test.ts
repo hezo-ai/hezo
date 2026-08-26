@@ -14,6 +14,7 @@ function fakeRuntime() {
 	const sshAgentServer = { releaseAll: vi.fn(async () => {}) };
 	const assetStore = { close: vi.fn(async () => {}) };
 	const db = { close: vi.fn(async () => {}) };
+	const policyWatcher = { close: vi.fn() };
 	const result = {
 		jobManager,
 		chatSessionManager,
@@ -21,8 +22,18 @@ function fakeRuntime() {
 		sshAgentServer,
 		assetStore,
 		db,
+		policyWatcher,
 	} as unknown as StartupResult;
-	return { result, jobManager, chatSessionManager, egressProxy, sshAgentServer, assetStore, db };
+	return {
+		result,
+		jobManager,
+		chatSessionManager,
+		egressProxy,
+		sshAgentServer,
+		assetStore,
+		db,
+		policyWatcher,
+	};
 }
 
 describe('active runtime accessors', () => {
@@ -36,8 +47,16 @@ describe('active runtime accessors', () => {
 
 describe('shutdownRuntime', () => {
 	it('stops every subsystem and closes the db on the first call, then is idempotent', async () => {
-		const { result, jobManager, chatSessionManager, egressProxy, sshAgentServer, assetStore, db } =
-			fakeRuntime();
+		const {
+			result,
+			jobManager,
+			chatSessionManager,
+			egressProxy,
+			sshAgentServer,
+			assetStore,
+			db,
+			policyWatcher,
+		} = fakeRuntime();
 
 		await shutdownRuntime(result);
 		// Live-run trees are reaped BEFORE the aborts, so the kill can't race exit.
@@ -63,6 +82,8 @@ describe('shutdownRuntime', () => {
 		expect(chatSessionManager.stop).toHaveBeenCalledTimes(1);
 		expect(egressProxy.releaseAll).toHaveBeenCalledTimes(1);
 		expect(sshAgentServer.releaseAll).toHaveBeenCalledTimes(1);
+		// A file watch left armed keeps the process alive past shutdown.
+		expect(policyWatcher.close).toHaveBeenCalledTimes(1);
 		expect(assetStore.close).toHaveBeenCalledTimes(1);
 		expect(db.close).toHaveBeenCalledTimes(1);
 
