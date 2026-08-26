@@ -44,6 +44,7 @@ const AUDIENCE = 'alice.control.example';
 
 const SSO: SsoConfig = {
 	issuerUrl: 'https://control.example',
+	logoutUrl: 'https://control.example/logout',
 	issuerPublicKey: `k1:${ISSUER.publicKeyHex}`,
 	ownerSubject: OWNER,
 	audience: AUDIENCE,
@@ -165,5 +166,29 @@ test('stops rather than redirecting again when the token is rejected', async () 
 	await findByTestId('sso-redirect');
 	await findByText(/Sign-in token rejected/);
 	expect(api.getToken()).toBeNull();
+	expect(leftFor()).toBeNull();
+});
+
+// Clearing only the local session leaves the issuer ready to sign the person
+// straight back in on the next redirect, so the button would read as broken.
+test('signing out ends the session at the issuer too', async () => {
+	const { findByTestId, user } = await renderApp({
+		initialPath: '/settings',
+		seed: () => configureIssuer(SSO),
+	});
+
+	await user.click(await findByTestId('settings-logout'));
+	await expect.poll(() => leftFor()).toBe(SSO.logoutUrl);
+	expect(api.getToken()).toBeNull();
+});
+
+test('signing out of an ordinary instance goes nowhere', async () => {
+	const { findByTestId, user } = await renderApp({
+		initialPath: '/settings',
+		seed: () => configureIssuer(null),
+	});
+
+	await user.click(await findByTestId('settings-logout'));
+	await expect.poll(() => api.getToken()).toBeNull();
 	expect(leftFor()).toBeNull();
 });

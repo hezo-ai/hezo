@@ -28,6 +28,7 @@ const AUDIENCE = 'alice.control.example';
 
 const SSO: SsoConfig = {
 	issuerUrl: 'https://control.example',
+	logoutUrl: 'https://control.example/logout',
 	issuerPublicKey: `k1:${ISSUER.publicKeyHex}`,
 	ownerSubject: OWNER,
 	audience: AUDIENCE,
@@ -327,7 +328,10 @@ describe('GET /api/status', () => {
 
 	it('names the issuer, pre-auth, so the gate knows what to offer', async () => {
 		withSso(SSO);
-		expect((await status()).sso).toEqual({ issuer_url: SSO.issuerUrl });
+		expect((await status()).sso).toEqual({
+			issuer_url: SSO.issuerUrl,
+			logout_url: SSO.logoutUrl,
+		});
 	});
 
 	// An ordinary instance's payload is byte-identical to before this existed.

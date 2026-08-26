@@ -125,6 +125,7 @@ test.beforeAll(() => {
 				jobs: { containerSyncCron: '*/10 * * * * *' },
 				sso: {
 					issuerUrl: ISSUER_URL,
+					logoutUrl: `${ISSUER_URL}/logout`,
 					issuerPublicKey: `k1:${ISSUER.publicKeyHex}`,
 					ownerSubject: OWNER,
 					audience: AUDIENCE,
@@ -196,4 +197,21 @@ test('a rejected token stops rather than bouncing back to the issuer', async ({ 
 
 	await expect(page.getByTestId('sso-redirect')).toBeVisible();
 	await expect(page).toHaveURL(/localhost/);
+});
+
+// First run: the control plane sends a new signup straight here, but there is no
+// account to be anybody yet. The token is spent and useless - and would expire
+// long before a phrase is written down - so arriving early must read as early,
+// not as a failure that strands the visitor on an error screen. Only this tier
+// has an instance that is genuinely unset.
+test('a token arriving before setup shows the setup screen, not an error', async ({ page }) => {
+	await startServer({ reset: true, enrol: false });
+	await stubIssuer(page);
+
+	await page.goto(`/#sso=${mintToken()}`);
+
+	// The ordinary first-run journey, unchanged: language, then the master key.
+	await expect(page.getByTestId('setup-step-language')).toBeVisible();
+	await expect(page.getByTestId('sso-redirect')).toHaveCount(0);
+	await expect(page.getByText(/did not complete/i)).toHaveCount(0);
 });

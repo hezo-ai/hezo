@@ -179,6 +179,15 @@ function AppShell() {
 				setSsoPhase('holding');
 			})
 			.catch((err: ApiError) => {
+				// Arriving before the instance has been set up is not a failure, it is
+				// early: a brand-new instance has no account to be anybody yet. Drop
+				// the token and fall through to the ordinary redirect, which fetches a
+				// fresh one once the phrase has been created - by which time this one
+				// would have expired anyway, its whole life being a minute.
+				if (err.code === 'SETUP_REQUIRED') {
+					setSsoPhase('idle');
+					return;
+				}
 				setSsoError(err.message || t('sso.failed'));
 				setSsoPhase('failed');
 			});

@@ -136,13 +136,14 @@ describe('the sso block', () => {
 
 	function sso(overrides: string): string {
 		return write(
-			`module.exports = { sso: { issuerUrl: 'https://app.hezo.ai', issuerPublicKey: 'k1:${KEY}', ownerSubject: 'acct-1', audience: 'alice.app.hezo.ai', ${overrides} } };`,
+			`module.exports = { sso: { issuerUrl: 'https://app.hezo.ai', logoutUrl: 'https://app.hezo.ai/logout', issuerPublicKey: 'k1:${KEY}', ownerSubject: 'acct-1', audience: 'alice.app.hezo.ai', ${overrides} } };`,
 		);
 	}
 
 	it('accepts a complete block', () => {
 		expect(loadConfigFile(sso('')).sso).toEqual({
 			issuerUrl: 'https://app.hezo.ai',
+			logoutUrl: 'https://app.hezo.ai/logout',
 			issuerPublicKey: `k1:${KEY}`,
 			ownerSubject: 'acct-1',
 			audience: 'alice.app.hezo.ai',
@@ -157,12 +158,14 @@ describe('the sso block', () => {
 	// A half-configured issuer is a hole, not a partial feature.
 	it.each([
 		'issuerUrl',
+		'logoutUrl',
 		'issuerPublicKey',
 		'ownerSubject',
 		'audience',
 	])('refuses a block missing %s', (field) => {
 		const full = {
 			issuerUrl: "'https://app.hezo.ai'",
+			logoutUrl: "'https://app.hezo.ai/logout'",
 			issuerPublicKey: `'k1:${KEY}'`,
 			ownerSubject: "'acct-1'",
 			audience: "'alice.app.hezo.ai'",

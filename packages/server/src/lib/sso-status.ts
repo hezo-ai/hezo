@@ -12,11 +12,11 @@ import { runtimeConfig } from '../config/runtime';
  * an instance's limits has not thereby given it anywhere to sign in, and
  * offering a sign-in button that leads nowhere is worse than offering none.
  *
- * Only the issuer's own URL goes out. It is already public - it is where the
+ * Only the issuer's URLs go out. They are already public - they are where the
  * browser is about to be sent - while the accepted keys, the owner subject and
  * the audience are matching material that a caller has no reason to read back.
  */
-export function ssoStatus(): { sso?: { issuer_url: string } } {
+export function ssoStatus(): { sso?: { issuer_url: string; logout_url: string } } {
 	const sso = runtimeConfig().sso;
-	return sso ? { sso: { issuer_url: sso.issuerUrl } } : {};
+	return sso ? { sso: { issuer_url: sso.issuerUrl, logout_url: sso.logoutUrl } } : {};
 }

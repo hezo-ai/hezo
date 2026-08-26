@@ -78,14 +78,16 @@ describe('serveStartupRequest (pre-ready handler)', () => {
 				...base,
 				sso: {
 					issuerUrl: 'https://control.example',
+					logoutUrl: 'https://control.example/logout',
 					issuerPublicKey: `k1:${'a'.repeat(64)}`,
 					ownerSubject: 'acct-1',
 					audience: 'alice.control.example',
 				},
 			});
 			const withIssuer = await serveStartupRequest(req('/api/status'), withBundle(null));
-			expect(((await withIssuer.json()) as { sso?: { issuer_url: string } }).sso).toEqual({
+			expect(((await withIssuer.json()) as { sso?: Record<string, string> }).sso).toEqual({
 				issuer_url: 'https://control.example',
+				logout_url: 'https://control.example/logout',
 			});
 
 			setRuntimeConfig({ ...base, sso: null });

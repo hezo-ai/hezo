@@ -133,7 +133,8 @@ blocks:
 
 ```js
 sso: {
-  issuerUrl: 'https://app.hezo.ai',
+  issuerUrl: 'https://app.hezo.ai',        // where an unidentified visitor is sent
+  logoutUrl: 'https://app.hezo.ai/logout', // where signing out goes
   issuerPublicKey: 'k1:ab12…,k2:cd34…',   // kid:hex list, comma-separated
   ownerSubject: '9f1c…',                   // the account uuid allowed in
   audience: 'alice.app.hezo.ai',           // what `aud` must equal
@@ -149,6 +150,12 @@ own host" is the `Host` header, and `requestOrigin()` (`lib/request-origin.ts`)
 takes both `host` and `x-forwarded-proto` from the request with no trusted-proxy
 setting. If reusing the existing top-level `webUrl` key is preferred to a new
 one, say so — but the value must be configured, not observed.
+
+**`logoutUrl` is required, not optional.** Clearing the instance's session is
+only half of signing out: the issuer still has one, and would sign the person
+straight back in on the very next redirect, so the button reads as broken. An
+issuer that can sign someone in can sign them out, and leaving the key optional
+would mean a logout that quietly does half of what it says.
 
 **`ownerSubject` is singular, and that is a 1:1 baked in on purpose.** The local
 side is single-superuser today (`services/password.ts:28` selects
@@ -265,6 +272,16 @@ with the token they return with.
   generates the phrase and POSTs the derived key to the instance. The password
   step leaves the stepper too, rather than showing as a completed step that never
   happened.
+- **Signing out goes to `sso.logoutUrl`** after clearing the local session. It
+  ends a session; it does not re-lock the instance, which still needs a restart
+  exactly as it always has.
+- **A token arriving before setup is early, not failed.** The control plane sends
+  a new signup straight to a brand-new instance, which has no account to be
+  anybody yet and refuses the token. Treating that as a failure strands every new
+  signup on an error screen the moment they finish creating their phrase. It
+  falls through to the ordinary redirect instead, which fetches a fresh token
+  once there is an account - which is necessary anyway, the first one having a
+  life of one minute and the phrase taking longer than that to write down.
 - **The self-update UI stays exactly as it is** — see *already satisfied*; a
   hosted tenant confirms its own updates like any other instance.
 

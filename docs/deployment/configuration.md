@@ -225,18 +225,20 @@ absent, which is what an ordinary instance wants.
 
 | Setting | Default | Description |
 |---|---|---|
-| `sso.issuerUrl` | - | The control plane users are sent back to. Must be `https:`. |
+| `sso.issuerUrl` | - | Where an unidentified visitor is sent to sign in. Must be `https:`. |
+| `sso.logoutUrl` | - | Where signing out goes, to end the session there too. Must be `https:`. |
 | `sso.issuerPublicKey` | - | Accepted issuer keys, as a comma-separated `kid:hex` list. |
 | `sso.ownerSubject` | - | The one issuer-side account allowed to sign in to this instance. |
 | `sso.audience` | - | The host name a token must be minted for. A host, not a URL. |
 
-All four are required together. A half-configured issuer is refused at startup
+All five are required together. A half-configured issuer is refused at startup
 rather than accepted and left to fail at someone's first sign-in.
 
 ```js
 module.exports = {
   sso: {
     issuerUrl: 'https://control.example',
+    logoutUrl: 'https://control.example/logout',
     issuerPublicKey: 'k1:1f0c...9ab2,k2:77de...41c0',
     ownerSubject: '9f1cb2d4-0000-4000-8000-000000000001',
     audience: 'alice.control.example',
@@ -244,11 +246,23 @@ module.exports = {
 };
 ```
 
+**The instance has no sign-in page of its own.** Signing in belongs to the
+issuer: an unidentified visitor is sent there, and comes back carrying a token.
+There is no password on an instance configured this way, and none is enrolled, so
+the issuer is the only way in. An instance whose issuer is unreachable cannot be
+signed in to, even from its own console.
+
 **Signing in is not unlocking.** The issuer proves who you are. It never sees,
 carries or obtains your recovery phrase, and an instance that accepts a valid
 token is still locked: it asks for the phrase exactly as it would otherwise, and
 only then completes the sign-in. A control plane can therefore let you into your
 instance without ever being able to read what is in it.
+
+**Signing out ends a session, and does not lock the instance.** It clears the
+session here and then goes to `logoutUrl` to end the one at the issuer; without
+that second half the issuer would sign you straight back in on the next redirect.
+The master key stays in memory until the process restarts, exactly as it does on
+any other instance.
 
 **List both keys while you rotate.** `issuerPublicKey` takes several keys so an
 issuer can add a new one, move signing to it, and drop the old one, with no moment

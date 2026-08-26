@@ -167,6 +167,12 @@ export const ssoSchema = z
 				const parsed = parseIssuerPublicKeys(value);
 				if (!parsed.ok) ctx.addIssue({ code: 'custom', message: parsed.error });
 			}),
+		// Required like the rest of the block. An issuer that can sign a person in
+		// can sign them out, and leaving it optional would mean a logout that
+		// quietly does half of what it says.
+		logoutUrl: z.url().refine((value) => value.startsWith('https://'), {
+			message: 'logoutUrl must be an https: URL',
+		}),
 		ownerSubject: z.string().trim().min(1),
 		// Compared to a token's `aud` verbatim, and never read from the request:
 		// the only request-time source for "this instance's host" is a header the

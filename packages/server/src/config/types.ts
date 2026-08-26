@@ -292,6 +292,14 @@ export interface SsoConfig {
 	 * one, then drop the old.
 	 */
 	issuerPublicKey: string;
+	/**
+	 * Where signing out goes. Ending the instance's session is not enough: the
+	 * issuer still has one, and would sign the person straight back in.
+	 *
+	 * Signing out ends a session. It does not re-lock the instance - the master
+	 * key stays in memory until the process restarts, as it always has.
+	 */
+	logoutUrl: string;
 	/** The one issuer-side account allowed in. Hosted is one account per instance. */
 	ownerSubject: string;
 	/** What a token's `aud` must equal, configured rather than read off the request. */

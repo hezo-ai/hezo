@@ -78,7 +78,12 @@ export async function redeemPendingSsoHandle(): Promise<boolean> {
 	return true;
 }
 
-/** Send the browser to the issuer to be identified. */
-export function goToIssuer(issuerUrl: string): void {
-	window.location.assign(issuerUrl);
+/**
+ * Hand the browser to the issuer - to be identified, or to be signed out.
+ *
+ * The one place anything here navigates away, so a test can watch where it went
+ * without a real navigation tearing the page out from under it.
+ */
+export function goToIssuer(url: string): void {
+	window.location.assign(url);
 }
