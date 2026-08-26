@@ -9,6 +9,7 @@ import { peekLogicalBackupHeaderFromFile } from '../src/db/logical-backup';
 import { MIGRATION_LOCK_KEY } from '../src/db/migrate';
 import { ExternalDbError } from '../src/db/migrate-errors';
 import { applyPendingMigrationsExternal } from '../src/db/migrate-external';
+import { BASE_SCHEMA } from '../src/db/schema';
 
 // The backup + lock-race branches of the external migrator. The core apply /
 // downgrade-guard / resume behaviour lives in database-external-migrations.test.ts.
@@ -33,7 +34,9 @@ describe('applyPendingMigrationsExternal — pre-migration backup', () => {
 	 */
 	async function advisoryLocksHeld(): Promise<number> {
 		const r = await db.query<{ c: number }>(
-			"SELECT COUNT(*)::int AS c FROM pg_locks WHERE locktype = 'advisory' AND objid = $1",
+			`SELECT COUNT(*)::int AS c FROM pg_locks
+			 WHERE locktype = 'advisory' AND objid = $1
+			   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
 			[MIGRATION_LOCK_KEY],
 		);
 		return r.rows[0].c;
@@ -133,5 +136,42 @@ describe('applyPendingMigrationsExternal — pre-migration backup', () => {
 		expect(applied.rows.map((r) => r.filename)).toEqual(['001_posts.sql']);
 		expect(await readdir(dir)).toEqual([]);
 		expect(await advisoryLocksHeld()).toBe(0);
+	});
+
+	// The dump runs in one REPEATABLE READ transaction, so a migration committing
+	// while it streams is simply not seen. Without that snapshot the file would
+	// carry some tables from before the commit and some from after, and restore
+	// into a database that never existed.
+	it('is unaffected by a migration committing while it streams', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'hezo-ext-snap-'));
+		await mkdir(dir, { recursive: true });
+		await db.exec(BASE_SCHEMA);
+
+		const { runMigrations } = await import('../src/db/migrate');
+		const wrapped: Db = Object.create(db);
+		let raced = false;
+		// `information_schema` is read by the dump's introspection and by nothing
+		// else on this path, so it marks the point the snapshot is already fixed.
+		wrapped.query = (async (...args: Parameters<Db['query']>) => {
+			const result = await db.query(...args);
+			if (!raced && String(args[0]).includes('information_schema')) {
+				raced = true;
+				await runMigrations(db, { '900_racer.sql': 'CREATE TABLE ext_bk_racer (id INT)' });
+			}
+			return result;
+		}) as Db['query'];
+
+		await applyPendingMigrationsExternal(
+			wrapped,
+			{ '001_posts.sql': V1 },
+			{ backup: { dir, version: '9.9.9' } },
+		);
+
+		// A backup was written, and its header does not mention the migration that
+		// landed mid-stream - it was outside the snapshot, which is the point.
+		const [file] = await readdir(dir);
+		expect(file).toBeDefined();
+		const header = await peekLogicalBackupHeaderFromFile(join(dir, file));
+		expect(header?.migrations.map((m) => m.filename)).not.toContain('900_racer.sql');
 	});
 });

@@ -1,9 +1,10 @@
+import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryDb } from '../src/db/client';
 import type { Db, Queryable } from '../src/db/database';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import { PostgresDb } from '../src/db/drivers/postgres';
-import { MIGRATION_LOCK_KEY } from '../src/db/migrate';
+import { MIGRATION_LOCK_KEY, runMigrations } from '../src/db/migrate';
 import { DbNewerThanAppError, ExternalMigrationFailedError } from '../src/db/migrate-errors';
 import { applyPendingMigrationsExternal } from '../src/db/migrate-external';
 import { BASE_SCHEMA } from '../src/db/schema';
@@ -32,7 +33,9 @@ describe('applyPendingMigrationsExternal', () => {
 	 */
 	async function advisoryLocksHeld(): Promise<number> {
 		const r = await db.query<{ c: number }>(
-			"SELECT COUNT(*)::int AS c FROM pg_locks WHERE locktype = 'advisory' AND objid = $1",
+			`SELECT COUNT(*)::int AS c FROM pg_locks
+			 WHERE locktype = 'advisory' AND objid = $1
+			   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
 			[MIGRATION_LOCK_KEY],
 		);
 		return r.rows[0].c;
@@ -108,6 +111,62 @@ describe('applyPendingMigrationsExternal', () => {
 		expect(applied.rows.map((r) => r.filename)).toEqual(['999_from_the_future.sql']);
 		// …and the rolled-back guard transaction took its lock with it.
 		expect(await advisoryLocksHeld()).toBe(0);
+	});
+
+	// The lock is per transaction, so it is not held across the run: a newer binary
+	// can win it partway through and migrate the database past us. Without a check
+	// after the run this binary finishes happily and goes on to serve requests
+	// against a schema it does not know - which is the whole thing the downgrade
+	// guard exists to prevent, so it must refuse rather than reason about it.
+	it('refuses when a newer binary migrated past us DURING the run', async () => {
+		const wrapped: Db = Object.create(db);
+		let transactions = 0;
+		wrapped.transaction = async <T>(cb: (tx: Queryable) => Promise<T>): Promise<T> => {
+			transactions += 1;
+			const result = await db.transaction(cb);
+			// 1 = the pre-run guard, 2 = migration 001. A newer binary wins the lock
+			// once 001 has committed and applies something we have never heard of.
+			if (transactions === 2) {
+				await db.exec(`
+					INSERT INTO _migrations (filename, checksum)
+					VALUES ('999_from_the_future.sql', 'x');
+				`);
+			}
+			return result;
+		};
+
+		await expect(
+			applyPendingMigrationsExternal(wrapped, { '001_posts.sql': V1 }),
+		).rejects.toBeInstanceOf(DbNewerThanAppError);
+		// Ours still committed - the refusal is about what happens next, not a
+		// rollback of work already durably applied.
+		const applied = await db.query<{ filename: string }>('SELECT filename FROM _migrations');
+		expect(applied.rows.map((r) => r.filename)).toContain('001_posts.sql');
+		expect(await advisoryLocksHeld()).toBe(0);
+	});
+
+	// The rolling-deploy shape, and the one an early return hid: the newer binary
+	// applies our WHOLE pending set plus one of its own, so we find nothing left
+	// to do and would have booted clean against a schema we do not know.
+	it('refuses when a newer binary applied our whole pending set and more', async () => {
+		const wrapped: Db = Object.create(db);
+		let injected = false;
+		wrapped.transaction = async <T>(cb: (tx: Queryable) => Promise<T>): Promise<T> => {
+			const result = await db.transaction(cb);
+			if (!injected) {
+				injected = true;
+				await runMigrations(db, { '001_posts.sql': V1 });
+				await db.exec(`
+					INSERT INTO _migrations (filename, checksum)
+					VALUES ('999_from_the_future.sql', 'x');
+				`);
+			}
+			return result;
+		};
+
+		await expect(
+			applyPendingMigrationsExternal(wrapped, { '001_posts.sql': V1 }),
+		).rejects.toBeInstanceOf(DbNewerThanAppError);
 	});
 
 	it('keeps the applied prefix and resumes after a failed migration', async () => {
@@ -226,6 +285,56 @@ describe.skipIf(!process.env.HEZO_TEST_DATABASE_URL)(
 			} finally {
 				await a.close();
 				await b.close();
+				await scratch.drop();
+			}
+		});
+	},
+);
+
+// The property a transaction pooler needs, proven without one.
+//
+// A pooler breaks session state by handing the next statement a different
+// backend. So rather than standing one up - a service container that could only
+// be validated in CI, on a required check - this drives the migration path
+// through a Db that gives every statement outside a transaction its OWN
+// connection, and closes it afterwards. That is strictly more hostile than
+// PgBouncer in transaction mode, which at least reuses a backend when it can.
+// If migrations survive this, no pooling mode can break them.
+describe.skipIf(!process.env.HEZO_TEST_DATABASE_URL)(
+	'applyPendingMigrationsExternal with no session continuity at all',
+	() => {
+		it('migrates the full bundled sequence', async () => {
+			const scratch = await createScratchPostgres('extpool');
+			const real = await PostgresDb.connect({ url: scratch.url });
+			try {
+				await real.exec(BASE_SCHEMA);
+
+				// Every non-transactional statement lands on a connection that has
+				// never been used before and is discarded after.
+				const hostile: Db = Object.create(real);
+				const onFreshConnection = async <T>(run: (c: pg.Client) => Promise<T>): Promise<T> => {
+					const client = new pg.Client({ connectionString: scratch.url });
+					await client.connect();
+					try {
+						return await run(client);
+					} finally {
+						await client.end();
+					}
+				};
+				hostile.query = ((sql: string, params?: unknown[]) =>
+					onFreshConnection((c) => c.query(sql, params as never))) as Db['query'];
+				hostile.exec = ((sql: string) =>
+					onFreshConnection(async (c) => {
+						await c.query(sql);
+					})) as Db['exec'];
+
+				const migrations = allMigrations();
+				await applyPendingMigrationsExternal(hostile, migrations);
+
+				const total = await real.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM _migrations');
+				expect(total.rows[0].c).toBe(Object.keys(migrations).length);
+			} finally {
+				await real.close();
 				await scratch.drop();
 			}
 		});

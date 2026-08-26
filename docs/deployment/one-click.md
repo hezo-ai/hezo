@@ -205,7 +205,7 @@ The concrete version for a DigitalOcean Droplet deployed with the snippet above:
 1. **Database:** create a [Managed PostgreSQL](https://www.digitalocean.com/products/managed-databases)
    cluster in the **same region** as the Droplet. On the cluster's overview, pick the
    **direct connection** details (host, port `25060`, user, password, database), or a
-   **connection pool** in either mode. Your URL looks like:
+   **connection pool** in session or transaction mode. Your URL looks like:
 
    ```
    postgres://doadmin:PASSWORD@db-postgresql-fra1-12345-do-user-0.db.ondigitalocean.com:25060/defaultdb?sslmode=require
@@ -233,7 +233,8 @@ The concrete version for a DigitalOcean Droplet deployed with the snippet above:
 ### Serverless Postgres (Neon, Supabase, …)
 
 Serverless Postgres providers work too. The rule that matters is to keep the database in
-the **same region** as your server; any endpoint they offer will work, pooled or direct.
+the **same region** as your server; their direct, session-pooled and transaction-pooled
+endpoints all work.
 
 ## How the HTTPS URL works
 

@@ -260,7 +260,9 @@ describe.each(drivers.filter((d) => d.available))('database conformance: $name',
 
 		async function held(): Promise<number> {
 			const r = await db.query<{ c: number }>(
-				"SELECT COUNT(*)::int AS c FROM pg_locks WHERE locktype = 'advisory' AND objid = $1",
+				`SELECT COUNT(*)::int AS c FROM pg_locks
+				 WHERE locktype = 'advisory' AND objid = $1
+				   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
 				[KEY],
 			);
 			return r.rows[0].c;
@@ -270,7 +272,9 @@ describe.each(drivers.filter((d) => d.available))('database conformance: $name',
 			await db.transaction(async (tx) => {
 				await tx.query('SELECT pg_advisory_xact_lock($1)', [KEY]);
 				const inside = await tx.query<{ c: number }>(
-					"SELECT COUNT(*)::int AS c FROM pg_locks WHERE locktype = 'advisory' AND objid = $1",
+					`SELECT COUNT(*)::int AS c FROM pg_locks
+				 WHERE locktype = 'advisory' AND objid = $1
+				   AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
 					[KEY],
 				);
 				expect(inside.rows[0].c).toBe(1);

@@ -201,7 +201,7 @@ function decodeValue(value: unknown, udt: string): unknown {
  * large the instance is.
  */
 export async function* streamLogicalBackupLines(
-	db: Db,
+	db: Queryable,
 	meta: { hezoVersion: string; migrations: Record<string, Migration> },
 ): AsyncGenerator<string> {
 	const tables = await introspectTables(db);
@@ -295,11 +295,29 @@ export async function dumpLogicalBackupToFile(
 	filePath: string,
 	meta: { hezoVersion: string; migrations: Record<string, Migration> },
 ): Promise<void> {
-	await pipeline(
-		Readable.from(streamLogicalBackupLines(db, meta), { objectMode: false }),
-		createGzip(),
-		createWriteStream(filePath),
-	);
+	// One transaction, one snapshot, for the whole dump.
+	//
+	// The dump reads table by table. Without a snapshot a migration committing
+	// partway through leaves some tables read before it and some after, and the
+	// file restores into a database that never existed - which is worse than
+	// having no backup, because it restores. REPEATABLE READ fixes the read to a
+	// single instant, so a concurrent migration commits freely and is simply not
+	// seen. Nobody is blocked from migrating; they are only blocked from being
+	// half-visible.
+	//
+	// `tx` is threaded through explicitly rather than left to the ambient
+	// transaction: the generator's queries are pulled by the stream's own read
+	// loop, and a query that reached the pool instead would ask for a second
+	// connection while this transaction holds one - a hang at `poolSize: 1`
+	// rather than a wrong answer.
+	await db.transaction(async (tx) => {
+		await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+		await pipeline(
+			Readable.from(streamLogicalBackupLines(tx, meta), { objectMode: false }),
+			createGzip(),
+			createWriteStream(filePath),
+		);
+	});
 }
 
 /**

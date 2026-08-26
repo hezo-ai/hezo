@@ -94,6 +94,12 @@ Payload: `kid · aud · sub · jti · iat · exp`, with **`exp` ≤ 60 s** and a
 clock-skew tolerance — two separate clouds, and a hard 60-second window with no
 allowance is brittle. Name the tolerance and test both edges.
 
+**Say the real accepted window, not the `exp`.** The skew widens it on *both*
+sides, so a 60-second token is takeable from `iat - skew` to `exp + skew`: at a
+30-second tolerance that is two minutes, not one. Anyone reasoning about how long
+a captured token is worth carrying needs that figure rather than the one the
+issuer wrote.
+
 **The encoding must be unambiguous, and the obvious way is not.** The five
 existing builders in the same file are colon-joined
 (`hezo-auth-v1:<verb>:<hex>…`), which is safe **only because every field is
@@ -202,9 +208,19 @@ That keeps `exp ≤ 60 s` on the signed token while decoupling it from human tim
 and makes replay protection fall out for free — the handle is single-use. **The
 handle proves identity and unlocks nothing**, so the invariant is untouched. Per
 `AGENTS.md`, the handle map states its bound and its invalidation where it is
-declared, and is cleared on lock.
+declared. **Not "cleared on lock"** - there is no runtime unlocked-to-locked
+transition to hook; `locked` is only ever set on the way up. The expiry is the
+bound, and the code says so.
 
-**The throttle must be its own, not the login one.** There is no rate-limit
+**Check the throttle only AFTER verifying, never before.** This is the part that
+matters, and it is easy to get backwards. On a hosted instance the issuer is the
+only door, so a throttle checked first hands anyone who can reach the gate a way
+to lock the owner out of their own instance with a stream of rubbish. Verify
+first; let anything that verifies through however hot the counter is; count and
+refuse only failures. A shorter backoff is not the fix - it only shortens the
+outage.
+
+**The throttle must also be its own, not the login one.** There is no rate-limit
 middleware in this repo. The login throttle is a module-global counter
 (`routes/auth.ts:43-65`) with exponential backoff to **one hour**, justified by
 "single admin, so one global counter suffices". Reusing it hands anyone who can
@@ -217,8 +233,9 @@ Both phases need an entry in `PUBLIC_PATHS` (`middleware/auth.ts:16`).
 
 **AC:** valid, wrong-`aud`, expired, skewed, replayed and unknown-`sub` each
 tested; **a locked instance returns a handle and stays locked**; the handle is
-single-use, expires, and is dropped on lock; the full locked → unlock → exchange
-path yields a working session; the route is inert without hosted config.
+single-use and expires; the full locked → unlock → exchange path yields a working
+session; the route is inert without hosted config; a valid token is accepted
+however hot the throttle is.
 
 ### H4 — `/api/status` hosted fields
 
@@ -313,7 +330,7 @@ twelve catalogs.
 
 ## H9 — Behind-gateway seam
 
-**Verified absent:** `BEHIND_GATEWAY` appears zero times in `deploy/`.
+**Was absent before this task:** `BEHIND_GATEWAY` appeared zero times in `deploy/`.
 
 A hosted tenant sits behind a shared gateway that already terminates TLS for the
 whole wildcard domain. The tenant Droplet must therefore **not** install Caddy,
@@ -365,15 +382,15 @@ refactor that first suggests itself gets neither cleanly.
 
 ### Why the obvious fix is the wrong one
 
-`acquireSessionLock` (`db/drivers/postgres.ts:143-165`) checks out a dedicated
-client:
+*What follows describes the code as it stood before this task; `acquireSessionLock`
+is gone now.* It checked out a dedicated client, and said why:
 
 > Advisory locks are session-scoped, so the holder must be one dedicated client —
 > taking the lock through the pool would bind it to a random connection that the
 > next query no longer uses.
 
-That dedicated client is the second connection, and the entire reason
-`config/schema.ts` enforces a floor of two.
+That dedicated client was the second connection, and the entire reason
+`config/schema.ts` enforced a floor of two.
 
 But the migration does **not** run on that client. `migrate-external.ts:96`
 takes the lock and then passes the **pool** `Db` to `runMigrations`, which does
@@ -501,7 +518,7 @@ survives the inode swap; nothing is watched when `policyFile` is unset.
 
 ## H16 — Make the container backend pinnable
 
-`policy.pinned` covers exactly four keys and `backend` is not one of them.
+`policy.pinned` covered four keys before this task, and `backend` was not one.
 `containers.backend` is a bare `z.string()` in the schema, and
 `backend-store.ts:160-178` lets the **stored** setting win over the config file
 with a warning, falling back to Docker for an unrecognised value.

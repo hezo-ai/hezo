@@ -5803,9 +5803,11 @@ newest 5 — `db/superseded.ts`). A superuser can reclaim them on demand: `GET
 subpage and are embedded-only — external Postgres migrates in place and produces no snapshots.
 An **external Postgres** migrates **in place** instead: per-migration transactions, each
 taking a transaction-scoped `pg_advisory_xact_lock` as its first statement and re-reading
-the applied set under it (`applyPendingMigrationsExternal`), with the downgrade guard
-re-checked in a locked transaction of its own, so concurrent startups can't double-migrate
-and a failed migration leaves the committed prefix intact. The lock is transaction-scoped
+the applied set under it (`applyPendingMigrationsExternal`), with the downgrade guard run in
+a locked transaction of its own **both before and after the run** - nothing holds the lock
+across the run, so a newer binary can win it partway through and migrate past us, and the
+second check is what stops this binary serving against a schema it does not know. Concurrent
+startups can't double-migrate, and a failed migration leaves the committed prefix intact. The lock is transaction-scoped
 rather than session-scoped so it needs no connection of its own: that is what allows
 `database.poolSize: 1` and what keeps Hezo usable through a transaction-mode connection
 pooler (`pooler-compatibility.test.ts` guards the rest of that property). A database carrying migrations the binary

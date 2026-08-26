@@ -14,7 +14,7 @@ import {
 	signAuthMessage,
 } from '@hezo/shared';
 import { ApiError, api } from './api';
-import { goToIssuer } from './sso';
+import { clearPendingSsoHandle, goToIssuer } from './sso';
 
 export interface StatusResponse {
 	/** Absent while the server is still booting (`starting` is true). */
@@ -262,6 +262,9 @@ export async function changePassword(currentPassword: string, newPassword: strin
 export function logout(issuerLogoutUrl?: string) {
 	api.clearToken();
 	clearPendingSetupToken();
+	// Survives only because the redirect below unloads the page, which is not a
+	// reason to leave it holding a verified identity.
+	clearPendingSsoHandle();
 	if (issuerLogoutUrl) goToIssuer(issuerLogoutUrl);
 }
 

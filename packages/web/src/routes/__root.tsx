@@ -184,7 +184,13 @@ function AppShell() {
 				// the token and fall through to the ordinary redirect, which fetches a
 				// fresh one once the phrase has been created - by which time this one
 				// would have expired anyway, its whole life being a minute.
-				if (err.code === 'SETUP_REQUIRED') {
+				// Neither of these is a failed sign-in. A brand-new instance has no
+				// account to be anybody yet, and a booting one has not opened its
+				// database - and a hosted instance boots on every restart, which is
+				// exactly when the control plane sends someone here. Both fall
+				// through to the ordinary redirect, which fetches a fresh token once
+				// there is something to verify it against.
+				if (err.code === 'SETUP_REQUIRED' || err.code === 'STARTING') {
 					setSsoPhase('idle');
 					return;
 				}

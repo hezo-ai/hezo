@@ -12,6 +12,7 @@ import { renderApp } from './helpers/render';
 const BACKEND_BASE = {
 	available: ['docker', 'daytona'] as SandboxBackend[],
 	credential_configured: false,
+	backend_pinned: false,
 	impact: { containers: 0, activeRuns: 0 },
 };
 
@@ -94,4 +95,29 @@ test('the card does not render for non-superusers', () => {
 		{ superuser: false },
 	);
 	expect(queryByTestId('settings-sandbox-backend')).toBeNull();
+});
+
+// The 409 is the enforcement; this is so an operator finds out before typing
+// rather than after. The other pinned settings render the same way.
+test('renders the backend locked when the deployer pinned it', async () => {
+	const { findByTestId } = renderManaged({
+		...BACKEND_BASE,
+		backend: 'daytona' as SandboxBackend,
+		display: 'app.daytona.io',
+		backend_pinned: true,
+	});
+
+	// The control is present but inert, and says who fixed it.
+	await findByTestId('managed-setting');
+});
+
+test('leaves an unpinned backend editable', async () => {
+	const { findByTestId, queryByTestId } = renderManaged({
+		...BACKEND_BASE,
+		backend: 'docker' as SandboxBackend,
+		display: 'local',
+	});
+
+	await findByTestId('settings-sandbox-backend');
+	expect(queryByTestId('managed-setting')).toBeNull();
 });

@@ -69,8 +69,8 @@ the data directory then holds only workspaces, SSH/signing keys, and pre-migrati
 backups. Each backend is one setting, adoptable independently:
 
 1. **Provision a PostgreSQL 14+ instance** in the same region as your server (Hezo's
-   scheduling polls every 1-5 seconds, so latency counts), with TLS. Any connection
-   mode works, pooled or direct. Full requirements:
+   scheduling polls every 1-5 seconds, so latency counts), with TLS. Direct,
+   session-pooled and transaction-pooled connections all work. Full requirements:
    [Using an external Postgres](/docs/deployment/configuration#using-an-external-postgres).
 2. **Provision a private bucket** on any S3-compatible store (AWS S3, Cloudflare R2,
    DigitalOcean Spaces, Backblaze B2, MinIO, …) with an access key. The bucket stays

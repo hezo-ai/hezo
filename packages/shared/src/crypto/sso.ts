@@ -22,13 +22,33 @@ export const SSO_TOKEN_MAX_LIFETIME_SECONDS = 60;
 
 /**
  * Allowance either side of the window, absorbing ordinary clock drift between
- * two independently-hosted machines. Wide enough that NTP-synced hosts never
- * trip it, narrow enough that it cannot meaningfully extend a token's life.
+ * two independently-hosted machines.
+ *
+ * **It widens the accepted window on both sides**, so a token is takeable from
+ * `iat - 30` to `exp + 30`: for the 60-second maximum above, two minutes rather
+ * than one. That is the real figure to reason about, not the `exp` an issuer
+ * writes. It is still far shorter than the time a captured token would need to
+ * be worth carrying anywhere, and a token is spent on first use regardless.
  */
 export const SSO_TOKEN_CLOCK_SKEW_SECONDS = 30;
 
+/**
+ * Longest token worth looking at. A real one is around 250 bytes.
+ *
+ * Decoding is the first thing an unauthenticated caller can make this process
+ * do, and it is not free: a base64 decode plus a JSON parse, on the process that
+ * is also the tool endpoint, the egress proxy and the container control plane.
+ * Without a ceiling the only bound is the API body limit, and megabytes of
+ * alphabet decode into hundreds of milliseconds of blocked event loop per
+ * request. The throttle is not that bound - it is checked after verification, so
+ * a valid token is never queued behind an attacker, which means the parse
+ * happens either way. This is the bound.
+ */
+const MAX_TOKEN_LENGTH = 4096;
+
 /** Ed25519 public keys are 32 bytes, carried as lowercase hex. */
 const PUBLIC_KEY_HEX_LENGTH = 64;
+const PUBLIC_KEY_HEX = new RegExp(`^[0-9a-f]{${PUBLIC_KEY_HEX_LENGTH}}$`);
 
 export interface SsoTokenPayload {
 	/** Which issuer key signed this, matching an entry in the configured list. */
@@ -102,6 +122,7 @@ export function encodeSsoToken(payload: SsoTokenPayload, signatureHex: string): 
  * throws, and says nothing about whether the signature is good.
  */
 export function parseSsoToken(token: string): ParsedSsoToken | null {
+	if (token.length > MAX_TOKEN_LENGTH) return null;
 	const bytes = base64UrlToBytes(token);
 	if (!bytes) return null;
 
@@ -190,7 +211,7 @@ export function parseIssuerPublicKeys(list: string): IssuerKeyParse {
 		}
 		const kid = entry.slice(0, separator);
 		const hex = entry.slice(separator + 1);
-		if (!new RegExp(`^[0-9a-f]{${PUBLIC_KEY_HEX_LENGTH}}$`).test(hex)) {
+		if (!PUBLIC_KEY_HEX.test(hex)) {
 			return {
 				ok: false,
 				error: `key "${kid}" is not ${PUBLIC_KEY_HEX_LENGTH} lowercase hex characters`,
@@ -235,5 +256,11 @@ function base64UrlToBytes(value: string): Uint8Array | null {
 			out.push((buffer >> bits) & 0xff);
 		}
 	}
+	// One encoding per token. The leftover bits of the final sextet are not part
+	// of any byte, so a decoder that discards them accepts four spellings of the
+	// same payload. Nothing downstream keys on the token string today - the
+	// replay cache keys on `jti` - but "there is exactly one way to write this
+	// token" is a cheaper property to keep than to re-establish later.
+	if (bits > 0 && (buffer & ((1 << bits) - 1)) !== 0) return null;
 	return new Uint8Array(out);
 }

@@ -208,6 +208,11 @@ module.exports = {
 };
 ```
 
+**`pinned.backend` is the exception: it takes effect on restart.** The engine
+containers run on is chosen once at startup, so re-pinning it while the instance
+is running changes what the settings page and the container-hours ledger report
+before it changes where containers actually run. Restart after changing it.
+
 **Use `policyFile` when the limits change while the instance runs.** A plan change
 must not need a restart - a restart kills in-flight agent runs, and under an
 hours meter that is billed compute thrown away. Hezo watches the file and picks
@@ -219,15 +224,15 @@ fail, the previous limits stay in force rather than silently unpinning.
 ### Single sign-on from a control plane
 
 Where a control plane provisions and manages instances, it can sign its users in
-without holding anything that could decrypt their data. Set an `sso` block and the
-sign-in page offers the issuer as a way in; leave it out and the whole mechanism is
-absent, which is what an ordinary instance wants.
+without holding anything that could decrypt their data. Set an `sso` block and an
+unidentified visitor is sent to the issuer to sign in; leave it out and the whole
+mechanism is absent, which is what an ordinary instance wants.
 
 | Setting | Default | Description |
 |---|---|---|
 | `sso.issuerUrl` | - | Where an unidentified visitor is sent to sign in. Must be `https:`. |
 | `sso.logoutUrl` | - | Where signing out goes, to end the session there too. Must be `https:`. |
-| `sso.issuerPublicKey` | - | Accepted issuer keys, as a comma-separated `kid:hex` list. |
+| `sso.issuerPublicKey` | - | Accepted issuer keys, as a comma-separated `kid:hex` list. Each `hex` is exactly 64 lowercase hex characters (an Ed25519 public key); uppercase is rejected. |
 | `sso.ownerSubject` | - | The one issuer-side account allowed to sign in to this instance. |
 | `sso.audience` | - | The host name a token must be minted for. A host, not a URL. |
 
@@ -361,8 +366,8 @@ Requirements and recommendations:
 - **Keep the database close to the server.** Hezo's background scheduling polls every
   1-5 seconds, so every millisecond of round-trip latency counts. Same-host,
   same-VPC, or same-region placement is strongly recommended.
-- **Any pooling mode works**, including transaction mode. See
-  [Connection pooling](#connection-pooling).
+- **Direct, session-pooled or transaction-pooled connections all work.**
+  Statement-mode pooling does not - see [Connection pooling](#connection-pooling).
 - **One Hezo server per database.** Concurrent startups coordinate migrations safely,
   but running two live servers against one database is not supported.
 - The connection string carries credentials: prefer the config file over the flag (flags
@@ -373,11 +378,16 @@ Requirements and recommendations:
 
 ### Connection pooling
 
-Hezo works through a connection pooler in any mode, including transaction mode. It
-opens no session-scoped state: no `LISTEN`/`NOTIFY`, no named prepared statements, no
+Hezo works through a connection pooler in session or transaction mode. It opens no
+session-scoped state: no `LISTEN`/`NOTIFY`, no named prepared statements, no
 cursors, no session `SET`, no temporary tables, and no session-scoped advisory locks.
 Migrations serialize on a transaction-scoped lock, which lives and dies inside the
 transaction that takes it.
+
+**Statement mode is the one that does not work**, and no amount of the above
+changes that: it refuses a multi-statement transaction outright, and every
+migration Hezo applies runs inside one. Providers that offer three modes call
+this out; pick session or transaction.
 
 That matters most when one cluster serves many Hezo instances. Under a transaction
 pooler, the cluster's backend connections track concurrent *transactions* rather than
@@ -386,7 +396,8 @@ instances, so a fixed connection budget carries far more of them.
 **`database.poolSize` can go down to `1`, but think before it does.** One connection
 serves the API, the tool endpoint, the egress proxy, the container control plane and a
 scheduler that polls every 1-5 seconds, so every query in the process waits behind
-every other. It is the right setting for packing many small instances onto one cluster,
+every other - and past the connection timeout they stop waiting and fail, which is
+what a busy instance on a pool of one actually looks like. It is the right setting for packing many small instances onto one cluster,
 and the wrong one for a single busy instance. The default of `10` suits a normal
 deployment.
 
@@ -526,7 +537,7 @@ These only choose what a brand-new instance starts on. The first startup records
 choice, and from then on the stored setting wins: the launch settings are ignored on later
 startups - Hezo logs that it ignored them if they disagree - so restarting with a different
 config file never switches an existing instance. Switching, in either direction, is done
-from Settings -> Containers at any time, no restart needed. See
+from Settings -> Containers at any time, no restart needed (unless a deployer has pinned it). See
 [Switching at any time](/docs/containers/overview#switching-at-any-time).
 
 [Remote containers](/docs/containers/remote/overview) covers what changes when you do:

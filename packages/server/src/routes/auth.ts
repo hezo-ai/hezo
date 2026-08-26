@@ -195,9 +195,33 @@ authRoutes.post('/auth/verify', async (c) => {
 
 // --- Password auth (challenge-response; password never leaves the browser) ----
 
+/**
+ * Refuse the password door where an issuer owns sign-in.
+ *
+ * Hiding it in the gate is not enough: these are public routes, and an instance
+ * put under a control plane after it already had a password would keep answering
+ * them with no trace in the UI. "The issuer is the only way in" is a claim the
+ * docs make in a security section, so the server has to be the thing that makes
+ * it true.
+ *
+ * That includes enrolling one. A master-key holder could otherwise set a
+ * password and sign in with it, which is the same door by a longer route.
+ */
+function ssoOwnsSignIn(c: Context<Env>) {
+	if (!runtimeConfig().sso) return null;
+	return err(
+		c,
+		'SSO_ONLY',
+		'This instance signs in through its issuer; password sign-in is disabled.',
+		409,
+	);
+}
+
 // Login step 1: hand back a nonce to sign + the admin's salt so the client can
 // re-derive its password keypair. 409 until a password verifier is enrolled.
 authRoutes.post('/auth/password-challenge', async (c) => {
+	const ssoOnly = ssoOwnsSignIn(c);
+	if (ssoOnly) return ssoOnly;
 	const masterKeyManager = c.get('masterKeyManager');
 	if (masterKeyManager.getState() !== 'unlocked') {
 		return err(c, 'LOCKED', 'Server is locked. Provide master key to unlock.', 401);
@@ -218,6 +242,8 @@ authRoutes.post('/auth/password-challenge', async (c) => {
 // Login step 2: verify the signature over buildPasswordLoginMessage(nonce)
 // against the stored verifier and mint a session JWT. Throttled globally.
 authRoutes.post('/auth/password-verify', async (c) => {
+	const ssoOnly = ssoOwnsSignIn(c);
+	if (ssoOnly) return ssoOnly;
 	const masterKeyManager = c.get('masterKeyManager');
 	const db = c.get('db');
 	if (masterKeyManager.getState() !== 'unlocked') {
@@ -290,6 +316,8 @@ authRoutes.post('/auth/password-verify', async (c) => {
 // recovery) and first enrollment are exempt. Returns a fresh session so the
 // caller is logged in with the password they just set.
 authRoutes.post('/auth/password', async (c) => {
+	const ssoOnly = ssoOwnsSignIn(c);
+	if (ssoOnly) return ssoOnly;
 	const masterKeyManager = c.get('masterKeyManager');
 	const db = c.get('db');
 	if (masterKeyManager.getState() !== 'unlocked') {
@@ -425,10 +453,24 @@ async function issuePasswordSetupToken(c: Context<Env>) {
 // Neither phase accepts, stores or forwards key material. A locked instance that
 // accepts a valid token is still locked.
 
-/** One undifferentiated failure: which step rejected a token is the server's business. */
+/**
+ * Refuse an attempt that did not verify.
+ *
+ * Reached only AFTER verification, never before, and that ordering is the whole
+ * point: on a hosted instance the issuer is the only door, so a throttle checked
+ * first would let anyone who can reach the gate deny the owner their own
+ * instance with a stream of rubbish. Something that verifies is always let
+ * through; only failures are counted, and only failures are refused while the
+ * counter is hot.
+ *
+ * The client is told one undifferentiated failure either way - which step
+ * rejected it is the server's business.
+ */
 function ssoRejected(c: Context<Env>, now: number, reason: string) {
 	recordSsoFailure(now);
 	log.warn(`Rejected an SSO sign-in: ${reason}`);
+	const lockMs = ssoLockRemainingMs(now);
+	if (lockMs > 0) return ssoThrottled(c, lockMs);
 	return err(c, 'INVALID_TOKEN', 'Sign-in token rejected', 401);
 }
 
@@ -453,8 +495,6 @@ authRoutes.post('/auth/sso', async (c) => {
 	}
 
 	const now = Date.now();
-	const lockMs = ssoLockRemainingMs(now);
-	if (lockMs > 0) return ssoThrottled(c, lockMs);
 
 	let body: { token?: string };
 	try {
@@ -491,8 +531,6 @@ authRoutes.post('/auth/sso/session', async (c) => {
 	}
 
 	const now = Date.now();
-	const lockMs = ssoLockRemainingMs(now);
-	if (lockMs > 0) return ssoThrottled(c, lockMs);
 
 	let body: { handle?: string };
 	try {
@@ -506,8 +544,10 @@ authRoutes.post('/auth/sso/session', async (c) => {
 
 	const subject = consumeSsoHandle(body.handle, now);
 	if (!subject) return ssoRejected(c, now, 'unknown, expired or already-used handle');
-	// The configured owner can change between the two phases, and the handle must
-	// not outlive the answer it was granted under.
+	// Belt and braces: `sso` is fixed at startup - `setPolicy` is the only runtime
+	// config mutator and it does not reach this slice - so a handle cannot
+	// currently outlive the owner it was granted under. Kept because the check is
+	// free and the day that stops being true is not one to find out about here.
 	if (subject !== config.ownerSubject) return ssoRejected(c, now, 'handle is no longer the owner');
 
 	const userId = await getSuperuserId(c.get('db'));

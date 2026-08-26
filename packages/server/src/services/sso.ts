@@ -73,10 +73,15 @@ const handles = new BoundedMap<string, { subject: string; expiresAtMs: number }>
 /**
  * Brute-force throttle, separate from the password login's.
  *
- * Deliberately shorter than that one. Where SSO is configured it is often the
- * only way in, and the password throttle's hour-long backoff would let anyone
- * who can reach the instance lock its owner out with malformed tokens. A valid
- * signature clears it, so a real sign-in is never queued behind an attacker.
+ * Deliberately shorter than that one. Where SSO is configured it is the only way
+ * in, and the password throttle's hour-long backoff would be a long time to be
+ * locked out of your own instance.
+ *
+ * The length matters less than the ordering, though: callers check this only
+ * AFTER an attempt has failed to verify, so something that verifies is let
+ * through however hot the counter is. That is what stops a stream of rubbish
+ * from anyone who can reach the gate denying the owner their own instance -
+ * a shorter backoff alone would only have made the outage shorter.
  */
 const SSO_MAX_ATTEMPTS = 10;
 const SSO_LOCKOUT_MS = 30_000;
@@ -137,9 +142,15 @@ export function verifySsoAssertion(
 
 	if (parsed.payload.sub !== config.ownerSubject) return { ok: false, reason: 'UNKNOWN_SUBJECT' };
 
-	// Held for as long as this token could still be presented, which is its own
-	// window plus the skew the freshness check allows either side of it.
-	replayCache.set(parsed.payload.jti, (parsed.payload.exp + SSO_TOKEN_CLOCK_SKEW_SECONDS) * 1000);
+	// Held strictly LONGER than the token stays presentable, not exactly as long.
+	// The freshness check works in whole seconds and expires only once the clock
+	// passes `exp + skew`, so an entry timed to that same instant lapses while the
+	// token it names is still being accepted - a one-second hole in which a spent
+	// token is takeable again. The extra second closes it.
+	replayCache.set(
+		parsed.payload.jti,
+		(parsed.payload.exp + SSO_TOKEN_CLOCK_SKEW_SECONDS + 1) * 1000,
+	);
 	return { ok: true, payload: parsed.payload };
 }
 

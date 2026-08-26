@@ -40,7 +40,7 @@ export interface DatabaseConfig {
 	 * `lib/db-info.ts`) and never passed into `buildApp`.
 	 */
 	url?: string;
-	/** Pool size for an external database (2-100). Ignored for the embedded one. */
+	/** Pool size for an external database (1-100). Ignored for the embedded one. */
 	poolSize: number;
 }
 

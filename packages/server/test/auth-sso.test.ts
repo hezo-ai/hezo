@@ -105,6 +105,23 @@ describe('verifySsoAssertion', () => {
 		expect(!result.ok && result.reason).toBe('LIFETIME_TOO_LONG');
 	});
 
+	// The cache must outlive the window, not match it. Matching leaves a second in
+	// which the token is still fresh and the entry naming it has already lapsed.
+	it('remembers a spent token for every instant it stays presentable', () => {
+		const now = Date.now();
+		const p = payload();
+		expect(verifySsoAssertion(mint(p), SSO, now).ok).toBe(true);
+
+		// The last instant the freshness check still accepts it.
+		const lastAccepted = (p.exp + SSO_TOKEN_CLOCK_SKEW_SECONDS) * 1000 + 999;
+		const replay = verifySsoAssertion(mint(p), SSO, lastAccepted);
+		expect(!replay.ok && replay.reason).toBe('REPLAYED');
+
+		// One millisecond later it is stale on its own merits, so the entry may go.
+		const stale = verifySsoAssertion(mint(p), SSO, lastAccepted + 1);
+		expect(!stale.ok && stale.reason).toBe('EXPIRED');
+	});
+
 	it('accepts a token exactly once', () => {
 		const token = mint(payload());
 		expect(verifySsoAssertion(token, SSO, Date.now()).ok).toBe(true);
@@ -221,17 +238,45 @@ describe('POST /api/auth/sso on an unlocked instance', () => {
 		expect((await post('/api/auth/sso', { token })).status).toBe(401);
 	});
 
-	it('throttles a run of failures, and a valid token clears it', async () => {
+	it('throttles a run of failures', async () => {
 		for (let i = 0; i < 10; i++) await post('/api/auth/sso', { token: 'rubbish' });
-		const throttled = await post('/api/auth/sso', { token: mint(payload()) });
-		expect(throttled.status).toBe(429);
+		expect((await post('/api/auth/sso', { token: 'rubbish' })).status).toBe(429);
+	});
 
-		resetSsoState();
-		expect((await post('/api/auth/sso', { token: mint(payload()) })).status).toBe(200);
+	// The throttle exists to slow guessing, not to hand anyone who can reach the
+	// gate a way to lock the owner out of the only door into their own instance.
+	it('lets a valid token through however hot the throttle is', async () => {
+		for (let i = 0; i < 20; i++) await post('/api/auth/sso', { token: 'rubbish' });
+		expect((await post('/api/auth/sso', { token: 'rubbish' })).status).toBe(429);
+
+		const res = await post('/api/auth/sso', { token: mint(payload()) });
+		expect(res.status).toBe(200);
+
+		// And succeeding clears it, so the next failure starts from zero.
+		expect((await post('/api/auth/sso', { token: 'rubbish' })).status).toBe(401);
 	});
 
 	it('rejects a body with no token', async () => {
 		expect((await post('/api/auth/sso', {})).status).toBe(400);
+	});
+
+	// The gate hides the password door; the server has to be what closes it. An
+	// instance put under a control plane after it already had a password would
+	// otherwise keep answering these with nothing visible in the UI.
+	it.each([
+		'/api/auth/password-challenge',
+		'/api/auth/password-verify',
+		'/api/auth/password',
+	])('refuses %s while an issuer owns sign-in', async (path) => {
+		const res = await post(path, {});
+		expect(res.status).toBe(409);
+		expect(((await res.json()) as { error: { code: string } }).error.code).toBe('SSO_ONLY');
+	});
+
+	it('leaves the password door open on an instance with no issuer', async () => {
+		withSso(null);
+		const res = await post('/api/auth/password-challenge', {});
+		expect(res.status).not.toBe(409);
 	});
 
 	it('is absent entirely when no issuer is configured', async () => {

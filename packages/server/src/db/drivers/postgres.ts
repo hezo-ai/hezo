@@ -18,12 +18,33 @@ pg.types.setTypeParser(pg.types.builtins.INT8, (value: string) => Number(value))
  * migration lock, which is now transaction-scoped and lives on the connection
  * its own transaction already has. A pool of one serializes every query in the
  * process, so it is a deliberate choice for a dense deployment, not a default.
+ *
+ * **What makes one safe rather than merely tight.** A pool of one deadlocks the
+ * moment anything holds a connection and then waits for a second, so the
+ * question is whether any code does. Audited at the eight `transaction()` call
+ * sites outside this file - `crypto/master-key.ts`, `db/logical-backup.ts`,
+ * `db/migrate.ts`, `db/migrate-external.ts`, `lib/asset-name.ts`, `lib/sql.ts`
+ * and `services/log-compaction.ts` - and none does, for a structural reason
+ * rather than by inspection surviving the next edit:
+ *
+ * - `transaction()` pins its connection in AsyncLocalStorage, so a `db.query`
+ *   issued from inside the block joins the transaction rather than asking the
+ *   pool for another one. That covers closed-over helpers, which is where this
+ *   would otherwise hide.
+ * - A nested `transaction()` joins the ambient one; it does not open a second.
+ * - A query from async work that OUTLIVES its block throws rather than quietly
+ *   running outside the transaction, so the one shape that could still want a
+ *   second connection fails loudly instead of hanging.
+ *
+ * The trap left is a promise created OUTSIDE a block and awaited inside it: its
+ * queries run on the pool, and at a floor of one they wait for a connection the
+ * awaiting block is holding. The `Db.transaction` doc says not to; nothing does.
  */
 const MIN_POOL_SIZE = 1;
 
 export interface PostgresConnectOptions {
 	url: string;
-	/** Pool size (default 10, floor 2 — see MIN_POOL_SIZE). */
+	/** Pool size (default 10, floor 1 — see MIN_POOL_SIZE). */
 	max?: number;
 }
 

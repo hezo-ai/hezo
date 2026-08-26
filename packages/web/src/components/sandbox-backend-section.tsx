@@ -3,6 +3,7 @@ import { useMe } from '../hooks/use-me';
 import { type SandboxBackendInfo, useSandboxBackendInfo } from '../hooks/use-sandbox-backend-info';
 import { useI18n } from '../lib/i18n';
 import { backendDisplayName } from '../lib/sandbox-backend';
+import { ManagedSetting } from './settings/managed-setting';
 
 /**
  * Sandbox-backend card, rendered alongside the database and asset-storage cards
@@ -25,7 +26,11 @@ export function SandboxBackendSection() {
 			className="border border-border rounded-md p-3 bg-surface"
 			data-testid="settings-sandbox-backend"
 		>
-			{info === undefined ? null : <SandboxBackendDetails info={info} />}
+			{info === undefined ? null : (
+				<ManagedSetting pinned={info.backend_pinned}>
+					<SandboxBackendDetails info={info} />
+				</ManagedSetting>
+			)}
 		</div>
 	);
 }

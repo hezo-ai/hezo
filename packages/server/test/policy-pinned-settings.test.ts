@@ -301,24 +301,25 @@ describe('a pinned container backend', () => {
 		expect(await getStoredSandboxBackend(db)).toBe(SandboxBackend.Docker);
 	});
 
-	it('tells the page it is locked, and by whom', async () => {
+	// Only the flag: who fixed it comes from the instance-settings payload the
+	// notice already reads, and a second copy here is one more thing to disagree.
+	it('tells the page it is locked', async () => {
 		pin({ backend: SandboxBackend.Daytona });
 		const res = await app.request('/api/sandbox-backend-info', { headers: authHeader(token) });
 		expect(res.status).toBe(200);
-		const { data } = (await res.json()) as {
-			data: { backend_pinned: boolean; policy: { managed_by: string } | null };
-		};
+		const { data } = (await res.json()) as { data: { backend_pinned: boolean } };
 		expect(data.backend_pinned).toBe(true);
-		expect(data.policy?.managed_by).toBe('Acme Cloud');
+
+		// And the name is served, once, from where the notice looks for it.
+		const settings = await app.request('/api/instance-settings', { headers: authHeader(token) });
+		const banner = (await settings.json()) as { data: { policy: { managed_by: string } | null } };
+		expect(banner.data.policy?.managed_by).toBe('Acme Cloud');
 	});
 
 	it('leaves an unpinned instance alone', async () => {
 		const res = await app.request('/api/sandbox-backend-info', { headers: authHeader(token) });
-		const { data } = (await res.json()) as {
-			data: { backend_pinned: boolean; policy: unknown };
-		};
+		const { data } = (await res.json()) as { data: { backend_pinned: boolean } };
 		expect(data.backend_pinned).toBe(false);
-		expect(data.policy).toBeNull();
 	});
 
 	it('is validated by the policy schema like every other pinned key', () => {

@@ -52,6 +52,26 @@ describe('buildSsoTokenMessage', () => {
 		expect(buildSsoTokenMessage(a)).not.toBe(buildSsoTokenMessage(b));
 	});
 
+	// The collision hunt, not just one hand-picked pair: every combination of a
+	// colon-heavy alphabet across the four free-text fields must produce a
+	// distinct message. A repeat would mean one signature covering two payloads.
+	it('produces a distinct message for every payload in a colon-heavy space', () => {
+		const parts = ['', ':', '::', 'a', 'a:', ':a', '1', ':1', 'aa'];
+		const seen = new Set<string>();
+		let count = 0;
+		for (const kid of parts) {
+			for (const aud of parts) {
+				for (const sub of parts) {
+					for (const jti of parts) {
+						seen.add(buildSsoTokenMessage({ ...PAYLOAD, kid, aud, sub, jti }));
+						count += 1;
+					}
+				}
+			}
+		}
+		expect(seen.size).toBe(count);
+	});
+
 	it('counts field widths in UTF-8 bytes, not code units', () => {
 		const wide: SsoTokenPayload = { ...PAYLOAD, sub: 'é' };
 		expect(buildSsoTokenMessage(wide)).toContain(':2:é');
@@ -69,12 +89,62 @@ describe('encodeSsoToken / parseSsoToken', () => {
 		expect(encodeSsoToken(PAYLOAD, sign(PAYLOAD))).toMatch(/^[A-Za-z0-9_-]+$/);
 	});
 
+	// Decoding is the first thing an unauthenticated caller can make the server do,
+	// and the throttle is deliberately not the bound on it.
+	it('refuses an absurdly long token without decoding it', () => {
+		const huge = 'A'.repeat(200_000);
+		const before = performance.now();
+		expect(parseSsoToken(huge)).toBeNull();
+		expect(performance.now() - before).toBeLessThan(50);
+	});
+
 	it.each([
 		['empty', ''],
 		['outside the alphabet', 'not base64!!'],
 		['valid base64url that is not JSON', 'aGVsbG8'],
 	])('returns null for %s', (_label, token) => {
 		expect(parseSsoToken(token)).toBeNull();
+	});
+
+	// A token is attacker-supplied JSON. It must neither reach the prototype nor
+	// smuggle extra fields past the six the signature actually covers.
+	it('ignores injected keys and does not touch the prototype', () => {
+		const raw = {
+			...PAYLOAD,
+			sig: sign(PAYLOAD),
+			__proto__: { polluted: true },
+			constructor: { polluted: true },
+			extra: 'ignored',
+		} as Record<string, unknown>;
+		const parsed = parseSsoToken(base64Url(JSON.stringify(raw)));
+		expect(parsed?.payload).toEqual(PAYLOAD);
+		expect(Object.keys(parsed?.payload ?? {}).sort()).toEqual([
+			'aud',
+			'exp',
+			'iat',
+			'jti',
+			'kid',
+			'sub',
+		]);
+		expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+	});
+
+	// Two spellings of one token would be two chances at a single-use `jti`.
+	it('rejects a non-canonical encoding of a valid token', () => {
+		const token = encodeSsoToken(PAYLOAD, sign(PAYLOAD));
+		expect(parseSsoToken(token)).not.toBeNull();
+		expect(parseSsoToken(`${token}=`)).toBeNull();
+		expect(parseSsoToken(`${token}==`)).toBeNull();
+	});
+
+	// Padding is the obvious variant; the leftover bits of the FINAL character
+	// are the one that actually decoded to the same bytes.
+	it('accepts exactly one spelling of the final character', () => {
+		const token = encodeSsoToken(PAYLOAD, sign(PAYLOAD));
+		const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+		const head = token.slice(0, -1);
+		const accepted = [...alphabet].filter((ch) => parseSsoToken(head + ch) !== null);
+		expect(accepted).toEqual([token.slice(-1)]);
 	});
 
 	it.each(['kid', 'aud', 'sub', 'jti', 'sig'])('returns null when %s is missing', (field) => {
@@ -128,6 +198,17 @@ describe('verifySsoTokenSignature', () => {
 describe('checkSsoTokenFreshness', () => {
 	it('accepts a token inside its window', () => {
 		expect(checkSsoTokenFreshness(PAYLOAD, IAT + 30)).toBe('ok');
+	});
+
+	// The figure that matters is the accepted window, not the `exp` an issuer
+	// writes: the skew widens it on both sides, so a 60-second token is takeable
+	// for two minutes.
+	it('accepts across the full window the skew actually opens', () => {
+		const start = IAT - SSO_TOKEN_CLOCK_SKEW_SECONDS;
+		const end = PAYLOAD.exp + SSO_TOKEN_CLOCK_SKEW_SECONDS;
+		expect(end - start).toBe(SSO_TOKEN_MAX_LIFETIME_SECONDS + 2 * SSO_TOKEN_CLOCK_SKEW_SECONDS);
+		expect(checkSsoTokenFreshness(PAYLOAD, start)).toBe('ok');
+		expect(checkSsoTokenFreshness(PAYLOAD, end)).toBe('ok');
 	});
 
 	it('accepts the exact skew boundaries on both sides', () => {

@@ -15,7 +15,8 @@
 #   4. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
 #   5. installs systemd units (a first-boot unit that derives the public URL, then Hezo)
 #   6. exempts Hezo from needrestart's automatic restarts (it comes back locked)
-#   7. locks the firewall down (only 80/443 public; the app port + egress ports stay host-local)
+#   7. locks the firewall down (only 80/443 public, or nothing public behind a
+#      gateway; the app port + egress ports stay host-local either way)
 #
 # It never sets the master key: that is generated in the browser on first run and
 # shown once, so it cannot be pre-seeded. After boot, open the printed URL and
@@ -39,7 +40,7 @@
 #                          (s3://KEY:SECRET@endpoint/bucket[/prefix]). A provisioning-shell
 #                          input, not a runtime variable: persisted into
 #                          /etc/hezo/hezo.config.cjs on first provision; omit for local disk.
-#   HEZO_DATABASE_POOL_SIZE  connection-pool size for the external database (2-100).
+#   HEZO_DATABASE_POOL_SIZE  connection-pool size for the external database (1-100).
 #   HEZO_SWAP_SIZE         size of the swap file this script creates so low-RAM hosts
 #                          don't OOM (default 6G; accepts 6G / 6144M). Set 0 to disable.
 #                          Auto-shrinks to fit the disk when 6G plus headroom won't fit,

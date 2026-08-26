@@ -51,6 +51,9 @@ export function checksumOfMigration(m: Migration): string {
  * not keep a caller on one backend between statements.
  */
 export const MIGRATION_LOCK_KEY = 0x48455a4f;
+// Arbitrary, but it MUST stay fixed forever: changing it lets an old binary and
+// a new one migrate the same database concurrently, each holding a lock the
+// other does not contend for.
 
 /** Progress for one step of a `runMigrations` pass. */
 export interface MigrationProgress {
@@ -76,14 +79,23 @@ export async function runMigrations(
 	migrations: Record<string, Migration>,
 	options: RunMigrationsOptions = {},
 ): Promise<void> {
-	await db.exec(`
-    CREATE TABLE IF NOT EXISTS _migrations (
-      id          SERIAL PRIMARY KEY,
-      filename    TEXT NOT NULL UNIQUE,
-      applied_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-      checksum    TEXT NOT NULL
-    );
-  `);
+	// Under the lock, because `CREATE TABLE IF NOT EXISTS` is NOT atomic against a
+	// concurrent create: two instances booting together against a brand-new
+	// database race inside the catalog and one dies with a duplicate-key error on
+	// `pg_class`. It used to sit inside the session lock by inheritance, since the
+	// caller held one for the whole run; a per-transaction lock has to take it
+	// here explicitly.
+	await db.transaction(async (tx) => {
+		await tx.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK_KEY]);
+		await tx.exec(`
+      CREATE TABLE IF NOT EXISTS _migrations (
+        id          SERIAL PRIMARY KEY,
+        filename    TEXT NOT NULL UNIQUE,
+        applied_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        checksum    TEXT NOT NULL
+      );
+    `);
+	});
 
 	const applied = await db.query<{ filename: string; checksum: string }>(
 		'SELECT filename, checksum FROM _migrations ORDER BY id',
@@ -108,6 +120,7 @@ export async function runMigrations(
 		index += 1;
 		options.onProgress?.({ filename, index, total });
 
+		let skipped = false;
 		try {
 			await db.transaction(async (tx) => {
 				// Serializes concurrent migrators, and is released by the commit or
@@ -117,12 +130,20 @@ export async function runMigrations(
 
 				// Re-read under the lock. The applied set was read before the loop,
 				// and whoever we just queued behind may have applied this very
-				// migration while we waited. Checking here rather than there is what
-				// makes "applied at most once" a property of the database rather than
-				// of the timing.
+				// migration while we waited.
+				//
+				// This read is the fast path, not the guarantee. At REPEATABLE READ
+				// the snapshot is taken BY the lock statement - before it blocks - so
+				// the re-read can still miss a commit that landed while we waited, and
+				// the body would run again. What makes "applied at most once" true
+				// regardless is the UNIQUE constraint on `_migrations.filename`: the
+				// second INSERT fails and the whole transaction rolls back, taking the
+				// re-run body with it. Say so here rather than leave the property
+				// resting on a default isolation level a provider can change.
 				const already = await tx.query('SELECT 1 FROM _migrations WHERE filename = $1', [filename]);
 				if (already.rows.length > 0) {
 					log.info(`Migration ${filename} was applied by another instance; skipping`);
+					skipped = true;
 					return;
 				}
 
@@ -136,7 +157,7 @@ export async function runMigrations(
 					checksum,
 				]);
 			});
-			log.info(`Applied migration: ${filename}`);
+			if (!skipped) log.info(`Applied migration: ${filename}`);
 		} catch (err) {
 			throw new Error(`Migration ${filename} failed: ${err}`);
 		}
