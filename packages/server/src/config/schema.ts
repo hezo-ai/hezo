@@ -1,3 +1,4 @@
+import { parseIssuerPublicKeys } from '@hezo/shared';
 import { z } from 'zod';
 import type { HezoConfig } from './types';
 
@@ -131,6 +132,49 @@ export const policySchema = z
 	})
 	.strict();
 
+/**
+ * Single sign-on from an external control plane.
+ *
+ * Present means an issuer may assert who is signing in; absent means the whole
+ * mechanism is inert. Every field is required, because a half-configured issuer
+ * is a security hole rather than a partial feature - there is no sensible
+ * default for "which key may vouch for whom".
+ *
+ * This is separate from `policy`, which says an operator manages the instance.
+ * The two travel together on a managed deployment but mean different things,
+ * and an instance whose settings are pinned by an IT department must not
+ * thereby offer a sign-in path that leads nowhere.
+ */
+export const ssoSchema = z
+	.object({
+		issuerUrl: z.url().refine((value) => value.startsWith('https://'), {
+			message: 'issuerUrl must be an https: URL',
+		}),
+		// Rejected here, naming the offending entry, so a mistyped rotation fails
+		// at startup while an operator is watching rather than at someone's first
+		// sign-in with nothing but a 401 to go on.
+		issuerPublicKey: z
+			.string()
+			.trim()
+			.min(1)
+			.superRefine((value, ctx) => {
+				const parsed = parseIssuerPublicKeys(value);
+				if (!parsed.ok) ctx.addIssue({ code: 'custom', message: parsed.error });
+			}),
+		ownerSubject: z.string().trim().min(1),
+		// Compared to a token's `aud` verbatim, and never read from the request:
+		// the only request-time source for "this instance's host" is a header the
+		// caller writes. A pasted URL is the likely typo, so refuse one.
+		audience: z
+			.string()
+			.trim()
+			.min(1)
+			.refine((value) => !value.includes('/'), {
+				message: 'audience is a host, not a URL - drop the scheme and any path',
+			}),
+	})
+	.strict();
+
 export const configFileSchema = z
 	.object({
 		port: z.int().min(1).max(65535).optional(),
@@ -152,6 +196,7 @@ export const configFileSchema = z
 		chat: chatSchema.optional(),
 		policy: policySchema.optional(),
 		policyFile: z.string().min(1).optional(),
+		sso: ssoSchema.optional(),
 	})
 	.strict();
 

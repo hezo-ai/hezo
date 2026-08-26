@@ -215,6 +215,49 @@ by renaming a temporary file into place (`policy.json.tmp`, then `rename`), whic
 is atomic, so Hezo can never read a half-written file. If a read or a parse does
 fail, the previous limits stay in force rather than silently unpinning.
 
+### Single sign-on from a control plane
+
+Where a control plane provisions and manages instances, it can sign its users in
+without holding anything that could decrypt their data. Set an `sso` block and the
+sign-in page offers the issuer as a way in; leave it out and the whole mechanism is
+absent, which is what an ordinary instance wants.
+
+| Setting | Default | Description |
+|---|---|---|
+| `sso.issuerUrl` | - | The control plane users are sent back to. Must be `https:`. |
+| `sso.issuerPublicKey` | - | Accepted issuer keys, as a comma-separated `kid:hex` list. |
+| `sso.ownerSubject` | - | The one issuer-side account allowed to sign in to this instance. |
+| `sso.audience` | - | The host name a token must be minted for. A host, not a URL. |
+
+All four are required together. A half-configured issuer is refused at startup
+rather than accepted and left to fail at someone's first sign-in.
+
+```js
+module.exports = {
+  sso: {
+    issuerUrl: 'https://control.example',
+    issuerPublicKey: 'k1:1f0c...9ab2,k2:77de...41c0',
+    ownerSubject: '9f1cb2d4-0000-4000-8000-000000000001',
+    audience: 'alice.control.example',
+  },
+};
+```
+
+**Signing in is not unlocking.** The issuer proves who you are. It never sees,
+carries or obtains your recovery phrase, and an instance that accepts a valid
+token is still locked: it asks for the phrase exactly as it would otherwise, and
+only then completes the sign-in. A control plane can therefore let you into your
+instance without ever being able to read what is in it.
+
+**List both keys while you rotate.** `issuerPublicKey` takes several keys so an
+issuer can add a new one, move signing to it, and drop the old one, with no moment
+where valid tokens are refused. A malformed entry fails at startup naming the key
+it could not read.
+
+`sso` is separate from `policy`. A deployer that fixes an instance's limits has
+not thereby given it somewhere to sign in, and an instance offering single sign-on
+need not have any of its settings pinned.
+
 ## The master key is not a config setting
 
 The master key is **never** read from the config file, and Hezo rejects a `masterKey` key
