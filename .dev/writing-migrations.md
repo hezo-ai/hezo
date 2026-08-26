@@ -35,7 +35,7 @@ Data transforms SQL can't express (parse/re-encode/re-encrypt with app-side logi
 
 On the **embedded** backend the runner migrates a *copy* of the database (`<dataDir>/.migrate-tmp`) and atomically swaps it in on success. On failure the live `pgdata` is left untouched, so downgrading to the previous binary just works.
 
-An **external Postgres** has no datadir to copy, so it migrates **in place** instead — per-migration transactions under a session `pg_advisory_lock` (`applyPendingMigrationsExternal`) — which is why a migration must be safe to half-apply-and-roll-back on its own.
+An **external Postgres** has no datadir to copy, so it migrates **in place** instead — per-migration transactions, each taking a transaction-scoped `pg_advisory_xact_lock` and re-checking the applied set under it (`applyPendingMigrationsExternal`) — which is why a migration must be safe to half-apply-and-roll-back on its own, and why it must run inside one transaction (no `CREATE INDEX CONCURRENTLY`).
 
 Either way, a data dir carrying migrations the binary doesn't recognize (a downgrade) makes the server **exit** and ask the operator to upgrade.
 

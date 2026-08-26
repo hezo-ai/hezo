@@ -39,6 +39,19 @@ export function checksumOfMigration(m: Migration): string {
 	return checksumOf(m);
 }
 
+/**
+ * Advisory lock key serializing concurrent migrators. "HEZO".
+ *
+ * Taken **per transaction**, not per session. A session-scoped lock has to be
+ * held on a dedicated connection - it belongs to the session, not to the
+ * statement - which meant a second connection existed for no other purpose, and
+ * a pool of one deadlocked the migration path. A transaction-scoped lock lives
+ * and dies inside the transaction that already has a connection, so it needs no
+ * second one, and it survives a transaction-mode connection pooler, which does
+ * not keep a caller on one backend between statements.
+ */
+export const MIGRATION_LOCK_KEY = 0x48455a4f;
+
 /** Progress for one step of a `runMigrations` pass. */
 export interface MigrationProgress {
 	/** The migration about to be applied. */
@@ -97,6 +110,22 @@ export async function runMigrations(
 
 		try {
 			await db.transaction(async (tx) => {
+				// Serializes concurrent migrators, and is released by the commit or
+				// rollback either way - a migrator that dies mid-step never wedges
+				// the next one.
+				await tx.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK_KEY]);
+
+				// Re-read under the lock. The applied set was read before the loop,
+				// and whoever we just queued behind may have applied this very
+				// migration while we waited. Checking here rather than there is what
+				// makes "applied at most once" a property of the database rather than
+				// of the timing.
+				const already = await tx.query('SELECT 1 FROM _migrations WHERE filename = $1', [filename]);
+				if (already.rows.length > 0) {
+					log.info(`Migration ${filename} was applied by another instance; skipping`);
+					return;
+				}
+
 				if (isCodeMigration(migration)) {
 					await migration.run(tx);
 				} else {

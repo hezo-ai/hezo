@@ -5801,10 +5801,14 @@ newest 5 — `db/superseded.ts`). A superuser can reclaim them on demand: `GET
 /api/database-info/prune-superseded` deletes **all** of them (no rollback retained; the live
 `pgdata` is untouched). Both are surfaced in the Database card on the Storage settings
 subpage and are embedded-only — external Postgres migrates in place and produces no snapshots.
-An **external Postgres** migrates **in place** instead: per-migration transactions under a
-session `pg_advisory_lock` (`applyPendingMigrationsExternal`), with the downgrade guard
-re-checked under the lock, so concurrent startups can't double-migrate and a failed
-migration leaves the committed prefix intact. A database carrying migrations the binary
+An **external Postgres** migrates **in place** instead: per-migration transactions, each
+taking a transaction-scoped `pg_advisory_xact_lock` as its first statement and re-reading
+the applied set under it (`applyPendingMigrationsExternal`), with the downgrade guard
+re-checked in a locked transaction of its own, so concurrent startups can't double-migrate
+and a failed migration leaves the committed prefix intact. The lock is transaction-scoped
+rather than session-scoped so it needs no connection of its own: that is what allows
+`database.poolSize: 1` and what keeps Hezo usable through a transaction-mode connection
+pooler (`pooler-compatibility.test.ts` guards the rest of that property). A database carrying migrations the binary
 doesn't recognize makes the server exit and ask the operator to upgrade. Migration
 mechanics and the per-migration rules are in `AGENTS.md` › Database migrations.
 

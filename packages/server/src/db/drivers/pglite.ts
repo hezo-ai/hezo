@@ -1,5 +1,5 @@
 import type { PGlite, Transaction } from '@electric-sql/pglite';
-import type { Db, Queryable, QueryResult, SessionLockHandle } from '../database';
+import type { Db, Queryable, QueryResult } from '../database';
 import { TxContext } from './tx-context';
 
 /**
@@ -98,15 +98,6 @@ export class PgliteDb implements Db {
 			const tx = wrapPgliteTx(pgTx);
 			return this.txContext.run(tx, () => cb(tx));
 		});
-	}
-
-	async acquireSessionLock(key: number): Promise<SessionLockHandle> {
-		await this.raw.query('SELECT pg_advisory_lock($1)', [key]);
-		return {
-			release: async () => {
-				await this.raw.query('SELECT pg_advisory_unlock($1)', [key]);
-			},
-		};
 	}
 
 	async close(): Promise<void> {

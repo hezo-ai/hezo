@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createMemoryDb } from '../src/db/client';
-import type { Db } from '../src/db/database';
+import type { Db, Queryable } from '../src/db/database';
 import type { PgliteDb } from '../src/db/drivers/pglite';
 import { PostgresDb } from '../src/db/drivers/postgres';
+import { MIGRATION_LOCK_KEY } from '../src/db/migrate';
 import { DbNewerThanAppError, ExternalMigrationFailedError } from '../src/db/migrate-errors';
-import { applyPendingMigrationsExternal, MIGRATION_LOCK_KEY } from '../src/db/migrate-external';
+import { applyPendingMigrationsExternal } from '../src/db/migrate-external';
 import { BASE_SCHEMA } from '../src/db/schema';
 import { createTestDbWithMigrations } from './helpers/db';
 import { allMigrations } from './helpers/migrate';
@@ -12,7 +13,7 @@ import { introspectSchema } from './helpers/schema-introspect';
 import { createScratchPostgres } from './helpers/scratch-postgres';
 
 // Orchestrator logic runs against PGlite through the generic Db interface —
-// pg_advisory_lock and the _migrations bookkeeping are core Postgres. The
+// pg_advisory_xact_lock and the _migrations bookkeeping are core Postgres. The
 // concurrency behaviour across real separate connections (two pools racing the
 // lock) is covered by the env-gated postgres leg in CI.
 
@@ -21,6 +22,21 @@ const V2 = "INSERT INTO ext_posts (id, title) VALUES (1, 'seeded by 002');";
 
 describe('applyPendingMigrationsExternal', () => {
 	let db: PgliteDb;
+
+	/**
+	 * Advisory locks still held.
+	 *
+	 * A transaction-scoped lock cannot be released by `pg_advisory_unlock`, which
+	 * only ever unlocks session locks - asking that way would answer false
+	 * whether or not the lock was held, which is a test that cannot fail.
+	 */
+	async function advisoryLocksHeld(): Promise<number> {
+		const r = await db.query<{ c: number }>(
+			"SELECT COUNT(*)::int AS c FROM pg_locks WHERE locktype = 'advisory' AND objid = $1",
+			[MIGRATION_LOCK_KEY],
+		);
+		return r.rows[0].c;
+	}
 
 	beforeEach(async () => {
 		db = await createMemoryDb();
@@ -46,13 +62,9 @@ describe('applyPendingMigrationsExternal', () => {
 		expect(recount.rows[0].c).toBe(1);
 	});
 
-	it('releases the migration lock after a successful run', async () => {
+	it('holds no lock after a successful run', async () => {
 		await applyPendingMigrationsExternal(db, { '001_posts.sql': V1 });
-		// Unlocking a lock we do not hold reports false — proves the runner released it.
-		const r = await db.query<{ held: boolean }>('SELECT pg_advisory_unlock($1) AS held', [
-			MIGRATION_LOCK_KEY,
-		]);
-		expect(r.rows[0].held).toBe(false);
+		expect(await advisoryLocksHeld()).toBe(0);
 	});
 
 	it('refuses to run when the database is newer than the binary', async () => {
@@ -68,20 +80,24 @@ describe('applyPendingMigrationsExternal', () => {
 
 	it('re-checks the downgrade guard under the lock', async () => {
 		// Deterministically simulate "a newer instance migrated while we waited on
-		// the lock": delegate to the real driver but make acquiring the lock also
-		// record a migration this binary doesn't know. The pre-check passes (clean
-		// DB, 001 pending), so only the under-lock re-check can catch it.
+		// the lock": delegate to the real driver, but have the first transaction
+		// commit a migration this binary does not know before the guard reads. The
+		// pre-check already passed on a clean database, so only the re-check under
+		// the lock can catch it.
 		const wrapped: Db = Object.create(db);
-		wrapped.acquireSessionLock = async (key: number) => {
-			const lock = await db.acquireSessionLock(key);
-			await db.exec(`
-				CREATE TABLE IF NOT EXISTS _migrations (
-					id SERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE,
-					applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), checksum TEXT NOT NULL
-				);
-				INSERT INTO _migrations (filename, checksum) VALUES ('999_from_the_future.sql', 'x');
-			`);
-			return lock;
+		let injected = false;
+		wrapped.transaction = async <T>(cb: (tx: Queryable) => Promise<T>): Promise<T> => {
+			if (!injected) {
+				injected = true;
+				await db.exec(`
+					CREATE TABLE IF NOT EXISTS _migrations (
+						id SERIAL PRIMARY KEY, filename TEXT NOT NULL UNIQUE,
+						applied_at TIMESTAMPTZ NOT NULL DEFAULT now(), checksum TEXT NOT NULL
+					);
+					INSERT INTO _migrations (filename, checksum) VALUES ('999_from_the_future.sql', 'x');
+				`);
+			}
+			return db.transaction(cb);
 		};
 
 		await expect(
@@ -90,11 +106,8 @@ describe('applyPendingMigrationsExternal', () => {
 		// 001 was never applied — the guard fired before runMigrations…
 		const applied = await db.query<{ filename: string }>('SELECT filename FROM _migrations');
 		expect(applied.rows.map((r) => r.filename)).toEqual(['999_from_the_future.sql']);
-		// …and the guard did not leave the lock held.
-		const r = await db.query<{ held: boolean }>('SELECT pg_advisory_unlock($1) AS held', [
-			MIGRATION_LOCK_KEY,
-		]);
-		expect(r.rows[0].held).toBe(false);
+		// …and the rolled-back guard transaction took its lock with it.
+		expect(await advisoryLocksHeld()).toBe(0);
 	});
 
 	it('keeps the applied prefix and resumes after a failed migration', async () => {
@@ -108,10 +121,7 @@ describe('applyPendingMigrationsExternal', () => {
 		// 001 committed durably; the failed 002 rolled back; the lock is free.
 		const applied = await db.query<{ filename: string }>('SELECT filename FROM _migrations');
 		expect(applied.rows.map((r) => r.filename)).toEqual(['001_posts.sql']);
-		const lock = await db.query<{ held: boolean }>('SELECT pg_advisory_unlock($1) AS held', [
-			MIGRATION_LOCK_KEY,
-		]);
-		expect(lock.rows[0].held).toBe(false);
+		expect(await advisoryLocksHeld()).toBe(0);
 
 		// A re-run with the fixed 002 resumes from where it failed.
 		await applyPendingMigrationsExternal(db, { '001_posts.sql': V1, '002_seed.sql': V2 });
@@ -146,6 +156,52 @@ describe.skipIf(!process.env.HEZO_TEST_DATABASE_URL)(
 				}
 			} finally {
 				await external.close();
+				await scratch.drop();
+			}
+		});
+
+		// The dense-deployment setting. It only works because the migration lock is
+		// transaction-scoped: a session-scoped one needs a connection of its own,
+		// and with a pool of one there is no second connection to give it.
+		it('starts and migrates on a pool of one', async () => {
+			const scratch = await createScratchPostgres('extpool1');
+			const external = await PostgresDb.connect({ url: scratch.url, max: 1 });
+			try {
+				await external.exec(BASE_SCHEMA);
+				const migrations = allMigrations();
+				await applyPendingMigrationsExternal(external, migrations);
+				const total = await external.query<{ c: number }>(
+					'SELECT COUNT(*)::int AS c FROM _migrations',
+				);
+				expect(total.rows[0].c).toBe(Object.keys(migrations).length);
+			} finally {
+				await external.close();
+				await scratch.drop();
+			}
+		});
+
+		// Removing the session lock must not have removed the guarantee it existed
+		// for, and a pool of one is where a lost lock would show up first.
+		it('applies each migration exactly once when two pools of one race', async () => {
+			const scratch = await createScratchPostgres('extrace1');
+			const a = await PostgresDb.connect({ url: scratch.url, max: 1 });
+			const b = await PostgresDb.connect({ url: scratch.url, max: 1 });
+			try {
+				await a.exec(BASE_SCHEMA);
+				const migrations = allMigrations();
+				await Promise.all([
+					applyPendingMigrationsExternal(a, migrations),
+					applyPendingMigrationsExternal(b, migrations),
+				]);
+				const duplicated = await a.query<{ filename: string }>(
+					'SELECT filename FROM _migrations GROUP BY filename HAVING COUNT(*) > 1',
+				);
+				expect(duplicated.rows).toEqual([]);
+				const total = await a.query<{ c: number }>('SELECT COUNT(*)::int AS c FROM _migrations');
+				expect(total.rows[0].c).toBe(Object.keys(migrations).length);
+			} finally {
+				await a.close();
+				await b.close();
 				await scratch.drop();
 			}
 		});

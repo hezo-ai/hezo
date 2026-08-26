@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { Db, Queryable, QueryResult, SessionLockHandle } from '../database';
+import type { Db, Queryable, QueryResult } from '../database';
 import { normalizePostgresUrl } from '../postgres-url';
 import { TxContext } from './tx-context';
 
@@ -11,8 +11,15 @@ import { TxContext } from './tx-context';
 // pool issues its first query.
 pg.types.setTypeParser(pg.types.builtins.INT8, (value: string) => Number(value));
 
-/** Pool floor: `transaction()` pins one client while `acquireSessionLock` holds another. */
-const MIN_POOL_SIZE = 2;
+/**
+ * Pool floor.
+ *
+ * One connection is enough: the only thing that ever held a second was the
+ * migration lock, which is now transaction-scoped and lives on the connection
+ * its own transaction already has. A pool of one serializes every query in the
+ * process, so it is a deliberate choice for a dense deployment, not a default.
+ */
+const MIN_POOL_SIZE = 1;
 
 export interface PostgresConnectOptions {
 	url: string;
@@ -105,7 +112,7 @@ export class PostgresDb implements Db {
 		// the pool concurrently; only transaction blocks queue, and they are
 		// tight DB sequences. Cross-INSTANCE serialization is out of scope —
 		// Hezo runs one server per database (migrations, the multi-writer case,
-		// take a pg_advisory_lock).
+		// take a transaction-scoped advisory lock of their own).
 		const run = () => this.runExclusiveTransaction(cb);
 		const result = this.txQueue.then(run, run);
 		this.txQueue = result.then(
@@ -138,30 +145,6 @@ export class PostgresDb implements Db {
 		} finally {
 			client.release(dispose);
 		}
-	}
-
-	async acquireSessionLock(key: number): Promise<SessionLockHandle> {
-		// Advisory locks are session-scoped, so the holder must be one dedicated
-		// client — taking the lock through the pool would bind it to a random
-		// connection that the next query no longer uses.
-		const client = await this.pool.connect();
-		try {
-			await client.query('SELECT pg_advisory_lock($1)', [key]);
-		} catch (err) {
-			client.release(err instanceof Error ? err : new Error(String(err)));
-			throw err;
-		}
-		return {
-			release: async () => {
-				try {
-					await client.query('SELECT pg_advisory_unlock($1)', [key]);
-					client.release();
-				} catch (err) {
-					// Destroy the connection — the session dying releases the lock.
-					client.release(err instanceof Error ? err : new Error(String(err)));
-				}
-			},
-		};
 	}
 
 	async close(): Promise<void> {

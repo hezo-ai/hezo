@@ -252,11 +252,40 @@ describe.each(drivers.filter((d) => d.available))('database conformance: $name',
 		await expect(leaked).rejects.toThrow(/transaction completed/);
 	});
 
-	it('acquires and releases session-scoped advisory locks', async () => {
-		const lock = await db.acquireSessionLock(424242);
-		await lock.release();
-		// Unlocking a lock we no longer hold reports false — proves release worked.
-		const r = await db.query<{ held: boolean }>('SELECT pg_advisory_unlock(424242) AS held');
-		expect(r.rows[0].held).toBe(false);
+	// The migration path serializes on a transaction-scoped advisory lock, so
+	// every driver has to release one at the end of the transaction that took it -
+	// including the transaction that ended by throwing.
+	describe('transaction-scoped advisory locks', () => {
+		const KEY = 424242;
+
+		async function held(): Promise<number> {
+			const r = await db.query<{ c: number }>(
+				"SELECT COUNT(*)::int AS c FROM pg_locks WHERE locktype = 'advisory' AND objid = $1",
+				[KEY],
+			);
+			return r.rows[0].c;
+		}
+
+		it('holds one for the life of the transaction, then releases it on commit', async () => {
+			await db.transaction(async (tx) => {
+				await tx.query('SELECT pg_advisory_xact_lock($1)', [KEY]);
+				const inside = await tx.query<{ c: number }>(
+					"SELECT COUNT(*)::int AS c FROM pg_locks WHERE locktype = 'advisory' AND objid = $1",
+					[KEY],
+				);
+				expect(inside.rows[0].c).toBe(1);
+			});
+			expect(await held()).toBe(0);
+		});
+
+		it('releases it on rollback, so a failed migrator never wedges the next', async () => {
+			await expect(
+				db.transaction(async (tx) => {
+					await tx.query('SELECT pg_advisory_xact_lock($1)', [KEY]);
+					throw new Error('migration blew up');
+				}),
+			).rejects.toThrow('migration blew up');
+			expect(await held()).toBe(0);
+		});
 	});
 });

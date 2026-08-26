@@ -82,7 +82,7 @@ Nested keys are written in dot form below: `database.url` means
 | Setting | Flag | Default | Description |
 |---|---|---|---|
 | `database.url` | `--database-url <url>` | - | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Its `sslmode` follows standard libpq rules - see [TLS and sslmode](#tls-and-sslmode). Omit to use the embedded database under the data directory (the default). |
-| `database.poolSize` | - | `10` | Connection-pool size for the external database (2-100). Ignored for the embedded database. |
+| `database.poolSize` | - | `10` | Connection-pool size for the external database (1-100). Ignored for the embedded database. `1` serializes every query in the process - see [Connection pooling](#connection-pooling). |
 
 ### Asset storage
 
@@ -347,8 +347,8 @@ Requirements and recommendations:
 - **Keep the database close to the server.** Hezo's background scheduling polls every
   1-5 seconds, so every millisecond of round-trip latency counts. Same-host,
   same-VPC, or same-region placement is strongly recommended.
-- **Direct connections or session pooling only.** Transaction-pooling proxies
-  (PgBouncer in transaction mode) break session-scoped advisory locks.
+- **Any pooling mode works**, including transaction mode. See
+  [Connection pooling](#connection-pooling).
 - **One Hezo server per database.** Concurrent startups coordinate migrations safely,
   but running two live servers against one database is not supported.
 - The connection string carries credentials: prefer the config file over the flag (flags
@@ -356,6 +356,25 @@ Requirements and recommendations:
 - `hezo backup` / `hezo restore` work against an external database too - including
   **moving an existing embedded instance to hosted Postgres** (and back). See
   [Backup & recovery](/docs/deployment/backup-and-recovery).
+
+### Connection pooling
+
+Hezo works through a connection pooler in any mode, including transaction mode. It
+opens no session-scoped state: no `LISTEN`/`NOTIFY`, no named prepared statements, no
+cursors, no session `SET`, no temporary tables, and no session-scoped advisory locks.
+Migrations serialize on a transaction-scoped lock, which lives and dies inside the
+transaction that takes it.
+
+That matters most when one cluster serves many Hezo instances. Under a transaction
+pooler, the cluster's backend connections track concurrent *transactions* rather than
+instances, so a fixed connection budget carries far more of them.
+
+**`database.poolSize` can go down to `1`, but think before it does.** One connection
+serves the API, the tool endpoint, the egress proxy, the container control plane and a
+scheduler that polls every 1-5 seconds, so every query in the process waits behind
+every other. It is the right setting for packing many small instances onto one cluster,
+and the wrong one for a single busy instance. The default of `10` suits a normal
+deployment.
 
 ### TLS and sslmode
 

@@ -94,11 +94,20 @@ describe('loadConfigFile', () => {
 
 		it('rejects a database pool size outside the supported band', () => {
 			expect(() =>
-				loadConfigFile(write('module.exports = { database: { poolSize: 1 } };')),
+				loadConfigFile(write('module.exports = { database: { poolSize: 0 } };')),
 			).toThrow(/poolSize/);
 			expect(() =>
 				loadConfigFile(write('module.exports = { database: { poolSize: 500 } };')),
 			).toThrow(/poolSize/);
+		});
+
+		// One is the dense-deployment setting: it serializes every query in the
+		// process, so it is a deliberate choice rather than a default, but nothing
+		// holds a connection outside a transaction any more so it is not a deadlock.
+		it('accepts a pool of one', () => {
+			expect(
+				loadConfigFile(write('module.exports = { database: { poolSize: 1 } };')).database?.poolSize,
+			).toBe(1);
 		});
 
 		it('reports every problem at once, not just the first', () => {

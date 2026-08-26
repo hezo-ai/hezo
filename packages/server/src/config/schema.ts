@@ -18,9 +18,10 @@ const positiveInt = z.int().positive();
 const databaseSchema = z
 	.object({
 		url: z.string().min(1).optional(),
-		// Matches parsePoolSize in db/open.ts - a pool below 2 deadlocks the
-		// migration path, and above 100 exhausts most managed Postgres plans.
-		poolSize: z.int().min(2).max(100).optional(),
+		// One is allowed but serializes every query in the process: a deliberate
+		// choice for a dense deployment, not a default. Above 100 exhausts most
+		// managed Postgres plans.
+		poolSize: z.int().min(1).max(100).optional(),
 	})
 	.strict();
 
