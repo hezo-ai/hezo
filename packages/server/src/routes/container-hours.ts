@@ -10,7 +10,7 @@ import {
 	containerHoursSeries,
 	containerHoursTotals,
 } from '../services/container-hours';
-import { getStoredSandboxBackend } from '../services/sandbox/backend-store';
+import { getSandboxBackendSetting } from '../services/sandbox/backend-store';
 
 export const containerHoursRoutes = new Hono<Env>();
 
@@ -80,7 +80,7 @@ containerHoursRoutes.get('/container-hours', async (c) => {
 		containerHoursByProject(db, bucket),
 		containerHoursTotals(db, null),
 		getMonthlyContainerHours(db),
-		getStoredSandboxBackend(db),
+		getSandboxBackendSetting(db),
 	]);
 
 	return ok(c, {

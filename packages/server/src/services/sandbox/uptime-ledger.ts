@@ -29,9 +29,9 @@
  * double-open would bill the same minutes twice.
  */
 
-import { type ContainerUptimeEndReason, SandboxBackend } from '@hezo/shared';
+import type { ContainerUptimeEndReason } from '@hezo/shared';
 import type { Db } from '../../db/database';
-import { getStoredSandboxBackend } from './backend-store';
+import { getSandboxBackendSetting } from './backend-store';
 
 /**
  * Start billing a container, from the member row that already describes it.
@@ -51,7 +51,7 @@ export async function openUptimeInterval(db: Db, containerId: string): Promise<v
 	// `template-resolver.ts` gives at its own read: the stored value is what
 	// selects the backend at boot and what a runtime switch writes, so it is the
 	// same answer the holder would give and it keeps every caller unchanged.
-	const backend = (await getStoredSandboxBackend(db)) ?? SandboxBackend.Docker;
+	const backend = await getSandboxBackendSetting(db);
 	await db.query(
 		`INSERT INTO container_uptime_entries
 		     (project_id, container_id, memory_bytes, disk_ceiling_bytes, reserved_for_chat, backend)

@@ -1,6 +1,8 @@
 import { isSandboxBackend, SANDBOX_BACKENDS, sandboxBackendNeedsApiKey } from '@hezo/shared';
 import { Hono } from 'hono';
+import { runtimeConfig } from '../config/runtime';
 import { err, ok } from '../lib/response';
+import { isPinned } from '../lib/system-meta';
 import type { Env } from '../lib/types';
 import { requireSuperuser } from '../middleware/auth';
 import { hasDaytonaApiKey, readDaytonaApiKey } from '../services/sandbox/backend-store';
@@ -36,6 +38,10 @@ export function buildSandboxBackendInfoRoutes(holder: SandboxBackendHolder): Hon
 			...holder.info,
 			available: SANDBOX_BACKENDS,
 			credential_configured: await hasDaytonaApiKey(db),
+			// So the page renders a locked control rather than inferring that a
+			// switch which keeps failing is somehow special.
+			backend_pinned: isPinned('backend'),
+			policy: policyBanner(),
 			// What a switch would cost right now, so the confirmation dialog names
 			// real numbers instead of warning in the abstract.
 			impact: await describeSwitchImpact(db, holder.engine, c.get('dataDir')),
@@ -57,6 +63,20 @@ export function buildSandboxBackendInfoRoutes(holder: SandboxBackendHolder): Hon
 				'INVALID_REQUEST',
 				`backend must be one of: ${SANDBOX_BACKENDS.join(', ')}`,
 				400,
+			);
+		}
+
+		// Refused, never silently ignored. Whoever runs this instance is still its
+		// superuser and can call this endpoint directly, so a switch that appeared
+		// to succeed and changed nothing would be the worst of both. 409 because
+		// the request is authorized and conflicts with a decision made above it.
+		const policy = runtimeConfig().policy;
+		if (policy && isPinned('backend')) {
+			return err(
+				c,
+				'CONFLICT',
+				`The container backend is set by ${policy.managedBy} and cannot be changed here.`,
+				409,
 			);
 		}
 
@@ -114,4 +134,11 @@ export function buildSandboxBackendInfoRoutes(holder: SandboxBackendHolder): Hon
 	});
 
 	return routes;
+}
+
+/** The rendered half of the policy - a name and an optional link, never anything to branch on. */
+function policyBanner(): { managed_by: string; manage_url: string | null } | null {
+	const policy = runtimeConfig().policy;
+	if (!policy) return null;
+	return { managed_by: policy.managedBy, manage_url: policy.manageUrl ?? null };
 }

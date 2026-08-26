@@ -18,7 +18,7 @@ import { isSandboxBackend, SandboxBackend, sandboxBackendNeedsApiKey } from '@he
 import { decrypt, encrypt } from '../../crypto/encryption';
 import type { MasterKeyManager } from '../../crypto/master-key';
 import type { Db } from '../../db/database';
-import { getSystemMeta, setSystemMeta } from '../../lib/system-meta';
+import { getSystemMeta, pinnedSetting, setSystemMeta } from '../../lib/system-meta';
 import { logger } from '../../logger';
 import type { SandboxBackendHolder } from './holder';
 import { openSandboxBackend } from './open';
@@ -46,6 +46,22 @@ export async function getStoredSandboxBackend(db: Db): Promise<SandboxBackend | 
 
 export async function setStoredSandboxBackend(db: Db, backend: SandboxBackend): Promise<void> {
 	await setSystemMeta(db, SANDBOX_BACKEND_KEY, backend);
+}
+
+/**
+ * The backend actually in force.
+ *
+ * The deployer's pin beats the operator's stored choice, which beats the
+ * built-in default. **Every reader goes through this**, so the pin cannot hold
+ * in one place and leak in another - a deployment whose containers run somewhere
+ * the instance's own host does not provide would otherwise have its runs sent to
+ * a runtime that is not there.
+ *
+ * `pinnedSetting` reads `runtimeConfig()` inside the call, so a plan change
+ * reloaded from the policy file is picked up without a restart.
+ */
+export async function getSandboxBackendSetting(db: Db): Promise<SandboxBackend> {
+	return pinnedSetting('backend') ?? (await getStoredSandboxBackend(db)) ?? SandboxBackend.Docker;
 }
 
 export async function getStoredDaytonaApiUrl(db: Db): Promise<string | null> {
@@ -158,7 +174,12 @@ export async function resolveStartupBackend(
 	if (flags.daytonaApiUrl) await setStoredDaytonaApiUrl(db, flags.daytonaApiUrl);
 
 	const requested = flags.backend?.trim().toLowerCase();
+	// The pin outranks everything, including a choice the operator made here
+	// earlier: a deployment can move where containers run, and the instance has
+	// to follow on the next boot rather than argue.
+	const pinned = pinnedSetting('backend');
 	const backend =
+		pinned ??
 		stored ??
 		(requested && isSandboxBackend(requested)
 			? (requested as SandboxBackend)
@@ -168,6 +189,12 @@ export async function resolveStartupBackend(
 	// Two ways a launch command can mean less than it appears to, both of which
 	// were silent - the operator read the Containers page, saw a backend they did
 	// not ask for, and had nothing to connect it to.
+	if (pinned && stored && pinned !== stored) {
+		log.warn(
+			`Containers run on ${pinned}: it is fixed by this deployment, so the stored ` +
+				`setting (${stored}) does not apply.`,
+		);
+	}
 	if (requested && stored && requested !== stored) {
 		log.warn(
 			`Ignoring --sandbox-backend / containers.backend=${requested}: this instance is set to ` +

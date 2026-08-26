@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import type { SandboxBackend } from '@hezo/shared';
 import {
 	CONNECTOR_CAPABILITIES,
 	DEFAULT_DATA_DIR,
@@ -269,6 +270,8 @@ export interface PolicyConfig {
 		defaultRamCapPerContainerGb?: number;
 		defaultContainerDiskGb?: number;
 		monthlyContainerHours?: number;
+		/** Which container backend runs agent containers. A name, not a number. */
+		backend?: SandboxBackend;
 	};
 }
 

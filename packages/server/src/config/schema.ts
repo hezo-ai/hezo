@@ -1,4 +1,4 @@
-import { parseIssuerPublicKeys } from '@hezo/shared';
+import { parseIssuerPublicKeys, SANDBOX_BACKENDS } from '@hezo/shared';
 import { z } from 'zod';
 import type { HezoConfig } from './types';
 
@@ -127,6 +127,11 @@ export const policySchema = z
 				// A deployment can therefore pin "no hours limit" as deliberately as
 				// it pins a number.
 				monthlyContainerHours: z.int().min(0).optional(),
+				// Not a number, unlike its neighbours. A deployment whose containers
+				// run somewhere the instance's own host cannot provide has to be able
+				// to say so: leaving this to the operator lets them switch onto a
+				// runtime that is not there and break every run.
+				backend: z.enum(SANDBOX_BACKENDS).optional(),
 			})
 			.strict(),
 	})

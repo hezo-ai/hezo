@@ -192,6 +192,7 @@ pinned unless you say so, so an ordinary instance is unaffected.
 | `policy.pinned.defaultRamCapPerContainerGb` | - | Fixes the per-container RAM cap. |
 | `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. |
 | `policy.pinned.monthlyContainerHours` | - | Fixes the monthly container-hours allowance. `0` pins "no limit". |
+| `policy.pinned.backend` | - | Fixes which container backend runs agent containers (`docker` or `daytona`). |
 | `policyFile` | - | Path to a JSON file holding the `policy` block. The file wins over an inline block, and is re-read when it changes. |
 
 Each key under `pinned` is independent: pin the memory budget and leave disk to
