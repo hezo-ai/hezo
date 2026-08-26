@@ -23,6 +23,7 @@ import type { AssetStorageInfo } from './lib/asset-storage-info';
 import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
 import type { SandboxBackendInfo } from './lib/sandbox-backend-info';
+import { ssoStatus } from './lib/sso-status';
 import {
 	getInstanceBaseUrl,
 	getInstanceLocale,
@@ -723,6 +724,7 @@ export function buildApp(
 			version: HEZO_VERSION,
 			locale: await getInstanceLocale(db),
 			localeConfigured: await instanceLocaleIsConfigured(db),
+			...ssoStatus(),
 		});
 	};
 	app.get('/api/status', statusHandler);

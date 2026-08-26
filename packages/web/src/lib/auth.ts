@@ -48,6 +48,12 @@ export interface StatusResponse {
 	 * an endless boot screen into something actionable.
 	 */
 	lastFailure?: StartupFailure;
+	/**
+	 * Where to sign in, when an external issuer is configured. Absent on an
+	 * instance that has none, which is what makes the gate's decision a presence
+	 * check rather than a flag it has to trust.
+	 */
+	sso?: { issuer_url: string };
 }
 
 /** Mirrors `StartupFailureRecord` in `packages/server/src/startup-failure.ts`. */

@@ -309,3 +309,50 @@ describe('POST /api/auth/sso on a locked instance', () => {
 		expect(res.status).toBe(401);
 	});
 });
+
+describe('GET /api/status', () => {
+	let ctx: ServerTestContext;
+
+	beforeAll(async () => {
+		ctx = await createTestContext();
+	});
+	afterAll(() => destroyTestContext(ctx));
+	afterEach(() => resetRuntimeConfig());
+
+	async function status(): Promise<Record<string, unknown>> {
+		const res = await ctx.app.request('/api/status');
+		expect(res.status).toBe(200);
+		return (await res.json()) as Record<string, unknown>;
+	}
+
+	it('names the issuer, pre-auth, so the gate knows what to offer', async () => {
+		withSso(SSO);
+		expect((await status()).sso).toEqual({ issuer_url: SSO.issuerUrl });
+	});
+
+	// An ordinary instance's payload is byte-identical to before this existed.
+	it('omits the field entirely when no issuer is configured', async () => {
+		withSso(null);
+		expect(Object.hasOwn(await status(), 'sso')).toBe(false);
+	});
+
+	// A deployer that pins limits has not given the instance somewhere to sign in.
+	it('does not infer an issuer from a policy being configured', async () => {
+		const base = runtimeConfig();
+		setRuntimeConfig({
+			...base,
+			sso: null,
+			policy: { managedBy: 'Acme Cloud', manageUrl: 'https://acme.example', pinned: {} },
+		} as HezoConfig);
+		expect(Object.hasOwn(await status(), 'sso')).toBe(false);
+	});
+
+	// Only the URL the browser is about to be sent to; never the matching material.
+	it('never returns the accepted keys, the owner subject or the audience', async () => {
+		withSso(SSO);
+		const body = JSON.stringify(await status());
+		expect(body).not.toContain(ISSUER.publicKeyHex);
+		expect(body).not.toContain(OWNER);
+		expect(body).not.toContain(AUDIENCE);
+	});
+});
