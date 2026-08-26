@@ -241,40 +241,56 @@ or the gate must handle their absence during boot. Say which.
 
 ### H5 — Hosted gate + setup wizard
 
-- `#sso=` fragment handler on the gate, stripping the fragment via
-  `history.replaceState` once read
-- "Continue with hezo.ai" as the primary path when an `sso` block is configured
+**The instance draws no sign-in page. The control plane owns signing in.** The
+user is already signed in there; it mints a token and sends them to the instance
+URL carrying it, so the session is set by the time they arrive. An instance that
+drew its own sign-in would be asking for credentials it has no business seeing,
+and duplicating a screen the control plane already has. The whole hosted gate is
+therefore: hand an unidentified visitor back to the issuer, and know what to do
+with the token they return with.
+
+- An unidentified visitor is **redirected to `sso.issuerUrl`**. No form, no
+  button to press first.
+- `#sso=` fragment handler, stripping the fragment via `history.replaceState`
+  before anything else, so a copied URL or a back-navigation cannot carry a token.
 - The locked-instance flow: hold the handle, run the ordinary mnemonic unlock,
-  exchange for a session
-- Mnemonic unlock stays the primary unlock affordance
+  exchange for a session. Mnemonic unlock stays the primary unlock affordance.
+- **A rejected token stops and waits.** Redirecting again is a loop: the issuer
+  mints another and sends the visitor straight back. The retry is theirs to make.
+- **The redirect must not race the redemption.** Between the unlock landing and
+  the handle becoming a session there is at least one render with no session; a
+  plain "redirect when signed out" fires in it and throws away an identity that
+  was about to be honoured. The gate tracks a phase, not a boolean.
 - Setup wizard with **no password enrollment and no custody push** — the browser
-  generates the phrase and POSTs the derived key to the instance
+  generates the phrase and POSTs the derived key to the instance. The password
+  step leaves the stepper too, rather than showing as a completed step that never
+  happened.
 - **The self-update UI stays exactly as it is** — see *already satisfied*; a
-  hosted tenant confirms its own updates like any other instance
+  hosted tenant confirms its own updates like any other instance.
 
-**Accepted trade, and it must be stated in the product docs, not just here:
-without a password, SSO is the only door.** A hosted tenant whose control plane
-is unreachable cannot reach their own instance, even sitting at the console.
-That is a deliberate decision; it is recorded so it is not discovered during an
-outage.
+**There is no password fallback, and that is the design rather than an
+omission.** A hosted instance never enrolls a password, so there is nothing to
+fall back to, and a second door would defeat the point of the first. The accepted
+consequence belongs in the product docs and not only here: a tenant whose control
+plane is unreachable cannot reach their own instance, even at the console.
 
-**Three surfaces H5 must handle that are easy to miss.** The mnemonic never
-mints a session — `/api/auth/setup` and `/api/auth/verify` both return only a
-`password_setup`-scoped token (`routes/auth.ts:387-420`). So on hosted
-`passwordSet` stays `false` forever, and each of these needs a hosted variant or
-an explicit exclusion:
+**Two surfaces H5 must reach before.** The mnemonic never mints a session —
+`/api/auth/setup` and `/api/auth/verify` both return only a `password_setup`-scoped
+token (`routes/auth.ts:387-420`). So on hosted `passwordSet` stays `false`
+forever, and the issuer branch has to come before both of these:
 
 1. the root gate's `CreatePasswordFlow` branch (`__root.tsx`, on `!passwordSet`)
-2. the `passwordSet` field in `/api/status`, whose meaning changes
-3. the "Forgot password?" path (`components/password-login.tsx:13`)
+2. the `PasswordLogin` branch behind it
 
-**Every new string reaches all twelve catalogs in the same commit.** H5 is the
-string-heaviest task on this list and this is a commit gate, not a nicety.
+**Every new string reaches all twelve catalogs in the same commit.** This is a
+commit gate, not a nicety.
 
-**AC:** component tests for both variants; a Playwright spec for the gate (the
-pre-auth gate is one of the cases that legitimately needs a real browser, and the
-spec says so at the top); the locked → unlock → session path covered end to end;
-non-hosted flows byte-identical; twelve catalogs.
+**AC:** component tests for both variants; **a Playwright spec covering the
+locked → unlock → session journey against an actually locked server** - the
+component harness always boots unlocked, so that path has no other home, and it
+is the one the redirect race breaks; the fragment stripped from a real address
+bar; a rejected token that does not bounce; non-hosted flows byte-identical;
+twelve catalogs.
 
 ---
 

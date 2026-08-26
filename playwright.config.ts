@@ -132,7 +132,7 @@ export default defineConfig({
 			// Self-contained: drives the pre-token setup wizard + locked gate
 			// against its own server on :3102 (spawned by the spec itself).
 			name: 'auth-gate',
-			testMatch: /master-key-gate\.spec\.ts$/,
+			testMatch: /(master-key-gate|sso-gate)\.spec\.ts$/,
 			fullyParallel: false,
 			workers: 1,
 			use: {

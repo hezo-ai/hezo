@@ -21,6 +21,7 @@ import { ScrollToBottomButton } from '../components/scroll-to-bottom-button';
 import { ScrollToTopButton } from '../components/scroll-to-top-button';
 import { LanguageStep } from '../components/setup/language-step';
 import { CreatePasswordFlow, SetupGate } from '../components/setup/setup-wizard';
+import { SsoRedirect } from '../components/sso-redirect';
 import { StartingScreen } from '../components/starting-screen';
 import { Button } from '../components/ui/button';
 import { PageLogo } from '../components/ui/page-logo';
@@ -38,9 +39,17 @@ import { useScrollToBottom } from '../hooks/use-scroll-to-bottom';
 import { useScrollToTop } from '../hooks/use-scroll-to-top';
 import { useStatus } from '../hooks/use-status';
 import { useShellWebSockets } from '../hooks/use-websocket';
-import { api } from '../lib/api';
+import { type ApiError, api } from '../lib/api';
 import { useI18n, useSyncInstanceLocale } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
+import { queryKeys } from '../lib/query-keys';
+import {
+	hasPendingSsoHandle,
+	hasSsoTokenInFragment,
+	redeemPendingSsoHandle,
+	submitSsoToken,
+	takeSsoTokenFromFragment,
+} from '../lib/sso';
 
 function RootLayout() {
 	return (
@@ -110,6 +119,12 @@ export function UnreachableScreen({
 	);
 }
 
+/** Re-evaluate the gate after a sign-in: the status payload and the session probe. */
+function refreshSession(): void {
+	queryClient.invalidateQueries({ queryKey: queryKeys.status() });
+	queryClient.invalidateQueries({ queryKey: queryKeys.me() });
+}
+
 function AppShell() {
 	const { data: status, isPending, isError, error, errorUpdatedAt, refetch } = useStatus();
 	const navigate = useNavigate();
@@ -129,6 +144,60 @@ function AppShell() {
 			navigate({ to: '/', replace: true });
 		}
 	}, [status?.masterKeyState, navigate]);
+
+	// --- Signing in through an external issuer ---------------------------------
+	//
+	// Two halves, because a locked instance cannot mint a session: the token is
+	// verified on arrival, and what survives until the phrase is entered is a
+	// handle. Both live here rather than inside a gate component so the flow is
+	// one thing to read, and so neither half depends on which gate happens to be
+	// mounted when it fires.
+	// `holding` is the whole reason this is a phase rather than a boolean. Between
+	// the unlock landing and the handle becoming a session there is at least one
+	// render with no session, and a plain "redirect when signed out" would fire in
+	// it - sending the visitor back to the issuer moments before the identity they
+	// already proved was about to be honoured.
+	type SsoPhase = 'idle' | 'exchanging' | 'holding' | 'redeeming' | 'failed';
+	const [ssoError, setSsoError] = useState('');
+	const [ssoPhase, setSsoPhase] = useState<SsoPhase>(() =>
+		hasSsoTokenInFragment() ? 'exchanging' : 'idle',
+	);
+
+	useEffect(() => {
+		const token = takeSsoTokenFromFragment();
+		if (!token) return;
+		setSsoPhase('exchanging');
+		submitSsoToken(token)
+			.then((outcome) => {
+				if (outcome === 'signed-in') {
+					setSsoPhase('idle');
+					refreshSession();
+					return;
+				}
+				// Locked: the gate asks for the phrase, and the effect below turns the
+				// held identity into a session once it is given.
+				setSsoPhase('holding');
+			})
+			.catch((err: ApiError) => {
+				setSsoError(err.message || t('sso.failed'));
+				setSsoPhase('failed');
+			});
+	}, [t]);
+
+	const unlocked = status?.masterKeyState === 'unlocked';
+	useEffect(() => {
+		if (!unlocked || ssoPhase !== 'holding' || !hasPendingSsoHandle()) return;
+		setSsoPhase('redeeming');
+		redeemPendingSsoHandle()
+			.then((redeemed) => {
+				setSsoPhase('idle');
+				if (redeemed) refreshSession();
+			})
+			.catch((err: ApiError) => {
+				setSsoError(err.message || t('sso.failed'));
+				setSsoPhase('failed');
+			});
+	}, [unlocked, ssoPhase, t]);
 
 	// The server is still booting (compiled binary serves the SPA shell during
 	// startup). Show the boot phase and keep polling rather than the bare spinner.
@@ -193,11 +262,23 @@ function AppShell() {
 	if (!me.isError) {
 		return (
 			<SocketProvider token={api.getToken()}>
-				<SetupGate>
+				<SetupGate hosted={!!status.sso}>
 					<ShellLayout />
 				</SetupGate>
 			</SocketProvider>
 		);
+	}
+
+	// An identity is mid-flight. Wait for it rather than redirecting out from
+	// under it - see the phase note above.
+	if (ssoPhase !== 'idle' && ssoPhase !== 'failed') return <Spinner />;
+
+	// An instance with an issuer has no sign-in of its own: signing in happens at
+	// the issuer, which sends the visitor back carrying a token. There is no
+	// password fallback, by design - the wizard never enrolls one on a hosted
+	// instance, and offering a second door would defeat the point of the first.
+	if (status.sso) {
+		return <SsoRedirect issuerUrl={status.sso.issuer_url} error={ssoError} />;
 	}
 
 	// No valid session. `passwordSet` decides how to get one:
