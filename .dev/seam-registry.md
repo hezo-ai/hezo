@@ -35,6 +35,8 @@ rather than here, is how a codebase ends up with two of everything.
 | Text the server writes that names a run (a log line, a chat notice) | `formatRunLink` / `splitRunLinks` (`@hezo/shared`) on the way out, `RunLinkedText` (`packages/web/src/components/`) on the way in |
 | "Did this release stop reading something an instance still sets?" | `REMOVED_ENV_VARS` / `detectRemovedEnvVars` (`config/removed-env.ts`) |
 | Fire-and-forget work | `trackBackground()` (`lib/background.ts`) |
+| A system row in a chat thread, or a task's chat-origin stamp + receipt | `postChatSystemMessage` / `recordChatTaskOrigin` / `postTaskStatusBreadcrumb` (`services/chat-breadcrumbs.ts`) - the writers that have only (db, wsManager); the manager's own turns use its `postSystemMessage` |
+| The suggested-replies trailer contract (parse, caps, strip) | `parseSuggestedReplies` (`@hezo/shared`) - the server parses with it, the web renders what it stored; never a second parser |
 | Paging (lists and large content) | `mcp/paging.ts` |
 | Shared enums, constants, validation run on both sides | `@hezo/shared` (`types/common.ts`) |
 | A resolved operator setting (from the config file or a flag) | `runtimeConfig()` (`config/runtime.ts`) - never a bare `process.env` read, and never into a module-level `const` |

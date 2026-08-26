@@ -482,6 +482,35 @@ describe('surplus idle containers in a working project', () => {
 		expect(removes).toEqual([]);
 	});
 
+	it('leaves a chatting project\u2019s idle members alone until the chat window lapses', async () => {
+		// Chat turns release their member between replies, so to the member-shaped
+		// scan a mid-conversation project reads idle while a person is mid-thought.
+		// The live-chat window (the same one BUSY_PROJECTS_SQL carries) has to bind
+		// this pass too, or the next message pays a cold start two minutes after
+		// the last reply. The pinned-member flag that used to carve this out is
+		// gone; the session row is the structural signal that replaced it.
+		await seedMember('warm', 'idle');
+		await db.query(
+			`INSERT INTO chat_sessions (member_id, team_id, project_id, runtime_type, status, last_activity_at)
+			 VALUES ($1, $2, $3, 'claude_code', 'running', now() - interval '5 minutes')`,
+			[agentId, teamId, projectId],
+		);
+
+		const held = await sweep();
+		expect(held.stops).toEqual([]);
+		expect(held.removes).toEqual([]);
+
+		// The person has genuinely gone: past the chat window the member retires
+		// like any other (the warm-start floor keeps it as the one suspended).
+		await db.query(
+			`UPDATE chat_sessions SET last_activity_at = now() - interval '60 minutes' WHERE team_id = $1`,
+			[teamId],
+		);
+		const lapsed = await sweep();
+		expect(lapsed.stops).toEqual(['warm']);
+		expect(lapsed.removes).toEqual([]);
+	});
+
 	it('keeps exactly one member warm for a fully idle project', async () => {
 		// Both passes answer this the same way now that the warm-start floor lives
 		// in the planner rather than in which pass happened to run.

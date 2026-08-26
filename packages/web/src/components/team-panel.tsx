@@ -54,7 +54,7 @@ function MemberCard({ projectId, agent }: { projectId: string; agent: Agent }) {
 					{agent.is_instance && (
 						<Globe
 							className="h-3 w-3 shrink-0 text-text-3"
-							aria-label="Global agent - works across all projects"
+							aria-label={t('agents.card.globalAgent')}
 						/>
 					)}
 					<AgentStatusLabel
@@ -74,7 +74,9 @@ function MemberCard({ projectId, agent }: { projectId: string; agent: Agent }) {
 				<Tooltip content={t('chat.launcher.label')} side="top">
 					<button
 						type="button"
-						aria-label={isCeo ? t('chat.launcher.label') : `Chat with ${agent.title}`}
+						aria-label={
+							isCeo ? t('chat.launcher.label') : t('agents.card.chatWith', { name: agent.title })
+						}
 						data-testid={`member-card-chat-${agent.slug}`}
 						onClick={(e) => {
 							e.preventDefault();

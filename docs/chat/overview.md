@@ -151,7 +151,8 @@ lives in your browser, per room, and does not survive a page reload.
 Chat is metered like everything else. Each turn's model spend lands on the agent's
 project (the CEO's on HQ), and the containers chat runs in count toward the monthly
 container-hours allowance - the CEO's included. If a budget or the hours allowance
-runs out, the conversation says so in place and picks up again once there is room.
+runs out, the conversation says so in place; send again once there is room and it
+carries on from where you left off.
 See [Budgets & cost control](/docs/concepts/budgets-and-costs).
 
 ## How conversations work across chat apps

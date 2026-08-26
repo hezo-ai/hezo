@@ -23,6 +23,7 @@ describe('074_team_chat migration', () => {
 	let teamId: string;
 	let projectId: string;
 	let memberId: string;
+	let coworkerId: string;
 	let seeded: string[];
 
 	beforeAll(async () => {
@@ -76,6 +77,15 @@ describe('074_team_chat migration', () => {
 			await insert('system', 'Conversation converted to task HQ-4', 'converted_task'),
 			await insert('system', 'Waiting for growth-analyst/HM-336.', 'credential_wait'),
 		];
+
+		// A coworker thread seeded at the old schema: the enum recreate must carry
+		// its kind and the single-stream close must not touch it.
+		const coworker = await h.db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, external_thread_id, kind, title)
+			 VALUES ($1, $2, $3, 'telegram', 'tg-123', 'coworker', 'Growth channel') RETURNING id`,
+			[memberId, teamId, projectId],
+		);
+		coworkerId = coworker.rows[0].id;
 
 		// A pinned-era pool member and its uptime history, seeded before the pin
 		// flag is dropped: the member must survive the drop, the ledger row must
@@ -309,6 +319,57 @@ describe('074_team_chat migration', () => {
 			[roomId],
 		);
 		expect(gone.rows[0].n).toBe(0);
+	});
+
+	it('carries a coworker thread through the enum recreate, open and untouched', async () => {
+		const row = await h.db.query<{ kind: string; closed_at: string | null }>(
+			`SELECT kind::text AS kind, closed_at FROM chat_conversations WHERE id = $1`,
+			[coworkerId],
+		);
+		expect(row.rows[0].kind).toBe('coworker');
+		// The single-stream close targets only open web assistant threads.
+		expect(row.rows[0].closed_at).toBeNull();
+	});
+
+	it('severs last_message_id when its message goes, never the conversation', async () => {
+		const convo = await h.db.query<{ id: string }>(
+			`INSERT INTO chat_conversations (member_id, team_id, project_id, channel, external_thread_id)
+			 VALUES ($1, $2, $3, 'web', 'sever-probe') RETURNING id`,
+			[memberId, teamId, projectId],
+		);
+		const msg = await h.db.query<{ id: string }>(
+			`INSERT INTO chat_messages (conversation_id, role, channel, status, content)
+			 VALUES ($1, 'user', 'web', 'complete', 'soon gone') RETURNING id`,
+			[convo.rows[0].id],
+		);
+		await h.db.query(`UPDATE chat_conversations SET last_message_id = $2 WHERE id = $1`, [
+			convo.rows[0].id,
+			msg.rows[0].id,
+		]);
+		await h.db.query(`DELETE FROM chat_messages WHERE id = $1`, [msg.rows[0].id]);
+		const after = await h.db.query<{ last_message_id: string | null }>(
+			`SELECT last_message_id FROM chat_conversations WHERE id = $1`,
+			[convo.rows[0].id],
+		);
+		expect(after.rows[0].last_message_id).toBeNull();
+	});
+
+	it('allows one General per project, so a second project gets its own', async () => {
+		const team2 = await h.db.query<{ id: string }>(
+			`INSERT INTO teams (name, slug) VALUES ('Second', 'second-team') RETURNING id`,
+		);
+		const project2 = await h.db.query<{ id: string }>(
+			`INSERT INTO projects (team_id, name, slug, task_prefix)
+			 VALUES ($1, 'Second', 'second', 'SE') RETURNING id`,
+			[team2.rows[0].id],
+		);
+		await expect(
+			h.db.query(
+				`INSERT INTO chat_conversations (team_id, project_id, channel, kind, is_general, title)
+				 VALUES ($1, $2, 'web', 'group', true, 'General')`,
+				[team2.rows[0].id, project2.rows[0].id],
+			),
+		).resolves.toBeDefined();
 	});
 
 	it('drops the pool pin flag, keeps the member and the ledger history', async () => {

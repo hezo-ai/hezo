@@ -5,6 +5,7 @@ import {
 	type AgentRuntime,
 	type AiProvider,
 	CEO_AGENT_SLUG,
+	CHAT_MESSAGE_PREVIEW_CHARS,
 	CHAT_WINDOW_RETAIN_MESSAGES,
 	ChatChannel,
 	ChatConversationKind,
@@ -420,13 +421,11 @@ export interface CeoSessionDeps extends RunnerDeps {
  * lock and cost recording all take this shape and never ask which kind.
  */
 interface TurnSession {
-	/**
-	 * `ceo` holds its pinned container and host-side half across turns; `worker`
-	 * builds all of it per turn (a `chat-turn` pool claim, released after) and
-	 * keeps only its `chat_sessions` row between turns.
-	 */
+	/** Which prompt/effort/JWT matrix the turn resolves - lifecycle is identical. */
 	kind: 'ceo' | 'worker';
 	sessionId: string;
+	/** This turn's host-side allocation key (ssh socket, egress proxy, tunnel). */
+	turnId: string;
 	memberId: string;
 	teamId: string;
 	projectId: string;
@@ -552,15 +551,19 @@ interface ConversationRuntime {
 	current: CurrentTurn | null;
 	compaction: Promise<void> | null;
 	compactionAbort: AbortController | null;
-	// In-flight auto-title run for this thread (runs in parallel with the reply,
-	// off its own prompt file). Tracked so a second one never runs concurrently and
-	// so a new turn / close can preempt it.
+	// In-flight auto-title run for this thread (post-reply upkeep in the turn's
+	// still-held container, off its own prompt file). Tracked so a second one
+	// never runs concurrently and so a new turn / close can preempt it.
 	titling: Promise<void> | null;
 	titlingAbort: AbortController | null;
 	// The reply queue behind the latest group message (mention-order, capped).
 	// Identity doubles as the preemption token: a newer message installs its own
 	// array (or null), and the old chain stops the moment it notices.
 	groupQueue: GroupPendingTurn[] | null;
+	// Whether the queued compaction actually began its exec. A compaction parked
+	// behind another thread's exec on the member lock has done nothing yet, so a
+	// preempting send may proceed without waiting out that other thread's exec.
+	compactionStarted: { started: boolean } | null;
 }
 
 /** One queued group reply: the acting agent, and how far its turn has got. */
@@ -595,12 +598,13 @@ export interface ChannelHooks {
 }
 
 /**
- * Owns the single persistent CEO chat session. Unlike a one-shot task run, the
- * session keeps warm resources (egress proxy, ssh socket, MCP token, runtime
- * config) for the HQ container and runs each turn as a one-shot exec with the
- * conversation history composed into the prompt — uniform across every runtime,
- * no held-open process. A new message interrupts an in-flight reply and starts
- * a fresh turn whose prompt already includes the prior message.
+ * Runs every chat turn - the CEO's, a worker DM's, a group reply's - as a
+ * one-shot exec in a pool container claimed for just that turn, with the
+ * conversation history composed into the prompt: uniform across every runtime,
+ * no held-open process and nothing retained between turns but the per-member
+ * `chat_sessions` row. A new message interrupts an in-flight reply (or queues,
+ * on a coworker thread) and starts a fresh turn whose prompt already includes
+ * the prior message.
  */
 export class ChatSessionManager {
 	// Per-conversation turn bookkeeping (lock + in-flight turn + compaction). Keyed
@@ -631,6 +635,11 @@ export class ChatSessionManager {
 	// by the conversations touched in this process's lifetime (one per DM), and
 	// repopulated on every resolve, so a stale entry cannot outlive a read.
 	private convoScopes = new Map<string, string>();
+	// Every in-flight runChatTurn / group chain, whole-promise. `convo.current`
+	// alone cannot cover shutdown: it is cleared before the post-reply upkeep
+	// runs, so an exec could outlive stop() while its session row is closed
+	// under it. Entries remove themselves on settle.
+	private activeTurns = new Set<Promise<unknown>>();
 
 	constructor(private readonly deps: CeoSessionDeps) {}
 
@@ -645,6 +654,13 @@ export class ChatSessionManager {
 		return false;
 	}
 
+	/** Register a whole turn (or group chain) so shutdown can await it. */
+	private trackTurn<T>(promise: Promise<T>): Promise<T> {
+		this.activeTurns.add(promise);
+		promise.catch(() => undefined).finally(() => this.activeTurns.delete(promise));
+		return promise;
+	}
+
 	private getConvoRuntime(conversationId: string): ConversationRuntime {
 		let rt = this.convos.get(conversationId);
 		if (!rt) {
@@ -657,6 +673,7 @@ export class ChatSessionManager {
 				titling: null,
 				titlingAbort: null,
 				groupQueue: null,
+				compactionStarted: null,
 			};
 			this.convos.set(conversationId, rt);
 		}
@@ -785,10 +802,7 @@ export class ChatSessionManager {
 		// A user turn preempts any in-flight background compaction for this thread so
 		// its prompt file and container exec are free, and so the new message is part
 		// of the window the next compaction summarizes.
-		if (convo.compactionAbort) {
-			convo.compactionAbort.abort('interrupted');
-			await convo.compaction?.catch(() => undefined);
-		}
+		await this.preemptCompaction(convo);
 
 		// Preempt an in-flight auto-title run too: this turn re-kicks titling from the
 		// richer window below (if the thread is still untitled), so drop the stale one
@@ -864,12 +878,14 @@ export class ChatSessionManager {
 		// session row, so there is no session to keep healthy, suspend, or
 		// restart when the provider selection moves.
 		const abort = new AbortController();
-		const promise = this.runChatTurn(
-			{ kind: 'ceo', memberId, teamId: DEFAULT_TEAM_ID, projectId },
-			ctx,
-			assistantMessageId,
-			abort,
-			input.injectedContext,
+		const promise = this.trackTurn(
+			this.runChatTurn(
+				{ kind: 'ceo', memberId, teamId: DEFAULT_TEAM_ID, projectId },
+				ctx,
+				assistantMessageId,
+				abort,
+				input.injectedContext,
+			),
 		);
 		convo.current = { assistantMessageId, abort, promise, ctx };
 		return { userMessageId, userMessageIds, assistantMessageId, conversationId };
@@ -1089,10 +1105,7 @@ export class ChatSessionManager {
 		const convo = this.getConvoRuntime(conversationId);
 
 		// Same preemption as the CEO's assistant threads: the newest turn wins.
-		if (convo.compactionAbort) {
-			convo.compactionAbort.abort('interrupted');
-			await convo.compaction?.catch(() => undefined);
-		}
+		await this.preemptCompaction(convo);
 		if (convo.current) {
 			convo.current.abort.abort('interrupted');
 			await convo.current.promise.catch(() => undefined);
@@ -1145,16 +1158,18 @@ export class ChatSessionManager {
 		);
 
 		const abort = new AbortController();
-		const promise = this.runChatTurn(
-			{
-				kind: 'worker',
-				memberId: input.memberId,
-				teamId: input.teamId,
-				projectId: input.projectId,
-			},
-			ctx,
-			assistantMessageId,
-			abort,
+		const promise = this.trackTurn(
+			this.runChatTurn(
+				{
+					kind: 'worker',
+					memberId: input.memberId,
+					teamId: input.teamId,
+					projectId: input.projectId,
+				},
+				ctx,
+				assistantMessageId,
+				abort,
+			),
 		);
 		convo.current = { assistantMessageId, abort, promise, ctx };
 		return { userMessageId, userMessageIds, assistantMessageId, conversationId };
@@ -1195,6 +1210,16 @@ export class ChatSessionManager {
 			if (!acquired) return;
 			try {
 				const { session, teardownTurn } = await this.buildTurnSession(args, acquired.containerId);
+				// The reply row was inserted before the claim, when this process may
+				// not have known the member's session id yet (first turn after boot).
+				// Attribution consumers - the busy predicate's in-flight arm, the
+				// task-origin breadcrumb - key off it, so fill the gap now.
+				await this.deps.db
+					.query(`UPDATE chat_messages SET session_id = $2 WHERE id = $1 AND session_id IS NULL`, [
+						assistantMessageId,
+						session.sessionId,
+					])
+					.catch(() => undefined);
 				try {
 					const status = await this.runTurn(
 						session,
@@ -1208,13 +1233,20 @@ export class ChatSessionManager {
 					// turn is about to be followed by a newer one that would preempt both,
 					// and a failed one would just fail its upkeep execs the same way.
 					// Coworker threads do neither: titled at creation, never compacted.
+					// Upkeep failures are their own: the reply is already delivered, so
+					// they log here rather than reach the catch below, whose fail() is
+					// for turns that died before finalizing.
 					if (
 						status === ChatMessageStatus.Complete &&
 						!abort.signal.aborted &&
 						ctx.kind !== ChatConversationKind.Coworker
 					) {
-						if (args.kind === 'ceo') await this.maybeAutoTitle(session, ctx);
-						await this.maybeCompact(session, ctx);
+						try {
+							if (args.kind === 'ceo') await this.maybeAutoTitle(session, ctx);
+							await this.maybeCompact(session, ctx);
+						} catch (e) {
+							log.warn(`chat post-reply upkeep failed: ${String(e)}`);
+						}
 					}
 				} finally {
 					await teardownTurn();
@@ -1296,7 +1328,19 @@ export class ChatSessionManager {
 						CHAT_CAPACITY_WAIT_NOTICE,
 					);
 				}
-				await new Promise((resolve) => setTimeout(resolve, pollMs));
+				// Wakes on abort so an interrupt (a newer message, a close, shutdown)
+				// is not held for the rest of the poll interval.
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(resolve, pollMs);
+					abort.signal.addEventListener(
+						'abort',
+						() => {
+							clearTimeout(timer);
+							resolve();
+						},
+						{ once: true },
+					);
+				});
 			}
 		}
 	}
@@ -1363,10 +1407,7 @@ export class ChatSessionManager {
 		// queue dies with the message it answered: its responders were resolved
 		// against a "latest message" that no longer is.
 		convo.groupQueue = null;
-		if (convo.compactionAbort) {
-			convo.compactionAbort.abort('interrupted');
-			await convo.compaction?.catch(() => undefined);
-		}
+		await this.preemptCompaction(convo);
 		if (convo.current) {
 			convo.current.abort.abort('interrupted');
 			await convo.current.promise.catch(() => undefined);
@@ -1390,7 +1431,7 @@ export class ChatSessionManager {
 		}));
 		convo.groupQueue = queue;
 		this.broadcastGroupPending(conversationId, queue);
-		trackBackground(this.runGroupQueue(input, ctx, queue));
+		trackBackground(this.trackTurn(this.runGroupQueue(input, ctx, queue)));
 		return {
 			userMessageId,
 			userMessageIds,
@@ -1467,7 +1508,7 @@ export class ChatSessionManager {
 				if (turn.cancelled) continue;
 				turn.started = true;
 				this.broadcastGroupPending(ctx.conversationId, queue);
-				const aborted = await this.runOneGroupTurn(args, ctx, turn);
+				const aborted = await this.runOneGroupTurn(args, ctx, turn, queue);
 				if (aborted || convo.groupQueue !== queue) return;
 			}
 		} finally {
@@ -1483,6 +1524,7 @@ export class ChatSessionManager {
 		args: { teamId: string; projectId: string },
 		ctx: ConversationContext,
 		turn: GroupPendingTurn,
+		queue: GroupPendingTurn[],
 	): Promise<boolean> {
 		const convo = this.getConvoRuntime(ctx.conversationId);
 		// The acting agent's own budget, like its DM turns. A blocked teammate
@@ -1524,6 +1566,20 @@ export class ChatSessionManager {
 			undefined,
 			turn.memberId,
 		);
+		// The budget gate and the insert both awaited: a newer operator message
+		// (or a close, or shutdown) may have replaced the queue in that window,
+		// with nothing registered for it to abort. Re-check before the kick so
+		// the stale turn never streams beside the new queue's first reply.
+		if (convo.groupQueue !== queue) {
+			await this.finalizeMessage(
+				ctx.conversationId,
+				assistantMessageId,
+				ChatMessageStatus.Interrupted,
+				'',
+				null,
+			);
+			return true;
+		}
 		const abort = new AbortController();
 		const promise = this.runChatTurn(
 			{ kind: 'worker', memberId: turn.memberId, teamId: args.teamId, projectId: args.projectId },
@@ -1552,6 +1608,20 @@ export class ChatSessionManager {
 	}
 
 	/** The pending strip's source of truth: every queued turn not yet started or cancelled. */
+	/**
+	 * The replies still queued in a group room, for the GET that (re)opens it -
+	 * without this the pending strip exists only for whoever saw the broadcast,
+	 * and a reload mid-queue shows nothing to see or cancel.
+	 */
+	groupPendingTurns(
+		conversationId: string,
+	): Array<{ memberId: string; slug: string; label: string }> {
+		const queue = this.convos.get(conversationId)?.groupQueue;
+		return (queue ?? [])
+			.filter((t) => !t.started && !t.cancelled)
+			.map((t) => ({ memberId: t.memberId, slug: t.slug, label: t.label }));
+	}
+
 	private broadcastGroupPending(conversationId: string, queue: GroupPendingTurn[]): void {
 		this.broadcastChat(conversationId, {
 			type: WsMessageType.ChatGroupPendingTurns,
@@ -1594,6 +1664,9 @@ export class ChatSessionManager {
 				? AgentEffort.Max
 				: resolveEffort(null, agent.rows[0]?.default_effort ?? null, agent.rows[0]?.slug ?? null);
 		const sessionId = await this.ensureTurnSessionRow(args, selection.runtimeType, containerId);
+		// The turn's own allocation key - see allocateHostSide for why the shared
+		// session id cannot key host-side resources.
+		const turnId = randomUUID();
 		const runUser = await resolveContainerRunUser(this.deps.docker, containerId);
 		const inputs: HostSideInputs = {
 			kind: args.kind,
@@ -1606,10 +1679,11 @@ export class ChatSessionManager {
 			modelOverride: selection.modelOverride,
 			effort,
 		};
-		const allocation = await this.allocateHostSide(sessionId, containerId, runUser, inputs);
+		const allocation = await this.allocateHostSide(sessionId, turnId, containerId, runUser, inputs);
 		const session: TurnSession = {
 			kind: args.kind,
 			sessionId,
+			turnId,
 			memberId: args.memberId,
 			teamId: args.teamId,
 			projectId: args.projectId,
@@ -1626,7 +1700,11 @@ export class ChatSessionManager {
 		return {
 			session,
 			teardownTurn: async () => {
-				allocation.closeTunnel();
+				try {
+					allocation.closeTunnel();
+				} catch (e) {
+					log.warn(`chat turn tunnel close failed: ${String(e)}`);
+				}
 				await allocation.releaseSsh().catch(() => undefined);
 				await allocation.releaseEgress().catch(() => undefined);
 			},
@@ -1666,20 +1744,34 @@ export class ChatSessionManager {
 			this.workerSessions.set(args.memberId, existing.rows[0].id);
 			return existing.rows[0].id;
 		}
-		const inserted = await db.query<{ id: string }>(
-			`INSERT INTO chat_sessions (member_id, team_id, project_id, container_id, runtime_type, status)
-			 VALUES ($1, $2, $3, $4, $5::agent_runtime, $6) RETURNING id`,
-			[
-				args.memberId,
-				args.teamId,
-				args.projectId,
-				containerId,
-				runtimeType,
-				ChatSessionStatus.Running,
-			],
-		);
-		this.workerSessions.set(args.memberId, inserted.rows[0].id);
-		return inserted.rows[0].id;
+		// Two first-ever turns of one member can race this SELECT-then-INSERT;
+		// the singleton index rejects the loser, who adopts the winner's row
+		// instead of failing the turn.
+		try {
+			const inserted = await db.query<{ id: string }>(
+				`INSERT INTO chat_sessions (member_id, team_id, project_id, container_id, runtime_type, status)
+				 VALUES ($1, $2, $3, $4, $5::agent_runtime, $6) RETURNING id`,
+				[
+					args.memberId,
+					args.teamId,
+					args.projectId,
+					containerId,
+					runtimeType,
+					ChatSessionStatus.Running,
+				],
+			);
+			this.workerSessions.set(args.memberId, inserted.rows[0].id);
+			return inserted.rows[0].id;
+		} catch (e) {
+			if ((e as { code?: string }).code !== '23505') throw e;
+			const raced = await db.query<{ id: string }>(
+				`SELECT id FROM chat_sessions WHERE member_id = $1 AND status IN ($2, $3) LIMIT 1`,
+				[args.memberId, ChatSessionStatus.Starting, ChatSessionStatus.Running],
+			);
+			if (!raced.rows[0]) throw e;
+			this.workerSessions.set(args.memberId, raced.rows[0].id);
+			return raced.rows[0].id;
+		}
 	}
 
 	/**
@@ -1694,9 +1786,17 @@ export class ChatSessionManager {
 		if (convo.current || convo.compaction) return;
 		const abort = new AbortController();
 		convo.compactionAbort = abort;
+		const startedFlag = { started: false };
+		convo.compactionStarted = startedFlag;
 		const run = this.memberCompactionLock
 			.catch(() => undefined)
-			.then(() => this.runCompaction(session, ctx, abort));
+			.then(() => {
+				// Aborted while parked behind another thread's exec: nothing ran, so
+				// there is nothing to do - and the preempting send did not wait.
+				if (abort.signal.aborted) return;
+				startedFlag.started = true;
+				return this.runCompaction(session, ctx, abort);
+			});
 		convo.compaction = run;
 		this.memberCompactionLock = run.catch(() => undefined);
 		try {
@@ -1708,7 +1808,20 @@ export class ChatSessionManager {
 		} finally {
 			if (convo.compactionAbort === abort) convo.compactionAbort = null;
 			if (convo.compaction === run) convo.compaction = null;
+			if (convo.compactionStarted === startedFlag) convo.compactionStarted = null;
 		}
+	}
+
+	/**
+	 * Preempt an in-flight background compaction ahead of a user turn. Waits only
+	 * when the compaction's exec actually began - one merely queued behind another
+	 * thread's exec on the member lock sees the abort and no-ops, so the send is
+	 * not held hostage to a neighbouring conversation's compaction.
+	 */
+	private async preemptCompaction(convo: ConversationRuntime): Promise<void> {
+		if (!convo.compactionAbort) return;
+		convo.compactionAbort.abort('interrupted');
+		if (convo.compactionStarted?.started) await convo.compaction?.catch(() => undefined);
 	}
 
 	/**
@@ -1722,24 +1835,21 @@ export class ChatSessionManager {
 		await this.closeOpenSessionRows(ChatSessionStatus.Stopped);
 	}
 
-	/** Abort every in-flight turn (and parallel auto-title run) across all
+	/** Abort every in-flight turn, upkeep exec and group chain across all
 	 * conversations and await them, so no exec outlives a restart/shutdown. */
 	private async abortAllCurrent(reason: string): Promise<void> {
-		const inflight: Promise<unknown>[] = [];
 		for (const convo of this.convos.values()) {
 			// Drop any pending group queue first: the chain checks queue identity
 			// before each turn, so this also stops a chain caught between turns.
 			convo.groupQueue = null;
-			if (convo.current) {
-				convo.current.abort.abort(reason);
-				inflight.push(convo.current.promise.catch(() => undefined));
-			}
-			if (convo.titlingAbort) {
-				convo.titlingAbort.abort(reason);
-				inflight.push(convo.titling?.catch(() => undefined) ?? Promise.resolve());
-			}
+			convo.current?.abort.abort(reason);
+			convo.compactionAbort?.abort(reason);
+			convo.titlingAbort?.abort(reason);
 		}
-		await Promise.all(inflight);
+		// Await the WHOLE turns, not just their exec phase: `convo.current` is
+		// cleared before post-reply upkeep, so only the tracked promises cover a
+		// turn caught titling or compacting in its still-held container.
+		await Promise.allSettled([...this.activeTurns]);
 	}
 
 	/**
@@ -1952,6 +2062,11 @@ export class ChatSessionManager {
 	 */
 	private async abortConversationRuntime(conversationId: string, reason: string): Promise<void> {
 		const rt = this.convos.get(conversationId);
+		if (rt) {
+			// A closed room's pending replies die with it - the running chain
+			// checks this queue's identity before each turn and before each kick.
+			rt.groupQueue = null;
+		}
 		if (rt?.current) {
 			rt.current.abort.abort(reason);
 			await rt.current.promise.catch(() => undefined);
@@ -2064,6 +2179,7 @@ export class ChatSessionManager {
 	 */
 	private async allocateHostSide(
 		sessionId: string,
+		turnId: string,
 		containerId: string,
 		runUser: ContainerRunUser,
 		inputs: HostSideInputs,
@@ -2078,37 +2194,42 @@ export class ChatSessionManager {
 			let sshSocketContainerPath: string | null = null;
 			let sshHostTcpPort = 0;
 			let sshTokenHex: string | null = null;
+			// Keyed by the TURN, not the session: the session row is a per-member
+			// singleton and a member can run two turns at once (the CEO in two
+			// conversations, an agent in a DM and a group room, a turn's upkeep
+			// overlapping the next turn). Session-keyed allocations made the second
+			// turn destroy the first one's live socket and proxy.
 			const sshAgentServer = this.deps.sshAgentServer;
 			if (sshAgentServer) {
-				const socketHostPath = getRunSocketPath(this.deps.dataDir, sessionId);
+				const socketHostPath = getRunSocketPath(this.deps.dataDir, turnId);
 				const allocated = await sshAgentServer.allocateRunSocket(
-					sessionId,
+					turnId,
 					{ teamId: inputs.teamId, agentId: inputs.memberId, label },
 					socketHostPath,
 				);
-				sshSocketContainerPath = `/run/hezo/${sessionId}.sock`;
+				sshSocketContainerPath = `/run/hezo/${turnId}.sock`;
 				sshHostTcpPort = allocated.tcpHostPort;
 				sshTokenHex = allocated.tokenHex;
-				releaseSsh = () => sshAgentServer.releaseRunSocket(sessionId);
+				releaseSsh = () => sshAgentServer.releaseRunSocket(turnId);
 			}
 
 			// Warm egress proxy (secret substitution), allocated once.
 			let egressHost: { host: string; port: number; token: string | null } | null = null;
 			const egressProxy = this.deps.egressProxy;
 			if (egressProxy && this.deps.egressCAPath) {
-				const allocated = await egressProxy.allocateRunProxy(sessionId, {
+				const allocated = await egressProxy.allocateRunProxy(turnId, {
 					teamId: inputs.teamId,
 					agentId: inputs.memberId,
 					projectId: inputs.projectId,
 					label,
-					onConnectorRejection: (event) => this.onConnectorRejection(event, inputs, sessionId),
+					onConnectorRejection: (event) => this.onConnectorRejection(event, inputs, turnId),
 				});
 				egressHost = {
 					host: allocated.proxyHost,
 					port: allocated.proxyPort,
 					token: allocated.token,
 				};
-				releaseEgress = () => egressProxy.releaseRunProxy(sessionId);
+				releaseEgress = () => egressProxy.releaseRunProxy(turnId);
 			}
 
 			// The chat reaches Hezo exactly as an agent run does - one tunnel, its
@@ -2127,8 +2248,8 @@ export class ChatSessionManager {
 				containerId,
 				runUser,
 				files: this.deps.docker.files(containerId, CONTAINER_WORKSPACE_ROOT),
-				configRelPath: join('.hezo', 'tunnel', `${sessionId}.json`),
-				configContainerPath: `${CONTAINER_WORKSPACE_ROOT}/.hezo/tunnel/${sessionId}.json`,
+				configRelPath: join('.hezo', 'tunnel', `${turnId}.json`),
+				configContainerPath: `${CONTAINER_WORKSPACE_ROOT}/.hezo/tunnel/${turnId}.json`,
 				addresses: {
 					mcp: { host: '127.0.0.1', port: this.deps.serverPort },
 					ssh: { host: '127.0.0.1', port: sshHostTcpPort },
@@ -2146,7 +2267,7 @@ export class ChatSessionManager {
 			// dropped tunnel, and the next turn allocates a fresh one anyway - the
 			// CEO's included, now that its turns hold nothing between execs.
 			tunnel.onClosed((why) => {
-				log.warn(`chat turn ${sessionId} lost its tunnel (${why})`);
+				log.warn(`chat turn ${turnId} lost its tunnel (${why})`);
 			});
 			const endpoints = tunnel.endpoints;
 
@@ -2315,7 +2436,7 @@ export class ChatSessionManager {
 		// The session's proxy outlives every turn, and a connector refusal is
 		// reported once per proxy - so each turn starts with a clean slate, or a
 		// connector that stayed broken would be reported on the first turn only.
-		this.deps.egressProxy?.resetConnectorRejections(session.sessionId);
+		this.deps.egressProxy?.resetConnectorRejections(session.turnId);
 		const {
 			write: writePrompt,
 			remove: removePrompt,
@@ -2448,6 +2569,10 @@ export class ChatSessionManager {
 			// the chat breaking; the operator reads the reason in the thread.
 			if (err instanceof ChatCredentialBusyError) log.warn(`CEO chat turn gave up: ${err.message}`);
 			else log.error('CEO chat turn failed', err);
+			// A failed ATTACH is not a dead CLI: a tunnel or stream error can leave
+			// the in-container process running while the member goes back to idle
+			// for the next claim. Reap by this exec's own scope, like an interrupt.
+			this.killAbandonedExec(session, execScopeId);
 			// Discarded usage, kept scrub - same as the interrupted arm.
 			await recoverUsage();
 			await finalize(ChatMessageStatus.Failed, null, (err as Error).message);
@@ -3217,33 +3342,34 @@ export class ChatSessionManager {
 		systemKind?: ChatSystemMessageKind | null;
 		completed: boolean;
 	}): Promise<string> {
-		const r = await this.deps.db.query<{ id: string }>(
-			`INSERT INTO chat_messages
-			   (conversation_id, role, channel, status, content, author_user_id, author_member_id, author_label, session_id, system_kind, completed_at)
-			 VALUES ($1, $2::chat_message_role, $3::chat_channel, $4::chat_message_status, $5, $6, $7, $8, $9, $10, ${input.completed ? 'now()' : 'NULL'})
-			 RETURNING id`,
-			[
-				input.conversationId,
-				input.role,
-				input.channel,
-				input.status,
-				input.content,
-				input.authorUserId ?? null,
-				input.authorMemberId ?? null,
-				input.authorLabel ?? null,
-				input.sessionId ?? null,
-				input.systemKind ?? null,
-			],
-		);
-		// The denormalized tail pointer unread badges compare against - written
-		// with the message so a badge can never point past what exists.
-		await this.deps.db
-			.query(
+		return withTransaction(this.deps.db, async () => {
+			const r = await this.deps.db.query<{ id: string }>(
+				`INSERT INTO chat_messages
+				   (conversation_id, role, channel, status, content, author_user_id, author_member_id, author_label, session_id, system_kind, completed_at)
+				 VALUES ($1, $2::chat_message_role, $3::chat_channel, $4::chat_message_status, $5, $6, $7, $8, $9, $10, ${input.completed ? 'now()' : 'NULL'})
+				 RETURNING id`,
+				[
+					input.conversationId,
+					input.role,
+					input.channel,
+					input.status,
+					input.content,
+					input.authorUserId ?? null,
+					input.authorMemberId ?? null,
+					input.authorLabel ?? null,
+					input.sessionId ?? null,
+					input.systemKind ?? null,
+				],
+			);
+			// The denormalized tail pointer unread badges compare against - written
+			// with the message, inside the same transaction, so the two cannot
+			// disagree; a failure fails the message rather than silently un-pointing.
+			await this.deps.db.query(
 				`UPDATE chat_conversations SET last_message_id = $2, last_activity_at = now() WHERE id = $1`,
 				[input.conversationId, r.rows[0].id],
-			)
-			.catch(() => undefined);
-		return r.rows[0].id;
+			);
+			return r.rows[0].id;
+		});
 	}
 
 	private async finalizeMessage(
@@ -3262,11 +3388,16 @@ export class ChatSessionManager {
 				? parseSuggestedReplies(content)
 				: { body: content, replies: null };
 		content = parsed.body;
-		await this.deps.db.query(
+		// Terminal states are sticky: only an in-flight row may be finalized, so a
+		// late failure path (an upkeep error, a teardown throw) can never rewrite
+		// an already-delivered reply to failed-and-empty. A no-match means someone
+		// finalized first; skip the broadcast too, or it would contradict theirs.
+		const updated = await this.deps.db.query(
 			`UPDATE chat_messages
 			 SET status = $2::chat_message_status, content = $3, input_tokens = $4, output_tokens = $5,
 			     cost_cents = $6, error = $7, suggested_replies = $8::jsonb, completed_at = now()
-			 WHERE id = $1`,
+			 WHERE id = $1 AND status IN ($9::chat_message_status, $10::chat_message_status)
+			 RETURNING id`,
 			[
 				messageId,
 				status,
@@ -3276,8 +3407,11 @@ export class ChatSessionManager {
 				usage?.costCents ?? 0,
 				error ?? null,
 				parsed.replies ? JSON.stringify(parsed.replies) : null,
+				ChatMessageStatus.Streaming,
+				ChatMessageStatus.Pending,
 			],
 		);
+		if (updated.rows.length === 0) return;
 		await this.touchConversation(conversationId);
 		this.broadcastChat(conversationId, {
 			type: WsMessageType.ChatMessageComplete,
@@ -3368,7 +3502,15 @@ export class ChatSessionManager {
 		// HQ-only viewer must not receive another team's conversation traffic.
 		const teamId = this.convoScopes.get(conversationId);
 		if (teamId && teamId !== DEFAULT_TEAM_ID) {
-			this.deps.wsManager.broadcast(wsRoom.chatTeam(teamId), { ...message });
+			// The signal room drives list ordering, previews and unread badges, so
+			// it gets the list's row width: a preview-sized slice, never the whole
+			// body. Whoever has the room open is in the conversation room above and
+			// received the full copy.
+			const slim =
+				'content' in message && typeof message.content === 'string'
+					? { ...message, content: message.content.slice(0, CHAT_MESSAGE_PREVIEW_CHARS) }
+					: { ...message };
+			this.deps.wsManager.broadcast(wsRoom.chatTeam(teamId), slim);
 		} else {
 			this.deps.wsManager.broadcast(wsRoom.chat(), { ...message });
 		}

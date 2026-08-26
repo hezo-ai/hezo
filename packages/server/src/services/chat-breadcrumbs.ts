@@ -9,6 +9,7 @@ import {
 	wsRoom,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
+import { withTransaction } from '../lib/sql';
 import type { AuthInfo } from '../lib/types';
 import { logger } from '../logger';
 import type { WebSocketManager } from './ws';
@@ -41,17 +42,22 @@ export async function postChatSystemMessage(
 	);
 	const row = convo.rows[0];
 	if (!row) return null;
-	const inserted = await db.query<{ id: string; created_at: string }>(
-		`INSERT INTO chat_messages (conversation_id, role, channel, status, content, system_kind, completed_at)
-		 VALUES ($1, $2::chat_message_role, 'web', $3::chat_message_status, $4, $5, now())
-		 RETURNING id, created_at`,
-		[conversationId, ChatMessageRole.System, ChatMessageStatus.Complete, content, kind],
-	);
-	const messageId = inserted.rows[0].id;
-	await db.query(
-		`UPDATE chat_conversations SET last_message_id = $2, last_activity_at = now() WHERE id = $1`,
-		[conversationId, messageId],
-	);
+	// One transaction: the row and the tail pointer the unread badges compare
+	// against must agree, or a crash between the two leaves the badge pointing
+	// at a message that is not the newest.
+	const { messageId, createdAt } = await withTransaction(db, async () => {
+		const inserted = await db.query<{ id: string; created_at: string }>(
+			`INSERT INTO chat_messages (conversation_id, role, channel, status, content, system_kind, completed_at)
+			 VALUES ($1, $2::chat_message_role, 'web', $3::chat_message_status, $4, $5, now())
+			 RETURNING id, created_at`,
+			[conversationId, ChatMessageRole.System, ChatMessageStatus.Complete, content, kind],
+		);
+		await db.query(
+			`UPDATE chat_conversations SET last_message_id = $2, last_activity_at = now() WHERE id = $1`,
+			[conversationId, inserted.rows[0].id],
+		);
+		return { messageId: inserted.rows[0].id, createdAt: inserted.rows[0].created_at };
+	});
 	if (wsManager) {
 		const message = {
 			type: WsMessageType.ChatMessageStart,
@@ -60,7 +66,7 @@ export async function postChatSystemMessage(
 			role: ChatMessageRole.System,
 			channel: 'web',
 			content,
-			createdAt: inserted.rows[0].created_at,
+			createdAt,
 			systemKind: kind,
 		};
 		wsManager.broadcast(wsRoom.chatConversation(conversationId), { ...message });

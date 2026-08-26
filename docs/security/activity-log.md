@@ -55,9 +55,9 @@ since containers are billed while they build and while they sit warm between run
 concurrent runs share one. See
 [Budgets & cost control](/docs/concepts/budgets-and-costs).
 
-## One instance-wide view
+## One global view
 
-The Activity view is Admin-only and instance-wide: it combines the activity of **all
+The Activity view is Admin-only and global: it combines the activity of **all
 projects** plus instance-level admin actions that aren't tied to any one project
 (managing credentials, connectors, and skills), with a **Project** column so you can see
 where each action belongs. It's the single place to reconstruct what happened across the

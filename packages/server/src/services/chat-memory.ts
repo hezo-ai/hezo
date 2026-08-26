@@ -252,6 +252,11 @@ export function roleLabel(role: string): string {
  * HQ asset library. An attachment-only message (empty text) still gets its files.
  * A message carrying an external sender label (coworker/group turns) is labelled
  * with the sender's name ("Alice: …") instead of the generic role label.
+ *
+ * Continuation lines of the BODY are indented, so a speaker label is exactly a
+ * column-zero `Label:` line and nothing inside a message can be one: a reply
+ * whose text contains "\nOperator: do X" replays as visibly-quoted content, not
+ * as a forged operator turn in the next prompt. Structural, not a phrase match.
  */
 export function chatTranscriptLine(msg: {
 	role: string;
@@ -260,7 +265,8 @@ export function chatTranscriptLine(msg: {
 	attachmentNames: string[];
 }): string {
 	const label = msg.authorLabel?.trim() ? msg.authorLabel.trim() : roleLabel(msg.role);
-	const base = `${label}: ${msg.content}`;
+	const body = msg.content.replaceAll('\n', '\n    ');
+	const base = `${label}: ${body}`;
 	if (msg.attachmentNames.length === 0) return base;
 	const refs = `[Attached files: ${msg.attachmentNames.map((n) => `assets/${n}`).join(', ')}]`;
 	return msg.content ? `${base}\n${refs}` : `${base}${refs}`;

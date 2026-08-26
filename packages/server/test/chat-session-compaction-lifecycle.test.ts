@@ -528,30 +528,36 @@ describe('ChatSessionManager — warm resources (ssh bridge + egress) and lifecy
 		);
 		const sessionId = session.rows[0].id;
 		expect(session.rows[0].status).toBe(ChatSessionStatus.Running);
-		expect(ssh.calls.allocated).toEqual([sessionId]);
-		expect(egress.calls.allocated).toEqual([sessionId]);
+		// Keyed per TURN, never by the shared session row: a member can run two
+		// turns at once, and session-keyed allocations would let the second turn
+		// destroy the first one's live socket and proxy.
+		expect(ssh.calls.allocated).toHaveLength(1);
+		expect(ssh.calls.allocated[0]).not.toBe(sessionId);
+		expect(egress.calls.allocated).toEqual(ssh.calls.allocated);
 		// Nothing is held between turns: the host side is given back with the turn,
 		// not at stop. Finalize lands before teardown, so poll for the release.
 		await poll(async () => ssh.calls.released.length === 1);
-		expect(ssh.calls.released).toEqual([sessionId]);
+		expect(ssh.calls.released).toEqual(ssh.calls.allocated);
 		await poll(async () => egress.calls.released.length === 1);
 
-		// The turn exec carries the warm-resource env: the per-session agent socket
+		// The turn exec carries the warm-resource env: the turn's own agent socket
 		// and the egress proxy plus its CA bundle pointers.
 		const env = chat.envByKind.get('turn') ?? [];
-		expect(env).toContain(`SSH_AUTH_SOCK=/run/hezo/${sessionId}.sock`);
+		expect(env).toContain(`SSH_AUTH_SOCK=/run/hezo/${ssh.calls.allocated[0]}.sock`);
 		// The chat reaches its egress proxy on container loopback through the
 		// turn's own tunnel, exactly as an agent run does.
 		expect(env.some((e: string) => /^HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+$/.test(e))).toBe(true);
 		expect(env).toContain('NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/hezo-egress.crt');
 
 		// A second turn reuses the session ROW (same JWT anchor) but allocates its
-		// own host side and gives it back again.
+		// own distinct host side and gives it back again.
 		const second = await manager.sendTurn({ text: 'again' });
 		await waitComplete(ctx, second.assistantMessageId);
-		expect(ssh.calls.allocated).toEqual([sessionId, sessionId]);
+		expect(ssh.calls.allocated).toHaveLength(2);
+		expect(ssh.calls.allocated[1]).not.toBe(ssh.calls.allocated[0]);
 		await poll(async () => ssh.calls.released.length === 2);
 		await poll(async () => egress.calls.released.length === 2);
+		expect([...ssh.calls.released].sort()).toEqual([...ssh.calls.allocated].sort());
 
 		await manager.stop();
 		const stopped = await ctx.db.query<{ status: string }>(

@@ -147,6 +147,14 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 		if (room.projectSlug !== projectSlug) return;
 		if (!projectGroups.some((g) => g.id === room.conversationId)) selectRoom(CEO_ROOM);
 	}, [open, room, roomsLoaded, projectGroups, projectSlug, selectRoom]);
+	// And for a remembered agent DM whose agent has since been fired: the roster
+	// list no longer carries it, its history read 404s, and a send would fail -
+	// so it falls back like a dead thread or room does.
+	useEffect(() => {
+		if (!open || room.kind !== 'agent' || !roomsLoaded) return;
+		if (room.projectSlug !== projectSlug) return;
+		if (!projectRooms.some((r) => r.slug === room.agentSlug)) selectRoom(CEO_ROOM);
+	}, [open, room, roomsLoaded, projectRooms, projectSlug, selectRoom]);
 
 	// The dock renders nothing while closed: the header monogram is the launcher.
 	if (!open) return null;

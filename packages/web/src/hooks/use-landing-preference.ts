@@ -2,6 +2,7 @@ import { HQ_PROJECT_SLUG } from '@hezo/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryKeys } from '../lib/query-keys';
+import { toast } from './use-toast';
 
 /**
  * What the app opens on. `adaptive` is the shipped behaviour - the full-page
@@ -33,6 +34,11 @@ export function useLandingPreference() {
 			}),
 		onSuccess: (settings) => {
 			queryClient.setQueryData(queryKeys.landingPreference(), settings);
+		},
+		// Response-driven means the control does not move until the server agrees,
+		// so a failed save with no message reads as a dead control.
+		onError: (error: { message?: string }) => {
+			toast.error(error?.message ?? 'Failed to save the landing preference');
 		},
 	});
 

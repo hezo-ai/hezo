@@ -151,3 +151,24 @@ CREATE INDEX idx_container_pool_members_idle
 -- container_uptime_entries.reserved_for_chat stays: those rows are recorded
 -- history from the pinned-container era, and a migration never discards user
 -- data. New rows simply default it to false.
+
+-- Indexes for the queries this feature runs per request, and for the FK
+-- back-references its deletes must chase.
+--
+-- The group-room list filters (project, kind='group', open) and pages keyset on
+-- (created_at, id); a partial composite serves both the filter and the order.
+CREATE INDEX idx_chat_conversations_groups
+    ON chat_conversations (project_id, created_at, id)
+    WHERE kind = 'group' AND closed_at IS NULL;
+
+-- The three ON DELETE SET NULL references added above are chased row-by-row
+-- when their target is deleted (every chat_messages delete scans for pointers
+-- to it; every conversation delete scans tasks). Referencing-side indexes keep
+-- boot repair's placeholder sweep and project deletion off sequential scans.
+CREATE INDEX idx_chat_conversations_last_message
+    ON chat_conversations (last_message_id);
+CREATE INDEX idx_chat_conversation_reads_last_read
+    ON chat_conversation_reads (last_read_message_id);
+CREATE INDEX idx_tasks_origin_chat_conversation
+    ON tasks (origin_chat_conversation_id)
+    WHERE origin_chat_conversation_id IS NOT NULL;

@@ -3,6 +3,7 @@ import {
 	ATTACHMENT_MAX_BYTES,
 	AuthType,
 	CAPTAIN_AGENT_SLUG,
+	CHAT_MESSAGE_PREVIEW_CHARS,
 	CHAT_UPLOADS_FOLDER,
 	ChatChannel,
 	ChatSystemMessageKind,
@@ -60,7 +61,7 @@ async function resolveProjectAgent(
 // The project's DM list: one row per enabled roster agent, with its open
 // conversation (when one exists), a bounded preview of the newest message, and
 // the caller's unread bit. Drives the project menu's chat cards and the dock
-// switcher. Bounded in rows by the roster and in width by the 140-char
+// switcher. Bounded in rows by the roster and in width by the preview-char
 // preview; the full message set comes from the single-conversation read.
 projectChatRoutes.get('/projects/:projectId/chat/conversations', async (c) => {
 	const teamId = c.get('teamId') as string;
@@ -70,12 +71,12 @@ projectChatRoutes.get('/projects/:projectId/chat/conversations', async (c) => {
 	// HQ's roster is the instance singletons; its chat surface is the global CEO
 	// chat, not a per-project DM list.
 	if (teamId === DEFAULT_TEAM_ID) {
-		return ok(c, { conversations: [], groups: [], groups_next_cursor: null });
+		return ok(c, { team_id: teamId, conversations: [], groups: [], groups_next_cursor: null });
 	}
 	const rows = await c.get('db').query<Record<string, unknown>>(
 		`SELECT m.id AS member_id, ma.slug, ma.title, m.display_name,
 		        c2.id AS conversation_id, c2.last_activity_at, c2.last_message_id,
-		        LEFT(lm.content, 140) AS last_message_preview,
+		        LEFT(lm.content, ${CHAT_MESSAGE_PREVIEW_CHARS}) AS last_message_preview,
 		        lm.role::text AS last_message_role,
 		        (c2.last_message_id IS NOT NULL
 		          AND ($3::uuid IS NULL OR r.last_read_message_id IS DISTINCT FROM c2.last_message_id)
@@ -107,7 +108,7 @@ projectChatRoutes.get('/projects/:projectId/chat/conversations', async (c) => {
 	const groupLimit = 50;
 	const groupRows = await c.get('db').query<Record<string, unknown> & { id: string }>(
 		`SELECT g.id, g.title, g.is_general, g.created_at, g.last_activity_at, g.last_message_id,
-		        LEFT(lm.content, 140) AS last_message_preview,
+		        LEFT(lm.content, ${CHAT_MESSAGE_PREVIEW_CHARS}) AS last_message_preview,
 		        lm.role::text AS last_message_role,
 		        COALESCE(lm.author_label, '') AS last_message_author,
 		        (g.last_message_id IS NOT NULL
@@ -144,6 +145,9 @@ projectChatRoutes.get('/projects/:projectId/chat/conversations', async (c) => {
 		encodeCursor(new Date(row.created_at as string).toISOString(), row.id),
 	);
 	return ok(c, {
+		// The team's chat signal room is keyed by this - the client joins
+		// `chat:team:<id>` off the list it renders badges for.
+		team_id: teamId,
 		conversations: rows.rows,
 		groups: page.data,
 		groups_next_cursor: page.meta.next_cursor,
@@ -427,6 +431,9 @@ projectChatRoutes.get('/projects/:projectId/chat/groups/:conversationId', async 
 		conversation_id: group.id,
 		title: group.title,
 		is_general: group.is_general,
+		// Replay of the pending strip: broadcasts only reach whoever was
+		// subscribed when the queue changed.
+		pending_turns: c.get('chatSessionManager')?.groupPendingTurns(group.id) ?? [],
 		participants: participants.rows,
 		messages: messages.rows.map((r) => ({
 			...r,

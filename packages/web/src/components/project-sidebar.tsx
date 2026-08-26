@@ -157,8 +157,8 @@ export function ProjectSidebar({
 			},
 		},
 		// HQ (internal) exposes Documents (the chatbox memory doc) and Assets (where
-		// the CEO saves files it produces for the operator in chat); Budget and
-		// Settings stay hidden below.
+		// the CEO saves files it produces for the operator in chat); its Team &
+		// Budget link is added below, and only Settings stays hidden.
 		{
 			to: '/projects/$projectId/documents',
 			params: projectParams,
@@ -172,10 +172,9 @@ export function ProjectSidebar({
 		// Team & Budget replaces the old Budget entry and the Team link section:
 		// the roster now lives on that page's Team tab. The link lands on Team.
 		...(isInternal
-			? // HQ has no Spend and no Settings, but it does hold the CEO/Coach
-				// singletons and the assistant chat's container - which is metered like
-				// any other. Container stays at the top level, after Connectors and
-				// Skills.
+			? // HQ has no Settings, but it does hold the CEO/Coach singletons and
+				// the instance-scoped Hours allowance on its Budget page. Container
+				// stays at the top level, after Connectors and Skills.
 				[
 					{
 						to: '/projects/$projectId/budget/team' as const,

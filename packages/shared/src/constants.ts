@@ -245,7 +245,7 @@ export function chatContainerReservationGb(ramCapGb: number): number {
 /**
  * How much of the configured budget **task-run** admission may fill, in GB.
  *
- * Every running container - the assistant's pinned one included - is charged
+ * Every running container - one held by a chat turn included - is charged
  * against the configured total; what differs is the ceiling each workload admits
  * against. Task runs admit only up to this figure, one container's worth short
  * of the total; chat turns admit against the full total. The gap is the floating
@@ -467,6 +467,13 @@ export const CONTAINER_IDLE_TIMEOUT_MIN = 2;
  * project falls back to the ordinary window immediately.
  */
 export const CHAT_IDLE_TIMEOUT_MIN = 15;
+
+/**
+ * Width cap for a chat message preview on list-shaped surfaces: the room list's
+ * `last_message_preview` column and the per-team signal room's boundary events.
+ * One constant so the pushed preview can never be wider than the fetched one.
+ */
+export const CHAT_MESSAGE_PREVIEW_CHARS = 140;
 
 /**
  * How long a member must have sat idle before another **project** may reclaim it

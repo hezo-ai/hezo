@@ -378,8 +378,9 @@ per-task session state for compaction across heartbeats. `chat_sessions` /
 chat) — generically named so the schema is first-class for a chat with any agent:
 a conversation carries `member_id` (the agent) + `team_id` + `project_id`, a session
 the same, and a message an `author_member_id` (the responding agent). `chat_message_attachments`
-links files sent through the chatbox to their message (stored in the HQ asset library
-under `uploads/chat/`), and `chat_memories` holds automatically-maintained long-term
+links files sent through the chatbox to their message (stored under `uploads/chat/` in
+the owning project's asset library - HQ's for the CEO stream, the project's own for a
+DM or group room), and `chat_memories` holds automatically-maintained long-term
 memory in exactly one scope per row (`chat_memories_one_scope`): `member_id` for an
 agent's DM memory (§ 4), `conversation_id` for a group room's shared memory.
 Migration 074 adds the team-chat columns: `chat_conversations.last_message_id`
@@ -494,7 +495,11 @@ settled yet, which is what made the post-reply wait read as the chat being stuck
 DM's — claims a pool container as a `'chat-turn'` for the duration of one exec and
 releases it after; the host-side half (`allocateHostSide`: ssh agent socket, egress
 proxy, tunnel, per-turn env and exec command) is built for that turn and given back in
-`teardownTurn`. There is therefore no pinned member, no session health check, no
+`teardownTurn`. Those allocations are keyed by a per-turn id, never by the shared
+`chat_sessions` row id: the session is a per-member singleton and a member can run two
+turns at once (the CEO in two conversations, an agent in a DM and a group room, a
+turn's upkeep overlapping the next turn), so a session-keyed allocation would let the
+second turn destroy the first one's live socket and proxy. There is therefore no pinned member, no session health check, no
 suspend/resume parking and no teardown-on-container-loss: a container that dies or is
 reclaimed between turns costs nothing (the next turn simply claims another), and one
 that dies mid-turn fails that turn's bubble like any exec error. The `chat_sessions`
@@ -683,7 +688,7 @@ ran bills a full bucket of uptime. Enforcement is a monthly allowance
 memory check since reclaiming a neighbour's idle container frees GB and never hours, and a
 project with a spare container is exempt from both. The same answer gates the acquire
 ladder itself for every workload, chat included (`PoolHoursExhaustedError` on a create,
-resume or reclaim decision, and on the chat-pin resume rung above the ladder). The cap
+resume or reclaim decision). The cap
 read short-circuits before the ledger is scanned, so an instance with no cap pays nothing
 on the dispatch path.
 
@@ -1126,9 +1131,9 @@ alone, whereas HQ — home of the always-on CEO/Coach — should run whenever th
 The live CEO chat (`chat-session-manager.ts`) also provisions it on demand as a fallback. Turns
 are **serialized** (a `turnLock` chain) so concurrent sends can't each spawn a turn — a newer
 message interrupts the in-flight reply (kept as `interrupted`) and only the latest streams. No
-turn survives a process restart, so `reconcileOnStartup` clears orphaned non-terminal
-`chat_messages` (deletes empty `streaming`/`pending` placeholders, marks partial ones
-`interrupted`) — an abandoned turn never lingers as a stuck "thinking" bubble.
+turn survives a process restart, so `ChatSessionManager.reconcileDatabaseOnStartup` clears
+orphaned non-terminal `chat_messages` (deletes empty `streaming`/`pending` placeholders,
+marks partial ones `interrupted`) — an abandoned turn never lingers as a stuck "thinking" bubble.
 
 **Chatbox message queue (client-side) + the batched turn it flushes.** The composer stays usable
 while a reply streams. Enter (or a tap of the send button) **queues** into a per-thread list held
@@ -1196,8 +1201,8 @@ row, then background acquire retries on the runner's 5s cadence until a containe
 the park deadline fails the turn. The budget check fails open on infrastructure errors: a
 broken gate must not brick the operator's control surface.
 
-HQ also exposes the standard **assets library** — the one internal-project surface that
-isn't hidden in the UI (Budget/Settings still are). Files the CEO produces for the operator
+HQ also exposes the standard **assets library**, alongside its Team & Budget page (the
+Team/Budget/Hours tabs; only Settings stays hidden on the internal project). Files the CEO produces for the operator
 in the live chat (a quick mockup, demo, or export) are saved via `write_project_asset` and
 linked back as `assets/<filename>`, so they are durable and openable over a signed URL rather
 than stranded as loose files in the container's `/workspace`. The CEO scopes such a
@@ -2124,7 +2129,12 @@ and a fresh one be built.
   members matched neither and pinned the budget indefinitely. The warm-start floor now lives
   in the planner, where it is a property of the plan rather than of which pass ran: one
   member is held back and suspended only when nothing else - a busy, suspended or pinned
-  member - could serve the project's next run.
+  member - could serve the project's next run. A project inside the live-chat window (a
+  `starting`/`running` chat session with recent activity - the same predicate
+  `BUSY_PROJECTS_SQL` carries) is excluded from the stale-member scan entirely: chat
+  turns release their member between replies, so a mid-conversation project reads idle
+  here while a person is mid-thought, and retiring the warm member would make their next
+  message pay a cold start.
 - **Cross-project reclaim** (`planCrossProjectReclaim`, the `reclaim` rung of
   `selectPoolMember`). Closes the gap in between: rather than queue behind memory a
   neighbour is demonstrably not using, a blocked acquire retires enough of other projects'

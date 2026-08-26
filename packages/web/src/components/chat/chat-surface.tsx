@@ -284,7 +284,7 @@ export function ChatSurface({
 		: armed
 			? 'Send now - stops the current reply'
 			: !canInterrupt
-				? 'Queue - sends when the reply finishes'
+				? t('chat.composer.queueHint')
 				: coarsePointer
 					? 'Queue - hold to send now'
 					: 'Queue (Enter) - hold, or Cmd/Ctrl Enter, to send now';
@@ -522,7 +522,7 @@ export function ChatSurface({
 								uploading={uploading}
 								errors={errors}
 								onRemove={removeAttachment}
-								projectId={room.kind === 'agent' ? room.projectSlug : hq?.slug}
+								projectId={roomProjectSlug ?? hq?.slug}
 								rowTestId="chat-attachment-row"
 								chipTestId="chat-attachment-chip"
 								previewTestId="chat-attachment-preview"
@@ -695,12 +695,13 @@ function QueuedMessages({
 	queue: readonly import('../../hooks/use-chat').QueuedChatMessage[];
 	onRemove: (id: string) => void;
 }) {
+	const { t } = useI18n();
 	return (
 		<div className="flex flex-col gap-1.5" data-testid="chat-queue">
 			<span className="text-eyebrow self-end px-1 text-purple-soft-fg">
-				Up next{' '}
+				{t('chat.queue.upNext')}{' '}
 				<span className="font-normal normal-case tracking-normal text-text-3">
-					sends when the reply finishes
+					{t('chat.queue.hint')}
 				</span>
 			</span>
 			{queue.map((m) => (
@@ -1023,12 +1024,13 @@ function ToolActivity({ tool }: { tool: string }) {
  * stand in for the (otherwise empty) bubble until the first tokens land.
  */
 function TypingIndicator({ label, tool }: { label: string; tool?: string | null }) {
+	const { t } = useI18n();
 	return (
 		<div
 			className="flex max-w-[90%] flex-col gap-1.5"
 			data-testid="chat-typing"
 			role="status"
-			aria-label={`${label} is typing`}
+			aria-label={t('chat.typing', { name: label })}
 		>
 			<RoleLabel>{label}</RoleLabel>
 			<span className="flex min-w-0 items-center gap-2 px-1">
@@ -1044,12 +1046,13 @@ function TypingIndicator({ label, tool }: { label: string; tool?: string | null 
  * working after the first tokens have already landed.
  */
 function StreamingDots({ label, tool }: { label: string; tool?: string | null }) {
+	const { t } = useI18n();
 	return (
 		<span
 			className="flex min-w-0 items-center gap-2 px-1 pt-0.5"
 			data-testid="chat-streaming-dots"
 			role="status"
-			aria-label={`${label} is still typing`}
+			aria-label={t('chat.stillTyping', { name: label })}
 		>
 			<Dots />
 			{tool && <ToolActivity tool={tool} />}

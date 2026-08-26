@@ -24,7 +24,8 @@ you can see exactly where spend is going from the budget view.
 **Chat turns are counted too.** A reply in the assistant chat bills its tokens the
 same way a run does, under the replying agent and its project, and an agent or
 project at its budget limit pauses in chat as well: the thread shows a notice, and
-the conversation resumes when the window rolls over or you raise the limit.
+the conversation carries on with your next message once the window rolls over or
+you raise the limit.
 
 Model pricing ships built in and refreshes daily from
 [pricepertoken.com](https://pricepertoken.com), so rates stay current without any

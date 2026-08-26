@@ -93,9 +93,9 @@ export interface ActiveContainers {
 	 * many containers fit depends on the mix of their sizes, so the number is not
 	 * stable enough to mean anything to an operator or to gate on.
 	 *
-	 * The assistant's pinned container counts like any other while it is up: chat
-	 * is metered, not exempt. Suspending it - the idle path - gives its memory
-	 * back, exactly as suspending a task member does.
+	 * A member held by a chat turn counts like any other busy one: chat is
+	 * metered, not exempt. Suspending an idle member gives its memory back,
+	 * whatever workload last used it.
 	 */
 	usedMemoryGb: number;
 	/**
@@ -175,8 +175,8 @@ export async function getActiveContainers(
 				// belongs to is carried through because that is where its memory cap
 				// lives.
 				//
-				// The member pinned for the assistant chat counts like any other: chat
-				// is metered, not exempt, and its guarantee is the lane the task-run
+				// A member a chat turn holds counts like any other busy one: chat is
+				// metered, not exempt, and its guarantee is the lane the task-run
 				// ceiling holds back ({@link ActiveContainers.budgetGb}), not an
 				// exclusion here. Excluding it *and* holding the lane back would
 				// reserve the same memory twice.
@@ -198,7 +198,7 @@ export async function getActiveContainers(
 			),
 			db.query<{ project_id: string }>(
 				// A project is spare-capable if it has an idle pool member a run may
-				// take - never one that is busy, reserved for the chat, or out of disk -
+				// take - never one that is busy or out of disk -
 				// or, while the pool is not yet populated for it, a running container of
 				// its own, which is today's one-container-per-project behaviour.
 				// Each member is judged against its own recorded ceiling rather than a
@@ -220,11 +220,10 @@ export async function getActiveContainers(
 				// records no state, so a container known only there cannot be shown to be
 				// idle, and retiring one on a guess would kill a live run.
 				//
-				// The chat's pinned member is excluded even though it now counts in
-				// `usedMemoryGb`: retiring it would free real budget, but the pin means a
-				// session is parked on that filesystem, and reclaim must never trade a
-				// person's conversation for a task run. The idle-suspend pass is the one
-				// that gives its memory back.
+				// A member a chat turn released is reclaimable like any other idle one:
+				// warmth is a convenience, and a starved neighbour's real work outranks
+				// it. (The idle-stop pass, by contrast, does wait out a live chat's
+				// window - nothing there is asking for the memory right now.)
 				//
 				// Served by `idx_container_pool_members_idle`.
 				`SELECT project_id, memory_bytes FROM container_pool_members
@@ -292,13 +291,8 @@ export async function getActiveContainers(
  *
  * `>=` rather than `>`: at exactly the cap the allowance is spent, and admitting
  * one more container would put the instance over a figure the operator chose.
- *
- * Exported for the one caller that needs the answer before it has an
- * {@link ActiveContainers}: the chat-pin reuse rung, which resumes a suspended
- * container ahead of the ladder and must not start uptime the allowance no
- * longer covers.
  */
-export async function hoursQuotaExhausted(db: Db): Promise<boolean> {
+async function hoursQuotaExhausted(db: Db): Promise<boolean> {
 	const capHours = await getMonthlyContainerHours(db);
 	if (capHours <= 0) return false;
 	return (await monthToDateContainerSeconds(db)) >= capHours * 3600;

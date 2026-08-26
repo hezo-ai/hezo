@@ -189,7 +189,7 @@ that's the single global default every agent uses unless it has its own model ov
 
 Adding a connection does **not** make it the default - use the star for that. Once you do,
 every agent on the default runs on the new provider from its next run, including a live
-CEO chat, which restarts itself onto it.
+CEO chat, whose next reply simply runs on it.
 
 The default is a choice, not a preference. If the credential you designated stops being
 usable - the key gets revoked and shows as **invalid**, say - runs on the default fail and

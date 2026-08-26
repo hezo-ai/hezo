@@ -85,6 +85,8 @@ interface ConversationData {
 	title?: string | null;
 	is_general?: boolean;
 	participants?: GroupParticipant[];
+	/** Group rooms only: replies still queued behind the latest message. */
+	pending_turns?: GroupPendingTurn[];
 }
 
 /**
@@ -138,11 +140,31 @@ function writeStoredUnread(count: number): void {
 }
 
 /**
+ * How many CEO-room surfaces are on screen right now. The dock is only one of
+ * them - the fresh-instance landing (and the chat landing preference) render
+ * the same room full-pane with the dock closed - and a reply the operator is
+ * watching stream in is not unread. Module-level because the badge and the
+ * surfaces are separate component trees.
+ */
+const ceoSurfaces = { count: 0, listeners: new Set<() => void>() };
+
+function registerCeoSurface(): () => void {
+	ceoSurfaces.count += 1;
+	for (const l of ceoSurfaces.listeners) l();
+	return () => {
+		ceoSurfaces.count -= 1;
+		for (const l of ceoSurfaces.listeners) l();
+	};
+}
+
+/**
  * The CEO-reply unread tally for the header monogram. Lives beside the widget
  * rather than inside `useChat` because its one consumer — the header badge —
  * renders whether or not the dock is mounted open. Joins the global HQ room
- * for its lifetime; a completed CEO reply while the dock is closed bumps it,
- * opening the dock clears it.
+ * for its lifetime; a completed CEO reply while no CEO surface is on screen
+ * bumps it, and any CEO surface appearing (the dock, the full-pane landing)
+ * clears it. A visible surface also holds the conversation's own room, whose
+ * duplicate Complete copy would otherwise double-count every reply.
  */
 export function useCeoUnread(chatOpen: boolean): number {
 	const { subscribe, joinRoom, leaveRoom } = useSocket();
@@ -156,6 +178,19 @@ export function useCeoUnread(chatOpen: boolean): number {
 		}
 	}, [chatOpen]);
 	useEffect(() => {
+		const clearWhenVisible = () => {
+			if (ceoSurfaces.count > 0) {
+				setUnread(0);
+				writeStoredUnread(0);
+			}
+		};
+		ceoSurfaces.listeners.add(clearWhenVisible);
+		clearWhenVisible();
+		return () => {
+			ceoSurfaces.listeners.delete(clearWhenVisible);
+		};
+	}, []);
+	useEffect(() => {
 		const room = wsRoom.chat();
 		joinRoom(room);
 		return () => leaveRoom(room);
@@ -163,7 +198,8 @@ export function useCeoUnread(chatOpen: boolean): number {
 	useEffect(() => {
 		return subscribe(WsMessageType.ChatMessageComplete, (raw) => {
 			const m = raw as WsChatMessageCompleteMessage;
-			if (m.status !== ChatMessageStatus.Complete || openRef.current) return;
+			if (m.status !== ChatMessageStatus.Complete || openRef.current || ceoSurfaces.count > 0)
+				return;
 			setUnread((n) => {
 				const next = n + 1;
 				writeStoredUnread(next);
@@ -307,30 +343,61 @@ export function useChatConversations(active: boolean) {
  */
 export function useProjectChatRooms(projectSlug: string | null | undefined, active: boolean) {
 	const queryClient = useQueryClient();
-	const { subscribe } = useSocket();
+	const { subscribe, joinRoom, leaveRoom } = useSocket();
 	const enabled = !!projectSlug && active;
 	const query = useQuery({
 		queryKey: queryKeys.projectChatRooms(projectSlug ?? ''),
-		queryFn: () =>
-			api.get<{
+		queryFn: async () => {
+			// The switcher and the menu cards render EVERY room, so walk the group
+			// cursor to the end rather than silently stopping at page one - a page
+			// the list never shows is the exact bug the paging rule names. Bounded:
+			// pages are 50 rooms and the walk stops at 20 (a thousand rooms).
+			const first = await api.get<{
+				team_id?: string;
 				conversations: ProjectChatRoomSummary[];
 				groups?: ProjectChatGroupSummary[];
-			}>(`/api/projects/${projectSlug}/chat/conversations`),
+				groups_next_cursor?: string | null;
+			}>(`/api/projects/${projectSlug}/chat/conversations`);
+			let cursor = first.groups_next_cursor ?? null;
+			const groups = [...(first.groups ?? [])];
+			for (let pages = 0; cursor && pages < 20; pages++) {
+				const next = await api.get<{
+					groups?: ProjectChatGroupSummary[];
+					groups_next_cursor?: string | null;
+				}>(
+					`/api/projects/${projectSlug}/chat/conversations?group_cursor=${encodeURIComponent(cursor)}`,
+				);
+				groups.push(...(next.groups ?? []));
+				cursor = next.groups_next_cursor ?? null;
+			}
+			return { ...first, groups };
+		},
 		enabled,
 	});
-	// Any boundary event for one of this project's conversations changes its
-	// ordering, preview or unread state — refetch the list. The events arrive on
-	// rooms other surfaces already hold open (the conversation's own room, the
-	// team signal room the sidebar joins).
+	// The team's chat signal room is where the server fans this project's
+	// boundary events (start/complete) for exactly this list's benefit - the
+	// per-conversation rooms carry only the one open room. Keyed by the team
+	// UUID the list itself reports (rooms are UUID-keyed; URLs are slugs).
+	const teamId = query.data?.team_id ?? null;
+	useEffect(() => {
+		if (!enabled || !teamId) return;
+		const room = wsRoom.chatTeam(teamId);
+		joinRoom(room);
+		return () => leaveRoom(room);
+	}, [enabled, teamId, joinRoom, leaveRoom]);
+	// Any boundary event changes ordering, preview or unread state — refetch the
+	// list. Rename/close events land as conversation-updated.
 	useEffect(() => {
 		if (!enabled) return;
 		const invalidate = () =>
 			queryClient.invalidateQueries({ queryKey: queryKeys.projectChatRooms(projectSlug ?? '') });
 		const offStart = subscribe(WsMessageType.ChatMessageStart, invalidate);
 		const offComplete = subscribe(WsMessageType.ChatMessageComplete, invalidate);
+		const offUpdated = subscribe(WsMessageType.ChatConversationUpdated, invalidate);
 		return () => {
 			offStart();
 			offComplete();
+			offUpdated();
 		};
 	}, [enabled, projectSlug, subscribe, queryClient]);
 	return {
@@ -383,8 +450,11 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 	// assistant placeholder) while the server warms the container, so the operator
 	// gets immediate feedback instead of a blank. Cleared when the real user
 	// message arrives over WS, or when the send settles (incl. failure). It's a
-	// list because a flushed queue sends several messages as one turn.
-	const [pending, setPending] = useState<{
+	// list because a flushed queue sends several messages as one turn, and it is
+	// tagged with the room it was sent in so switching rooms mid-send never
+	// renders (or busies) the bubble in the wrong room.
+	const [pendingSend, setPendingSend] = useState<{
+		roomKey: string;
 		at: string;
 		messages: OutboundChatMessage[];
 	} | null>(null);
@@ -413,6 +483,15 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		setGroupNudge(false);
 	}, [queueKey]);
 
+	// A visible CEO room - the dock's or the full-pane landing's - suppresses
+	// and clears the header monogram's unread tally: the operator is watching
+	// these replies arrive.
+	const isCeoSurface = active && room.kind === 'ceo';
+	useEffect(() => {
+		if (!isCeoSurface) return;
+		return registerCeoSurface();
+	}, [isCeoSurface]);
+
 	const query = useQuery({
 		queryKey,
 		queryFn: () => api.get<ConversationData>(conversationUrl(room)),
@@ -420,6 +499,14 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		staleTime: Number.POSITIVE_INFINITY,
 		refetchOnWindowFocus: false,
 	});
+	// Replay the pending strip from the read: broadcasts only reach whoever was
+	// subscribed when the queue changed, so a room opened (or reloaded)
+	// mid-queue would otherwise show nothing to see or cancel.
+	const seededPendingTurns = query.data?.pending_turns;
+	useEffect(() => {
+		if (room.kind === 'group' && seededPendingTurns) setPendingTurns(seededPendingTurns);
+	}, [room.kind, seededPendingTurns]);
+
 	// Track the server-resolved conversation id so WS events can be filtered.
 	resolvedIdRef.current =
 		query.data?.conversation_id ??
@@ -436,10 +523,31 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		return () => leaveRoom(r);
 	}, [joinRoom, leaveRoom, resolvedConversationId]);
 
+	// The room's own first send, still in flight: the only window in which an
+	// unresolved room may accept (and anchor to) broadcast events.
+	const awaitingFirstSendRef = useRef(false);
+
+	// A cached tail stuck in a non-terminal state means the settle event landed
+	// while another room was shown (events patch only the visible room, and this
+	// cache never goes stale on its own). Refetch on activation so a switched-
+	// back room shows the server's truth instead of eternal typing dots - and a
+	// reply genuinely still streaming simply resumes from the refetched row.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: run on room activation
+	useEffect(() => {
+		if (!active) return;
+		const cached = queryClient.getQueryData<ConversationData>(queryKey);
+		const tail = cached?.messages[cached.messages.length - 1];
+		if (tail && tail.role === 'assistant' && tail.status === 'streaming') {
+			queryClient.invalidateQueries({ queryKey });
+		}
+	}, [active, queueKey, queryClient]);
+
 	// Server-side read watermark: while the room is open, the newest message is
 	// what the operator has seen. Written only when the tail actually moves, and
 	// never for the operator's own just-sent message (their bubble is not
-	// "unread" anywhere). Fire-and-forget — a failed mark costs a stale badge.
+	// "unread" anywhere). Fire-and-forget — a failed mark costs a stale badge,
+	// but a landed one refreshes the room list so its unread dot clears now
+	// rather than on the next unrelated event.
 	const lastMarkedRef = useRef<string | null>(null);
 	const serverMessagesForMark = query.data?.messages;
 	useEffect(() => {
@@ -451,8 +559,15 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 			.post(`/api/chat/conversations/${resolvedConversationId}/read`, {
 				last_read_message_id: tail.id,
 			})
+			.then(() => {
+				if (room.kind === 'agent' || room.kind === 'group') {
+					queryClient.invalidateQueries({
+						queryKey: queryKeys.projectChatRooms(room.projectSlug),
+					});
+				}
+			})
 			.catch(() => undefined);
-	}, [active, resolvedConversationId, serverMessagesForMark]);
+	}, [active, resolvedConversationId, serverMessagesForMark, room, queryClient]);
 
 	// queryKey is derived from the room; the string key is the stable identity.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: queryKey identity is the room key
@@ -464,16 +579,22 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		};
 		// A message belongs to this room when its conversationId matches the
 		// resolved id. A room that has no conversation yet (a fresh agent DM)
-		// accepts the first events unfiltered — its conversation is being created
-		// by this very send, and the refetch below re-anchors the id.
-		const forThisRoom = (cid?: string): boolean =>
-			!cid || !resolvedIdRef.current || cid === resolvedIdRef.current;
+		// accepts events only while its OWN first send is in flight - that send is
+		// what creates the conversation. Without the gate, any HQ event on the
+		// always-joined global room (a CEO reply from another device, a task
+		// breadcrumb) would render in the empty DM and anchor it to the CEO's
+		// conversation for good.
+		const forThisRoom = (cid?: string): boolean => {
+			if (!cid) return true;
+			if (resolvedIdRef.current) return cid === resolvedIdRef.current;
+			return awaitingFirstSendRef.current;
+		};
 		const offStart = subscribe(WsMessageType.ChatMessageStart, (raw) => {
 			const m = raw as WsChatMessageStartMessage;
 			if (!forThisRoom(m.conversationId)) return;
 			// The real user message landed — drop the optimistic placeholder so the
 			// server rows (user + streaming assistant) take over without duplicating.
-			if (m.role === 'user') setPending(null);
+			if (m.role === 'user') setPendingSend((p) => (p && p.roomKey === queueKey ? null : p));
 			// A fresh DM's first send creates its conversation server-side; anchor
 			// the cache to it so later events filter correctly.
 			queryClient.setQueryData<ConversationData>(queryKey, (prev) =>
@@ -592,10 +713,6 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		onError: (error: { message?: string }) => {
 			toast.error(error?.message ?? 'Failed to send message');
 		},
-		// Clear the optimistic placeholder once the request settles — on success the
-		// WS user-message event has already cleared it; on failure this drops the
-		// unsent bubble.
-		onSettled: () => setPending(null),
 	});
 
 	// Cancel one still-queued group reply (a chip on the pending strip). The
@@ -609,13 +726,19 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 				{ member_id: memberId },
 			);
 		},
+		// A failed or raced cancel must not die silently while the chip stays lit.
+		onError: (error: { message?: string }) => {
+			toast.error(error?.message ?? 'Failed to cancel the reply');
+		},
 	});
 
 	const serverMessages = query.data?.messages ?? [];
 	// Append the optimistic user bubbles + a pending assistant "thinking"
-	// placeholder while a send is in flight. A group room skips the assistant
-	// placeholder: who replies (or that nobody does) is the server's call, and
-	// the pending strip is that answer.
+	// placeholder while a send is in flight - only in the room the send belongs
+	// to, so flipping rooms mid-send never shows (or busies) the wrong room. A
+	// group room skips the assistant placeholder: who replies (or that nobody
+	// does) is the server's call, and the pending strip is that answer.
+	const pending = pendingSend && pendingSend.roomKey === queueKey ? pendingSend : null;
 	const messages: ChatMessage[] =
 		pending !== null
 			? [
@@ -651,10 +774,21 @@ export function useChat(active: boolean, room: ChatRoom = CEO_ROOM) {
 		(batch: OutboundChatMessage[]) => {
 			if (batch.length === 0) return Promise.resolve();
 			setGroupNudge(false);
-			setPending({ at: new Date().toISOString(), messages: batch });
-			return mutateAsync(batch);
+			const sentKey = queueKey;
+			if (!resolvedIdRef.current) awaitingFirstSendRef.current = true;
+			setPendingSend({ roomKey: sentKey, at: new Date().toISOString(), messages: batch });
+			return mutateAsync(batch, {
+				// Clear the optimistic placeholder once the request settles — on
+				// success the WS user-message event has already cleared it; on failure
+				// this drops the unsent bubble. Keyed to the SENDING room, whatever
+				// room is shown by then.
+				onSettled: () => {
+					awaitingFirstSendRef.current = false;
+					setPendingSend((p) => (p && p.roomKey === sentKey ? null : p));
+				},
+			});
 		},
-		[mutateAsync],
+		[mutateAsync, queueKey],
 	);
 
 	/**

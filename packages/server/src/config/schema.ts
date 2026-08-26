@@ -169,6 +169,11 @@ const REJECTED_KEYS: Record<string, string> = {
 	reset:
 		'"reset" wipes the embedded database, so a config file carrying it would wipe on every ' +
 		'restart. Pass --reset on the one invocation that should start fresh.',
+	// A removed mechanism, not a typo: without this entry the strict parse says
+	// "Unrecognized key: chat" and the operator goes hunting for a spelling.
+	chat:
+		'the pinned chat container and its health check were removed - chat replies now borrow ' +
+		'a task container per reply, so there is nothing to configure. Delete the "chat" block.',
 };
 
 /** A config-file validation failure, already formatted for an operator to read. */

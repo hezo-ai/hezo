@@ -45,7 +45,6 @@ import { ensureProjectRepos } from './repo-sync';
 import {
 	CAPACITY_PARK_QUEUED_REASON,
 	getActiveContainers,
-	hoursQuotaExhausted,
 	projectContainerMemoryGb,
 	reclaimableForOthers,
 } from './run-concurrency';
@@ -1246,14 +1245,13 @@ export type ContainerWorkload = 'task-run' | 'chat-turn';
  * per-project lifecycle lock, and re-deciding if another acquire won the race for
  * the same member.
  *
- * **The chat comes through here too, and that is the point.** It used to take
- * whatever `projects.container_id` named, which under a pool may be a member
- * currently serving a task run - so the chat pinned it and executed turns on it,
- * two workloads sharing one memory cap, which is precisely the shared-fate
- * failure the pool exists to remove. Routing it through the same ladder is what
- * guarantees the container it pins is one nothing else is using. Both callers
- * take the same per-project lifecycle lock, so a task run cannot claim a member
- * between the chat deciding on it and pinning it.
+ * **Chat turns come through here too, and that is the point.** Chat used to
+ * take whatever `projects.container_id` named, which under a pool may be a
+ * member currently serving a task run - two workloads sharing one memory cap,
+ * which is precisely the shared-fate failure the pool exists to remove.
+ * Routing every chat turn through the same ladder is what guarantees the
+ * member it claims is one nothing else is using, and the claim itself (busy
+ * for one exec) is what keeps anything else off it until release.
  */
 export async function acquireRunContainer(
 	deps: ContainerDeps,
@@ -1883,10 +1881,13 @@ export async function isProjectIdleForContainerStop(
  * warm-start floor now lives in `planSurplusIdleRetirement`, where it is a
  * property of the plan rather than of which pass ran, so this can be total.
  *
- * The chat's pinned member is excluded - it counts against the budget, but a
- * session is parked on that filesystem, and the surplus pass must not trade a
- * person's conversation for headroom. The whole-project idle pass suspends it
- * once its session goes quiet. Served by `idx_container_pool_members_idle`.
+ * A project mid-conversation is excluded: chat turns release their member
+ * between replies, so to this pass a chatting project looks idle while a person
+ * is mid-thought - and retiring the warm member makes their next message pay a
+ * cold start. The predicate is the same live-chat window `BUSY_PROJECTS_SQL`
+ * carries (a live session, recent activity), a structural signal rather than
+ * the old pinned-member flag. The table it reads is one small row per member.
+ * Served by `idx_container_pool_members_idle`.
  */
 const STALE_IDLE_MEMBER_SQL = (extraSql: string, limitSql: string) => `
 	SELECT m.container_id, m.project_id, p.slug, p.team_id
@@ -1894,6 +1895,12 @@ const STALE_IDLE_MEMBER_SQL = (extraSql: string, limitSql: string) => `
 	  JOIN projects p ON p.id = m.project_id
 	 WHERE m.state = 'idle'
 	   AND m.last_released_at < now() - ($1 * interval '1 minute')
+	   AND NOT EXISTS (
+	     SELECT 1 FROM chat_sessions cs
+	      WHERE cs.project_id = m.project_id
+	        AND cs.status IN ('starting', 'running')
+	        AND cs.last_activity_at > now() - (${CHAT_IDLE_TIMEOUT_MIN} * interval '1 minute')
+	   )
 	   ${extraSql}
 	 ORDER BY m.last_released_at
 	 ${limitSql}
