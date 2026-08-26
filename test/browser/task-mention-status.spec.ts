@@ -93,10 +93,15 @@ test.describe('Task mention — status pill tooltip & terminal strikethrough', (
 		// Hover opens the Radix tooltip; the status pill lives inside its portal
 		// content. Scope to the role="tooltip" panel — Radix also renders a hidden
 		// aria duplicate of the content that carries the same testId.
-		await mention.hover();
 		const tooltip = page.getByRole('tooltip');
 		const pill = tooltip.getByTestId('task-mention-status-pill');
-		await expect(pill).toBeVisible({ timeout: 20_000 });
+		// Re-hover on retry rather than waiting longer on one hover: a relayout
+		// after the pointer settles fires pointerleave under a stationary pointer,
+		// and a tooltip closed that way never opens again on its own.
+		await expect(async () => {
+			await mention.hover();
+			await expect(pill).toBeVisible({ timeout: 2_000 });
+		}).toPass({ timeout: 20_000 });
 		await expect(pill).toHaveText('Cancelled');
 		// The tooltip prefixes the task title with the bold task identifier.
 		await expect(tooltip).toContainText(
