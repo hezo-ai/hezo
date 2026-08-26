@@ -5868,7 +5868,7 @@ default 04:30). Two deliberately narrow jobs:
   cleared blocker re-queues it) and must never be swept.
 
 **Storage abstraction & transactions.** All app code takes the `Db` interface
-(`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
+(`query`/`exec`/`transaction`/`close`); the drivers live in
 `src/db/drivers/` (`PgliteDb`, `PostgresDb`) and are constructed only by
 `src/db/open.ts:openDatabase()` at startup. `Db.transaction(cb)` pins the block's
 connection in AsyncLocalStorage, so closed-over `db.query` calls inside the block join
