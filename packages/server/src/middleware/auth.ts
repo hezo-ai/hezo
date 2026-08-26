@@ -23,6 +23,9 @@ const PUBLIC_PATHS = [
 	// signature. Both are token-keyed and self-authenticating.
 	'/api/auth/password-challenge',
 	'/api/auth/password-verify',
+	// Self-authenticating: an issuer signature, then a single-use handle.
+	'/api/auth/sso',
+	'/api/auth/sso/session',
 	// Set/change the password verifier. Public path but self-authenticating: it
 	// accepts either a full session JWT or a password-setup-scoped JWT and checks
 	// the bearer itself (the scoped token is rejected everywhere else).
