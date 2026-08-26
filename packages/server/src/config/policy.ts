@@ -12,14 +12,17 @@
  * old object. This file is plain JSON, re-read from disk, and swaps one slice.
  *
  * **The writer renames into place.** `<file>.tmp` then `rename()` is atomic on
- * POSIX, so a watcher can never observe a half-written file. A deployment that
- * writes in place instead will occasionally hand us a truncated read - which is
- * why a bad parse keeps the last good value rather than clearing the policy.
- * Clearing would silently unpin every limit the deployment is billing for.
+ * POSIX, so a watcher can never observe a half-written file. That write pattern
+ * is also why the watch is on the containing directory rather than on the file
+ * itself - see `watchPolicyFile`. A deployment that writes in place instead will
+ * occasionally hand us a truncated read, which is why a bad parse keeps the last
+ * good value rather than clearing the policy. Clearing would silently unpin
+ * every limit the deployment is billing for.
  */
 
 import type { FSWatcher } from 'node:fs';
 import { readFileSync, watch } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { logger } from '../logger';
 import { setPolicy } from './runtime';
 import { policySchema } from './schema';
@@ -64,23 +67,28 @@ export function loadPolicy(path: string | undefined): PolicyConfig | null | unde
 }
 
 /**
- * Watch the policy file and swap the slice when it changes.
+ * Watch for a new policy file and swap the slice when one lands.
  *
- * Coalesced on a short timer: an atomic rename fires `rename` and can fire
- * `change` besides, and a deployment that writes then chmods fires twice more.
- * Re-reading four times is harmless but logs four times, which reads as
- * thrashing.
+ * **Watches the containing directory, not the file.** A watch on the file is
+ * bound to that file's inode, and the atomic `rename()` the writer is told to
+ * use replaces the *directory entry* while leaving the old inode untouched - so
+ * a file watch never fires for the one write pattern this is built around. The
+ * directory entry is what changes, so the directory is what is watched, and
+ * events for anything else in it are filtered out by name.
  *
- * Watches the file rather than its directory, which means a rename replaces the
- * inode and can end the watch. Re-arming on every event is what keeps it alive
- * across the atomic-rename case the writer is supposed to use.
+ * Coalesced on a short timer: one rename fires more than once, and a deployment
+ * that writes then chmods fires more again. Re-reading four times is harmless
+ * but logs four times, which reads as thrashing.
  */
+const RELOAD_DEBOUNCE_MS = 150;
+
 export function watchPolicyFile(path: string | undefined): { close: () => void } {
 	if (!path) return { close: () => {} };
 
+	const directory = dirname(path);
+	const name = basename(path);
 	let watcher: FSWatcher | null = null;
 	let timer: ReturnType<typeof setTimeout> | null = null;
-	let closed = false;
 
 	const reload = () => {
 		const next = readPolicyFile(path);
@@ -93,29 +101,21 @@ export function watchPolicyFile(path: string | undefined): { close: () => void }
 		);
 	};
 
-	const arm = () => {
-		if (closed) return;
-		try {
-			watcher?.close();
-			watcher = watch(path, () => {
-				if (timer) clearTimeout(timer);
-				timer = setTimeout(() => {
-					reload();
-					// Re-arm after a rename swapped the inode out from under the watch.
-					arm();
-				}, 150);
-			});
-		} catch (err) {
-			// A file that does not exist yet is not an error: a deployment may write
-			// it after the server is up. Nothing is pinned until it does.
-			log.warn(`could not watch the policy file at ${path}: ${(err as Error).message}`);
-		}
-	};
+	try {
+		watcher = watch(directory, (_event, changed) => {
+			// The name is absent on some platforms. Reload rather than miss a change.
+			if (changed !== null && changed !== name) return;
+			if (timer) clearTimeout(timer);
+			timer = setTimeout(reload, RELOAD_DEBOUNCE_MS);
+		});
+	} catch (err) {
+		// A directory that does not exist yet is not an error: a deployment may
+		// create it after the server is up. Nothing is pinned until it does.
+		log.warn(`could not watch for a policy file at ${path}: ${(err as Error).message}`);
+	}
 
-	arm();
 	return {
 		close: () => {
-			closed = true;
 			if (timer) clearTimeout(timer);
 			watcher?.close();
 			watcher = null;

@@ -9,6 +9,7 @@
  * get a JSON 503 STARTING so they retry.
  */
 
+import { ssoStatus } from './lib/sso-status';
 import type { StartupFailureRecord } from './startup-failure';
 import type { StartupProgress } from './startup-progress';
 import type { StaticAsset } from './static-assets';
@@ -76,6 +77,9 @@ export async function serveStartupRequest(
 			message,
 			detail,
 			version: HEZO_VERSION,
+			// Config is resolved before anything starts, so the gate can already
+			// know what it will be offered and need not re-decide once boot ends.
+			...ssoStatus(),
 			...(deps.lastFailure ? { last_failure: deps.lastFailure } : {}),
 		});
 	}

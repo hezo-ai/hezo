@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import type { SandboxBackend } from '@hezo/shared';
 import {
 	CONNECTOR_CAPABILITIES,
 	DEFAULT_DATA_DIR,
@@ -39,7 +40,7 @@ export interface DatabaseConfig {
 	 * `lib/db-info.ts`) and never passed into `buildApp`.
 	 */
 	url?: string;
-	/** Pool size for an external database (2-100). Ignored for the embedded one. */
+	/** Pool size for an external database (1-100). Ignored for the embedded one. */
 	poolSize: number;
 }
 
@@ -264,7 +265,40 @@ export interface PolicyConfig {
 		defaultRamCapPerContainerGb?: number;
 		defaultContainerDiskGb?: number;
 		monthlyContainerHours?: number;
+		/** Which container backend runs agent containers. A name, not a number. */
+		backend?: SandboxBackend;
 	};
+}
+
+/**
+ * Single sign-on from an external control plane.
+ *
+ * The issuer proves *who* is signing in. It never proves, carries or obtains
+ * the unlock key: an instance that accepts a valid token is still locked, and
+ * still asks for the passphrase. Null when no issuer is configured, which
+ * leaves the whole mechanism inert.
+ */
+export interface SsoConfig {
+	/** The control plane a user is sent back to, and shown on the gate. */
+	issuerUrl: string;
+	/**
+	 * Accepted issuer keys as a `kid:hex` list. A list rather than one key so an
+	 * issuer can rotate without a flag day: publish both, move minting to the new
+	 * one, then drop the old.
+	 */
+	issuerPublicKey: string;
+	/**
+	 * Where signing out goes. Ending the instance's session is not enough: the
+	 * issuer still has one, and would sign the person straight back in.
+	 *
+	 * Signing out ends a session. It does not re-lock the instance - the master
+	 * key stays in memory until the process restarts, as it always has.
+	 */
+	logoutUrl: string;
+	/** The one issuer-side account allowed in. Hosted is one account per instance. */
+	ownerSubject: string;
+	/** What a token's `aud` must equal, configured rather than read off the request. */
+	audience: string;
 }
 
 export interface HezoConfig {
@@ -289,6 +323,8 @@ export interface HezoConfig {
 	github: GithubConfig;
 	jobs: JobsConfig;
 	logCompaction: LogCompactionConfig;
+	/** The configured SSO issuer, or null when sign-in is local only. */
+	sso: SsoConfig | null;
 	/**
 	 * Settings fixed by the deployer, or null when nothing is. Loaded from its own
 	 * file (`policyFile`) rather than the main config, so it can be reloaded on a
@@ -341,6 +377,7 @@ export const DEFAULT_CONFIG: HezoConfig = {
 	open: true,
 
 	policy: null,
+	sso: null,
 
 	database: { poolSize: 10 },
 	assetStorage: {},

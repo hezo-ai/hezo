@@ -134,8 +134,7 @@ postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require
 
 - **Same region as the server** - Hezo's scheduling polls every 1-5 seconds, so keep
   round-trip latency low. Same-VPC/private networking is ideal.
-- **Use the direct or session-pooled connection**, never a transaction-mode pooler
-  (PgBouncer in transaction mode breaks the locks Hezo uses to coordinate migrations).
+- **Any connection mode works** - direct, session-pooled, or transaction-pooled.
 - **Use TLS** - `sslmode=require` encrypts the connection but does not verify the
   server's certificate. For verified TLS use `sslmode=verify-full`, adding
   `&sslrootcert=/etc/hezo/db-ca.crt` if your provider signs with its own CA (most do).
@@ -205,9 +204,8 @@ The concrete version for a DigitalOcean Droplet deployed with the snippet above:
 
 1. **Database:** create a [Managed PostgreSQL](https://www.digitalocean.com/products/managed-databases)
    cluster in the **same region** as the Droplet. On the cluster's overview, pick the
-   **direct connection** details (host, port `25060`, user, password, database) - not the
-   **connection pool** (DO's pools default to transaction mode, which Hezo can't use;
-   if you do want a pool, create one in **session** mode). Your URL looks like:
+   **direct connection** details (host, port `25060`, user, password, database), or a
+   **connection pool** in session or transaction mode. Your URL looks like:
 
    ```
    postgres://doadmin:PASSWORD@db-postgresql-fra1-12345-do-user-0.db.ondigitalocean.com:25060/defaultdb?sslmode=require
@@ -234,11 +232,9 @@ The concrete version for a DigitalOcean Droplet deployed with the snippet above:
 
 ### Serverless Postgres (Neon, Supabase, …)
 
-Serverless Postgres providers work too, with the same two rules: keep the database in
-the **same region** as your server, and connect through the **direct or session-pooled**
-endpoint - not a transaction-mode pooler (for Supabase that means the session pooler or
-direct connection, not the transaction pooler; for Neon, the standard connection
-string is fine).
+Serverless Postgres providers work too. The rule that matters is to keep the database in
+the **same region** as your server; their direct, session-pooled and transaction-pooled
+endpoints all work.
 
 ## How the HTTPS URL works
 

@@ -885,6 +885,10 @@ export function resolveConfig(
 		policy:
 			loadPolicy(file.policyFile ? resolve(file.policyFile) : undefined) ?? file.policy ?? null,
 
+		// File-only, and deliberately not a flag: an issuer key list on the command
+		// line is visible in the process table to every account on the box.
+		sso: file.sso ?? null,
+
 		reset,
 		masterKey: masterKeyRaw ? parseMasterKey(masterKeyRaw) : undefined,
 		configPath,

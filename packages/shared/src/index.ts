@@ -8,6 +8,7 @@ export * from './credentials/placeholder.js';
 export * from './credentials/suggest-allowed-hosts.js';
 export * from './crypto/auth.js';
 export * from './crypto/mnemonic.js';
+export * from './crypto/sso.js';
 export * from './documents/injected-text-caps.js';
 export * from './documents/text.js';
 export * from './i18n/format.js';

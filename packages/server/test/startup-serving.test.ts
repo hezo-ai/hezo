@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { resetRuntimeConfig, runtimeConfig, setRuntimeConfig } from '../src/config/runtime';
 import type { StartupProgress } from '../src/startup-progress';
 import { serveStartupRequest } from '../src/startup-serving';
 import type { StaticAsset } from '../src/static-assets';
@@ -66,6 +67,35 @@ describe('serveStartupRequest (pre-ready handler)', () => {
 		expect(body.last_failure?.phase).toBe('migrations');
 		expect(body.last_failure?.version).toBe('0.36.0');
 		expect(body.last_failure?.message).toContain('out of disk');
+	});
+
+	// The gate polls this while the server boots, and has to know what it will be
+	// offered before it can render anything.
+	it('names the SSO issuer while still booting, and omits it when there is none', async () => {
+		const base = runtimeConfig();
+		try {
+			setRuntimeConfig({
+				...base,
+				sso: {
+					issuerUrl: 'https://control.example',
+					logoutUrl: 'https://control.example/logout',
+					issuerPublicKey: `k1:${'a'.repeat(64)}`,
+					ownerSubject: 'acct-1',
+					audience: 'alice.control.example',
+				},
+			});
+			const withIssuer = await serveStartupRequest(req('/api/status'), withBundle(null));
+			expect(((await withIssuer.json()) as { sso?: Record<string, string> }).sso).toEqual({
+				issuer_url: 'https://control.example',
+				logout_url: 'https://control.example/logout',
+			});
+
+			setRuntimeConfig({ ...base, sso: null });
+			const without = await serveStartupRequest(req('/api/status'), withBundle(null));
+			expect(Object.hasOwn((await without.json()) as object, 'sso')).toBe(false);
+		} finally {
+			resetRuntimeConfig();
+		}
 	});
 
 	it('omits last_failure entirely when the previous boot was clean', async () => {

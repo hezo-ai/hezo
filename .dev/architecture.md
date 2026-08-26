@@ -5902,10 +5902,16 @@ newest 5 — `db/superseded.ts`). A superuser can reclaim them on demand: `GET
 /api/database-info/prune-superseded` deletes **all** of them (no rollback retained; the live
 `pgdata` is untouched). Both are surfaced in the Database card on the Storage settings
 subpage and are embedded-only — external Postgres migrates in place and produces no snapshots.
-An **external Postgres** migrates **in place** instead: per-migration transactions under a
-session `pg_advisory_lock` (`applyPendingMigrationsExternal`), with the downgrade guard
-re-checked under the lock, so concurrent startups can't double-migrate and a failed
-migration leaves the committed prefix intact. A database carrying migrations the binary
+An **external Postgres** migrates **in place** instead: per-migration transactions, each
+taking a transaction-scoped `pg_advisory_xact_lock` as its first statement and re-reading
+the applied set under it (`applyPendingMigrationsExternal`), with the downgrade guard run in
+a locked transaction of its own **both before and after the run** - nothing holds the lock
+across the run, so a newer binary can win it partway through and migrate past us, and the
+second check is what stops this binary serving against a schema it does not know. Concurrent
+startups can't double-migrate, and a failed migration leaves the committed prefix intact. The lock is transaction-scoped
+rather than session-scoped so it needs no connection of its own: that is what allows
+`database.poolSize: 1` and what keeps Hezo usable through a transaction-mode connection
+pooler (`pooler-compatibility.test.ts` guards the rest of that property). A database carrying migrations the binary
 doesn't recognize makes the server exit and ask the operator to upgrade. Migration
 mechanics and the per-migration rules are in `AGENTS.md` › Database migrations.
 
@@ -5965,7 +5971,7 @@ default 04:30). Two deliberately narrow jobs:
   cleared blocker re-queues it) and must never be swept.
 
 **Storage abstraction & transactions.** All app code takes the `Db` interface
-(`query`/`exec`/`transaction`/`acquireSessionLock`/`close`); the drivers live in
+(`query`/`exec`/`transaction`/`close`); the drivers live in
 `src/db/drivers/` (`PgliteDb`, `PostgresDb`) and are constructed only by
 `src/db/open.ts:openDatabase()` at startup. `Db.transaction(cb)` pins the block's
 connection in AsyncLocalStorage, so closed-over `db.query` calls inside the block join

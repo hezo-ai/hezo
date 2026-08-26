@@ -347,13 +347,16 @@ other tenant's hostname.
   instead of ~4–5 min of apt.
 - **Managed Postgres:** one shared cluster is not enough at 100 tenants — the
   driver pool is up to 10 connections per instance
-  (`db/drivers/postgres.ts`; `HEZO_DATABASE_POOL_SIZE`, floor 2) and DO
-  backend connection limits are on the order of low hundreds per node. DO's
-  built-in pools are PgBouncer transaction mode, which Hezo cannot use
-  (session advisory locks; one-server-per-database design). Plan: set
-  `HEZO_DATABASE_POOL_SIZE` low (~4) for hosted tenants, shard tenants across
-  clusters at ~20–30 tenants/cluster (`pg_clusters` + capacity-aware
-  placement), starting from one 2-node cluster. Per-tenant `ROLE` owns only
+  (`db/drivers/postgres.ts`; `database.poolSize`, floor 1) and DO
+  backend connection limits are on the order of low hundreds per node.
+  **Superseded on the pooler point** — see `hezo-cloud-requirements.md` § H14.
+  This section said DO's built-in PgBouncer transaction-mode pools were
+  unusable because the migration lock was session-scoped. That lock is now
+  transaction-scoped, so transaction-mode pooling works, and it changes the
+  sizing plan rather than refining it: under a pooler, backend connections
+  track concurrent *transactions* rather than tenants, so the per-tenant pool
+  size stops being what the cluster is sized by. Shard tenants across clusters
+  (`pg_clusters` + capacity-aware placement) starting from one 2-node cluster. Per-tenant `ROLE` owns only
   its database; the cluster admin credential lives only in the control plane.
   Managed backups/PITR come with the service — that is the point of the
   managed-PG decision.
@@ -382,7 +385,7 @@ other tenant's hostname.
 | `HEZO_PORT` | `3100` | behind local Caddy |
 | `HEZO_DATA_DIR` | `/var/lib/hezo` | scratch only — DB and assets are external |
 | `HEZO_DATABASE_URL` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § 12 (*External TLS (`sslmode`)*)): encrypted, certificate not verified — accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
-| `HEZO_DATABASE_POOL_SIZE` | `4` | keeps cluster connection math sane |
+| `database.poolSize` | `4` | superseded: see § H14, a pooler decouples this from cluster sizing |
 | `HEZO_ASSET_STORAGE_URL` | `s3://<KEY>:<SECRET>@<region>.digitaloceanspaces.com/hezo-t-<shortid>?region=…` | per-bucket key |
 | `HEZO_WEB_URL` | `https://<sub>.app.hezo.ai` | also the SSO `aud` |
 | `HEZO_TELEMETRY_ENDPOINT` | `https://app.hezo.ai/api/telemetry` | fleet telemetry lands in the control plane |

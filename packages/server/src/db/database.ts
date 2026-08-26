@@ -17,10 +17,6 @@ export interface Queryable {
 	exec(sql: string): Promise<void>;
 }
 
-export interface SessionLockHandle {
-	release(): Promise<void>;
-}
-
 export interface Db extends Queryable {
 	readonly kind: 'pglite' | 'postgres';
 
@@ -43,13 +39,6 @@ export interface Db extends Queryable {
 	 *   their queries run on the shared handle/pool, not the transaction.
 	 */
 	transaction<T>(cb: (tx: Queryable) => Promise<T>): Promise<T>;
-
-	/**
-	 * Session-scoped `pg_advisory_lock(key)`. Blocks until acquired; released
-	 * by the handle or automatically when the session/process ends. Used to
-	 * serialize cross-process work (e.g. external in-place migrations).
-	 */
-	acquireSessionLock(key: number): Promise<SessionLockHandle>;
 
 	close(): Promise<void>;
 }
