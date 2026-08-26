@@ -1,3 +1,4 @@
+import { parseIssuerPublicKeys, SANDBOX_BACKENDS } from '@hezo/shared';
 import { z } from 'zod';
 import type { HezoConfig } from './types';
 
@@ -17,9 +18,10 @@ const positiveInt = z.int().positive();
 const databaseSchema = z
 	.object({
 		url: z.string().min(1).optional(),
-		// Matches parsePoolSize in db/open.ts - a pool below 2 deadlocks the
-		// migration path, and above 100 exhausts most managed Postgres plans.
-		poolSize: z.int().min(2).max(100).optional(),
+		// One is allowed but serializes every query in the process: a deliberate
+		// choice for a dense deployment, not a default. Above 100 exhausts most
+		// managed Postgres plans.
+		poolSize: z.int().min(1).max(100).optional(),
 	})
 	.strict();
 
@@ -126,8 +128,62 @@ export const policySchema = z
 				// A deployment can therefore pin "no hours limit" as deliberately as
 				// it pins a number.
 				monthlyContainerHours: z.int().min(0).optional(),
+				// Not a number, unlike its neighbours. A deployment whose containers
+				// run somewhere the instance's own host cannot provide has to be able
+				// to say so: leaving this to the operator lets them switch onto a
+				// runtime that is not there and break every run.
+				backend: z.enum(SANDBOX_BACKENDS).optional(),
 			})
 			.strict(),
+	})
+	.strict();
+
+/**
+ * Single sign-on from an external control plane.
+ *
+ * Present means an issuer may assert who is signing in; absent means the whole
+ * mechanism is inert. Every field is required, because a half-configured issuer
+ * is a security hole rather than a partial feature - there is no sensible
+ * default for "which key may vouch for whom".
+ *
+ * This is separate from `policy`, which says an operator manages the instance.
+ * The two travel together on a managed deployment but mean different things,
+ * and an instance whose settings are pinned by an IT department must not
+ * thereby offer a sign-in path that leads nowhere.
+ */
+export const ssoSchema = z
+	.object({
+		issuerUrl: z.url().refine((value) => value.startsWith('https://'), {
+			message: 'issuerUrl must be an https: URL',
+		}),
+		// Rejected here, naming the offending entry, so a mistyped rotation fails
+		// at startup while an operator is watching rather than at someone's first
+		// sign-in with nothing but a 401 to go on.
+		issuerPublicKey: z
+			.string()
+			.trim()
+			.min(1)
+			.superRefine((value, ctx) => {
+				const parsed = parseIssuerPublicKeys(value);
+				if (!parsed.ok) ctx.addIssue({ code: 'custom', message: parsed.error });
+			}),
+		// Required like the rest of the block. An issuer that can sign a person in
+		// can sign them out, and leaving it optional would mean a logout that
+		// quietly does half of what it says.
+		logoutUrl: z.url().refine((value) => value.startsWith('https://'), {
+			message: 'logoutUrl must be an https: URL',
+		}),
+		ownerSubject: z.string().trim().min(1),
+		// Compared to a token's `aud` verbatim, and never read from the request:
+		// the only request-time source for "this instance's host" is a header the
+		// caller writes. A pasted URL is the likely typo, so refuse one.
+		audience: z
+			.string()
+			.trim()
+			.min(1)
+			.refine((value) => !value.includes('/'), {
+				message: 'audience is a host, not a URL - drop the scheme and any path',
+			}),
 	})
 	.strict();
 
@@ -152,6 +208,7 @@ export const configFileSchema = z
 		chat: chatSchema.optional(),
 		policy: policySchema.optional(),
 		policyFile: z.string().min(1).optional(),
+		sso: ssoSchema.optional(),
 	})
 	.strict();
 

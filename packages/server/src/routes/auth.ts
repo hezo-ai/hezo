@@ -4,12 +4,11 @@ import {
 	buildPasswordSetupMessage,
 	buildSetupMessage,
 	buildUnlockMessage,
-	DEFAULT_TEAM_ID,
-	MemberType,
 	verifyAuthSignature,
 } from '@hezo/shared';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { runtimeConfig } from '../config/runtime';
 import { requestOrigin } from '../lib/request-origin';
 import { err, ok } from '../lib/response';
 import {
@@ -30,6 +29,15 @@ import {
 	setAdminPasswordVerifier,
 	verifyPasswordSignature,
 } from '../services/password';
+import {
+	consumeSsoHandle,
+	issueSsoHandle,
+	recordSsoFailure,
+	resetSsoThrottle,
+	ssoLockRemainingMs,
+	verifySsoAssertion,
+} from '../services/sso';
+import { ensureSuperuserId, getSuperuserId } from '../services/superuser';
 
 const log = logger.child('routes');
 
@@ -187,9 +195,33 @@ authRoutes.post('/auth/verify', async (c) => {
 
 // --- Password auth (challenge-response; password never leaves the browser) ----
 
+/**
+ * Refuse the password door where an issuer owns sign-in.
+ *
+ * Hiding it in the gate is not enough: these are public routes, and an instance
+ * put under a control plane after it already had a password would keep answering
+ * them with no trace in the UI. "The issuer is the only way in" is a claim the
+ * docs make in a security section, so the server has to be the thing that makes
+ * it true.
+ *
+ * That includes enrolling one. A master-key holder could otherwise set a
+ * password and sign in with it, which is the same door by a longer route.
+ */
+function ssoOwnsSignIn(c: Context<Env>) {
+	if (!runtimeConfig().sso) return null;
+	return err(
+		c,
+		'SSO_ONLY',
+		'This instance signs in through its issuer; password sign-in is disabled.',
+		409,
+	);
+}
+
 // Login step 1: hand back a nonce to sign + the admin's salt so the client can
 // re-derive its password keypair. 409 until a password verifier is enrolled.
 authRoutes.post('/auth/password-challenge', async (c) => {
+	const ssoOnly = ssoOwnsSignIn(c);
+	if (ssoOnly) return ssoOnly;
 	const masterKeyManager = c.get('masterKeyManager');
 	if (masterKeyManager.getState() !== 'unlocked') {
 		return err(c, 'LOCKED', 'Server is locked. Provide master key to unlock.', 401);
@@ -210,6 +242,8 @@ authRoutes.post('/auth/password-challenge', async (c) => {
 // Login step 2: verify the signature over buildPasswordLoginMessage(nonce)
 // against the stored verifier and mint a session JWT. Throttled globally.
 authRoutes.post('/auth/password-verify', async (c) => {
+	const ssoOnly = ssoOwnsSignIn(c);
+	if (ssoOnly) return ssoOnly;
 	const masterKeyManager = c.get('masterKeyManager');
 	const db = c.get('db');
 	if (masterKeyManager.getState() !== 'unlocked') {
@@ -282,6 +316,8 @@ authRoutes.post('/auth/password-verify', async (c) => {
 // recovery) and first enrollment are exempt. Returns a fresh session so the
 // caller is logged in with the password they just set.
 authRoutes.post('/auth/password', async (c) => {
+	const ssoOnly = ssoOwnsSignIn(c);
+	if (ssoOnly) return ssoOnly;
 	const masterKeyManager = c.get('masterKeyManager');
 	const db = c.get('db');
 	if (masterKeyManager.getState() !== 'unlocked') {
@@ -401,44 +437,122 @@ async function issuePasswordSetupToken(c: Context<Env>) {
 		log.error('Failed to capture instance base URL:', e);
 	}
 
-	const existing = await db.query<{ id: string }>(
-		'SELECT id FROM users WHERE is_superuser = true LIMIT 1',
-	);
-	let userId: string;
-	if (existing.rows.length > 0) {
-		userId = existing.rows[0].id;
-	} else {
-		const inserted = await db.query<{ id: string }>(
-			"INSERT INTO users (display_name, is_superuser) VALUES ('Admin', true) RETURNING id",
-		);
-		userId = inserted.rows[0].id;
-		await addUserToDefaultTeam(db, userId);
-	}
-
-	const token = await signPasswordSetupToken(masterKeyManager, userId);
+	const token = await signPasswordSetupToken(masterKeyManager, await ensureSuperuserId(db));
 	return ok(c, { token }, 200);
 }
 
-async function addUserToDefaultTeam(
-	db: import('../db/database').Db,
-	userId: string,
-): Promise<void> {
-	const existing = await db.query(
-		`SELECT m.id FROM members m
-		 JOIN member_users mu ON mu.id = m.id
-		 WHERE mu.user_id = $1 AND m.team_id = $2`,
-		[userId, DEFAULT_TEAM_ID],
-	);
-	if (existing.rows.length > 0) return;
+// --- Single sign-on from an external issuer -----------------------------------
+//
+// Two phases, because on a locked instance identity and session cannot be minted
+// in the same breath: the session key derives from the master key, so there is
+// nothing to sign with until someone supplies the phrase. A token good for a
+// minute cannot wait for that, so the first phase verifies the assertion and
+// parks it, the gate unlocks as it always would, and the second phase redeems
+// the parked identity for an ordinary session.
+//
+// Neither phase accepts, stores or forwards key material. A locked instance that
+// accepts a valid token is still locked.
 
-	const member = await db.query<{ id: string }>(
-		`INSERT INTO members (team_id, member_type, display_name)
-		 VALUES ($1, $2, (SELECT display_name FROM users WHERE id = $3))
-		 RETURNING id`,
-		[DEFAULT_TEAM_ID, MemberType.User, userId],
-	);
-	await db.query(`INSERT INTO member_users (id, user_id, role) VALUES ($1, $2, 'admin')`, [
-		member.rows[0].id,
-		userId,
-	]);
+/**
+ * Refuse an attempt that did not verify.
+ *
+ * Reached only AFTER verification, never before, and that ordering is the whole
+ * point: on a hosted instance the issuer is the only door, so a throttle checked
+ * first would let anyone who can reach the gate deny the owner their own
+ * instance with a stream of rubbish. Something that verifies is always let
+ * through; only failures are counted, and only failures are refused while the
+ * counter is hot.
+ *
+ * The client is told one undifferentiated failure either way - which step
+ * rejected it is the server's business.
+ */
+function ssoRejected(c: Context<Env>, now: number, reason: string) {
+	recordSsoFailure(now);
+	log.warn(`Rejected an SSO sign-in: ${reason}`);
+	const lockMs = ssoLockRemainingMs(now);
+	if (lockMs > 0) return ssoThrottled(c, lockMs);
+	return err(c, 'INVALID_TOKEN', 'Sign-in token rejected', 401);
 }
+
+function ssoThrottled(c: Context<Env>, lockMs: number) {
+	return err(
+		c,
+		'TOO_MANY_ATTEMPTS',
+		`Too many attempts. Try again in ${Math.ceil(lockMs / 1000)}s.`,
+		429,
+	);
+}
+
+// Phase one. Answers either a session (already unlocked) or a handle to redeem
+// once the gate has been satisfied.
+authRoutes.post('/auth/sso', async (c) => {
+	const config = runtimeConfig().sso;
+	if (!config) return err(c, 'NOT_FOUND', 'Single sign-on is not configured', 404);
+
+	const masterKeyManager = c.get('masterKeyManager');
+	if (masterKeyManager.getState() === 'unset') {
+		return err(c, 'SETUP_REQUIRED', 'This instance has not been set up yet', 409);
+	}
+
+	const now = Date.now();
+
+	let body: { token?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return err(c, 'INVALID_REQUEST', 'JSON body required', 400);
+	}
+	if (typeof body.token !== 'string' || body.token.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'token is required', 400);
+	}
+
+	const verification = verifySsoAssertion(body.token, config, now);
+	if (!verification.ok) return ssoRejected(c, now, verification.reason);
+	resetSsoThrottle();
+
+	if (masterKeyManager.getState() !== 'unlocked') {
+		const { handle, expiresInSeconds } = issueSsoHandle(verification.payload.sub, now);
+		return ok(c, { locked: true, handle, expires_in: expiresInSeconds }, 200);
+	}
+
+	const userId = await getSuperuserId(c.get('db'));
+	if (!userId) return err(c, 'SETUP_REQUIRED', 'This instance has not been set up yet', 409);
+	return ok(c, { locked: false, token: await signAdminJwt(masterKeyManager, userId) }, 200);
+});
+
+// Phase two. Redeems a handle from phase one, once the instance is unlocked.
+authRoutes.post('/auth/sso/session', async (c) => {
+	const config = runtimeConfig().sso;
+	if (!config) return err(c, 'NOT_FOUND', 'Single sign-on is not configured', 404);
+
+	const masterKeyManager = c.get('masterKeyManager');
+	if (masterKeyManager.getState() !== 'unlocked') {
+		return err(c, 'LOCKED', 'Server is locked. Provide master key to unlock.', 401);
+	}
+
+	const now = Date.now();
+
+	let body: { handle?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return err(c, 'INVALID_REQUEST', 'JSON body required', 400);
+	}
+	if (typeof body.handle !== 'string' || body.handle.length === 0) {
+		return err(c, 'INVALID_REQUEST', 'handle is required', 400);
+	}
+
+	const subject = consumeSsoHandle(body.handle, now);
+	if (!subject) return ssoRejected(c, now, 'unknown, expired or already-used handle');
+	// Belt and braces: `sso` is fixed at startup - `setPolicy` is the only runtime
+	// config mutator and it does not reach this slice - so a handle cannot
+	// currently outlive the owner it was granted under. Kept because the check is
+	// free and the day that stops being true is not one to find out about here.
+	if (subject !== config.ownerSubject) return ssoRejected(c, now, 'handle is no longer the owner');
+
+	const userId = await getSuperuserId(c.get('db'));
+	if (!userId) return err(c, 'SETUP_REQUIRED', 'This instance has not been set up yet', 409);
+
+	resetSsoThrottle();
+	return ok(c, { token: await signAdminJwt(masterKeyManager, userId) }, 200);
+});

@@ -18,6 +18,13 @@ export type WizardStep = 'password' | 'ai-provider' | 'done';
 
 interface WizardShellProps {
 	currentStep: 'password' | 'ai-provider';
+	/**
+	 * An external issuer signs this instance in, so no password is ever enrolled
+	 * and the step that would enroll one is not part of the journey. Passed down
+	 * rather than read from status here: a second `useStatus()` observer under
+	 * this gate races AppShell's own (see `useWizardStep`).
+	 */
+	hosted?: boolean;
 	children: ReactNode;
 }
 
@@ -26,7 +33,7 @@ interface WizardShellProps {
  * separate pre-active gate, so it's always a completed step here; the two live
  * steps are creating a password and configuring an AI provider.
  */
-function WizardShell({ currentStep, children }: WizardShellProps) {
+function WizardShell({ currentStep, hosted, children }: WizardShellProps) {
 	const { t } = useI18n();
 	const passwordStatus: StepStatus = currentStep === 'password' ? 'current' : 'complete';
 	const aiProviderStatus: StepStatus = currentStep === 'ai-provider' ? 'current' : 'pending';
@@ -43,7 +50,7 @@ function WizardShell({ currentStep, children }: WizardShellProps) {
 					steps={[
 						{ label: t('setup.step.language'), status: 'complete' },
 						{ label: t('setup.step.masterKey'), status: 'complete' },
-						{ label: t('setup.step.password'), status: passwordStatus },
+						...(hosted ? [] : [{ label: t('setup.step.password'), status: passwordStatus }]),
 						{ label: t('setup.step.aiProvider'), status: aiProviderStatus },
 					]}
 				/>
@@ -112,10 +119,10 @@ export function CreatePasswordFlow() {
 	);
 }
 
-export function SetupWizard() {
+export function SetupWizard({ hosted }: { hosted?: boolean }) {
 	const { t } = useI18n();
 	return (
-		<WizardShell currentStep="ai-provider">
+		<WizardShell currentStep="ai-provider" hosted={hosted}>
 			<div data-testid="setup-step-ai-provider">
 				<h2 className="text-base sm:text-lg font-semibold mb-1">{t('setup.aiProvider.title')}</h2>
 				<p className="text-[13px] text-text-2 mb-5">{t('setup.aiProvider.description')}</p>
@@ -139,11 +146,13 @@ export function useWizardStep(): WizardStep | 'loading' {
 }
 
 interface SetupGateProps {
+	/** See {@link WizardShellProps.hosted}. */
+	hosted?: boolean;
 	children: React.ReactNode;
 }
 
 /** Wraps the app shell: shows the AI-provider wizard until a provider is configured. */
-export function SetupGate({ children }: SetupGateProps) {
+export function SetupGate({ hosted, children }: SetupGateProps) {
 	const step = useWizardStep();
 	if (step === 'loading') {
 		return (
@@ -153,5 +162,5 @@ export function SetupGate({ children }: SetupGateProps) {
 		);
 	}
 	if (step === 'done') return <>{children}</>;
-	return <SetupWizard />;
+	return <SetupWizard hosted={hosted} />;
 }

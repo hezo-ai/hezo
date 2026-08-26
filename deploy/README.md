@@ -81,6 +81,25 @@ throwaway VM/droplet:
    laptop hit `https://<ip>.sslip.io/health` (a valid cert proves the Let's Encrypt
    path) and load the root URL to confirm you reach the master-key gate. Destroy it.
 
+## Behind a shared gateway
+
+Set `BEHIND_GATEWAY=1` when the host sits behind a gateway that already terminates
+TLS for the whole domain - a fleet where one front end serves many instances on
+sub-domains of a wildcard certificate.
+
+The host then installs no Caddy, attempts no ACME, and opens no public 80/443.
+Hezo's own port is opened to private ranges only, for the gateway to reach over
+the private network; narrow that further with the provider's own firewall so only
+the gateway can. Set `HEZO_DOMAIN_OVERRIDE` to the name the gateway serves - it is
+required with this flag, because the gateway owns the name and this host's address
+is not it.
+
+Unprefixed, unlike the `HEZO_*` inputs, because the hezo binary never reads it.
+Only `provision.sh` and the first-boot unit do.
+
+Without the flag two things race for port 80, and the host tries to solve an ACME
+challenge for a name the gateway owns.
+
 ## DigitalOcean Marketplace image (Phase 2)
 
 [`marketplace/digitalocean/`](marketplace/digitalocean/README.md) holds a Packer

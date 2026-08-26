@@ -134,7 +134,9 @@ export type PinnableSetting = keyof NonNullable<HezoConfig['policy']>['pinned'];
  * hot-reloaded on a plan change, and a module-level capture would keep serving
  * the plan the instance started on.
  */
-export function pinnedSetting(key: PinnableSetting): number | undefined {
+export function pinnedSetting<K extends PinnableSetting>(
+	key: K,
+): NonNullable<HezoConfig['policy']>['pinned'][K] {
 	return runtimeConfig().policy?.pinned[key];
 }
 

@@ -8,6 +8,7 @@ import { LocalAssetStore } from './assets/drivers/local';
 import { openAssetStorage } from './assets/open';
 import type { AssetStore } from './assets/store';
 import type { HezoConfig } from './cli';
+import { watchPolicyFile } from './config/policy';
 import type { Db } from './db/database';
 import { logger } from './logger';
 
@@ -23,6 +24,7 @@ import type { AssetStorageInfo } from './lib/asset-storage-info';
 import { trackBackground } from './lib/background';
 import type { StorageInfo } from './lib/db-info';
 import type { SandboxBackendInfo } from './lib/sandbox-backend-info';
+import { ssoStatus } from './lib/sso-status';
 import {
 	getInstanceBaseUrl,
 	getInstanceLocale,
@@ -161,6 +163,8 @@ export interface StartupResult {
 	containerLogStreamer: ContainerLogStreamer;
 	sshAgentServer: SshAgentServer;
 	egressProxy: EgressProxy;
+	/** Live reload of the deployer's pinned settings; closed on shutdown. */
+	policyWatcher: { close: () => void };
 }
 
 export async function startup(config: HezoConfig): Promise<StartupResult> {
@@ -174,6 +178,12 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 			? `Using config file: ${config.configPath}`
 			: 'No config file (--config not given); using defaults plus any flags',
 	);
+
+	// Armed before anything slow, so a plan change landing during a long boot is
+	// picked up rather than missed. A deployment changes what it pins while the
+	// server runs, and restarting to apply it would kill in-flight agent runs -
+	// which under an hours meter is billed container time thrown away.
+	const policyWatcher = watchPolicyFile(config.policyFile);
 
 	if (config.telemetry?.enabled) {
 		log.info(
@@ -586,6 +596,7 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		containerLogStreamer,
 		sshAgentServer,
 		egressProxy,
+		policyWatcher,
 	};
 }
 
@@ -723,6 +734,7 @@ export function buildApp(
 			version: HEZO_VERSION,
 			locale: await getInstanceLocale(db),
 			localeConfigured: await instanceLocaleIsConfigured(db),
+			...ssoStatus(),
 		});
 	};
 	app.get('/api/status', statusHandler);

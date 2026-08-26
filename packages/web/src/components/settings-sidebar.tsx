@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { useCloseOnRouteChange } from '../hooks/use-close-on-route-change';
 import { useInstanceSettings } from '../hooks/use-instance-settings';
 import { useMe } from '../hooks/use-me';
+import { useStatus } from '../hooks/use-status';
 import { logout } from '../lib/auth';
 import { type MessageKey, useI18n } from '../lib/i18n';
 import { queryClient } from '../lib/query-client';
@@ -188,9 +189,14 @@ export function SettingsSidebar() {
 	// link, and the panel covers the page one just opened.
 	useCloseOnRouteChange(open, () => setOpen(false));
 
+	const { data: status } = useStatus();
+	// With an issuer, signing out has to end its session too: clearing only the
+	// local one leaves the issuer ready to sign the person straight back in, so
+	// the button would read as broken.
+	const issuerLogoutUrl = status?.sso?.logout_url;
 	const handleLogout = useCallback(() => {
 		setOpen(false);
-		logout();
+		logout(issuerLogoutUrl);
 		// Reset every query: drops each back to its initial (data-less) state so no
 		// authenticated response lingers behind the sign-in screen, and refetches
 		// the active ones. Crucially, the top-level gate's `me` probe re-runs and —
@@ -199,7 +205,7 @@ export function SettingsSidebar() {
 		// invalidated query keeps its last data on a failed refetch, and a cleared
 		// query's mounted observer doesn't reliably re-probe.)
 		queryClient.resetQueries();
-	}, []);
+	}, [issuerLogoutUrl]);
 
 	return (
 		<>

@@ -64,6 +64,7 @@ export async function shutdownRuntime(result: StartupResult): Promise<void> {
 				stranded.map((r) => `${r.runId}${r.taskId ? ` (task ${r.taskId})` : ''}`).join(', '),
 		);
 	}
+	result.policyWatcher.close();
 	result.jobManager.shutdown();
 	await result.chatSessionManager.stop();
 	await result.egressProxy.releaseAll();

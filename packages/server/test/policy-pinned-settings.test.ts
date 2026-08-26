@@ -12,6 +12,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SandboxBackend } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { readPolicyFile } from '../src/config/policy';
@@ -29,6 +30,11 @@ import {
 	setSystemMeta,
 } from '../src/lib/system-meta';
 import type { Env } from '../src/lib/types';
+import {
+	getSandboxBackendSetting,
+	getStoredSandboxBackend,
+	setStoredSandboxBackend,
+} from '../src/services/sandbox/backend-store';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp } from './helpers/app';
 
@@ -38,7 +44,11 @@ let token: string;
 let tmp: string;
 
 /** Pin a set of settings for the duration of one case. */
-function pin(pinned: Record<string, number>, managedBy = 'Acme Cloud', manageUrl?: string): void {
+function pin(
+	pinned: Record<string, number | SandboxBackend>,
+	managedBy = 'Acme Cloud',
+	manageUrl?: string,
+): void {
 	setPolicy({ managedBy, manageUrl, pinned });
 }
 
@@ -251,5 +261,73 @@ describe('hot reload', () => {
 		expect(after.policy?.pinned.maxContainerMemoryGb).toBe(64);
 		expect(after.dataDir).toBe(before.dataDir);
 		expect(after.port).toBe(before.port);
+	});
+});
+
+/**
+ * The backend is the one pinnable setting that is a name rather than a number,
+ * and the one whose stored value can point somewhere the host cannot provide -
+ * a deployment running containers on a remote service has no local runtime, so
+ * an operator switching back to it breaks every run.
+ */
+describe('a pinned container backend', () => {
+	afterEach(() => resetRuntimeConfig());
+
+	it("wins over the operator's stored choice", async () => {
+		await setStoredSandboxBackend(db, SandboxBackend.Docker);
+		expect(await getSandboxBackendSetting(db)).toBe(SandboxBackend.Docker);
+
+		pin({ backend: SandboxBackend.Daytona });
+		expect(await getSandboxBackendSetting(db)).toBe(SandboxBackend.Daytona);
+		expect(isPinned('backend')).toBe(true);
+
+		// The operator's choice survives underneath, to be restored on unpin.
+		resetRuntimeConfig();
+		expect(await getSandboxBackendSetting(db)).toBe(SandboxBackend.Docker);
+	});
+
+	it('refuses a switch through the API, rather than accepting and ignoring it', async () => {
+		pin({ backend: SandboxBackend.Daytona });
+		const res = await app.request('/api/sandbox-backend', {
+			method: 'PATCH',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ backend: SandboxBackend.Docker }),
+		});
+		expect(res.status).toBe(409);
+		const body = (await res.json()) as { error: { message: string } };
+		expect(body.error.message).toContain('Acme Cloud');
+
+		// And the refusal was real: nothing was written.
+		expect(await getStoredSandboxBackend(db)).toBe(SandboxBackend.Docker);
+	});
+
+	// Only the flag: who fixed it comes from the instance-settings payload the
+	// notice already reads, and a second copy here is one more thing to disagree.
+	it('tells the page it is locked', async () => {
+		pin({ backend: SandboxBackend.Daytona });
+		const res = await app.request('/api/sandbox-backend-info', { headers: authHeader(token) });
+		expect(res.status).toBe(200);
+		const { data } = (await res.json()) as { data: { backend_pinned: boolean } };
+		expect(data.backend_pinned).toBe(true);
+
+		// And the name is served, once, from where the notice looks for it.
+		const settings = await app.request('/api/instance-settings', { headers: authHeader(token) });
+		const banner = (await settings.json()) as { data: { policy: { managed_by: string } | null } };
+		expect(banner.data.policy?.managed_by).toBe('Acme Cloud');
+	});
+
+	it('leaves an unpinned instance alone', async () => {
+		const res = await app.request('/api/sandbox-backend-info', { headers: authHeader(token) });
+		const { data } = (await res.json()) as { data: { backend_pinned: boolean } };
+		expect(data.backend_pinned).toBe(false);
+	});
+
+	it('is validated by the policy schema like every other pinned key', () => {
+		expect(() =>
+			policySchema.parse({ managedBy: 'Acme', pinned: { backend: 'not-a-backend' } }),
+		).toThrow();
+		expect(
+			policySchema.parse({ managedBy: 'Acme', pinned: { backend: 'daytona' } }).pinned.backend,
+		).toBe('daytona');
 	});
 });

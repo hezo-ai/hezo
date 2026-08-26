@@ -96,13 +96,24 @@ describe.skipIf(!url)('PostgresDb on the Bun runtime', () => {
 		}
 	});
 
-	it('acquires and releases session advisory locks', async () => {
-		const db = await PostgresDb.connect({ url: url as string });
+	// A pool of one is the dense-deployment setting, and it only works because
+	// nothing holds a connection outside a transaction any more. On the real
+	// driver rather than PGlite, because PGlite has a single connection anyway
+	// and so could never show this failing.
+	it('migrates on a pool of one, holding a transaction-scoped lock', async () => {
+		const db = await PostgresDb.connect({ url: url as string, max: 1 });
 		try {
-			const lock = await db.acquireSessionLock(52_4242);
-			await lock.release();
-			const r = await db.query<{ held: boolean }>('SELECT pg_advisory_unlock(524242) AS held');
-			expect(r.rows[0].held).toBe(false);
+			await db.transaction(async (tx) => {
+				await tx.query('SELECT pg_advisory_xact_lock($1)', [52_4242]);
+				// A query inside the block routes onto the transaction's own
+				// connection, so it cannot deadlock waiting for a second one.
+				await tx.query('SELECT 1');
+			});
+			const r = await db.query<{ c: number }>(
+				"SELECT COUNT(*)::int AS c FROM pg_locks WHERE locktype = 'advisory' AND objid = $1",
+				[52_4242],
+			);
+			expect(r.rows[0].c).toBe(0);
 		} finally {
 			await db.close();
 		}

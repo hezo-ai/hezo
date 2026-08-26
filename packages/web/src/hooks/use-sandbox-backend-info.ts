@@ -25,6 +25,12 @@ export interface SandboxBackendInfo {
 	 * demanding one on every switch.
 	 */
 	credential_configured: boolean;
+	/**
+	 * The deployer fixed which backend this instance runs on, so the switch is
+	 * refused with a 409. Renders the control locked rather than letting someone
+	 * discover that by trying.
+	 */
+	backend_pinned: boolean;
 	impact: SandboxSwitchImpact;
 	/** Present only on the response to a switch. */
 	containers_destroyed?: number;

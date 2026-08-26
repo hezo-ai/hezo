@@ -5,14 +5,13 @@ import {
 	LIVE_CONTEXT_BLOCK_VARS,
 	renderPromptStyleRules,
 	repoNameFromIdentifier,
-	SandboxBackend,
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { terminalStatusParams } from '../lib/sql';
 import { buildConnectorRecipesSkill } from './connector-registry';
 import { buildHezoDocsBlock } from './docs-bundle';
 import { buildContainerEnvironmentBlock as buildAgentContainerEnvironmentBlock } from './sandbox/agent-environment';
-import { getStoredSandboxBackend } from './sandbox/backend-store';
+import { getSandboxBackendSetting } from './sandbox/backend-store';
 import { CONTAINER_WORKTREES_ROOT } from './workspace';
 
 /**
@@ -598,7 +597,7 @@ export async function resolveSystemPrompt(
  * asking the database keeps every `resolveTemplate` caller unchanged.
  */
 async function buildContainerEnvironmentBlock(db: Db): Promise<string> {
-	const backend = (await getStoredSandboxBackend(db)) ?? SandboxBackend.Docker;
+	const backend = await getSandboxBackendSetting(db);
 	return buildAgentContainerEnvironmentBlock(backend);
 }
 

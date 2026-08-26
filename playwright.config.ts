@@ -15,7 +15,7 @@ const TEST_DATA_DIR = join(tmpdir(), 'hezo-e2e-test');
 // undefined and the whole config fails to load.
 const E2E_CONFIG_FILE = resolve(process.cwd(), 'test/browser/hezo.e2e.config.cjs');
 
-// The master-key-gate spec owns its own backend lifecycle (boot, kill,
+// The auth-gate specs own their own backend lifecycle (boot, kill,
 // restart on :3102), so it gets a dedicated vite instance proxying there —
 // the shared server on :3101 must stay up for every other project.
 const GATE_SERVER_PORT = 3102;
@@ -118,7 +118,7 @@ export default defineConfig({
 		{
 			name: 'parallel',
 			testIgnore:
-				/(?:ai-providers|\.mobile|agent-run-logs|run-trigger-reason|master-key-gate)\.spec\.ts$/,
+				/(?:ai-providers|\.mobile|agent-run-logs|run-trigger-reason|master-key-gate|sso-gate)\.spec\.ts$/,
 			// Run after agent-runs-serial so the shared e2e job queue is not flooded first.
 			dependencies: ['ai-provider-serial', 'agent-runs-serial'],
 		},
@@ -132,7 +132,7 @@ export default defineConfig({
 			// Self-contained: drives the pre-token setup wizard + locked gate
 			// against its own server on :3102 (spawned by the spec itself).
 			name: 'auth-gate',
-			testMatch: /master-key-gate\.spec\.ts$/,
+			testMatch: /(master-key-gate|sso-gate)\.spec\.ts$/,
 			fullyParallel: false,
 			workers: 1,
 			use: {

@@ -94,11 +94,20 @@ describe('loadConfigFile', () => {
 
 		it('rejects a database pool size outside the supported band', () => {
 			expect(() =>
-				loadConfigFile(write('module.exports = { database: { poolSize: 1 } };')),
+				loadConfigFile(write('module.exports = { database: { poolSize: 0 } };')),
 			).toThrow(/poolSize/);
 			expect(() =>
 				loadConfigFile(write('module.exports = { database: { poolSize: 500 } };')),
 			).toThrow(/poolSize/);
+		});
+
+		// One is the dense-deployment setting: it serializes every query in the
+		// process, so it is a deliberate choice rather than a default, but nothing
+		// holds a connection outside a transaction any more so it is not a deadlock.
+		it('accepts a pool of one', () => {
+			expect(
+				loadConfigFile(write('module.exports = { database: { poolSize: 1 } };')).database?.poolSize,
+			).toBe(1);
 		});
 
 		it('reports every problem at once, not just the first', () => {
@@ -121,6 +130,81 @@ describe('loadConfigFile', () => {
 	});
 });
 
+describe('the sso block', () => {
+	const KEY = 'a'.repeat(64);
+	const OTHER = 'b'.repeat(64);
+
+	function sso(overrides: string): string {
+		return write(
+			`module.exports = { sso: { issuerUrl: 'https://app.hezo.ai', logoutUrl: 'https://app.hezo.ai/logout', issuerPublicKey: 'k1:${KEY}', ownerSubject: 'acct-1', audience: 'alice.app.hezo.ai', ${overrides} } };`,
+		);
+	}
+
+	it('accepts a complete block', () => {
+		expect(loadConfigFile(sso('')).sso).toEqual({
+			issuerUrl: 'https://app.hezo.ai',
+			logoutUrl: 'https://app.hezo.ai/logout',
+			issuerPublicKey: `k1:${KEY}`,
+			ownerSubject: 'acct-1',
+			audience: 'alice.app.hezo.ai',
+		});
+	});
+
+	it('accepts several issuer keys, so an issuer can rotate', () => {
+		const path = sso(`issuerPublicKey: 'k1:${KEY},k2:${OTHER}'`);
+		expect(loadConfigFile(path).sso?.issuerPublicKey).toBe(`k1:${KEY},k2:${OTHER}`);
+	});
+
+	// A half-configured issuer is a hole, not a partial feature.
+	it.each([
+		'issuerUrl',
+		'logoutUrl',
+		'issuerPublicKey',
+		'ownerSubject',
+		'audience',
+	])('refuses a block missing %s', (field) => {
+		const full = {
+			issuerUrl: "'https://app.hezo.ai'",
+			logoutUrl: "'https://app.hezo.ai/logout'",
+			issuerPublicKey: `'k1:${KEY}'`,
+			ownerSubject: "'acct-1'",
+			audience: "'alice.app.hezo.ai'",
+		} as Record<string, string>;
+		delete full[field];
+		const body = Object.entries(full)
+			.map(([k, v]) => `${k}: ${v}`)
+			.join(', ');
+		expect(() => loadConfigFile(write(`module.exports = { sso: { ${body} } };`))).toThrow(
+			new RegExp(field),
+		);
+	});
+
+	// The list fails at startup naming the entry, not at someone's first login.
+	it.each([
+		['a key that is not kid:hex', `'${KEY}'`, /not in kid:hex form/],
+		['a short key', "'k1:abcd'", /lowercase hex/],
+		['an uppercase key', `'k1:${KEY.toUpperCase()}'`, /lowercase hex/],
+		['a repeated kid', `'k1:${KEY},k1:${OTHER}'`, /listed more than once/],
+	])('rejects %s', (_label, value, expected) => {
+		expect(() => loadConfigFile(sso(`issuerPublicKey: ${value}`))).toThrow(expected);
+	});
+
+	it('rejects an audience given as a URL', () => {
+		expect(() => loadConfigFile(sso("audience: 'https://alice.app.hezo.ai'"))).toThrow(
+			/audience is a host/,
+		);
+	});
+
+	it('rejects a plain-http issuer', () => {
+		expect(() => loadConfigFile(sso("issuerUrl: 'http://app.hezo.ai'"))).toThrow(
+			/issuerUrl must be an https: URL/,
+		);
+	});
+
+	it('rejects an unknown key inside the block', () => {
+		expect(() => loadConfigFile(sso('hosted: true'))).toThrow(/hosted/);
+	});
+});
 describe('runtimeConfig', () => {
 	it('serves the built-in defaults until one is set', () => {
 		resetRuntimeConfig();

@@ -82,7 +82,7 @@ Nested keys are written in dot form below: `database.url` means
 | Setting | Flag | Default | Description |
 |---|---|---|---|
 | `database.url` | `--database-url <url>` | - | Connection string for an [external Postgres](#using-an-external-postgres) (`postgres://user:password@host:5432/hezo`). Its `sslmode` follows standard libpq rules - see [TLS and sslmode](#tls-and-sslmode). Omit to use the embedded database under the data directory (the default). |
-| `database.poolSize` | - | `10` | Connection-pool size for the external database (2-100). Ignored for the embedded database. |
+| `database.poolSize` | - | `10` | Connection-pool size for the external database (1-100). Ignored for the embedded database. `1` serializes every query in the process - see [Connection pooling](#connection-pooling). |
 
 ### Asset storage
 
@@ -192,6 +192,7 @@ pinned unless you say so, so an ordinary instance is unaffected.
 | `policy.pinned.defaultRamCapPerContainerGb` | - | Fixes the per-container RAM cap. |
 | `policy.pinned.defaultContainerDiskGb` | - | Fixes the per-container disk size. |
 | `policy.pinned.monthlyContainerHours` | - | Fixes the monthly container-hours allowance. `0` pins "no limit". |
+| `policy.pinned.backend` | - | Fixes which container backend runs agent containers (`docker` or `daytona`). |
 | `policyFile` | - | Path to a JSON file holding the `policy` block. The file wins over an inline block, and is re-read when it changes. |
 
 Each key under `pinned` is independent: pin the memory budget and leave disk to
@@ -207,6 +208,11 @@ module.exports = {
 };
 ```
 
+**`pinned.backend` is the exception: it takes effect on restart.** The engine
+containers run on is chosen once at startup, so re-pinning it while the instance
+is running changes what the settings page and the container-hours ledger report
+before it changes where containers actually run. Restart after changing it.
+
 **Use `policyFile` when the limits change while the instance runs.** A plan change
 must not need a restart - a restart kills in-flight agent runs, and under an
 hours meter that is billed compute thrown away. Hezo watches the file and picks
@@ -214,6 +220,63 @@ up a change on the next setting it reads, without restarting anything. Write it
 by renaming a temporary file into place (`policy.json.tmp`, then `rename`), which
 is atomic, so Hezo can never read a half-written file. If a read or a parse does
 fail, the previous limits stay in force rather than silently unpinning.
+
+### Single sign-on from a control plane
+
+Where a control plane provisions and manages instances, it can sign its users in
+without holding anything that could decrypt their data. Set an `sso` block and an
+unidentified visitor is sent to the issuer to sign in; leave it out and the whole
+mechanism is absent, which is what an ordinary instance wants.
+
+| Setting | Default | Description |
+|---|---|---|
+| `sso.issuerUrl` | - | Where an unidentified visitor is sent to sign in. Must be `https:`. |
+| `sso.logoutUrl` | - | Where signing out goes, to end the session there too. Must be `https:`. |
+| `sso.issuerPublicKey` | - | Accepted issuer keys, as a comma-separated `kid:hex` list. Each `hex` is exactly 64 lowercase hex characters (an Ed25519 public key); uppercase is rejected. |
+| `sso.ownerSubject` | - | The one issuer-side account allowed to sign in to this instance. |
+| `sso.audience` | - | The host name a token must be minted for. A host, not a URL. |
+
+All five are required together. A half-configured issuer is refused at startup
+rather than accepted and left to fail at someone's first sign-in.
+
+```js
+module.exports = {
+  sso: {
+    issuerUrl: 'https://control.example',
+    logoutUrl: 'https://control.example/logout',
+    issuerPublicKey: 'k1:1f0c...9ab2,k2:77de...41c0',
+    ownerSubject: '9f1cb2d4-0000-4000-8000-000000000001',
+    audience: 'alice.control.example',
+  },
+};
+```
+
+**The instance has no sign-in page of its own.** Signing in belongs to the
+issuer: an unidentified visitor is sent there, and comes back carrying a token.
+There is no password on an instance configured this way, and none is enrolled, so
+the issuer is the only way in. An instance whose issuer is unreachable cannot be
+signed in to, even from its own console.
+
+**Signing in is not unlocking.** The issuer proves who you are. It never sees,
+carries or obtains your recovery phrase, and an instance that accepts a valid
+token is still locked: it asks for the phrase exactly as it would otherwise, and
+only then completes the sign-in. A control plane can therefore let you into your
+instance without ever being able to read what is in it.
+
+**Signing out ends a session, and does not lock the instance.** It clears the
+session here and then goes to `logoutUrl` to end the one at the issuer; without
+that second half the issuer would sign you straight back in on the next redirect.
+The master key stays in memory until the process restarts, exactly as it does on
+any other instance.
+
+**List both keys while you rotate.** `issuerPublicKey` takes several keys so an
+issuer can add a new one, move signing to it, and drop the old one, with no moment
+where valid tokens are refused. A malformed entry fails at startup naming the key
+it could not read.
+
+`sso` is separate from `policy`. A deployer that fixes an instance's limits has
+not thereby given it somewhere to sign in, and an instance offering single sign-on
+need not have any of its settings pinned.
 
 ## The master key is not a config setting
 
@@ -303,8 +366,8 @@ Requirements and recommendations:
 - **Keep the database close to the server.** Hezo's background scheduling polls every
   1-5 seconds, so every millisecond of round-trip latency counts. Same-host,
   same-VPC, or same-region placement is strongly recommended.
-- **Direct connections or session pooling only.** Transaction-pooling proxies
-  (PgBouncer in transaction mode) break session-scoped advisory locks.
+- **Direct, session-pooled or transaction-pooled connections all work.**
+  Statement-mode pooling does not - see [Connection pooling](#connection-pooling).
 - **One Hezo server per database.** Concurrent startups coordinate migrations safely,
   but running two live servers against one database is not supported.
 - The connection string carries credentials: prefer the config file over the flag (flags
@@ -312,6 +375,31 @@ Requirements and recommendations:
 - `hezo backup` / `hezo restore` work against an external database too - including
   **moving an existing embedded instance to hosted Postgres** (and back). See
   [Backup & recovery](/docs/deployment/backup-and-recovery).
+
+### Connection pooling
+
+Hezo works through a connection pooler in session or transaction mode. It opens no
+session-scoped state: no `LISTEN`/`NOTIFY`, no named prepared statements, no
+cursors, no session `SET`, no temporary tables, and no session-scoped advisory locks.
+Migrations serialize on a transaction-scoped lock, which lives and dies inside the
+transaction that takes it.
+
+**Statement mode is the one that does not work**, and no amount of the above
+changes that: it refuses a multi-statement transaction outright, and every
+migration Hezo applies runs inside one. Providers that offer three modes call
+this out; pick session or transaction.
+
+That matters most when one cluster serves many Hezo instances. Under a transaction
+pooler, the cluster's backend connections track concurrent *transactions* rather than
+instances, so a fixed connection budget carries far more of them.
+
+**`database.poolSize` can go down to `1`, but think before it does.** One connection
+serves the API, the tool endpoint, the egress proxy, the container control plane and a
+scheduler that polls every 1-5 seconds, so every query in the process waits behind
+every other - and past the connection timeout they stop waiting and fail, which is
+what a busy instance on a pool of one actually looks like. It is the right setting for packing many small instances onto one cluster,
+and the wrong one for a single busy instance. The default of `10` suits a normal
+deployment.
 
 ### TLS and sslmode
 
@@ -449,7 +537,7 @@ These only choose what a brand-new instance starts on. The first startup records
 choice, and from then on the stored setting wins: the launch settings are ignored on later
 startups - Hezo logs that it ignored them if they disagree - so restarting with a different
 config file never switches an existing instance. Switching, in either direction, is done
-from Settings -> Containers at any time, no restart needed. See
+from Settings -> Containers at any time, no restart needed (unless a deployer has pinned it). See
 [Switching at any time](/docs/containers/overview#switching-at-any-time).
 
 [Remote containers](/docs/containers/remote/overview) covers what changes when you do:

@@ -14,6 +14,7 @@ import {
 	signAuthMessage,
 } from '@hezo/shared';
 import { ApiError, api } from './api';
+import { clearPendingSsoHandle, goToIssuer } from './sso';
 
 export interface StatusResponse {
 	/** Absent while the server is still booting (`starting` is true). */
@@ -48,6 +49,12 @@ export interface StatusResponse {
 	 * an endless boot screen into something actionable.
 	 */
 	lastFailure?: StartupFailure;
+	/**
+	 * Where to sign in, when an external issuer is configured. Absent on an
+	 * instance that has none, which is what makes the gate's decision a presence
+	 * check rather than a flag it has to trust.
+	 */
+	sso?: { issuer_url: string; logout_url: string };
 }
 
 /** Mirrors `StartupFailureRecord` in `packages/server/src/startup-failure.ts`. */
@@ -241,9 +248,24 @@ export async function changePassword(currentPassword: string, newPassword: strin
 	api.setToken(data.token);
 }
 
-export function logout() {
+/**
+ * End the session.
+ *
+ * With an issuer, clearing the local token is not enough: the issuer still has
+ * a session of its own and would sign the person straight back in on the next
+ * redirect, so signing out looks like nothing happened. Handing the browser to
+ * the issuer's logout is what actually ends it.
+ *
+ * This ends a session; it does not re-lock the instance. The master key stays
+ * in memory until the process restarts, as it always has.
+ */
+export function logout(issuerLogoutUrl?: string) {
 	api.clearToken();
 	clearPendingSetupToken();
+	// Survives only because the redirect below unloads the page, which is not a
+	// reason to leave it holding a verified identity.
+	clearPendingSsoHandle();
+	if (issuerLogoutUrl) goToIssuer(issuerLogoutUrl);
 }
 
 export function isAuthenticated(): boolean {

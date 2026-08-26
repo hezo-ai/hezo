@@ -36,7 +36,7 @@ The rules are here; the detail is there. Prefer reading the guide over rediscove
 | Looking up where a helper lives | `seam-registry.md` |
 | Checking what else a change must touch | `mirrored-surfaces.md` |
 
-Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `mcp-cli-efficiency.md`.
+Plus point-in-time decision notes and measurements, not rules: `hosted-architecture.md`, `microvm-assessment.md`, `target-audiences.md`, `container-backend-cost-comparison.md`, `mcp-cli-efficiency.md`, `hezo-cloud-requirements.md`.
 
 ## Commands
 
