@@ -68,6 +68,13 @@ describe('formatRelativeTime', () => {
 		expect(formatRelativeTime(boundary)).toBe(absolute(boundary));
 	});
 
+	test('stays relative past the cutoff when asked', () => {
+		expect(formatRelativeTime(ago(9 * DAY), { alwaysRelative: true })).toBe('9 days ago');
+		expect(formatRelativeTime(ago(400 * DAY), { alwaysRelative: true })).toBe('1 year ago');
+		const future = new Date(NOW.getTime() + 30 * DAY).toISOString();
+		expect(formatRelativeTime(future, { alwaysRelative: true })).toBe('in 1 month');
+	});
+
 	test('reads as "in …" for near-future timestamps', () => {
 		const future = new Date(NOW.getTime() + HOUR).toISOString();
 		expect(formatRelativeTime(future)).toBe('in 1 hour');
@@ -92,6 +99,10 @@ describe('formatRelativeTimeCompact', () => {
 	test('falls back to the absolute date once older than 7 days', () => {
 		const iso = ago(8 * DAY);
 		expect(formatRelativeTimeCompact(iso)).toBe(absolute(iso));
+	});
+
+	test('counts on past the cutoff in days when asked', () => {
+		expect(formatRelativeTimeCompact(ago(9 * DAY), { alwaysRelative: true })).toBe('9d');
 	});
 
 	test('returns "" for empty or unparsable input', () => {
