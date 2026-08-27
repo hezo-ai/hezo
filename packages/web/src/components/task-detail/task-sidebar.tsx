@@ -384,7 +384,7 @@ export function TaskSidebar({
 					<span className="text-text-3 block mb-1 uppercase tracking-wider font-medium">
 						Created
 					</span>
-					<RelativeTime iso={task.created_at} className="text-[13px] text-text-1" />
+					<RelativeTime iso={task.created_at} alwaysRelative className="text-[13px] text-text-1" />
 				</div>
 
 				<div>
