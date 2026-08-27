@@ -82,15 +82,36 @@ export function formatDate(iso: string | null | undefined): string {
 }
 
 /**
+ * Options shared by both relative formatters.
+ *
+ * `alwaysRelative` keeps the phrase relative however old the timestamp is
+ * (`"2 months ago"`, `"1 year ago"`), for a slot whose whole point is the age -
+ * a metadata field labelled with what the timestamp means, sitting next to its
+ * absolute-date tooltip. Everywhere else the week cutoff stands, so a timestamp
+ * that is no longer in living memory reads as a date.
+ */
+export interface RelativeTimeOptions {
+	alwaysRelative?: boolean;
+}
+
+/** Whether a timestamp is old (or far enough in the future) to read as a date. */
+function fallsBackToDate(d: Date, { alwaysRelative = false }: RelativeTimeOptions): boolean {
+	return !alwaysRelative && Math.abs(Date.now() - d.getTime()) >= SEVEN_DAYS_MS;
+}
+
+/**
  * Relative label: `"30 seconds ago"`, `"1 hour ago"`, `"2 days ago"`, up to a
  * week; anything older (or more than a week in the future) falls back to the
- * absolute date. Near-future timestamps read as `"in 5 minutes"`. `''` when
- * unparsable.
+ * absolute date unless `alwaysRelative` is set. Near-future timestamps read as
+ * `"in 5 minutes"`. `''` when unparsable.
  */
-export function formatRelativeTime(iso: string | null | undefined): string {
+export function formatRelativeTime(
+	iso: string | null | undefined,
+	options: RelativeTimeOptions = {},
+): string {
 	const d = parseDate(iso);
 	if (!d) return '';
-	if (Math.abs(Date.now() - d.getTime()) >= SEVEN_DAYS_MS) return formatDateIn(d, activeLocale);
+	if (fallsBackToDate(d, options)) return formatDateIn(d, activeLocale);
 	return formatDistanceToNowStrict(d, {
 		addSuffix: true,
 		locale: DATE_FNS_LOCALES[activeLocale.language],
@@ -99,17 +120,20 @@ export function formatRelativeTime(iso: string | null | undefined): string {
 
 /**
  * Compact relative label for space-constrained spots: `"now"`, `"5m"`, `"3h"`,
- * `"2d"`; older than a week falls back to the absolute date. `''` when
- * unparsable.
+ * `"2d"`; older than a week falls back to the absolute date unless
+ * `alwaysRelative` is set. `''` when unparsable.
  *
  * The unit suffixes stay untranslated on purpose - they have to fit a fixed,
  * very narrow slot, and a localized abbreviation would overflow it.
  */
-export function formatRelativeTimeCompact(iso: string | null | undefined): string {
+export function formatRelativeTimeCompact(
+	iso: string | null | undefined,
+	options: RelativeTimeOptions = {},
+): string {
 	const d = parseDate(iso);
 	if (!d) return '';
 	const now = Date.now();
-	if (Math.abs(now - d.getTime()) >= SEVEN_DAYS_MS) return formatDateIn(d, activeLocale);
+	if (fallsBackToDate(d, options)) return formatDateIn(d, activeLocale);
 	if (differenceInSeconds(now, d) < 60) return 'now';
 	const minutes = differenceInMinutes(now, d);
 	if (minutes < 60) return `${minutes}m`;

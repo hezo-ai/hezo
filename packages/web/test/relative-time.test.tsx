@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { RelativeTime } from '../src/components/ui/relative-time';
+import { formatDate } from '../src/lib/format-date';
 
 // The absolute-date tooltip content is driven by formatDateTime (covered in
 // format-date.test.ts) and rendered through the shared Radix <Tooltip>; its
@@ -32,6 +33,14 @@ test('honours the compact variant', () => {
 	const iso = new Date(NOW.getTime() - 3 * HOUR).toISOString();
 	const { container } = render(<RelativeTime iso={iso} compact />);
 	expect(container.querySelector('time')?.textContent).toBe('3h');
+});
+
+test('falls back to the absolute date past a week, and stays relative when asked', () => {
+	const iso = new Date(NOW.getTime() - 9 * 24 * HOUR).toISOString();
+	const { container: dated } = render(<RelativeTime iso={iso} />);
+	expect(dated.querySelector('time')?.textContent).toBe(formatDate(iso));
+	const { container: relative } = render(<RelativeTime iso={iso} alwaysRelative />);
+	expect(relative.querySelector('time')?.textContent).toBe('9 days ago');
 });
 
 test('renders nothing for an empty/unparsable timestamp', () => {
