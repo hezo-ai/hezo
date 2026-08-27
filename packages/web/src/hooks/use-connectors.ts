@@ -297,15 +297,39 @@ export function useUpdateConnectorMethods(scope: ConnectorMethodsScope) {
 	});
 }
 
+/** What a probe found, as the test route reports it. Mirrors the server's
+ * `ConnectorProbeVerdict` (`services/connectors/method-discovery.ts`). */
+export interface ConnectorProbeVerdict {
+	reachable: boolean;
+	probe: 'ok' | 'unverifiable' | ConnectorProbeError | null;
+	/** An operator-facing sentence, authored server-side beside the outcomes it
+	 * describes. Render it; never re-word it here. */
+	note: string;
+}
+
+export interface ConnectorTestResult {
+	verdict: ConnectorProbeVerdict | null;
+	connector: Connector | null;
+}
+
 /**
- * Re-ask the server what it advertises. Invalidate-and-refetch rather than
- * response-driven: the round trip goes out to a third-party server, so how long
- * it takes and what comes back are both the server's call.
+ * Ask the server to re-check this connector now, and say what it found.
+ *
+ * Invalidate-and-refetch, for the same reason as the method refresh below: the
+ * round trip goes out to a third-party server. The probe can move the row's
+ * recorded health in either direction, so the connector list and the health
+ * banner both have to re-read - the banner's key nests under the list's, so
+ * invalidating the list covers it.
  */
-export function useRefreshConnectorMethods(scope: ConnectorMethodsScope) {
+export function useTestConnector(scope: ConnectorMethodsScope) {
 	return useMutation({
 		mutationFn: (connectorId: string) =>
-			api.post<ConnectorMethods>(`${methodsPath(scope, connectorId)}/refresh`, {}),
+			api.post<ConnectorTestResult>(
+				scope === null
+					? `/api/connectors/${connectorId}/test`
+					: `/api/projects/${scope}/connectors/${connectorId}/test`,
+				{},
+			),
 		onSuccess: (_data, connectorId) => {
 			queryClient.invalidateQueries({ queryKey: methodsKey(scope, connectorId) });
 			queryClient.invalidateQueries({

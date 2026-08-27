@@ -4,7 +4,7 @@ import {
 	type McpMethodInfo,
 	summarizeMethodAccess,
 } from '@hezo/shared';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { encrypt } from '../crypto/encryption';
 import { trackBackground } from '../lib/background';
 import { broadcastConnectorChange } from '../lib/broadcast';
@@ -200,30 +200,35 @@ const methodDiscovery = () => import('../services/connectors/method-discovery');
 async function refreshConnectorMethods(
 	deps: MethodDiscoveryDeps,
 	connectorId: string,
-	trigger: 'connect' | 'create' | 'manual' = 'manual',
+	trigger: 'connect' | 'create' | 'manual' | 'test' = 'manual',
 ): Promise<MethodDiscoveryResult> {
 	const { discoverConnectorMethods } = await methodDiscovery();
 	return discoverConnectorMethods(deps, connectorId, trigger);
 }
 
 /**
- * Probe a just-registered hosted MCP server, and say what it means.
+ * Probe a hosted MCP server, and say what it means.
  *
- * Awaited rather than backgrounded: whether the server answers Hezo without a
- * credential is what decides whether the connector reaches an agent run at all,
- * so the person who just registered it gets that answer with the registration
- * instead of discovering it days later in a run log they cannot see.
+ * Awaited rather than backgrounded: whether the server answers Hezo is what
+ * decides whether the connector reaches an agent run at all, so whoever asked -
+ * the agent that just registered it, or the operator who just pressed Test
+ * connection - gets that answer with their request instead of discovering it
+ * days later in a run log they cannot see.
+ *
+ * A thrown probe is folded into a verdict rather than propagated: "the server
+ * did not answer" is the result, not a failure of the request that asked.
  *
  * Returns null for a connector kind that has no server to probe.
  */
-async function probeOnCreate(
+async function probeAndDescribe(
 	deps: MethodDiscoveryDeps,
 	kind: string,
 	connectorId: string,
+	trigger: 'create' | 'test' = 'create',
 ): Promise<ConnectorProbeVerdict | null> {
 	if (kind !== ConnectorTransport.Saas) return null;
 	const { describeProbeVerdict } = await methodDiscovery();
-	const result = await refreshConnectorMethods(deps, connectorId, 'create').catch(
+	const result = await refreshConnectorMethods(deps, connectorId, trigger).catch(
 		(e): MethodDiscoveryResult => ({
 			ok: false,
 			reason: 'probe_failed',
@@ -439,7 +444,7 @@ connectorsRoutes.post('/connectors', async (c) => {
 		connectionId: createdRow.id,
 		name: createdRow.name,
 	});
-	const probe = await probeOnCreate(
+	const probe = await probeAndDescribe(
 		{ db, masterKeyManager: c.get('masterKeyManager') },
 		body.kind,
 		createdRow.id,
@@ -592,7 +597,7 @@ connectorsRoutes.patch('/projects/:projectId/connectors/:id/methods', async (c) 
 		return err(
 			c,
 			'INVALID_REQUEST',
-			`not advertised by this server: ${unknown.join(', ')}. Refresh the method list if the server has changed.`,
+			`not advertised by this server: ${unknown.join(', ')}. Press Test connection to re-list them if the server has changed.`,
 			400,
 		);
 	}
@@ -641,6 +646,87 @@ connectorsRoutes.post('/projects/:projectId/connectors/:id/methods/refresh', asy
 	return ok(c, found);
 });
 
+/**
+ * Re-check a hosted connector's server on demand, and say what was found.
+ *
+ * The REST twin of the `test_connector` MCP tool: what an agent could already
+ * ask for, an operator can now ask for too. Until this existed the only probe a
+ * human could trigger was the method-list refresh, whose name and placement say
+ * nothing about connector health, and whose 400-on-failure contract is wrong
+ * for a button whose entire job is to report bad news.
+ *
+ * Deliberately 200 with a verdict, never 4xx for a failed probe. "The server
+ * did not answer" is this request succeeding.
+ *
+ * Runs through `discoverConnectorMethods`, the one sanctioned writer of
+ * `probed_at` / `probe_error` / `auth_error`, so the card, the project banner
+ * and the run gate all move off the same call. Nothing here is a second probe
+ * path.
+ *
+ * Global connectors are testable from a project page even though their method
+ * allowlist is not editable there: a probe reads the server and widens no
+ * access.
+ */
+async function respondWithProbe(
+	c: Context<Env>,
+	connector: { id: string; kind: string },
+	scope: { teamId: string; projectId: string } | null,
+) {
+	if (connector.kind !== ConnectorTransport.Saas) {
+		return err(
+			c,
+			'INVALID_REQUEST',
+			'Only hosted MCP servers can be tested. A local server has no endpoint to reach, and an API connector is called directly by the agent.',
+			400,
+		);
+	}
+	const db = c.get('db');
+	const verdict = await probeAndDescribe(
+		{ db, masterKeyManager: c.get('masterKeyManager') },
+		connector.kind,
+		connector.id,
+		'test',
+	);
+	// The probe may have set or cleared auth_error and stamped fresh evidence, so
+	// an open Connectors page elsewhere has to hear about it - the operator who
+	// pressed the button is not necessarily the only one watching.
+	if (scope) broadcastConnectorChange(c, scope, 'UPDATE', { id: connector.id, status: 'probed' });
+	return ok(c, { verdict, connector: await rereadConnector(db, connector.id) });
+}
+
+connectorsRoutes.post('/projects/:projectId/connectors/:id/test', async (c) => {
+	const db = c.get('db');
+	const projectId = c.get('projectId') as string;
+	const id = c.req.param('id');
+
+	const owned = await db.query<{ id: string; kind: string }>(
+		`SELECT id, kind::text AS kind FROM mcp_connections
+		 WHERE id = $1 AND (project_id = $2 OR project_id IS NULL)`,
+		[id, projectId],
+	);
+	if (owned.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+
+	return respondWithProbe(c, owned.rows[0], { teamId: c.get('teamId') as string, projectId });
+});
+
+connectorsRoutes.post('/connectors/:id/test', async (c) => {
+	const denied = requireAdminEquivalent(c);
+	if (denied) return denied;
+	const id = c.req.param('id');
+
+	const owned = await c
+		.get('db')
+		.query<{ id: string; kind: string }>(
+			`SELECT id, kind::text AS kind FROM mcp_connections WHERE id = $1`,
+			[id],
+		);
+	if (owned.rows.length === 0) return err(c, 'NOT_FOUND', 'connector not found', 404);
+
+	// No broadcast: the admin surface spans every project, so there is no one
+	// team room this belongs in, and the page refetches on its own.
+	return respondWithProbe(c, owned.rows[0], null);
+});
+
 // Admin equivalents of the three /methods routes above, for the global
 // Connectors page. A **global** ("All projects") connector is read-only from any
 // project page — it is shared by every project — so these are the only place its
@@ -676,7 +762,7 @@ connectorsRoutes.patch('/connectors/:id/methods', async (c) => {
 		return err(
 			c,
 			'INVALID_REQUEST',
-			`not advertised by this server: ${unknown.join(', ')}. Refresh the method list if the server has changed.`,
+			`not advertised by this server: ${unknown.join(', ')}. Press Test connection to re-list them if the server has changed.`,
 			400,
 		);
 	}
@@ -1095,7 +1181,7 @@ connectorsRoutes.post('/projects/:projectId/connectors', async (c) => {
 		);
 	}
 
-	const probe = await probeOnCreate(
+	const probe = await probeAndDescribe(
 		{ db, masterKeyManager: c.get('masterKeyManager') },
 		body.kind,
 		inserted.id as string,
@@ -1186,7 +1272,7 @@ connectorsRoutes.post('/projects/:projectId/connectors/ensure', async (c) => {
 	// discovery anyway. Blocking it on a third-party round trip would only slow
 	// the redirect they are waiting for.
 	trackBackground(
-		probeOnCreate({ db, masterKeyManager: c.get('masterKeyManager') }, row.kind, row.id).catch(
+		probeAndDescribe({ db, masterKeyManager: c.get('masterKeyManager') }, row.kind, row.id).catch(
 			(e) => log.warn('connector probe after ensure failed', { error: (e as Error).message }),
 		),
 	);

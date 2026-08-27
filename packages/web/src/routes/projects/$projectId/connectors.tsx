@@ -7,6 +7,7 @@ import { ConnectorDeviceFlowDialog } from '../../../components/connector-device-
 import { ConnectorOAuthBrokerForm } from '../../../components/connector-oauth-broker-form';
 import { ConnectorProbeNotice } from '../../../components/connector-probe-notice';
 import { ConnectorSettingsSection } from '../../../components/connector-settings-section';
+import { ConnectorTestButton } from '../../../components/connector-test-button';
 import { InfiniteScrollSentinel } from '../../../components/infinite-scroll-sentinel';
 import { LinkedReposWarning } from '../../../components/linked-repos-warning';
 import { Badge } from '../../../components/ui/badge';
@@ -703,6 +704,11 @@ function ConnectorRow({ connector, projectId, focused, focusRef }: ConnectorRowP
 					className="flex flex-wrap items-center gap-2 sm:shrink-0"
 					data-testid="connector-actions"
 				>
+					{/* Outside the branch below, because "is this server answering?" is
+					    worth asking whatever the row's status - and a global connector,
+					    read-only here in every other respect, is no exception: a probe
+					    reads the server and widens no access. */}
+					<ConnectorTestButton connector={connector} scope={projectId} />
 					{isGlobal ? (
 						// Read-only here: manage global connectors on the global page.
 						<Link
