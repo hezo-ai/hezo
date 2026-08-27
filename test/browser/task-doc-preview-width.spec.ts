@@ -104,10 +104,14 @@ test('document preview panel widens on xl/2xl screens (up to 2× its base width)
 	// At lg+ the widening track carries the panel's movement, so its own travel is
 	// overridden to zero and it only fades. If that `lg:` variant stopped
 	// compiling, the desktop panel would slide its full width in from off-screen —
-	// a visible bug the width assertions below would sail straight past.
+	// a visible bug the width assertions below would sail straight past. Read it as
+	// a number: this runs against the minified bundle in CI, and the exact text a
+	// custom property ships as is the minifier's business, not this test's.
 	expect(
-		await panel.evaluate((el) => getComputedStyle(el).getPropertyValue('--panel-travel').trim()),
-	).toBe('0px');
+		await panel.evaluate((el) =>
+			Number.parseFloat(getComputedStyle(el).getPropertyValue('--panel-travel')),
+		),
+	).toBe(0);
 
 	// The preview track is a fixed px width independent of the (scrollbar-sensitive)
 	// 1fr content column, so the measured border-box lands on the track value ±a

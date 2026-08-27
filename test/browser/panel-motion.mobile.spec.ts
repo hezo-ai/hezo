@@ -87,19 +87,17 @@ test.describe('Side panel motion — mobile (390px)', () => {
 		await expect(panel).toBeVisible();
 
 		// The declared animation is readable whether or not it has finished, so this
-		// is a straight assertion rather than a race against the clock.
+		// is a straight assertion rather than a race against the clock. A resolved
+		// duration also proves --panel-motion reached the page: the keyframe reads it
+		// through var(), so an unresolved token would compute to 0s. Assert the
+		// computed value, never the custom property's raw text — the production
+		// bundle this runs against is minified, and `300ms` ships as `.3s`.
 		expect(await motionOf(page)).toEqual({
 			name: 'panel-enter',
 			duration: '0.3s',
 			easing: 'ease-in-out',
 			travel: '100%', // full-width travel below lg; lg+ overrides this to 0px
 		});
-		// The token the whole system reads resolves on the page, not just in source.
-		expect(
-			await page.evaluate(() =>
-				getComputedStyle(document.documentElement).getPropertyValue('--panel-motion').trim(),
-			),
-		).toBe('300ms');
 
 		await expect
 			.poll(async () => (await panel.boundingBox())?.x ?? 999, { timeout: 5000 })
