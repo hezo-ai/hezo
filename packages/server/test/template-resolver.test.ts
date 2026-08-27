@@ -431,6 +431,7 @@ describe('template resolver', () => {
 		expect(result).toContain('### @-Mentions, Linking & Handoffs');
 		expect(result).toContain('### Knowledge Maintenance');
 		expect(result).toContain('### Sub-Agents & Parallel Exploration');
+		expect(result).toContain("### Reviewing a Teammate's Work");
 		// Before doing assigned work, an agent must first decide whether parts of it
 		// belong to a direct report and delegate rather than absorbing it all —
 		// acute on "redo / revise / fix" assignments that re-do the team's prior work.
@@ -460,6 +461,30 @@ describe('template resolver', () => {
 	// agents were producing one deliverable and the delegate kept working from a brief
 	// that had been silently superseded. The prompt previously covered only the initial
 	// delegation decision and the cancel-then-absorb variant.
+
+	it("tells every agent to review a teammate's work with adversarial sub-agents", async () => {
+		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
+
+		// Reviewing a teammate's finished work is not one role's job — QA, Security,
+		// the Architect, the Coach, the Risk Verifier, a Content Editor and every
+		// Captain all do it, as does any future hire given a review duty. So the
+		// mechanism lives here, at the surface that reaches all of them, and each
+		// role doc supplies only its own dimensions.
+		expect(result).toContain('adversarial sub-agents');
+		// The cap is what bounds the spend this rule adds across every team.
+		expect(result).toContain('ten at most');
+		// The adversarial brief is the whole point: a sub-agent asked to confirm the
+		// work finds it fine. This is the clause a later reword would soften first.
+		expect(result).toContain('proving the work wrong rather than confirming it right');
+		// A finding nobody reproduced is noise handed to the author as fact.
+		expect(result).toContain('drop what you cannot reproduce');
+		// A sub-agent that rewrites what it reviews destroys the evidence, and on a
+		// role forbidden from editing source it also breaches that rule by proxy.
+		expect(result).toContain('never edits it');
+		// Of the CLIs the agent image installs, only the Claude Code family is wired
+		// for sub-agents, so the coverage must not depend on having them.
+		expect(result).toContain('Without sub-agents on your runtime');
+	});
 	it('routes post-delegation feedback to the delegate rather than letting the manager absorb it', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 		expect(result).toContain(
