@@ -1,12 +1,7 @@
 import { summarizeMethodAccess } from '@hezo/shared';
 import { ChevronDown, ChevronRight, KeyRound, RefreshCw, SquarePen } from 'lucide-react';
 import { useState } from 'react';
-import {
-	type Connector,
-	type ConnectorStatus,
-	useConnectorMethods,
-	useRefreshConnectorMethods,
-} from '../hooks/use-connectors';
+import { type Connector, type ConnectorStatus, useConnectorMethods } from '../hooks/use-connectors';
 import { toast } from '../hooks/use-toast';
 import { apiKeyGuideFor, ConnectorApiKeyForm } from './connector-api-key-form';
 import { ConnectorMethodsDialog } from './connector-methods-dialog';
@@ -58,7 +53,6 @@ export function ConnectorSettingsSection({
 	// Only fetch the method catalog once the section is actually opened — a
 	// connectors page can hold dozens of cards and none of them need it closed.
 	const methodsQuery = useConnectorMethods(projectId, connector.id, open);
-	const refresh = useRefreshConnectorMethods(projectId);
 
 	const credentials = connector.credentials ?? [];
 	const summary = summarizeMethodAccess(
@@ -66,14 +60,6 @@ export function ConnectorSettingsSection({
 		methodsQuery.data?.enabled_methods ?? connector.enabled_methods ?? null,
 	);
 	const Chevron = open ? ChevronDown : ChevronRight;
-
-	async function runRefresh() {
-		try {
-			await refresh.mutateAsync(connector.id);
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : 'Could not list this server’s methods');
-		}
-	}
 
 	return (
 		<>
@@ -177,22 +163,6 @@ export function ConnectorSettingsSection({
 									>
 										<SquarePen className="w-3 h-3" />
 									</button>
-								)}
-								{!isGlobal && (
-									<Button
-										size="sm"
-										variant="outline"
-										onClick={runRefresh}
-										disabled={refresh.isPending}
-										data-testid="connector-methods-refresh"
-									>
-										<RefreshCw className="size-3.5 mr-1" />
-										{refresh.isPending
-											? 'Listing…'
-											: summary.total > 0
-												? 'Refresh'
-												: 'List methods'}
-									</Button>
 								)}
 							</>
 						)}

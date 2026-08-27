@@ -358,14 +358,15 @@ export async function discoverConnectorMethods(
 	connectorId: string,
 	/**
 	 * What prompted this attempt, which decides how loudly a failure is logged.
-	 * `manual` means an operator pressed refresh and is waiting on an answer, so a
-	 * failure is worth a warning. Everything else fires on Hezo's own schedule -
-	 * after an activation, at registration, on the health sweep, or after an
-	 * agent run's request to the connector was refused (`run`) - where a failure
-	 * is ordinary, already visible on the connector card or in the run's log, and
-	 * logs at debug.
+	 * `manual` (an operator pressed refresh) and `test` (an operator pressed Test
+	 * connection) both mean somebody is waiting on the answer, so a failure is
+	 * worth a warning. Everything else fires on Hezo's own schedule - after an
+	 * activation, at registration, on the health sweep, or after an agent run's
+	 * request to the connector was refused (`run`) - where a failure is ordinary,
+	 * already visible on the connector card or in the run's log, and logs at
+	 * debug.
 	 */
-	trigger: 'connect' | 'create' | 'sweep' | 'manual' | 'run' = 'manual',
+	trigger: 'connect' | 'create' | 'sweep' | 'manual' | 'test' | 'run' = 'manual',
 ): Promise<MethodDiscoveryResult> {
 	const found = await deps.db.query<DiscoveryRow>(
 		`SELECT id, name, kind::text AS kind, config, oauth_connection_id, api_key_secret_id,
@@ -419,7 +420,7 @@ export async function discoverConnectorMethods(
 		const detail = (outcome.error as Error)?.message ?? String(outcome.error);
 		const status = httpStatusOf(outcome.error);
 		const rejectedCredential = status === 401 || status === 403;
-		const at = trigger === 'manual' ? log.warn : log.debug;
+		const at = trigger === 'manual' || trigger === 'test' ? log.warn : log.debug;
 		at.call(log, 'mcp method discovery failed', {
 			connectorId,
 			name: row.name,

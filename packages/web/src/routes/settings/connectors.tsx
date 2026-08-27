@@ -4,6 +4,7 @@ import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { ConnectorMethodsDialog } from '../../components/connector-methods-dialog';
 import { ConnectorProbeNotice } from '../../components/connector-probe-notice';
+import { ConnectorTestButton } from '../../components/connector-test-button';
 import { InfiniteScrollSentinel } from '../../components/infinite-scroll-sentinel';
 import { LinkedReposWarning } from '../../components/linked-repos-warning';
 import { RelatedItemsList } from '../../components/related-items-list';
@@ -17,12 +18,7 @@ import {
 	SearchableSelect,
 	type SearchableSelectOption,
 } from '../../components/ui/searchable-select';
-import {
-	type Connector,
-	connectorStatus,
-	useConnectorMethods,
-	useRefreshConnectorMethods,
-} from '../../hooks/use-connectors';
+import { type Connector, connectorStatus, useConnectorMethods } from '../../hooks/use-connectors';
 import {
 	INSTANCE_CONNECTORS_KEY,
 	useCreateInstanceConnector,
@@ -365,6 +361,7 @@ function InstanceConnectorRow({
 					{url}
 				</span>
 				<div className="flex items-center gap-2 ml-auto shrink-0">
+					<ConnectorTestButton connector={connector} scope={null} />
 					{connector.kind === 'saas' && status !== 'active' && (
 						<Button
 							size="sm"
@@ -449,8 +446,6 @@ function InstanceConnectorRow({
 function AdminMethodAccess({ connector }: { connector: Connector }) {
 	const [open, setOpen] = useState(false);
 	const methodsQuery = useConnectorMethods(null, connector.id);
-	const refresh = useRefreshConnectorMethods(null);
-	const [error, setError] = useState<string | null>(null);
 
 	const summary = summarizeMethodAccess(
 		methodsQuery.data?.methods ?? connector.discovered_methods ?? [],
@@ -480,22 +475,6 @@ function AdminMethodAccess({ connector }: { connector: Connector }) {
 					Edit
 				</Button>
 			)}
-			<Button
-				size="sm"
-				variant="outline"
-				disabled={refresh.isPending}
-				data-testid="connector-methods-refresh"
-				onClick={() => {
-					setError(null);
-					refresh.mutate(connector.id, {
-						onError: (e: unknown) =>
-							setError(errMessage(e, "Could not list this server's methods")),
-					});
-				}}
-			>
-				{refresh.isPending ? 'Listing…' : summary.total > 0 ? 'Refresh' : 'List methods'}
-			</Button>
-			{error && <span className="text-xs text-danger basis-full">{error}</span>}
 			{open && methodsQuery.data && (
 				<ConnectorMethodsDialog
 					open={open}
