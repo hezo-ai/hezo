@@ -533,6 +533,87 @@ test('a global connector is read-only on the project page (badge + manage link, 
 	expect(within(row).queryByTestId('connector-revoke')).toBeNull();
 	expect(within(row).queryByTestId('connector-api-key-toggle')).toBeNull();
 	expect(within(row).queryByTestId('connector-remove')).toBeNull();
+	// Read-only means nothing here may *change* the connector. Re-checking whether
+	// its server answers changes nothing about it, so it stays available - and a
+	// shared connector that has gone quiet is exactly the one an operator on a
+	// project page needs to be able to diagnose.
+	expect(within(row).getByTestId('connector-test')).toBeTruthy();
+});
+
+test('Test connection sits on the card, outside Settings, and reports a reachable server', async () => {
+	let slug = '';
+	const { findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			// A `/mcp` URL is rerouted into the in-process app, so this one answers.
+			await seedSaasConnector(ws, { name: 'linear', url: 'https://mcp.linear.example/mcp' });
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+	const row = (await findByText('linear')).closest('[data-testid="connector-row"]') as HTMLElement;
+
+	// The point of the change: reachable without opening the Settings disclosure,
+	// where the only probe a human could trigger used to live.
+	expect(row.querySelector('[data-testid="connector-settings-body"]')).toBeNull();
+	const button = within(row).getByTestId('connector-test');
+	expect(within(row).getByTestId('connector-actions').contains(button)).toBe(true);
+
+	await user.click(button);
+
+	// The verdict is authored server-side; the page renders it verbatim.
+	await waitFor(() => {
+		expect(document.body.textContent).toContain('reaches agent runs');
+	});
+});
+
+test('Test connection reports a server that does not answer', async () => {
+	let slug = '';
+	const { findByText, user, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			// Not a `/mcp` path, so it leaves the in-process app and is refused at
+			// once - a deterministic unreachable verdict with no real network wait.
+			await seedSaasConnector(ws, { name: 'offline', url: 'http://127.0.0.1:1/nope' });
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+	const row = (await findByText('offline')).closest('[data-testid="connector-row"]') as HTMLElement;
+
+	await user.click(within(row).getByTestId('connector-test'));
+
+	await waitFor(() => {
+		expect(document.body.textContent).toContain('did not answer');
+	});
+});
+
+test('connectors with no MCP server to reach offer no Test connection button', async () => {
+	let slug = '';
+	const { findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			await seedLocalConnector(ws, { name: 'umami-local', command: 'umami-mcp' });
+			await seedApiConnector(ws, {
+				name: 'plain-rest',
+				baseUrl: 'https://api.example.com',
+				hosts: ['api.example.com'],
+			});
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	// A stdio server has no endpoint to hand-shake with and an `api` connector is
+	// called directly by the agent, so the route refuses both. A button that can
+	// only ever fail is worse than no button.
+	for (const name of ['umami-local', 'plain-rest']) {
+		const row = (await findByText(name)).closest('[data-testid="connector-row"]') as HTMLElement;
+		expect(within(row).queryByTestId('connector-test')).toBeNull();
+	}
 });
 
 test('shows the empty-state hint when there are no connectors or OAuth connections', async () => {

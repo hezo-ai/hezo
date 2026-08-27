@@ -32,6 +32,14 @@ export interface ExchangeCodeInput {
 	code: string;
 	codeVerifier: string;
 	redirectUri: string;
+	/**
+	 * RFC 8707 resource indicator - the MCP server this token is for. The MCP
+	 * authorization spec requires it on the token request whenever the
+	 * authorization request carried it, and a compliant AS rejects the exchange
+	 * with `invalid_target` when it is missing. Pass exactly what
+	 * {@link buildAuthorizationUrl} was given, so the two requests agree.
+	 */
+	resource?: string;
 	additionalParams?: Record<string, string>;
 }
 
@@ -116,6 +124,7 @@ export async function exchangeCode(
 		code_verifier: input.codeVerifier,
 	});
 	if (input.clientSecret) params.set('client_secret', input.clientSecret);
+	if (input.resource) params.set('resource', input.resource);
 	if (input.additionalParams) {
 		for (const [k, v] of Object.entries(input.additionalParams)) {
 			params.set(k, v);
@@ -137,7 +146,7 @@ export async function exchangeCode(
 	if (!res.ok) {
 		const errorCode = typeof raw.error === 'string' ? raw.error : `${res.status}`;
 		const description = typeof raw.error_description === 'string' ? raw.error_description : '';
-		throw new Error(`token endpoint error: ${errorCode}${description ? ` — ${description}` : ''}`);
+		throw new Error(`token endpoint error: ${errorCode}${description ? ` - ${description}` : ''}`);
 	}
 	const accessToken = typeof raw.access_token === 'string' ? raw.access_token : null;
 	if (!accessToken) {
@@ -161,6 +170,8 @@ export interface RefreshInput {
 	clientId: string;
 	clientSecret?: string;
 	refreshToken: string;
+	/** RFC 8707 resource indicator, as on {@link ExchangeCodeInput}. */
+	resource?: string;
 	additionalParams?: Record<string, string>;
 }
 
@@ -181,6 +192,7 @@ export async function refreshAccessToken(
 		refresh_token: input.refreshToken,
 	});
 	if (input.clientSecret) params.set('client_secret', input.clientSecret);
+	if (input.resource) params.set('resource', input.resource);
 	if (input.additionalParams) {
 		for (const [k, v] of Object.entries(input.additionalParams)) {
 			params.set(k, v);
@@ -202,7 +214,7 @@ export async function refreshAccessToken(
 	if (!res.ok) {
 		const errorCode = typeof raw.error === 'string' ? raw.error : `${res.status}`;
 		const description = typeof raw.error_description === 'string' ? raw.error_description : '';
-		throw new Error(`token endpoint error: ${errorCode}${description ? ` — ${description}` : ''}`);
+		throw new Error(`token endpoint error: ${errorCode}${description ? ` - ${description}` : ''}`);
 	}
 	const accessToken = typeof raw.access_token === 'string' ? raw.access_token : null;
 	if (!accessToken) {

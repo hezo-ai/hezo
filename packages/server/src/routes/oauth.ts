@@ -144,10 +144,14 @@ oauthRoutes.get('/oauth/callback', async (c) => {
 			code,
 			codeVerifier: payload.codeVerifier,
 			redirectUri: payload.redirectUri,
+			// Same value the authorize request carried - the state envelope stores it
+			// precisely so the two halves of the flow cannot disagree. An AS that
+			// scopes tokens per resource rejects an exchange that drops it.
+			resource: payload.resourceUrl,
 		});
 	} catch (e) {
 		log.warn('oauth code exchange failed', { error: (e as Error).message });
-		return c.html(buildCallbackPage('error', 'exchange_failed'), 200);
+		return c.html(buildCallbackPage('error', exchangeFailureMessage(e)), 200);
 	}
 
 	const allowedHosts = inferAllowedHosts(payload.resourceUrl, payload.manualConfig.token_url);
@@ -619,11 +623,12 @@ oauthRoutes.get('/oauth/mcp-callback', async (c) => {
 			code,
 			codeVerifier: payload.codeVerifier,
 			redirectUri: payload.redirectUri,
+			resource: payload.resourceUrl,
 		});
 	} catch (e) {
 		log.warn('mcp oauth code exchange failed', { error: (e as Error).message });
 		await markFailed(db, connector.id, `exchange: ${(e as Error).message}`);
-		return c.html(buildCallbackPage('error', 'exchange_failed'), 200);
+		return c.html(buildCallbackPage('error', exchangeFailureMessage(e)), 200);
 	}
 
 	// The DCR/auth-code path only ever lands non-device providers here: GitHub
@@ -1075,6 +1080,25 @@ function inferAllowedHosts(resourceUrl: string | undefined, tokenUrl: string): s
 	return [...hosts];
 }
 
+/**
+ * What the operator is told when the token exchange fails.
+ *
+ * Keeps the `exchange_failed` code - it is the stable thing to search for and
+ * what the opener already keys on - and appends what the Authorization Server
+ * actually said. Without the suffix this page reported the same six words
+ * whether the AS rejected the redirect URI, the client, the PKCE verifier or
+ * the resource indicator, and the one useful sentence died in a log the person
+ * looking at the popup cannot read.
+ *
+ * The upstream text is bounded and carries no part of the grant: the only
+ * inputs are `error`/`error_description` from the token endpoint's own body, or
+ * a transport failure naming the endpoint.
+ */
+function exchangeFailureMessage(e: unknown): string {
+	const detail = (e as Error)?.message?.trim();
+	return detail ? `exchange_failed: ${detail.slice(0, 300)}` : 'exchange_failed';
+}
+
 function buildCallbackPage(
 	status: 'success' | 'error',
 	message?: string,
@@ -1093,15 +1117,41 @@ function buildCallbackPage(
 				window.opener.postMessage({ type: 'hezo-oauth-success' }, '*');
 				window.close();
 			} else {
-				location.href = ${JSON.stringify(safeReturn)};
+				location.href = ${jsonForScript(safeReturn)};
 			}
 		</script><p>OAuth connection complete. You can close this window.</p></body></html>`;
 	}
+	// `message` can quote an upstream error body, so it is neither ours nor
+	// trustworthy as markup. Both slots it lands in need their own escaping.
+	const raw = message ?? 'unknown';
 	return `<!doctype html><html><head><title>OAuth failed</title></head><body><script>
 		if (window.opener) {
-			window.opener.postMessage({ type: 'hezo-oauth-error', error: ${JSON.stringify(message ?? 'unknown')} }, '*');
+			window.opener.postMessage({ type: 'hezo-oauth-error', error: ${jsonForScript(raw)} }, '*');
 		}
-	</script><p>OAuth failed: ${message ?? 'unknown'}</p></body></html>`;
+	</script><p>OAuth failed: ${escapeHtml(raw)}</p></body></html>`;
+}
+
+/** Escape text destined for an HTML text node or a quoted attribute. */
+function escapeHtml(value: string): string {
+	return value
+		.replaceAll('&', '&amp;')
+		.replaceAll('<', '&lt;')
+		.replaceAll('>', '&gt;')
+		.replaceAll('"', '&quot;')
+		.replaceAll("'", '&#39;');
+}
+
+/**
+ * A JS string literal safe to inline in an HTML `<script>` element.
+ *
+ * `JSON.stringify` alone is not: it leaves `<` and `>` as themselves, so a
+ * value containing `</script>` closes the element and everything after it is
+ * parsed as markup. The HTML parser does not look inside string literals, and
+ * these values quote an upstream error body. `\u003c` / `\u003e` are the same
+ * characters to JavaScript and inert to the parser.
+ */
+function jsonForScript(value: unknown): string {
+	return JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e');
 }
 
 /**

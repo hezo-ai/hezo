@@ -7,6 +7,11 @@ import { type GenericRefreshFn, loadSecretValue, registerGenericRefreshFn } from
  * then runs the refresh_token grant. Registered once at startup as the fallback
  * for any oauth_connection whose provider has no bespoke refresh fn — so a new
  * device-flow provider needs zero refresh code.
+ *
+ * `resource_url` rides along when the connection has one. It is written only by
+ * the flows that also sent the RFC 8707 `resource` on the authorization and
+ * token requests, so a refresh carries the parameter exactly when the grant it
+ * refreshes did — an AS that scopes tokens per resource needs it on every leg.
  */
 export const genericRefreshFn: GenericRefreshFn = async (deps, conn, refreshToken) => {
 	const tokenUrl = typeof conn.metadata.token_url === 'string' ? conn.metadata.token_url : null;
@@ -14,11 +19,13 @@ export const genericRefreshFn: GenericRefreshFn = async (deps, conn, refreshToke
 	if (!tokenUrl || !clientId) {
 		throw new Error('generic refresh needs token_url + client_id in connection metadata');
 	}
+	const resource =
+		typeof conn.metadata.resource_url === 'string' ? conn.metadata.resource_url : undefined;
 	let clientSecret: string | undefined;
 	if (conn.clientSecretSecretId) {
 		clientSecret = (await loadSecretValue(deps, conn.clientSecretSecretId)) ?? undefined;
 	}
-	const t = await refreshAccessToken({ tokenUrl, clientId, clientSecret, refreshToken });
+	const t = await refreshAccessToken({ tokenUrl, clientId, clientSecret, refreshToken, resource });
 	return {
 		accessToken: t.accessToken,
 		refreshToken: t.refreshToken ?? null,

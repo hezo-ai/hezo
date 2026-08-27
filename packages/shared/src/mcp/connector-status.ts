@@ -111,6 +111,26 @@ export function connectorStatus(row: ConnectorStatusRow): ConnectorStatus {
 }
 
 /**
+ * True when the connector already carries a credential an agent run would send:
+ * a completed OAuth connection, a stored API key, or a `__HEZO_SECRET_*__`
+ * header the egress proxy substitutes at request time.
+ *
+ * The TypeScript twin of `SAAS_CREDENTIALED_SQL`
+ * (`services/connectors/connections.ts`), which is the predicate deciding
+ * whether a hosted connector reaches a run. **Change both together.** Its one
+ * consumer is the operator-facing explanation of a failed probe: a credentialed
+ * connector reaches runs whatever the last probe said, so telling its owner
+ * that agents cannot use it would be false.
+ */
+export function connectorIsCredentialed(row: ConnectorStatusRow): boolean {
+	return (
+		row.oauth_connection_id !== null ||
+		row.api_key_secret_id !== null ||
+		connectorHasPlaceholderHeader(row.config)
+	);
+}
+
+/**
  * `list_connectors`' view of the same state.
  *
  * The one difference from `connectorStatus` is part of the tool's contract, not

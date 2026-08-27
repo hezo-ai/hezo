@@ -275,9 +275,10 @@ matter which AI model or coding tool the agent is running. Disabled methods are 
 from `hezo-mcp search`, so an agent never sees a tool it can't use and won't waste a turn
 trying. Either way it cannot be called.
 
-Methods are listed when you connect the server. If a connector shows that its methods
-haven't been listed yet - it was connected before this existed, or the listing failed -
-press **List methods** on the same row.
+Methods are listed when you connect the server, and again every time you press **Test
+connection**. If a connector shows that its methods haven't been listed yet - it was
+connected before this existed, or the listing failed - press **Test connection** on the
+same row.
 
 The allowlist belongs to the connector, so a connector scoped to **All projects** carries
 one allowlist shared by every project, edited from the global **Settings → Connectors**
@@ -294,6 +295,26 @@ This only ever narrows access. An agent can't ask for *more* than it would get b
 and the request is skipped entirely once you've chosen the enabled methods yourself: your
 choice stands, and a later registration won't undo it. You can widen or narrow a connector
 at any time from the same control.
+
+## Checking a connector yourself
+
+Every hosted connector's row carries a **Test connection** button, on both the project's
+Connectors page and the global **Settings → Connectors** page. Press it whenever you want
+to know where a connector stands, whatever its badge says.
+
+It runs the same check Hezo runs on its own: it opens an MCP handshake with the server,
+using the connector's stored credential, and tells you what came back. A reachable server
+also re-lists its methods, so the allowlist reflects whatever the server advertises today.
+
+Use it when a row says **Connected** but carries a warning underneath, when an agent
+reports that a connector's tools are missing, or after the provider tells you an outage is
+over. Hezo re-checks connectors that carry no credential on a timer; one that has a
+credential is only checked when something happens to it, so a warning from an outage last
+week can still be sitting on the row long after the server came back. This button is how
+you clear it.
+
+Local (stdio) servers and REST API connectors have no button: neither has an MCP endpoint
+to hand-shake with, so there is nothing to check from here.
 
 ## When a connector stops working
 
@@ -315,9 +336,9 @@ Hezo surfaces it four ways instead:
   `[runner] WARNING:` line naming the connector, the HTTP status and whether the request
   carried a credential - and Hezo immediately re-checks the connector itself, then writes a
   second line with what it found. In a CEO chat the same two sentences appear as warning rows
-  in the thread. That re-check is the same probe as the connector's **Refresh** button, so a
-  dead credential lights the banner and the badge at that moment rather than at the next
-  timed check, and a public server that has started demanding a credential is held back from
+  in the thread. That re-check is the same probe as the connector's **Test connection**
+  button, so a dead credential lights the banner and the badge at that moment rather than
+  at the next timed check, and a public server that has started demanding a credential is held back from
   later runs until you connect one. If the line says the request carried no credential
   although one is configured, the agent runtime is not sending it - that is a Hezo defect,
   not something reconnecting fixes; please report it with the runtime named in the line.

@@ -423,3 +423,27 @@ test("a global connector's method allowlist is editable from the global page", a
 	});
 	await findByText('2 of 4');
 });
+
+test('a global connector can be tested from the admin page', async () => {
+	// The same affordance as the project page, on the surface where an
+	// "All projects" connector is actually managed. Before this, the admin page
+	// offered no way to re-check a connector at all once it was connected.
+	const { findByText, findByTestId, user } = await renderApp({
+		initialPath: '/settings/connectors',
+		seed: async (ctx) => {
+			await seedInstanceConnector(ctx, {
+				name: 'reachable-conn',
+				kind: 'saas',
+				// A `/mcp` path is rerouted into the in-process app, so it answers.
+				config: { url: 'https://reachable-conn.example/mcp' },
+			});
+		},
+	});
+
+	await findByText('reachable-conn');
+	await user.click(await findByTestId('connector-test'));
+
+	await waitFor(() => {
+		expect(document.body.textContent).toContain('reaches agent runs');
+	});
+});

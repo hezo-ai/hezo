@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	CONNECTOR_OAUTH_STATUS_NONE,
 	ConnectorStatus,
+	connectorIsCredentialed,
 	connectorNeedsHuman,
 	connectorOAuthStatus,
 	connectorStatus,
@@ -187,5 +188,30 @@ describe('connectorOAuthStatus', () => {
 				auth_error: 'token refresh: invalid_grant',
 			}),
 		).toBe(ConnectorStatus.Degraded);
+	});
+});
+
+describe('connectorIsCredentialed', () => {
+	// The three arms have to stay in step with SAAS_CREDENTIALED_SQL, which is
+	// what actually decides whether a hosted connector reaches an agent run.
+	it('counts each credential a run would send', () => {
+		expect(connectorIsCredentialed({ ...base, oauth_connection_id: 'oc-1' })).toBe(true);
+		expect(connectorIsCredentialed({ ...base, api_key_secret_id: 'sec-1' })).toBe(true);
+		expect(
+			connectorIsCredentialed({
+				...base,
+				config: { headers: { 'X-Api-Key': '__HEZO_SECRET_TYPEFULLY__' } },
+			}),
+		).toBe(true);
+	});
+
+	it('counts a bare hosted row as uncredentialed, however it was last probed', () => {
+		expect(connectorIsCredentialed(base)).toBe(false);
+		expect(
+			connectorIsCredentialed({ ...base, config: { headers: { 'X-Api-Key': 'literal' } } }),
+		).toBe(false);
+		// Probe evidence is not a credential: it is the *substitute* for one, which
+		// is why a failed probe keeps only this group out of runs.
+		expect(connectorIsCredentialed({ ...base, probed_at: 'now', probe_error: null })).toBe(false);
 	});
 });

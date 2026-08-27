@@ -4671,7 +4671,19 @@ host-only client secret when present), so refresh is now **real** for broker con
 rather than the historically GitHub-inert no-op; a provider-specific fn still wins over the
 generic one where registered. Every flow that mints a connection therefore has to persist
 **both** `token_url` and `client_id` on its metadata — the auth-code and MCP DCR callbacks
-included, not just the device-flow broker. Omitting `client_id` makes the generic fn throw
+included, not just the device-flow broker. `resource_url` is persisted for the same reason:
+the **RFC 8707 resource indicator** rides *every* leg of a flow that uses it, not just the
+authorization request. `buildAuthorizationUrl` has always sent `resource`; `exchangeCode`
+and `refreshAccessToken` now take it too, sourced from `StatePayload.resourceUrl` at both
+callbacks and from `metadata.resource_url` in the generic refresh — so it is present on the
+token request exactly when it was present on the authorization request, which is what the MCP
+authorization spec requires. An AS that scopes tokens per resource (Typefully's, among
+others) answers a token request that drops it with `invalid_target`, which is how this was
+found: reconnect completed the consent screen and then failed at the exchange, every time.
+The callback page reports the AS's own `error`/`error_description` alongside the
+`exchange_failed` code rather than the code alone — escaped into both the paragraph and the
+inline `<script>` literal, since that text is upstream-controlled and `JSON.stringify` alone
+leaves `</script>` able to close the element. Omitting `client_id` makes the generic fn throw
 before any network call, and because a failed refresh is swallowed and never advances
 `expires_at`, the connection silently keeps serving its original access token until the
 upstream 401s. A failed refresh now backs off per connection (30 s doubling to a 15 min
@@ -4683,8 +4695,16 @@ each in its own try/catch so one third party cannot stop the other. The **token 
 to 25 connections per tick at concurrency 5, ordered soonest-to-expire, skipped entirely while
 the vault is locked, and calls `refreshExpiringTokens` with a 10-minute horizon — wider than its
 own tick, so a token expiring *between* ticks is renewed rather than lapsing. The **probe leg**
-(`probeUnverifiedConnectors`) re-proves the uncredentialed hosted connectors, 10 per tick at
-concurrency 3, re-probing after 6 hours, ordered `probed_at ASC NULLS FIRST, created_at ASC` to
+(`probeUnverifiedConnectors`) re-proves the uncredentialed hosted connectors — and only
+those, which is why an operator-triggered check exists: a **credentialed** row is probed
+only when something happens to it, so a stale `probe_error` on one sits there until
+`POST /api/projects/:projectId/connectors/:id/test` (or its admin twin
+`POST /api/connectors/:id/test`, the REST twins of the `test_connector` tool, behind the
+connector card's **Test connection** button) asks again. Those routes answer **200 with a
+`ConnectorProbeVerdict`** for a failed probe rather than a 4xx — the probe failing is the
+request succeeding — and run through `discoverConnectorMethods` like every other probe, so
+there is still exactly one writer of `probed_at`/`probe_error`. The leg is bounded to
+10 per tick at concurrency 3, re-probing after 6 hours, ordered `probed_at ASC NULLS FIRST, created_at ASC` to
 match `idx_mcp_connections_probe_due` exactly, and excluding placeholder-header rows. It runs
 **even while the instance is locked**, because it decrypts nothing — it only probes rows with no
 stored credential — so a locked instance still learns that a public MCP has started demanding
