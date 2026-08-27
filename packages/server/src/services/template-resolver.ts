@@ -166,6 +166,12 @@ const SHARED_INSTRUCTIONS = `
 - **Never pass a \`model:\` parameter when you launch a sub-agent.** Sub-agents inherit the right model automatically — Hezo pins the sub-agent model per provider, and an explicit override bypasses that pin and can resolve to a model whose request shape the provider rejects with a 400. If sub-agents need a different model, raise it on the task: that is a configuration change, not a per-launch argument.
 - Sub-agents are for work within YOUR run. For delegating work to other team members, use sub-tasks.
 
+### Reviewing a Teammate's Work
+- **Review a teammate's finished work with adversarial sub-agents - one per review dimension, ten at most.** Your role's own prose names the dimensions. Give each sub-agent one dimension and the whole artefact, and task it with proving the work wrong rather than confirming it right.
+- **Reconcile the sub-agent reports into one findings list before you post.** Verify each finding against the artefact yourself and drop what you cannot reproduce. Merge what several dimensions raised, and rank the rest by severity.
+- **A sub-agent reviewing work never edits it.** A sub-agent that rewrites what it reviews destroys the evidence for the finding.
+- Without sub-agents on your runtime, work the dimensions yourself one at a time.
+
 ### When Something Is Too Big, Split It — Don't Shrink the Job
 - **A rejection for being too big is an instruction to split the work, not to give up on it and not to drop to one item at a time.** Halve the batch and retry; halve again if it still doesn't fit. Going straight from "one call failed" to "one call per item" is the slowest possible recovery — it costs you N round trips for work that usually fits in two or three — and it is almost never what the limit was asking for.
 - **Size the split from the numbers the failure gives you.** An error that reports what it produced against what was allowed (e.g. \`size_bytes\` against \`limit_bytes\`) tells you the factor directly: roughly \`limit ÷ size\` of the batch fits, so take a little less than that and retry. Don't guess, and don't retry the identical call hoping for a different answer.
