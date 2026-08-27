@@ -31,6 +31,7 @@ import {
 import { useProjectAssets } from '../../../hooks/use-project-assets';
 import { folderCrumbs } from '../../../lib/asset-folders';
 import type { ReviewAnchor } from '../../../lib/doc-review-selection';
+import { PANEL_MOTION_TRANSITION } from '../../../lib/panel-motion';
 
 interface AssetViewSearch {
 	/** The asset's full path (`original_filename`), e.g. `launch/hero.png`. */
@@ -211,7 +212,7 @@ function AssetViewerPage() {
 						    sticky inside its own scroll area. */}
 						<div
 							data-testid="asset-review-drawer"
-							className={`fixed top-0 right-0 z-40 h-full w-[300px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform duration-200 ${
+							className={`fixed top-0 right-0 z-40 h-full w-[300px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform ${PANEL_MOTION_TRANSITION} ${
 								panelOpen ? 'translate-x-0' : 'translate-x-full'
 							} lg:static lg:z-auto lg:h-auto lg:w-auto lg:max-w-none lg:translate-x-0 lg:overflow-visible lg:p-0 lg:shadow-none`}
 						>

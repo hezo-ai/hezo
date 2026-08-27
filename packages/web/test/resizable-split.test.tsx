@@ -1,17 +1,21 @@
 // Unit tests for ResizableSplit: the divider's a11y contract, the collapsed vs
-// default vs dragged track classes, and that dragging / arrow-keys drive the
-// width state, the `--panel-w` CSS variable, and persistence. happy-dom has no
-// layout, so getBoundingClientRect is stubbed to a fixed width to make the clamp
-// math deterministic; real pixel behavior is covered by
-// test/browser/task-doc-preview-resize.spec.ts.
-import { fireEvent, render } from '@testing-library/react';
+// default vs dragged track classes, that dragging / arrow-keys drive the width
+// state, the `--panel-w` CSS variable, and persistence, and that a closed panel
+// stays mounted for its exit while the track transition is armed only across an
+// open or a close. happy-dom has no layout, so getBoundingClientRect is stubbed
+// to a fixed width to make the clamp math deterministic; the motion itself needs
+// a real CSS engine and is covered by test/browser/panel-motion.mobile.spec.ts,
+// real pixel behavior by test/browser/task-doc-preview-resize.spec.ts.
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { ResizableSplit } from '../src/components/ui/resizable-split';
+import { PANEL_MOTION_MS } from '../src/lib/panel-motion';
 
 const KEY = 'hezo:test-resizable-split';
 const DEFAULT_TRACK = 'lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_520px] 2xl:grid-cols-[1fr_720px]';
 const COLLAPSED_TRACK = 'lg:grid-cols-[1fr_190px]';
 const VAR_TRACK = 'lg:grid-cols-[1fr_var(--panel-w)]';
+const TRACK_MOTION = 'lg:transition-[grid-template-columns]';
 
 /** happy-dom returns zero-size boxes; pin a width so clamp math is predictable. */
 function stubLayout(width: number) {
@@ -130,4 +134,106 @@ test('arrow keys resize the focused handle by a step and persist (right side: �
 	fireEvent.keyDown(handle, { key: 'ArrowRight' }); // away from main → narrow by STEP
 	expect(grid.style.getPropertyValue('--panel-w')).toBe('350px');
 	expect(localStorage.getItem(KEY)).toBe('350');
+});
+
+test('keeps a closed panel mounted for its exit, then drops it', () => {
+	vi.useFakeTimers();
+	try {
+		const { container, queryByText, queryByTestId, rerender } = render(
+			<ResizableSplit
+				panel={<div>panel</div>}
+				defaultTrackClass={DEFAULT_TRACK}
+				collapsedTrackClass={COLLAPSED_TRACK}
+				storageKey={KEY}
+			>
+				<div>main</div>
+			</ResizableSplit>,
+		);
+		const grid = container.firstElementChild as HTMLElement;
+
+		act(() => {
+			rerender(
+				<ResizableSplit
+					panel={null}
+					defaultTrackClass={DEFAULT_TRACK}
+					collapsedTrackClass={COLLAPSED_TRACK}
+					storageKey={KEY}
+				>
+					<div>main</div>
+				</ResizableSplit>,
+			);
+		});
+
+		// The track collapses and starts travelling straight away, but the panel is
+		// still there playing its exit — and is no longer draggable.
+		expect(grid.className).toContain(COLLAPSED_TRACK);
+		expect(grid.className).toContain(TRACK_MOTION);
+		expect(queryByText('panel')).not.toBeNull();
+		expect(queryByTestId('resize-handle')).toBeNull();
+
+		act(() => void vi.advanceTimersByTime(PANEL_MOTION_MS));
+
+		expect(queryByText('panel')).toBeNull();
+		expect(grid.className).not.toContain(TRACK_MOTION);
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+test('reopening inside the closing beat brings the panel straight back', () => {
+	vi.useFakeTimers();
+	try {
+		const split = (panel: React.ReactNode) => (
+			<ResizableSplit
+				panel={panel}
+				defaultTrackClass={DEFAULT_TRACK}
+				collapsedTrackClass={COLLAPSED_TRACK}
+				storageKey={KEY}
+			>
+				<div>main</div>
+			</ResizableSplit>
+		);
+		const { container, getByTestId, queryByText, rerender } = render(split(<div>panel</div>));
+		const grid = container.firstElementChild as HTMLElement;
+
+		act(() => rerender(split(null)));
+		act(() => void vi.advanceTimersByTime(PANEL_MOTION_MS / 2)); // mid-exit
+		act(() => rerender(split(<div>panel</div>)));
+
+		// Back to open at once — not still counting down the interrupted close.
+		expect(queryByText('panel')).not.toBeNull();
+		expect(grid.className).toContain(DEFAULT_TRACK);
+		expect(getByTestId('resize-handle')).not.toBeNull();
+
+		// And the old timer cannot fire later and yank it away.
+		act(() => void vi.advanceTimersByTime(PANEL_MOTION_MS * 2));
+		expect(queryByText('panel')).not.toBeNull();
+	} finally {
+		vi.useRealTimers();
+	}
+});
+
+test('does not arm the track transition for a resize', () => {
+	stubLayout(800);
+	const { getByTestId, container } = render(
+		<ResizableSplit
+			panel={<div>panel</div>}
+			side="right"
+			defaultTrackClass={DEFAULT_TRACK}
+			storageKey={KEY}
+		>
+			<div>main</div>
+		</ResizableSplit>,
+	);
+	const grid = container.firstElementChild as HTMLElement;
+	const handle = getByTestId('resize-handle');
+
+	// A drag and an arrow-key step both write the same property the open/close
+	// animates. Arming for either would make every resize lag by the full beat.
+	fireEvent(handle, pointerEvent('pointerdown', { clientX: 500 }));
+	fireEvent(document, pointerEvent('pointermove', { clientX: 900 }));
+	expect(grid.className).not.toContain(TRACK_MOTION);
+	fireEvent(document, pointerEvent('pointerup', { clientX: 900 }));
+	fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+	expect(grid.className).not.toContain(TRACK_MOTION);
 });

@@ -271,6 +271,62 @@ html.dark,
 	}
 }
 
+/* One beat for every right-hand side panel: the document preview on a task, the
+   asset review drawer, the task details rail and the Documents list collapse.
+   `--panel-motion` is the single source the CSS animates on; PANEL_MOTION_MS in
+   lib/panel-motion.ts mirrors it for the timers that keep a closing panel
+   mounted, and panel-motion.test.ts fails if the two drift.
+
+   A panel that mounts when it opens gets `.panel-enter` / `.panel-exit` rather
+   than a transition - it does not exist before it opens, so a transition has no
+   start state to leave. A panel that is always mounted and only slides (the two
+   drawers) keeps its transition and just reads the same duration.
+
+   `--panel-travel` is per-element because one panel is two things: a full-screen
+   overlay below lg, which travels its whole width in from the right edge, and an
+   in-grid column at lg+, where the widening grid track carries the movement and
+   the panel only fades. */
+:root {
+	--panel-motion: 300ms;
+}
+
+@keyframes panel-enter {
+	from {
+		opacity: 0;
+		transform: translateX(var(--panel-travel, 100%));
+	}
+	to {
+		opacity: 1;
+		/* `none`, not translateX(0): `both` leaves the final value applied, and a
+		   non-none transform makes the panel a containing block for any fixed
+		   descendant - the review toolbar's dialogs portal out, but a future one
+		   might not. */
+		transform: none;
+	}
+}
+@keyframes panel-exit {
+	from {
+		opacity: 1;
+		transform: none;
+	}
+	to {
+		opacity: 0;
+		transform: translateX(var(--panel-travel, 100%));
+	}
+}
+.panel-enter {
+	animation: panel-enter var(--panel-motion) ease-in-out both;
+}
+.panel-exit {
+	animation: panel-exit var(--panel-motion) ease-in-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+	.panel-enter,
+	.panel-exit {
+		animation: none;
+	}
+}
+
 @theme {
 	--color-bg: var(--bg);
 	--color-surface: var(--surface);

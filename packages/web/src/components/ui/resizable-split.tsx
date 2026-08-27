@@ -1,13 +1,16 @@
 import {
 	type CSSProperties,
+	createContext,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
 	useCallback,
+	useContext,
 	useEffect,
 	useRef,
 	useState,
 } from 'react';
+import { PANEL_MOTION_MS } from '../../lib/panel-motion';
 import {
 	clampPanelWidth,
 	MAX_PANEL_WIDTH,
@@ -20,6 +23,22 @@ import {
 const STEP = 24;
 
 type Side = 'left' | 'right';
+
+/** Whether the split's panel is open, or still playing its exit before unmounting. */
+export type PanelPresence = 'open' | 'closing';
+
+const PanelPresenceContext = createContext<PanelPresence>('open');
+
+/**
+ * Read the surrounding {@link ResizableSplit}'s panel state. The panel itself
+ * reads this to pick its enter or exit animation. A sibling that yields its grid
+ * track to the panel reads it too, and must stay out of the grid until this
+ * reports `open` again - returning while the panel is still fading out puts both
+ * in the slot they share, and the sibling renders behind it.
+ */
+export function usePanelPresence(): PanelPresence {
+	return useContext(PanelPresenceContext);
+}
 
 interface UseResizableSplitOptions {
 	side: Side;
@@ -175,7 +194,13 @@ interface ResizableSplitProps {
 	 * keep their own responsive default. MUST be a literal for Tailwind's JIT.
 	 */
 	defaultTrackClass: string;
-	/** Static `lg:grid-cols-[…]` utility used when `panel` is `null`. */
+	/**
+	 * Static `lg:grid-cols-[…]` utility used when `panel` is `null`. Declare the
+	 * same number of tracks as `defaultTrackClass` or the open/close cannot
+	 * interpolate and the width snaps: `grid-cols-1` against `1fr 320px` is one
+	 * track against two. Omitting this is safe only for a split whose panel is
+	 * never `null`.
+	 */
 	collapsedTrackClass?: string;
 	/** Extra classes on the grid container (base breakpoints, etc.). */
 	className?: string;
@@ -189,6 +214,12 @@ interface ResizableSplitProps {
  * resizable track only engages at `lg+` (the caller's track utilities are all
  * `lg:`-prefixed), so a below-`lg` panel that renders as its own overlay is
  * unaffected. The divider is keyboard-operable and the width optionally persists.
+ *
+ * It also owns the panel's open/close beat: the track travels between the two
+ * caller tracks, a closed panel stays mounted long enough to play its exit, and
+ * {@link usePanelPresence} tells the panel - and any sibling that yields its
+ * column - which of the two is happening. The track transition is armed per
+ * open/close and disarmed straight after, so resizing never inherits it.
  */
 export function ResizableSplit({
 	children,
@@ -206,11 +237,43 @@ export function ResizableSplit({
 	});
 
 	const hasPanel = panel != null;
+	// The last panel stays mounted through the closing beat so its exit has
+	// something to play on, while `hasPanel` keeps tracking the live prop - so the
+	// grid track collapses and travels at the *start* of the close rather than
+	// snapping once it is over.
+	const retainedPanel = useRef<ReactNode>(null);
+	if (hasPanel) retainedPanel.current = panel;
+	const [closing, setClosing] = useState(false);
+
+	// Animate the track only across an open or a close. Arming on the panel
+	// appearing or disappearing rather than on the width changing is what keeps a
+	// divider drag and an Arrow-key step instant - both write the same property,
+	// and a transition left on would lag every one of them by the full beat.
+	const prevHasPanel = useRef(hasPanel);
+	const [trackArmed, setTrackArmed] = useState(false);
+	useEffect(() => {
+		if (prevHasPanel.current === hasPanel) return;
+		prevHasPanel.current = hasPanel;
+		setTrackArmed(true);
+		// Both ways round: reopening inside the closing beat must clear the flag
+		// immediately, or the panel that just came back plays its exit.
+		setClosing(!hasPanel);
+		const t = setTimeout(() => {
+			setTrackArmed(false);
+			setClosing(false);
+		}, PANEL_MOTION_MS);
+		return () => clearTimeout(t);
+	}, [hasPanel]);
+
+	const renderedPanel = hasPanel ? panel : closing ? retainedPanel.current : null;
 	const dragged = width != null;
 	// Static per-side literals so Tailwind's JIT emits both tracks.
 	const varTrack =
 		side === 'right' ? 'lg:grid-cols-[1fr_var(--panel-w)]' : 'lg:grid-cols-[var(--panel-w)_1fr]';
 	const trackClass = hasPanel ? (dragged ? varTrack : defaultTrackClass) : collapsedTrackClass;
+	const trackMotion = trackArmed
+		? 'lg:transition-[grid-template-columns] lg:duration-[var(--panel-motion)] lg:ease-in-out motion-reduce:lg:transition-none'
+		: '';
 	const gridStyle: CSSProperties | undefined =
 		hasPanel && dragged ? ({ '--panel-w': `${width}px` } as CSSProperties) : undefined;
 
@@ -218,24 +281,33 @@ export function ResizableSplit({
 	// renders as its own overlay (e.g. `fixed`) then contributes no empty row/gap,
 	// and a panel that stacks flows directly. At `lg+` it becomes the positioned
 	// grid cell that hosts the divider and any sticky panel.
-	const panelCell = hasPanel ? (
-		<div ref={panelCellRef} className="contents min-w-0 lg:relative lg:block">
-			<ResizeHandle side={side} active={isResizing} valueNow={width} {...handleProps} />
-			{panel}
-		</div>
-	) : null;
+	const panelCell =
+		renderedPanel != null ? (
+			<div ref={panelCellRef} className="contents min-w-0 lg:relative lg:block">
+				{/* A cell on its way out is not draggable - the width it would write
+				    is about to be discarded. */}
+				{!closing && (
+					<ResizeHandle side={side} active={isResizing} valueNow={width} {...handleProps} />
+				)}
+				{renderedPanel}
+			</div>
+		) : null;
 
 	return (
-		<div
-			ref={gridRef}
-			className={`grid grid-cols-1 gap-5 ${trackClass} ${className}`.trim()}
-			style={gridStyle}
-		>
-			{side === 'left' && panelCell}
-			{children}
-			{aside}
-			{side === 'right' && panelCell}
-		</div>
+		<PanelPresenceContext.Provider value={closing ? 'closing' : 'open'}>
+			<div
+				ref={gridRef}
+				className={`grid grid-cols-1 gap-5 ${trackClass} ${trackMotion} ${className}`
+					.replace(/\s+/g, ' ')
+					.trim()}
+				style={gridStyle}
+			>
+				{side === 'left' && panelCell}
+				{children}
+				{aside}
+				{side === 'right' && panelCell}
+			</div>
+		</PanelPresenceContext.Provider>
 	);
 }
 
