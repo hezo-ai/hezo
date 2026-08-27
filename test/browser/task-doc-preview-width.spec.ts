@@ -3,8 +3,11 @@
 // is set by responsive `grid-cols-[1fr_Npx]` utilities that only diverge once a
 // real layout pass evaluates the lg/xl/2xl media queries. happy-dom runs no media
 // queries and returns zero-width boxes, so the widening can only be observed in a
-// real browser at real viewport sizes. The mention→panel data flow itself is
-// covered by packages/web/test/task-comment-doc-preview.test.tsx.
+// real browser at real viewport sizes. It also pins the panel's own travel to
+// zero here, which is the same kind of media-query-only fact. The mention→panel
+// data flow itself is covered by
+// packages/web/test/task-comment-doc-preview.test.tsx; the motion by
+// test/browser/panel-motion.mobile.spec.ts.
 
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
@@ -72,10 +75,43 @@ test('document preview panel widens on xl/2xl screens (up to 2× its base width)
 	// Open the doc in the in-grid preview panel.
 	const mention = page.getByTestId('doc-mention-link').first();
 	await expect(mention).toBeVisible({ timeout: 20000 });
+
+	// Catch the grid mid-open. The track transition is armed only across an open or
+	// a close, so start watching before the click: by the time an awaited click
+	// resolves the beat may already be spent. This pins the duration, not just its
+	// presence — drop the `duration-[…]` utility and the track still animates, at
+	// Tailwind's default speed, with every other assertion here still green.
+	const armedDuration = page.evaluate(
+		() =>
+			new Promise<string>((resolve) => {
+				const started = performance.now();
+				const tick = () => {
+					const grid = document.querySelector('[data-testid="preview-panel"]')?.closest('.grid');
+					const duration = grid ? getComputedStyle(grid).transitionDuration : '0s';
+					if (duration !== '0s') return resolve(duration);
+					if (performance.now() - started > 4000) return resolve('never armed');
+					requestAnimationFrame(tick);
+				};
+				tick();
+			}),
+	);
 	await mention.click();
+	expect(await armedDuration).toBe('0.3s');
 
 	const panel = page.getByTestId('preview-panel');
 	await expect(panel).toBeVisible();
+
+	// At lg+ the widening track carries the panel's movement, so its own travel is
+	// overridden to zero and it only fades. If that `lg:` variant stopped
+	// compiling, the desktop panel would slide its full width in from off-screen —
+	// a visible bug the width assertions below would sail straight past. Read it as
+	// a number: this runs against the minified bundle in CI, and the exact text a
+	// custom property ships as is the minifier's business, not this test's.
+	expect(
+		await panel.evaluate((el) =>
+			Number.parseFloat(getComputedStyle(el).getPropertyValue('--panel-travel')),
+		),
+	).toBe(0);
 
 	// The preview track is a fixed px width independent of the (scrollbar-sensitive)
 	// 1fr content column, so the measured border-box lands on the track value ±a

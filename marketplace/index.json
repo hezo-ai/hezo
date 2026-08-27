@@ -81,9 +81,9 @@
 				"testing",
 				"security review"
 			],
-			"version": 30,
+			"version": 31,
 			"roster_count": 10,
-			"latest_notes": "Agents ship with no monthly spend cap. The old per-role figures were arbitrary, and until cache traffic was priced at real rates they bit several times sooner than they read - so a team could stop working for a reason its operator never set. Set a cap per agent if you want one."
+			"latest_notes": "Reviewing a teammate's finished work now fans out to adversarial sub-agents, one per review dimension, and the reviewer reconciles their reports into one ranked findings list after verifying each finding themselves. That rule reaches every agent on every team, so the QA Engineer's own prompt now carries only what is specific to it: the eight dimensions a code review covers - correctness, security, performance, scalability, maintainability, architectural elegance, testing and documentation - stated once and read by both the post-implementation review and the heartbeat audit, which previously kept two lists that could drift apart."
 		},
 		{
 			"slug": "influencer",

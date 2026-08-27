@@ -47,6 +47,7 @@ rather than here, is how a codebase ends up with two of everything.
 | Duration formatting (a settled figure, not a live tick) | `formatDuration` (`packages/web/src/lib/format-duration.ts`) |
 | A per-bucket stacked chart, and its axis/tooltip formatting | `StackedSeriesChart` + `chart-format.ts` (`packages/web/src/components/charts/`) |
 | A dropdown panel's vertical side + height clamp | `usePanelPlacement` (`hooks/use-panel-placement.ts`), pure math in `lib/panel-placement.ts` |
+| Open/close motion for a right-hand side panel | `--panel-motion` + `.panel-enter` / `.panel-exit` (`packages/web/src/index.css`), reached through `packages/web/src/lib/panel-motion.ts`. A panel that mounts when it opens takes the animations; one that is always mounted and only slides takes `PANEL_MOTION_TRANSITION`. `ResizableSplit` arms its grid-track transition on the panel appearing or disappearing and disarms it after - never leave it on, or every divider drag and Arrow-key step lags by the full beat |
 | A breadcrumb row - one line, scrolling sideways rather than wrapping or truncating | `BreadcrumbRow` (`components/ui/breadcrumb.tsx`) - `Breadcrumb` renders through it; a caller with its own links takes the row, never a second `<nav>` |
 | A device sign-in (copy a one-time code, enter it on a provider's page) | `DeviceCodeSteps` (`components/ui/device-code-steps.tsx`) - callers supply transport only |
 | An optimistic mutation | `useOptimisticMutation` (`hooks/use-optimistic-mutation.ts`) |
