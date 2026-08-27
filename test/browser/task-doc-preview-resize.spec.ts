@@ -58,12 +58,23 @@ async function seedTaskWithDocMention(
 	return { projectSlug: project.slug, taskId: task.identifier.toLowerCase() };
 }
 
+/** The split's grid-track transition, as the browser computes it right now. */
+const trackTransition = async (panel: Locator): Promise<string> =>
+	panel.evaluate((el) => {
+		const grid = el.closest('.grid');
+		return grid ? getComputedStyle(grid).transitionDuration : 'no grid';
+	});
+
 async function openPreview(page: Page): Promise<Locator> {
 	const mention = page.getByTestId('doc-mention-link').first();
 	await expect(mention).toBeVisible({ timeout: 20000 });
 	await mention.click();
 	const panel = page.getByTestId('preview-panel');
 	await expect(panel).toBeVisible();
+	// The column widens as the panel fades in; the split disarms the track
+	// transition when that finishes. Wait for it, or every width read below lands
+	// mid-animation.
+	await expect.poll(() => trackTransition(panel), { timeout: 5000 }).toBe('0s');
 	return panel;
 }
 
@@ -129,6 +140,10 @@ test('the divider drags to resize the preview panel, clamps, and persists', asyn
 
 	// Drag left → the right-hand panel widens by ~120px.
 	await dragBy(page, -120);
+	// A drag writes the same property the open/close animates. If that transition
+	// were left armed instead of armed per open/close, every drag would lag by the
+	// full beat — so it must still read as untransitioned here.
+	expect(await trackTransition(panel)).toBe('0s');
 	const widened = await widthAfterReflow(panel, (w) => w > w0 + 100);
 	expect(widened).toBeLessThanOrEqual(w0 + 140);
 
@@ -153,6 +168,7 @@ test('the divider drags to resize the preview panel, clamps, and persists', asyn
 	const beforeKey = await widthAfterReflow(panel, (w) => w <= MIN_PANEL_WIDTH + 6);
 	await page.getByTestId('resize-handle').focus();
 	await page.keyboard.press('ArrowLeft'); // right side: ← widens
+	expect(await trackTransition(panel)).toBe('0s'); // same guard, keyboard path
 	const afterKey = await widthAfterReflow(panel, (w) => w > beforeKey + 6);
 	expect(Math.abs(afterKey - (beforeKey + STEP))).toBeLessThanOrEqual(6);
 

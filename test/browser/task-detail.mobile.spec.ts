@@ -160,9 +160,13 @@ test.describe('Task detail — document preview panel (mobile, 390px)', () => {
 		// meta sidebar is not shown behind it.
 		const preview = page.getByTestId('preview-panel');
 		await expect(preview).toBeInViewport();
+		// It slides in from the right edge, so poll it to rest rather than reading a
+		// box mid-travel — toBeInViewport() passes at any ratio above zero.
+		await expect
+			.poll(async () => (await preview.boundingBox())?.x ?? 999, { timeout: 5000 })
+			.toBeLessThan(8);
 		const previewBox = await preview.boundingBox();
 		expect(previewBox).not.toBeNull();
-		expect(previewBox!.x).toBeLessThan(8);
 		expect(previewBox!.width).toBeGreaterThan(360);
 		await expect(page.getByTestId('task-sidebar')).not.toBeInViewport();
 

@@ -265,7 +265,7 @@ export function DocsLibrary({
 		   document takes the full content width. */
 		<div
 			data-testid="docs-library-grid"
-			className={`grid grid-cols-1 md:min-h-[500px] md:transition-[grid-template-columns,gap] md:duration-200 motion-reduce:md:transition-none ${
+			className={`grid grid-cols-1 md:min-h-[500px] md:transition-[grid-template-columns,gap] md:duration-[var(--panel-motion)] md:ease-in-out motion-reduce:md:transition-none ${
 				collapsed
 					? 'md:grid-cols-[0px_minmax(0,1fr)] md:gap-0'
 					: 'md:grid-cols-[240px_minmax(0,1fr)] md:gap-6'
@@ -279,7 +279,7 @@ export function DocsLibrary({
 			<aside
 				inert={collapsed}
 				data-testid="doc-list-pane"
-				className={`min-w-0 md:transition-opacity md:duration-200 motion-reduce:md:transition-none ${
+				className={`min-w-0 md:transition-opacity md:duration-[var(--panel-motion)] md:ease-in-out motion-reduce:md:transition-none ${
 					collapsed ? 'md:overflow-hidden md:opacity-0' : 'md:border-r md:border-border md:pr-6'
 				} ${showRightPane ? 'hidden md:block' : 'block'}`}
 			>

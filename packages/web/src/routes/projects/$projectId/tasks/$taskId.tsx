@@ -1,7 +1,7 @@
 import { type AgentEffort, DEFAULT_TASK_VIEW, type TaskView } from '@hezo/shared';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { jumpToComment } from '../../../../components/comment-renderers';
 import { CommentComposer } from '../../../../components/task-detail/comment-composer';
 import { CommentsSection } from '../../../../components/task-detail/comments-section';
@@ -16,7 +16,7 @@ import { SubTasksSection } from '../../../../components/task-detail/sub-tasks-se
 import { TaskHeader } from '../../../../components/task-detail/task-header';
 import { TaskSidebar } from '../../../../components/task-detail/task-sidebar';
 import { TaskSummary } from '../../../../components/task-detail/task-summary';
-import { ResizableSplit } from '../../../../components/ui/resizable-split';
+import { ResizableSplit, usePanelPresence } from '../../../../components/ui/resizable-split';
 import { useRegisterScrollContent } from '../../../../contexts/scroll-content-context';
 import { useAgents } from '../../../../hooks/use-agents';
 import {
@@ -28,6 +28,7 @@ import { useExecutionLock } from '../../../../hooks/use-execution-locks';
 import { useInstanceSettings } from '../../../../hooks/use-instance-settings';
 import { useScrollToBottom } from '../../../../hooks/use-scroll-to-bottom';
 import { useTask, useUpdateTask } from '../../../../hooks/use-tasks';
+import { PANEL_MOTION_TRANSITION } from '../../../../lib/panel-motion';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -162,59 +163,28 @@ function TaskDetailView({ projectId, taskId }: { projectId: string; taskId: stri
 				) : null
 			}
 			aside={
-				<>
-					{/* Right rail: an in-grid sticky column at lg+, a slide-in floating
-					    drawer below lg (collapsed by default, toggled by the chevron). */}
-					<button
-						type="button"
-						onClick={() => setSidebarOpen((o) => !o)}
-						data-testid="task-sidebar-toggle"
-						aria-label={sidebarOpen ? 'Collapse task details' : 'Expand task details'}
-						aria-expanded={sidebarOpen}
-						className="lg:hidden fixed right-0 top-1/2 -translate-y-1/2 z-50 h-12 w-7 rounded-l-md border border-r-0 border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center"
-					>
-						{sidebarOpen ? (
-							<ChevronRight className="w-4 h-4" />
-						) : (
-							<ChevronLeft className="w-4 h-4" />
-						)}
-					</button>
-					{sidebarOpen && (
-						<button
-							type="button"
-							aria-label="Close task details"
-							onClick={() => setSidebarOpen(false)}
-							className="lg:hidden fixed inset-0 z-40 bg-[var(--overlay)] cursor-default"
-						/>
-					)}
-					{/* Task meta side panel. Mobile: a fixed right-side drawer toggled by the
-					    chevron. Desktop: `lg:contents` makes this wrapper generate no box, so
-					    TaskSidebar becomes the direct grid child (in-grid sticky column). While
-					    a preview is open the sidebar column yields to the preview on desktop
-					    (`lg:hidden`); on mobile the preview is its own overlay above this. */}
-					<div
-						data-testid="task-rail"
-						className={`fixed top-0 right-0 z-40 h-full w-[280px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform duration-200 ${
-							sidebarOpen ? 'translate-x-0' : 'translate-x-full'
-						} ${preview ? 'lg:hidden' : 'lg:contents'}`}
-					>
-						<TaskSidebar
-							task={task}
-							projectId={projectId}
-							taskId={taskId}
-							agents={agents}
-							lock={lock}
-							comments={comments}
-							updateTask={updateTask}
-							commentEffort={commentEffort}
-							setCommentEffort={setCommentEffort}
-							scrollToBottom={scrollToBottom}
-							view={view}
-							setView={setViewOverride}
-							defaultView={defaultView}
-						/>
-					</div>
-				</>
+				<TaskMetaRail
+					open={sidebarOpen}
+					onToggle={() => setSidebarOpen((o) => !o)}
+					onClose={() => setSidebarOpen(false)}
+					previewOpen={!!preview}
+				>
+					<TaskSidebar
+						task={task}
+						projectId={projectId}
+						taskId={taskId}
+						agents={agents}
+						lock={lock}
+						comments={comments}
+						updateTask={updateTask}
+						commentEffort={commentEffort}
+						setCommentEffort={setCommentEffort}
+						scrollToBottom={scrollToBottom}
+						view={view}
+						setView={setViewOverride}
+						defaultView={defaultView}
+					/>
+				</TaskMetaRail>
 			}
 		>
 			<PreviewProvider value={openPreview}>
@@ -272,6 +242,70 @@ function TaskDetailView({ projectId, taskId }: { projectId: string; taskId: stri
 				</div>
 			</PreviewProvider>
 		</ResizableSplit>
+	);
+}
+
+/**
+ * The task meta rail. Mobile: a fixed right-side drawer toggled by the chevron.
+ * Desktop: `lg:contents` makes this wrapper generate no box, so TaskSidebar
+ * becomes the direct grid child (in-grid sticky column).
+ *
+ * While a preview is open the rail yields its column to it (`lg:hidden`) — and
+ * stays yielded until the preview has finished its exit, which is why this reads
+ * the split's presence rather than `previewOpen` alone. Returning a frame early
+ * puts the rail behind a panel still fading out, in the slot they share. On
+ * mobile the preview is its own overlay above this.
+ *
+ * It renders under ResizableSplit's provider (it is passed as `aside`), so the
+ * presence hook resolves; a component defined outside that tree would read the
+ * default `open` forever.
+ */
+function TaskMetaRail({
+	open,
+	onToggle,
+	onClose,
+	previewOpen,
+	children,
+}: {
+	open: boolean;
+	onToggle: () => void;
+	onClose: () => void;
+	previewOpen: boolean;
+	children: ReactNode;
+}) {
+	const closing = usePanelPresence() === 'closing';
+	const yielded = previewOpen || closing;
+	return (
+		<>
+			{/* Right rail: an in-grid sticky column at lg+, a slide-in floating
+			    drawer below lg (collapsed by default, toggled by the chevron). */}
+			<button
+				type="button"
+				onClick={onToggle}
+				data-testid="task-sidebar-toggle"
+				aria-label={open ? 'Collapse task details' : 'Expand task details'}
+				aria-expanded={open}
+				className="lg:hidden fixed right-0 top-1/2 -translate-y-1/2 z-50 h-12 w-7 rounded-l-md border border-r-0 border-border bg-surface text-text-2 hover:text-text-1 shadow-md flex items-center justify-center"
+			>
+				{open ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+			</button>
+			{open && (
+				<button
+					type="button"
+					aria-label="Close task details"
+					onClick={onClose}
+					className="lg:hidden fixed inset-0 z-40 bg-[var(--overlay)] cursor-default"
+				/>
+			)}
+			<div
+				data-testid="task-rail"
+				className={`fixed top-0 right-0 z-40 h-full w-[280px] max-w-[85vw] overflow-y-auto bg-surface p-4 shadow-xl transition-transform ${PANEL_MOTION_TRANSITION} ${
+					open ? 'translate-x-0' : 'translate-x-full'
+				} ${yielded ? 'lg:hidden' : 'lg:contents'}`}
+			>
+				{children}
+			</div>
+		</>
 	);
 }
 
