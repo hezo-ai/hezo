@@ -445,10 +445,21 @@ export function buildSubscriptionLoginScript(opts: {
 	);
 }
 
-/** Deliver the operator's pasted code to a waiting login process. */
+/**
+ * Deliver the operator's pasted code to a waiting login process.
+ *
+ * **Terminated with CR, never LF.** A vendor CLI's paste prompt is a full-screen
+ * TUI reading a raw-mode terminal, where no line discipline translates one into
+ * the other and only `\r` is the return key - an LF is delivered as an ordinary
+ * character, so the code lands in the prompt's buffer and simply sits there
+ * unsubmitted until the flow times out. Measured against claude-code 2.1.250:
+ * the pasted text appears masked in the prompt and nothing else happens, where
+ * a CR runs the token exchange. A CLI reading lines canonically instead is
+ * unaffected, since `ICRNL` turns the CR back into its newline.
+ */
 export function buildSubscriptionLoginCodeScript(dir: string, code: string): string {
 	if (!/^\/[A-Za-z0-9._/-]*$/.test(dir)) throw new Error(`unsafe dir: ${JSON.stringify(dir)}`);
-	return `printf '%s\\n' ${shellQuote(code)} > ${shellQuote(`${dir}/${LOGIN_STDIN_FIFO}`)}`;
+	return `printf '%s\\r' ${shellQuote(code)} > ${shellQuote(`${dir}/${LOGIN_STDIN_FIFO}`)}`;
 }
 
 /**

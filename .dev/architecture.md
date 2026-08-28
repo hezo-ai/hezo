@@ -3667,8 +3667,10 @@ registers a flow in `subscriptionLoginService`. The host polls the merged log th
 `SandboxFiles` — never a byte channel, because Docker's exec has no TTY and Daytona's
 redirects stderr to a file drained only on close, so a challenge printed there would strand
 the flow. `GET …/:flowId` returns the challenge (URL, and a one-time code where the flow has
-one), `POST …/:flowId/code` writes the operator's code to the CLI's stdin FIFO, and `DELETE
-…/:flowId` cancels. Which runtimes can be driven is `RUNTIMES_WITH_GUIDED_SIGN_IN`
+one), `POST …/:flowId/code` writes the operator's code to the CLI's stdin FIFO terminated by a
+**carriage return** — the paste prompt is a raw-mode TUI, where nothing translates LF into
+CR and an LF arrives as an ordinary character that leaves the code sitting in the prompt
+unsubmitted — and `DELETE …/:flowId` cancels. Which runtimes can be driven is `RUNTIMES_WITH_GUIDED_SIGN_IN`
 (`@hezo/shared`, read by the web to decide whether to offer the button) paired with
 `SUBSCRIPTION_LOGIN_DRIVERS` (the server's argv, output parsers and harvest shape); a test
 asserts the two agree. Codex uses its device flow and needs nothing back; Claude Code needs
