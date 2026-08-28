@@ -92,6 +92,28 @@ test('describes a first nesting', () => {
 	expect(describeAuditEntry(e)).toBe('Moved OP-1 under OP-9');
 });
 
+test.each([
+	['priority', { from: 'medium', to: 'high' }, 'Changed priority of OP-1 from Medium to High'],
+	['progress_summary', {}, 'Updated the progress summary of OP-1'],
+	['rules', {}, 'Updated the rules of OP-1'],
+	['branch', { from: null, to: 'hezo/OP-1' }, 'Set branch of OP-1 to hezo/OP-1'],
+	['branch', { from: 'hezo/OP-1', to: null }, 'Cleared branch of OP-1 (was hezo/OP-1)'],
+	['runtime', { from: null, to: 'codex' }, 'Set runtime of OP-1 to Codex'],
+	[
+		'runtime',
+		{ from: 'codex', to: 'claude_code' },
+		'Changed runtime of OP-1 from Codex to Claude Code',
+	],
+])('describes a %s task update', (field, values, expected) => {
+	const e = entry({
+		action: 'updated',
+		entity_type: 'task',
+		entity_identifier: 'OP-1',
+		details: { field, ...values },
+	});
+	expect(describeAuditEntry(e)).toBe(expected);
+});
+
 test('describes an agent run against its referenced task', () => {
 	const e = entry({
 		action: 'run_started',

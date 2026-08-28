@@ -1,16 +1,24 @@
 import { CAPTAIN_AGENT_SLUG } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { mapEventToAudit } from '../src/events/audit-observer';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
 import { safeClose } from './helpers';
-import { authHeader, createTestApp, createTestProject, createTestTeam } from './helpers/app';
+import {
+	authHeader,
+	createTestApp,
+	createTestProject,
+	createTestTeam,
+	mintAgentToken,
+} from './helpers/app';
 
 let app: Hono<Env>;
 let db: Db;
 let token: string;
+let masterKeyManager: MasterKeyManager;
 let teamId: string;
 let projectId: string;
 let projectSlug: string;
@@ -20,8 +28,9 @@ beforeAll(async () => {
 	app = ctx.app;
 	db = ctx.db;
 	token = ctx.token;
+	masterKeyManager = ctx.masterKeyManager;
 
-	const teamRes = await createTestTeam(db, { name: 'Events Co' });
+	const teamRes = await createTestTeam(db, { name: 'Events Co', marketplace_slug: 'app-dev' });
 	teamId = (await teamRes.json()).data.id;
 
 	const project = await createTestProject(db, teamId, { name: 'Events Project' });
@@ -45,6 +54,28 @@ async function auditRows(filter: { entityType?: string; action?: string } = {}) 
 	});
 	expect(res.status).toBe(200);
 	return (await res.json()).data as Array<Record<string, unknown>>;
+}
+
+async function callAgentTool(
+	agentToken: string,
+	name: string,
+	args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+	const res = await app.request('/mcp', {
+		method: 'POST',
+		headers: { ...authHeader(agentToken), 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			jsonrpc: '2.0',
+			method: 'tools/call',
+			params: { name, arguments: args },
+			id: 1,
+		}),
+	});
+	expect(res.status).toBe(200);
+	const body = (await res.json()) as {
+		result: { content: Array<{ type: string; text: string }> };
+	};
+	return JSON.parse(body.result.content[0].text) as Record<string, unknown>;
 }
 
 describe('audit observer (end-to-end)', () => {
@@ -177,6 +208,237 @@ describe('audit observer (end-to-end)', () => {
 		expect(details.from).toBeNull();
 		expect(details.to).toBeNull();
 		expect(JSON.stringify(details)).not.toContain('rewritten body');
+	});
+
+	it('records every supported agent-side task mutation with the agent actor', async () => {
+		const agents = await db.query<{
+			id: string;
+			slug: string;
+			title: string;
+			reports_to: string | null;
+		}>(
+			`SELECT ma.id, ma.slug, ma.title, ma.reports_to
+			   FROM member_agents ma JOIN members m ON m.id = ma.id
+			  WHERE m.team_id = $1`,
+			[teamId],
+		);
+		const captain = agents.rows.find((agent) => agent.slug === CAPTAIN_AGENT_SLUG);
+		expect(captain).toBeDefined();
+		const subordinate = agents.rows.find((agent) => agent.reports_to === captain?.id);
+		expect(subordinate).toBeDefined();
+
+		const parentRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Audit parent', assignee_id: captain?.id }),
+		});
+		const parent = (await parentRes.json()).data as { id: string; identifier: string };
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				title: 'Agent audit task',
+				description: 'Original description',
+				assignee_id: captain?.id,
+			}),
+		});
+		const task = (await taskRes.json()).data as { id: string; identifier: string };
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captain?.id as string,
+			teamId,
+			task.id,
+		);
+
+		const updated = await callAgentTool(agentToken, 'update_task', {
+			project: projectSlug,
+			task_id: task.identifier,
+			title: 'Agent-renamed task',
+			description: 'Rewritten by the agent',
+			status: 'in_progress',
+			priority: 'high',
+			assignee_id: subordinate?.id,
+			progress_summary: 'Implementation is underway.',
+			rules: 'Run focused tests before committing.',
+			branch_name: 'hezo/HM-audit',
+			runtime_type: 'codex',
+			parent_task_id: parent.identifier,
+		});
+		expect(updated.error).toBeUndefined();
+
+		await waitForBackground();
+		const result = await db.query<{
+			actor_type: string;
+			actor_member_id: string | null;
+			details: Record<string, unknown>;
+		}>(
+			`SELECT actor_type, actor_member_id, details
+			   FROM audit_log
+			  WHERE entity_type = 'task' AND action = 'updated' AND entity_id = $1
+			  ORDER BY created_at`,
+			[task.id],
+		);
+		const byField = new Map(result.rows.map((row) => [row.details.field, row]));
+		expect(result.rows).toHaveLength(10);
+		expect(new Set(byField.keys())).toEqual(
+			new Set([
+				'title',
+				'description',
+				'status',
+				'priority',
+				'assignee',
+				'progress_summary',
+				'rules',
+				'branch',
+				'runtime',
+				'parent',
+			]),
+		);
+		for (const row of result.rows) {
+			expect(row.actor_type).toBe('agent');
+			expect(row.actor_member_id).toBe(captain?.id);
+		}
+		expect(byField.get('title')?.details).toMatchObject({
+			from: 'Agent audit task',
+			to: 'Agent-renamed task',
+		});
+		expect(byField.get('description')?.details).toMatchObject({ from: null, to: null });
+		expect(byField.get('status')?.details).toMatchObject({ from: 'backlog', to: 'in_progress' });
+		expect(byField.get('priority')?.details).toMatchObject({ from: 'medium', to: 'high' });
+		expect(byField.get('assignee')?.details).toMatchObject({
+			from: captain?.id,
+			to: subordinate?.id,
+			from_label: captain?.title,
+			to_label: subordinate?.title,
+		});
+		expect(byField.get('progress_summary')?.details).toMatchObject({ from: null, to: null });
+		expect(byField.get('rules')?.details).toMatchObject({ from: null, to: null });
+		expect(byField.get('branch')?.details).toMatchObject({ from: null, to: 'hezo/HM-audit' });
+		expect(byField.get('runtime')?.details).toMatchObject({ from: null, to: 'codex' });
+		expect(byField.get('parent')?.details).toMatchObject({
+			from: null,
+			to: parent.id,
+			to_label: parent.identifier,
+		});
+
+		const unchanged = await callAgentTool(agentToken, 'update_task', {
+			project: projectSlug,
+			task_id: task.identifier,
+			title: 'Agent-renamed task',
+			description: 'Rewritten by the agent',
+			status: 'in_progress',
+			priority: 'high',
+			assignee_id: subordinate?.id,
+			progress_summary: 'Implementation is underway.',
+			rules: 'Run focused tests before committing.',
+			branch_name: 'hezo/HM-audit',
+			runtime_type: 'codex',
+			parent_task_id: parent.identifier,
+		});
+		expect(unchanged.error).toBeUndefined();
+		await waitForBackground();
+		const unchangedCount = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM audit_log
+			  WHERE entity_type = 'task' AND action = 'updated' AND entity_id = $1`,
+			[task.id],
+		);
+		expect(unchangedCount.rows[0].count).toBe(10);
+
+		const cleared = await callAgentTool(agentToken, 'update_task', {
+			project: projectSlug,
+			task_id: task.identifier,
+			description: '',
+			progress_summary: '',
+			rules: '',
+			branch_name: '',
+			runtime_type: '',
+			parent_task_id: null,
+		});
+		expect(cleared.error).toBeUndefined();
+		await waitForBackground();
+		const afterClear = await db.query<{ details: Record<string, unknown> }>(
+			`SELECT details FROM audit_log
+			  WHERE entity_type = 'task' AND action = 'updated' AND entity_id = $1
+			  ORDER BY created_at`,
+			[task.id],
+		);
+		expect(afterClear.rows).toHaveLength(16);
+		const clearRows = afterClear.rows.slice(10).map((row) => row.details);
+		expect(new Set(clearRows.map((row) => row.field))).toEqual(
+			new Set(['description', 'progress_summary', 'rules', 'branch', 'runtime', 'parent']),
+		);
+		expect(clearRows.find((row) => row.field === 'description')).toMatchObject({
+			from: null,
+			to: null,
+		});
+		expect(clearRows.find((row) => row.field === 'runtime')).toMatchObject({
+			from: 'codex',
+			to: null,
+		});
+		expect(clearRows.find((row) => row.field === 'parent')).toMatchObject({
+			from: parent.id,
+			to: null,
+			from_label: parent.identifier,
+		});
+	});
+
+	it('does not attribute an interleaved field change to the agent update', async () => {
+		const captain = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			  JOIN members m ON m.id = ma.id
+			 WHERE ma.slug = $1 AND m.team_id = $2`,
+			[CAPTAIN_AGENT_SLUG, teamId],
+		);
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Before interleaving', assignee_id: captain.rows[0].id }),
+		});
+		const task = (await taskRes.json()).data as { id: string; identifier: string };
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captain.rows[0].id,
+			teamId,
+			task.id,
+		);
+
+		const originalQuery = db.query.bind(db);
+		let interleaved = false;
+		const querySpy = vi.spyOn(db, 'query').mockImplementation(async (sql, params) => {
+			const result = await originalQuery(sql, params);
+			if (
+				!interleaved &&
+				typeof sql === 'string' &&
+				sql.includes('SELECT title, description, status, priority') &&
+				params?.[0] === task.id
+			) {
+				interleaved = true;
+				await originalQuery("UPDATE tasks SET title = 'Concurrent rename' WHERE id = $1", [
+					task.id,
+				]);
+			}
+			return result;
+		});
+		try {
+			const updated = await callAgentTool(agentToken, 'update_task', {
+				project: projectSlug,
+				task_id: task.identifier,
+				priority: 'high',
+			});
+			expect(updated.error).toBeUndefined();
+		} finally {
+			querySpy.mockRestore();
+		}
+
+		await waitForBackground();
+		const rows = await db.query<{ details: Record<string, unknown> }>(
+			`SELECT details FROM audit_log
+			  WHERE entity_type = 'task' AND action = 'updated' AND entity_id = $1`,
+			[task.id],
+		);
+		expect(rows.rows.map((row) => row.details.field)).toEqual(['priority']);
 	});
 
 	it('folds resolved assignee display names into the audit details', () => {

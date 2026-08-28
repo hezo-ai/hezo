@@ -1,5 +1,34 @@
-import { TASK_STATUS_LABELS, type TaskStatus } from '@hezo/shared';
+import {
+	AGENT_RUNTIME_LABELS,
+	type AgentRuntime,
+	TASK_STATUS_LABELS,
+	type TaskStatus,
+} from '@hezo/shared';
 import type { AuditEntry } from '../hooks/use-audit-log';
+import type { MessageKey } from './i18n';
+import en from './i18n/catalog/en.json';
+
+type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
+const TASK_VALUE_KEYS = {
+	branch: {
+		set: 'activity.task.branch.set',
+		cleared: 'activity.task.branch.cleared',
+		changed: 'activity.task.branch.changed',
+	},
+	runtime: {
+		set: 'activity.task.runtime.set',
+		cleared: 'activity.task.runtime.cleared',
+		changed: 'activity.task.runtime.changed',
+	},
+} as const;
+
+const english: Translate = (key, vars = {}) => {
+	let message = en[key];
+	for (const [name, value] of Object.entries(vars))
+		message = message.replace(`{${name}}`, String(value));
+	return message;
+};
 
 /** Past-tense verb for an audit action, used to open a description sentence. */
 function actionVerb(action: string): string {
@@ -31,6 +60,27 @@ function str(details: Record<string, unknown>, key: string): string | null {
 	return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
+function describeTranslatedValueChange(
+	field: 'branch' | 'runtime',
+	task: string,
+	from: string | null,
+	to: string | null,
+	t: Translate,
+): string {
+	const keys = TASK_VALUE_KEYS[field];
+	if (!from && to) return t(keys.set, { task, to });
+	if (from && !to) return t(keys.cleared, { task, from });
+	return t(keys.changed, { task, from: from ?? 'none', to: to ?? 'none' });
+}
+
+function runtimeLabel(value: string | null): string | null {
+	return value ? (AGENT_RUNTIME_LABELS[value as AgentRuntime] ?? value) : null;
+}
+
+function priorityLabel(value: string | null): string {
+	return value ? value.charAt(0).toUpperCase() + value.slice(1) : 'None';
+}
+
 /** A tri-state flag: true / false / absent (the key was never written). */
 function bool(details: Record<string, unknown>, key: string): boolean | null {
 	const v = details[key];
@@ -55,7 +105,7 @@ function taskRef(entry: AuditEntry): string | null {
  * (task identifier, resource name) and the relevant change. Falls back to a
  * generic "<verb> <entity_type> <name>" so every row still reads sensibly.
  */
-export function describeAuditEntry(entry: AuditEntry): string {
+export function describeAuditEntry(entry: AuditEntry, t: Translate = english): string {
 	const d = entry.details ?? {};
 	const verb = actionVerb(entry.action);
 	const task = taskRef(entry);
@@ -74,6 +124,13 @@ export function describeAuditEntry(entry: AuditEntry): string {
 			if (field === 'status') {
 				return `Changed status of ${id} from ${statusLabel(str(d, 'from'))} to ${statusLabel(str(d, 'to'))}`;
 			}
+			if (field === 'priority') {
+				return t('activity.task.priority.changed', {
+					task: id,
+					from: priorityLabel(str(d, 'from')),
+					to: priorityLabel(str(d, 'to')),
+				});
+			}
 			if (field === 'assignee') {
 				const from = str(d, 'from_label') ?? 'Unassigned';
 				const to = str(d, 'to_label') ?? 'Unassigned';
@@ -87,6 +144,19 @@ export function describeAuditEntry(entry: AuditEntry): string {
 				if (from) return `Moved ${id} out of ${from} to top level`;
 				return `Moved ${id} to top level`;
 			}
+			if (field === 'progress_summary')
+				return t('activity.task.progressSummary.updated', { task: id });
+			if (field === 'rules') return t('activity.task.rules.updated', { task: id });
+			if (field === 'branch')
+				return describeTranslatedValueChange('branch', id, str(d, 'from'), str(d, 'to'), t);
+			if (field === 'runtime')
+				return describeTranslatedValueChange(
+					'runtime',
+					id,
+					runtimeLabel(str(d, 'from')),
+					runtimeLabel(str(d, 'to')),
+					t,
+				);
 			return `${verb} task ${id}`;
 		}
 		case 'project':

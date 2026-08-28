@@ -49,11 +49,15 @@ import { logger } from '../logger';
 import { cancelCoachWorkForTask, terminateRunsForTask } from '../services/run-termination';
 import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
 import {
+	emitTaskUpdateEvents,
 	recordAssigneeChange,
 	recordDescriptionChange,
 	recordParentChange,
 	recordTaskLinks,
 	recordTitleChange,
+	type TaskUpdateMutationRow,
+	type TaskUpdateSnapshot,
+	taskUpdateMutationSql,
 } from '../services/task-events';
 import {
 	type CreateTaskCaller,
@@ -493,16 +497,15 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
-	const existing = await db.query<{
-		id: string;
-		title: string;
-		description: string | null;
-		status: string;
-		project_id: string;
-		assignee_id: string | null;
-		parent_task_id: string | null;
-	}>(
-		'SELECT id, title, description, status, project_id, assignee_id, parent_task_id FROM tasks WHERE id = $1 AND team_id = $2',
+	const existing = await db.query<
+		TaskUpdateSnapshot & {
+			id: string;
+			project_id: string;
+		}
+	>(
+		`SELECT id, title, description, status, priority, project_id, assignee_id,
+		        parent_task_id, progress_summary, rules, branch_name, runtime_type
+		   FROM tasks WHERE id = $1 AND team_id = $2`,
 		[taskId, teamId],
 	);
 	if (existing.rows.length === 0) {
@@ -708,17 +711,16 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	}
 
 	params.push(taskId);
-	const result = await db.query(
-		`UPDATE tasks SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
-		params,
-	);
+	const result = await db.query<TaskUpdateMutationRow>(taskUpdateMutationSql(sets, idx), params);
+	const mutationBefore = result.rows[0].before;
+	const updatedRow = result.rows[0].after;
 
 	// Every wakeup this write causes carries the run behind it, so that run's own
 	// no-wake exit check can see whom it notified. An agent run reaches this route
 	// with a run-scoped JWT, so this is not a human-only path.
 	const callerRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
 
-	if (body.assignee_id && body.assignee_id !== existing.rows[0].assignee_id) {
+	if (body.assignee_id && body.assignee_id !== mutationBefore.assignee_id) {
 		// Awaited: the run's exit check reads this back at the end of the run.
 		await wakeAgentIfAssigned(
 			db,
@@ -731,9 +733,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		);
 	}
 
-	const wasTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(
-		existing.rows[0].status,
-	);
+	const wasTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(mutationBefore.status);
 	const nowTerminal =
 		body.status !== undefined &&
 		(TERMINAL_TASK_STATUSES as readonly string[]).includes(body.status);
@@ -759,7 +759,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		// `''` and NULL are the same "no description", so re-sending either over an
 		// already-empty description is not an edit and records nothing. The recorder
 		// applies the same rule; this guard keeps the no-op off the audit log too.
-		if (body.description !== (existing.rows[0].description ?? '')) {
+		if (body.description !== (mutationBefore.description ?? '')) {
 			// Awaited: the client's onSettled invalidation refetches the comment feed
 			// straight away and has to see this row (same reason as the rename below).
 			try {
@@ -767,7 +767,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 					db,
 					teamId,
 					taskId,
-					existing.rows[0].description,
+					mutationBefore.description,
 					body.description,
 					actorMemberId,
 					actorApiKeyId,
@@ -775,18 +775,6 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				);
 				// The bodies deliberately stay off the audit row — a description has no
 				// size ceiling, and the thread comment already carries bounded previews.
-				events?.emit({
-					type: 'task.updated',
-					teamId,
-					projectId,
-					actorType,
-					actorMemberId,
-					actorApiKeyId,
-					taskId,
-					field: 'description',
-					from: null,
-					to: null,
-				});
 			} catch (e) {
 				log.error('Failed to record description change:', e);
 			}
@@ -811,24 +799,12 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				db,
 				teamId,
 				taskId,
-				existing.rows[0].title,
+				mutationBefore.title,
 				body.title.trim(),
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
 			);
-			events?.emit({
-				type: 'task.updated',
-				teamId,
-				projectId,
-				actorType,
-				actorMemberId,
-				actorApiKeyId,
-				taskId,
-				field: 'title',
-				from: existing.rows[0].title,
-				to: body.title.trim(),
-			});
 		} catch (e) {
 			log.error('Failed to record title change:', e);
 		}
@@ -836,30 +812,16 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 
 	if (newParentTaskId) {
 		try {
-			const ends = await recordParentChange(
+			await recordParentChange(
 				db,
 				teamId,
 				taskId,
-				oldParentTaskId,
+				mutationBefore.parent_task_id,
 				newParentTaskId.value,
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
 			);
-			events?.emit({
-				type: 'task.updated',
-				teamId,
-				projectId,
-				actorType,
-				actorMemberId,
-				actorApiKeyId,
-				taskId,
-				field: 'parent',
-				from: oldParentTaskId,
-				to: newParentTaskId.value,
-				fromLabel: ends?.fromIdentifier ?? null,
-				toLabel: ends?.toIdentifier ?? null,
-			});
 		} catch (e) {
 			log.error('Failed to record parent change:', e);
 		}
@@ -867,41 +829,27 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		// closing it would, so the old parent's assignee gets the same wakeup. The
 		// new parent gets nothing: gaining a child can only add an open child, never
 		// clear a gate.
-		if (oldParentTaskId) {
+		if (mutationBefore.parent_task_id) {
 			trackBackground(
-				wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId, callerRunId).catch((e) =>
-					log.error('Failed to wake former parent after re-parent:', e),
+				wakeTaskIfChildrenClosed(db, teamId, mutationBefore.parent_task_id, callerRunId).catch(
+					(e) => log.error('Failed to wake former parent after re-parent:', e),
 				),
 			);
 		}
 	}
 
-	if (body.assignee_id !== undefined && body.assignee_id !== existing.rows[0].assignee_id) {
+	if (body.assignee_id !== undefined && body.assignee_id !== mutationBefore.assignee_id) {
 		try {
-			const names = await recordAssigneeChange(
+			await recordAssigneeChange(
 				db,
 				teamId,
 				taskId,
-				existing.rows[0].assignee_id,
+				mutationBefore.assignee_id,
 				body.assignee_id,
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
 			);
-			events?.emit({
-				type: 'task.updated',
-				teamId,
-				projectId,
-				actorType,
-				actorMemberId,
-				actorApiKeyId,
-				taskId,
-				field: 'assignee',
-				from: existing.rows[0].assignee_id,
-				to: body.assignee_id,
-				fromLabel: names?.fromName ?? null,
-				toLabel: names?.toName ?? null,
-			});
 		} catch (e) {
 			log.error('Failed to record assignee change:', e);
 		}
@@ -913,7 +861,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				db,
 				teamId,
 				taskId,
-				existing.rows[0].status,
+				mutationBefore.status,
 				body.status,
 				actorMemberId,
 				actorApiKeyId,
@@ -923,24 +871,6 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			);
 		} catch (e) {
 			log.error('Failed to trigger status automations:', e);
-		}
-
-		{
-			const newStatus = (result.rows[0] as Record<string, unknown>).status as string;
-			if (newStatus !== existing.rows[0].status) {
-				events?.emit({
-					type: 'task.updated',
-					teamId,
-					projectId,
-					actorType,
-					actorMemberId,
-					actorApiKeyId,
-					taskId,
-					field: 'status',
-					from: existing.rows[0].status,
-					to: newStatus,
-				});
-			}
 		}
 
 		if (body.status === TaskStatus.Cancelled) {
@@ -981,14 +911,20 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		// `update_task` path prune closed tasks' worktrees consistently.
 	}
 
-	broadcastChange(
-		c,
-		wsRoom.team(teamId),
-		'tasks',
-		'UPDATE',
-		result.rows[0] as Record<string, unknown>,
-	);
-	return ok(c, result.rows[0]);
+	try {
+		await emitTaskUpdateEvents(
+			db,
+			events,
+			{ teamId, projectId, actorType, actorMemberId, actorApiKeyId, taskId },
+			mutationBefore,
+			updatedRow,
+		);
+	} catch (e) {
+		log.error('Failed to emit task update events:', e);
+	}
+
+	broadcastChange(c, wsRoom.team(teamId), 'tasks', 'UPDATE', updatedRow);
+	return ok(c, updatedRow);
 });
 
 tasksRoutes.post('/projects/:projectId/tasks/:taskId/sub-tasks', async (c) => {

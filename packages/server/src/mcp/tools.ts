@@ -193,11 +193,15 @@ import { isTaskBusyInDb } from '../services/run-concurrency';
 import { recordSkillRevisionIfChanged } from '../services/skill-revisions';
 import { triggerStatusAutomations, wakeTaskIfChildrenClosed } from '../services/task-automation';
 import {
+	emitTaskUpdateEvents,
 	recordAssigneeChange,
 	recordDescriptionChange,
 	recordParentChange,
 	recordTaskLinks,
 	recordTitleChange,
+	type TaskUpdateMutationRow,
+	type TaskUpdateSnapshot,
+	taskUpdateMutationSql,
 } from '../services/task-events';
 import {
 	type CreateTaskCaller,
@@ -1916,15 +1920,9 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { teamId, taskId, projectId } = scope;
 
-			const currentRowResult = await db.query<{
-				title: string;
-				description: string | null;
-				status: string;
-				assignee_id: string | null;
-				parent_task_id: string | null;
-				progress_summary: string | null;
-			}>(
-				`SELECT title, description, status, assignee_id, parent_task_id, progress_summary
+			const currentRowResult = await db.query<TaskUpdateSnapshot>(
+				`SELECT title, description, status, priority, assignee_id, parent_task_id,
+				        progress_summary, rules, branch_name, runtime_type
 				 FROM tasks WHERE id = $1`,
 				[taskId],
 			);
@@ -2013,8 +2011,6 @@ export function registerTools(
 			// the promote-to-top-level semantics the builder should emit; deleting
 			// the key on a no-op is what keeps an unchanged row from being rewritten.
 			const oldParentTaskId = currentRow?.parent_task_id ?? null;
-			let parentChangedTo: string | null = null;
-			let parentChanged = false;
 			if (args.parent_task_id !== undefined) {
 				const assignment = await resolveParentAssignment(
 					db,
@@ -2030,8 +2026,6 @@ export function registerTools(
 				if (!assignment.ok) return { error: assignment.message };
 				if (assignment.changed) {
 					args.parent_task_id = assignment.parentTaskId;
-					parentChangedTo = assignment.parentTaskId;
-					parentChanged = true;
 				} else {
 					delete args.parent_task_id;
 				}
@@ -2077,14 +2071,14 @@ export function registerTools(
 			}
 			if (sets.length === 0) return { unchanged: true };
 			params.push(taskId);
-			const r = await db.query(
-				`UPDATE tasks SET ${sets.join(', ')} WHERE id = $${idx} RETURNING ${TASK_COLUMNS_BARE}`,
-				params,
-			);
+			const r = await db.query<TaskUpdateMutationRow>(taskUpdateMutationSql(sets, idx), params);
 			if (!r.rows[0]) return null;
+			const mutationBefore = r.rows[0].before;
+			const updatedRow = r.rows[0].after;
 
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const actorApiKeyId = apiKeyIdFromAuth(auth);
+			const actorType = actorTypeFromAuth(auth);
 			// Every wakeup this write causes carries the run behind it, so that run's
 			// own no-wake exit check can see whom it notified.
 			const callerRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
@@ -2093,13 +2087,13 @@ export function registerTools(
 			// agent's edit leaves the same thread entry a human's does. Awaited for the
 			// same reason as the parent change below: a human watching the task page
 			// depends on the broadcast that lands with the comment.
-			if (args.title !== undefined && currentRow) {
+			if (args.title !== undefined) {
 				try {
 					await recordTitleChange(
 						db,
 						teamId,
 						taskId,
-						currentRow.title,
+						mutationBefore.title,
 						args.title as string,
 						actorMemberId,
 						actorApiKeyId,
@@ -2111,21 +2105,19 @@ export function registerTools(
 			}
 
 			if (args.description !== undefined) {
-				if (currentRow) {
-					try {
-						await recordDescriptionChange(
-							db,
-							teamId,
-							taskId,
-							currentRow.description,
-							args.description as string,
-							actorMemberId,
-							actorApiKeyId,
-							wsManager,
-						);
-					} catch (e) {
-						log.error('Failed to record description change:', e);
-					}
+				try {
+					await recordDescriptionChange(
+						db,
+						teamId,
+						taskId,
+						mutationBefore.description,
+						args.description as string,
+						actorMemberId,
+						actorApiKeyId,
+						wsManager,
+					);
+				} catch (e) {
+					log.error('Failed to record description change:', e);
 				}
 
 				trackBackground(
@@ -2141,7 +2133,7 @@ export function registerTools(
 				);
 			}
 
-			if (parentChanged) {
+			if (mutationBefore.parent_task_id !== updatedRow.parent_task_id) {
 				// Awaited: a human watching the task page depends on the broadcast that
 				// lands with this comment.
 				try {
@@ -2149,8 +2141,8 @@ export function registerTools(
 						db,
 						teamId,
 						taskId,
-						oldParentTaskId,
-						parentChangedTo,
+						mutationBefore.parent_task_id,
+						updatedRow.parent_task_id,
 						actorMemberId,
 						actorApiKeyId,
 						wsManager,
@@ -2161,10 +2153,10 @@ export function registerTools(
 				// Moving a task out clears the former parent's child-closure gate just
 				// as closing it would. The new parent gets nothing: gaining a child can
 				// only add an open child, never clear a gate.
-				if (oldParentTaskId) {
+				if (mutationBefore.parent_task_id) {
 					trackBackground(
-						wakeTaskIfChildrenClosed(db, teamId, oldParentTaskId, callerRunId).catch((e) =>
-							log.error('Failed to wake former parent after re-parent:', e),
+						wakeTaskIfChildrenClosed(db, teamId, mutationBefore.parent_task_id, callerRunId).catch(
+							(e) => log.error('Failed to wake former parent after re-parent:', e),
 						),
 					);
 				}
@@ -2173,34 +2165,20 @@ export function registerTools(
 			// Ordered to match the REST route (description, title, parent, assignee,
 			// status) so both surfaces lay the same sequence of system comments into
 			// the thread.
-			if (currentRow && args.assignee_id && args.assignee_id !== previousAssigneeId) {
+			if (args.assignee_id && args.assignee_id !== mutationBefore.assignee_id) {
 				// Awaited: a human watching the task page depends on the broadcast that
 				// lands with this comment.
 				try {
-					const names = await recordAssigneeChange(
+					await recordAssigneeChange(
 						db,
 						teamId,
 						taskId,
-						previousAssigneeId,
+						mutationBefore.assignee_id,
 						args.assignee_id as string,
 						actorMemberId,
 						actorApiKeyId,
 						wsManager,
 					);
-					events?.emit({
-						type: 'task.updated',
-						teamId,
-						projectId,
-						actorType: actorTypeFromAuth(auth),
-						actorMemberId,
-						actorApiKeyId,
-						taskId,
-						field: 'assignee',
-						from: previousAssigneeId,
-						to: args.assignee_id as string,
-						fromLabel: names?.fromName ?? null,
-						toLabel: names?.toName ?? null,
-					});
 				} catch (e) {
 					log.error('Failed to record assignee change:', e);
 				}
@@ -2218,13 +2196,13 @@ export function registerTools(
 				);
 			}
 
-			if (args.status && currentStatus) {
+			if (args.status) {
 				try {
 					await triggerStatusAutomations(
 						db,
 						teamId,
 						taskId,
-						currentStatus,
+						mutationBefore.status,
 						args.status as string,
 						actorMemberId,
 						actorApiKeyId,
@@ -2236,6 +2214,17 @@ export function registerTools(
 					log.error('Failed to trigger status automations:', e);
 				}
 			}
+			try {
+				await emitTaskUpdateEvents(
+					db,
+					events,
+					{ teamId, projectId, actorType, actorMemberId, actorApiKeyId, taskId },
+					mutationBefore,
+					updatedRow,
+				);
+			} catch (e) {
+				log.error('Failed to emit task update events:', e);
+			}
 
 			const updatedText = [args.description, args.progress_summary, args.rules]
 				.filter((v): v is string => typeof v === 'string')
@@ -2246,7 +2235,7 @@ export function registerTools(
 				teamId,
 				scope.projectId,
 				updatedText || undefined,
-				r.rows[0],
+				updatedRow,
 			);
 		},
 		db,
