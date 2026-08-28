@@ -19,10 +19,19 @@ import { type SeededWorkspace, seedWorkspace } from './helpers/seed';
  */
 async function seedSaasConnector(
 	ws: SeededWorkspace,
-	input: { name: string; url: string; withDcr?: boolean; probed?: boolean },
+	input: {
+		name: string;
+		url: string;
+		withDcr?: boolean;
+		probed?: boolean;
+		/** Static headers, e.g. a `__HEZO_SECRET_*__` placeholder the egress proxy
+		 * substitutes at request time and the probe therefore strips. */
+		headers?: Record<string, string>;
+	},
 ): Promise<{ id: string; name: string }> {
 	const { apiBase, db } = getTestContext();
 	const config: Record<string, unknown> = { url: input.url };
+	if (input.headers) config.headers = input.headers;
 	if (input.withDcr) {
 		config.dcr = {
 			client_id: 'dcr-client-id',
@@ -588,6 +597,113 @@ test('Test connection reports a server that does not answer', async () => {
 	await waitFor(() => {
 		expect(document.body.textContent).toContain('did not answer');
 	});
+});
+
+/**
+ * Answer the connector test route with a fixed verdict.
+ *
+ * The `unverifiable` outcome needs a real cross-origin 401, which happy-dom's
+ * same-origin policy blocks before a status ever reaches the probe. What broke
+ * was the web's mapping from verdict to toast severity, not the probe, so the
+ * verdict is supplied and the mapping is what gets exercised. The outcomes
+ * themselves are covered against a live server in
+ * `packages/server/test/connector-test-route.test.ts`.
+ */
+function interceptConnectorTest(verdict: {
+	reachable: boolean;
+	probe: string | null;
+	note: string;
+}): { restore: () => void } {
+	const patched = globalThis.fetch;
+	globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const urlStr =
+			input instanceof Request ? input.url : typeof input === 'string' ? input : input.toString();
+		const path = new URL(urlStr, 'http://localhost').pathname;
+		if (/\/connectors\/[^/]+\/test$/.test(path)) {
+			return new Response(JSON.stringify({ data: { verdict, connector: null } }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+		return patched(input as RequestInfo, init);
+	}) as typeof globalThis.fetch;
+	return {
+		restore: () => {
+			globalThis.fetch = patched;
+		},
+	};
+}
+
+test('a connector Hezo cannot verify from here is reported as a notice, not an error', async () => {
+	// The connector's credential rides a placeholder header the egress proxy
+	// substitutes at request time. The probe strips it, so it goes out with less
+	// than a run does and its 401 says nothing about the connector either way.
+	const intercept = interceptConnectorTest({
+		reachable: false,
+		probe: 'unverifiable',
+		note: "This server wants a credential, and this connector's own credential is a placeholder the egress proxy substitutes at request time, which Hezo can't reproduce from here. It still reaches agent runs.",
+	});
+	try {
+		let slug = '';
+		const { findByText, user, router } = await renderApp({
+			initialPath: '/',
+			seed: async () => {
+				const ws = await seedWorkspace();
+				slug = ws.internalSlug;
+				await seedSaasConnector(ws, {
+					name: 'placeholder-auth',
+					url: 'https://mcp.placeholder.example/mcp',
+					headers: { Authorization: 'Bearer __HEZO_SECRET_TRACKER_KEY__' },
+				});
+			},
+		});
+		await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+		const row = (await findByText('placeholder-auth')).closest(
+			'[data-testid="connector-row"]',
+		) as HTMLElement;
+
+		await user.click(within(row).getByTestId('connector-test'));
+
+		// Scoped to this note's own toast: the store is module-level, so earlier
+		// specs in this file have left their own toasts in the DOM, and Radix renders
+		// a second announcement copy of each. The title sits immediately before the
+		// description inside one toast, which is the pairing under test.
+		const titles = (await screen.findAllByText(/placeholder the egress proxy substitutes/))
+			.map((d) => d.previousElementSibling?.textContent)
+			.filter((t): t is string => !!t);
+		// The regression this guards: severity was keyed on `reachable`, false here,
+		// so a connector that works was announced under the error title - directly
+		// contradicting the last sentence of the note it was carrying.
+		expect(titles).toContain('Heads up');
+		expect(titles).not.toContain('Something went wrong');
+	} finally {
+		intercept.restore();
+	}
+});
+
+test('a revoked connector offers no Test connection button', async () => {
+	let slug = '';
+	const { findByText, router } = await renderApp({
+		initialPath: '/',
+		seed: async () => {
+			const ws = await seedWorkspace();
+			slug = ws.internalSlug;
+			const { id } = await seedSaasConnector(ws, {
+				name: 'gone',
+				url: 'https://mcp.linear.example/mcp',
+			});
+			await getTestContext().db.query(
+				`UPDATE mcp_connections SET revoked_at = now() WHERE id = $1`,
+				[id],
+			);
+		},
+	});
+	await router.navigate({ to: CONNECTORS_ROUTE, params: { projectId: slug } });
+
+	// The probe refuses a revoked row outright, so the button could only ever
+	// report a failure - the same reason the non-hosted kinds get none.
+	const row = (await findByText('gone')).closest('[data-testid="connector-row"]') as HTMLElement;
+	expect(within(row).queryByTestId('connector-test')).toBeNull();
 });
 
 test('connectors with no MCP server to reach offer no Test connection button', async () => {

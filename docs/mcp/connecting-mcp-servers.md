@@ -298,13 +298,21 @@ at any time from the same control.
 
 ## Checking a connector yourself
 
-Every hosted connector's row carries a **Test connection** button, on both the project's
-Connectors page and the global **Settings → Connectors** page. Press it whenever you want
-to know where a connector stands, whatever its badge says.
+Every hosted connector you have not disconnected carries a **Test connection** button on its
+row, on both the project's Connectors page and the global **Settings → Connectors** page.
+Press it whenever you want to know where a connector stands, whatever its badge says.
 
 It runs the same check Hezo runs on its own: it opens an MCP handshake with the server,
 using the connector's stored credential, and tells you what came back. A reachable server
 also re-lists its methods, so the allowlist reflects whatever the server advertises today.
+
+One case it cannot answer. When a connector's credential is a `__HEZO_SECRET_*__`
+placeholder in one of its headers, that value is filled in by the egress proxy as an agent's
+request leaves the container - and this check does not go through the proxy, so it sends the
+header without the credential. Hezo tells you so rather than guessing: the result reads as a
+notice, not a failure, and says the connector still reaches agent runs. What it confirms is
+that the server is up; whether that credential is still accepted is not something this button
+can tell you.
 
 Use it when a row says **Connected** but carries a warning underneath, when an agent
 reports that a connector's tools are missing, or after the provider tells you an outage is
@@ -314,7 +322,8 @@ week can still be sitting on the row long after the server came back. This butto
 you clear it.
 
 Local (stdio) servers and REST API connectors have no button: neither has an MCP endpoint
-to hand-shake with, so there is nothing to check from here.
+to hand-shake with, so there is nothing to check from here. Nor does a **Revoked** row -
+its credential is already gone, and the check is refused until you connect it again.
 
 ## When a connector stops working
 
