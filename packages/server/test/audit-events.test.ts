@@ -4,8 +4,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import { mapEventToAudit } from '../src/events/audit-observer';
+import { DomainEventBus } from '../src/events/bus';
+import type { DomainEvent } from '../src/events/types';
 import { waitForBackground } from '../src/lib/background';
 import type { Env } from '../src/lib/types';
+import { emitTaskUpdateEvents } from '../src/services/task-events';
 import { safeClose } from './helpers';
 import {
 	authHeader,
@@ -405,21 +408,16 @@ describe('audit observer (end-to-end)', () => {
 		);
 
 		const originalQuery = db.query.bind(db);
+		const originalTransaction = db.transaction.bind(db);
 		let interleaved = false;
-		const querySpy = vi.spyOn(db, 'query').mockImplementation(async (sql, params) => {
-			const result = await originalQuery(sql, params);
-			if (
-				!interleaved &&
-				typeof sql === 'string' &&
-				sql.includes('SELECT title, description, status, priority') &&
-				params?.[0] === task.id
-			) {
+		const transactionSpy = vi.spyOn(db, 'transaction').mockImplementation(async (fn) => {
+			if (!interleaved) {
 				interleaved = true;
 				await originalQuery("UPDATE tasks SET title = 'Concurrent rename' WHERE id = $1", [
 					task.id,
 				]);
 			}
-			return result;
+			return originalTransaction(fn);
 		});
 		try {
 			const updated = await callAgentTool(agentToken, 'update_task', {
@@ -429,8 +427,13 @@ describe('audit observer (end-to-end)', () => {
 			});
 			expect(updated.error).toBeUndefined();
 		} finally {
-			querySpy.mockRestore();
+			transactionSpy.mockRestore();
 		}
+		const persisted = await db.query<{ title: string; priority: string }>(
+			'SELECT title, priority FROM tasks WHERE id = $1',
+			[task.id],
+		);
+		expect(persisted.rows[0]).toMatchObject({ title: 'Concurrent rename', priority: 'high' });
 
 		await waitForBackground();
 		const rows = await db.query<{ details: Record<string, unknown> }>(
@@ -439,6 +442,115 @@ describe('audit observer (end-to-end)', () => {
 			[task.id],
 		);
 		expect(rows.rows.map((row) => row.details.field)).toEqual(['priority']);
+	});
+
+	it('revalidates terminal status under the task update lock before an agent reopens it', async () => {
+		const captain = await db.query<{ id: string }>(
+			`SELECT ma.id FROM member_agents ma
+			  JOIN members m ON m.id = ma.id
+			 WHERE ma.slug = $1 AND m.team_id = $2`,
+			[CAPTAIN_AGENT_SLUG, teamId],
+		);
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Concurrent close', assignee_id: captain.rows[0].id }),
+		});
+		const task = (await taskRes.json()).data as { id: string; identifier: string };
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captain.rows[0].id,
+			teamId,
+			task.id,
+		);
+
+		const originalQuery = db.query.bind(db);
+		const originalTransaction = db.transaction.bind(db);
+		let interleaved = false;
+		const interleaveClose = async () => {
+			if (interleaved) return;
+			interleaved = true;
+			await originalQuery("UPDATE tasks SET status = 'done' WHERE id = $1", [task.id]);
+		};
+		const transactionSpy = vi.spyOn(db, 'transaction').mockImplementation(async (fn) => {
+			await interleaveClose();
+			return originalTransaction(fn);
+		});
+		const querySpy = vi.spyOn(db, 'query').mockImplementation(async (sql, params) => {
+			const result = await originalQuery(sql, params);
+			if (
+				!interleaved &&
+				typeof sql === 'string' &&
+				sql.includes('SELECT title, description, status, priority') &&
+				params?.[0] === task.id
+			) {
+				await interleaveClose();
+			}
+			return result;
+		});
+		try {
+			const updated = await callAgentTool(agentToken, 'update_task', {
+				project: projectSlug,
+				task_id: task.identifier,
+				status: 'in_progress',
+			});
+			expect(updated.error).toBe('Only the admin can re-open a completed task');
+		} finally {
+			querySpy.mockRestore();
+			transactionSpy.mockRestore();
+		}
+
+		const persisted = await db.query<{ status: string }>('SELECT status FROM tasks WHERE id = $1', [
+			task.id,
+		]);
+		expect(persisted.rows[0].status).toBe('done');
+		const statusComments = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM task_comments
+			  WHERE task_id = $1 AND content_type = 'system'
+			    AND content->>'kind' = 'status_change'`,
+			[task.id],
+		);
+		expect(statusComments.rows[0].count).toBe(0);
+	});
+
+	it('treats clearing an already-null branch as an unchanged agent update', async () => {
+		const captain = await db.query<{ id: string }>(
+			'SELECT id FROM member_agents WHERE slug = $1 LIMIT 1',
+			[CAPTAIN_AGENT_SLUG],
+		);
+		const taskRes = await app.request(`/api/projects/${projectSlug}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'No branch', assignee_id: captain.rows[0].id }),
+		});
+		const task = (await taskRes.json()).data as { id: string; identifier: string };
+		const { token: agentToken } = await mintAgentToken(
+			db,
+			masterKeyManager,
+			captain.rows[0].id,
+			teamId,
+			task.id,
+		);
+
+		const before = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM audit_log
+			  WHERE entity_type = 'task' AND action = 'updated' AND entity_id = $1`,
+			[task.id],
+		);
+		const result = await callAgentTool(agentToken, 'update_task', {
+			project: projectSlug,
+			task_id: task.identifier,
+			branch_name: '',
+		});
+		expect(result.error).toBeUndefined();
+		await waitForBackground();
+		const after = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM audit_log
+			  WHERE entity_type = 'task' AND action = 'updated' AND entity_id = $1`,
+			[task.id],
+		);
+		expect(after.rows[0].count).toBe(before.rows[0].count);
 	});
 
 	it('folds resolved assignee display names into the audit details', () => {
@@ -461,5 +573,45 @@ describe('audit observer (end-to-end)', () => {
 			from_label: 'Bob',
 			to_label: 'Alice',
 		});
+	});
+
+	it('keeps unresolved assignee and parent ids as truthful audit label fallbacks', async () => {
+		const missingMemberId = '00000000-0000-4000-8000-000000000091';
+		const missingTaskId = '00000000-0000-4000-8000-000000000092';
+		const emitted: DomainEvent[] = [];
+		const events = new DomainEventBus();
+		events.subscribe((event) => emitted.push(event));
+		const before = {
+			title: 'Before',
+			description: null,
+			status: 'backlog',
+			priority: 'medium',
+			assignee_id: missingMemberId,
+			progress_summary: null,
+			rules: null,
+			branch_name: null,
+			runtime_type: null,
+			parent_task_id: missingTaskId,
+		};
+		await emitTaskUpdateEvents(
+			db,
+			events,
+			{
+				teamId,
+				projectId,
+				actorType: 'admin',
+				actorMemberId: null,
+				actorApiKeyId: null,
+				taskId: '00000000-0000-4000-8000-000000000093',
+			},
+			before,
+			{ ...before, assignee_id: null, parent_task_id: null },
+		);
+		expect(emitted).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ field: 'assignee', fromLabel: missingMemberId }),
+				expect.objectContaining({ field: 'parent', fromLabel: missingTaskId }),
+			]),
+		);
 	});
 });

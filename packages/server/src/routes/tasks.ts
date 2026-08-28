@@ -58,6 +58,7 @@ import {
 	type TaskUpdateMutationRow,
 	type TaskUpdateSnapshot,
 	taskUpdateMutationSql,
+	taskUpdateValueChanged,
 } from '../services/task-events';
 import {
 	type CreateTaskCaller,
@@ -497,21 +498,6 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const taskId = await resolveTaskId(db, teamId, c.req.param('taskId'));
 	if (!taskId) return err(c, 'NOT_FOUND', 'Task not found', 404);
 
-	const existing = await db.query<
-		TaskUpdateSnapshot & {
-			id: string;
-			project_id: string;
-		}
-	>(
-		`SELECT id, title, description, status, priority, project_id, assignee_id,
-		        parent_task_id, progress_summary, rules, branch_name, runtime_type
-		   FROM tasks WHERE id = $1 AND team_id = $2`,
-		[taskId, teamId],
-	);
-	if (existing.rows.length === 0) {
-		return err(c, 'NOT_FOUND', 'Task not found', 404);
-	}
-
 	const body = await c.req.json<{
 		title?: string;
 		description?: string;
@@ -548,183 +534,227 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			403,
 		);
 	}
+	if (body.branch_name === '') body.branch_name = null;
 
-	// `done` and `cancelled` are now the only terminal states; once a task is
-	// terminal only the admin can move it back to an active status (re-open).
-	if (
-		body.status !== undefined &&
-		body.status !== existing.rows[0].status &&
-		auth.type === AuthType.Agent &&
-		(TERMINAL_TASK_STATUSES as readonly string[]).includes(existing.rows[0].status)
-	) {
-		return err(c, 'FORBIDDEN', 'Only the admin can re-open a completed task', 403);
-	}
-
-	if (body.status === TaskStatus.Done) {
-		const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
-		if (!childrenCheck.ok) {
-			return err(c, 'INVALID_REQUEST', childrenCheck.message, 400);
-		}
-	}
-	if (body.status === TaskStatus.Done) {
-		const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-		const activityCheck = await assertNoOutstandingActivity(db, taskId, callerMemberId);
-		if (!activityCheck.ok) {
-			return err(c, 'INVALID_REQUEST', activityCheck.message, 400);
-		}
-		// Agents cannot close over an unanswered @admin ask; a human closing
-		// the task is itself the human's decision, so humans bypass this.
-		if (callerMemberId !== null) {
-			const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
-			if (!adminAskCheck.ok) {
-				return err(c, 'INVALID_REQUEST', adminAskCheck.message, 400);
+	const mutation = await db.transaction(async () => {
+		const existing = await db.query<
+			TaskUpdateSnapshot & {
+				id: string;
+				project_id: string;
 			}
-		}
-	}
-
-	if (body.status !== undefined) {
-		body.status = await coerceTargetStatusForBlockers(db, taskId, body.status);
-	}
-
-	// `parent_task_id` is the one field on this route where an explicit null is
-	// meaningful: null promotes the task to top level, a value nests it, and an
-	// absent key leaves the parent alone. (Contrast `assignee_id` below, which
-	// rejects null outright.) Deliberately not wrapped in a transaction: every
-	// other guard here is read-then-write too, `PostgresDb.txQueue` is
-	// process-wide so one on this path would queue behind every other request,
-	// and the residual race is bounded because every tree walk is depth-capped.
-	const oldParentTaskId = existing.rows[0].parent_task_id;
-	let newParentTaskId: { value: string | null } | null = null;
-	if (body.parent_task_id !== undefined) {
-		const assignment = await resolveParentAssignment(
-			db,
-			teamId,
-			{
-				taskId,
-				projectId: existing.rows[0].project_id,
-				currentParentTaskId: oldParentTaskId,
-				status: existing.rows[0].status,
-			},
-			body.parent_task_id,
+		>(
+			`SELECT id, title, description, status, priority, project_id, assignee_id,
+			        parent_task_id, progress_summary, rules, branch_name, runtime_type
+			   FROM tasks WHERE id = $1 AND team_id = $2 FOR UPDATE`,
+			[taskId, teamId],
 		);
-		if (!assignment.ok) {
-			return err(
-				c,
-				assignment.code,
-				assignment.message,
-				assignment.code === 'NOT_FOUND' ? 404 : 400,
-			);
+		if (existing.rows.length === 0) {
+			return err(c, 'NOT_FOUND', 'Task not found', 404);
 		}
-		if (assignment.changed) newParentTaskId = { value: assignment.parentTaskId };
-	}
 
-	const sets: string[] = [];
-	const params: unknown[] = [];
-	let idx = 1;
-
-	if (body.title?.trim() !== undefined) {
-		sets.push(`title = $${idx}`);
-		params.push(body.title.trim());
-		idx++;
-	}
-	if (body.description !== undefined) {
-		sets.push(`description = $${idx}`);
-		params.push(body.description);
-		idx++;
-	}
-	if (body.status !== undefined) {
-		sets.push(`status = $${idx}::task_status`);
-		params.push(body.status);
-		idx++;
-	}
-	if (body.priority !== undefined) {
-		sets.push(`priority = $${idx}::task_priority`);
-		params.push(body.priority);
-		idx++;
-	}
-	if (body.assignee_id !== undefined) {
-		if (body.assignee_id === null) {
-			return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
+		// `done` and `cancelled` are now the only terminal states; once a task is
+		// terminal only the admin can move it back to an active status (re-open).
+		if (
+			body.status !== undefined &&
+			body.status !== existing.rows[0].status &&
+			auth.type === AuthType.Agent &&
+			(TERMINAL_TASK_STATUSES as readonly string[]).includes(existing.rows[0].status)
+		) {
+			return err(c, 'FORBIDDEN', 'Only the admin can re-open a completed task', 403);
 		}
-		if (body.assignee_id !== existing.rows[0].assignee_id) {
-			const blocking = await assertNoBlockingRun(db, taskId, {
-				callerMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
-				incomingAssigneeId: body.assignee_id,
-			});
-			if (!blocking.ok) {
-				return err(c, 'CONFLICT', blocking.message, 409);
+
+		if (body.status === TaskStatus.Done && body.status !== existing.rows[0].status) {
+			const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
+			if (!childrenCheck.ok) {
+				return err(c, 'INVALID_REQUEST', childrenCheck.message, 400);
 			}
-			// The MCP twin has always enforced this (`update_task` in mcp/tools.ts);
-			// REST never did, because the unconditional run guard above incidentally
-			// 409'd any agent reaching here from inside its own run. Exempting the
-			// caller's own run opens that path, so the rule has to be stated here too
-			// or an agent could dump its live task on a peer or its manager.
-			if (auth.type === AuthType.Agent) {
-				const hierarchy = await assertSubordinateAssignee(db, auth.memberId, body.assignee_id);
-				if (!hierarchy.ok) {
-					return err(c, 'FORBIDDEN', hierarchy.message, 403);
+		}
+		if (body.status === TaskStatus.Done && body.status !== existing.rows[0].status) {
+			const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+			const activityCheck = await assertNoOutstandingActivity(db, taskId, callerMemberId);
+			if (!activityCheck.ok) {
+				return err(c, 'INVALID_REQUEST', activityCheck.message, 400);
+			}
+			// Agents cannot close over an unanswered @admin ask; a human closing
+			// the task is itself the human's decision, so humans bypass this.
+			if (callerMemberId !== null) {
+				const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
+				if (!adminAskCheck.ok) {
+					return err(c, 'INVALID_REQUEST', adminAskCheck.message, 400);
 				}
 			}
 		}
-		sets.push(`assignee_id = $${idx}`);
-		params.push(body.assignee_id);
-		idx++;
-	}
-	if (newParentTaskId) {
-		sets.push(`parent_task_id = $${idx}`);
-		params.push(newParentTaskId.value);
-		idx++;
-	}
-	if (body.labels !== undefined) {
-		sets.push(`labels = $${idx}::jsonb`);
-		params.push(JSON.stringify(body.labels));
-		idx++;
-	}
-	if (body.progress_summary !== undefined) {
-		sets.push(`progress_summary = $${idx}`);
-		params.push(body.progress_summary);
-		idx++;
-		sets.push('progress_summary_updated_at = now()');
-		// Only an agent reaches here — the guard above rejects every other caller.
-		sets.push(`progress_summary_updated_by = $${idx}`);
-		params.push(auth.type === AuthType.Agent ? auth.memberId : null);
-		idx++;
-	}
-	if (body.rules !== undefined) {
-		sets.push(`rules = $${idx}`);
-		params.push(body.rules);
-		idx++;
-	}
-	if (body.branch_name !== undefined) {
-		sets.push(`branch_name = $${idx}`);
-		params.push(body.branch_name);
-		idx++;
-	}
-	if (body.runtime_type !== undefined) {
-		sets.push(`runtime_type = $${idx}::agent_runtime`);
-		params.push(body.runtime_type);
-		idx++;
-	}
 
-	if (sets.length === 0) {
-		return ok(c, existing.rows[0]);
-	}
+		if (body.status !== undefined) {
+			body.status = await coerceTargetStatusForBlockers(db, taskId, body.status);
+		}
 
-	params.push(taskId);
-	const result = await db.query<TaskUpdateMutationRow>(taskUpdateMutationSql(sets, idx), params);
-	const mutationBefore = result.rows[0].before;
-	const updatedRow = result.rows[0].after;
+		// `parent_task_id` is the one field on this route where an explicit null is
+		// meaningful: null promotes the task to top level, a value nests it, and an
+		// absent key leaves the parent alone. (Contrast `assignee_id` below, which
+		// rejects null outright.)
+		const oldParentTaskId = existing.rows[0].parent_task_id;
+		let newParentTaskId: { value: string | null } | null = null;
+		if (body.parent_task_id !== undefined) {
+			const assignment = await resolveParentAssignment(
+				db,
+				teamId,
+				{
+					taskId,
+					projectId: existing.rows[0].project_id,
+					currentParentTaskId: oldParentTaskId,
+					status: existing.rows[0].status,
+				},
+				body.parent_task_id,
+			);
+			if (!assignment.ok) {
+				return err(
+					c,
+					assignment.code,
+					assignment.message,
+					assignment.code === 'NOT_FOUND' ? 404 : 400,
+				);
+			}
+			if (assignment.changed) newParentTaskId = { value: assignment.parentTaskId };
+		}
+
+		const sets: string[] = [];
+		const params: unknown[] = [];
+		let idx = 1;
+
+		if (
+			body.title?.trim() !== undefined &&
+			taskUpdateValueChanged(existing.rows[0], 'title', body.title.trim())
+		) {
+			sets.push(`title = $${idx}`);
+			params.push(body.title.trim());
+			idx++;
+		}
+		if (
+			body.description !== undefined &&
+			taskUpdateValueChanged(existing.rows[0], 'description', body.description)
+		) {
+			sets.push(`description = $${idx}`);
+			params.push(body.description);
+			idx++;
+		}
+		if (
+			body.status !== undefined &&
+			taskUpdateValueChanged(existing.rows[0], 'status', body.status)
+		) {
+			sets.push(`status = $${idx}::task_status`);
+			params.push(body.status);
+			idx++;
+		}
+		if (
+			body.priority !== undefined &&
+			taskUpdateValueChanged(existing.rows[0], 'priority', body.priority)
+		) {
+			sets.push(`priority = $${idx}::task_priority`);
+			params.push(body.priority);
+			idx++;
+		}
+		if (body.assignee_id !== undefined) {
+			if (body.assignee_id === null) {
+				return err(c, 'INVALID_REQUEST', 'assignee_id cannot be null', 400);
+			}
+			if (body.assignee_id !== existing.rows[0].assignee_id) {
+				const blocking = await assertNoBlockingRun(db, taskId, {
+					callerMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+					incomingAssigneeId: body.assignee_id,
+				});
+				if (!blocking.ok) {
+					return err(c, 'CONFLICT', blocking.message, 409);
+				}
+				// The MCP twin has always enforced this (`update_task` in mcp/tools.ts);
+				// REST never did, because the unconditional run guard above incidentally
+				// 409'd any agent reaching here from inside its own run. Exempting the
+				// caller's own run opens that path, so the rule has to be stated here too
+				// or an agent could dump its live task on a peer or its manager.
+				if (auth.type === AuthType.Agent) {
+					const hierarchy = await assertSubordinateAssignee(db, auth.memberId, body.assignee_id);
+					if (!hierarchy.ok) {
+						return err(c, 'FORBIDDEN', hierarchy.message, 403);
+					}
+				}
+			}
+			if (taskUpdateValueChanged(existing.rows[0], 'assignee_id', body.assignee_id)) {
+				sets.push(`assignee_id = $${idx}`);
+				params.push(body.assignee_id);
+				idx++;
+			}
+		}
+		if (newParentTaskId) {
+			sets.push(`parent_task_id = $${idx}`);
+			params.push(newParentTaskId.value);
+			idx++;
+		}
+		if (body.labels !== undefined) {
+			sets.push(`labels = $${idx}::jsonb`);
+			params.push(JSON.stringify(body.labels));
+			idx++;
+		}
+		if (
+			body.progress_summary !== undefined &&
+			taskUpdateValueChanged(existing.rows[0], 'progress_summary', body.progress_summary)
+		) {
+			sets.push(`progress_summary = $${idx}`);
+			params.push(body.progress_summary);
+			idx++;
+			sets.push('progress_summary_updated_at = now()');
+			// Only an agent reaches here — the guard above rejects every other caller.
+			sets.push(`progress_summary_updated_by = $${idx}`);
+			params.push(auth.type === AuthType.Agent ? auth.memberId : null);
+			idx++;
+		}
+		if (body.rules !== undefined && taskUpdateValueChanged(existing.rows[0], 'rules', body.rules)) {
+			sets.push(`rules = $${idx}`);
+			params.push(body.rules);
+			idx++;
+		}
+		if (
+			body.branch_name !== undefined &&
+			taskUpdateValueChanged(existing.rows[0], 'branch_name', body.branch_name)
+		) {
+			sets.push(`branch_name = $${idx}`);
+			params.push(body.branch_name);
+			idx++;
+		}
+		if (
+			body.runtime_type !== undefined &&
+			taskUpdateValueChanged(existing.rows[0], 'runtime_type', body.runtime_type)
+		) {
+			sets.push(`runtime_type = $${idx}::agent_runtime`);
+			params.push(body.runtime_type);
+			idx++;
+		}
+
+		if (sets.length === 0) {
+			return { unchanged: existing.rows[0] };
+		}
+
+		params.push(taskId);
+		const result = await db.query<TaskUpdateMutationRow>(taskUpdateMutationSql(sets, idx), params);
+		return {
+			mutationBefore: result.rows[0].before,
+			updatedRow: result.rows[0].after,
+			projectId: existing.rows[0].project_id,
+		};
+	});
+	if (mutation instanceof Response) return mutation;
+	if ('unchanged' in mutation) return ok(c, mutation.unchanged);
+	const { mutationBefore, updatedRow, projectId } = mutation;
 
 	// Every wakeup this write causes carries the run behind it, so that run's own
 	// no-wake exit check can see whom it notified. An agent run reaches this route
 	// with a run-scoped JWT, so this is not a human-only path.
 	const callerRunId = auth.type === AuthType.Agent ? (auth.runId ?? null) : null;
 
-	if (body.assignee_id && body.assignee_id !== mutationBefore.assignee_id) {
+	if (updatedRow.assignee_id && updatedRow.assignee_id !== mutationBefore.assignee_id) {
 		// Awaited: the run's exit check reads this back at the end of the run.
 		await wakeAgentIfAssigned(
 			db,
-			body.assignee_id,
+			updatedRow.assignee_id,
 			teamId,
 			taskId,
 			undefined,
@@ -734,13 +764,11 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	}
 
 	const wasTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(mutationBefore.status);
-	const nowTerminal =
-		body.status !== undefined &&
-		(TERMINAL_TASK_STATUSES as readonly string[]).includes(body.status);
-	if (body.status !== undefined && wasTerminal && !nowTerminal) {
+	const nowTerminal = (TERMINAL_TASK_STATUSES as readonly string[]).includes(updatedRow.status);
+	if (mutationBefore.status !== updatedRow.status && wasTerminal && !nowTerminal) {
 		await wakeAgentIfAssigned(
 			db,
-			existing.rows[0].assignee_id,
+			mutationBefore.assignee_id,
 			teamId,
 			taskId,
 			WakeupSource.Automation,
@@ -753,13 +781,12 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 	const actorApiKeyId = apiKeyIdFromAuth(c.get('auth'));
 	const events = c.get('events');
 	const actorType = actorTypeFromAuth(c.get('auth'));
-	const projectId = existing.rows[0].project_id;
 
-	if (body.description !== undefined) {
+	if (taskUpdateValueChanged(mutationBefore, 'description', updatedRow.description)) {
 		// `''` and NULL are the same "no description", so re-sending either over an
 		// already-empty description is not an edit and records nothing. The recorder
 		// applies the same rule; this guard keeps the no-op off the audit log too.
-		if (body.description !== (mutationBefore.description ?? '')) {
+		if (updatedRow.description !== (mutationBefore.description ?? '')) {
 			// Awaited: the client's onSettled invalidation refetches the comment feed
 			// straight away and has to see this row (same reason as the rename below).
 			try {
@@ -768,7 +795,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 					teamId,
 					taskId,
 					mutationBefore.description,
-					body.description,
+					updatedRow.description ?? '',
 					actorMemberId,
 					actorApiKeyId,
 					c.get('wsManager'),
@@ -785,7 +812,7 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 				db,
 				teamId,
 				taskId,
-				body.description,
+				updatedRow.description ?? '',
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
@@ -793,14 +820,14 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		);
 	}
 
-	if (body.title !== undefined) {
+	if (taskUpdateValueChanged(mutationBefore, 'title', updatedRow.title)) {
 		try {
 			await recordTitleChange(
 				db,
 				teamId,
 				taskId,
 				mutationBefore.title,
-				body.title.trim(),
+				updatedRow.title,
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
@@ -810,14 +837,14 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		}
 	}
 
-	if (newParentTaskId) {
+	if (mutationBefore.parent_task_id !== updatedRow.parent_task_id) {
 		try {
 			await recordParentChange(
 				db,
 				teamId,
 				taskId,
 				mutationBefore.parent_task_id,
-				newParentTaskId.value,
+				updatedRow.parent_task_id,
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
@@ -838,14 +865,14 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		}
 	}
 
-	if (body.assignee_id !== undefined && body.assignee_id !== mutationBefore.assignee_id) {
+	if (updatedRow.assignee_id !== mutationBefore.assignee_id) {
 		try {
 			await recordAssigneeChange(
 				db,
 				teamId,
 				taskId,
 				mutationBefore.assignee_id,
-				body.assignee_id,
+				updatedRow.assignee_id,
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
@@ -855,14 +882,14 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 		}
 	}
 
-	if (body.status) {
+	if (mutationBefore.status !== updatedRow.status) {
 		try {
 			await triggerStatusAutomations(
 				db,
 				teamId,
 				taskId,
 				mutationBefore.status,
-				body.status,
+				updatedRow.status,
 				actorMemberId,
 				actorApiKeyId,
 				c.get('wsManager'),
@@ -873,8 +900,8 @@ tasksRoutes.patch('/projects/:projectId/tasks/:taskId', async (c) => {
 			log.error('Failed to trigger status automations:', e);
 		}
 
-		if (body.status === TaskStatus.Cancelled) {
-			const terminateReason = `Task ${body.status}`;
+		if (updatedRow.status === TaskStatus.Cancelled) {
+			const terminateReason = `Task ${updatedRow.status}`;
 			trackBackground(
 				terminateRunsForTask(
 					{

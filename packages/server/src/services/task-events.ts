@@ -52,11 +52,11 @@ interface TaskUpdateEventContext {
 	taskId: string;
 }
 
-type SnapshotKey = keyof TaskUpdateSnapshot;
+export type TaskUpdateSnapshotKey = keyof TaskUpdateSnapshot;
 
 interface TaskUpdateAuditField {
 	field: import('../events/types').TaskUpdateField;
-	key: SnapshotKey;
+	key: TaskUpdateSnapshotKey;
 	redact?: boolean;
 	emptyIsNull?: boolean;
 	label?: 'member' | 'task';
@@ -70,13 +70,26 @@ const TASK_UPDATE_AUDIT_FIELDS: readonly TaskUpdateAuditField[] = [
 	{ field: 'assignee', key: 'assignee_id', label: 'member' },
 	{ field: 'progress_summary', key: 'progress_summary', redact: true },
 	{ field: 'rules', key: 'rules', redact: true },
-	{ field: 'branch', key: 'branch_name' },
+	{ field: 'branch', key: 'branch_name', emptyIsNull: true },
 	{ field: 'runtime', key: 'runtime_type' },
 	{ field: 'parent', key: 'parent_task_id', label: 'task' },
 ];
 
 function comparableTaskValue(value: string | null, emptyIsNull: boolean): string | null {
 	return emptyIsNull && value === '' ? null : value;
+}
+
+/** Compare a requested direct-edit value with the locked persisted snapshot. */
+export function taskUpdateValueChanged(
+	before: TaskUpdateSnapshot,
+	key: TaskUpdateSnapshotKey,
+	to: string | null,
+): boolean {
+	const field = TASK_UPDATE_AUDIT_FIELDS.find((candidate) => candidate.key === key);
+	return (
+		comparableTaskValue(before[key], field?.emptyIsNull ?? false) !==
+		comparableTaskValue(to, field?.emptyIsNull ?? false)
+	);
 }
 
 async function taskUpdateLabels(
@@ -127,10 +140,8 @@ export async function emitTaskUpdateEvents(
 	after: TaskUpdateSnapshot,
 ): Promise<void> {
 	if (!events) return;
-	const changed = TASK_UPDATE_AUDIT_FIELDS.filter(({ key, emptyIsNull = false }) => {
-		return (
-			comparableTaskValue(before[key], emptyIsNull) !== comparableTaskValue(after[key], emptyIsNull)
-		);
+	const changed = TASK_UPDATE_AUDIT_FIELDS.filter(({ key }) => {
+		return taskUpdateValueChanged(before, key, after[key]);
 	});
 	if (changed.length === 0) return;
 
@@ -153,8 +164,8 @@ export async function emitTaskUpdateEvents(
 			to: redact ? null : to,
 			...(labelMap
 				? {
-						fromLabel: from ? (labelMap.get(from) ?? null) : null,
-						toLabel: to ? (labelMap.get(to) ?? null) : null,
+						fromLabel: from ? (labelMap.get(from) ?? from) : null,
+						toLabel: to ? (labelMap.get(to) ?? to) : null,
 					}
 				: {}),
 		});

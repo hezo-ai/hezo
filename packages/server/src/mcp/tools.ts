@@ -201,7 +201,9 @@ import {
 	recordTitleChange,
 	type TaskUpdateMutationRow,
 	type TaskUpdateSnapshot,
+	type TaskUpdateSnapshotKey,
 	taskUpdateMutationSql,
+	taskUpdateValueChanged,
 } from '../services/task-events';
 import {
 	type CreateTaskCaller,
@@ -1920,19 +1922,8 @@ export function registerTools(
 			if ('error' in scope) return scope;
 			const { teamId, taskId, projectId } = scope;
 
-			const currentRowResult = await db.query<TaskUpdateSnapshot>(
-				`SELECT title, description, status, priority, assignee_id, parent_task_id,
-				        progress_summary, rules, branch_name, runtime_type
-				 FROM tasks WHERE id = $1`,
-				[taskId],
-			);
-			const currentRow = currentRowResult.rows[0];
-
 			const scopeDenied = assertRunTaskScope(auth, taskId, args.status as string | undefined);
 			if (scopeDenied) return { error: scopeDenied };
-
-			const currentStatus = currentRow?.status;
-			const previousAssigneeId = currentRow?.assignee_id ?? null;
 
 			// Normalize the title the way the REST route does (`tasks.ts`), so both
 			// surfaces store the same value and the rename recorder treats the same
@@ -1952,129 +1943,162 @@ export function registerTools(
 				if (invalid) return { error: invalid };
 			}
 
-			// `done` and `cancelled` are the only terminal states; once a task is
-			// terminal only the admin can re-open it (move it back to active).
-			if (
-				args.status !== undefined &&
-				args.status !== currentStatus &&
-				auth.type === AuthType.Agent &&
-				(TERMINAL_TASK_STATUSES as readonly string[]).includes(currentStatus ?? '')
-			) {
-				return { error: 'Only the admin can re-open a completed task' };
-			}
-
-			if (args.status === TaskStatus.Done) {
-				const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
-				if (!childrenCheck.ok) return { error: childrenCheck.message };
-			}
-			if (args.status === TaskStatus.Done) {
-				const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
-				const activityCheck = await assertNoOutstandingActivity(db, taskId, callerMemberId);
-				if (!activityCheck.ok) return { error: activityCheck.message };
-				// Agents cannot close over an unanswered @admin ask; humans (and
-				// API keys — admin-equivalent) can always close through it.
-				if (callerMemberId !== null) {
-					const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
-					if (!adminAskCheck.ok) return { error: adminAskCheck.message };
-				}
-			}
-
-			if (args.status !== undefined) {
-				args.status = await coerceTargetStatusForBlockers(db, taskId, args.status as string);
-			}
-
-			if (args.assignee_id && currentRow) {
-				if (args.assignee_id !== previousAssigneeId) {
-					const blocking = await assertNoBlockingRun(db, taskId, {
-						callerMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
-						incomingAssigneeId: args.assignee_id as string,
-					});
-					if (!blocking.ok) return { error: blocking.message };
-				}
-				if (auth.type === AuthType.Agent && args.assignee_id !== previousAssigneeId) {
-					const hierarchyCheck = await assertSubordinateAssignee(
-						db,
-						auth.memberId,
-						args.assignee_id as string,
-					);
-					if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
-				}
-			}
-
-			// Placed after the status guards (matching the REST handler) so a combined
-			// {status, parent_task_id} call reports the status problem first.
-			//
-			// The generic SQL builder below writes whatever sits on `args`, so an
-			// identifier like "BE-2" would reach the uuid column unresolved and come
-			// back as "invalid input syntax for type uuid". Normalize in place here,
-			// mirroring the assignee resolution above. A surviving null is exactly
-			// the promote-to-top-level semantics the builder should emit; deleting
-			// the key on a no-op is what keeps an unchanged row from being rewritten.
-			const oldParentTaskId = currentRow?.parent_task_id ?? null;
-			if (args.parent_task_id !== undefined) {
-				const assignment = await resolveParentAssignment(
-					db,
-					teamId,
-					{
-						taskId,
-						projectId,
-						currentParentTaskId: oldParentTaskId,
-						status: currentRow?.status ?? '',
-					},
-					args.parent_task_id as string | null,
+			const mutation = await db.transaction(async () => {
+				const currentRowResult = await db.query<{ task: TaskUpdateMutationRow['after'] }>(
+					`SELECT to_jsonb(tasks) - 'search_tsv' AS task
+					 FROM tasks WHERE id = $1 FOR UPDATE`,
+					[taskId],
 				);
-				if (!assignment.ok) return { error: assignment.message };
-				if (assignment.changed) {
-					args.parent_task_id = assignment.parentTaskId;
-				} else {
-					delete args.parent_task_id;
-				}
-			}
+				const currentRow = currentRowResult.rows[0]?.task;
+				if (!currentRow) return null;
+				const currentStatus = currentRow.status;
+				const previousAssigneeId = currentRow.assignee_id;
+				const hadDirectEdit = Object.entries(args).some(
+					([key, value]) =>
+						!['project', 'task_id', 'parent_task_id'].includes(key) && value !== undefined,
+				);
 
-			const sets: string[] = [];
-			const params: unknown[] = [];
-			let idx = 1;
-			for (const [key, val] of Object.entries(args)) {
-				if (['project', 'task_id'].includes(key) || val === undefined) continue;
-				if (key === 'status') {
-					sets.push(`status = $${idx}::task_status`);
-				} else if (key === 'priority') {
-					sets.push(`priority = $${idx}::task_priority`);
-				} else if (key === 'runtime_type') {
-					sets.push(`runtime_type = $${idx}::agent_runtime`);
-					params.push(val === '' ? null : val);
-					idx++;
-					continue;
-				} else if (key === 'progress_summary') {
-					// The current length keeps a summary written before this ceiling
-					// existed shrinkable, rather than frozen at whatever size it is.
-					const oversize = checkInjectedTextCap(
-						'task_progress_summary',
-						String(val ?? ''),
-						currentRow?.progress_summary?.length,
-					);
-					if (oversize) return { error: oversize.error };
-					sets.push(`progress_summary = $${idx}`);
-					params.push(val);
-					idx++;
-					sets.push('progress_summary_updated_at = now()');
-					const updatedBy = auth.type === AuthType.Agent ? auth.memberId : null;
-					sets.push(`progress_summary_updated_by = $${idx}`);
-					params.push(updatedBy);
-					idx++;
-					continue;
-				} else {
-					sets.push(`${key} = $${idx}`);
+				// `done` and `cancelled` are the only terminal states; once a task is
+				// terminal only the admin can re-open it (move it back to active).
+				if (
+					args.status !== undefined &&
+					args.status !== currentStatus &&
+					auth.type === AuthType.Agent &&
+					(TERMINAL_TASK_STATUSES as readonly string[]).includes(currentStatus ?? '')
+				) {
+					return { error: 'Only the admin can re-open a completed task' };
 				}
-				params.push(val);
-				idx++;
-			}
-			if (sets.length === 0) return { unchanged: true };
-			params.push(taskId);
-			const r = await db.query<TaskUpdateMutationRow>(taskUpdateMutationSql(sets, idx), params);
-			if (!r.rows[0]) return null;
-			const mutationBefore = r.rows[0].before;
-			const updatedRow = r.rows[0].after;
+
+				if (args.status === TaskStatus.Done && args.status !== currentStatus) {
+					const childrenCheck = await assertChildrenAllClosed(db, teamId, taskId);
+					if (!childrenCheck.ok) return { error: childrenCheck.message };
+				}
+				if (args.status === TaskStatus.Done && args.status !== currentStatus) {
+					const callerMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
+					const activityCheck = await assertNoOutstandingActivity(db, taskId, callerMemberId);
+					if (!activityCheck.ok) return { error: activityCheck.message };
+					// Agents cannot close over an unanswered @admin ask; humans (and
+					// API keys — admin-equivalent) can always close through it.
+					if (callerMemberId !== null) {
+						const adminAskCheck = await assertNoUnansweredAdminMentions(db, taskId);
+						if (!adminAskCheck.ok) return { error: adminAskCheck.message };
+					}
+				}
+
+				if (args.status !== undefined) {
+					args.status = await coerceTargetStatusForBlockers(db, taskId, args.status as string);
+				}
+
+				if (args.assignee_id && currentRow) {
+					if (args.assignee_id !== previousAssigneeId) {
+						const blocking = await assertNoBlockingRun(db, taskId, {
+							callerMemberId: auth.type === AuthType.Agent ? auth.memberId : null,
+							incomingAssigneeId: args.assignee_id as string,
+						});
+						if (!blocking.ok) return { error: blocking.message };
+					}
+					if (auth.type === AuthType.Agent && args.assignee_id !== previousAssigneeId) {
+						const hierarchyCheck = await assertSubordinateAssignee(
+							db,
+							auth.memberId,
+							args.assignee_id as string,
+						);
+						if (!hierarchyCheck.ok) return { error: hierarchyCheck.message };
+					}
+				}
+
+				// Placed after the status guards (matching the REST handler) so a combined
+				// {status, parent_task_id} call reports the status problem first.
+				//
+				// The generic SQL builder below writes whatever sits on `args`, so an
+				// identifier like "BE-2" would reach the uuid column unresolved and come
+				// back as "invalid input syntax for type uuid". Normalize in place here,
+				// mirroring the assignee resolution above. A surviving null is exactly
+				// the promote-to-top-level semantics the builder should emit; deleting
+				// the key on a no-op is what keeps an unchanged row from being rewritten.
+				const oldParentTaskId = currentRow?.parent_task_id ?? null;
+				if (args.parent_task_id !== undefined) {
+					const assignment = await resolveParentAssignment(
+						db,
+						teamId,
+						{
+							taskId,
+							projectId,
+							currentParentTaskId: oldParentTaskId,
+							status: currentRow?.status ?? '',
+						},
+						args.parent_task_id as string | null,
+					);
+					if (!assignment.ok) return { error: assignment.message };
+					if (assignment.changed) {
+						args.parent_task_id = assignment.parentTaskId;
+					} else {
+						delete args.parent_task_id;
+					}
+				}
+
+				const sets: string[] = [];
+				const params: unknown[] = [];
+				let idx = 1;
+				for (const [key, val] of Object.entries(args)) {
+					if (['project', 'task_id'].includes(key) || val === undefined) continue;
+					const persistedVal =
+						(key === 'branch_name' || key === 'runtime_type') && val === '' ? null : val;
+					if (
+						Object.hasOwn(currentRow, key) &&
+						!taskUpdateValueChanged(
+							currentRow,
+							key as TaskUpdateSnapshotKey,
+							persistedVal as string | null,
+						)
+					) {
+						continue;
+					}
+					if (key === 'status') {
+						sets.push(`status = $${idx}::task_status`);
+					} else if (key === 'priority') {
+						sets.push(`priority = $${idx}::task_priority`);
+					} else if (key === 'runtime_type') {
+						sets.push(`runtime_type = $${idx}::agent_runtime`);
+						params.push(persistedVal);
+						idx++;
+						continue;
+					} else if (key === 'progress_summary') {
+						// The current length keeps a summary written before this ceiling
+						// existed shrinkable, rather than frozen at whatever size it is.
+						const oversize = checkInjectedTextCap(
+							'task_progress_summary',
+							String(val ?? ''),
+							currentRow?.progress_summary?.length,
+						);
+						if (oversize) return { error: oversize.error };
+						sets.push(`progress_summary = $${idx}`);
+						params.push(val);
+						idx++;
+						sets.push('progress_summary_updated_at = now()');
+						const updatedBy = auth.type === AuthType.Agent ? auth.memberId : null;
+						sets.push(`progress_summary_updated_by = $${idx}`);
+						params.push(updatedBy);
+						idx++;
+						continue;
+					} else {
+						sets.push(`${key} = $${idx}`);
+					}
+					params.push(persistedVal);
+					idx++;
+				}
+				if (sets.length === 0) return hadDirectEdit ? currentRow : { unchanged: true };
+				params.push(taskId);
+				const r = await db.query<TaskUpdateMutationRow>(taskUpdateMutationSql(sets, idx), params);
+				const row = r.rows[0];
+				if (!row) return null;
+				return { mutationBefore: row.before, updatedRow: row.after };
+			});
+			if (mutation === null || !('mutationBefore' in mutation)) return mutation;
+			const { mutationBefore, updatedRow } = mutation as {
+				mutationBefore: TaskUpdateSnapshot;
+				updatedRow: TaskUpdateMutationRow['after'];
+			};
 
 			const actorMemberId = auth.type === AuthType.Agent ? auth.memberId : null;
 			const actorApiKeyId = apiKeyIdFromAuth(auth);
@@ -2087,7 +2111,7 @@ export function registerTools(
 			// agent's edit leaves the same thread entry a human's does. Awaited for the
 			// same reason as the parent change below: a human watching the task page
 			// depends on the broadcast that lands with the comment.
-			if (args.title !== undefined) {
+			if (taskUpdateValueChanged(mutationBefore, 'title', updatedRow.title)) {
 				try {
 					await recordTitleChange(
 						db,
@@ -2104,7 +2128,7 @@ export function registerTools(
 				}
 			}
 
-			if (args.description !== undefined) {
+			if (taskUpdateValueChanged(mutationBefore, 'description', updatedRow.description)) {
 				try {
 					await recordDescriptionChange(
 						db,
@@ -2196,14 +2220,14 @@ export function registerTools(
 				);
 			}
 
-			if (args.status) {
+			if (mutationBefore.status !== updatedRow.status) {
 				try {
 					await triggerStatusAutomations(
 						db,
 						teamId,
 						taskId,
 						mutationBefore.status,
-						args.status as string,
+						updatedRow.status,
 						actorMemberId,
 						actorApiKeyId,
 						wsManager,

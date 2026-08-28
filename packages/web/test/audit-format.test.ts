@@ -1,6 +1,14 @@
 import { expect, test } from 'vitest';
 import type { AuditEntry } from '../src/hooks/use-audit-log';
 import { auditEntryLink, describeAuditEntry } from '../src/lib/audit-format';
+import de from '../src/lib/i18n/catalog/de.json';
+
+const german = (key: keyof typeof de, vars: Record<string, string | number> = {}): string => {
+	let message = de[key];
+	for (const [name, value] of Object.entries(vars))
+		message = message.replace(`{${name}}`, String(value));
+	return message;
+};
 
 function entry(overrides: Partial<AuditEntry>): AuditEntry {
 	return {
@@ -90,6 +98,55 @@ test('describes a first nesting', () => {
 		details: { field: 'parent', from_label: null, to_label: 'OP-9' },
 	});
 	expect(describeAuditEntry(e)).toBe('Moved OP-1 under OP-9');
+});
+
+test.each([
+	['title', { from: 'Alt', to: 'Neu' }, 'OP-1 von „Alt“ in „Neu“ umbenannt'],
+	['description', {}, 'Beschreibung von OP-1 aktualisiert'],
+	[
+		'status',
+		{ from: 'in_progress', to: 'done' },
+		'Status von OP-1 von In Arbeit auf Erledigt geändert',
+	],
+	['priority', { from: 'medium', to: 'high' }, 'Priorität von OP-1 von Mittel auf Hoch geändert'],
+	[
+		'assignee',
+		{ from_label: null, to_label: 'Alice' },
+		'OP-1 von Nicht zugewiesen an Alice neu zugewiesen',
+	],
+	[
+		'parent',
+		{ from_label: 'OP-4', to_label: null },
+		'OP-1 aus OP-4 auf die oberste Ebene verschoben',
+	],
+])('localizes the %s task update and its enum values', (field, values, expected) => {
+	const e = entry({
+		action: 'updated',
+		entity_type: 'task',
+		details: { field, ...values },
+	});
+	expect(describeAuditEntry(e, german)).toBe(expected);
+});
+
+test('uses non-null ids instead of null-state labels when a relation label is unresolved', () => {
+	const assignee = entry({
+		action: 'updated',
+		entity_type: 'task',
+		details: {
+			field: 'assignee',
+			from: 'member-missing',
+			to: 'member-alice',
+			to_label: 'Alice',
+		},
+	});
+	expect(describeAuditEntry(assignee)).toBe('Reassigned OP-1 from member-missing to Alice');
+
+	const parent = entry({
+		action: 'updated',
+		entity_type: 'task',
+		details: { field: 'parent', from: 'task-missing', to: null },
+	});
+	expect(describeAuditEntry(parent)).toBe('Moved OP-1 out of task-missing to top level');
 });
 
 test.each([
