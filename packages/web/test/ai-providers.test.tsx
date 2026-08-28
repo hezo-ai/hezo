@@ -238,8 +238,10 @@ test('can add an Anthropic API key via the settings UI', async () => {
 
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 
-	// Pick the Anthropic card from the grid, then fill its API-key form.
+	// Pick the Anthropic card from the grid, then fill its API-key form. Anthropic
+	// opens on its subscription, so the key form is one pill away.
 	await user.click(getByRole('button', { name: 'Anthropic' }));
+	await user.click(getByRole('button', { name: 'API key' }));
 	const keyInput = container.querySelector('input[type="password"]') as HTMLInputElement;
 	fireEvent.change(keyInput, { target: { value: 'sk-ant-component-test-1234567890' } });
 	await user.click(getByRole('button', { name: 'Save' }));
@@ -639,8 +641,10 @@ test('blocks the app when no provider is configured and drops once one is added'
 	await findByRole('heading', { name: 'Set up an AI provider' }, { timeout: 15_000 });
 	expect(queryAllByRole('heading', { name: 'AI providers' }).length).toBe(0);
 
-	// Pick the Anthropic card from the grid, then fill its API-key form.
+	// Pick the Anthropic card from the grid, then fill its API-key form. Anthropic
+	// opens on its subscription, so the key form is one pill away.
 	await user.click(getByRole('button', { name: 'Anthropic' }));
+	await user.click(getByRole('button', { name: 'API key' }));
 	const keyInput = container.querySelector('input[type="password"]') as HTMLInputElement;
 	fireEvent.change(keyInput, { target: { value: 'sk-ant-gate-component-12345' } });
 	await user.click(getByRole('button', { name: 'Save' }));
@@ -953,6 +957,7 @@ test('adding a provider ends on a default-model step for the config it just crea
 
 	const dialog = await findByRole('dialog');
 	await user.click(await within(dialog).findByRole('button', { name: 'Anthropic' }));
+	await user.click(within(dialog).getByRole('button', { name: 'API key' }));
 	await user.type(await within(dialog).findByLabelText('API key'), 'sk-ant-add-flow-model-step');
 	await user.click(within(dialog).getByRole('button', { name: 'Add provider' }));
 
@@ -1044,17 +1049,19 @@ test('the add form warns that a rotating subscription runs one agent at a time',
 	const dialog = await findByRole('dialog');
 	await user.click(within(dialog).getByRole('button', { name: 'OpenAI' }));
 
-	// API key is the default, and has no such limit - nothing should be claimed.
-	expect(within(dialog).queryByText(/only one agent can use it at a time/)).toBeNull();
-
-	await user.click(within(dialog).getByRole('button', { name: /subscription/i }));
+	// Subscription is where this provider opens, so the limit is stated without
+	// the operator having to go looking for it.
 	await within(dialog).findByText(/only one agent can use it at a time/);
 
-	// And it goes away again if they switch back, rather than sticking.
+	// An API key carries no such limit, so nothing should be claimed of it.
 	await user.click(within(dialog).getByRole('button', { name: 'API key' }));
 	await waitFor(() =>
 		expect(within(dialog).queryByText(/only one agent can use it at a time/)).toBeNull(),
 	);
+
+	// And it comes back on the way in, rather than only rendering once.
+	await user.click(within(dialog).getByRole('button', { name: /subscription/i }));
+	await within(dialog).findByText(/only one agent can use it at a time/);
 });
 
 test('the providers list marks only the credential whose runs serialise', async () => {

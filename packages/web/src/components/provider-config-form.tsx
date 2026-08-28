@@ -132,8 +132,12 @@ export function ProviderConfigForm({
 	const updateProvider = useUpdateAiProviderConfig(editing?.id ?? '');
 	const info = AI_PROVIDER_INFO[provider];
 
+	// A provider that has a subscription opens on it: it is the credential the
+	// operator already owns, and the one Hezo can mint end to end. Editing keeps
+	// whatever the stored config uses, which is never guessed at.
 	const [authMethod, setAuthMethod] = useState<AiAuthMethod>(
-		(editing?.auth_method as AiAuthMethod) ?? AiAuthMethod.ApiKey,
+		(editing?.auth_method as AiAuthMethod) ??
+			(info.supportsSubscription ? AiAuthMethod.Subscription : AiAuthMethod.ApiKey),
 	);
 	const [name, setName] = useState(() => editing?.label ?? defaultLabel(provider, configs));
 	const [nameEdited, setNameEdited] = useState(false);
@@ -276,21 +280,14 @@ export function ProviderConfigForm({
 			{info.supportsSubscription && (
 				<div className="flex flex-col gap-1.5">
 					<span className="text-eyebrow text-text-2">Authentication</span>
-					<div className="flex gap-2">
+					{/* Subscription leads, because it is the default and the path most
+					    operators want. `aria-pressed` is what makes this a segmented
+					    toggle rather than two buttons that happen to change colour. */}
+					<div className="flex flex-wrap gap-2">
 						<Button
 							type="button"
 							size="sm"
-							variant={authMethod === AiAuthMethod.ApiKey ? 'primary' : 'secondary'}
-							onClick={() => {
-								setAuthMethod(AiAuthMethod.ApiKey);
-								setError(null);
-							}}
-						>
-							API key
-						</Button>
-						<Button
-							type="button"
-							size="sm"
+							aria-pressed={authMethod === AiAuthMethod.Subscription}
 							variant={authMethod === AiAuthMethod.Subscription ? 'primary' : 'secondary'}
 							onClick={() => {
 								setAuthMethod(AiAuthMethod.Subscription);
@@ -298,6 +295,18 @@ export function ProviderConfigForm({
 							}}
 						>
 							{info.runtimeLabel} subscription
+						</Button>
+						<Button
+							type="button"
+							size="sm"
+							aria-pressed={authMethod === AiAuthMethod.ApiKey}
+							variant={authMethod === AiAuthMethod.ApiKey ? 'primary' : 'secondary'}
+							onClick={() => {
+								setAuthMethod(AiAuthMethod.ApiKey);
+								setError(null);
+							}}
+						>
+							API key
 						</Button>
 					</div>
 				</div>
