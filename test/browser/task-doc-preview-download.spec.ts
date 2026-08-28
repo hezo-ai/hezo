@@ -56,7 +56,15 @@ test('the preview panel download menu paints above the full-screen mobile panel'
 	await waitForPageLoad(page);
 
 	await page.getByTestId('doc-mention-link').first().click();
-	await expect(page.getByTestId('preview-panel')).toBeVisible();
+	const panel = page.getByTestId('preview-panel');
+	await expect(panel).toBeVisible();
+	// Below lg the panel travels its whole width in from the right edge, and
+	// `toBeVisible()` passes on the first frame of that slide — so poll it to rest
+	// before measuring anything inside it, or the trigger reads at wherever the
+	// panel had got to (581px and 613px on two runs of the same assertion).
+	await expect
+		.poll(async () => (await panel.boundingBox())?.x ?? 999, { timeout: 5000 })
+		.toBeLessThan(8);
 
 	// The whole header cluster still fits the 390px row — the trigger is inside
 	// the viewport, not pushed off the right edge by the other icon actions.

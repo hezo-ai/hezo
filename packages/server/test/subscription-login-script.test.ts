@@ -143,6 +143,12 @@ describe('buildSubscriptionLoginCodeScript', () => {
 		const script = buildSubscriptionLoginCodeScript('/tmp/flow', "a'; id #");
 		expect(script).toContain(`'a'\\''; id #'`);
 	});
+
+	it('ends the code with a carriage return, never a line feed', () => {
+		const script = buildSubscriptionLoginCodeScript('/tmp/flow', 'CODE-1234');
+		expect(script).toContain(String.raw`printf '%s\r'`);
+		expect(script).not.toContain(String.raw`\n`);
+	});
 });
 
 // Linux-only: the login script launches its CLI through `util-linux script`
@@ -217,6 +223,40 @@ describe.skipIf(process.platform !== 'linux')('the generated script, under real 
 		const cli = fakeCli(home, 'echo done; exit 0');
 
 		await run('sh', ['-c', buildSubscriptionLoginScript({ dir, argv: [cli], holdSecs: 30 })]);
+		await waitFor(exited(dir));
+	});
+
+	/**
+	 * Raw mode is where CR and LF stop being interchangeable, and it is the mode
+	 * every vendor paste prompt runs in: nothing translates one into the other, so
+	 * only the byte actually sent arrives, and only `\r` reads as return. A
+	 * `read`-based stand-in cannot show this - canonical mode's `ICRNL` accepts
+	 * either - so this one puts its own terminal in raw mode and dumps the bytes
+	 * it was handed.
+	 */
+	it('delivers the code terminated by CR, which is what a raw-mode prompt submits on', async () => {
+		const home = tempDir();
+		const dir = join(tempDir(), 'flow');
+		const cli = fakeCli(
+			home,
+			[
+				'stty raw -echo',
+				'echo ready',
+				'dd bs=1 count=3 2>/dev/null | od -An -to1',
+				'stty sane',
+			].join('\n'),
+		);
+
+		await run('sh', ['-c', buildSubscriptionLoginScript({ dir, argv: [cli], holdSecs: 30 })]);
+		const log = () => readFileSync(join(dir, LOGIN_LOG_FILE), 'utf8');
+		await waitFor(() => log().includes('ready'));
+
+		await run('sh', ['-c', buildSubscriptionLoginCodeScript(dir, 'ab')]);
+		await waitFor(() => log().includes('141 142'));
+
+		// `a`, `b`, then 015 - CR. 012 would be the LF that leaves a TUI's prompt
+		// holding the code, unsubmitted, until the flow times out.
+		expect(log()).toContain('141 142 015');
 		await waitFor(exited(dir));
 	});
 

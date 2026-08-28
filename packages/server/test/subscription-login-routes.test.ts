@@ -34,6 +34,16 @@ let authFile: string | null = null;
 let liveContainers: Set<string>;
 /** Set when the probe should report a CLI that no longer offers its flag. */
 let probeAnswers = true;
+/** Set once the fake CLI has exited. */
+let exitFile = false;
+/**
+ * Set to have the CLI issue its credential in the very round trip the watcher
+ * spends asking whether it has exited - the ordering a real CLI produces, since
+ * it prints its credential and exits in the same breath.
+ */
+let credentialArrivesWithExit = false;
+/** Every script the container was asked to run, for asserting on what was sent. */
+let execScripts: string[] = [];
 
 const CHALLENGE = [
 	'1. Open this link in your browser and sign in to your account',
@@ -45,9 +55,34 @@ const CHALLENGE = [
 
 const CODEX_AUTH_JSON = JSON.stringify({ tokens: { refresh_token: 'rt-from-container' } });
 
+const ESC = String.fromCharCode(0x1b);
+const CLAUDE_AUTHORIZE_URL =
+	'https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a&response_type=code';
+/** What `claude setup-token` has painted by the time it blocks on its prompt. */
+const CLAUDE_CHALLENGE = [
+	`${ESC}]8;id=155gj3v;${CLAUDE_AUTHORIZE_URL}${ESC}\\https://claude.com/cai/oauth/auth${ESC}]8;;${ESC}\\`,
+	'Paste code here if prompted >',
+].join('\r\n');
+/** The line it prints once the exchange lands. */
+const CLAUDE_TOKEN_LINE = `${ESC}[32mtoken:${ESC}[0m sk-ant-oat01-from-the-container\r\n`;
+
 function scriptedFiles(): SandboxFiles {
 	return {
-		exists: async (rel: string) => (rel.endsWith('auth.json') ? authFile !== null : rel === 'out'),
+		exists: async (rel: string) => {
+			if (rel.endsWith('auth.json')) return authFile !== null;
+			if (rel === 'exit') {
+				if (!exitFile) return false;
+				// The credential lands while this very answer is in flight, so the
+				// harvest that ran a round trip ago could not have seen it.
+				if (credentialArrivesWithExit) {
+					credentialArrivesWithExit = false;
+					authFile = CODEX_AUTH_JSON;
+					log += CLAUDE_TOKEN_LINE;
+				}
+				return true;
+			}
+			return rel === 'out';
+		},
 		read: async (rel: string) => {
 			if (rel.endsWith('auth.json')) {
 				if (authFile === null) throw new Error('no auth file yet');
@@ -81,6 +116,7 @@ function scriptedDocker(): ContainerEngine {
 		execCreate: async (_id: string, config: { Cmd: string[] }) => {
 			const execId = `exec-${++n}`;
 			scripts.set(execId, config.Cmd.join(' '));
+			execScripts.push(config.Cmd.join(' '));
 			return execId;
 		},
 		execStart: async (execId: string) => {
@@ -132,6 +168,9 @@ beforeEach(async () => {
 	log = '';
 	authFile = null;
 	probeAnswers = true;
+	exitFile = false;
+	credentialArrivesWithExit = false;
+	execScripts = [];
 	liveContainers = new Set();
 	await db.query('DELETE FROM ai_provider_configs');
 });
@@ -311,5 +350,88 @@ describe('submitting a code', () => {
 		const res = await post('/api/ai-providers/subscription-login/nonexistent/code', { code: '  ' });
 		expect(res.status).toBe(400);
 		expect((await res.json()).error.code).toBe('INVALID_CODE');
+	});
+
+	/**
+	 * The Anthropic flow end to end, which is the one that asks for a code: the
+	 * challenge comes out of an OSC 8 escape, the operator's code goes back in,
+	 * and the token is read off what the CLI printed rather than out of a file.
+	 */
+	it('carries the operator code into the CLI and stores the token it prints', async () => {
+		const start = await post('/api/ai-providers/subscription-login/start', {
+			provider: AiProvider.Anthropic,
+		});
+		expect(start.status).toBe(201);
+		const { flow_id } = (await start.json()).data;
+
+		log = CLAUDE_CHALLENGE;
+		const { body: challenge } = await pollUntil(flow_id, 'awaiting_user');
+		expect(challenge.url).toBe(CLAUDE_AUTHORIZE_URL);
+		// Anthropic's callback page displays the code instead of issuing one here.
+		expect(challenge.user_code).toBeNull();
+		expect(challenge.completion).toBe('code');
+
+		const submitted = await post(`/api/ai-providers/subscription-login/${flow_id}/code`, {
+			code: 'code-from-the-callback-page',
+		});
+		expect(submitted.status).toBe(200);
+
+		// Delivered as a keypress the CLI's raw-mode prompt submits on. An LF
+		// reaches the prompt as an ordinary character and the sign-in hangs to its
+		// timeout with the code sitting in the box - which is the whole failure.
+		const delivery = execScripts.find((script) => script.includes('code-from-the-callback-page'));
+		expect(delivery).toContain(String.raw`printf '%s\r'`);
+
+		// The CLI completes the exchange and prints its token.
+		log += CLAUDE_TOKEN_LINE;
+		const { body: done } = await pollUntil(flow_id, 'succeeded');
+		expect(done.config_id).toBeTruthy();
+		expect(JSON.stringify(done)).not.toContain('sk-ant-oat01-');
+
+		const stored = await db.query<{ auth_method: string }>(
+			'SELECT auth_method FROM ai_provider_configs WHERE id = $1',
+			[done.config_id],
+		);
+		expect(stored.rows[0].auth_method).toBe('subscription');
+		expect(liveContainers.size).toBe(0);
+	});
+});
+
+describe('a CLI that exits', () => {
+	/**
+	 * A CLI issues its credential and exits in the same breath, so the log the
+	 * watcher harvested is always a round trip older than the exit file it then
+	 * finds. Failing on that file alone throws away a sign-in that succeeded -
+	 * and does it at the very last step, after the operator has done everything
+	 * asked of them.
+	 */
+	it('harvests a credential written as the CLI exited, rather than reporting an empty exit', async () => {
+		const start = await post('/api/ai-providers/subscription-login/start', {
+			provider: AiProvider.OpenAI,
+		});
+		const { flow_id } = (await start.json()).data;
+		log = CHALLENGE;
+		await pollUntil(flow_id, 'awaiting_user');
+
+		exitFile = true;
+		credentialArrivesWithExit = true;
+
+		const { body: done } = await pollUntil(flow_id, 'succeeded');
+		expect(done.config_id).toBeTruthy();
+	});
+
+	it('still fails when the CLI really did exit with nothing to harvest', async () => {
+		const start = await post('/api/ai-providers/subscription-login/start', {
+			provider: AiProvider.OpenAI,
+		});
+		const { flow_id } = (await start.json()).data;
+		log = CHALLENGE;
+		await pollUntil(flow_id, 'awaiting_user');
+
+		exitFile = true;
+
+		const { body } = await pollUntil(flow_id, 'failed');
+		expect(body.code).toBe('exited_without_credential');
+		expect(liveContainers.size).toBe(0);
 	});
 });

@@ -32,7 +32,9 @@ A normal project dashboard shows, top to bottom:
 - **Action items** - what the project's **Inbox** holds unread: pending approvals, @admin
   mentions and credential requests. **Open inbox** always lands on the rows listed here,
   and reading one there clears it from the dashboard while the Inbox keeps it under
-  **Read**.
+  **Read**. The Inbox itself can be ordered **Newest** or **Oldest** first, and the order
+  is part of the page's address, so a link you share opens on the same one. On a phone the
+  filters, the order and **Mark all as read** move behind the button beside the search box.
 - **In progress** - tasks currently in progress.
 - **Team snapshot** - open-task count, last activity, and any agents currently running.
 - **Goals** - the top goals by health.

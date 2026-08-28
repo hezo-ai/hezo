@@ -157,6 +157,10 @@ test('the preview panel still fits the scroller when the shell renders a banner'
 
 	const panel = page.getByTestId('preview-panel');
 	await expect(panel).toBeVisible();
+	// The panel mounts before its document does, as a header over a "Loading…"
+	// body ~122px tall - so the cap assertion below has to wait for the content
+	// that drives the panel into the cap, not just for the panel.
+	await expect(page.getByTestId('preview-doc-body')).toBeVisible({ timeout: 15000 });
 
 	const scroller = page.locator('main').first();
 	const box0 = await scroller.boundingBox();
@@ -213,6 +217,9 @@ test('the document preview panel fits the viewport and its top stays pinned on s
 	await expect(panel).toBeVisible();
 	const header = page.getByTestId('preview-panel-filename');
 	await expect(header).toBeVisible();
+	// Same reason as the spec above: the cap check needs the document, not just
+	// the panel shell it renders into.
+	await expect(page.getByTestId('preview-doc-body')).toBeVisible({ timeout: 15000 });
 
 	const scroller = page.locator('main').first();
 	// Re-read at every comparison rather than captured once. The scroller's own

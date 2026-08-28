@@ -338,12 +338,26 @@ export class SubscriptionLoginService {
 					// The CLI exiting without a credential is terminal: nothing else
 					// is going to write one, so waiting out the TTL would only make
 					// the operator watch a spinner for fifteen minutes.
+					//
+					// One last harvest first, against freshly read output. A CLI
+					// issues its credential and exits in the same breath, and the log
+					// above was read a round trip before this check - so a credential
+					// written in between is in the container and not in `log`, and
+					// failing on the exit file alone would throw away a sign-in that
+					// actually succeeded.
 					if (await files.exists(LOGIN_EXIT_FILE)) {
-						await this.finish(id, {
-							status: 'failed',
-							error: `${driver.argv[0]} exited before a credential was issued`,
-							code: 'exited_without_credential',
-						});
+						const final = await files.read(LOGIN_LOG_FILE).catch(() => log);
+						const late = await this.tryHarvest(flow, files, final);
+						await this.finish(
+							id,
+							late
+								? { status: 'succeeded', credential: late }
+								: {
+										status: 'failed',
+										error: `${driver.argv[0]} exited before a credential was issued`,
+										code: 'exited_without_credential',
+									},
+						);
 						return;
 					}
 					if (Date.now() - startedAt > driver.completionTimeoutMs) {

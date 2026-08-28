@@ -562,7 +562,10 @@ export function describeDiscoveryFailure(result: { reason: string; detail?: stri
 		case 'unsupported_kind':
 			return 'Method access applies to hosted MCP servers only.';
 		case 'not_connected':
-			return 'Connect this server before listing its methods.';
+			// Neutral about what the caller was doing: both the method list and the
+			// card's Test connection button surface this, and it is the second one
+			// an operator is most likely to be holding when they read it.
+			return 'Connect this server first.';
 		case 'locked':
 			return 'Hezo is locked, so this connector’s credential can’t be read. Unlock and try again.';
 		case 'not_found':

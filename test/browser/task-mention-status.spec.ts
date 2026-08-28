@@ -95,13 +95,19 @@ test.describe('Task mention — status pill tooltip & terminal strikethrough', (
 		// aria duplicate of the content that carries the same testId.
 		const tooltip = page.getByRole('tooltip');
 		const pill = tooltip.getByTestId('task-mention-status-pill');
-		// Re-hover on retry rather than waiting longer on one hover: a relayout
-		// after the pointer settles fires pointerleave under a stationary pointer,
-		// and a tooltip closed that way never opens again on its own.
+		// Re-hover until the tooltip is actually up, the same way the cancel above
+		// is re-asserted until it sticks. One `hover()` fires a single pointerenter,
+		// and there is live traffic behind this page - the run row and its two
+		// events land while the test is standing here. A re-render between that
+		// pointerenter and Radix's 150ms open delay swallows it, and nothing
+		// re-issues the event, so a plain hover plus a long wait can never recover:
+		// it fails having never opened the tooltip at all. Leaving the link and
+		// coming back is what produces a fresh pointerenter.
 		await expect(async () => {
+			await page.mouse.move(0, 0);
 			await mention.hover();
-			await expect(pill).toBeVisible({ timeout: 2_000 });
-		}).toPass({ timeout: 20_000 });
+			await expect(pill).toBeVisible({ timeout: 3_000 });
+		}).toPass({ timeout: 30_000 });
 		await expect(pill).toHaveText('Cancelled');
 		// The tooltip prefixes the task title with the bold task identifier.
 		await expect(tooltip).toContainText(
