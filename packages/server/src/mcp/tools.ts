@@ -1254,7 +1254,7 @@ const assetSortArg = () =>
 		.enum(Object.values(AssetSortOrder) as [string, ...string[]])
 		.optional()
 		.describe(
-			"Order of the returned assets: 'newest' (default - most recently created first), 'oldest', or 'alphabetical' (by filename, A→Z).",
+			"Order of the returned assets: 'newest' (default - most recently created first), 'oldest', 'alphabetical' / 'alphabetical_desc' (by filename, A→Z / Z→A), 'size_asc' / 'size_desc' (by byte size), or 'type_asc' / 'type_desc' (by file extension, A→Z / Z→A).",
 		);
 
 const toAssetSortOrder = (value: unknown): AssetSortOrder =>
@@ -5896,7 +5896,7 @@ export function registerTools(
 	tool(
 		server,
 		'list_project_assets',
-		"List the project's assets - files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Every entry carries `byte_size`, so you can tell before opening one whether read_project_asset will need more than one window. Results are ordered newest-first by default; pass sort: 'oldest' or 'alphabetical' to change the order.",
+		"List the project's assets - files in the assets library (UI mockups, wireframes, diagrams, images, PDFs, scripts, and generated markdown such as blog posts or reports). Filenames may carry a folder prefix up to 2 levels deep (e.g. `launch/images/hero.png`); reference one in a comment or doc as `assets/<path>` exactly as returned here (e.g. assets/launch/images/hero.png), no backticks. Author both text and binary assets with write_project_asset (binary via encoding: 'base64') and reorganize with move_project_asset / copy_project_asset; obsolete assets are archived with archive_project_asset (hard deletion is admin-only). Archived assets are excluded by default - set filter: 'archived' or 'all' to see them (entries then carry an `archived` flag). Raster image entries (PNG/JPEG/GIF/WebP) also carry their pixel `width`/`height`. Every entry carries `byte_size`, so you can tell before opening one whether read_project_asset will need more than one window. Results are ordered newest-first by default; pass sort to order by name, size or file extension instead.",
 		{
 			project: projectArg(),
 			filter: archiveFilterArg(),
@@ -5930,7 +5930,7 @@ export function registerTools(
 				 ORDER BY ${assetSortOrderBy(sort)}`,
 				[scope.projectId],
 			);
-			// The caller picks the sort (newest / oldest / alphabetical), so the
+			// The caller picks the sort (by date, name, size or type), so the
 			// cursor anchors on row identity rather than a fixed sort column.
 			const rows = assets.rows.map((a) => ({
 				id: a.id,

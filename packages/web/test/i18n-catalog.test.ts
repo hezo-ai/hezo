@@ -183,6 +183,17 @@ describe('message catalogs', () => {
 		// figure now sits beside each agent's spend, and the tab measures container
 		// uptime instead.
 		'budget.hours.bucket.week': ['nl'],
+		// German writes "Name" identically, as `agents.identity.nameLabel` above
+		// already records for a person's name. The other three asset columns differ
+		// in every language (Typ, Größe, Geändert, Taille, Rozmiar, ...).
+		'assets.column.name': ['de'],
+		// Italian borrowed "file" whole and does not inflect it, so the singular is
+		// spelt like the English. The plural is where they part: "{count} file" in
+		// Italian against "{count} files".
+		'assets.files.one': ['it'],
+		// Polish writes the loanword "Folder", capital and all. Every other
+		// language differs (Ordner, Dossier, Carpeta, Cartella, Map, Mapp, ...).
+		'assets.folderType': ['pl'],
 	};
 
 	test('no message was left identical to the English source', () => {

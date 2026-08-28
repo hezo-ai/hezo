@@ -1,3 +1,4 @@
+import { ArrowDown } from 'lucide-react';
 import { Fragment, type ReactNode, useCallback } from 'react';
 
 export interface Column<T> {
@@ -7,6 +8,23 @@ export interface Column<T> {
 	render: (row: T) => ReactNode;
 	className?: string;
 	hideOnMobile?: boolean;
+	/**
+	 * Makes this header a sort button for the given key. The column declares that
+	 * it can be sorted; the table's `sort` prop owns which one currently is.
+	 */
+	sortKey?: string;
+	/** Right-align the header and its cells (numeric columns). */
+	alignRight?: boolean;
+}
+
+/** Which column the table is sorted by, and what a header click does. */
+export interface DataTableSort {
+	key: string;
+	direction: 'asc' | 'desc';
+	/** Called with the clicked column's `sortKey`; the caller owns the new order. */
+	onSort: (key: string) => void;
+	/** Accessible name for a column's sort button, given its header text. */
+	label: (header: string) => string;
 }
 
 interface DataTableProps<T> {
@@ -34,6 +52,14 @@ interface DataTableProps<T> {
 	getRowId?: (row: T) => string;
 	/** When it matches a row's `getRowId`, that row scrolls into view + highlights. */
 	focusedRowId?: string;
+	/** Required once any column carries a `sortKey`. */
+	sort?: DataTableSort;
+	/**
+	 * Drop the header row below `md`. For a table whose columns mostly carry
+	 * `hideOnMobile`, the surviving header names one column beside empty cells
+	 * and reads as a stray row.
+	 */
+	hideHeaderOnMobile?: boolean;
 }
 
 // One entry per legal sub-task level (MAX_SUB_TASK_DEPTH), so every level reads
@@ -57,6 +83,8 @@ export function DataTable<T>({
 	subRow,
 	getRowId,
 	focusedRowId,
+	sort,
+	hideHeaderOnMobile,
 }: DataTableProps<T>) {
 	// Ref callback fires when the focused row mounts (which can be after the first
 	// render, once data resolves) — scroll it into view then, mirroring the
@@ -67,19 +95,51 @@ export function DataTable<T>({
 	return (
 		<div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
 			<table className="w-full border-collapse">
-				<thead>
+				<thead className={hideHeaderOnMobile ? 'hidden md:table-header-group' : undefined}>
 					<tr>
-						{columns.map((col) => (
-							<th
-								key={col.key}
-								className={`text-left text-xs text-text-2 font-normal px-2 py-2 border-b border-border ${
-									col.hideOnMobile ? 'hidden md:table-cell' : ''
-								}`}
-								style={col.width ? { width: col.width } : undefined}
-							>
-								{col.header}
-							</th>
-						))}
+						{columns.map((col) => {
+							const sortKey = col.sortKey;
+							const sortable = sortKey != null && sort != null;
+							const sorted = sortable && sort.key === sortKey;
+							return (
+								<th
+									key={col.key}
+									aria-sort={
+										sorted ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined
+									}
+									className={`text-xs font-normal border-b border-border ${
+										col.alignRight ? 'text-right' : 'text-left'
+									} ${sorted ? 'text-text-1' : 'text-text-2'} ${sortable ? 'p-0' : 'px-2 py-2'} ${
+										col.hideOnMobile ? 'hidden md:table-cell' : ''
+									}`}
+									style={col.width ? { width: col.width } : undefined}
+								>
+									{sortable ? (
+										<button
+											type="button"
+											onClick={() => sort.onSort(sortKey)}
+											aria-label={sort.label(col.header)}
+											data-testid={`data-table-sort-${sortKey}`}
+											className={`inline-flex w-full cursor-pointer items-center gap-1 px-2 py-2 transition-colors hover:bg-surface-2 hover:text-text-1 ${
+												col.alignRight ? 'justify-end' : ''
+											} ${sorted ? 'font-semibold' : ''}`}
+										>
+											{col.header}
+											<ArrowDown
+												aria-hidden
+												className={`w-3 h-3 transition-opacity ${
+													sorted
+														? `opacity-100 ${sort.direction === 'asc' ? 'rotate-180' : ''}`
+														: 'opacity-0'
+												}`}
+											/>
+										</button>
+									) : (
+										col.header
+									)}
+								</th>
+							);
+						})}
 					</tr>
 				</thead>
 				<tbody>
@@ -110,8 +170,10 @@ export function DataTable<T>({
 											<td
 												key={col.key}
 												className={`px-2 py-2.5 ${cellBorder} text-[13px] align-middle ${
-													col.hideOnMobile ? 'hidden md:table-cell ' : ''
-												}${indent ? `${indent} ` : ''}${col.className ?? ''}`}
+													col.alignRight ? 'text-right ' : ''
+												}${col.hideOnMobile ? 'hidden md:table-cell ' : ''}${
+													indent ? `${indent} ` : ''
+												}${col.className ?? ''}`}
 											>
 												{col.render(row)}
 											</td>
