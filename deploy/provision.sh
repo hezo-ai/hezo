@@ -286,7 +286,7 @@ curl -fsSL -o /usr/local/bin/hezo "${BINARY_URL}"
 chmod +x /usr/local/bin/hezo
 
 # ---------------------------------------------------------------------------
-# 4. Data dir + environment file (never overwrite an operator-edited env file)
+# 4. Data directory + Hezo config file (never overwrite an operator-edited config file)
 # ---------------------------------------------------------------------------
 install -d -m 700 /etc/hezo
 install -d -m 755 "${DATA_DIR}"

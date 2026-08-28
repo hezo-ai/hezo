@@ -63,9 +63,9 @@ too.** Run `hezo backup` with the same `--config` the server uses,
 or pass `--data-dir /your/path` explicitly. Otherwise the command falls back to `~/.hezo` - a
 directory your instance never used - and backs up the wrong database instead of yours.
 
-- **systemd / Docker** (the env var is already set for the service): `hezo backup` needs no
-  extra flag - run it with the unit's environment (an `EnvironmentFile` / `systemd-run`), or
-  `docker exec <container> hezo backup --config <path>`, and the same file resolves your database.
+- **systemd / Docker:** pass the same `--config` to the backup command - for example,
+  `hezo backup --config /etc/hezo/hezo.config.cjs` or
+  `docker exec <container> hezo backup --config <path>`.
 - **A custom dir passed only as a startup flag** (`hezo --data-dir /var/lib/hezo`): pass the
   **same** `--data-dir /var/lib/hezo` to `hezo backup` (there is no env var to inherit).
 
