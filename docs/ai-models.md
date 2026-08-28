@@ -119,14 +119,16 @@ caching and token counting.
 
 Most providers accept a plain **API key**, and Anthropic and OpenAI also accept a
 **subscription sign-in** (Claude Pro/Max, or ChatGPT) - so you can put an existing plan
-to work instead of paying per token. You choose the method when you connect the provider.
+to work instead of paying per token. You choose the method when you connect the provider;
+where a subscription is available it is the one offered first, and an API key is a click away.
 Google is API-key only in Hezo for now: Antigravity has a consumer subscription (Login with Google),
 but Hezo cannot yet bring its keyring-only sign-in into a run container.
 
 ### Signing in to a subscription
 
-For **OpenAI** and **Anthropic**, Hezo runs the sign-in for you. Choose the subscription
-option, select **Sign in**, and Hezo walks you through it a step at a time. First it shows
+For **OpenAI** and **Anthropic**, Hezo runs the sign-in for you. These two open on the
+subscription option already selected, so just select **Sign in** (choose **API key**
+instead if that is what you want). Hezo walks you through it a step at a time. First it shows
 a short one-time code and a **Copy code** button. Then it offers the link: open it on any
 device - your phone is fine - sign in to that account, and enter the code. Hezo shows how
 long the code has left, and waits while you finish.

@@ -50,8 +50,13 @@ test('every pickable provider shows how-to-get-a-key instructions linking its ke
 	for (const { card, title, href } of EXPECTED_KEY_LINKS) {
 		await user.click(within(dialog).getByRole('button', { name: card }));
 
-		// The API-key mode is the default, so the instructions box renders
-		// immediately with a link to the provider's own key console.
+		// A provider with a subscription opens on that instead, so ask for the key
+		// mode where one is offered. The rest of the assertion is the same either way.
+		const apiKeyPill = within(dialog).queryByRole('button', { name: 'API key' });
+		if (apiKeyPill) await user.click(apiKeyPill);
+
+		// API-key mode renders the instructions box with a link to the provider's
+		// own key console.
 		await within(dialog).findByText(title);
 		await waitFor(() => {
 			const link = Array.from(dialog.querySelectorAll('a')).find(
@@ -79,16 +84,21 @@ test('switching Anthropic to subscription swaps the API-key instructions for the
 	await user.click(getByRole('button', { name: 'Add provider' }));
 	const dialog = await findByRole('dialog');
 
+	// Anthropic opens on its subscription, so those are the instructions on offer
+	// first - behind the manual-paste disclosure, since guided sign-in leads.
 	await user.click(within(dialog).getByRole('button', { name: 'Anthropic' }));
-	await within(dialog).findByText(/How to get your Anthropic API key/i);
-
-	await user.click(within(dialog).getByRole('button', { name: /Claude Code subscription/i }));
 	await user.click(within(dialog).getByRole('button', { name: /Paste credential manually/i }));
 	await within(dialog).findByText(/How to get your Claude subscription token/i);
 	expect(within(dialog).queryByText(/How to get your Anthropic API key/i)).toBeNull();
 
-	// And back: API-key mode restores the key instructions.
+	// And across: API-key mode swaps in the key instructions.
 	await user.click(within(dialog).getByRole('button', { name: 'API key' }));
 	await within(dialog).findByText(/How to get your Anthropic API key/i);
 	expect(within(dialog).queryByText(/How to get your Claude subscription token/i)).toBeNull();
+
+	// And back again, rather than the first render sticking. The manual-paste
+	// disclosure is already open from above - it is not reset by the pill.
+	await user.click(within(dialog).getByRole('button', { name: /Claude Code subscription/i }));
+	await within(dialog).findByText(/How to get your Claude subscription token/i);
+	expect(within(dialog).queryByText(/How to get your Anthropic API key/i)).toBeNull();
 });
