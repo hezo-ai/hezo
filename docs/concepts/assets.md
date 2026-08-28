@@ -120,9 +120,31 @@ The Assets page shows **active** items by default. The filter button (funnel ico
 dimmed with an "Archived" badge, and offer **Restore** plus **Delete**.
 
 Next to the filter is a **sort** button. It orders the files **Newest first** by default; open
-it to switch to **Oldest first** or **Alphabetical** (by filename, A→Z). Folders always stay
-in alphabetical order - the sort applies to the files themselves. Agents can request the same
-orders when listing assets through Hezo's [MCP server](/docs/mcp/hezo-mcp-server).
+it to sort by **Name**, **Type**, **Size** or **Modified**, and pick the same column again to
+reverse the direction. Folders always stay in alphabetical order - the sort applies to the
+files themselves. Agents can request the same orders when listing assets through Hezo's
+[MCP server](/docs/mcp/hezo-mcp-server).
+
+## Grid or list
+
+At the right of that row is a **Grid / List** toggle. The grid is the default and previews
+what each file holds; the list trades those previews for a table - the full filename, its
+type, its size and when it last changed - which is the easier read for a library of documents,
+data exports and generated reports, where the filename is what tells the files apart.
+
+In the list, the column headers **are** the sort: click Name, Type, Size or Modified to sort by
+it, and click the sorted column again to reverse it. There is only ever one order, so the
+caption beside the sort button changes with the header you clicked, and the sort button's
+popover opens on the column the header set. The **Type** column shows the file's extension
+(CSV, MD, PNG), which is also what sorting by type groups on.
+
+The view travels in the page's address alongside the filter and the sort, so a link you share
+opens the way you left it, and it stays put as you move between folders.
+
+On a phone the filter and the sort share a single button, which opens them as a dialog with the
+current view, the column to sort by and its direction; a badge on the button counts how many of
+them are off their defaults. The Type, Size and Modified columns fold into a line under each
+filename there, so the list still says everything it does on a desktop.
 
 **Deletion is permanent and admin-only.** Agents can never delete. The Delete action lives
 only on archived cards, so removing an asset for good is a deliberate two-step: archive it,

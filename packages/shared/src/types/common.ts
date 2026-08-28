@@ -1437,14 +1437,24 @@ export function matchesRunOutcomeFilter(
 }
 
 /**
- * Order for the assets grid. Newest is the default (matches the API's historical
+ * Order for the assets list. Newest is the default (matches the API's historical
  * `created_at DESC`). The web sorts client-side and the REST route / MCP tool
  * sort in SQL; both mirror `compareAssetsForSort`, the single source of truth.
+ *
+ * Every order is one of four fields in one of two directions - see
+ * `ASSET_SORT_FIELDS`, which is what the list view's column headers read. The
+ * two original values keep their historical names so existing links, stored
+ * URLs and agent calls carry on working.
  */
 export const AssetSortOrder = {
 	Newest: 'newest',
 	Oldest: 'oldest',
 	Alphabetical: 'alphabetical',
+	AlphabeticalDesc: 'alphabetical_desc',
+	SizeAsc: 'size_asc',
+	SizeDesc: 'size_desc',
+	TypeAsc: 'type_asc',
+	TypeDesc: 'type_desc',
 } as const;
 export type AssetSortOrder = (typeof AssetSortOrder)[keyof typeof AssetSortOrder];
 
@@ -1452,18 +1462,107 @@ export function isAssetSortOrder(value: unknown): value is AssetSortOrder {
 	return typeof value === 'string' && (Object.values(AssetSortOrder) as string[]).includes(value);
 }
 
+/** The column a sort order acts on. One field, two directions, eight orders. */
+export const AssetSortField = {
+	Name: 'name',
+	Type: 'type',
+	Size: 'size',
+	Modified: 'modified',
+} as const;
+export type AssetSortField = (typeof AssetSortField)[keyof typeof AssetSortField];
+
+export type AssetSortDirection = 'asc' | 'desc';
+
+/**
+ * Each sortable column's two orders, plus the direction a first click on it
+ * takes - largest and newest first, because that is what someone reaching for
+ * those columns is looking for; A→Z for the two textual ones.
+ *
+ * This is the whole mapping between a column header and `AssetSortOrder`: the
+ * list view's headers, the sort popover and the mobile filter dialog all read
+ * it rather than each carrying their own copy. A test asserts every order
+ * appears here exactly once, so a ninth order cannot arrive without a column.
+ */
+export const ASSET_SORT_FIELDS: Record<
+	AssetSortField,
+	{ asc: AssetSortOrder; desc: AssetSortOrder; first: AssetSortDirection }
+> = {
+	[AssetSortField.Name]: {
+		asc: AssetSortOrder.Alphabetical,
+		desc: AssetSortOrder.AlphabeticalDesc,
+		first: 'asc',
+	},
+	[AssetSortField.Type]: {
+		asc: AssetSortOrder.TypeAsc,
+		desc: AssetSortOrder.TypeDesc,
+		first: 'asc',
+	},
+	[AssetSortField.Size]: {
+		asc: AssetSortOrder.SizeAsc,
+		desc: AssetSortOrder.SizeDesc,
+		first: 'desc',
+	},
+	[AssetSortField.Modified]: {
+		asc: AssetSortOrder.Oldest,
+		desc: AssetSortOrder.Newest,
+		first: 'desc',
+	},
+};
+
+/** The column an order sorts on. */
+export function assetSortField(order: AssetSortOrder): AssetSortField {
+	for (const [field, pair] of Object.entries(ASSET_SORT_FIELDS)) {
+		if (pair.asc === order || pair.desc === order) return field as AssetSortField;
+	}
+	// Unreachable while the table stays complete, which its test enforces.
+	return AssetSortField.Modified;
+}
+
+/** The direction an order sorts in. */
+export function assetSortDirection(order: AssetSortOrder): AssetSortDirection {
+	return ASSET_SORT_FIELDS[assetSortField(order)].asc === order ? 'asc' : 'desc';
+}
+
+/** The order that sorts `field` in `direction`. */
+export function assetSortOrderFor(
+	field: AssetSortField,
+	direction: AssetSortDirection,
+): AssetSortOrder {
+	return ASSET_SORT_FIELDS[field][direction];
+}
+
+/**
+ * The file-type token shown in the list view's Type column, and the key the
+ * type sort orders by: the filename's extension, upper-cased, or `FILE` when it
+ * has none.
+ *
+ * Deliberately read off the name rather than `content_type`, which is too
+ * coarse to be useful here - every script, CSV, JSON and YAML asset stores as
+ * `text/plain` (see `ATTACHMENT_EXTENSIONS`), so a whole folder would read as
+ * one type. It is a format token, not prose, so it is not translated and the
+ * displayed order is the sorted order in every language.
+ *
+ * `assetTypeSortSql` mirrors this in SQL; change the two together.
+ */
+export function assetTypeLabel(filename: string): string {
+	const match = /\.([^./]+)$/.exec(filename);
+	return match ? match[1].toUpperCase() : 'FILE';
+}
+
 /** The minimal asset shape the sort comparison reads. */
 export interface AssetSortFields {
 	created_at: string;
 	original_filename: string;
+	byte_size: number;
 }
 
 /**
  * Compare two assets for the given sort order. The SQL `ORDER BY` on the REST
- * route and MCP tool mirrors this exactly:
- * - Newest:       created_at DESC, then original_filename ASC
- * - Oldest:       created_at ASC,  then original_filename ASC
- * - Alphabetical: LOWER(original_filename) ASC, then created_at DESC
+ * route and MCP tool mirrors this exactly (see `assetSortOrderBy`):
+ * - Newest / Oldest:           created_at DESC / ASC, then original_filename ASC
+ * - Alphabetical (+ Desc):     LOWER(original_filename) ASC / DESC, then created_at DESC
+ * - SizeAsc / SizeDesc:        byte_size ASC / DESC,  then LOWER(original_filename) ASC
+ * - TypeAsc / TypeDesc:        type token ASC / DESC, then LOWER(original_filename) ASC
  * Every branch has a deterministic tiebreak so the order is stable.
  */
 export function compareAssetsForSort(
@@ -1471,21 +1570,41 @@ export function compareAssetsForSort(
 	b: AssetSortFields,
 	order: AssetSortOrder,
 ): number {
-	if (order === AssetSortOrder.Alphabetical) {
-		const byName = a.original_filename
-			.toLowerCase()
-			.localeCompare(b.original_filename.toLowerCase());
-		if (byName !== 0) return byName;
-		// Newest first as the tiebreak (created_at DESC).
-		return b.created_at.localeCompare(a.created_at);
+	const byName = () =>
+		a.original_filename.toLowerCase().localeCompare(b.original_filename.toLowerCase());
+
+	switch (order) {
+		case AssetSortOrder.Alphabetical:
+		case AssetSortOrder.AlphabeticalDesc: {
+			const name = byName();
+			if (name !== 0) return order === AssetSortOrder.Alphabetical ? name : -name;
+			// Newest first as the tiebreak (created_at DESC), in both directions.
+			return b.created_at.localeCompare(a.created_at);
+		}
+		case AssetSortOrder.SizeAsc:
+		case AssetSortOrder.SizeDesc: {
+			const bySize = a.byte_size - b.byte_size;
+			if (bySize !== 0) return order === AssetSortOrder.SizeAsc ? bySize : -bySize;
+			return byName();
+		}
+		case AssetSortOrder.TypeAsc:
+		case AssetSortOrder.TypeDesc: {
+			const byType = assetTypeLabel(a.original_filename).localeCompare(
+				assetTypeLabel(b.original_filename),
+			);
+			if (byType !== 0) return order === AssetSortOrder.TypeAsc ? byType : -byType;
+			return byName();
+		}
+		default: {
+			// ISO-8601 timestamps sort chronologically as plain strings.
+			const byDate =
+				order === AssetSortOrder.Oldest
+					? a.created_at.localeCompare(b.created_at)
+					: b.created_at.localeCompare(a.created_at);
+			if (byDate !== 0) return byDate;
+			return byName();
+		}
 	}
-	// ISO-8601 timestamps sort chronologically as plain strings.
-	const byDate =
-		order === AssetSortOrder.Oldest
-			? a.created_at.localeCompare(b.created_at)
-			: b.created_at.localeCompare(a.created_at);
-	if (byDate !== 0) return byDate;
-	return a.original_filename.toLowerCase().localeCompare(b.original_filename.toLowerCase());
 }
 
 export const AuditActorType = {

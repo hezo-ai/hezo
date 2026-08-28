@@ -1,7 +1,7 @@
-// Sort control on the Assets page: the "Newest first" caption + popover
-// (Newest / Oldest / Alphabetical), the grid re-ordering client-side, and the
-// `sort` URL search param tracking the selection (absent for the default).
-// Component tier — no layout/scroll/viewport dependency.
+// Sort control on the Assets page: the caption + popover of sortable columns
+// (picking the active column reverses it), the grid re-ordering client-side,
+// and the `sort` URL search param tracking the selection (absent for the
+// default). Component tier — no layout/scroll/viewport dependency.
 
 import type { AssetSortOrder } from '@hezo/shared';
 import { waitFor } from '@testing-library/react';
@@ -18,7 +18,7 @@ async function setup() {
 			ws = await seedWorkspace();
 			const project = await seedProject(ws, { name: 'Sortable Assets' });
 			ref.slug = project.slug;
-			// Names deliberately differ from creation order so all three sorts
+			// Names deliberately differ from creation order so all the sorts
 			// produce distinct sequences.
 			const banana = await seedAsset(ws, project, { filename: 'banana.png' });
 			const apple = await seedAsset(ws, project, { filename: 'apple.png' });
@@ -58,9 +58,9 @@ test('the sort control reorders the grid and its caption tracks the selection', 
 		expect(cardOrder(r.container)).toEqual(['banana.png', 'apple.png', 'cherry.png']),
 	);
 
-	// Switch to Oldest first via the popover.
+	// Picking the column already sorted on reverses it: Modified flips to Oldest.
 	await r.user.click(await r.findByTestId('asset-sort-button'));
-	await r.user.click(await r.findByTestId('asset-sort-option-oldest'));
+	await r.user.click(await r.findByTestId('asset-sort-option-modified'));
 	expect((await r.findByTestId('asset-sort-text')).textContent).toBe('Oldest first');
 	await waitFor(() =>
 		expect(cardOrder(r.container)).toEqual(['cherry.png', 'apple.png', 'banana.png']),
@@ -68,22 +68,44 @@ test('the sort control reorders the grid and its caption tracks the selection', 
 	// The non-default sort is reflected in the URL.
 	expect((r.router.state.location.search as { sort?: string }).sort).toBe('oldest');
 
-	// Alphabetical orders by filename.
-	await r.user.click(await r.findByTestId('asset-sort-button'));
-	await r.user.click(await r.findByTestId('asset-sort-option-alphabetical'));
-	expect((await r.findByTestId('asset-sort-text')).textContent).toBe('Alphabetical');
+	// A different column adopts its own first direction — A→Z for Name. The
+	// popover stays open across picks, so no second trigger click here.
+	await r.user.click(await r.findByTestId('asset-sort-option-name'));
+	expect((await r.findByTestId('asset-sort-text')).textContent).toBe('Name ascending');
 	await waitFor(() =>
 		expect(cardOrder(r.container)).toEqual(['apple.png', 'banana.png', 'cherry.png']),
 	);
 	expect((r.router.state.location.search as { sort?: string }).sort).toBe('alphabetical');
 
-	// Back to Newest drops the param entirely (default carries no URL noise).
-	await r.user.click(await r.findByTestId('asset-sort-button'));
-	await r.user.click(await r.findByTestId('asset-sort-option-newest'));
+	// Picking Name again reverses it rather than re-applying the same order.
+	await r.user.click(await r.findByTestId('asset-sort-option-name'));
+	expect((await r.findByTestId('asset-sort-text')).textContent).toBe('Name descending');
+	await waitFor(() =>
+		expect(cardOrder(r.container)).toEqual(['cherry.png', 'banana.png', 'apple.png']),
+	);
+	expect((r.router.state.location.search as { sort?: string }).sort).toBe('alphabetical_desc');
+
+	// Back to the default order drops the param entirely (no URL noise). One
+	// pick is enough: coming from another column, Modified adopts its own first
+	// direction, which is newest-first.
+	await r.user.click(await r.findByTestId('asset-sort-option-modified'));
 	await waitFor(() =>
 		expect(cardOrder(r.container)).toEqual(['banana.png', 'apple.png', 'cherry.png']),
 	);
 	expect((r.router.state.location.search as { sort?: string }).sort).toBeUndefined();
+});
+
+test('an unselected column advertises the direction a click would take it in', async () => {
+	const r = await setup();
+	await r.router.navigate({ to: '/projects/$projectId/assets', params: { projectId: r.ref.slug } });
+	await r.findByText('banana.png', undefined, { timeout: 15_000 });
+
+	await r.user.click(await r.findByTestId('asset-sort-button'));
+	// Largest and newest first; A→Z for the two textual columns.
+	expect((await r.findByTestId('asset-sort-direction-size')).textContent).toBe('Largest');
+	expect((await r.findByTestId('asset-sort-direction-modified')).textContent).toBe('Newest');
+	expect((await r.findByTestId('asset-sort-direction-name')).textContent).toBe('Ascending');
+	expect((await r.findByTestId('asset-sort-direction-type')).textContent).toBe('Ascending');
 });
 
 test('an invalid sort search param falls back to Newest first', async () => {
