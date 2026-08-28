@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { AssetSortOrder, compareAssetsForSort } from '@hezo/shared';
 import type { Hono } from 'hono';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
@@ -1354,4 +1355,100 @@ describe('asset sort order (REST + MCP)', () => {
 			'cherry.png',
 		]);
 	});
+});
+
+describe('asset sort order mirrors the shared comparator', () => {
+	// `assetSortOrderBy` is hand-written SQL claiming to reproduce
+	// `compareAssetsForSort`, which is what the web sorts by client-side. Nothing
+	// but this test connects the two: a mismatch shows up as a list that reorders
+	// itself the moment the page refetches. So rather than asserting a literal
+	// sequence per order, every order is run through both and compared.
+	let mirrorProjectId: string;
+	let mirrorAgentToken: string;
+
+	/** Sizes, extensions and dates all differ, so no two orders coincide. */
+	const FIXTURES = [
+		{ filename: 'zebra.png', size: 900, created: '2026-02-01T00:00:00.000Z' },
+		{ filename: 'alpha.md', size: 64, created: '2026-02-05T00:00:00.000Z' },
+		{ filename: 'mango.csv', size: 12_000, created: '2026-02-03T00:00:00.000Z' },
+		{ filename: 'basil.csv', size: 300, created: '2026-02-04T00:00:00.000Z' },
+		{ filename: 'README', size: 48, created: '2026-02-02T00:00:00.000Z' },
+	];
+
+	async function restList(sort: AssetSortOrder): Promise<string[]> {
+		const res = await app.request(`/api/projects/${mirrorProjectId}/assets?sort=${sort}`, {
+			headers: authHeader(token),
+		});
+		expect(res.status).toBe(200);
+		return ((await res.json()).data as Array<{ original_filename: string }>).map(
+			(a) => a.original_filename,
+		);
+	}
+
+	async function mcpList(sort: AssetSortOrder): Promise<string[]> {
+		const out = (await callToolViaMcp(mirrorAgentToken, 'list_project_assets', { sort })) as {
+			items: Array<{ filename: string }>;
+		};
+		return out.items.map((f) => f.filename);
+	}
+
+	function expected(sort: AssetSortOrder): string[] {
+		return FIXTURES.map((f) => ({
+			original_filename: f.filename,
+			created_at: f.created,
+			byte_size: f.size,
+		}))
+			.sort((a, b) => compareAssetsForSort(a, b, sort))
+			.map((a) => a.original_filename);
+	}
+
+	beforeAll(async () => {
+		const teamRes = await createTestTeam(db, { name: 'Mirror Co' });
+		const mirrorTeamId = (await teamRes.json()).data.id;
+		const projectRes = await createTestProject(db, mirrorTeamId, { name: 'Mirrored' });
+		mirrorProjectId = (await projectRes.json()).data.id;
+
+		const agentRes = await app.request(`/api/projects/${mirrorProjectId}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Mirror Bot' }),
+		});
+		const mirrorAgentId = (await agentRes.json()).data.id;
+		const taskRes = await app.request(`/api/projects/${mirrorProjectId}/tasks`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Mirror task', assignee_id: mirrorAgentId }),
+		});
+		const mirrorTaskId = (await taskRes.json()).data.id;
+		mirrorAgentToken = (
+			await mintAgentToken(db, masterKeyManager, mirrorAgentId, mirrorTeamId, mirrorTaskId)
+		).token;
+
+		for (const fixture of FIXTURES) {
+			// Written through the asset-name seam rather than the upload route: it
+			// takes an exact byte size and an extensionless name, neither of which a
+			// multipart upload lets the test choose.
+			const assetId = randomUUID();
+			const result = await upsertProjectAsset(db, {
+				assetId,
+				teamId: mirrorTeamId,
+				projectId: mirrorProjectId,
+				contentType: 'text/plain',
+				byteSize: fixture.size,
+				sha256: `mirror-${fixture.filename}`,
+				desiredName: fixture.filename,
+				uploadedByMemberId: null,
+				searchText: '',
+			});
+			expect(result.status).toBe('written');
+			await db.query(`UPDATE assets SET created_at = $1 WHERE id = $2`, [fixture.created, assetId]);
+		}
+	});
+
+	for (const sort of Object.values(AssetSortOrder)) {
+		it(`REST and MCP both order '${sort}' the way the comparator does`, async () => {
+			expect(await restList(sort)).toEqual(expected(sort));
+			expect(await mcpList(sort)).toEqual(expected(sort));
+		});
+	}
 });
