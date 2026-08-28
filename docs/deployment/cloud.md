@@ -76,11 +76,11 @@ backups. Each backend is one setting, adoptable independently:
    DigitalOcean Spaces, Backblaze B2, MinIO, …) with an access key. The bucket stays
    private - Hezo serves asset bytes through signed URLs. URL grammar and options:
    [Storing assets in S3-compatible object storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-storage).
-3. **Set the URL(s) where your service definition reads its environment** - e.g. the
-   `EnvironmentFile` of your systemd unit (see
-   [Self-hosting](/docs/deployment/self-hosting)), kept root-only (mode 600) since the
+3. **Write the URL(s) into the config file your service starts with** - for example,
+   `/etc/hezo/hezo.config.cjs` for the systemd unit in
+   [Self-hosting](/docs/deployment/self-hosting). Keep it root-only (mode 600) since the
    URLs carry credentials. Prefer the config file over the CLI flags - flags are visible
-   in the process list - and give it mode 600:
+   in the process list:
 
    ```js
    // /etc/hezo/hezo.config.cjs
