@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.55.0 - 2026-08-28
+
+### Features
+
+- **web:** animate the side panel open and closed ([#1052](https://github.com/hezo-ai/hezo/pull/1052))
+- **agents:** review a teammate's work with adversarial sub-agents ([#1051](https://github.com/hezo-ai/hezo/pull/1051))
+- **connectors:** test any connector on demand, and fix MCP OAuth reconnect ([#1050](https://github.com/hezo-ai/hezo/pull/1050))
+
+### Bug Fixes
+
+- **web:** keep the task's created date relative, however old it is ([#1049](https://github.com/hezo-ai/hezo/pull/1049))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.54.1...0.55.0
+
 ## 0.54.1 - 2026-08-26
 
 ### Documentation
