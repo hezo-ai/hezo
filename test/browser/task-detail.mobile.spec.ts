@@ -294,22 +294,41 @@ test.describe('Comment header — mobile (narrow viewport)', () => {
 			.filter({ has: page.getByTestId('replying-to') });
 		await expect(replyItem).toBeVisible({ timeout: 15000 });
 		const timestamp = replyItem.getByTestId('comment-timestamp-link');
-		const author = replyItem.getByTestId('comment-author');
-		const replyingTo = replyItem.getByTestId('replying-to');
 		await expect(timestamp).toBeVisible();
 
-		// The page never scrolls horizontally.
-		const overflow = await page.evaluate(() => {
+		// Read the overflow and all three boxes in ONE evaluate. A row-overlap
+		// comparison is only meaningful between boxes from the SAME layout, and the
+		// thread is still moving under it: comment bodies load lazily, and a body
+		// landing grows its row by a reactions strip and a Reply button, dropping
+		// every row below it ~40px. Three separate boundingBox round trips are
+		// three chances for that to land between them — the reply then reads 40px
+		// lower than the author measured a moment earlier, and a header that never
+		// wrapped is reported as two rows. One synchronous read cannot straddle a
+		// reflow, and the assertions below hold in either layout, so this needs no
+		// wait on the bodies (which never arrive at all for a row that stays out of
+		// the viewport).
+		const layout = await replyItem.evaluate((row) => {
+			const box = (sel: string) => {
+				const el = row.querySelector(sel);
+				if (!el) return null;
+				const { x, y, width, height } = el.getBoundingClientRect();
+				return { x, y, width, height };
+			};
 			const main = document.querySelector('main');
-			return main ? main.scrollWidth - main.clientWidth : -1;
+			return {
+				overflow: main ? main.scrollWidth - main.clientWidth : -1,
+				author: box('[data-testid="comment-author"]'),
+				timestamp: box('[data-testid="comment-timestamp-link"]'),
+				replyingTo: box('[data-testid="replying-to"]'),
+			};
 		});
-		expect(overflow).toBe(0);
+
+		// The page never scrolls horizontally.
+		expect(layout.overflow).toBe(0);
 
 		// Author, timestamp, and "replying to" all sit on the SAME row — their
 		// vertical spans overlap (the header did not wrap onto a second line).
-		const authorBox = await author.boundingBox();
-		const tsBox = await timestamp.boundingBox();
-		const replyBox = await replyingTo.boundingBox();
+		const { author: authorBox, timestamp: tsBox, replyingTo: replyBox } = layout;
 		if (!authorBox || !tsBox || !replyBox) throw new Error('Missing layout box');
 		const sameRow = (a: typeof authorBox, b: typeof tsBox) =>
 			a.y < b.y + b.height && b.y < a.y + a.height;
