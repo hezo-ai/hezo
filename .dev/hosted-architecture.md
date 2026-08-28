@@ -94,8 +94,9 @@ shared kernel and daemon. More work, weaker isolation.
 
 Each tenant = one stock `hezo` binary on its own DigitalOcean Droplet (the KVM
 boundary; Docker runs single-level inside — no nested virtualization needed),
-with **managed Postgres** (`HEZO_DATABASE_URL`) and **Spaces object storage**
-(`HEZO_ASSET_STORAGE_URL`) instead of the embedded PGlite + local assets. That
+with **managed Postgres** (`database.url`) and **Spaces object storage**
+(`assetStorage.url`) in `/etc/hezo/hezo.config.cjs` instead of the embedded
+PGlite + local assets. That
 makes the droplet **near-stateless**: the database and assets — the data that
 matters — live in managed services with managed backups/PITR, and a dead
 droplet is rebuilt from the golden image without data loss. The `dataDir` on
@@ -131,8 +132,8 @@ session cookie, CORS-scoped). Setup is not complete until this succeeds.
   key (AWS KMS — DigitalOcean has no KMS; the control plane's secret store is
   an acceptable stand-in until the KMS wiring lands), decrypted per use, with
   every decrypt audited.
-- **The instance never sees the custody path and never persists the key.**
-  `HEZO_MASTER_KEY` is never written to any env file or unit; the core
+- **The instance never sees the custody path and never persists the key.** The
+  one-shot `HEZO_MASTER_KEY` input is never written to a file or unit; the core
   in-memory-only invariant holds unchanged.
 - The 12 words remain the user's recovery root: manual unlock at the gate
   still works, and they are the exit path to self-hosting with their own data.
@@ -175,9 +176,9 @@ Flows:
 
 Instance-side verification (`POST /api/auth/sso`):
 
-1. Signature verifies against `HEZO_SSO_ISSUER_PUBLIC_KEY` (a `kid:hex` list,
+1. Signature verifies against `sso.issuerPublicKey` (a `kid:hex` list,
    so issuer keys can rotate) via the existing `verifyAuthSignature`.
-2. `aud` equals the instance's own `HEZO_WEB_URL` host — a token minted for
+2. `aud` equals the instance's configured `sso.audience` host — a token minted for
    tenant A is unusable at tenant B even though one issuer key signs for all.
 3. `iat`/`exp` window (≤60s, small clock skew allowance).
 4. `jti` unused (small in-memory replay cache; the 60s expiry bounds its size).
@@ -185,8 +186,8 @@ Instance-side verification (`POST /api/auth/sso`):
    existing canary check rejects a wrong key.
 6. `sub` maps through `user_auth_methods(provider='hezo_cloud',
    provider_user_id=sub)`; the row is auto-created bound to the single
-   superuser iff `sub == HEZO_SSO_OWNER_SUBJECT` (an env pin of the owning
-   account id — defense in depth on top of the control plane's ownership
+   superuser iff `sub == sso.ownerSubject` (the configured owning account id —
+   defense in depth on top of the control plane's ownership
    check). Any other `sub` is rejected.
 7. Mint the normal 7-day admin session via the existing `signAdminJwt`.
    Everything downstream — REST bearer, WebSocket `?token=` — is unchanged.
@@ -241,7 +242,7 @@ instances(id, account_id FK UNIQUE,                               -- 1 instance/
                      'destroy_scheduled','destroying','destroyed','error'),
          droplet_id, droplet_ip, pg_cluster_id FK, pg_db_name, pg_role,
          spaces_bucket, version, desired_version,
-         sso_owner_subject,                                       -- == account_id, denormalized into env
+         sso_owner_subject,                                       -- == account_id, written into instance config
          fleet_token_hash,                                        -- per-instance pull-agent credential
          last_health_at, last_health jsonb,                       -- {masterKeyState,passwordSet,version}
          suspended_at, destroy_after)
@@ -281,7 +282,7 @@ audit_events(id, account_id, instance_id, actor enum('user','system','stripe','m
 3. `storage` — create the Spaces bucket `hezo-t-<shortid>` + a **per-bucket
    access key**.
 4. `droplet` — create from the golden image; `user_data` cloud-init writes
-   `/etc/hezo/hezo.env` (matrix below), the Caddy site address, and the fleet
+   `/etc/hezo/hezo.config.cjs` (matrix below), the Caddy site address, and the fleet
    agent token; attach the DO Cloud Firewall.
 5. `dns` — A record `<sub>.app.hezo.ai → droplet_ip` (Caddy retries ACME until
    DNS resolves, so ordering is forgiving).
@@ -305,8 +306,8 @@ completed (droplet / DNS / bucket / db are all recorded on the instance row).
   `GET app.hezo.ai/fleet/v1/state` with its per-instance bearer token; the
   response carries `{desired_version, binary_url, sha256}`. The agent
   downloads, verifies the checksum, swaps `/usr/local/bin/hezo`, restarts the
-  service, and reports back. `HEZO_DISABLE_AUTO_UPDATE=1` keeps the core
-  self-updater off (`services/updater.ts`); rollouts stage by cohort (canary
+  service, and reports back. `updates.disabled: true` in the instance config
+  keeps the core self-updater off; rollouts stage by cohort (canary
   N≈5 → fleet). Restart-induced locks are healed by the proactive re-unlock.
   Pull-based means **no steady-state inbound SSH** to tenant droplets.
 - **Health monitor:** `GET /api/status` per running instance (~60s, batched);
@@ -339,11 +340,12 @@ other tenant's hostname.
   bucket are pinned to the same region; droplet↔PG rides the DO VPC private
   hostname.
 - **Image:** a **Packer golden image** extending the existing
-  `deploy/marketplace/digitalocean` template (which already supports
-  `HEZO_IMAGE_BUILD=1`): Docker + Caddy + the `hezo` binary + the fleet agent
+  `deploy/marketplace/digitalocean` template. Its build invokes the provisioning
+  script with `HEZO_IMAGE_BUILD=1`, a Packer-only input that the Hezo runtime
+  never reads: Docker + Caddy + the `hezo` binary + the fleet agent
   baked in, services enabled-but-not-started; the hosted image drops the
   sslip.io `hezo-firstboot` URL derivation (the control plane supplies the
-  real hostname). Per-tenant cloud-init only writes env files → boot in <60s
+  real hostname). Per-tenant cloud-init only writes the config file → boot in <60s
   instead of ~4–5 min of apt.
 - **Managed Postgres:** one shared cluster is not enough at 100 tenants — the
   driver pool is up to 10 connections per instance
@@ -378,24 +380,25 @@ other tenant's hostname.
   cheapest-compute alternative below) slots in later without touching the
   state machine.
 
-### Per-tenant env (written once by cloud-init to `/etc/hezo/hezo.env`, mode 600)
+### Per-tenant config (written once by cloud-init to `/etc/hezo/hezo.config.cjs`, mode 600)
 
-| Var | Value | Note |
+| Config key | Value | Note |
 |---|---|---|
-| `HEZO_PORT` | `3100` | behind local Caddy |
-| `HEZO_DATA_DIR` | `/var/lib/hezo` | scratch only — DB and assets are external |
-| `HEZO_DATABASE_URL` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § 12 (*External TLS (`sslmode`)*)): encrypted, certificate not verified — accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
+| `port` | `3100` | behind local Caddy |
+| `dataDir` | `/var/lib/hezo` | scratch only — DB and assets are external |
+| `database.url` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § 12 (*External TLS (`sslmode`)*)): encrypted, certificate not verified — accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
 | `database.poolSize` | `4` | superseded: see § H14, a pooler decouples this from cluster sizing |
-| `HEZO_ASSET_STORAGE_URL` | `s3://<KEY>:<SECRET>@<region>.digitaloceanspaces.com/hezo-t-<shortid>?region=…` | per-bucket key |
-| `HEZO_WEB_URL` | `https://<sub>.app.hezo.ai` | also the SSO `aud` |
-| `HEZO_TELEMETRY_ENDPOINT` | `https://app.hezo.ai/api/telemetry` | fleet telemetry lands in the control plane |
-| `HEZO_DISABLE_AUTO_UPDATE` | `1` | fleet agent owns versions |
-| `HEZO_OPEN` | `0` | headless |
-| `HEZO_HOSTED` | `1` | *new* — hosted gate/wizard variants, hide update UI |
-| `HEZO_SSO_ISSUER_URL` | `https://app.hezo.ai` | where the gate redirects |
-| `HEZO_SSO_ISSUER_PUBLIC_KEY` | `<kid1>:<hex>[,<kid2>:<hex>]` | *new* — list enables issuer rotation |
-| `HEZO_SSO_OWNER_SUBJECT` | `<account uuid>` | *new* — owner pin |
-| `HEZO_MASTER_KEY` | **never set** | custody + SSO unlock replace it; the never-persist invariant holds |
+| `assetStorage.url` | `s3://<KEY>:<SECRET>@<region>.digitaloceanspaces.com/hezo-t-<shortid>?region=…` | per-bucket key |
+| `webUrl` | `https://<sub>.app.hezo.ai` | public base URL |
+| `telemetry.endpoint` | `https://app.hezo.ai/api/telemetry` | fleet telemetry lands in the control plane |
+| `updates.disabled` | `true` | fleet agent owns versions |
+| `open` | `false` | headless |
+| `sso.issuerUrl` | `https://app.hezo.ai` | where the gate redirects |
+| `sso.logoutUrl` | `https://app.hezo.ai/logout` | where instance logout ends the issuer session |
+| `sso.issuerPublicKey` | `<kid1>:<hex>[,<kid2>:<hex>]` | list enables issuer rotation |
+| `sso.ownerSubject` | `<account uuid>` | owner pin |
+| `sso.audience` | `<sub>.app.hezo.ai` | exact host accepted in the token `aud` |
+| one-shot `HEZO_MASTER_KEY` input | **never persisted** | custody + SSO unlock replace it; the in-memory-only invariant holds |
 
 Secrets in this file are per-tenant scoped by construction — a compromised
 droplet exposes only that tenant's database and bucket. A `rotate_creds` job
@@ -409,9 +412,10 @@ additive and inert unless the SSO config is present:
 1. `packages/shared/src/crypto/auth.ts` — one new builder,
    `buildSsoTokenMessage(kid, aud, sub, jti, iat, exp, unlockKeyHex)`
    (`hezo-sso-v1:` domain tag); the existing `verifyAuthSignature` verifies.
-2. `packages/server/src/cli.ts` — new config: `HEZO_HOSTED`,
-   `HEZO_SSO_ISSUER_URL`, `HEZO_SSO_ISSUER_PUBLIC_KEY`,
-   `HEZO_SSO_OWNER_SUBJECT` (+ docs sync per repo rules).
+2. `packages/server/src/config/schema.ts` and `packages/server/src/cli.ts` — the
+   file-only `sso` block: `sso.issuerUrl`, `sso.logoutUrl`,
+   `sso.issuerPublicKey`, `sso.ownerSubject`, and `sso.audience` (+ docs sync
+   per repo rules).
 3. `packages/server/src/routes/auth.ts` (or a sibling `routes/sso.ts`) — one
    endpoint, `POST /api/auth/sso`: verify → unlock-if-locked → bind `sub` via
    `user_auth_methods` → mint the session with the existing `signAdminJwt`;
@@ -463,7 +467,7 @@ login-style throttle.
 ## Phasing
 
 - **M0 — validation spikes** (throwaway):
-  - *S1 storage:* stock binary on a droplet with managed PG + Spaces env → a
+  - *S1 storage:* stock binary on a droplet with managed PG + Spaces config → a
     full agent run end-to-end. Confirms the near-zero-core-change claim under
     the hosted storage config.
   - *S2 provisioning:* script `DO API: droplet(golden image) + DNS + tenant
@@ -502,8 +506,8 @@ login-style throttle.
    Manager / Cloudflare-for-SaaS (GA proxy option only).
 6. **No DO KMS** — AWS KMS cross-cloud for custody wrapping (or the
    secret-store stand-in until M2).
-7. `HEZO_DISABLE_AUTO_UPDATE` is env-only (read in `services/updater.ts`, not
-   `parseConfig`) — fine for env-file deployment; keep documented.
+7. `updates.disabled` keeps the in-app updater off when the fleet agent owns
+   releases; it is written in the same config file as the tenant storage and SSO settings.
 8. DO VPC private connectivity droplet → managed PG within a region.
 9. Clock skew: droplets run NTP; the 60s token window assumes ≤ a few seconds
    of skew — confirm on the golden image.
@@ -520,7 +524,8 @@ login-style throttle.
   `db/migrate-external.ts` — external-Postgres support the hosted storage
   rides on.
 - `packages/server/src/assets/` — S3 asset storage (`parseAssetStorageUrl`).
-- `packages/server/src/cli.ts` — `HEZO_*` config surface.
+- `packages/server/src/config/schema.ts`, `config/types.ts`, and `cli.ts` — the
+  config-file schema and resolved runtime configuration.
 - `packages/server/migrations/001_initial_schema.sql` — `user_auth_methods`
   (the SSO identity seam), the single-tenant unique constraints.
 - `deploy/provision.sh`, `deploy/cloud-init/`, `deploy/marketplace/` — the

@@ -83,8 +83,8 @@ To run on a different port or data directory:
 hezo --port 8080 --data-dir /path/to/data
 ```
 
-See the [Configuration reference](/docs/deployment/configuration) for every flag and
-environment variable.
+See the [Configuration reference](/docs/deployment/configuration) for config-file settings
+and flags.
 
 ## Verify the install
 

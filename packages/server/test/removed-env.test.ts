@@ -10,6 +10,8 @@ import {
 	type ResolvedDataLocation,
 } from '../src/config/removed-env';
 
+const REPO_ROOT = join(import.meta.dirname, '../../..');
+
 const at = (dataDir: string, extra: Partial<ResolvedDataLocation> = {}): ResolvedDataLocation => ({
 	dataDir,
 	database: {},
@@ -241,5 +243,29 @@ describe('resolveConfig', () => {
 				'legal winner thank year wave sausage worth useful legal winner thank yellow',
 		});
 		expect(config.masterKey?.unlockKeyHex).toBeTruthy();
+	});
+});
+
+describe('configuration documentation after the environment-variable migration', () => {
+	it('keeps the active hosted design on config-file settings', () => {
+		const design = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
+		const hezoEnvNames = [...new Set(design.match(/\bHEZO_[A-Z0-9_]+\b/g) ?? [])].sort();
+
+		expect(design).toContain('/etc/hezo/hezo.config.cjs');
+		expect(design).not.toContain('/etc/hezo/hezo.env');
+		expect(design).toContain('`sso.issuerUrl`');
+		expect(design).toContain('`sso.issuerPublicKey`');
+		expect(design).toContain('`sso.ownerSubject`');
+		expect(design).toContain('`sso.audience`');
+		expect(hezoEnvNames).toEqual(['HEZO_IMAGE_BUILD', 'HEZO_MASTER_KEY']);
+	});
+
+	it.each([
+		'docs/getting-started/installation.md',
+		'docs/deployment/container-runtimes.md',
+	])('%s describes the configuration reference as config-file settings and flags', (rel) => {
+		const doc = readFileSync(join(REPO_ROOT, rel), 'utf8');
+		expect(doc).toMatch(/config-file settings\s+and flags/);
+		expect(doc).not.toContain('every flag and environment variable');
 	});
 });
