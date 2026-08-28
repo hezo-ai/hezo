@@ -96,11 +96,13 @@ Each tenant = one stock `hezo` binary on its own DigitalOcean Droplet (the KVM
 boundary; Docker runs single-level inside — no nested virtualization needed),
 with **managed Postgres** (`database.url`) and **Spaces object storage**
 (`assetStorage.url`) in `/etc/hezo/hezo.config.cjs` instead of the embedded
-PGlite + local assets. That
-makes the droplet **near-stateless**: the database and assets — the data that
-matters — live in managed services with managed backups/PITR, and a dead
-droplet is rebuilt from the golden image without data loss. The `dataDir` on
-the droplet holds only scratch (run sockets, extracted docker context, tmp).
+PGlite + local assets. Managed Postgres and Spaces move database rows and asset
+blobs off the droplet and give those backends managed backups/PITR, but the
+droplet still carries required local state. `/var/lib/hezo` holds project
+workspaces and worktrees, instance keys, and other required state alongside
+runtime scratch. Restore `/var/lib/hezo` from backup before starting a
+replacement droplet, then reconnect the managed database and bucket; the golden
+image alone is not a complete recovery.
 
 The control plane never reads a tenant's database content; it provisions,
 routes, unlocks, and lifecycle-manages.
@@ -193,10 +195,11 @@ Instance-side verification (`POST /api/auth/sso`):
    Everything downstream — REST bearer, WebSocket `?token=` — is unchanged.
 
 A login-style throttle (same in-memory pattern as `routes/auth.ts`) guards the
-endpoint. Logout stays instance-local (drop the localStorage token); hard
-revocation is instance suspension. Control-plane logout does not revoke
-already-minted 7-day instance sessions — acceptable for a single-owner
-instance, documented.
+endpoint. Logout is a two-session browser flow: the instance clears its local
+7-day JWT, then redirects to the required `sso.logoutUrl` so the control plane
+can clear its own session cookie. Neither step revokes the instance JWT
+server-side, so a retained copy remains valid until expiry; hard revocation is
+instance suspension.
 
 ### Proactive re-unlock after restarts
 
@@ -385,7 +388,7 @@ other tenant's hostname.
 | Config key | Value | Note |
 |---|---|---|
 | `port` | `3100` | behind local Caddy |
-| `dataDir` | `/var/lib/hezo` | scratch only - DB and assets are external |
+| `dataDir` | `/var/lib/hezo` | persistent workspaces, worktrees, and instance keys plus runtime scratch - back up or snapshot even with external DB/assets |
 | `database.url` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § 12 (*External TLS (`sslmode`)*)): encrypted, certificate not verified - accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
 | `database.poolSize` | `4` | superseded: see § H14, a pooler decouples this from cluster sizing |
 | `assetStorage.url` | `s3://<KEY>:<SECRET>@<region>.digitaloceanspaces.com/hezo-t-<shortid>?region=…` | per-bucket key |
@@ -394,7 +397,7 @@ other tenant's hostname.
 | `updates.disabled` | `true` | fleet agent owns versions |
 | `open` | `false` | headless |
 | `sso.issuerUrl` | `https://app.hezo.ai` | where the gate redirects |
-| `sso.logoutUrl` | `https://app.hezo.ai/logout` | where instance logout ends the issuer session |
+| `sso.logoutUrl` | `https://app.hezo.ai/logout` | required second step after the browser clears its local instance token; ends the issuer session |
 | `sso.issuerPublicKey` | `<kid1>:<hex>[,<kid2>:<hex>]` | list enables issuer rotation |
 | `sso.ownerSubject` | `<account uuid>` | owner pin |
 | `sso.audience` | `<sub>.app.hezo.ai` | exact host accepted in the token `aud` |
