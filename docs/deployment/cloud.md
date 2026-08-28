@@ -23,7 +23,7 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
 > ([configuration](/docs/deployment/configuration#running-agent-containers-on-a-managed-sandbox-service)),
 > or move an already-running instance over from **Settings -> Containers**
 > ([Switching at any time](/docs/containers/overview#switching-at-any-time)) - restarting
-> with different environment variables does not switch an existing instance.
+> with a different startup config does not switch an existing instance.
 
 ## The shape of a cloud deployment
 
