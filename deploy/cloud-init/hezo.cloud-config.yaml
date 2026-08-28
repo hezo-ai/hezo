@@ -20,33 +20,25 @@
 #
 # OPTIONAL — managed data hosting: to keep the database in a managed Postgres
 # and/or asset files in an S3-compatible bucket, uncomment and edit the
-# /etc/hezo/hezo.config.cjs block below. Step-by-step guide:
+# /etc/hezo/deploy.env lines under runcmd. Step-by-step guide:
 # docs/deployment/one-click.md § Using managed data hosting.
 # ---------------------------------------------------------------------------
 package_update: true
 packages:
   - curl
 
-# To use a managed database and/or object storage for assets, uncomment this
-# block and fill in the URLs. Remove either setting if you do not use it.
-# write_files:
-#   - path: /etc/hezo/hezo.config.cjs
-#     owner: root:root
-#     permissions: '0600'
-#     content: |
-#       const { existsSync, readFileSync } = require('node:fs');
-#       const webUrlFile = '/etc/hezo/web-url';
-#       module.exports = {
-#         dataDir: '/var/lib/hezo',
-#         webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
-#         database: { url: 'postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' },
-#         assetStorage: { url: 's3://ACCESS_KEY:SECRET@endpoint/bucket' },
-#       };
-
 runcmd:
   # To change the swap size (default 6G; set 0 to disable), set this before the curl line:
   # - [ sh, -c, "echo 'HEZO_SWAP_SIZE=2G' >> /etc/environment" ]
   # To use your own domain, set this before the curl line (A record must point here first):
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]
+  # To use a managed database and/or object storage for assets, seed the URLs into
+  # /etc/hezo/deploy.env (root-only, mode 600 — not /etc/environment: they carry credentials).
+  # provision.sh persists them into the service's config file. sslmode=require encrypts
+  # without verifying the certificate; for verified TLS use sslmode=verify-full plus
+  # &sslrootcert=/etc/hezo/db-ca.crt when the provider signs with its own CA (most do).
+  # - [ sh, -c, "install -d -m 700 /etc/hezo && install -m 600 /dev/null /etc/hezo/deploy.env" ]
+  # - [ sh, -c, "echo 'HEZO_DATABASE_URL=postgres://hezo:PASSWORD@db-host:5432/hezo?sslmode=require' >> /etc/hezo/deploy.env" ]
+  # - [ sh, -c, "echo 'HEZO_ASSET_STORAGE_URL=s3://ACCESS_KEY:SECRET@endpoint/bucket' >> /etc/hezo/deploy.env" ]
   - [ sh, -c, "curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.sh -o /root/hezo-provision.sh" ]
   - [ sh, -c, "set -a; [ -f /etc/environment ] && . /etc/environment; set +a; bash /root/hezo-provision.sh" ]
