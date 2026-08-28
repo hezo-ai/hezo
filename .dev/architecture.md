@@ -5596,6 +5596,19 @@ plain text on all three surfaces, so a stripped body is the only form that reads
 rather than source. `buildHighlightedSnippet` (search results) normalises through the same
 function, so one strip serves every preview line in the product.
 
+**Inbox ordering is a view concern, and its comparator is total.** Approvals and mentions
+arrive from two endpoints, each already `created_at DESC`, and are merged in the browser
+(`components/inbox-view.tsx`) - so the order the user sees is decided client-side and
+nothing about it reaches SQL. `compareInboxRowsForSort` (`web/src/lib/inbox-sort.ts`) is
+the single home for it: newest or oldest by `created_at`, then **the row key**
+(`approval:<id>` / `mention:<id>`) as a tiebreak. The tiebreak is load-bearing rather than
+cosmetic - two feeds interleaved on one timestamp otherwise sit in whatever order the merge
+produced, which is not stable across renders. The chosen order lives in each inbox route's
+`sort` search param, written as absent for the default, so a link carries it and the
+project and global inboxes hold it independently. The two dashboard previews stay
+newest-first: they are top-N previews, not lists, and the parity contract above is about
+which rows they carry, not their order.
+
 **Task list ordering: two tiers, then the chosen sort.** `buildTaskListOrderBy`
 (`lib/task-sort.ts`) prefixes every sort mode of `GET /api/projects/:projectId/tasks` with
 two boolean keys, so the caller's sort only orders *within* a tier:
