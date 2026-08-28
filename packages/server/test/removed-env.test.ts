@@ -260,6 +260,19 @@ describe('configuration documentation after the environment-variable migration',
 		expect(hezoEnvNames).toEqual(['HEZO_IMAGE_BUILD', 'HEZO_MASTER_KEY']);
 	});
 
+	it('keeps hosted recovery and logout claims consistent with runtime state', () => {
+		const design = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
+
+		expect(design).toMatch(/the\s+droplet still carries required local state/);
+		expect(design).toMatch(/Restore `\/var\/lib\/hezo` from backup/);
+		expect(design).toMatch(/Logout is a two-session browser flow/);
+		expect(design).toMatch(/Neither step revokes the instance JWT\s+server-side/);
+		expect(design).not.toContain('near-stateless');
+		expect(design).not.toContain('without data loss');
+		expect(design).not.toContain('scratch only');
+		expect(design).not.toContain('Logout stays instance-local');
+	});
+
 	it.each([
 		'docs/getting-started/installation.md',
 		'docs/deployment/container-runtimes.md',
