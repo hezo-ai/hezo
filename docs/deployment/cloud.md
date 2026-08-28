@@ -64,9 +64,11 @@ See the [Configuration reference](/docs/deployment/configuration) for every opti
 ## Managed database & asset storage
 
 Local disk is the default, not a requirement: point Hezo at a **managed Postgres**
-and/or an **S3-compatible bucket** and the server itself becomes nearly stateless -
-the data directory then holds only workspaces, SSH/signing keys, and pre-migration
-backups. Each backend is one setting, adoptable independently:
+and/or an **S3-compatible bucket** to move database rows and asset files off the
+server. Managed backends do not replace a `dataDir` backup: the server still holds
+workspaces, worktrees, and instance keys that a replacement host needs. Back up or
+snapshot that directory before replacing the server. Each backend is one setting,
+adoptable independently:
 
 1. **Provision a PostgreSQL 14+ instance** in the same region as your server (Hezo's
    scheduling polls every 1-5 seconds, so latency counts), with TLS. Direct,

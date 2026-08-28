@@ -254,6 +254,7 @@ describe('configuration documentation after the environment-variable migration',
 		expect(design).toContain('/etc/hezo/hezo.config.cjs');
 		expect(design).not.toContain('/etc/hezo/hezo.env');
 		expect(design).toContain('`sso.issuerUrl`');
+		expect(design).toContain('`sso.logoutUrl`');
 		expect(design).toContain('`sso.issuerPublicKey`');
 		expect(design).toContain('`sso.ownerSubject`');
 		expect(design).toContain('`sso.audience`');
@@ -262,15 +263,47 @@ describe('configuration documentation after the environment-variable migration',
 
 	it('keeps hosted recovery and logout claims consistent with runtime state', () => {
 		const design = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
+		const oneClick = readFileSync(join(REPO_ROOT, 'docs/deployment/one-click.md'), 'utf8');
+		const cloud = readFileSync(join(REPO_ROOT, 'docs/deployment/cloud.md'), 'utf8');
+		const publicDocs = `${oneClick}\n${cloud}`;
 
 		expect(design).toMatch(/the\s+droplet still carries required local state/);
 		expect(design).toMatch(/Restore `\/var\/lib\/hezo` from backup/);
+		expect(design).toContain('The export bundle includes `/var/lib/hezo`');
+		expect(design).toMatch(/The cold archive includes\s+the final `\/var\/lib\/hezo` snapshot/);
+		expect(design).toMatch(
+			/verify the `\/var\/lib\/hezo` snapshot before destroying\s+the droplet/,
+		);
+		expect(design).toContain(
+			'`dataDir` | `/var/lib/hezo` | persistent workspaces, worktrees, and instance keys',
+		);
+		expect(design).toContain('database dump + bucket export + `dataDir` archive');
 		expect(design).toMatch(/Logout is a two-session browser flow/);
 		expect(design).toMatch(/Neither step revokes the instance JWT\s+server-side/);
+		expect(design).toContain('SSO tokens assert identity only');
+		expect(design).toContain('historical planning record');
+		expect(design).toMatch(
+			/The former\s+`unlock_key` field and `system:unlock` subject are obsolete/,
+		);
+		expect(oneClick).toContain('Managed backends do not make the server disposable');
+		expect(oneClick).toContain('`/var/lib/hezo` still holds workspaces and keys');
+		expect(oneClick).toMatch(
+			/`\/var\/lib\/hezo` still holds workspaces and keys\s+-\s+keep backing it up/,
+		);
+		expect(cloud).toContain('Managed backends do not replace a `dataDir` backup');
+		expect(cloud).toContain('workspaces, worktrees, and instance keys');
+		expect(publicDocs).not.toContain('little worth losing');
+		expect(publicDocs).not.toContain('nearly stateless');
 		expect(design).not.toContain('near-stateless');
 		expect(design).not.toContain('without data loss');
 		expect(design).not.toContain('scratch only');
 		expect(design).not.toContain('Logout stays instance-local');
+		expect(design).not.toContain('the token carries the unlock key');
+		expect(design.match(/unlock_key/g)).toHaveLength(1);
+		expect(design.match(/system:unlock/g)).toHaveLength(1);
+		expect(design).not.toContain('unlock-key custody');
+		expect(design).not.toContain('proactive re-unlock');
+		expect(design).not.toContain('auto-unlock');
 	});
 
 	it.each([

@@ -118,10 +118,11 @@ read them before you paste if you'd like to see exactly what runs.
 By default the deploy keeps everything on the server's own disk: the embedded database
 and asset files both live under `/var/lib/hezo`. That's a fine place to start - but you
 can just as well point Hezo at a **managed Postgres** for the database and an
-**S3-compatible bucket** for assets, so your provider handles database backups and
-storage durability and the server itself holds little worth losing. Each one is a single
-URL setting, and you can adopt either independently - managed database with local
-assets, or the other way around.
+**S3-compatible bucket** for assets. Your provider then handles database backups and
+asset-storage durability. Managed backends do not make the server disposable:
+`/var/lib/hezo` still holds workspaces and keys, so back up or snapshot that directory
+too. Each backend is a single URL setting, and you can adopt either independently -
+managed database with local assets, or the other way around.
 
 ### 1. Provision the database
 

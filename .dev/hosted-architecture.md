@@ -1,16 +1,16 @@
 # Hosted Hezo — Architecture
 
-**Status (2026-08).** Written 2026-05/06 (#397, #594) and not built: none of the
-*Hezo-core changes* below exists in the tree. The analysis still holds - every seam it
-names still resolves - so this remains the design of record for hosted, not a historical
-note.
+**Status (2026-08).** This is a historical planning record written in 2026-05/06
+(#397, #594). [`hezo-cloud-requirements.md`](./hezo-cloud-requirements.md) is newer
+and supersedes this document's Hezo-core changes and SSO/unlock design. The current
+tree implements the identity-only SSO flow described there. The topology, storage,
+and cost analysis below remains useful background, but this file is not the current
+design of record for those superseded areas.
 
-This document is the single reference for the hosted, click-to-signup version of
-Hezo: the tenant topology, storage, SSO/unlock design, the control plane at
-`app.hezo.ai`, DigitalOcean provisioning, the (small) set of Hezo-core changes,
-and the build phasing. It is a design reference for a build-out that lives
-mostly *outside* this repo; the core changes it requires are enumerated in
-§ "Hezo-core changes".
+This document records the original plan for the hosted, click-to-signup version of
+Hezo: the tenant topology, storage, control plane at `app.hezo.ai`, DigitalOcean
+provisioning, and build phasing. Superseded passages have been reconciled with the
+current implementation so they do not prescribe an obsolete security flow.
 
 - **Product shape:** a user signs up at `app.hezo.ai`, gets their own always-on
   Hezo instance at `username.app.hezo.ai`, and is signed in to it from the
@@ -76,10 +76,10 @@ shared kernel and daemon. More work, weaker isolation.
 
 ```
                     ┌──────────────── app.hezo.ai (control plane, new repo) ───────────────┐
- signup / login ──▶ │  accounts · sessions · Stripe billing · SSO issuer · unlock-key       │
-                    │  custody · provisioner · job worker · health monitor · fleet versions │
+ signup / login ──▶ │  accounts · sessions · Stripe billing · SSO issuer · provisioner      │
+                    │  job worker · health monitor · fleet versions                          │
                     └──────┬──────────────────────────────┬──────────────────┬─────────────┘
-                           │ provisions / unlocks / SSO   │                  │
+                           │ provisions / routes / SSO    │                  │
               ┌────────────▼───┐            ┌─────────────▼──┐        ┌──────▼─────────┐
               │ tenant droplet │            │ tenant droplet │  ...   │ tenant droplet │
               │ Caddy ─ hezo   │            │ Caddy ─ hezo   │        │ Caddy ─ hezo   │
@@ -104,8 +104,8 @@ runtime scratch. Restore `/var/lib/hezo` from backup before starting a
 replacement droplet, then reconnect the managed database and bucket; the golden
 image alone is not a complete recovery.
 
-The control plane never reads a tenant's database content; it provisions,
-routes, unlocks, and lifecycle-manages.
+The control plane never reads a tenant's database content or receives master-key
+material; it provisions, routes, and lifecycle-manages.
 
 ## Auth: control-plane accounts, SSO, and unlock
 
@@ -118,49 +118,34 @@ links go out via Resend, the existing hezo.ai sender). Successful auth sets an
 httpOnly session cookie. Signup collects the `username` subdomain (unique,
 reserved-word denylist).
 
-### First-run setup and unlock-key custody
+### First-run setup and the master-key boundary
 
-At first setup on a fresh instance the hosted wizard runs the existing
-in-browser flow: generate the 12-word mnemonic, show it, require the user to
-save it, `POST /api/auth/setup` to the instance. Then — mandatory, hosted-only —
-the browser **pushes the derived 32-byte unlock key to
-`app.hezo.ai/api/account/unlock-key`** (authenticated by the control-plane
-session cookie, CORS-scoped). Setup is not complete until this succeeds.
+At first setup on a fresh instance, the hosted wizard runs the existing in-browser
+flow: generate the 12-word mnemonic, show it, require the user to save it, and
+`POST /api/auth/setup` to the instance. The phrase and its derived key stay between
+the user's browser and the instance. The control plane must never accept, store,
+log, or forward either form.
 
-- What is stored is the **unlock key, never the 12 words** — the mnemonic and
-  the mnemonic-derived Ed25519 auth seed never leave the browser. The control
-  plane can unlock instances; it can never reconstruct the phrase.
-- At rest the key is encrypted in the control-plane DB under a KMS-wrapped data
-  key (AWS KMS — DigitalOcean has no KMS; the control plane's secret store is
-  an acceptable stand-in until the KMS wiring lands), decrypted per use, with
-  every decrypt audited.
-- **The instance never sees the custody path and never persists the key.** The
-  one-shot `HEZO_MASTER_KEY` input is never written to a file or unit; the core
-  in-memory-only invariant holds unchanged.
-- The 12 words remain the user's recovery root: manual unlock at the gate
-  still works, and they are the exit path to self-hosting with their own data.
+After a reboot or service restart, the instance comes up locked and the user unlocks
+it through the ordinary mnemonic gate. A valid SSO assertion can park the verified
+identity until that unlock completes, but it cannot unlock the instance. The former
+`unlock_key` field and `system:unlock` subject are obsolete and are superseded by
+[`hezo-cloud-requirements.md`](./hezo-cloud-requirements.md) and the current auth
+implementation.
 
-Threat posture (stated, not optional): the control plane holds tenant unlock
-keys *and* the managed-PG admin credentials, so a control-plane compromise can
-decrypt tenant instances. Mitigations: KMS wrapping, per-use decryption, audit
-trail, alerting on unlocks outside a restart window. This is the deliberate
-trade for a hosted product whose instances survive restarts without user
-intervention.
+### SSO into the instance - identity only
 
-### SSO into the instance — the token carries the unlock key
-
-One flow serves login *and* unlock. There is **no admin password on hosted
-instances**: the hosted wizard never enrolls a password verifier, and the gate
-offers only "Continue with hezo.ai" (plus the manual mnemonic unlock as
-recovery). The password machinery stays fully intact in core for self-hosted
-installs.
+SSO tokens assert identity only. They carry no key material, and accepting one never
+changes the master-key state. A hosted gate may offer "Continue with hezo.ai" for
+identity, but a locked instance still requires the ordinary mnemonic unlock. The
+password machinery remains intact for self-hosted installs.
 
 Token: a canonical signed string in the style of the existing
 `hezo-auth-v1:*` messages (`packages/shared/src/crypto/auth.ts`), domain tag
 `hezo-sso-v1:`, signed with the control plane's Ed25519 **issuer key**:
 
 ```
-payload: kid · aud (instance host) · sub (account_id) · jti · iat · exp (+60s) · unlock_key
+payload: kid · aud (instance host) · sub (account_id) · jti · iat · exp (+60s)
 ```
 
 Flows:
@@ -184,32 +169,25 @@ Instance-side verification (`POST /api/auth/sso`):
    tenant A is unusable at tenant B even though one issuer key signs for all.
 3. `iat`/`exp` window (≤60s, small clock skew allowance).
 4. `jti` unused (small in-memory replay cache; the 60s expiry bounds its size).
-5. If the master key is locked, `masterKeyManager.unlock(unlock_key)` — the
-   existing canary check rejects a wrong key.
-6. `sub` maps through `user_auth_methods(provider='hezo_cloud',
-   provider_user_id=sub)`; the row is auto-created bound to the single
-   superuser iff `sub == sso.ownerSubject` (the configured owning account id -
-   defense in depth on top of the control plane's ownership
-   check). Any other `sub` is rejected.
-7. Mint the normal 7-day admin session via the existing `signAdminJwt`.
-   Everything downstream — REST bearer, WebSocket `?token=` — is unchanged.
+5. `sub` equals the configured `sso.ownerSubject`. Any other subject is rejected.
+6. If the instance is unlocked, mint the normal admin session. If it is locked,
+   mint nothing and return a short-lived, single-use in-memory handle for the
+   verified identity. After the user completes the ordinary unlock, the browser
+   redeems that handle through `POST /api/auth/sso/session` for the normal session.
 
-A login-style throttle (same in-memory pattern as `routes/auth.ts`) guards the
-endpoint. Logout is a two-session browser flow: the instance clears its local
+The SSO throttle runs after verification so invalid traffic cannot block a valid
+assertion. Logout is a two-session browser flow: the instance clears its local
 7-day JWT, then redirects to the required `sso.logoutUrl` so the control plane
 can clear its own session cookie. Neither step revokes the instance JWT
 server-side, so a retained copy remains valid until expiry; hard revocation is
 instance suspension.
 
-### Proactive re-unlock after restarts
+### Restarts stay locked
 
-Version rollouts and reboots restart the server, which by design comes up
-locked. Waiting for the user's next visit would silently pause their agents,
-so the control plane's health monitor watches `GET /api/status` and, on
-`masterKeyState: 'locked'`, mints the same signed token shape with
-`sub = system:unlock` and POSTs it to `/api/auth/sso`. The instance unlocks
-and mints **no session** for the system subject. One endpoint, two consumers;
-restarts become invisible to the user.
+Version rollouts and reboots restart the server, which by design comes up locked.
+SSO does not change that state. The health monitor may report the lock, but the user
+must complete the ordinary mnemonic unlock before the parked SSO identity can become
+a local session.
 
 ## Control plane (`app.hezo.ai`)
 
@@ -223,11 +201,11 @@ Three stateless processes from one codebase, coordinated through the control
 plane's own Postgres database (never a tenant DB):
 
 - **web/api** — Hono: marketing-agnostic app shell, account auth, dashboard,
-  Stripe webhooks, SSO issuer, unlock-key custody API, fleet state API.
+  Stripe webhooks, SSO issuer, fleet state API.
 - **worker** — job runner over a `provisioning_jobs` table
   (`FOR UPDATE SKIP LOCKED` poll loop; idempotent resumable steps).
 - **monitor** — health loop (per-instance `GET /api/status` every ~60s),
-  drives auto-unlock and alerting.
+  records lock and availability state for alerts.
 
 ### Schema sketch
 
@@ -254,7 +232,6 @@ provisioning_jobs(id, instance_id FK,
          kind enum('create','destroy','suspend','resume','upgrade','rotate_creds'),
          state enum('pending','running','waiting_retry','succeeded','failed','cancelled'),
          step, attempt, max_attempts, run_after, last_error, payload jsonb)
-unlock_keys(instance_id PK FK, encrypted_key bytea, key_kid, created_at, last_used_at)
 sso_issuer_keys(kid PK, public_key_hex, private_key_wrapped, active, created_at)
 audit_events(id, account_id, instance_id, actor enum('user','system','stripe','monitor'),
          type, payload jsonb, created_at)                         -- append-only
@@ -268,9 +245,11 @@ audit_events(id, account_id, instance_id, actor enum('user','system','stripe','m
   days) enqueue `suspend`.
 - `invoice.paid` on a suspended instance → `resume`.
 - `customer.subscription.deleted` → `destroy_scheduled` with
-  `destroy_after = now() + 30d`, an export email (pg_dump + bucket sync +
-  "Hezo is GPL — take the binary and self-host"), then `destroy` after grace
-  with a final logical backup + bucket snapshot to cold storage.
+  `destroy_after = now() + 30d`. The export bundle includes `/var/lib/hezo`,
+  a logical database dump, and a bucket sync, plus the GPL binary and
+  self-hosting instructions. After the grace period, prepare the final archive.
+  The cold archive includes the final `/var/lib/hezo` snapshot, logical database
+  backup, and bucket snapshot before `destroy` runs.
 - Stripe webhooks are the only writer of `subscriptions`; card/plan management
   goes through the Stripe customer portal.
 
@@ -293,11 +272,13 @@ audit_events(id, account_id, instance_id, actor enum('user','system','stripe','m
    until it reports `masterKeyState: 'unset'` (timeout ~10 min →
    `waiting_retry` with backoff, then `error` + operator alert).
 7. `done` — `status = running`; the user's first visit runs the in-browser
-   master-key setup + unlock-key push (§ above).
+   master-key setup described above.
 
 Failure past `max_attempts` runs a compensating teardown of whichever steps
 completed (droplet / DNS / bucket / db are all recorded on the instance row).
-`destroy` is the same list reversed, snapshot first.
+`destroy` is the same list reversed. Capture the managed database and bucket
+backups, then capture and verify the `/var/lib/hezo` snapshot before destroying
+the droplet.
 
 ### Lifecycle
 
@@ -311,11 +292,13 @@ completed (droplet / DNS / bucket / db are all recorded on the instance row).
   downloads, verifies the checksum, swaps `/usr/local/bin/hezo`, restarts the
   service, and reports back. `updates.disabled: true` in the instance config
   keeps the core self-updater off; rollouts stage by cohort (canary
-  N≈5 → fleet). Restart-induced locks are healed by the proactive re-unlock.
-  Pull-based means **no steady-state inbound SSH** to tenant droplets.
+  N≈5 → fleet). A restart leaves the instance locked until the user completes
+  the ordinary unlock. Pull-based means **no steady-state inbound SSH** to
+  tenant droplets.
 - **Health monitor:** `GET /api/status` per running instance (~60s, batched);
-  stores `{masterKeyState, passwordSet, version}`. `locked` → auto-unlock;
-  unreachable ×3 → alert + dashboard surface.
+  stores `{masterKeyState, passwordSet, version}`. A locked or repeatedly
+  unreachable instance produces an alert and dashboard state; the monitor does
+  not supply master-key material.
 
 ## Routing & certificates
 
@@ -401,44 +384,25 @@ other tenant's hostname.
 | `sso.issuerPublicKey` | `<kid1>:<hex>[,<kid2>:<hex>]` | list enables issuer rotation |
 | `sso.ownerSubject` | `<account uuid>` | owner pin |
 | `sso.audience` | `<sub>.app.hezo.ai` | exact host accepted in the token `aud` |
-| one-shot `HEZO_MASTER_KEY` input | **never persisted** | custody + SSO unlock replace it; the in-memory-only invariant holds |
+| one-shot `HEZO_MASTER_KEY` input | **never persisted** | optional input for one non-interactive startup; SSO never carries or replaces it |
 
 Secrets in this file are per-tenant scoped by construction — a compromised
 droplet exposes only that tenant's database and bucket. A `rotate_creds` job
 can re-issue both.
 
-## Hezo-core changes (the complete list)
+## Hezo-core changes (superseded)
 
-Everything else in this document is control-plane work. Core changes are
-additive and inert unless the SSO config is present:
+[`hezo-cloud-requirements.md`](./hezo-cloud-requirements.md) supersedes the
+original list. The current tree already contains the identity-only token format
+in `packages/shared/src/crypto/sso.ts`, the file-only `sso` config block, the
+two-phase SSO routes, the public-route entries, hosted status fields, and the web
+gate. These changes are additive and inert when the `sso` block is absent.
 
-1. `packages/shared/src/crypto/auth.ts` — one new builder,
-   `buildSsoTokenMessage(kid, aud, sub, jti, iat, exp, unlockKeyHex)`
-   (`hezo-sso-v1:` domain tag); the existing `verifyAuthSignature` verifies.
-2. `packages/server/src/config/schema.ts` and `packages/server/src/cli.ts` - the
-   file-only `sso` block: `sso.issuerUrl`, `sso.logoutUrl`,
-   `sso.issuerPublicKey`, `sso.ownerSubject`, and `sso.audience` (+ docs sync
-   per repo rules).
-3. `packages/server/src/routes/auth.ts` (or a sibling `routes/sso.ts`) — one
-   endpoint, `POST /api/auth/sso`: verify → unlock-if-locked → bind `sub` via
-   `user_auth_methods` → mint the session with the existing `signAdminJwt`;
-   the `system:unlock` subject unlocks without minting. In-memory jti replay
-   cache + login-style throttle.
-4. `packages/server/src/middleware/auth.ts` — add `/api/auth/sso` to
-   `PUBLIC_PATHS`.
-5. `packages/server/src/startup.ts` — `/api/status` gains `sso`/`hosted`
-   fields so the gate knows what to render.
-6. `packages/web` — hosted gate: `#sso=` fragment handler + "Continue with
-   hezo.ai" redirect, no password form; hosted setup wizard: mnemonic save →
-   mandatory unlock-key push to the control plane, no password enrollment;
-   hide the self-update UI when hosted.
-7. `deploy/` — a hosted Packer image variant (fleet agent baked in, firstboot
-   sslip.io logic disabled). Additive; the marketplace image is untouched.
-
-**No database migration is needed** — `user_auth_methods` already exists in
-the baseline schema with exactly the right shape. Master-key/unlock semantics,
-password challenge-response, the JWT scheme, the migrations runner, and the
-storage/asset drivers are all unchanged.
+The lock boundary is unchanged: SSO verifies and parks identity, while the
+ordinary master-key flow unlocks the instance. The SSO routes never receive key
+material. No database migration or separate SSO identity table is required;
+the configured owner maps to the existing local superuser when a session is
+minted.
 
 ## Cost posture
 
@@ -481,18 +445,17 @@ login-style throttle.
 - **M1 — private alpha** (invite-only, ~5–10 tenants): `hezo-ai/cloud`
   skeleton (accounts + magic-link/OAuth login, sessions, instances, jobs +
   worker), DO provisioner, create/destroy, per-droplet ACME routing, SSO +
-  unlock-key custody end-to-end (core changes 1–6; secret-store encryption
-  acceptable, KMS in M2), proactive auto-unlock, health monitor + a basic
-  dashboard. No billing.
+  the user-mediated unlock flow, health monitor + a basic dashboard. No billing.
 - **M2 — paid beta:** Stripe (checkout, webhooks, dunning → suspend/resume),
-  KMS wrapping for key custody, fleet agent + staged version rollouts,
-  destroy-with-grace + final export snapshot, audit events.
+  fleet agent + staged version rollouts, destroy-with-grace + verified database,
+  bucket, and `dataDir` archives, audit events.
 - **M3 — GA / open signup:** the routing proxy layer with central rate
   limiting and instant suspend (mandatory before open signup, given the LE
   cert-rate cap and the abuse surface), PG cluster sharding + capacity-aware
   placement, monitoring/alerting (uptime, cert expiry, disk), abuse controls,
   an SSO issuer-key rotation drill, a restore-from-backup runbook, and the
-  self-host offboarding path (pg_dump + bucket export + the GPL binary).
+  self-host offboarding path (database dump + bucket export + `dataDir` archive
+  + the GPL binary).
 
 ## Assumptions flagged for verification (S2 unless noted)
 
@@ -507,18 +470,16 @@ login-style throttle.
    fallback behaviour.
 5. **Cloudflare**: second-level subdomain certs need Advanced Certificate
    Manager / Cloudflare-for-SaaS (GA proxy option only).
-6. **No DO KMS** — AWS KMS cross-cloud for custody wrapping (or the
-   secret-store stand-in until M2).
-7. `updates.disabled` keeps the in-app updater off when the fleet agent owns
+6. `updates.disabled` keeps the in-app updater off when the fleet agent owns
    releases; it is written in the same config file as the tenant storage and SSO settings.
-8. DO VPC private connectivity droplet → managed PG within a region.
-9. Clock skew: droplets run NTP; the 60s token window assumes ≤ a few seconds
+7. DO VPC private connectivity droplet → managed PG within a region.
+8. Clock skew: droplets run NTP; the 60s token window assumes ≤ a few seconds
    of skew — confirm on the golden image.
 
 ## Key files referenced
 
-- `packages/shared/src/crypto/{auth.ts, mnemonic.ts}` — key derivation, signed
-  message builders (the SSO token builder lands here).
+- `packages/shared/src/crypto/{auth.ts,sso.ts}` — signature verification and
+  the current identity-only SSO token format.
 - `packages/server/src/crypto/master-key.ts` — `MasterKeyManager`, unlock,
   canary, JWT-key derivation.
 - `packages/server/src/routes/auth.ts`, `middleware/auth.ts` — auth routes,
@@ -529,7 +490,7 @@ login-style throttle.
 - `packages/server/src/assets/` — S3 asset storage (`parseAssetStorageUrl`).
 - `packages/server/src/config/schema.ts`, `config/types.ts`, and `cli.ts` - the
   config-file schema and resolved runtime configuration.
-- `packages/server/migrations/001_initial_schema.sql` — `user_auth_methods`
-  (the SSO identity seam), the single-tenant unique constraints.
+- `packages/server/migrations/001_initial_schema.sql` — the single-tenant
+  constraints the hosted design builds around.
 - `deploy/provision.sh`, `deploy/cloud-init/`, `deploy/marketplace/` — the
   provisioning assets the golden image extends.
