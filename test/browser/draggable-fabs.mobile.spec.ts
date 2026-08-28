@@ -110,11 +110,17 @@ test.describe('Draggable floating buttons (portrait mobile)', () => {
 		expect(Math.abs(remounted.y - dragged.y)).toBeLessThan(2);
 
 		// On desktop (gate off) the launcher is back at its fixed bottom-right
-		// corner, and dragging does nothing.
+		// corner, and dragging does nothing. The snap-back runs through a
+		// matchMedia change, a React re-render and a fresh layout, none of which
+		// setViewportSize waits for — so read the box only once the button has
+		// crossed back, or its dragged mid-left position is measured as the desktop
+		// corner (x=16 against an expected >640).
 		await page.setViewportSize({ width: 1280, height: 900 });
+		await expect
+			.poll(async () => (await launcher.boundingBox())?.x ?? -1, { timeout: 5000 })
+			.toBeGreaterThan(1280 / 2);
 		const desktop = await launcher.boundingBox();
 		if (!desktop) throw new Error('Missing layout box');
-		expect(desktop.x).toBeGreaterThan(1280 / 2);
 		expect(desktop.y).toBeGreaterThan(900 / 2);
 		await dragTo(page, launcher, 200, 200);
 		const afterDesktopDrag = await launcher.boundingBox();
