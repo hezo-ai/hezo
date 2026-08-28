@@ -178,7 +178,7 @@ Instance-side verification (`POST /api/auth/sso`):
 
 1. Signature verifies against `sso.issuerPublicKey` (a `kid:hex` list,
    so issuer keys can rotate) via the existing `verifyAuthSignature`.
-2. `aud` equals the instance's configured `sso.audience` host — a token minted for
+2. `aud` equals the instance's configured `sso.audience` host - a token minted for
    tenant A is unusable at tenant B even though one issuer key signs for all.
 3. `iat`/`exp` window (≤60s, small clock skew allowance).
 4. `jti` unused (small in-memory replay cache; the 60s expiry bounds its size).
@@ -186,7 +186,7 @@ Instance-side verification (`POST /api/auth/sso`):
    existing canary check rejects a wrong key.
 6. `sub` maps through `user_auth_methods(provider='hezo_cloud',
    provider_user_id=sub)`; the row is auto-created bound to the single
-   superuser iff `sub == sso.ownerSubject` (the configured owning account id —
+   superuser iff `sub == sso.ownerSubject` (the configured owning account id -
    defense in depth on top of the control plane's ownership
    check). Any other `sub` is rejected.
 7. Mint the normal 7-day admin session via the existing `signAdminJwt`.
@@ -385,8 +385,8 @@ other tenant's hostname.
 | Config key | Value | Note |
 |---|---|---|
 | `port` | `3100` | behind local Caddy |
-| `dataDir` | `/var/lib/hezo` | scratch only — DB and assets are external |
-| `database.url` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § 12 (*External TLS (`sslmode`)*)): encrypted, certificate not verified — accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
+| `dataDir` | `/var/lib/hezo` | scratch only - DB and assets are external |
+| `database.url` | `postgres://hezo_t_<id>:<pw>@<cluster-private-host>:25060/hezo_t_<id>?sslmode=require` | per-tenant role + database. `require` is libpq-semantic (see `.dev/architecture.md` § 12 (*External TLS (`sslmode`)*)): encrypted, certificate not verified - accepted here because the host is the cluster's private VPC address. Verifying it would mean `sslmode=verify-full&sslrootcert=` with the DO cluster CA placed by provisioning. |
 | `database.poolSize` | `4` | superseded: see § H14, a pooler decouples this from cluster sizing |
 | `assetStorage.url` | `s3://<KEY>:<SECRET>@<region>.digitaloceanspaces.com/hezo-t-<shortid>?region=…` | per-bucket key |
 | `webUrl` | `https://<sub>.app.hezo.ai` | public base URL |
@@ -412,7 +412,7 @@ additive and inert unless the SSO config is present:
 1. `packages/shared/src/crypto/auth.ts` — one new builder,
    `buildSsoTokenMessage(kid, aud, sub, jti, iat, exp, unlockKeyHex)`
    (`hezo-sso-v1:` domain tag); the existing `verifyAuthSignature` verifies.
-2. `packages/server/src/config/schema.ts` and `packages/server/src/cli.ts` — the
+2. `packages/server/src/config/schema.ts` and `packages/server/src/cli.ts` - the
    file-only `sso` block: `sso.issuerUrl`, `sso.logoutUrl`,
    `sso.issuerPublicKey`, `sso.ownerSubject`, and `sso.audience` (+ docs sync
    per repo rules).
@@ -524,7 +524,7 @@ login-style throttle.
   `db/migrate-external.ts` — external-Postgres support the hosted storage
   rides on.
 - `packages/server/src/assets/` — S3 asset storage (`parseAssetStorageUrl`).
-- `packages/server/src/config/schema.ts`, `config/types.ts`, and `cli.ts` — the
+- `packages/server/src/config/schema.ts`, `config/types.ts`, and `cli.ts` - the
   config-file schema and resolved runtime configuration.
 - `packages/server/migrations/001_initial_schema.sql` — `user_auth_methods`
   (the SSO identity seam), the single-tenant unique constraints.
