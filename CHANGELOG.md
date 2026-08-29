@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.56.0 - 2026-08-28
+
+### Features
+
+- **assets:** add a sortable list view to the asset library ([#1060](https://github.com/hezo-ai/hezo/pull/1060))
+- **web:** lead with the subscription when a provider has one ([#1058](https://github.com/hezo-ai/hezo/pull/1058))
+- **web:** sort the inbox newest or oldest first ([#1054](https://github.com/hezo-ai/hezo/pull/1054))
+
+### Bug Fixes
+
+- **providers:** submit the guided sign-in code with a carriage return ([#1055](https://github.com/hezo-ai/hezo/pull/1055))
+- **connectors:** report an unverifiable probe as a notice, not a failure ([#1056](https://github.com/hezo-ai/hezo/pull/1056))
+
+### Tests
+
+- **browser:** read a moving layout in one pass, not several ([#1057](https://github.com/hezo-ai/hezo/pull/1057))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.55.0...0.56.0
+
 ## 0.55.0 - 2026-08-28
 
 ### Features
