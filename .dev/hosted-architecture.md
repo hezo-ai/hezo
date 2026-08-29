@@ -179,8 +179,9 @@ The SSO throttle runs after verification so invalid traffic cannot block a valid
 assertion. Logout is a two-session browser flow: the instance clears its local
 7-day JWT, then redirects to the required `sso.logoutUrl` so the control plane
 can clear its own session cookie. Neither step revokes the instance JWT
-server-side, so a retained copy remains valid until expiry; hard revocation is
-instance suspension.
+server-side, so a retained copy remains valid until expiry. Suspension cuts off access to
+the instance by powering it off and routing traffic away; it does not invalidate an
+already-minted JWT.
 
 ### Restarts stay locked
 

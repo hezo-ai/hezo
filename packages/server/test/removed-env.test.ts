@@ -263,9 +263,13 @@ describe('configuration documentation after the environment-variable migration',
 
 	it('keeps hosted recovery and logout claims consistent with runtime state', () => {
 		const design = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
+		const architecture = readFileSync(join(REPO_ROOT, '.dev/architecture.md'), 'utf8');
+		const backup = readFileSync(join(REPO_ROOT, 'docs/deployment/backup-and-recovery.md'), 'utf8');
+		const configuration = readFileSync(join(REPO_ROOT, 'docs/deployment/configuration.md'), 'utf8');
+		const cli = readFileSync(join(REPO_ROOT, 'docs/reference/cli.md'), 'utf8');
 		const oneClick = readFileSync(join(REPO_ROOT, 'docs/deployment/one-click.md'), 'utf8');
 		const cloud = readFileSync(join(REPO_ROOT, 'docs/deployment/cloud.md'), 'utf8');
-		const publicDocs = `${oneClick}\n${cloud}`;
+		const publicDocs = `${backup}\n${configuration}\n${cli}\n${oneClick}\n${cloud}`;
 
 		expect(design).toMatch(/the\s+droplet still carries required local state/);
 		expect(design).toMatch(/Restore `\/var\/lib\/hezo` from backup/);
@@ -280,6 +284,8 @@ describe('configuration documentation after the environment-variable migration',
 		expect(design).toContain('database dump + bucket export + `dataDir` archive');
 		expect(design).toMatch(/Logout is a two-session browser flow/);
 		expect(design).toMatch(/Neither step revokes the instance JWT\s+server-side/);
+		expect(design).toMatch(/Suspension cuts off access to\s+the instance/);
+		expect(design).not.toContain('hard revocation is instance suspension');
 		expect(design).toContain('SSO tokens assert identity only');
 		expect(design).toContain('historical planning record');
 		expect(design).toMatch(
@@ -292,6 +298,20 @@ describe('configuration documentation after the environment-variable migration',
 		);
 		expect(cloud).toContain('Managed backends do not replace a `dataDir` backup');
 		expect(cloud).toContain('workspaces, worktrees, and instance keys');
+		expect(backup).not.toMatch(/captures a \*\*complete instance\*\*|whole instance \(database/i);
+		expect(configuration).not.toContain('moves the whole instance');
+		expect(cli).not.toMatch(/captures a \*\*complete instance\*\*/i);
+		expect(architecture).not.toMatch(/captures the whole instance/i);
+		expect(backup).toContain('database-and-assets migration bundle');
+		expect(configuration).toContain('database and assets between storage backends');
+		expect(cli).toContain('database-and-assets migration bundle');
+		expect(architecture).toContain('database-and-assets migration bundle');
+		for (const doc of [backup, configuration, cli, architecture]) {
+			expect(doc).toMatch(/dataDir/);
+			expect(doc).toMatch(/workspaces/);
+			expect(doc).toMatch(/worktrees/);
+			expect(doc).toMatch(/instance (?:keys|key state)/);
+		}
 		expect(publicDocs).not.toContain('little worth losing');
 		expect(publicDocs).not.toContain('nearly stateless');
 		expect(design).not.toContain('near-stateless');

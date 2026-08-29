@@ -5977,8 +5977,8 @@ deletes, which also collects orphans). The in-process S3 sim
 (`test/helpers/s3-sim.ts`) backs the driver-conformance and integration suites; the
 `test-s3` CI job runs the env-gated leg against real MinIO.
 
-**Backup/restore.** `hezo backup` captures the whole instance — database **and** asset
-blobs — as a **backup bundle** directory: `database.backup.gz` (the portable logical
+**Backup/restore.** `hezo backup` writes a **database-and-assets migration bundle**:
+`database.backup.gz` (the portable logical
 database backup) + `assets/<projectId>/<assetId>` blob files + a `manifest.json` written
 **last** as the completion marker. The database half is the **portable logical backup**
 (`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every
@@ -6039,7 +6039,9 @@ and hosted storage in either direction — direction is expressed purely by whic
 artifact internal callers still use), `--no-database` an assets-only bundle, and
 `--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
 input: a directory is a bundle, a file whose header parses is a `.backup.gz`, and anything
-else is refused with a message naming the expected format. The physical pgdata tarball
+else is refused with a message naming the expected format. These commands do not export
+or restore the rest of `dataDir`; full host recovery also requires its project workspaces,
+git worktrees, and instance key state. The physical pgdata tarball
 (`db/backup.ts`) is **gone** — it only ever loaded into embedded PGlite, so it was never a
 backup that could restore onto both backends; converting one needs a Hezo old enough to read
 it, then a fresh `hezo backup`. Restoring a large instance is minutes of work inside two loops (row inserts, blob

@@ -502,10 +502,10 @@ Recommendations:
 
 ### Switching an existing instance
 
-`hezo backup` / `hezo restore` move an instance's assets between local storage and a bucket
-for you - they carry the database in the same backup bundle, so one pair of commands moves
-the whole instance (see [Backup & recovery](/docs/deployment/backup-and-recovery)). To move
-existing assets into a bucket:
+`hezo backup` / `hezo restore` move an instance's database and assets between storage backends
+(see [Backup & recovery](/docs/deployment/backup-and-recovery)). They do not copy the rest of
+`dataDir`, including project workspaces, git worktrees, and instance key state. Preserve that
+directory separately for full host recovery. To move existing assets into a bucket:
 
 1. Stop the server.
 2. Back up the instance: `hezo backup --output move/`. If your data directory isn't the
