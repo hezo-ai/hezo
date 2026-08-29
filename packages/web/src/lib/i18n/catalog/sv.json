@@ -7,7 +7,7 @@
 	"activity.task.parent.changed": "Flyttade {task} från {from} till {to}",
 	"activity.task.parent.nested": "Flyttade {task} under {to}",
 	"activity.task.parent.promoted": "Flyttade {task} från {from} till den översta nivån",
-	"activity.task.priority.critical": "Kritisk",
+	"activity.task.priority.urgent": "Brådskande",
 	"activity.task.priority.high": "Hög",
 	"activity.task.priority.low": "Låg",
 	"activity.task.priority.medium": "Medel",

@@ -7,7 +7,7 @@
 	"activity.task.parent.changed": "{task}을(를) {from}에서 {to}(으)로 이동",
 	"activity.task.parent.nested": "{task}을(를) {to} 아래로 이동",
 	"activity.task.parent.promoted": "{task}을(를) {from}에서 최상위로 이동",
-	"activity.task.priority.critical": "긴급",
+	"activity.task.priority.urgent": "긴급",
 	"activity.task.priority.high": "높음",
 	"activity.task.priority.low": "낮음",
 	"activity.task.priority.medium": "보통",

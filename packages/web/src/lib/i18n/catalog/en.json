@@ -7,7 +7,7 @@
 	"activity.task.parent.changed": "Moved {task} from {from} to {to}",
 	"activity.task.parent.nested": "Moved {task} under {to}",
 	"activity.task.parent.promoted": "Moved {task} out of {from} to top level",
-	"activity.task.priority.critical": "Critical",
+	"activity.task.priority.urgent": "Urgent",
 	"activity.task.priority.high": "High",
 	"activity.task.priority.low": "Low",
 	"activity.task.priority.medium": "Medium",

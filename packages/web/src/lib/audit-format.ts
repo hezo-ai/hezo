@@ -90,7 +90,7 @@ const TASK_PRIORITY_VALUE_KEYS: Record<string, MessageKey> = {
 	low: 'activity.task.priority.low',
 	medium: 'activity.task.priority.medium',
 	high: 'activity.task.priority.high',
-	critical: 'activity.task.priority.critical',
+	urgent: 'activity.task.priority.urgent',
 };
 
 function priorityLabel(value: string | null, t: Translate): string {

@@ -109,6 +109,7 @@ test.each([
 		'Status von OP-1 von In Arbeit auf Erledigt geändert',
 	],
 	['priority', { from: 'medium', to: 'high' }, 'Priorität von OP-1 von Mittel auf Hoch geändert'],
+	['priority', { from: 'high', to: 'urgent' }, 'Priorität von OP-1 von Hoch auf Dringend geändert'],
 	[
 		'assignee',
 		{ from_label: null, to_label: 'Alice' },

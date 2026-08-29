@@ -7,7 +7,7 @@
 	"activity.task.parent.changed": "将 {task} 从 {from} 移到 {to}",
 	"activity.task.parent.nested": "将 {task} 移到 {to} 下",
 	"activity.task.parent.promoted": "将 {task} 从 {from} 移到顶层",
-	"activity.task.priority.critical": "紧急",
+	"activity.task.priority.urgent": "紧急",
 	"activity.task.priority.high": "高",
 	"activity.task.priority.low": "低",
 	"activity.task.priority.medium": "中",

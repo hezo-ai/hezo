@@ -7,7 +7,7 @@
 	"activity.task.parent.changed": "{task} verplaatst van {from} naar {to}",
 	"activity.task.parent.nested": "{task} onder {to} geplaatst",
 	"activity.task.parent.promoted": "{task} uit {from} naar het hoogste niveau verplaatst",
-	"activity.task.priority.critical": "Kritiek",
+	"activity.task.priority.urgent": "Dringend",
 	"activity.task.priority.high": "Hoog",
 	"activity.task.priority.low": "Laag",
 	"activity.task.priority.medium": "Gemiddeld",

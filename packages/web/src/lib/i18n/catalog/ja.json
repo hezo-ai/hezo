@@ -7,7 +7,7 @@
 	"activity.task.parent.changed": "{task} を {from} から {to} へ移動",
 	"activity.task.parent.nested": "{task} を {to} の配下に移動",
 	"activity.task.parent.promoted": "{task} を {from} から最上位に移動",
-	"activity.task.priority.critical": "緊急",
+	"activity.task.priority.urgent": "緊急",
 	"activity.task.priority.high": "高",
 	"activity.task.priority.low": "低",
 	"activity.task.priority.medium": "中",

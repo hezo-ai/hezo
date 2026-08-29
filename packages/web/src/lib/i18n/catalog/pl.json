@@ -7,7 +7,7 @@
 	"activity.task.parent.changed": "Przeniesiono {task} z {from} do {to}",
 	"activity.task.parent.nested": "Przeniesiono {task} pod {to}",
 	"activity.task.parent.promoted": "Przeniesiono {task} z {from} na najwyższy poziom",
-	"activity.task.priority.critical": "Krytyczny",
+	"activity.task.priority.urgent": "Pilny",
 	"activity.task.priority.high": "Wysoki",
 	"activity.task.priority.low": "Niski",
 	"activity.task.priority.medium": "Średni",

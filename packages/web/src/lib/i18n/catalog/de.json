@@ -7,7 +7,7 @@
 	"activity.task.parent.changed": "{task} von {from} nach {to} verschoben",
 	"activity.task.parent.nested": "{task} unter {to} verschoben",
 	"activity.task.parent.promoted": "{task} aus {from} auf die oberste Ebene verschoben",
-	"activity.task.priority.critical": "Kritisch",
+	"activity.task.priority.urgent": "Dringend",
 	"activity.task.priority.high": "Hoch",
 	"activity.task.priority.low": "Niedrig",
 	"activity.task.priority.medium": "Mittel",
