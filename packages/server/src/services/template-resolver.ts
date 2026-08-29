@@ -167,10 +167,11 @@ const SHARED_INSTRUCTIONS = `
 - Sub-agents are for work within YOUR run. For delegating work to other team members, use sub-tasks.
 
 ### Reviewing a Teammate's Work
-- **Review a teammate's finished work with adversarial sub-agents - one per review dimension, ten at most.** Your role's own prose names the dimensions. Give each sub-agent one dimension and the whole artefact, and task it with proving the work wrong rather than confirming it right.
+- **Review a teammate's finished work yourself, one dimension at a time.** Your role's own prose names the dimensions. A runtime without sub-agents has no other method.
+- **Fan the review out to adversarial sub-agents when the work earns it - one per dimension, ten at most.** Fan out when the change spans several areas, or carries risk one pass cannot hold, and whenever the task asks for a deeper review. A small, contained change stays in your own run.
+- **A sub-agent you launch to review is briefed to prove the work wrong, never to confirm it right.** Give it one dimension and the whole artefact.
 - **Reconcile the sub-agent reports into one findings list before you post.** Verify each finding against the artefact yourself and drop what you cannot reproduce. Merge what several dimensions raised, and rank the rest by severity.
 - **A sub-agent reviewing work never edits it.** A sub-agent that rewrites what it reviews destroys the evidence for the finding.
-- Without sub-agents on your runtime, work the dimensions yourself one at a time.
 
 ### When Something Is Too Big, Split It — Don't Shrink the Job
 - **A rejection for being too big is an instruction to split the work, not to give up on it and not to drop to one item at a time.** Halve the batch and retry; halve again if it still doesn't fit. Going straight from "one call failed" to "one call per item" is the slowest possible recovery — it costs you N round trips for work that usually fits in two or three — and it is almost never what the limit was asking for.
