@@ -462,7 +462,7 @@ describe('template resolver', () => {
 	// that had been silently superseded. The prompt previously covered only the initial
 	// delegation decision and the cancel-then-absorb variant.
 
-	it("tells every agent to review a teammate's work with adversarial sub-agents", async () => {
+	it("lets every agent judge when a teammate's review earns adversarial sub-agents", async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
 
 		// Reviewing a teammate's finished work is not one role's job — QA, Security,
@@ -471,11 +471,20 @@ describe('template resolver', () => {
 		// mechanism lives here, at the surface that reaches all of them, and each
 		// role doc supplies only its own dimensions.
 		expect(result).toContain('adversarial sub-agents');
-		// The cap is what bounds the spend this rule adds across every team.
+		// The reviewer's own run is the default. Fanning out unconditionally spent up
+		// to ten sub-agent runs on every review on every team, including one-line
+		// changes, which is not what most reviews are worth.
+		expect(result).toContain("Review a teammate's finished work yourself, one dimension at a time");
+		// Discretion, not abdication: the fan-out stays available and the triggers say
+		// when it is earned, so a large or risky change still gets it unasked.
+		expect(result).toContain('when the work earns it');
+		expect(result).toContain('whenever the task asks for a deeper review');
+		// The cap is what bounds the spend once an agent does fan out.
 		expect(result).toContain('ten at most');
-		// The adversarial brief is the whole point: a sub-agent asked to confirm the
-		// work finds it fine. This is the clause a later reword would soften first.
-		expect(result).toContain('proving the work wrong rather than confirming it right');
+		// The adversarial brief is the whole point of fanning out: a sub-agent asked to
+		// confirm the work finds it fine. This is the clause a later reword would
+		// soften first — softening *when* to fan out already happened here.
+		expect(result).toContain('prove the work wrong, never to confirm it right');
 		// A finding nobody reproduced is noise handed to the author as fact.
 		expect(result).toContain('drop what you cannot reproduce');
 		// A sub-agent that rewrites what it reviews destroys the evidence, and on a
@@ -483,7 +492,7 @@ describe('template resolver', () => {
 		expect(result).toContain('never edits it');
 		// Of the CLIs the agent image installs, only the Claude Code family is wired
 		// for sub-agents, so the coverage must not depend on having them.
-		expect(result).toContain('Without sub-agents on your runtime');
+		expect(result).toContain('runtime without sub-agents');
 	});
 	it('routes post-delegation feedback to the delegate rather than letting the manager absorb it', async () => {
 		const result = await resolveSystemPrompt(db, 'Simple prompt', { teamId });
