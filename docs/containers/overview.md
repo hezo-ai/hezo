@@ -163,9 +163,9 @@ quietly switched substrates would look healthy while doing something you did not
 ### Restarting an instance on a managed service
 
 Your service's API key is kept encrypted, so Hezo can only read it once the instance is
-unlocked. Every restart comes back locked by design, which means Hezo connects to the
-service a moment after you unlock rather than during startup. Nothing is lost by that:
-agent runs do not start while the instance is locked either way.
+unlocked. A reboot, crash, or service restart comes back locked by design, which means
+Hezo connects to the service after you unlock rather than during startup. Nothing is lost
+by that: agent runs do not start while the instance is locked either way.
 
 If the connection then fails, Hezo records the reason in the server log and stays
 disconnected. It never falls back to local Docker, so container operations report that

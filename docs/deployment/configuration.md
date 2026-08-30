@@ -504,8 +504,10 @@ Recommendations:
 
 `hezo backup` / `hezo restore` move an instance's database and assets between storage backends
 (see [Backup & recovery](/docs/deployment/backup-and-recovery)). They do not copy the rest of
-`dataDir`, including project workspaces, git worktrees, and instance key state. Preserve that
-directory separately for full host recovery. To move existing assets into a bucket:
+`dataDir`, including project workspaces, git worktrees, and instance key state. Full host
+recovery also needs the config file, its backend credentials, referenced files such as a
+database CA certificate, and the service definition or startup flags that load it. Back up
+those inputs or record how to recreate them. To move existing assets into a bucket:
 
 1. Stop the server.
 2. Back up the instance: `hezo backup --output move/`. If your data directory isn't the

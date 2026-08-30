@@ -6,9 +6,10 @@ section: Deployment
 
 # Deploying to a cloud server
 
-Running Hezo on an always-on cloud server lets your teams keep working around the clock
-without your laptop being on. Any VPS that can run Docker works - for example
-DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
+Running Hezo on a cloud server keeps the host reachable without your laptop being on.
+Agent execution continues while the instance is unlocked. A reboot, crash, or service
+restart pauses agents until you unlock Hezo again. Any VPS that can run Docker works - for
+example DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
 
 > **Want the fast path?** [One-click deploy](/docs/deployment/one-click) provisions all
 > of the below for you from a single cloud-init snippet - Docker, the binary, automatic
@@ -65,9 +66,11 @@ See the [Configuration reference](/docs/deployment/configuration) for every opti
 
 Local disk is the default, not a requirement: point Hezo at a **managed Postgres**
 and/or an **S3-compatible bucket** to move database rows and asset files off the
-server. Managed backends do not replace a `dataDir` backup: the server still holds
-workspaces, worktrees, and instance keys that a replacement host needs. Back up or
-snapshot that directory before replacing the server. Each backend is one setting,
+server. Managed backends do not replace a host backup: a replacement host also needs
+`dataDir`, `/etc/hezo/hezo.config.cjs`, any referenced files such as a database CA
+certificate, and the service definition or startup flags that select the config. Back up
+those inputs, including backend credentials, or record how to recreate them before replacing
+the server. Each backend is one setting,
 adoptable independently:
 
 1. **Provision a PostgreSQL 14+ instance** in the same region as your server (Hezo's

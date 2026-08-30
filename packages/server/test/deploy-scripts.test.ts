@@ -29,6 +29,12 @@ const PROVISION = readFileSync(join(DEPLOY, 'provision.sh'), 'utf8');
 const CLOUD_INIT = readFileSync(join(DEPLOY, 'cloud-init/hezo.cloud-config.yaml'), 'utf8');
 const ONE_CLICK = readFileSync(join(REPO_ROOT, 'docs/deployment/one-click.md'), 'utf8');
 const BACKUP = readFileSync(join(REPO_ROOT, 'docs/deployment/backup-and-recovery.md'), 'utf8');
+const CLOUD = readFileSync(join(REPO_ROOT, 'docs/deployment/cloud.md'), 'utf8');
+const CONFIGURATION = readFileSync(join(REPO_ROOT, 'docs/deployment/configuration.md'), 'utf8');
+const CLI = readFileSync(join(REPO_ROOT, 'docs/reference/cli.md'), 'utf8');
+const FIRST_RUN = readFileSync(join(REPO_ROOT, 'docs/getting-started/first-run.md'), 'utf8');
+const MASTER_KEY = readFileSync(join(REPO_ROOT, 'docs/security/master-key.md'), 'utf8');
+const ARCHITECTURE = readFileSync(join(REPO_ROOT, '.dev/architecture.md'), 'utf8');
 const HOSTED_ARCHITECTURE = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
 const CLOUD_REQUIREMENTS = readFileSync(join(REPO_ROOT, '.dev/hezo-cloud-requirements.md'), 'utf8');
 
@@ -43,15 +49,15 @@ function shellScripts(dir: string): string[] {
 }
 
 function configAdapterScript(): string {
-	const serializerStart = PROVISION.indexOf('json_string() {');
+	const serializerStart = PROVISION.indexOf('GENERATED_CONFIG_HEADER=');
 	const serializerEnd = PROVISION.indexOf(
 		'# ---------------------------------------------------------------------------',
 		serializerStart,
 	);
 	const envStart = PROVISION.indexOf('# Cloud-init can seed optional settings');
 	const envEnd = PROVISION.indexOf('# Resolved once so every branch below');
-	const dataDirStart = PROVISION.indexOf(`DATA_DIR="\${HEZO_DATA_DIR:-\${DATA_DIR}}"`);
-	const prepareStart = PROVISION.indexOf('CONFIG_READY=""', dataDirStart);
+	const migrationStart = PROVISION.indexOf('# 1a. Migrate a pre-0.50');
+	const prepareStart = PROVISION.indexOf('CONFIG_READY=""', migrationStart);
 	const prepareEnd = PROVISION.indexOf(
 		'# ---------------------------------------------------------------------------',
 		prepareStart,
@@ -68,7 +74,7 @@ function configAdapterScript(): string {
 		serializerEnd,
 		envStart,
 		envEnd,
-		dataDirStart,
+		migrationStart,
 		prepareStart,
 		prepareEnd,
 		configSection,
@@ -82,7 +88,10 @@ function configAdapterScript(): string {
 		'log() { :; }',
 		PROVISION.slice(serializerStart, serializerEnd),
 		PROVISION.slice(envStart, envEnd),
-		PROVISION.slice(prepareStart, prepareEnd),
+		PROVISION.slice(migrationStart, prepareEnd).replace(
+			'LEGACY_ENV="/etc/hezo/hezo.env"',
+			`LEGACY_ENV="\${LEGACY_ENV:-/etc/hezo/hezo.env}"`,
+		),
 		`${PROVISION.slice(configStart, cleanupEnd)}\ntrue`,
 	].join('\n');
 }
@@ -306,6 +315,161 @@ describe('the one-click managed-backend configuration contract', () => {
 		}
 	});
 
+	it('preserves a valid operator-edited CommonJS config byte-for-byte on rerun', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-operator-config-'));
+		const configFile = join(dir, 'hezo.config.cjs');
+		const operatorConfig = [
+			'// Hezo configuration. Edit and restart: systemctl restart hezo',
+			"const config = { dataDir: '/srv/hezo-operator' };",
+			'module.exports = config;',
+			'// hezo-provision: complete',
+			'',
+		].join('\n');
+		writeFileSync(configFile, operatorConfig);
+
+		try {
+			const loaded = JSON.parse(
+				execFileSync(
+					process.execPath,
+					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
+					{ encoding: 'utf8' },
+				),
+			) as { dataDir?: string };
+			expect(loaded.dataDir).toBe('/srv/hezo-operator');
+
+			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+				env: {
+					...process.env,
+					DEPLOY_ENV: join(dir, 'deploy.env'),
+					CONFIG_FILE: configFile,
+					WEB_URL_FILE: join(dir, 'web-url'),
+					DATA_DIR: join(dir, 'data'),
+					LEGACY_ENV: join(dir, 'hezo.env'),
+					BEHIND_GATEWAY: '',
+				},
+				stdio: 'pipe',
+			});
+
+			expect(readFileSync(configFile, 'utf8')).toBe(operatorConfig);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('preserves a valid markerless operator config even when it retains the generated header', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-markerless-operator-config-'));
+		const configFile = join(dir, 'hezo.config.cjs');
+		const operatorConfig = [
+			'// Hezo configuration. Edit and restart: systemctl restart hezo',
+			"const config = { dataDir: '/srv/hezo-markerless' };",
+			'module.exports = config;',
+			'',
+		].join('\n');
+		writeFileSync(configFile, operatorConfig);
+
+		try {
+			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+				env: {
+					...process.env,
+					DEPLOY_ENV: join(dir, 'deploy.env'),
+					CONFIG_FILE: configFile,
+					WEB_URL_FILE: join(dir, 'web-url'),
+					DATA_DIR: join(dir, 'data'),
+					LEGACY_ENV: join(dir, 'hezo.env'),
+					BEHIND_GATEWAY: '',
+				},
+				stdio: 'pipe',
+			});
+
+			expect(readFileSync(configFile, 'utf8')).toBe(operatorConfig);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('recovers an interrupted pre-0.50 migration with every legacy setting intact', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-legacy-recovery-'));
+		const deployEnv = join(dir, 'deploy.env');
+		const configFile = join(dir, 'hezo.config.cjs');
+		const webUrlFile = join(dir, 'web-url');
+		const legacyEnv = join(dir, 'hezo.env');
+		const dataDir = join(dir, 'legacy-data');
+		const databaseUrl = 'postgres://hezo:legacy@db-host:5432/hezo?sslmode=require';
+		const assetStorageUrl = 's3://legacy:secret@storage-host/bucket';
+		const webUrl = 'https://legacy.example.test';
+		const originalLegacy = [
+			`HEZO_DATA_DIR=${dataDir}`,
+			`HEZO_WEB_URL=${webUrl}`,
+			`HEZO_DATABASE_URL=${databaseUrl}`,
+			'HEZO_DATABASE_POOL_SIZE=23',
+			`HEZO_ASSET_STORAGE_URL=${assetStorageUrl}`,
+		].join('\n');
+		writeFileSync(deployEnv, '');
+		writeFileSync(legacyEnv, originalLegacy);
+		writeFileSync(
+			configFile,
+			[
+				'// hezo-provision: generated',
+				'// Hezo configuration. Edit and restart: systemctl restart hezo',
+				'module.exports = {',
+			].join('\n'),
+		);
+
+		const env = {
+			...process.env,
+			DEPLOY_ENV: deployEnv,
+			CONFIG_FILE: configFile,
+			WEB_URL_FILE: webUrlFile,
+			DATA_DIR: join(dir, 'default-data'),
+			LEGACY_ENV: legacyEnv,
+			BEHIND_GATEWAY: '',
+		};
+
+		try {
+			const interrupted = configAdapterScript().replace(
+				`echo "\${GENERATED_CONFIG_COMPLETE_MARKER}" >>"\${CONFIG_CANDIDATE}"`,
+				'false',
+			);
+			expect(interrupted).not.toBe(configAdapterScript());
+			expect(() =>
+				execFileSync('bash', ['-c', `set -euo pipefail\n${interrupted}`], {
+					env,
+					stdio: 'pipe',
+				}),
+			).toThrow();
+			expect(readFileSync(legacyEnv, 'utf8')).toBe(originalLegacy);
+			expect(existsSync(`${legacyEnv}.migrated`)).toBe(false);
+
+			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+				env,
+				stdio: 'pipe',
+			});
+			const generated = JSON.parse(
+				execFileSync(
+					process.execPath,
+					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
+					{ encoding: 'utf8' },
+				),
+			) as {
+				dataDir?: string;
+				webUrl?: string;
+				database?: { url?: string; poolSize?: number };
+				assetStorage?: { url?: string };
+			};
+			expect(generated).toEqual({
+				dataDir,
+				webUrl,
+				database: { url: databaseUrl, poolSize: 23 },
+				assetStorage: { url: assetStorageUrl },
+			});
+			expect(existsSync(legacyEnv)).toBe(false);
+			expect(readFileSync(`${legacyEnv}.migrated`, 'utf8')).toBe(originalLegacy);
+			expect(statSync(configFile).mode & 0o777).toBe(0o600);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('parses the final managed setting without a trailing newline', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-no-final-newline-'));
 		const deployEnv = join(dir, 'deploy.env');
@@ -420,6 +584,49 @@ describe('the one-click managed-backend configuration contract', () => {
 		expect(HOSTED_ARCHITECTURE).toMatch(/reboot, crash, or\s+service restart[^.]*locked/i);
 		expect(HOSTED_ARCHITECTURE).not.toMatch(/Updates and reboots[^.]*locked/i);
 		expect(HOSTED_ARCHITECTURE).not.toMatch(/A restart leaves the\s+instance locked/i);
+	});
+
+	it.each([
+		['backup guide', BACKUP],
+		['cloud guide', CLOUD],
+		['configuration guide', CONFIGURATION],
+		['CLI reference', CLI],
+		['architecture guide', ARCHITECTURE],
+		['hosted design record', HOSTED_ARCHITECTURE],
+	])('%s includes runtime inputs in full host recovery', (_name, guide) => {
+		expect(guide).toMatch(/config file/i);
+		expect(guide).toMatch(/backend credentials/i);
+		expect(guide).toMatch(
+			/referenced\s+files|files\s+(?:it|the config)\s+references|files referenced by\s+the config/i,
+		);
+		expect(guide).toMatch(/service\s+(?:definition|settings)|startup\s+flags/i);
+	});
+
+	it('separates cloud host reachability from unlocked agent execution', () => {
+		expect(CLOUD).toMatch(
+			/keeps the host reachable[\s\S]*Agent execution continues while the instance is unlocked/,
+		);
+		expect(CLOUD).not.toMatch(/keep working around the clock/i);
+		expect(ONE_CLICK).toMatch(/host stays reachable[\s\S]*agent execution pauses/i);
+		expect(ONE_CLICK).not.toMatch(/public, always-on Hezo/i);
+	});
+
+	it.each([
+		['first-run guide', FIRST_RUN],
+		['master-key guide', MASTER_KEY],
+		['hosted design record', HOSTED_ARCHITECTURE],
+	])('%s names both ways a new process can receive the key', (_name, guide) => {
+		expect(guide).toMatch(/in-app update|update restart/i);
+		expect(guide).toMatch(/--master-key/);
+		expect(guide).toMatch(/HEZO_MASTER_KEY/);
+	});
+
+	it('marks the local-Docker hosted plan as superseded by Daytona', () => {
+		expect(HOSTED_ARCHITECTURE).toMatch(/current authority[\s\S]*agent containers on Daytona/);
+		expect(HOSTED_ARCHITECTURE).toMatch(/## Superseded historical recommendation/);
+		expect(HOSTED_ARCHITECTURE).toMatch(/## Superseded historical topology/);
+		expect(HOSTED_ARCHITECTURE).toMatch(/## Superseded historical DigitalOcean provisioning plan/);
+		expect(HOSTED_ARCHITECTURE).not.toMatch(/^## Recommendation:/m);
 	});
 
 	it('parses retained first-boot settings as literal data', () => {

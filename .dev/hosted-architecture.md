@@ -1,11 +1,12 @@
 # Hosted Hezo — Architecture
 
 **Status (2026-08).** This is a historical planning record written in 2026-05/06
-(#397, #594). [`hezo-cloud-requirements.md`](./hezo-cloud-requirements.md) is newer
-and supersedes this document's Hezo-core changes and SSO/unlock design. The current
-tree implements the identity-only SSO flow described there. The topology, storage,
-and cost analysis below remains useful background, but this file is not the current
-design of record for those superseded areas.
+(#397, #594). [`hezo-cloud-requirements.md`](./hezo-cloud-requirements.md) is the
+current authority and supersedes this document's substrate, topology, provisioning,
+operations, cost, Hezo-core changes, and SSO/unlock design. The chosen substrate keeps
+one DigitalOcean Droplet per tenant, runs agent containers on Daytona rather than on
+the tenant host, and uses DigitalOcean Managed Postgres. Every section labeled
+"superseded historical" below is background, not current implementation guidance.
 
 This document records the original plan for the hosted, click-to-signup version of
 Hezo: the tenant topology, storage, control plane at `app.hezo.ai`, DigitalOcean
@@ -25,7 +26,11 @@ current implementation so they do not prescribe an obsolete security flow.
   droplet stays online, but after a reboot or service restart Hezo is locked and
   background work remains paused until the user unlocks it.
 
-## Recommendation: instance-per-tenant
+## Superseded historical recommendation: instance-per-tenant
+
+This recommendation predates the Daytona decision. The per-tenant Droplet remains,
+but the current design runs agent containers on Daytona and installs no local Docker
+daemon on the tenant host.
 
 **One isolated Hezo instance per user — a dedicated VM running the stock
 `hezo` binary with its own Docker daemon — orchestrated by a thin control
@@ -71,7 +76,10 @@ secrets/MCP/skills namespacing, and the instance singletons across the whole
 codebase — and still co-locates all tenants' untrusted agent containers on one
 shared kernel and daemon. More work, weaker isolation.
 
-## Topology
+## Superseded historical topology
+
+This diagram records the former on-Droplet Docker topology. The current topology sends
+container operations from each tenant's Hezo process to Daytona.
 
 ```
                     ┌──────────────── app.hezo.ai (control plane, new repo) ───────────────┐
@@ -99,9 +107,11 @@ PGlite + local assets. Managed Postgres and Spaces move database rows and asset
 blobs off the droplet and give those backends managed backups/PITR, but the
 droplet still carries required local state. `/var/lib/hezo` holds project
 workspaces and worktrees, instance keys, and other required state alongside
-runtime scratch. Restore `/var/lib/hezo` from backup before starting a
-replacement droplet, then reconnect the managed database and bucket; the golden
-image alone is not a complete recovery.
+runtime scratch. Restore `/var/lib/hezo` before starting a replacement droplet,
+then restore or recreate `/etc/hezo/hezo.config.cjs`, its backend credentials,
+any referenced files such as the database CA certificate, and the service
+settings that load it. Reconnect the managed database and bucket only after
+those inputs are ready; the golden image alone is not a complete recovery.
 
 The control plane never reads a tenant's database content or receives master-key
 material; it provisions, routes, and lifecycle-manages.
@@ -189,9 +199,11 @@ surviving supervisor, so "Install & restart" comes back unlocked. A reboot, cras
 service restart replaces that supervisor and comes up locked. SSO does not change a
 locked instance's state. The health monitor may report the lock, but the user must
 complete the ordinary mnemonic unlock before the parked SSO identity can become a
-local session.
+local session. A one-shot `--master-key` / `HEZO_MASTER_KEY` input can also unlock the
+new process for that invocation; hosted policy never persists it or treats SSO as a
+replacement for it.
 
-## Control plane (`app.hezo.ai`)
+## Superseded historical control-plane proposal (`app.hezo.ai`)
 
 A **new repository in the hezo-ai organisation** (working name
 `hezo-ai/cloud`): a Bun + Hono full-stack app. It consumes `@hezo/shared` as a
@@ -299,7 +311,7 @@ the droplet.
   unreachable instance produces an alert and dashboard state; the monitor does
   not supply master-key material.
 
-## Routing & certificates
+## Superseded historical routing and certificates plan
 
 Two stages:
 
@@ -316,7 +328,10 @@ suspend. **Never push a wildcard certificate's private key onto tenant
 droplets** — a compromised tenant VM would then hold a key valid for every
 other tenant's hostname.
 
-## DigitalOcean provisioning
+## Superseded historical DigitalOcean provisioning plan
+
+This plan baked Docker into each tenant image. The current Daytona substrate leaves
+Docker off the tenant host; follow `hezo-cloud-requirements.md` for provisioning inputs.
 
 - **Droplet:** default `s-2vcpu-4gb` (~$24/mo) — the Bun server + dockerd +
   one long-lived container per project + bursty agent CLI runs; PGlite is gone
@@ -403,7 +418,7 @@ material. No database migration or separate SSO identity table is required;
 the configured owner maps to the existing local superuser when a session is
 minted.
 
-## Cost posture
+## Superseded historical cost posture
 
 While the instance is unlocked, Hezo's background work is periodic and
 bursty (scheduler ticks ~1 Hz; agent wakeups default to 12 h; a run is a
@@ -422,7 +437,7 @@ hypervisor — the provisioner interface keeps that door open.
 > Hezo's per-project/per-agent budget caps and the instance-wide
 > `max_container_memory_gb` budget are the existing levers.
 
-## Quotas, rate limiting, abuse
+## Superseded historical quotas, rate limiting, and abuse plan
 
 Hezo core has no rate limiting; hosted enforcement lives in the control plane
 and (at GA) the proxy layer: per-tenant run/spend caps via Hezo's existing
@@ -430,7 +445,7 @@ budget fields, provisioning throttles, email verification at signup, egress
 caps on droplets. The new `/api/auth/sso` endpoint carries an instance-local
 login-style throttle.
 
-## Phasing
+## Superseded historical phasing
 
 - **M0 — validation spikes** (throwaway):
   - *S1 storage:* stock binary on a droplet with managed PG + Spaces config → a
@@ -456,7 +471,7 @@ login-style throttle.
   self-host offboarding path (database dump + bucket export + `dataDir` archive
   + the GPL binary).
 
-## Assumptions flagged for verification (S2 unless noted)
+## Superseded historical assumptions flagged for verification
 
 1. **DO Spaces per-bucket access keys** — API-creatable; key-per-bucket limits
    and grant granularity.

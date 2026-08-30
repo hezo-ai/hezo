@@ -105,7 +105,9 @@ assets in S3.
 
 The bundle does not include the rest of `dataDir`. Full host recovery also requires a copy
 of that directory because project workspaces, git worktrees, and instance key state are not
-exported or restored by these commands.
+exported or restored by these commands. Preserve the config file, backend credentials,
+referenced files such as a database CA certificate, and the service definition or startup
+flags that load the config, or record how to recreate them on the replacement host.
 
 - `--no-assets` - database only. Writes the single portable `.backup.gz` file (default
   `<data-dir>/backups/hezo-<timestamp>.backup.gz`) instead of a bundle.

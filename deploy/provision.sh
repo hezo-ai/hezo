@@ -98,6 +98,10 @@ fi
 
 log() { echo "[hezo-provision] $*"; }
 
+GENERATED_CONFIG_HEADER='// Hezo configuration. Edit and restart: systemctl restart hezo'
+GENERATED_CONFIG_START_MARKER='// hezo-provision: generated'
+GENERATED_CONFIG_COMPLETE_MARKER='// hezo-provision: complete'
+
 # Serialize a shell value as a JSON string, which is also a JavaScript string
 # literal. Shell variables cannot contain NUL; every other byte is preserved.
 json_string() {
@@ -138,9 +142,41 @@ json_string() {
 #     renamed aside once the config file exists, so an interrupted run loses
 #     nothing.
 # ---------------------------------------------------------------------------
+CONFIG_READY=""
+NEEDS_GENERATED_CONFIG=""
+
+# The completion marker is the current provisioner's durable boundary. The
+# closing-line check recognizes config files written before that marker existed.
+generated_config_complete() {
+	local path="$1"
+	[[ -f "${path}" ]] || return 1
+	grep -Fqx "${GENERATED_CONFIG_COMPLETE_MARKER}" "${path}" && return 0
+	grep -Fqx "${GENERATED_CONFIG_HEADER}" "${path}" || return 1
+	grep -Eq '^};([[:space:]]*//.*)?$' "${path}"
+}
+
+# Only files carrying the generated-start marker without a completion marker,
+# plus the exact partial object written by the old provisioner, are recoverable.
+interrupted_generated_config() {
+	local path="$1"
+	[[ -f "${path}" ]] || return 1
+	grep -Fqx "${GENERATED_CONFIG_START_MARKER}" "${path}" &&
+		! grep -Fqx "${GENERATED_CONFIG_COMPLETE_MARKER}" "${path}" && return 0
+	[[ "$(tr -d '[:space:]' <"${path}")" == 'module.exports={' ]]
+}
+
+if generated_config_complete "${CONFIG_FILE}"; then
+	CONFIG_READY=1
+elif [[ ! -f "${CONFIG_FILE}" ]]; then
+	NEEDS_GENERATED_CONFIG=1
+elif interrupted_generated_config "${CONFIG_FILE}"; then
+	NEEDS_GENERATED_CONFIG=1
+	log "Replacing an incomplete generated config at ${CONFIG_FILE}."
+fi
+
 LEGACY_ENV="/etc/hezo/hezo.env"
 LEGACY_ENV_CARRIED=""
-if [[ -f "${LEGACY_ENV}" && ! -f "${CONFIG_FILE}" ]]; then
+if [[ -f "${LEGACY_ENV}" && -n "${NEEDS_GENERATED_CONFIG}" ]]; then
 	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
 		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
 		if [[ -z "${!key:-}" ]]; then
@@ -164,28 +200,6 @@ fi
 
 # An operator who moved the data dir keeps it. Everything below writes to this path.
 DATA_DIR="${HEZO_DATA_DIR:-${DATA_DIR}}"
-CONFIG_READY=""
-NEEDS_GENERATED_CONFIG=""
-
-# A generated file is ready only after its complete marker lands. Accept the
-# pre-marker form written by the previous provisioner when its closing line is
-# present, so an upgrade does not rewrite a valid existing config.
-generated_config_complete() {
-	local path="$1"
-	[[ -f "${path}" ]] || return 1
-	grep -Fqx '// Hezo configuration. Edit and restart: systemctl restart hezo' "${path}" || return 1
-	grep -Eq '^};([[:space:]]*//.*)?$' "${path}"
-}
-
-if generated_config_complete "${CONFIG_FILE}"; then
-	CONFIG_READY=1
-elif [[ ! -f "${CONFIG_FILE}" ]]; then
-	NEEDS_GENERATED_CONFIG=1
-elif grep -Fq '// Hezo configuration. Edit and restart: systemctl restart hezo' "${CONFIG_FILE}" ||
-	[[ "$(tr -d '[:space:]' <"${CONFIG_FILE}")" == 'module.exports={' ]]; then
-	NEEDS_GENERATED_CONFIG=1
-	log "Replacing an incomplete generated config at ${CONFIG_FILE}."
-fi
 
 if [[ -n "${NEEDS_GENERATED_CONFIG}" ]]; then
 	if [[ -n "${HEZO_DATABASE_POOL_SIZE:-}" && ! "${HEZO_DATABASE_POOL_SIZE}" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
@@ -366,7 +380,8 @@ if [[ -n "${NEEDS_GENERATED_CONFIG}" ]]; then
 	CONFIG_CANDIDATE="$(mktemp "${CONFIG_FILE}.tmp.XXXXXX")"
 	chmod 600 "${CONFIG_CANDIDATE}"
 	cat >"${CONFIG_CANDIDATE}" <<EOF
-// Hezo configuration. Edit and restart: systemctl restart hezo
+${GENERATED_CONFIG_START_MARKER}
+${GENERATED_CONFIG_HEADER}
 // Reference: https://hezo.ai/docs/deployment/configuration
 //
 // Do NOT put your master key in this file. Hezo keeps it in memory only. A reboot,
@@ -398,9 +413,9 @@ EOF
 		printf '\tassetStorage: { url: %s },\n' "${HEZO_ASSET_STORAGE_URL_JSON}" >>"${CONFIG_CANDIDATE}"
 	fi
 	echo "};" >>"${CONFIG_CANDIDATE}"
-	echo '// hezo-provision: complete' >>"${CONFIG_CANDIDATE}"
+	echo "${GENERATED_CONFIG_COMPLETE_MARKER}" >>"${CONFIG_CANDIDATE}"
 	if ! generated_config_complete "${CONFIG_CANDIDATE}" ||
-		[[ "$(tail -n 1 "${CONFIG_CANDIDATE}")" != '// hezo-provision: complete' ]]; then
+		[[ "$(tail -n 1 "${CONFIG_CANDIDATE}")" != "${GENERATED_CONFIG_COMPLETE_MARKER}" ]]; then
 		echo "Generated Hezo config did not pass its completion check." >&2
 		exit 1
 	fi

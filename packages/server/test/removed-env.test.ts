@@ -272,7 +272,10 @@ describe('configuration documentation after the environment-variable migration',
 		const publicDocs = `${backup}\n${configuration}\n${cli}\n${oneClick}\n${cloud}`;
 
 		expect(design).toMatch(/the\s+droplet still carries required local state/);
-		expect(design).toMatch(/Restore `\/var\/lib\/hezo` from backup/);
+		expect(design).toMatch(/Restore `\/var\/lib\/hezo` before starting a replacement droplet/);
+		expect(design).toMatch(
+			/restore or recreate `\/etc\/hezo\/hezo\.config\.cjs`[\s\S]*backend credentials[\s\S]*referenced files[\s\S]*service\s+settings/,
+		);
 		expect(design).toContain('The export bundle includes `/var/lib/hezo`');
 		expect(design).toMatch(/The cold archive includes\s+the final `\/var\/lib\/hezo` snapshot/);
 		expect(design).toMatch(
@@ -294,10 +297,12 @@ describe('configuration documentation after the environment-variable migration',
 		expect(oneClick).toContain('Managed backends do not make the server disposable');
 		expect(oneClick).toContain('`/var/lib/hezo` still holds workspaces and keys');
 		expect(oneClick).toMatch(
-			/`\/var\/lib\/hezo` still holds workspaces and keys\s+-\s+keep backing it up/,
+			/Back up `\/var\/lib\/hezo`, `\/etc\/hezo\/hezo\.config\.cjs`, referenced files/,
 		);
-		expect(cloud).toContain('Managed backends do not replace a `dataDir` backup');
-		expect(cloud).toContain('workspaces, worktrees, and instance keys');
+		expect(cloud).toContain('Managed backends do not replace a host backup');
+		expect(cloud).toMatch(
+			/`dataDir`, `\/etc\/hezo\/hezo\.config\.cjs`, any referenced files[\s\S]*backend credentials/,
+		);
 		expect(backup).not.toMatch(/captures a \*\*complete instance\*\*|whole instance \(database/i);
 		expect(configuration).not.toContain('moves the whole instance');
 		expect(cli).not.toMatch(/captures a \*\*complete instance\*\*/i);

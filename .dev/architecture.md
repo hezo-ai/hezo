@@ -1443,8 +1443,8 @@ exiting would take down the UI the operator needs. Opt out with `containers.skip
 
 **A vault-backed credential defers the open to unlock, and only then.** The provider API
 key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
-an instance, which comes back **locked** after every restart, cannot read it at the moment
-the backend is chosen. Making that fatal aborts startup on every boot — a stored key reads
+an instance starting without a supervisor handoff or one-shot master-key input cannot read
+it at the moment the backend is chosen. Making that fatal aborts startup on every boot - a stored key reads
 back as "no API key is configured" and a launch-supplied `containers.daytona.apiKey` throws
 "the instance is locked" from `storeDaytonaApiKey` — so a managed backend could not survive a
 restart at all, workable only by passing the master key on the command line, the one thing
@@ -5200,8 +5200,9 @@ unlock-after-restart — always inside an Ed25519-signed payload.
 + canary in one transaction (self-certifying signature, `unset` state only). The mnemonic
 transmits **zero key material** on routine use: `POST /auth/challenge` issues a single-use
 nonce, `POST /auth/verify` verifies the signature over a reconstructed, domain-separated
-message (`hezo-auth-v1:login:<nonce>`). After a restart the server starts **locked**; the
-first `verify` includes the `unlock_key`. Messages are versioned and domain-separated so
+message (`hezo-auth-v1:login:<nonce>`). Without a supervisor handoff or one-shot
+master-key input, the server starts **locked**; the first `verify` includes the
+`unlock_key`. Messages are versioned and domain-separated so
 signatures can't be replayed or cross-purposed; on unlock `MasterKeyManager` fires
 `onUnlock` callbacks that start the `JobManager`.
 
@@ -6041,7 +6042,9 @@ artifact internal callers still use), `--no-database` an assets-only bundle, and
 input: a directory is a bundle, a file whose header parses is a `.backup.gz`, and anything
 else is refused with a message naming the expected format. These commands do not export
 or restore the rest of `dataDir`; full host recovery also requires its project workspaces,
-git worktrees, and instance key state. The physical pgdata tarball
+git worktrees, instance key state, config file, backend credentials, files referenced by
+the config, and the service definition or startup flags that load it. The physical pgdata
+tarball
 (`db/backup.ts`) is **gone** — it only ever loaded into embedded PGlite, so it was never a
 backup that could restore onto both backends; converting one needs a Hezo old enough to read
 it, then a fresh `hezo backup`. Restoring a large instance is minutes of work inside two loops (row inserts, blob

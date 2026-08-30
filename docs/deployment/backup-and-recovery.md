@@ -12,13 +12,16 @@ database and every uploaded asset file. It works for both database backends (emb
 and an [S3-compatible bucket](/docs/deployment/configuration)), which also makes it the way
 to move those two stores between backends. It does not copy the rest of `dataDir`.
 
-## You need the data *and* the master key
+## You need data, runtime settings, and the master key
 
 Your secrets are **encrypted with your master key**, and the master key is never stored
-with them. To restore a working instance you need **both**:
+with them. To restore a working instance you need all of these:
 
-- a **backup bundle plus the data directory** for full host recovery - see below, and
-- the **twelve-word master key** that unlocks it.
+- the **backup bundle** for database rows and assets;
+- the complete **data directory** for workspaces, worktrees, and instance keys;
+- the **config file**, any files it references such as a database CA certificate, and
+  the service definition or startup flags that select that config; and
+- the **twelve-word master key** that unlocks the restored data.
 
 A backup without the master key cannot decrypt the secrets inside it. Store the master
 key separately and safely (see [Master key & encryption](/docs/security/master-key)).
@@ -75,11 +78,14 @@ it's on you to point it at the *right* directory; a valid-but-wrong data dir is 
 backup of the wrong instance. The same resolution applies to `hezo restore`, which **writes**
 into the resolved data directory.
 
-**The bundle does not cover the whole data directory.** Project workspaces, git worktrees,
+**The bundle does not cover the whole host.** Project workspaces, git worktrees,
 and instance key state live under `<data-dir>` and are **not** in a backup, so full host
 recovery requires the bundle **plus** a copy of the data directory (a file backup or volume
-snapshot works; stopped-server copies are cleanest). If your assets already live
-in [S3-compatible object storage](/docs/deployment/configuration), `hezo backup` reads them
+snapshot works; stopped-server copies are cleanest). Also back up the config file and
+service definition, including backend credentials, startup flags, and referenced files
+outside `dataDir` such as `/etc/hezo/db-ca.crt`. If you choose to recreate them instead,
+record the exact values and restore those files before starting Hezo. If your assets already
+live in [S3-compatible object storage](/docs/deployment/configuration), `hezo backup` reads them
 straight from the bucket into the bundle - or rely on the bucket's own
 versioning/replication and take a `--no-assets` database backup.
 
