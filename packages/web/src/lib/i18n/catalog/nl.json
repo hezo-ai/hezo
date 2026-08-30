@@ -626,6 +626,8 @@
 	"setup.aiProvider.title": "Stel een AI-aanbieder in",
 	"setup.masterKey.confirmDescription": "Voer je hoofdsleutel in om een beheerderswachtwoord voor deze instantie in te stellen.",
 	"setup.masterKey.confirmTitle": "Bevestig je hoofdsleutel",
+	"setup.masterKey.lifecycleDescription": "Nieuwe processen starten standaard vergrendeld. Een begeleide update in de app kan de sleutel in het geheugen doorgeven. Ontgrendel Hezo na een herstart, crash of directe serviceherstart met deze sleutel, tenzij die start eenmalige invoer via --master-key of HEZO_MASTER_KEY ontvangt.",
+	"setup.masterKey.lifecycleTitle": "Versleutelt je gegevens en ontgrendelt Hezo.",
 	"setup.password.description": "Vanaf nu log je in met dit wachtwoord. Ben je het vergeten, dan kun je het opnieuw instellen met je hoofdsleutel.",
 	"setup.password.submit": "Wachtwoord instellen en doorgaan",
 	"setup.password.title": "Maak een beheerderswachtwoord",
@@ -681,7 +683,7 @@
 	"toast.success": "Klaar",
 	"updates.confirm.drain": "Hezo wacht een paar seconden tot lopende agent-runs klaar zijn en stopt dan. Wat nog draait, gaat terug in de wachtrij en begint opnieuw.",
 	"updates.confirm.restart": "Hezo wordt afgesloten en start opnieuw op met {version}.",
-	"updates.confirm.reunlock": "Je hebt je hoofdsleutel van 12 woorden nodig om Hezo na de herstart weer te ontgrendelen.",
+	"updates.confirm.reunlock": "Nieuwe processen starten standaard vergrendeld. Een begeleide update in de app kan de sleutel in het geheugen doorgeven. Na een herstart, crash of directe serviceherstart heb je je hoofdsleutel van 12 woorden nodig, tenzij die start eenmalige invoer via --master-key of HEZO_MASTER_KEY ontvangt.",
 	"updates.confirm.runsInFlight.one": "Er is nu {count} agent-run bezig.",
 	"updates.confirm.runsInFlight.other": "Er zijn nu {count} agent-runs bezig."
 }

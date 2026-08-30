@@ -266,8 +266,10 @@ instance without ever being able to read what is in it.
 **Signing out ends a session, and does not lock the instance.** It clears the
 session here and then goes to `logoutUrl` to end the one at the issuer; without
 that second half the issuer would sign you straight back in on the next redirect.
-The master key stays in memory until the process restarts, exactly as it does on
-any other instance.
+The master key stays in memory. A new process starts locked by default, a supervised
+in-app update can carry the key forward in memory, and a reboot, crash, or direct service
+restart stays locked unless that startup receives one-shot `--master-key` or
+`HEZO_MASTER_KEY` input.
 
 **List both keys while you rotate.** `issuerPublicKey` takes several keys so an
 issuer can add a new one, move signing to it, and drop the old one, with no moment

@@ -50,10 +50,12 @@ export interface AuthKeyPair {
 /**
  * Deterministic words -> 32-byte unlock key, lowercase hex (64 chars). The only
  * key material the server ever receives: it feeds the server's canary /
- * encryption / JWT derivations and transits solely at setup and at
- * unlock-after-restart, inside an Ed25519-signed payload. Salt-separated from
- * the auth keypair so neither derived key reveals the other. Identical output
- * in the browser (esbuild) and Node/Bun (pure JS, no node:crypto).
+ * encryption / JWT derivations. A new process starts locked by default. The key
+ * reaches it inside a signed web setup or unlock payload, through a supervised
+ * update's in-memory IPC handoff, or by direct startup injection after deriving
+ * deliberate one-shot `--master-key` or `HEZO_MASTER_KEY` input. Salt-separated
+ * from the auth keypair so neither derived key reveals the other. Identical
+ * output in the browser (esbuild) and Node/Bun (pure JS, no node:crypto).
  */
 export function deriveUnlockKey(phrase: string): string {
 	const seed = mnemonicToSeedSync(normalizeMnemonic(phrase)); // 64 bytes

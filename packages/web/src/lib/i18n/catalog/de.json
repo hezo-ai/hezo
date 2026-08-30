@@ -626,6 +626,8 @@
 	"setup.aiProvider.title": "KI-Anbieter einrichten",
 	"setup.masterKey.confirmDescription": "Geben Sie Ihren Hauptschlüssel ein, um ein Admin-Passwort für diese Instanz festzulegen.",
 	"setup.masterKey.confirmTitle": "Hauptschlüssel bestätigen",
+	"setup.masterKey.lifecycleDescription": "Neue Prozesse starten standardmäßig gesperrt. Ein überwachtes Update innerhalb der App kann den Schlüssel im Arbeitsspeicher weiterreichen. Entsperren Sie Hezo nach einem Neustart, Absturz oder direkten Dienstneustart mit diesem Schlüssel, sofern der Start nicht die einmalige Eingabe --master-key oder HEZO_MASTER_KEY erhält.",
+	"setup.masterKey.lifecycleTitle": "Verschlüsselt Ihre Daten und entsperrt Hezo.",
 	"setup.password.description": "Mit diesem Passwort melden Sie sich künftig an. Falls Sie es vergessen, können Sie es mit Ihrem Hauptschlüssel zurücksetzen.",
 	"setup.password.submit": "Passwort festlegen & fortfahren",
 	"setup.password.title": "Admin-Passwort erstellen",
@@ -681,7 +683,7 @@
 	"toast.success": "Fertig",
 	"updates.confirm.drain": "Hezo wartet einige Sekunden, bis laufende Agentenläufe abgeschlossen sind, und stoppt dann. Was noch läuft, wird neu eingereiht und beginnt von vorne.",
 	"updates.confirm.restart": "Hezo wird beendet und startet mit {version} neu.",
-	"updates.confirm.reunlock": "Sie benötigen Ihren 12-Wörter-Hauptschlüssel, um Hezo nach dem Neustart wieder zu entsperren.",
+	"updates.confirm.reunlock": "Neue Prozesse starten standardmäßig gesperrt. Ein überwachtes Update innerhalb der App kann den Schlüssel im Arbeitsspeicher weiterreichen. Nach einem Neustart, Absturz oder direkten Dienstneustart benötigen Sie Ihren 12-Wörter-Hauptschlüssel, sofern der Start nicht die einmalige Eingabe --master-key oder HEZO_MASTER_KEY erhält.",
 	"updates.confirm.runsInFlight.one": "{count} Agentenlauf ist gerade aktiv.",
 	"updates.confirm.runsInFlight.other": "{count} Agentenläufe sind gerade aktiv."
 }

@@ -129,7 +129,7 @@ export interface AppConfig {
 	 * naming the host.
 	 */
 	serverPort?: number;
-	/** A master key was configured at startup (env/CLI), so the instance auto-unlocks after a restart. */
+	/** Deliberate one-shot `--master-key` or `HEZO_MASTER_KEY` input unlocks this startup. */
 	autoUnlock?: boolean;
 	/**
 	 * Pre-redacted storage metadata for the superuser settings endpoint. Never
@@ -305,10 +305,11 @@ export async function startup(config: HezoConfig): Promise<StartupResult> {
 		});
 		deferredBackend = resolved;
 		if (resolved.deferred) {
-			// The credential exists but only the vault has it, and an instance boots
-			// locked by design. Holding a pending engine until the unlock is what lets
-			// a managed backend survive a restart at all - the alternatives were
-			// failing every boot, or quietly running on Docker instead.
+			// A new process starts locked by default. A supervised update can restore
+			// the key through its in-memory IPC handoff, and deliberate one-shot
+			// --master-key or HEZO_MASTER_KEY input can inject it at startup. Here
+			// neither path supplied the key, so a pending engine waits for browser
+			// unlock instead of failing the boot or quietly running on Docker.
 			const { createPendingEngine, pendingUnlockMessage } = await import(
 				'./services/sandbox/pending.js'
 			);

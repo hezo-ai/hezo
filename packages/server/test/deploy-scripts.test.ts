@@ -681,6 +681,32 @@ describe('the one-click managed-backend configuration contract', () => {
 		expect(guide).toMatch(/reboot,\s+crash,\s+or\s+(?:direct\s+)?service restart[^.]*locked/i);
 	});
 
+	it.each([
+		['architecture', '.dev/architecture.md'],
+		['master-key manager', 'packages/server/src/crypto/master-key.ts'],
+		['shared auth derivation', 'packages/shared/src/crypto/auth.ts'],
+		['sandbox backend startup', 'packages/server/src/services/sandbox/backend-store.ts'],
+		['pending sandbox backend', 'packages/server/src/services/sandbox/pending.ts'],
+		['server startup', 'packages/server/src/startup.ts'],
+		['runtime configuration types', 'packages/server/src/config/types.ts'],
+		['unlock handoff', 'packages/server/src/lib/unlock-handoff.ts'],
+		['job startup reconciliation', 'packages/server/src/services/job-manager.ts'],
+		['chat startup reconciliation', 'packages/server/src/services/chat-session-manager.ts'],
+		['auth throttle', 'packages/server/src/routes/auth.ts'],
+		['SSO replay cache', 'packages/server/src/services/sso.ts'],
+		['browser master-key authentication', 'packages/web/src/lib/auth.ts'],
+		['English message catalog', 'packages/web/src/lib/i18n/catalog/en.json'],
+		['configuration guide', 'docs/deployment/configuration.md'],
+	])('%s states the complete process unlock lifecycle', (_name, rel) => {
+		const source = readFileSync(join(REPO_ROOT, rel), 'utf8');
+		expect(source).toMatch(/new process[^.]*locked by\s+(?:[*]\s*)?default/i);
+		expect(source).toMatch(/supervis(?:ed|or)[^.]*in[- ]memory|in[- ]memory[^.]*supervisor/i);
+		expect(source).toMatch(/--master-key[^.]*HEZO_MASTER_KEY|HEZO_MASTER_KEY[^.]*--master-key/i);
+		expect(source).not.toMatch(
+			/transits? (?:only|solely|exactly twice)|(?:comes back|boots?|starts?) locked after every restart|service restart[^.]*re-locks the instance|master key stays in memory until the process restarts/i,
+		);
+	});
+
 	it('marks the local-Docker hosted plan as superseded by Daytona', () => {
 		expect(HOSTED_ARCHITECTURE).toMatch(/current authority[\s\S]*agent containers on Daytona/);
 		expect(HOSTED_ARCHITECTURE).toMatch(/## Superseded historical recommendation/);

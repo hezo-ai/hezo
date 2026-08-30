@@ -626,6 +626,8 @@
 	"setup.aiProvider.title": "AI プロバイダーを設定",
 	"setup.masterKey.confirmDescription": "このインスタンスの管理者パスワードを設定するために、マスターキーを入力してください。",
 	"setup.masterKey.confirmTitle": "マスターキーを確認",
+	"setup.masterKey.lifecycleDescription": "新しいプロセスはデフォルトでロックされた状態で起動します。アプリ内の監視付きアップデートでは、メモリ内のキーを引き継ぐことができます。再起動、クラッシュ、またはサービスの直接再起動後は、その起動に一度限りの --master-key または HEZO_MASTER_KEY 入力を渡さない限り、このキーで Hezo のロックを解除してください。",
+	"setup.masterKey.lifecycleTitle": "Hezo のデータを暗号化し、ロックを解除します。",
 	"setup.password.description": "今後はこのパスワードでサインインします。忘れた場合は、マスターキーで再設定できます。",
 	"setup.password.submit": "パスワードを設定して続ける",
 	"setup.password.title": "管理者パスワードを作成",
@@ -681,7 +683,7 @@
 	"toast.success": "完了",
 	"updates.confirm.drain": "Hezo は実行中のエージェント実行が終わるまで数秒待ってから停止します。まだ実行中のものは再度キューに入り、最初からやり直します。",
 	"updates.confirm.restart": "Hezo を停止し、{version} で再起動します。",
-	"updates.confirm.reunlock": "再起動後に Hezo のロックを解除するには、12 語のマスターキーが必要です。",
+	"updates.confirm.reunlock": "新しいプロセスはデフォルトでロックされた状態で起動します。アプリ内の監視付きアップデートでは、メモリ内のキーを引き継ぐことができます。再起動、クラッシュ、またはサービスの直接再起動後は、その起動に一度限りの --master-key または HEZO_MASTER_KEY 入力を渡さない限り、12 語のマスターキーが必要です。",
 	"updates.confirm.runsInFlight.one": "現在 {count} 件のエージェント実行が進行中です。",
 	"updates.confirm.runsInFlight.other": "現在 {count} 件のエージェント実行が進行中です。"
 }

@@ -14,7 +14,8 @@
 #   3. downloads the arch-matched `hezo` binary from GitHub Releases
 #   4. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
 #   5. installs systemd units (a first-boot unit that derives the public URL, then Hezo)
-#   6. exempts Hezo from needrestart's automatic restarts (a direct restart starts locked)
+#   6. exempts Hezo from needrestart's automatic restarts (a direct restart without
+#      one-shot --master-key or HEZO_MASTER_KEY input starts locked)
 #   7. locks the firewall down (only 80/443 public, or nothing public behind a
 #      gateway; the app port + egress ports stay host-local either way)
 #

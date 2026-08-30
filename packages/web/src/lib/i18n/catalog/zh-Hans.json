@@ -626,6 +626,8 @@
 	"setup.aiProvider.title": "设置 AI 提供商",
 	"setup.masterKey.confirmDescription": "输入您的主密钥，以便为此实例设置管理员密码。",
 	"setup.masterKey.confirmTitle": "确认您的主密钥",
+	"setup.masterKey.lifecycleDescription": "新进程默认以锁定状态启动。应用内的受控更新可以在内存中传递密钥。重新启动、崩溃或直接重启服务后，请使用此密钥解锁 Hezo，除非该次启动接收了一次性的 --master-key 或 HEZO_MASTER_KEY 输入。",
+	"setup.masterKey.lifecycleTitle": "加密您的数据并解锁 Hezo。",
 	"setup.password.description": "今后您将使用此密码登录。若忘记密码，可用主密钥重置。",
 	"setup.password.submit": "设置密码并继续",
 	"setup.password.title": "创建管理员密码",
@@ -681,7 +683,7 @@
 	"toast.success": "完成",
 	"updates.confirm.drain": "Hezo 会等待几秒钟，让进行中的代理运行完成，然后停止。仍在运行的会重新排队并从头开始。",
 	"updates.confirm.restart": "Hezo 将关闭并以 {version} 重新启动。",
-	"updates.confirm.reunlock": "重启后需要用你的 12 个单词主密钥再次解锁 Hezo。",
+	"updates.confirm.reunlock": "新进程默认以锁定状态启动。应用内的受控更新可以在内存中传递密钥。重新启动、崩溃或直接重启服务后，您需要使用 12 个单词的主密钥，除非该次启动接收了一次性的 --master-key 或 HEZO_MASTER_KEY 输入。",
 	"updates.confirm.runsInFlight.one": "当前有 {count} 个代理运行正在进行。",
 	"updates.confirm.runsInFlight.other": "当前有 {count} 个代理运行正在进行。"
 }

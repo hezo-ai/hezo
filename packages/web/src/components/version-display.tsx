@@ -8,6 +8,7 @@ import {
 	useDownloadUpdate,
 	useUpdateStatus,
 } from '../hooks/use-update-check';
+import { useI18n } from '../lib/i18n';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
 import { UpdateRestartOverlay } from './update-restart-overlay';
@@ -32,6 +33,7 @@ const RELEASES_URL = 'https://github.com/hezo-ai/hezo/releases';
  * refetches while a download is in flight so the transition is live, no reload.
  */
 export function VersionDisplay() {
+	const { t } = useI18n();
 	const { data: update } = useUpdateStatus({ poll: true });
 	const { data: me } = useMe();
 	const check = useCheckForUpdate();
@@ -67,9 +69,7 @@ export function VersionDisplay() {
 			{!update.autoUnlock && (
 				<>
 					{' '}
-					<span className="font-medium text-text-1">
-						You'll need your 12-word master key to unlock Hezo again once it restarts.
-					</span>
+					<span className="font-medium text-text-1">{t('updates.confirm.reunlock')}</span>
 				</>
 			)}
 		</>

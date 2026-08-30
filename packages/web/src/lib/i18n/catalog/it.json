@@ -626,6 +626,8 @@
 	"setup.aiProvider.title": "Configura un provider IA",
 	"setup.masterKey.confirmDescription": "Inserisci la tua chiave principale per impostare una password di amministratore su questa istanza.",
 	"setup.masterKey.confirmTitle": "Conferma la tua chiave principale",
+	"setup.masterKey.lifecycleDescription": "I nuovi processi si avviano bloccati per impostazione predefinita. Un aggiornamento supervisionato nell'app può trasferire la chiave in memoria. Dopo un riavvio, un arresto anomalo o un riavvio diretto del servizio, sblocca Hezo con questa chiave, a meno che l'avvio non riceva l'input monouso --master-key o HEZO_MASTER_KEY.",
+	"setup.masterKey.lifecycleTitle": "Crittografa i tuoi dati e sblocca Hezo.",
 	"setup.password.description": "D'ora in poi accederai con questa password. Se la dimentichi, puoi reimpostarla con la tua chiave principale.",
 	"setup.password.submit": "Imposta la password e continua",
 	"setup.password.title": "Crea una password di amministratore",
@@ -681,7 +683,7 @@
 	"toast.success": "Fatto",
 	"updates.confirm.drain": "Hezo attende qualche secondo che le esecuzioni degli agenti in corso finiscano, poi si ferma. Ciò che è ancora in esecuzione torna in coda e riparte da capo.",
 	"updates.confirm.restart": "Hezo si arresterà e ripartirà con {version}.",
-	"updates.confirm.reunlock": "Ti servirà la chiave principale di 12 parole per sbloccare Hezo dopo il riavvio.",
+	"updates.confirm.reunlock": "I nuovi processi si avviano bloccati per impostazione predefinita. Un aggiornamento supervisionato nell'app può trasferire la chiave in memoria. Dopo un riavvio, un arresto anomalo o un riavvio diretto del servizio, ti servirà la chiave principale di 12 parole, a meno che l'avvio non riceva l'input monouso --master-key o HEZO_MASTER_KEY.",
 	"updates.confirm.runsInFlight.one": "{count} esecuzione di agente è in corso adesso.",
 	"updates.confirm.runsInFlight.other": "{count} esecuzioni di agente sono in corso adesso."
 }

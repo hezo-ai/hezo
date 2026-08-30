@@ -626,6 +626,8 @@
 	"setup.aiProvider.title": "Configura un proveedor de IA",
 	"setup.masterKey.confirmDescription": "Introduce tu clave maestra para establecer una contraseña de administrador en esta instancia.",
 	"setup.masterKey.confirmTitle": "Confirma tu clave maestra",
+	"setup.masterKey.lifecycleDescription": "Los procesos nuevos se inician bloqueados de forma predeterminada. Una actualización supervisada desde la aplicación puede transferir la clave en memoria. Tras un reinicio del sistema, un fallo o un reinicio directo del servicio, desbloquea Hezo con esta clave, salvo que ese inicio reciba la entrada de un solo uso --master-key o HEZO_MASTER_KEY.",
+	"setup.masterKey.lifecycleTitle": "Cifra tus datos y desbloquea Hezo.",
 	"setup.password.description": "A partir de ahora iniciarás sesión con esta contraseña. Si la olvidas, puedes restablecerla con tu clave maestra.",
 	"setup.password.submit": "Establecer contraseña y continuar",
 	"setup.password.title": "Crea una contraseña de administrador",
@@ -681,7 +683,7 @@
 	"toast.success": "Listo",
 	"updates.confirm.drain": "Hezo espera unos segundos a que terminen los intentos de agente en curso y luego se detiene. Lo que siga en marcha vuelve a la cola y empieza de nuevo.",
 	"updates.confirm.restart": "Hezo se apagará y reiniciará con {version}.",
-	"updates.confirm.reunlock": "Necesitarás tu clave maestra de 12 palabras para desbloquear Hezo cuando se reinicie.",
+	"updates.confirm.reunlock": "Los procesos nuevos se inician bloqueados de forma predeterminada. Una actualización supervisada desde la aplicación puede transferir la clave en memoria. Tras un reinicio del sistema, un fallo o un reinicio directo del servicio, necesitarás tu clave maestra de 12 palabras, salvo que ese inicio reciba la entrada de un solo uso --master-key o HEZO_MASTER_KEY.",
 	"updates.confirm.runsInFlight.one": "{count} intento de agente está en curso ahora mismo.",
 	"updates.confirm.runsInFlight.other": "{count} intentos de agente están en curso ahora mismo."
 }

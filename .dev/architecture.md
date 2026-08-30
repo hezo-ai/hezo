@@ -5193,8 +5193,10 @@ enrolled at setup in `system_meta.auth_public_key`) and a 32-byte **unlock key**
 input to the server's at-rest derivations — canary, secrets encryption, JWT signing —
 held in memory only). The server needs symmetric key material at runtime because it
 decrypts secrets with no client in the loop (egress substitution, ssh signing, provider
-keys), so the unlock key transits exactly twice per boot — at setup and at
-unlock-after-restart — always inside an Ed25519-signed payload.
+keys). A new process starts locked by default. The unlock key reaches it through an
+Ed25519-signed web setup or unlock payload, a supervised update's private in-memory IPC
+handoff, or direct startup injection derived from deliberate one-shot `--master-key` or
+`HEZO_MASTER_KEY` input.
 
 **Bootstrap (challenge-response).** `POST /auth/setup` enrolls the public key + unlock key
 + canary in one transaction (self-certifying signature, `unset` state only). The mnemonic

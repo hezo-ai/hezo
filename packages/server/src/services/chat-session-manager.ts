@@ -504,8 +504,11 @@ export class ChatSessionManager {
 	 * gone. Frees the singleton index so a fresh session can start.
 	 *
 	 * Three statements and nothing else, so like the job manager's own DB repair
-	 * it runs at boot regardless of lock state - an instance that comes up locked
-	 * would otherwise serve a session that reads as live and can never answer.
+	 * it runs at boot regardless of lock state. A new process starts locked by
+	 * default, though a supervised update may restore the key through its in-memory
+	 * IPC handoff and deliberate one-shot `--master-key` or `HEZO_MASTER_KEY` input
+	 * may inject it at startup. Waiting on any unlock path would otherwise serve a
+	 * session that reads as live and can never answer.
 	 */
 	async reconcileDatabaseOnStartup(): Promise<void> {
 		await this.deps.db.query(

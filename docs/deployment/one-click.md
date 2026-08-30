@@ -7,8 +7,8 @@ section: Deployment
 # One-click deploy
 
 The fastest way to get a public Hezo host running is to let your VPS provider
-provision it for you. The host stays reachable, but agent execution pauses when a
-new process starts locked. You paste one snippet when
+provision it for you. The host stays reachable, but agent execution pauses whenever
+Hezo is locked. You paste one snippet when
 you create the server, wait a couple of minutes, and open a working HTTPS URL - then finish the short
 [first-run setup](/docs/getting-started/first-run) in your browser.
 

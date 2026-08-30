@@ -56,6 +56,19 @@ test('setup generates a 12-word master key in a numbered grid', async () => {
 	expect(screen.queryByRole('button', { name: /continue/i })).toBeNull();
 });
 
+test('the generated-key warning states the complete restart lifecycle', async () => {
+	render(withI18n(<MasterKeyForm state="unset" embedded />));
+
+	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
+
+	expect(await screen.findByText('Encrypts your data and unlocks Hezo.')).toBeTruthy();
+	expect(
+		screen.getByText(
+			/New processes start locked by default.*in-app update.*key forward in memory.*reboot, crash, or direct service restart.*one-shot --master-key or HEZO_MASTER_KEY input/i,
+		),
+	).toBeTruthy();
+});
+
 test('copy writes the space-joined phrase and reveals Continue', async () => {
 	const calls: string[] = [];
 	Object.defineProperty(navigator, 'clipboard', {

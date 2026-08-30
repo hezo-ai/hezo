@@ -626,6 +626,8 @@
 	"setup.aiProvider.title": "Set up an AI provider",
 	"setup.masterKey.confirmDescription": "Enter your master key to set an admin password for this instance.",
 	"setup.masterKey.confirmTitle": "Confirm your master key",
+	"setup.masterKey.lifecycleDescription": "New processes start locked by default. A supervised in-app update can carry the key forward in memory. After a reboot, crash, or direct service restart, unlock Hezo with this key unless that startup receives one-shot --master-key or HEZO_MASTER_KEY input.",
+	"setup.masterKey.lifecycleTitle": "Encrypts your data and unlocks Hezo.",
 	"setup.password.description": "You'll sign in with this password from now on. If you forget it, you can reset it with your master key.",
 	"setup.password.submit": "Set password & continue",
 	"setup.password.title": "Create an admin password",
@@ -681,7 +683,7 @@
 	"toast.success": "Done",
 	"updates.confirm.drain": "Hezo waits a few seconds for agent runs in flight to finish, then stops. Anything still running is re-queued and starts over.",
 	"updates.confirm.restart": "Hezo will shut down and restart on {version}.",
-	"updates.confirm.reunlock": "You'll need your 12-word master key to unlock Hezo again once it restarts.",
+	"updates.confirm.reunlock": "New processes start locked by default. A supervised in-app update can carry the key forward in memory. After a reboot, crash, or direct service restart, you'll need your 12-word master key unless that startup receives one-shot --master-key or HEZO_MASTER_KEY input.",
 	"updates.confirm.runsInFlight.one": "{count} agent run is in flight right now.",
 	"updates.confirm.runsInFlight.other": "{count} agent runs are in flight right now."
 }
