@@ -330,7 +330,7 @@ describe('configuration documentation after the environment-variable migration',
 		expect(design).not.toContain('proactive re-unlock');
 		expect(design).not.toContain('auto-unlock');
 		expect(design).toMatch(
-			/A provisioned\s+droplet stays online, but after a reboot or service restart[\s\S]*background work remains paused until the user unlocks it/,
+			/A provisioned\s+droplet stays online\.[\s\S]*new Hezo process starts locked by default[\s\S]*supervised in-app\s+update hands the key forward in memory[\s\S]*reboot, crash, or direct service restart[\s\S]*one-shot `--master-key`[\s\S]*Background work remains paused while Hezo is locked/,
 		);
 		expect(design).toMatch(
 			/The database and bucket credentials in this file are per-tenant scoped[\s\S]*compromised droplet exposes those credentials only for that\s+tenant/,

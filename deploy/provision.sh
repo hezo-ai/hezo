@@ -14,7 +14,7 @@
 #   3. downloads the arch-matched `hezo` binary from GitHub Releases
 #   4. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
 #   5. installs systemd units (a first-boot unit that derives the public URL, then Hezo)
-#   6. exempts Hezo from needrestart's automatic restarts (it comes back locked)
+#   6. exempts Hezo from needrestart's automatic restarts (a direct restart starts locked)
 #   7. locks the firewall down (only 80/443 public, or nothing public behind a
 #      gateway; the app port + egress ports stay host-local either way)
 #
@@ -155,13 +155,14 @@ generated_config_complete() {
 	grep -Eq '^};([[:space:]]*//.*)?$' "${path}"
 }
 
-# Only files carrying the generated-start marker without a completion marker,
-# plus the exact partial object written by the old provisioner, are recoverable.
+# Only the exact partial objects left by interrupted provisioners are
+# recoverable. A marker alone is not proof of an incomplete file: an operator
+# may retain it while changing the export shape or removing the completion
+# marker from an otherwise valid CommonJS config.
 interrupted_generated_config() {
 	local path="$1"
 	[[ -f "${path}" ]] || return 1
-	grep -Fqx "${GENERATED_CONFIG_START_MARKER}" "${path}" &&
-		! grep -Fqx "${GENERATED_CONFIG_COMPLETE_MARKER}" "${path}" && return 0
+	[[ "$(cat "${path}")" == "${GENERATED_CONFIG_START_MARKER}"$'\n'"${GENERATED_CONFIG_HEADER}"$'\n''module.exports = {' ]] && return 0
 	[[ "$(tr -d '[:space:]' <"${path}")" == 'module.exports={' ]]
 }
 
@@ -384,8 +385,10 @@ ${GENERATED_CONFIG_START_MARKER}
 ${GENERATED_CONFIG_HEADER}
 // Reference: https://hezo.ai/docs/deployment/configuration
 //
-// Do NOT put your master key in this file. Hezo keeps it in memory only. A reboot,
-// crash, or service restart comes up locked; unlock it from the browser gate. A copy
+// Do NOT put your master key in this file. Hezo keeps it in memory only. A supervised
+// in-app update hands it forward in memory. A reboot, crash, or direct service restart
+// comes up locked unless that invocation receives one-shot --master-key or
+// HEZO_MASTER_KEY input; you can otherwise use the browser gate. A copy
 // of the key on disk next to the encrypted data would let anyone who reads this box
 // decrypt your vault.
 const { existsSync, readFileSync } = require('node:fs');
@@ -596,8 +599,9 @@ EOF
 #    Ubuntu runs needrestart from the APT hook in automatic mode, so a security
 #    upgrade replacing a library the binary maps (the C library among them)
 #    restarts the service with no prompt. Hezo keeps its master key in memory
-#    only and comes back locked, so an unattended restart takes agent execution
-#    offline until someone unlocks it from the browser gate - minutes if you are
+#    only and comes back locked unless that invocation deliberately receives the
+#    one-shot --master-key or HEZO_MASTER_KEY input. An unattended restart therefore
+#    takes agent execution offline until someone unlocks it - minutes if you are
 #    awake, hours if it lands overnight. Patches still install on schedule; the
 #    restart becomes yours to make when you can unlock it straight after.
 #    See docs/deployment/self-hosting.md § Keeping the host patched.
@@ -605,8 +609,10 @@ EOF
 install -d /etc/needrestart/conf.d
 cat >/etc/needrestart/conf.d/hezo.conf <<'EOF'
 # Managed by Hezo provision.sh.
-# Hezo comes back locked after a restart (its master key lives in memory only),
-# so an unattended restart takes agent execution offline until an operator
+# A new Hezo process starts locked by default (its master key lives in memory only).
+# The supervised in-app update hands the key forward; a direct service restart does
+# not, unless that invocation receives one-shot --master-key or HEZO_MASTER_KEY input.
+# An unattended restart therefore takes agent execution offline until an operator
 # unlocks it. needrestart still reports Hezo as needing a restart - check with
 # `needrestart -b -r l` - it just must never perform one on its own.
 $nrconf{override_rc} = { qr(^hezo\.service$) => 0 };

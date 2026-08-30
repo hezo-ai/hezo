@@ -80,5 +80,7 @@ gcloud compute firewall-rules delete hezo-allow-web
 ```
 
 Everything Hezo stores lives in `/var/lib/hezo` on the VM — back that directory up.
-After a reboot Hezo comes up **locked** by design; unlock it from the browser gate
-with your master key.
+A new Hezo process starts **locked** by default. A supervised in-app update hands the key
+to the new process in memory. A reboot, crash, or direct service restart comes up locked
+unless that invocation deliberately receives the one-shot `--master-key` or
+`HEZO_MASTER_KEY` input. You can otherwise unlock from the browser gate.

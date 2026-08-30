@@ -23,8 +23,10 @@ current implementation so they do not prescribe an obsolete security flow.
   arbitrary agent code. The isolation boundary must hold against a malicious
   tenant.
 - **Availability:** instances are not transient and do not scale to zero. A provisioned
-  droplet stays online, but after a reboot or service restart Hezo is locked and
-  background work remains paused until the user unlocks it.
+  droplet stays online. A new Hezo process starts locked by default; a supervised in-app
+  update hands the key forward in memory. A reboot, crash, or direct service restart
+  comes up locked unless that invocation deliberately receives the one-shot `--master-key`
+  or `HEZO_MASTER_KEY` input. Background work remains paused while Hezo is locked.
 
 ## Superseded historical recommendation: instance-per-tenant
 
@@ -135,9 +137,11 @@ flow: generate the 12-word mnemonic, show it, require the user to save it, and
 the user's browser and the instance. The control plane must never accept, store,
 log, or forward either form.
 
-After a reboot or service restart, the instance comes up locked and the user unlocks
-it through the ordinary mnemonic gate. A valid SSO assertion can park the verified
-identity until that unlock completes, but it cannot unlock the instance. The former
+After a reboot, crash, or direct service restart, the instance comes up locked unless
+that invocation deliberately receives the one-shot `--master-key` or `HEZO_MASTER_KEY`
+input. The user can otherwise unlock through the ordinary mnemonic gate. A valid SSO
+assertion can park the verified identity until that unlock completes, but it cannot
+unlock the instance. The former
 `unlock_key` field and `system:unlock` subject are obsolete and are superseded by
 [`hezo-cloud-requirements.md`](./hezo-cloud-requirements.md) and the current auth
 implementation.
@@ -194,9 +198,11 @@ already-minted JWT.
 
 ### Restart boundary
 
-The normal in-app update restart preserves the in-memory unlock key through the
-surviving supervisor, so "Install & restart" comes back unlocked. A reboot, crash, or
-service restart replaces that supervisor and comes up locked. SSO does not change a
+The normal supervised in-app update restart hands the unlock key to the new process in
+memory, so "Install & restart" comes back unlocked. A new Hezo process otherwise starts
+locked by default. A reboot, crash, or direct service restart replaces that supervisor
+and comes up locked unless the invocation deliberately receives the one-shot
+`--master-key` or `HEZO_MASTER_KEY` input. SSO does not change a
 locked instance's state. The health monitor may report the lock, but the user must
 complete the ordinary mnemonic unlock before the parked SSO identity can become a
 local session. A one-shot `--master-key` / `HEZO_MASTER_KEY` input can also unlock the
@@ -304,8 +310,9 @@ the droplet.
   block. The control plane records each observed `version` and supports mixed
   versions because tenants update at different times. This in-app update restart
   preserves the in-memory unlock key through the supervisor. A reboot, crash, or
-  service restart instead comes up locked until the user completes the ordinary
-  unlock.
+  direct service restart instead comes up locked unless that invocation deliberately
+  receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. The user can
+  otherwise complete the ordinary unlock.
 - **Health monitor:** `GET /api/status` per running instance (~60s, batched);
   stores `{masterKeyState, passwordSet, version}`. A locked or repeatedly
   unreachable instance produces an alert and dashboard state; the monitor does

@@ -56,7 +56,7 @@ everything - exactly what encryption at rest is meant to prevent.
 Starting **locked** by default is the feature, not an inconvenience. Two startup paths can
 supply the key in memory: an in-app update hands it from the surviving supervisor to the
 new process, and `--master-key` / `HEZO_MASTER_KEY` supplies it to one invocation. Neither
-path writes it to disk. A reboot, crash, or service restart has no surviving handoff and
+path writes it to disk. A reboot, crash, or direct service restart has no surviving handoff and
 comes up locked unless you deliberately provide the one-shot input. Keep the only durable
 copy somewhere safe **off** the server. See
 [Updating](/docs/deployment/self-hosting#updating).
@@ -74,8 +74,10 @@ The master key and your password do two different jobs:
 
 This split is what lets you run Hezo on a public network safely: access is gated by the
 admin password on every request, while the master key stays purely about unlocking
-encryption. You unlock the instance from the browser gate after each restart, and everyone
-still has to sign in with the password to reach the app. See
+encryption. A reboot, crash, or direct service restart comes up locked unless that
+invocation deliberately receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input.
+You can otherwise unlock from the browser gate. Everyone still has to sign in with the
+password to reach the app. See
 [Secure remote access](/docs/deployment/secure-remote-access).
 
 **Changing your password?** While signed in, go to **Settings → Users & access**, enter

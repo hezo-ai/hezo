@@ -62,9 +62,11 @@ hezo
 ```
 
 For an always-on instance, run it under your platform's service manager (for example a
-`systemd` unit on Linux) so it restarts on boot. Remember that Hezo starts **locked**
-after a reboot, crash, or service restart, so you unlock it from the web app's gate when
-it comes back up. An in-app update restart preserves unlock through the supervisor.
+`systemd` unit on Linux) so it restarts on boot. A new Hezo process starts **locked** by
+default. A supervised in-app update hands the key to the new process in memory. A reboot,
+crash, or direct service restart comes up locked unless that invocation deliberately
+receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. You can otherwise unlock
+from the web app's gate.
 Don't store the master key on the server to skip the unlock step; it's the one secret
 Hezo keeps in memory only (see [Master key & encryption](/docs/security/master-key)).
 
@@ -108,8 +110,9 @@ those carry credentials. See the
 > **Never put your master key in this file** (or anywhere else on the server).
 > The master key is deliberately kept in memory only - a copy on disk next to the
 > encrypted data defeats encryption at rest, letting anyone who can read the disk
-> decrypt your vault. Hezo comes up **locked** after each restart on purpose; you
-> unlock it from the browser gate (step 5).
+> decrypt your vault. A new service process starts **locked** by default. The unit below
+> deliberately supplies no one-shot `--master-key` or `HEZO_MASTER_KEY` input, so a boot,
+> crash recovery, or `systemctl restart hezo` requires an unlock (step 5).
 
 **3. Create the unit** at `/etc/systemd/system/hezo.service`:
 
@@ -145,10 +148,11 @@ systemctl status hezo
 journalctl -u hezo -f          # follow the logs
 ```
 
-**5. Unlock it in the browser.** Hezo comes up **locked** - open it in the browser
-to create your master key and finish setup on first run, and to unlock it again
-after each restart. Keep the twelve words somewhere safe **off** the server; Hezo
-never stores them, so unlocking from the gate is how the instance comes back up.
+**5. Unlock it.** Open Hezo in the browser to create your master key and finish setup on
+first run. The systemd unit above starts each new process locked, so use the browser gate
+after a boot, crash, or direct service restart. A one-shot `--master-key` or
+`HEZO_MASTER_KEY` input can unlock one deliberate invocation instead, but never persist
+the phrase in the unit or on the server.
 
 In-app auto-update continues to work under systemd: Hezo swaps in the new binary
 and relaunches itself internally, so systemd sees one continuously running
@@ -263,9 +267,10 @@ release page.)
 An update restart comes back **unlocked**: the part of Hezo that supervises the
 restart holds the unlock key **in memory** across the swap and hands it to the new
 process, so nothing is ever written to disk and you don't re-enter your master key
-after an update. Restarts that supervisor doesn't survive - a service restart, a
-crash, a reboot - still come up locked by design, and you unlock from the browser
-gate (don't stash the key on the server to avoid that). In-flight agent runs are
+after an update. Restarts that supervisor doesn't survive - a direct service restart, a
+crash, a reboot - still come up locked by design unless that invocation receives the
+one-shot `--master-key` or `HEZO_MASTER_KEY` input. You can otherwise unlock from the
+browser gate. In-flight agent runs are
 aborted and recovered automatically, and connected browsers reconnect on their own.
 
 Auto-update applies to the self-managed single binary. It is disabled when Hezo
@@ -287,8 +292,9 @@ Two things to know before enabling it:
 - **The instance comes back unlocked** after the automatic restart - the unlock
   key is handed to the new process in memory (see above), so agents resume
   without anyone re-entering the master key. Restarts outside the update flow
-  (service restart, reboot, crash) still come up locked by design and are
-  unlocked from the browser gate - never persist the key to disk on the server
+  (direct service restart, reboot, crash) still come up locked by design unless that
+  invocation receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. You can
+  otherwise use the browser gate - never persist the key to disk on the server
   to avoid that (see [Master key & encryption](/docs/security/master-key)).
 - It only takes effect where in-app auto-update works at all: the self-managed
   single binary, not inside a container (update the image instead), and not
@@ -338,10 +344,11 @@ restarts every service still running against a library the upgrade replaced.
 That is the right default for most daemons: a patched file on disk does nothing
 for a process that still has the old code mapped in memory.
 
-Hezo is the exception, because it cannot bring itself back. Its master key is
-held in memory only and never written to disk, so any restart outside the in-app
-update flow above brings the instance up **locked**, with agent execution
-stopped until someone opens the browser gate and unlocks it. An unattended
+Hezo is the exception, because it cannot bring itself back unlocked. Its master key is
+held in memory only and never written to disk, so a direct service restart outside the
+supervised in-app update flow brings the instance up **locked** unless that invocation
+deliberately receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. Agent
+execution otherwise stays stopped until someone unlocks it. An unattended
 restart therefore turns a routine background patch into an outage lasting until
 you happen to notice - a couple of minutes if you are at your desk, the whole
 night if it lands at 3am.
@@ -368,7 +375,7 @@ a pending restart whenever you are on the box:
 sudo needrestart -b -r l      # lists services running against replaced libraries
 ```
 
-If `hezo.service` is listed, restart it and unlock it in the browser:
+If `hezo.service` is listed, restart it at a time when you can unlock it:
 
 ```sh
 sudo systemctl restart hezo

@@ -44,7 +44,8 @@ By default, a new Hezo process starts **locked**: agents can't run and secrets c
 read until you provide the phrase on the unlock screen. Two startup paths can supply the
 key in memory: the supervisor hands it to a new process during an in-app update, or you
 pass it to one invocation with `--master-key` / `HEZO_MASTER_KEY`. A reboot, crash, or
-service restart has neither input and comes up locked. Don't store the phrase on
+direct service restart comes up locked unless that invocation deliberately receives this
+one-shot input. Don't store the phrase on
 the server (see [Deploying to the cloud](/docs/deployment/cloud) and
 [Master key & encryption](/docs/security/master-key)).
 

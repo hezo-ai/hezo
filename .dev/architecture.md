@@ -6174,9 +6174,10 @@ supervisor code talks to the new worker binary) on every `onUnlock`; the supervi
 in memory only (`createSupervisorUnlockKeyStore`) and answers the relaunched worker's request
 on a locked boot (`setupWorkerUnlockHandoff`, wired in `index.ts`). The reply still passes the
 master-key canary check, so a stale key just leaves the instance locked; the key never touches
-disk, argv, or env. Restarts the supervisor doesn't survive (crash, service restart, reboot)
-still come up locked — the web restart overlay polls `/api/status` and reloads onto the
-master-key gate. `GET /api/updates/status` surfaces the staged-update state plus an
+disk, argv, or env. Restarts the supervisor doesn't survive (crash, direct service restart,
+reboot) still come up locked unless that invocation deliberately receives the one-shot
+`--master-key` or `HEZO_MASTER_KEY` input. The web restart overlay polls `/api/status`
+and reloads onto the master-key gate. `GET /api/updates/status` surfaces the staged-update state plus an
 `autoUnlock` hint (startup master key **or** an active handoff channel on a supervised worker)
 so the UI's confirmation only warns about re-unlock when re-unlock will actually be needed. The web banner shows an **"Install & restart"** button only once the
 binary is `Staged` (so the restart is instant); while the background download is in flight it

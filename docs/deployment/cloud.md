@@ -7,9 +7,12 @@ section: Deployment
 # Deploying to a cloud server
 
 Running Hezo on a cloud server keeps the host reachable without your laptop being on.
-Agent execution continues while the instance is unlocked. A reboot, crash, or service
-restart pauses agents until you unlock Hezo again. Any VPS that can run Docker works - for
-example DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
+Agent execution continues while the instance is unlocked. A new Hezo process starts
+**locked** by default. A supervised in-app update hands the key to the new process in
+memory. A reboot, crash, or direct service restart comes up locked unless that invocation
+deliberately receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. Any VPS
+that can run Docker works - for example DigitalOcean, Hetzner, Fly, Linode, or an EC2
+instance.
 
 > **Want the fast path?** [One-click deploy](/docs/deployment/one-click) provisions all
 > of the below for you from a single cloud-init snippet - Docker, the binary, automatic
@@ -43,8 +46,8 @@ example DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
    see [Managed database & asset storage](#managed-database--asset-storage) below.
 3. **Serve it over HTTPS** with a reverse proxy - required, not a nice-to-have; see
    [below](#serve-it-over-https).
-4. **Unlock it from the browser.** After boot Hezo starts **locked** - open its gate
-   and enter your twelve-word master key to unlock the instance. This is by design:
+4. **Unlock it.** After boot Hezo starts **locked** - open its browser gate and enter
+   your twelve-word master key to unlock the instance. This is by design:
    the master key is kept in memory only and is never stored on the server, so a stolen
    disk image can't decrypt your vault. If you need to unlock a single startup without
    the browser, you can pass the key to that one invocation - but don't bake it into a

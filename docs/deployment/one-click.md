@@ -7,8 +7,8 @@ section: Deployment
 # One-click deploy
 
 The fastest way to get a public Hezo host running is to let your VPS provider
-provision it for you. The host stays reachable, but agent execution pauses after
-a reboot, crash, or service restart until you unlock Hezo. You paste one snippet when
+provision it for you. The host stays reachable, but agent execution pauses when a
+new process starts locked. You paste one snippet when
 you create the server, wait a couple of minutes, and open a working HTTPS URL - then finish the short
 [first-run setup](/docs/getting-started/first-run) in your browser.
 
@@ -255,13 +255,12 @@ certificate for that name instead.
 
 ## After it's up
 
-- **The master key locks the *instance*.** After a reboot, crash, or service restart,
-  Hezo comes up **locked**
-  until you provide the twelve words again on the browser gate - that locked-on-restart
-  behaviour is by design, and unlocking from the browser is the secure way to bring it
-  back up. A new process can start unlocked in two cases: an in-app update hands the key
-  to the new process in memory, or you pass `--master-key` / `HEZO_MASTER_KEY` to one
-  invocation. **Don't save your master key to a file on the server** (an env file, the
+- **The master key locks the *instance*.** A new Hezo process starts **locked** by
+  default. A supervised in-app update hands the key to the new process in memory, so
+  **Install & restart** returns unlocked. A reboot, crash, or direct service restart
+  comes up locked unless that invocation deliberately receives the one-shot
+  `--master-key` or `HEZO_MASTER_KEY` input. You can otherwise unlock from the browser
+  gate. **Don't save your master key to a file on the server** (an env file, the
   systemd unit, anywhere on disk): it's the
   one secret Hezo keeps in memory only, and a copy sitting next to the encrypted data
   lets anyone who can read the disk decrypt everything. See

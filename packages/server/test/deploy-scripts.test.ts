@@ -28,6 +28,11 @@ const DEPLOY = join(REPO_ROOT, 'deploy');
 const PROVISION = readFileSync(join(DEPLOY, 'provision.sh'), 'utf8');
 const CLOUD_INIT = readFileSync(join(DEPLOY, 'cloud-init/hezo.cloud-config.yaml'), 'utf8');
 const ONE_CLICK = readFileSync(join(REPO_ROOT, 'docs/deployment/one-click.md'), 'utf8');
+const SELF_HOSTING = readFileSync(join(REPO_ROOT, 'docs/deployment/self-hosting.md'), 'utf8');
+const SECURE_REMOTE_ACCESS = readFileSync(
+	join(REPO_ROOT, 'docs/deployment/secure-remote-access.md'),
+	'utf8',
+);
 const BACKUP = readFileSync(join(REPO_ROOT, 'docs/deployment/backup-and-recovery.md'), 'utf8');
 const CLOUD = readFileSync(join(REPO_ROOT, 'docs/deployment/cloud.md'), 'utf8');
 const CONFIGURATION = readFileSync(join(REPO_ROOT, 'docs/deployment/configuration.md'), 'utf8');
@@ -387,6 +392,47 @@ describe('the one-click managed-backend configuration contract', () => {
 		}
 	});
 
+	it('preserves a valid operator config with a generated-start marker and no completion marker', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-marked-operator-config-'));
+		const configFile = join(dir, 'hezo.config.cjs');
+		const operatorConfig = [
+			'// hezo-provision: generated',
+			'// Hezo configuration. Edit and restart: systemctl restart hezo',
+			"const config = { dataDir: '/srv/hezo-marked-operator' };",
+			'module.exports = config;',
+			'',
+		].join('\n');
+		writeFileSync(configFile, operatorConfig);
+
+		try {
+			const loaded = JSON.parse(
+				execFileSync(
+					process.execPath,
+					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
+					{ encoding: 'utf8' },
+				),
+			) as { dataDir?: string };
+			expect(loaded.dataDir).toBe('/srv/hezo-marked-operator');
+
+			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+				env: {
+					...process.env,
+					DEPLOY_ENV: join(dir, 'deploy.env'),
+					CONFIG_FILE: configFile,
+					WEB_URL_FILE: join(dir, 'web-url'),
+					DATA_DIR: join(dir, 'data'),
+					LEGACY_ENV: join(dir, 'hezo.env'),
+					BEHIND_GATEWAY: '',
+				},
+				stdio: 'pipe',
+			});
+
+			expect(readFileSync(configFile, 'utf8')).toBe(operatorConfig);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('recovers an interrupted pre-0.50 migration with every legacy setting intact', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-legacy-recovery-'));
 		const deployEnv = join(dir, 'deploy.env');
@@ -580,8 +626,12 @@ describe('the one-click managed-backend configuration contract', () => {
 		expect(HOSTED_ARCHITECTURE).not.toMatch(
 			/hezo-fleet-agent|fleet agent|fleet state API|desired_version|fleet_token_hash|updates\.disabled/,
 		);
-		expect(HOSTED_ARCHITECTURE).toMatch(/update restart[^.]*preserves the in-memory unlock key/i);
-		expect(HOSTED_ARCHITECTURE).toMatch(/reboot, crash, or\s+service restart[^.]*locked/i);
+		expect(HOSTED_ARCHITECTURE).toMatch(
+			/supervised in-app update restart[^.]*hands the unlock key to the new process[^.]*memory/i,
+		);
+		expect(HOSTED_ARCHITECTURE).toMatch(
+			/reboot, crash, or\s+direct service restart[^.]*locked[^.]*one-shot[^.]*--master-key[^.]*HEZO_MASTER_KEY/i,
+		);
 		expect(HOSTED_ARCHITECTURE).not.toMatch(/Updates and reboots[^.]*locked/i);
 		expect(HOSTED_ARCHITECTURE).not.toMatch(/A restart leaves the\s+instance locked/i);
 	});
@@ -612,13 +662,23 @@ describe('the one-click managed-backend configuration contract', () => {
 	});
 
 	it.each([
+		['one-click guide', ONE_CLICK],
 		['first-run guide', FIRST_RUN],
+		['self-hosting guide', SELF_HOSTING],
 		['master-key guide', MASTER_KEY],
+		['secure remote-access guide', SECURE_REMOTE_ACCESS],
+		['cloud guide', CLOUD],
 		['hosted design record', HOSTED_ARCHITECTURE],
-	])('%s names both ways a new process can receive the key', (_name, guide) => {
+	])('%s states the complete restart and unlock boundary', (_name, guide) => {
+		expect(guide).toMatch(
+			/new (?:Hezo )?process[^.]*starts?[^.]*locked|default state for a new process/i,
+		);
 		expect(guide).toMatch(/in-app update|update restart/i);
+		expect(guide).toMatch(/supervis(?:ed|or)/i);
+		expect(guide).toMatch(/in memory/i);
 		expect(guide).toMatch(/--master-key/);
 		expect(guide).toMatch(/HEZO_MASTER_KEY/);
+		expect(guide).toMatch(/reboot,\s+crash,\s+or\s+(?:direct\s+)?service restart[^.]*locked/i);
 	});
 
 	it('marks the local-Docker hosted plan as superseded by Daytona', () => {

@@ -285,8 +285,11 @@ with an error rather than accepting it. It is kept in memory only, which is what
 encryption at rest meaningful: a copy of the key on disk next to the encrypted data would
 let anyone who reads the host decrypt your vault.
 
-Hezo starts **locked** by design; you unlock it from the browser gate. To unlock a single
-non-interactive startup, pass the phrase to that one invocation with `HEZO_MASTER_KEY` (an
+Hezo starts **locked** by default. A supervised in-app update hands the key to the new
+process in memory. A reboot, crash, or direct service restart stays locked unless that
+invocation receives a one-shot `--master-key` or `HEZO_MASTER_KEY` input. To unlock a
+single non-interactive startup, pass the phrase to that one invocation with
+`HEZO_MASTER_KEY` (an
 environment variable rather than a flag, because flags are visible in the process list):
 
 ```sh
@@ -312,7 +315,7 @@ hezo --port 8080 --data-dir /var/lib/hezo
 ```
 
 Unlock a single startup non-interactively by passing the master key to that one
-invocation (Hezo normally starts **locked** and you unlock from the browser gate):
+invocation (Hezo normally starts **locked**; the browser gate is the interactive route):
 
 ```js
 // /etc/hezo/hezo.config.cjs
