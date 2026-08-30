@@ -16,6 +16,10 @@ const REPO_ROOT = join(import.meta.dirname, '../../..');
  */
 
 const DEPLOY = join(REPO_ROOT, 'deploy');
+const PROVISION = readFileSync(join(DEPLOY, 'provision.sh'), 'utf8');
+const CLOUD_INIT = readFileSync(join(DEPLOY, 'cloud-init/hezo.cloud-config.yaml'), 'utf8');
+const ONE_CLICK = readFileSync(join(REPO_ROOT, 'docs/deployment/one-click.md'), 'utf8');
+const BACKUP = readFileSync(join(REPO_ROOT, 'docs/deployment/backup-and-recovery.md'), 'utf8');
 
 function shellScripts(dir: string): string[] {
 	const out: string[] = [];
@@ -43,7 +47,7 @@ describe('deploy shell scripts', () => {
 });
 
 describe('the behind-a-gateway seam in provision.sh', () => {
-	const script = readFileSync(join(DEPLOY, 'provision.sh'), 'utf8');
+	const script = PROVISION;
 
 	/** The lines of the `if`/`else` arm that `marker` sits in. */
 	function guardAbove(marker: string): string {
@@ -87,5 +91,45 @@ describe('the behind-a-gateway seam in provision.sh', () => {
 
 	it('documents the flag where an operator reading the script will find it', () => {
 		expect(script).toMatch(/^#\s+BEHIND_GATEWAY\s/m);
+	});
+});
+
+describe('the one-click managed-backend configuration contract', () => {
+	it.each([
+		['the checked-in cloud-init file', CLOUD_INIT],
+		['the one-click documentation sample', ONE_CLICK],
+	])('%s seeds both managed-backend URLs through deploy.env', (_name, sample) => {
+		expect(sample).toContain('/etc/hezo/deploy.env');
+		expect(sample).toMatch(/provision\.sh persists them into the CommonJS config/);
+		expect(sample).toMatch(
+			/HEZO_DATABASE_URL=postgres:\/\/hezo:PASSWORD@db-host:5432\/hezo\?sslmode=require.*>> \/etc\/hezo\/deploy\.env/,
+		);
+		expect(sample).toMatch(
+			/HEZO_ASSET_STORAGE_URL=s3:\/\/ACCESS_KEY:SECRET@endpoint\/bucket.*>> \/etc\/hezo\/deploy\.env/,
+		);
+	});
+
+	it('carries deploy.env inputs into the generated CommonJS config', () => {
+		expect(PROVISION).toContain('DEPLOY_ENV="/etc/hezo/deploy.env"');
+		expect(PROVISION).toContain(`done <"\${DEPLOY_ENV}"`);
+		expect(PROVISION).toContain(`export "\${key}=\${value}"`);
+		expect(PROVISION).toMatch(
+			/cat >"\$\{CONFIG_FILE\}" <<EOF[\s\S]*module\.exports = \{[\s\S]*dataDir:/,
+		);
+		expect(PROVISION).toContain(`url: '\${HEZO_DATABASE_URL}',`);
+		expect(PROVISION).toContain(`poolSize: \${HEZO_DATABASE_POOL_SIZE},`);
+		expect(PROVISION).toContain(`assetStorage: { url: '\${HEZO_ASSET_STORAGE_URL}' },`);
+		expect(ONE_CLICK).toMatch(
+			/At provision time[\s\S]*\/etc\/hezo\/deploy\.env[\s\S]*persists them into `\/etc\/hezo\/hezo\.config\.cjs`/,
+		);
+		expect(ONE_CLICK).toMatch(
+			/Post-boot, or on an existing server[\s\S]*\/etc\/hezo\/hezo\.config\.cjs[\s\S]*database: \{ url: 'postgres:\/\/hezo:PASSWORD@db-host:5432\/hezo\?sslmode=require' \},[\s\S]*assetStorage: \{ url: 's3:\/\/ACCESS_KEY:SECRET@endpoint\/bucket' \},[\s\S]*systemctl restart hezo/,
+		);
+	});
+
+	it('documents explicit backup flags above the config file and default', () => {
+		expect(BACKUP).toMatch(
+			/explicit\s+`--data-dir` flag first, then the `--config` file, then the default `~\/\.hezo`/,
+		);
 	});
 });

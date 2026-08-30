@@ -324,6 +324,13 @@ describe('configuration documentation after the environment-variable migration',
 		expect(design).not.toContain('unlock-key custody');
 		expect(design).not.toContain('proactive re-unlock');
 		expect(design).not.toContain('auto-unlock');
+		expect(design).toMatch(
+			/A provisioned\s+droplet stays online, but after a reboot or service restart[\s\S]*background work remains paused until the user unlocks it/,
+		);
+		expect(design).toMatch(
+			/The database and bucket credentials in this file are per-tenant scoped[\s\S]*compromised droplet exposes those credentials only for that\s+tenant/,
+		);
+		expect(design).not.toContain('a compromised droplet exposes only that tenant');
 	});
 
 	it.each([

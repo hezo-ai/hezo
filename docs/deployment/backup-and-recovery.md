@@ -54,9 +54,9 @@ versioning.
 
 ### Point the command at your data directory
 
-`hezo backup` resolves its data directory the **same way the server does** - the `--config` file
-first, then `--data-dir`, then the default `~/.hezo`. This matters the moment your instance
-does **not** live at the default location.
+`hezo backup` resolves its data directory the **same way the server does** - an explicit
+`--data-dir` flag first, then the `--config` file, then the default `~/.hezo`. This matters
+the moment your instance does **not** live at the default location.
 
 **If your server runs with a custom data directory, the backup command has to know about it
 too.** Run `hezo backup` with the same `--config` the server uses,

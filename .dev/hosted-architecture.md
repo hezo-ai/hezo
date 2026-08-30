@@ -12,7 +12,7 @@ Hezo: the tenant topology, storage, control plane at `app.hezo.ai`, DigitalOcean
 provisioning, and build phasing. Superseded passages have been reconciled with the
 current implementation so they do not prescribe an obsolete security flow.
 
-- **Product shape:** a user signs up at `app.hezo.ai`, gets their own always-on
+- **Product shape:** a user signs up at `app.hezo.ai`, gets their own provisioned
   Hezo instance at `username.app.hezo.ai`, and is signed in to it from the
   control plane with no separate instance password. Billing, login, and account
   management live at `app.hezo.ai`.
@@ -21,10 +21,9 @@ current implementation so they do not prescribe an obsolete security flow.
 - **Threat model:** untrusted / open signup. Anyone can sign up and run
   arbitrary agent code. The isolation boundary must hold against a malicious
   tenant.
-- **Availability:** every tenant instance is **always-on**. A signed-up user
-  expects their Hezo to keep doing background work (agents picking up tasks,
-  heartbeat wakeups) whether or not they are attending to it. Instances are
-  **not** transient and must not scale to zero.
+- **Availability:** instances are not transient and do not scale to zero. A provisioned
+  droplet stays online, but after a reboot or service restart Hezo is locked and
+  background work remains paused until the user unlocks it.
 
 ## Recommendation: instance-per-tenant
 
@@ -387,9 +386,10 @@ other tenant's hostname.
 | `sso.audience` | `<sub>.app.hezo.ai` | exact host accepted in the token `aud` |
 | one-shot `HEZO_MASTER_KEY` input | **never persisted** | optional input for one non-interactive startup; SSO never carries or replaces it |
 
-Secrets in this file are per-tenant scoped by construction — a compromised
-droplet exposes only that tenant's database and bucket. A `rotate_creds` job
-can re-issue both.
+The database and bucket credentials in this file are per-tenant scoped by
+construction. A compromised droplet exposes those credentials only for that
+tenant. A `rotate_creds` job can re-issue both. The droplet's local `dataDir`
+state is a separate part of the same compromise boundary.
 
 ## Hezo-core changes (superseded)
 
@@ -407,7 +407,7 @@ minted.
 
 ## Cost posture
 
-Always-on does not mean always-busy: Hezo's background work is periodic and
+While the instance is unlocked, Hezo's background work is periodic and
 bursty (scheduler ticks ~1 Hz; agent wakeups default to 12 h; a run is a
 transient `docker exec`), so an instance idles at its baseline most of the
 time. Per-tenant at ~100 tenants on DO: droplet ~$12–24 + amortized shared PG
@@ -417,7 +417,7 @@ Hetzner dedicated with packed Firecracker micro-VMs the cost floor (~€2.3),
 at the price of a second vendor for managed PG and (respectively) operating a
 hypervisor — the provisioner interface keeps that door open.
 
-> The bigger cost is probably not infrastructure. At 100 always-on tenants
+> The bigger cost is probably not infrastructure. At 100 provisioned tenants
 > doing background agent work, **LLM API token spend likely dwarfs compute**.
 > The credential/billing model (bring-your-own-key vs. a pooled platform key
 > with metering) deserves at least as much design effort as the substrate;
@@ -479,7 +479,7 @@ login-style throttle.
 
 ## Key files referenced
 
-- `packages/shared/src/crypto/{auth.ts,sso.ts}` — signature verification and
+- `packages/shared/src/crypto/{auth.ts,sso.ts}` - signature verification and
   the current identity-only SSO token format.
 - `packages/server/src/crypto/master-key.ts` — `MasterKeyManager`, unlock,
   canary, JWT-key derivation.
@@ -491,7 +491,7 @@ login-style throttle.
 - `packages/server/src/assets/` — S3 asset storage (`parseAssetStorageUrl`).
 - `packages/server/src/config/schema.ts`, `config/types.ts`, and `cli.ts` - the
   config-file schema and resolved runtime configuration.
-- `packages/server/migrations/001_initial_schema.sql` — the single-tenant
+- `packages/server/migrations/001_initial_schema.sql` - the single-tenant
   constraints the hosted design builds around.
 - `deploy/provision.sh`, `deploy/cloud-init/`, `deploy/marketplace/` — the
   provisioning assets the golden image extends.
