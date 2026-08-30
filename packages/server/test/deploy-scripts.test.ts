@@ -111,6 +111,8 @@ describe('the one-click managed-backend configuration contract', () => {
 
 	it('carries deploy.env inputs into the generated CommonJS config', () => {
 		expect(PROVISION).toContain('DEPLOY_ENV="/etc/hezo/deploy.env"');
+		expect(PROVISION).toContain('CONFIG_FILE="/etc/hezo/hezo.config.cjs"');
+		expect(PROVISION).toContain('ExecStart=/usr/local/bin/hezo --config /etc/hezo/hezo.config.cjs');
 		expect(PROVISION).toContain(`done <"\${DEPLOY_ENV}"`);
 		expect(PROVISION).toContain(`export "\${key}=\${value}"`);
 		expect(PROVISION).toMatch(
