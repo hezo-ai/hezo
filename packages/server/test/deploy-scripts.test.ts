@@ -699,9 +699,10 @@ describe('the one-click managed-backend configuration contract', () => {
 		['browser master-key authentication', 'packages/web/src/lib/auth.ts'],
 		['English message catalog', 'packages/web/src/lib/i18n/catalog/en.json'],
 		['configuration guide', 'docs/deployment/configuration.md'],
+		['provisioner', 'deploy/provision.sh'],
 	])('%s states the complete process unlock lifecycle', (_name, rel) => {
 		const source = readFileSync(join(REPO_ROOT, rel), 'utf8');
-		expect(source).toMatch(/new process[^.]*locked by\s+(?:[*]\s*)?default/i);
+		expect(source).toMatch(/new (?:Hezo )?process[^.]*locked by\s+(?:[*]\s*)?default/i);
 		expect(source).toMatch(/supervis(?:ed|or)[^.]*in[- ]memory|in[- ]memory[^.]*supervisor/i);
 		expect(source).toMatch(/--master-key[^.]*HEZO_MASTER_KEY|HEZO_MASTER_KEY[^.]*--master-key/i);
 		expect(source).not.toMatch(
@@ -738,6 +739,7 @@ describe('the one-click managed-backend configuration contract', () => {
 		['English message catalog', 'packages/web/src/lib/i18n/catalog/en.json'],
 		['configuration guide', 'docs/deployment/configuration.md'],
 		['self-hosting guide', 'docs/deployment/self-hosting.md'],
+		['provisioner', 'deploy/provision.sh'],
 	])('%s contains no contradictory restart-lifecycle shorthand', (_name, rel) => {
 		const source = readFileSync(join(REPO_ROOT, rel), 'utf8');
 		expect(source).not.toMatch(
