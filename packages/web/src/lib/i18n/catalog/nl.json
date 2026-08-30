@@ -681,7 +681,7 @@
 	"toast.error": "Er ging iets mis",
 	"toast.info": "Let op",
 	"toast.success": "Klaar",
-	"updates.confirm.drain": "Hezo wacht een paar seconden tot lopende agent-runs klaar zijn en stopt dan. Wat nog draait, gaat terug in de wachtrij en begint opnieuw.",
+	"updates.confirm.drain": "Hezo stopt lopende agent-runs, zet ze opnieuw in de wachtrij en start ze vanaf het begin.",
 	"updates.confirm.restart": "Hezo wordt afgesloten en start opnieuw op met {version}.",
 	"updates.confirm.reunlock": "Nieuwe processen starten standaard vergrendeld. Een begeleide update in de app kan de sleutel in het geheugen doorgeven. Na een herstart, crash of directe serviceherstart heb je je hoofdsleutel van 12 woorden nodig, tenzij die start eenmalige invoer via --master-key of HEZO_MASTER_KEY ontvangt.",
 	"updates.confirm.runsInFlight.one": "Er is nu {count} agent-run bezig.",

@@ -681,7 +681,7 @@
 	"toast.error": "出错了",
 	"toast.info": "提示",
 	"toast.success": "完成",
-	"updates.confirm.drain": "Hezo 会等待几秒钟，让进行中的代理运行完成，然后停止。仍在运行的会重新排队并从头开始。",
+	"updates.confirm.drain": "Hezo 会停止正在进行的代理运行，将其重新排队并从头开始。",
 	"updates.confirm.restart": "Hezo 将关闭并以 {version} 重新启动。",
 	"updates.confirm.reunlock": "新进程默认以锁定状态启动。应用内的受控更新可以在内存中传递密钥。重新启动、崩溃或直接重启服务后，您需要使用 12 个单词的主密钥，除非该次启动接收了一次性的 --master-key 或 HEZO_MASTER_KEY 输入。",
 	"updates.confirm.runsInFlight.one": "当前有 {count} 个代理运行正在进行。",

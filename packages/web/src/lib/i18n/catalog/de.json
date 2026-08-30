@@ -681,7 +681,7 @@
 	"toast.error": "Etwas ist schiefgelaufen",
 	"toast.info": "Hinweis",
 	"toast.success": "Fertig",
-	"updates.confirm.drain": "Hezo wartet einige Sekunden, bis laufende Agentenläufe abgeschlossen sind, und stoppt dann. Was noch läuft, wird neu eingereiht und beginnt von vorne.",
+	"updates.confirm.drain": "Hezo stoppt laufende Agentenläufe, reiht sie neu ein und startet sie von vorne.",
 	"updates.confirm.restart": "Hezo wird beendet und startet mit {version} neu.",
 	"updates.confirm.reunlock": "Neue Prozesse starten standardmäßig gesperrt. Ein überwachtes Update innerhalb der App kann den Schlüssel im Arbeitsspeicher weiterreichen. Nach einem Neustart, Absturz oder direkten Dienstneustart benötigen Sie Ihren 12-Wörter-Hauptschlüssel, sofern der Start nicht die einmalige Eingabe --master-key oder HEZO_MASTER_KEY erhält.",
 	"updates.confirm.runsInFlight.one": "{count} Agentenlauf ist gerade aktiv.",

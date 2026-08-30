@@ -681,7 +681,7 @@
 	"toast.error": "Something went wrong",
 	"toast.info": "Heads up",
 	"toast.success": "Done",
-	"updates.confirm.drain": "Hezo waits a few seconds for agent runs in flight to finish, then stops. Anything still running is re-queued and starts over.",
+	"updates.confirm.drain": "Hezo stops agent runs in flight, re-queues them, and starts them over.",
 	"updates.confirm.restart": "Hezo will shut down and restart on {version}.",
 	"updates.confirm.reunlock": "New processes start locked by default. A supervised in-app update can carry the key forward in memory. After a reboot, crash, or direct service restart, you'll need your 12-word master key unless that startup receives one-shot --master-key or HEZO_MASTER_KEY input.",
 	"updates.confirm.runsInFlight.one": "{count} agent run is in flight right now.",

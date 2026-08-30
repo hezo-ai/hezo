@@ -681,7 +681,7 @@
 	"toast.error": "Une erreur est survenue",
 	"toast.info": "À noter",
 	"toast.success": "Terminé",
-	"updates.confirm.drain": "Hezo attend quelques secondes que les exécutions d'agent en cours se terminent, puis s'arrête. Ce qui tourne encore est remis en file et repart de zéro.",
+	"updates.confirm.drain": "Hezo arrête les exécutions d'agent en cours, les remet en file d'attente et les relance depuis le début.",
 	"updates.confirm.restart": "Hezo va s’arrêter puis redémarrer sur {version}.",
 	"updates.confirm.reunlock": "Les nouveaux processus démarrent verrouillés par défaut. Une mise à jour supervisée dans l'application peut transmettre la clé en mémoire. Après un redémarrage, un plantage ou un redémarrage direct du service, vous aurez besoin de votre clé maîtresse de 12 mots, sauf si ce démarrage reçoit l'entrée à usage unique --master-key ou HEZO_MASTER_KEY.",
 	"updates.confirm.runsInFlight.one": "{count} exécution d'agent est en cours.",

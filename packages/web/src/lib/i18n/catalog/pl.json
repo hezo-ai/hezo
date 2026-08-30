@@ -681,7 +681,7 @@
 	"toast.error": "Coś poszło nie tak",
 	"toast.info": "Uwaga",
 	"toast.success": "Gotowe",
-	"updates.confirm.drain": "Hezo czeka kilka sekund na zakonczenie trwajacych uruchomien agentow, a potem sie zatrzymuje. To, co nadal dziala, wraca do kolejki i zaczyna od poczatku.",
+	"updates.confirm.drain": "Hezo zatrzymuje trwające uruchomienia agentów, ponownie umieszcza je w kolejce i uruchamia od początku.",
 	"updates.confirm.restart": "Hezo zostanie zamkniete i uruchomi sie ponownie w wersji {version}.",
 	"updates.confirm.reunlock": "Nowe procesy są domyślnie uruchamiane w stanie zablokowanym. Nadzorowana aktualizacja w aplikacji może przekazać klucz w pamięci. Po ponownym uruchomieniu, awarii lub bezpośrednim restarcie usługi potrzebny będzie 12-wyrazowy klucz główny, chyba że to uruchomienie otrzyma jednorazowe dane wejściowe --master-key lub HEZO_MASTER_KEY.",
 	"updates.confirm.runsInFlight.one": "Trwa teraz {count} uruchomienie agenta.",

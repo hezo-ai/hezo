@@ -681,7 +681,7 @@
 	"toast.error": "問題が発生しました",
 	"toast.info": "お知らせ",
 	"toast.success": "完了",
-	"updates.confirm.drain": "Hezo は実行中のエージェント実行が終わるまで数秒待ってから停止します。まだ実行中のものは再度キューに入り、最初からやり直します。",
+	"updates.confirm.drain": "Hezo は実行中のエージェント実行を停止して再度キューに入れ、最初からやり直します。",
 	"updates.confirm.restart": "Hezo を停止し、{version} で再起動します。",
 	"updates.confirm.reunlock": "新しいプロセスはデフォルトでロックされた状態で起動します。アプリ内の監視付きアップデートでは、メモリ内のキーを引き継ぐことができます。再起動、クラッシュ、またはサービスの直接再起動後は、その起動に一度限りの --master-key または HEZO_MASTER_KEY 入力を渡さない限り、12 語のマスターキーが必要です。",
 	"updates.confirm.runsInFlight.one": "現在 {count} 件のエージェント実行が進行中です。",

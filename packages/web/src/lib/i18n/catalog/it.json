@@ -681,7 +681,7 @@
 	"toast.error": "Qualcosa è andato storto",
 	"toast.info": "Nota",
 	"toast.success": "Fatto",
-	"updates.confirm.drain": "Hezo attende qualche secondo che le esecuzioni degli agenti in corso finiscano, poi si ferma. Ciò che è ancora in esecuzione torna in coda e riparte da capo.",
+	"updates.confirm.drain": "Hezo interrompe le esecuzioni degli agenti in corso, le rimette in coda e le riavvia dall'inizio.",
 	"updates.confirm.restart": "Hezo si arresterà e ripartirà con {version}.",
 	"updates.confirm.reunlock": "I nuovi processi si avviano bloccati per impostazione predefinita. Un aggiornamento supervisionato nell'app può trasferire la chiave in memoria. Dopo un riavvio, un arresto anomalo o un riavvio diretto del servizio, ti servirà la chiave principale di 12 parole, a meno che l'avvio non riceva l'input monouso --master-key o HEZO_MASTER_KEY.",
 	"updates.confirm.runsInFlight.one": "{count} esecuzione di agente è in corso adesso.",

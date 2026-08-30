@@ -681,7 +681,7 @@
 	"toast.error": "Algo deu errado",
 	"toast.info": "Atenção",
 	"toast.success": "Pronto",
-	"updates.confirm.drain": "O Hezo espera alguns segundos para que as execuções de agente em andamento terminem e então para. O que ainda estiver rodando volta para a fila e começa de novo.",
+	"updates.confirm.drain": "O Hezo interrompe as execuções de agente em andamento, coloca-as de volta na fila e as reinicia do começo.",
 	"updates.confirm.restart": "O Hezo vai desligar e reiniciar na {version}.",
 	"updates.confirm.reunlock": "Novos processos iniciam bloqueados por padrão. Uma atualização supervisionada no aplicativo pode transferir a chave na memória. Após uma reinicialização, falha ou reinício direto do serviço, você precisará da sua chave mestra de 12 palavras, a menos que essa inicialização receba a entrada única --master-key ou HEZO_MASTER_KEY.",
 	"updates.confirm.runsInFlight.one": "{count} execução de agente está em andamento agora.",

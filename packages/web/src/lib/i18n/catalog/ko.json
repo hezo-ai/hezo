@@ -681,7 +681,7 @@
 	"toast.error": "문제가 발생했습니다",
 	"toast.info": "알림",
 	"toast.success": "완료",
-	"updates.confirm.drain": "Hezo는 진행 중인 에이전트 실행이 끝날 때까지 몇 초 기다린 뒤 멈춰요. 그래도 남아 있는 실행은 큐로 돌아가 처음부터 다시 시작해요.",
+	"updates.confirm.drain": "Hezo는 진행 중인 에이전트 실행을 중지하고 큐에 다시 넣은 뒤 처음부터 다시 시작해요.",
 	"updates.confirm.restart": "Hezo를 종료하고 {version}으로 다시 시작해요.",
 	"updates.confirm.reunlock": "새 프로세스는 기본적으로 잠긴 상태로 시작해요. 감독되는 앱 내 업데이트는 메모리의 키를 다음 프로세스로 전달할 수 있어요. 재부팅, 충돌 또는 직접 서비스 재시작 후에는 해당 시작에 일회용 --master-key 또는 HEZO_MASTER_KEY 입력을 제공하지 않았다면 12단어 마스터 키가 필요해요.",
 	"updates.confirm.runsInFlight.one": "지금 에이전트 실행 {count}건이 진행 중이에요.",
