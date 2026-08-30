@@ -40,9 +40,10 @@ for you on first run.
 - If you lose it, there is no recovery - the only way forward is to reset and start
   fresh. See [Master key & encryption](/docs/security/master-key).
 
-After every restart, Hezo starts **locked**: agents can't run and secrets can't be
-read until you provide the phrase again on the unlock screen. This is by design - unlock
-it from the browser each time. You can pass it to a single startup non-interactively with
+After a reboot, crash, or service restart, Hezo starts **locked**: agents can't run and
+secrets can't be read until you provide the phrase again on the unlock screen. An in-app
+update restart is the exception - the supervisor passes the unlock key to the new process
+in memory. You can pass it to a single startup non-interactively with
 `--master-key` / the `HEZO_MASTER_KEY` environment variable, but don't store the phrase on
 the server (see [Deploying to the cloud](/docs/deployment/cloud) and
 [Master key & encryption](/docs/security/master-key)).

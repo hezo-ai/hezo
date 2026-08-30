@@ -65,9 +65,9 @@ second, externally-verifiable mechanism is needed rather than reusing it.
 
 ### The load-bearing consequence: identity and session must be separable in time
 
-A hosted tenant **boots locked on every restart**. The supervisor unlock handoff
-(`lib/unlock-handoff.ts`) survives only an *update* restart, by design; reboot,
-crash and `systemctl restart` all come up locked.
+A hosted tenant **boots locked after any restart the supervisor does not survive**.
+The supervisor unlock handoff (`lib/unlock-handoff.ts`) survives an *update* restart,
+by design; reboot, crash and `systemctl restart` all come up locked.
 
 And a locked instance cannot mint a session at all:
 
@@ -290,8 +290,8 @@ with the token they return with.
   step leaves the stepper too, rather than showing as a completed step that never
   happened.
 - **Signing out goes to `sso.logoutUrl`** after clearing the local session. It
-  ends a session; it does not re-lock the instance, which still needs a restart
-  exactly as it always has.
+  ends a session; it does not re-lock the instance. A reboot or service restart
+  still does.
 - **A token arriving before setup is early, not failed.** The control plane sends
   a new signup straight to a brand-new instance, which has no account to be
   anybody yet and refuses the token. Treating that as a failure strands every new

@@ -51,7 +51,7 @@ function issuerKeys(config: SsoConfig): Map<string, string> {
  * a token old enough to be evicted under the cap has to outlive its own window
  * to be worth replaying, and the window is a minute.
  *
- * In memory only. A restart drops it, and also re-locks the instance.
+ * In memory only. A reboot, crash, or service restart drops it and re-locks the instance.
  */
 const REPLAY_CACHE_MAX_ENTRIES = 1024;
 const replayCache = new BoundedMap<string, number>(REPLAY_CACHE_MAX_ENTRIES);

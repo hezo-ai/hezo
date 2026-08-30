@@ -63,8 +63,9 @@ hezo
 
 For an always-on instance, run it under your platform's service manager (for example a
 `systemd` unit on Linux) so it restarts on boot. Remember that Hezo starts **locked**
-after a restart, by design, so you unlock it from the web app's gate each time it comes
-back up. Don't store the master key on the server to skip that step; it's the one secret
+after a reboot, crash, or service restart, so you unlock it from the web app's gate when
+it comes back up. An in-app update restart preserves unlock through the supervisor.
+Don't store the master key on the server to skip the unlock step; it's the one secret
 Hezo keeps in memory only (see [Master key & encryption](/docs/security/master-key)).
 
 ### Run as a systemd service (Linux)

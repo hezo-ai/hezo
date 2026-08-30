@@ -79,7 +79,7 @@ APP_PORT=3100
 # override) into deploy.env before this script runs — pick them up. Explicit shell
 # environment still wins over the file.
 if [[ -f "${DEPLOY_ENV}" ]]; then
-	while IFS='=' read -r key value; do
+	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
 		[[ "${key}" =~ ^(HEZO_[A-Z_]+|BEHIND_GATEWAY)$ ]] || continue
 		if [[ -z "${!key:-}" ]]; then
 			export "${key}=${value}"
@@ -141,7 +141,7 @@ json_string() {
 LEGACY_ENV="/etc/hezo/hezo.env"
 LEGACY_ENV_CARRIED=""
 if [[ -f "${LEGACY_ENV}" && ! -f "${CONFIG_FILE}" ]]; then
-	while IFS='=' read -r key value; do
+	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
 		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
 		if [[ -z "${!key:-}" ]]; then
 			export "${key}=${value}"
@@ -164,7 +164,30 @@ fi
 
 # An operator who moved the data dir keeps it. Everything below writes to this path.
 DATA_DIR="${HEZO_DATA_DIR:-${DATA_DIR}}"
-if [[ ! -f "${CONFIG_FILE}" ]]; then
+CONFIG_READY=""
+NEEDS_GENERATED_CONFIG=""
+
+# A generated file is ready only after its complete marker lands. Accept the
+# pre-marker form written by the previous provisioner when its closing line is
+# present, so an upgrade does not rewrite a valid existing config.
+generated_config_complete() {
+	local path="$1"
+	[[ -f "${path}" ]] || return 1
+	grep -Fqx '// Hezo configuration. Edit and restart: systemctl restart hezo' "${path}" || return 1
+	grep -Eq '^};([[:space:]]*//.*)?$' "${path}"
+}
+
+if generated_config_complete "${CONFIG_FILE}"; then
+	CONFIG_READY=1
+elif [[ ! -f "${CONFIG_FILE}" ]]; then
+	NEEDS_GENERATED_CONFIG=1
+elif grep -Fq '// Hezo configuration. Edit and restart: systemctl restart hezo' "${CONFIG_FILE}" ||
+	[[ "$(tr -d '[:space:]' <"${CONFIG_FILE}")" == 'module.exports={' ]]; then
+	NEEDS_GENERATED_CONFIG=1
+	log "Replacing an incomplete generated config at ${CONFIG_FILE}."
+fi
+
+if [[ -n "${NEEDS_GENERATED_CONFIG}" ]]; then
 	if [[ -n "${HEZO_DATABASE_POOL_SIZE:-}" && ! "${HEZO_DATABASE_POOL_SIZE}" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
 		echo "HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100." >&2
 		exit 1
@@ -329,17 +352,27 @@ chmod +x /usr/local/bin/hezo
 # ---------------------------------------------------------------------------
 install -d -m 700 /etc/hezo
 install -d -m 755 "${DATA_DIR}"
-if [[ ! -f "${CONFIG_FILE}" ]]; then
-	# Mode 600: this file can hold database and object-storage credentials.
-	install -m 600 /dev/null "${CONFIG_FILE}"
-	cat >"${CONFIG_FILE}" <<EOF
+CONFIG_CANDIDATE=""
+DEPLOY_ENV_CANDIDATE=""
+cleanup_config_candidates() {
+	[[ -z "${CONFIG_CANDIDATE}" ]] || rm -f -- "${CONFIG_CANDIDATE}"
+	[[ -z "${DEPLOY_ENV_CANDIDATE}" ]] || rm -f -- "${DEPLOY_ENV_CANDIDATE}"
+}
+trap cleanup_config_candidates EXIT
+
+if [[ -n "${NEEDS_GENERATED_CONFIG}" ]]; then
+	# Build beside the destination so the final rename is atomic. Mode 600: this
+	# file can hold database and object-storage credentials.
+	CONFIG_CANDIDATE="$(mktemp "${CONFIG_FILE}.tmp.XXXXXX")"
+	chmod 600 "${CONFIG_CANDIDATE}"
+	cat >"${CONFIG_CANDIDATE}" <<EOF
 // Hezo configuration. Edit and restart: systemctl restart hezo
 // Reference: https://hezo.ai/docs/deployment/configuration
 //
-// Do NOT put your master key in this file. Hezo keeps it in memory only and comes up
-// locked after each restart by design; unlock it from the browser gate. A copy of the
-// key on disk next to the encrypted data would let anyone who reads this box decrypt
-// your vault.
+// Do NOT put your master key in this file. Hezo keeps it in memory only. A reboot,
+// crash, or service restart comes up locked; unlock it from the browser gate. A copy
+// of the key on disk next to the encrypted data would let anyone who reads this box
+// decrypt your vault.
 const { existsSync, readFileSync } = require('node:fs');
 
 // Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
@@ -359,27 +392,42 @@ EOF
 			[[ -n "${HEZO_DATABASE_URL:-}" ]] && printf '\t\turl: %s,\n' "${HEZO_DATABASE_URL_JSON}"
 			[[ -n "${HEZO_DATABASE_POOL_SIZE:-}" ]] && printf '\t\tpoolSize: %s,\n' "${HEZO_DATABASE_POOL_SIZE}"
 			printf '\t},\n'
-		} >>"${CONFIG_FILE}"
+		} >>"${CONFIG_CANDIDATE}"
 	fi
 	if [[ -n "${HEZO_ASSET_STORAGE_URL:-}" ]]; then
-		printf '\tassetStorage: { url: %s },\n' "${HEZO_ASSET_STORAGE_URL_JSON}" >>"${CONFIG_FILE}"
+		printf '\tassetStorage: { url: %s },\n' "${HEZO_ASSET_STORAGE_URL_JSON}" >>"${CONFIG_CANDIDATE}"
 	fi
-	echo "};" >>"${CONFIG_FILE}"
+	echo "};" >>"${CONFIG_CANDIDATE}"
+	echo '// hezo-provision: complete' >>"${CONFIG_CANDIDATE}"
+	if ! generated_config_complete "${CONFIG_CANDIDATE}" ||
+		[[ "$(tail -n 1 "${CONFIG_CANDIDATE}")" != '// hezo-provision: complete' ]]; then
+		echo "Generated Hezo config did not pass its completion check." >&2
+		exit 1
+	fi
+	mv -fT "${CONFIG_CANDIDATE}" "${CONFIG_FILE}"
+	CONFIG_CANDIDATE=""
+	CONFIG_READY=1
 fi
 
 # Now that the settings live in the config file, take the old one out of the way:
 # nothing reads it any more, and leaving it invites a hand-edit that does nothing.
-if [[ -n "${LEGACY_ENV_CARRIED}" && -f "${CONFIG_FILE}" && -f "${LEGACY_ENV}" ]]; then
+if [[ -n "${LEGACY_ENV_CARRIED}" && -n "${CONFIG_READY}" && -f "${LEGACY_ENV}" ]]; then
 	mv "${LEGACY_ENV}" "${LEGACY_ENV}.migrated"
 	log "Renamed ${LEGACY_ENV} to ${LEGACY_ENV}.migrated (no longer read)."
 fi
 
-# Keep only settings the first-boot unit still needs. Managed credentials now
-# live in the root-only CommonJS config and must not remain in a second file.
-install -m 600 /dev/null "${DEPLOY_ENV}"
-[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && printf 'HEZO_DOMAIN_OVERRIDE=%s\n' "${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV}"
-[[ -n "${HEZO_SWAP_SIZE:-}" ]] && printf 'HEZO_SWAP_SIZE=%s\n' "${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV}"
-[[ -n "${BEHIND_GATEWAY}" ]] && printf 'BEHIND_GATEWAY=%s\n' "${BEHIND_GATEWAY}" >>"${DEPLOY_ENV}"
+# Keep only settings the first-boot unit still needs after the generated config
+# is complete. The atomic rewrite retains the credential source if cleanup is
+# interrupted, rather than truncating the only copy in place.
+if [[ -n "${CONFIG_READY}" ]]; then
+	DEPLOY_ENV_CANDIDATE="$(mktemp "${DEPLOY_ENV}.tmp.XXXXXX")"
+	chmod 600 "${DEPLOY_ENV_CANDIDATE}"
+	[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && printf 'HEZO_DOMAIN_OVERRIDE=%s\n' "${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV_CANDIDATE}"
+	[[ -n "${HEZO_SWAP_SIZE:-}" ]] && printf 'HEZO_SWAP_SIZE=%s\n' "${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV_CANDIDATE}"
+	[[ -n "${BEHIND_GATEWAY}" ]] && printf 'BEHIND_GATEWAY=%s\n' "${BEHIND_GATEWAY}" >>"${DEPLOY_ENV_CANDIDATE}"
+	mv -fT "${DEPLOY_ENV_CANDIDATE}" "${DEPLOY_ENV}"
+	DEPLOY_ENV_CANDIDATE=""
+fi
 
 # ---------------------------------------------------------------------------
 # 5. Caddy (reverse proxy, automatic HTTPS, WebSocket passthrough)
@@ -442,7 +490,7 @@ SENTINEL="/var/lib/hezo/.firstboot-done"
 [[ -f "${SENTINEL}" ]] && exit 0
 
 if [[ -f /etc/hezo/deploy.env ]]; then
-	while IFS='=' read -r key value; do
+	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
 		[[ "${key}" =~ ^(HEZO_DOMAIN_OVERRIDE|HEZO_SWAP_SIZE|BEHIND_GATEWAY)$ ]] || continue
 		export "${key}=${value}"
 	done </etc/hezo/deploy.env

@@ -46,8 +46,8 @@ const SIGNATURE_HEX = /^[0-9a-f]{128}$/;
 const SALT_HEX = /^[0-9a-f]{32}$/;
 
 // In-memory brute-force throttle for password login. Single admin, so one global
-// counter suffices. Not persisted — a restart clears it, which is fine (a
-// restart re-locks the instance behind the master key anyway).
+// counter suffices. Not persisted - a reboot, crash, or service restart clears
+// it and re-locks the instance behind the master key anyway.
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCKOUT_MS = 60_000;
 const loginThrottle = { failures: 0, lockedUntil: 0 };

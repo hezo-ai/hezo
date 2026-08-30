@@ -182,12 +182,14 @@ server-side, so a retained copy remains valid until expiry. Suspension cuts off 
 the instance by powering it off and routing traffic away; it does not invalidate an
 already-minted JWT.
 
-### Restarts stay locked
+### Restart boundary
 
-Updates and reboots restart the server, which by design comes up locked.
-SSO does not change that state. The health monitor may report the lock, but the user
-must complete the ordinary mnemonic unlock before the parked SSO identity can become
-a local session.
+The normal in-app update restart preserves the in-memory unlock key through the
+surviving supervisor, so "Install & restart" comes back unlocked. A reboot, crash, or
+service restart replaces that supervisor and comes up locked. SSO does not change a
+locked instance's state. The health monitor may report the lock, but the user must
+complete the ordinary mnemonic unlock before the parked SSO identity can become a
+local session.
 
 ## Control plane (`app.hezo.ai`)
 
@@ -288,8 +290,10 @@ the droplet.
   flow: the ordinary banner tells the superuser when a release is ready, and
   the superuser chooses "Install & restart". Hosted does not write an `updates`
   block. The control plane records each observed `version` and supports mixed
-  versions because tenants update at different times. A restart leaves the
-  instance locked until the user completes the ordinary unlock.
+  versions because tenants update at different times. This in-app update restart
+  preserves the in-memory unlock key through the supervisor. A reboot, crash, or
+  service restart instead comes up locked until the user completes the ordinary
+  unlock.
 - **Health monitor:** `GET /api/status` per running instance (~60s, batched);
   stores `{masterKeyState, passwordSet, version}`. A locked or repeatedly
   unreachable instance produces an alert and dashboard state; the monitor does
