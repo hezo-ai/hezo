@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -113,14 +114,69 @@ describe('the one-click managed-backend configuration contract', () => {
 		expect(PROVISION).toContain('DEPLOY_ENV="/etc/hezo/deploy.env"');
 		expect(PROVISION).toContain('CONFIG_FILE="/etc/hezo/hezo.config.cjs"');
 		expect(PROVISION).toContain('ExecStart=/usr/local/bin/hezo --config /etc/hezo/hezo.config.cjs');
-		expect(PROVISION).toContain(`done <"\${DEPLOY_ENV}"`);
-		expect(PROVISION).toContain(`export "\${key}=\${value}"`);
-		expect(PROVISION).toMatch(
-			/cat >"\$\{CONFIG_FILE\}" <<EOF[\s\S]*module\.exports = \{[\s\S]*dataDir:/,
+
+		const envStart = PROVISION.indexOf('# Cloud-init can seed optional settings');
+		const envEnd = PROVISION.indexOf('# Resolved once so every branch below');
+		const configStart = PROVISION.indexOf(`if [[ ! -f "\${CONFIG_FILE}" ]]`);
+		const configEnd = PROVISION.indexOf(
+			'# Now that the settings live in the config file',
+			configStart,
 		);
-		expect(PROVISION).toContain(`url: '\${HEZO_DATABASE_URL}',`);
-		expect(PROVISION).toContain(`poolSize: \${HEZO_DATABASE_POOL_SIZE},`);
-		expect(PROVISION).toContain(`assetStorage: { url: '\${HEZO_ASSET_STORAGE_URL}' },`);
+		expect(envStart).toBeGreaterThan(-1);
+		expect(envEnd).toBeGreaterThan(envStart);
+		expect(configStart).toBeGreaterThan(-1);
+		expect(configEnd).toBeGreaterThan(configStart);
+
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-contract-'));
+		const deployEnv = join(dir, 'deploy.env');
+		const configFile = join(dir, 'hezo.config.cjs');
+		const webUrlFile = join(dir, 'web-url');
+		const databaseUrl = 'postgres://hezo:secret@db-host:5432/hezo?sslmode=require';
+		const assetStorageUrl = 's3://access:secret@storage-host/bucket';
+		writeFileSync(
+			deployEnv,
+			[
+				`HEZO_DATABASE_URL=${databaseUrl}`,
+				'HEZO_DATABASE_POOL_SIZE=17',
+				`HEZO_ASSET_STORAGE_URL=${assetStorageUrl}`,
+				'',
+			].join('\n'),
+		);
+
+		try {
+			execFileSync(
+				'bash',
+				[
+					'-c',
+					[
+						'set -euo pipefail',
+						`DEPLOY_ENV=${JSON.stringify(deployEnv)}`,
+						`CONFIG_FILE=${JSON.stringify(configFile)}`,
+						`WEB_URL_FILE=${JSON.stringify(webUrlFile)}`,
+						`DATA_DIR=${JSON.stringify(join(dir, 'data'))}`,
+						PROVISION.slice(envStart, envEnd),
+						PROVISION.slice(configStart, configEnd),
+					].join('\n'),
+				],
+				{ stdio: 'pipe' },
+			);
+
+			const generated = JSON.parse(
+				execFileSync(
+					process.execPath,
+					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
+					{ encoding: 'utf8' },
+				),
+			) as {
+				database?: { url?: string; poolSize?: number };
+				assetStorage?: { url?: string };
+			};
+			expect(generated.database).toEqual({ url: databaseUrl, poolSize: 17 });
+			expect(generated.assetStorage).toEqual({ url: assetStorageUrl });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+
 		expect(ONE_CLICK).toMatch(
 			/At provision time[\s\S]*\/etc\/hezo\/deploy\.env[\s\S]*persists them into `\/etc\/hezo\/hezo\.config\.cjs`/,
 		);
