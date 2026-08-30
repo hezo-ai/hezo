@@ -646,7 +646,7 @@ not.** A hosted tenant confirms its own updates exactly like a self-hoster: the
 banner appears, the superuser presses "Install & restart", and nothing installs
 itself.
 
-The shipped defaults are already that behaviour — `config/types.ts:361` is
+The shipped defaults are already that behaviour - `config/types.ts` sets
 `updates: { disabled: false, autoInstall: false }`. So **hosted writes no
 `updates` block at all**, H5 hides nothing, and this repo grows no hosted branch
 in the update path.

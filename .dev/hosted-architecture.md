@@ -76,7 +76,7 @@ shared kernel and daemon. More work, weaker isolation.
 ```
                     ┌──────────────── app.hezo.ai (control plane, new repo) ───────────────┐
  signup / login ──▶ │  accounts · sessions · Stripe billing · SSO issuer · provisioner      │
-                    │  job worker · health monitor · fleet versions                          │
+                    │  job worker · health monitor · version visibility                      │
                     └──────┬──────────────────────────────┬──────────────────┬─────────────┘
                            │ provisions / routes / SSO    │                  │
               ┌────────────▼───┐            ┌─────────────▼──┐        ┌──────▼─────────┐
@@ -184,7 +184,7 @@ already-minted JWT.
 
 ### Restarts stay locked
 
-Version rollouts and reboots restart the server, which by design comes up locked.
+Updates and reboots restart the server, which by design comes up locked.
 SSO does not change that state. The health monitor may report the lock, but the user
 must complete the ordinary mnemonic unlock before the parked SSO identity can become
 a local session.
@@ -201,7 +201,7 @@ Three stateless processes from one codebase, coordinated through the control
 plane's own Postgres database (never a tenant DB):
 
 - **web/api** — Hono: marketing-agnostic app shell, account auth, dashboard,
-  Stripe webhooks, SSO issuer, fleet state API.
+  Stripe webhooks, SSO issuer, and tenant version status.
 - **worker** — job runner over a `provisioning_jobs` table
   (`FOR UPDATE SKIP LOCKED` poll loop; idempotent resumable steps).
 - **monitor** — health loop (per-instance `GET /api/status` every ~60s),
@@ -222,9 +222,8 @@ instances(id, account_id FK UNIQUE,                               -- 1 instance/
          status enum('queued','provisioning','running','locked','suspended',
                      'destroy_scheduled','destroying','destroyed','error'),
          droplet_id, droplet_ip, pg_cluster_id FK, pg_db_name, pg_role,
-         spaces_bucket, version, desired_version,
+         spaces_bucket, version,
          sso_owner_subject,                                       -- == account_id, written into instance config
-         fleet_token_hash,                                        -- per-instance pull-agent credential
          last_health_at, last_health jsonb,                       -- {masterKeyState,passwordSet,version}
          suspended_at, destroy_after)
 pg_clusters(id, do_cluster_id, host, port, admin_secret_ref, tenant_count, max_tenants)
@@ -264,8 +263,8 @@ audit_events(id, account_id, instance_id, actor enum('user','system','stripe','m
 3. `storage` — create the Spaces bucket `hezo-t-<shortid>` + a **per-bucket
    access key**.
 4. `droplet` — create from the golden image; `user_data` cloud-init writes
-   `/etc/hezo/hezo.config.cjs` (matrix below), the Caddy site address, and the fleet
-   agent token; attach the DO Cloud Firewall.
+   `/etc/hezo/hezo.config.cjs` (matrix below) and the Caddy site address; attach
+   the DO Cloud Firewall.
 5. `dns` — A record `<sub>.app.hezo.ai → droplet_ip` (Caddy retries ACME until
    DNS resolves, so ordering is forgiving).
 6. `verify` — poll `https://<sub>.app.hezo.ai/health`, then `/api/status`
@@ -285,16 +284,12 @@ the droplet.
 - **Suspend / resume:** power the droplet off and repoint the DNS A record to
   a control-plane "suspended" page (low TTL); resume reverses it. With the GA
   proxy layer this becomes an instant route flip instead of DNS surgery.
-- **Version rollouts — pull, not push.** A tiny `hezo-fleet-agent` (systemd
-  timer baked into the golden image) polls
-  `GET app.hezo.ai/fleet/v1/state` with its per-instance bearer token; the
-  response carries `{desired_version, binary_url, sha256}`. The agent
-  downloads, verifies the checksum, swaps `/usr/local/bin/hezo`, restarts the
-  service, and reports back. `updates.disabled: true` in the instance config
-  keeps the core self-updater off; rollouts stage by cohort (canary
-  N≈5 → fleet). A restart leaves the instance locked until the user completes
-  the ordinary unlock. Pull-based means **no steady-state inbound SSH** to
-  tenant droplets.
+- **Updates stay user-confirmed.** Hosted uses the normal user-confirmed update
+  flow: the ordinary banner tells the superuser when a release is ready, and
+  the superuser chooses "Install & restart". Hosted does not write an `updates`
+  block. The control plane records each observed `version` and supports mixed
+  versions because tenants update at different times. A restart leaves the
+  instance locked until the user completes the ordinary unlock.
 - **Health monitor:** `GET /api/status` per running instance (~60s, batched);
   stores `{masterKeyState, passwordSet, version}`. A locked or repeatedly
   unreachable instance produces an alert and dashboard state; the monitor does
@@ -328,8 +323,8 @@ other tenant's hostname.
 - **Image:** a **Packer golden image** extending the existing
   `deploy/marketplace/digitalocean` template. Its build invokes the provisioning
   script with `HEZO_IMAGE_BUILD=1`, a Packer-only input that the Hezo runtime
-  never reads: Docker + Caddy + the `hezo` binary + the fleet agent
-  baked in, services enabled-but-not-started; the hosted image drops the
+  never reads: Docker + Caddy + the `hezo` binary baked in, services
+  enabled-but-not-started; the hosted image drops the
   sslip.io `hezo-firstboot` URL derivation (the control plane supplies the
   real hostname). Per-tenant cloud-init only writes the config file → boot in <60s
   instead of ~4–5 min of apt.
@@ -377,7 +372,6 @@ other tenant's hostname.
 | `assetStorage.url` | `s3://<KEY>:<SECRET>@<region>.digitaloceanspaces.com/hezo-t-<shortid>?region=…` | per-bucket key |
 | `webUrl` | `https://<sub>.app.hezo.ai` | public base URL |
 | `telemetry.endpoint` | `https://app.hezo.ai/api/telemetry` | fleet telemetry lands in the control plane |
-| `updates.disabled` | `true` | fleet agent owns versions |
 | `open` | `false` | headless |
 | `sso.issuerUrl` | `https://app.hezo.ai` | where the gate redirects |
 | `sso.logoutUrl` | `https://app.hezo.ai/logout` | required second step after the browser clears its local instance token; ends the issuer session |
@@ -448,7 +442,7 @@ login-style throttle.
   worker), DO provisioner, create/destroy, per-droplet ACME routing, SSO +
   the user-mediated unlock flow, health monitor + a basic dashboard. No billing.
 - **M2 — paid beta:** Stripe (checkout, webhooks, dunning → suspend/resume),
-  fleet agent + staged version rollouts, destroy-with-grace + verified database,
+  mixed-version visibility and support, destroy-with-grace + verified database,
   bucket, and `dataDir` archives, audit events.
 - **M3 — GA / open signup:** the routing proxy layer with central rate
   limiting and instant suspend (mandatory before open signup, given the LE
@@ -471,10 +465,8 @@ login-style throttle.
    fallback behaviour.
 5. **Cloudflare**: second-level subdomain certs need Advanced Certificate
    Manager / Cloudflare-for-SaaS (GA proxy option only).
-6. `updates.disabled` keeps the in-app updater off when the fleet agent owns
-   releases; it is written in the same config file as the tenant storage and SSO settings.
-7. DO VPC private connectivity droplet → managed PG within a region.
-8. Clock skew: droplets run NTP; the 60s token window assumes ≤ a few seconds
+6. DO VPC private connectivity droplet → managed PG within a region.
+7. Clock skew: droplets run NTP; the 60s token window assumes ≤ a few seconds
    of skew — confirm on the golden image.
 
 ## Key files referenced
