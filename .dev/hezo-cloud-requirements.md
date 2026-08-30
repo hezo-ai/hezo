@@ -80,11 +80,13 @@ And a locked instance cannot mint a session at all:
 - The web gate calls `api.clearToken()` on mount for any non-unlocked state
   (`packages/web/src/routes/__root.tsx:186`).
 
-So a one-shot "verify the token, return a session" route cannot work: on the
-common path there is nothing to sign with, and a 60-second token cannot wait for
-a human to fetch twelve words. **H3 is therefore specified as a two-phase
-exchange** — see below. This is not a refinement; without it a hosted tenant has
-no way in after any reboot.
+So a one-shot "verify the token, return a session" route cannot work when a new
+process is locked by default: there is nothing to sign with, and a 60-second token
+cannot wait for a human to fetch twelve words. A supervised in-app update hands the
+key to the new process in memory; a deliberate one-shot `--master-key` or
+`HEZO_MASTER_KEY` invocation supplies it at launch. After a reboot, crash, or direct
+service restart without either input, **H3's two-phase exchange** provides the deferred
+browser-unlock path - see below.
 
 ### H1 — SSO token builder in `@hezo/shared`
 

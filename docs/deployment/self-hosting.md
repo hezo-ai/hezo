@@ -344,10 +344,10 @@ restarts every service still running against a library the upgrade replaced.
 That is the right default for most daemons: a patched file on disk does nothing
 for a process that still has the old code mapped in memory.
 
-Hezo is the exception, because it cannot bring itself back unlocked. Its master key is
-held in memory only and never written to disk, so a direct service restart outside the
-supervised in-app update flow brings the instance up **locked** unless that invocation
-deliberately receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. Agent
+Hezo needs a deliberate restart path because its master key is held in memory only and
+never written to disk. A supervised in-app update hands the key to the new process in
+memory. A direct service restart starts the new process **locked** by default unless that
+invocation deliberately receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. Agent
 execution otherwise stays stopped until someone unlocks it. An unattended
 restart therefore turns a routine background patch into an outage lasting until
 you happen to notice - a couple of minutes if you are at your desk, the whole

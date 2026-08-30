@@ -296,7 +296,7 @@ Never expose raw secrets, private keys or signing keys via endpoints or logs. Us
 
 ### Never encourage storing the master key on a system
 
-The master key is kept **in memory only, never written to disk** - the invariant that makes encryption at rest meaningful. **Never encourage a user to store it anywhere on a system**: not an env file, a service definition, a config file, a shell profile, a same-host secrets file, or a code comment. This holds on every surface an agent produces. The secure default is to unlock interactively; coming up locked after a restart is intended behaviour, not a gap to paper over. The env var may be documented as the mechanism for a **single, non-interactive startup**, never as a place to persist the key.
+The master key is kept **in memory only, never written to disk** - the invariant that makes encryption at rest meaningful. **Never encourage a user to store it anywhere on a system**: not an env file, a service definition, a config file, a shell profile, a same-host secrets file, or a code comment. This holds on every surface an agent produces. A new process starts locked by default; a supervised in-app update hands the key to the new process in memory. A reboot, crash, or direct service restart stays locked unless the operator deliberately supplies the one-shot `--master-key` or `HEZO_MASTER_KEY` input, then the browser gate remains the interactive unlock path. The env var may be documented as the mechanism for a **single, non-interactive startup**, never as a place to persist the key.
 
 ### Credentials
 

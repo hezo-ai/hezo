@@ -413,7 +413,7 @@ interface MasterKeyGateProps {
 	state: MasterKeyState;
 }
 
-/** Full-page vault screen: master-key setup (unset) or unlock-on-restart (locked). */
+/** Full-page vault screen: master-key setup (unset) or unlock gate (locked). */
 export function MasterKeyGate({ state }: MasterKeyGateProps) {
 	return (
 		<VaultShell>

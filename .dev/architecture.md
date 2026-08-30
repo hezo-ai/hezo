@@ -1442,13 +1442,15 @@ refused -> `read-only`. Logged at `error` with the runtime-specific fix but **no
 exiting would take down the UI the operator needs. Opt out with `containers.skipMountCheck`.
 
 **A vault-backed credential defers the open to unlock, and only then.** The provider API
-key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
-an instance starting without a supervisor handoff or one-shot master-key input cannot read
-it at the moment the backend is chosen. Making that fatal aborts startup on every boot - a stored key reads
-back as "no API key is configured" and a launch-supplied `containers.daytona.apiKey` throws
-"the instance is locked" from `storeDaytonaApiKey` — so a managed backend could not survive a
-restart at all, workable only by passing the master key on the command line, the one thing
-Hezo never asks an operator to persist.
+key lives in the `secrets` vault, encrypted with the master key, which is memory-only. A
+new process starts locked by default. A supervised in-app update hands the key to the new
+process in memory, while a deliberate one-shot `--master-key` or `HEZO_MASTER_KEY`
+invocation supplies it at launch. A reboot, crash, or direct service restart without either
+input cannot read the credential until the operator uses the browser unlock gate. Making
+that locked path fatal would abort startup: a stored key reads back as "no API key is
+configured" and a launch-supplied `containers.daytona.apiKey` throws "the instance is
+locked" from `storeDaytonaApiKey`. Deferring the backend keeps all three paths workable
+without asking an operator to persist the master key.
 
 So `resolveStartupBackend` returns `deferred` when (and only when) the backend needs a
 credential, none is in hand, the vault is locked, and `hasDaytonaApiKey` says one is on

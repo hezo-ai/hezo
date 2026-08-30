@@ -40,8 +40,10 @@ function readDismissed(): Dismissal | null {
  * nav and above content. The server downloads and stages the new binary in the
  * background; when this instance can apply-and-restart (a supervised compiled
  * binary), the caller is a superuser, and the binary is staged, an "Install &
- * restart" button — after a confirmation that warns about the master-key
- * re-unlock — restarts onto it instantly. The new version number links to its
+ * restart" button restarts onto it instantly. The confirmation warns about
+ * unlocking only when neither a deliberate one-shot `--master-key` /
+ * `HEZO_MASTER_KEY` input nor the supervisor's in-memory handoff will unlock the
+ * new process. The new version number links to its
  * GitHub release page so the user can read the release notes. While the
  * background download is still
  * in flight the banner stays hidden; if staging errored on a self-applying

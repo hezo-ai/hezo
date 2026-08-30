@@ -140,8 +140,8 @@ export async function authenticateWithMnemonic(
 	try {
 		await challengeLogin(keys, state === 'locked' ? unlockKey : null);
 	} catch (err) {
-		// The server restarted (and locked) between the status fetch and this
-		// attempt — retry once with the unlock key included.
+		// The server changed to the locked state between the status fetch and this
+		// attempt - retry once with the unlock key included.
 		if ((err as ApiError).code === 'UNLOCK_KEY_REQUIRED') {
 			await challengeLogin(keys, unlockKey);
 			return;

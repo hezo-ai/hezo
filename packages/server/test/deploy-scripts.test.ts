@@ -707,6 +707,40 @@ describe('the one-click managed-backend configuration contract', () => {
 		);
 	});
 
+	it.each([
+		['architecture', '.dev/architecture.md'],
+		['cloud requirements', '.dev/hezo-cloud-requirements.md'],
+		['agent guidance', 'AGENTS.md'],
+		['master-key manager', 'packages/server/src/crypto/master-key.ts'],
+		['shared auth derivation', 'packages/shared/src/crypto/auth.ts'],
+		['sandbox backend startup', 'packages/server/src/services/sandbox/backend-store.ts'],
+		['pending sandbox backend', 'packages/server/src/services/sandbox/pending.ts'],
+		['server startup', 'packages/server/src/startup.ts'],
+		['runtime configuration types', 'packages/server/src/config/types.ts'],
+		['unlock handoff', 'packages/server/src/lib/unlock-handoff.ts'],
+		['job startup reconciliation', 'packages/server/src/services/job-manager.ts'],
+		['chat startup reconciliation', 'packages/server/src/services/chat-session-manager.ts'],
+		['auth throttle', 'packages/server/src/routes/auth.ts'],
+		['SSO replay cache', 'packages/server/src/services/sso.ts'],
+		['browser master-key authentication', 'packages/web/src/lib/auth.ts'],
+		['update route', 'packages/server/src/routes/updates.ts'],
+		['update banner', 'packages/web/src/components/update-banner.tsx'],
+		['update status hook', 'packages/web/src/hooks/use-update-check.ts'],
+		['master-key gate', 'packages/web/src/components/master-key-gate.tsx'],
+		['locale switcher', 'packages/web/src/components/locale/locale-switcher.tsx'],
+		['locale settings hook', 'packages/web/src/hooks/use-locale-settings.ts'],
+		['root route', 'packages/web/src/routes/__root.tsx'],
+		['SSO gate browser test', 'test/browser/sso-gate.spec.ts'],
+		['English message catalog', 'packages/web/src/lib/i18n/catalog/en.json'],
+		['configuration guide', 'docs/deployment/configuration.md'],
+		['self-hosting guide', 'docs/deployment/self-hosting.md'],
+	])('%s contains no contradictory restart-lifecycle shorthand', (_name, rel) => {
+		const source = readFileSync(join(REPO_ROOT, rel), 'utf8');
+		expect(source).not.toMatch(
+			/only by passing the master key on the command line|no way in after any reboot|coming up locked after a restart is intended|cannot bring itself back unlocked|confirmation that warns about the master-key re-unlock|master key is configured at startup|unlock-on-restart|post-restart unlock|locked after a restart|locked is normal after any restart/i,
+		);
+	});
+
 	it('marks the local-Docker hosted plan as superseded by Daytona', () => {
 		expect(HOSTED_ARCHITECTURE).toMatch(/current authority[\s\S]*agent containers on Daytona/);
 		expect(HOSTED_ARCHITECTURE).toMatch(/## Superseded historical recommendation/);
