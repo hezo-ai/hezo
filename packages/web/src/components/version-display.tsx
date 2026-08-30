@@ -8,9 +8,9 @@ import {
 	useDownloadUpdate,
 	useUpdateStatus,
 } from '../hooks/use-update-check';
-import { useI18n } from '../lib/i18n';
 import { Button } from './ui/button';
 import { ConfirmDialog } from './ui/confirm-dialog';
+import { UpdateConfirmDescription } from './update-confirm-description';
 import { UpdateRestartOverlay } from './update-restart-overlay';
 
 /** Release tags are plain `MAJOR.MINOR.PATCH` (no `v` prefix) — only those have a GitHub tag page. */
@@ -33,7 +33,6 @@ const RELEASES_URL = 'https://github.com/hezo-ai/hezo/releases';
  * refetches while a download is in flight so the transition is live, no reload.
  */
 export function VersionDisplay() {
-	const { t } = useI18n();
 	const { data: update } = useUpdateStatus({ poll: true });
 	const { data: me } = useMe();
 	const check = useCheckForUpdate();
@@ -63,16 +62,11 @@ export function VersionDisplay() {
 	const downloading = canApply && !staged && !errored;
 
 	const confirmDescription = (
-		<>
-			Hezo will shut down and restart on <span className="font-medium">{latest}</span>. In-flight
-			agent runs are paused and resume automatically.
-			{!update.autoUnlock && (
-				<>
-					{' '}
-					<span className="font-medium text-text-1">{t('updates.confirm.reunlock')}</span>
-				</>
-			)}
-		</>
+		<UpdateConfirmDescription
+			version={latest}
+			runsInFlight={update.runsInFlight}
+			autoUnlock={update.autoUnlock}
+		/>
 	);
 
 	return (

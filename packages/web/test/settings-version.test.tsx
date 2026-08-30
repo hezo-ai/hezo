@@ -12,6 +12,7 @@ import { I18nProvider } from '../src/lib/i18n';
 import { queryClient } from '../src/lib/query-client';
 import { queryKeys } from '../src/lib/query-keys';
 import { renderApp } from './helpers/render';
+import { expectAccurateUpdateRestartCopy } from './helpers/update-confirmation';
 
 // The General settings page reads version + staged-update lifecycle via
 // useUpdateStatus(); the app tree pulls from the singleton query client (__root
@@ -152,10 +153,14 @@ test('Install & restart asks for confirmation (with master-key warning) then app
 	// The mounted overlay polls `/api/status`; there's no server here, so stub fetch
 	// to a clean rejection (happy-dom's real fetch would log an ECONNREFUSED).
 	vi.spyOn(global, 'fetch').mockRejectedValue(new Error('down'));
-	const { getByTestId, findByTestId, queryByTestId } = renderVersion({ state: UpdateState.Staged });
+	const { getByTestId, findByTestId, queryByTestId } = renderVersion({
+		state: UpdateState.Staged,
+		runsInFlight: 2,
+	});
 
 	await user.click(getByTestId('settings-version-install'));
 	const dialog = await findByTestId('confirm-dialog');
+	expectAccurateUpdateRestartCopy(dialog, 2);
 	expect(dialog.textContent).toContain('master key');
 	expect(postSpy).not.toHaveBeenCalled();
 	expect(queryByTestId('update-restart-overlay')).toBeNull();
