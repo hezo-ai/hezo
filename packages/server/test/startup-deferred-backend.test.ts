@@ -12,18 +12,22 @@ import { type StartupResult, startup } from '../src/startup';
 import { testHezoConfig } from './helpers/config';
 
 /**
- * The boot every managed-backend instance actually performs: **locked**, with
- * the provider key readable only from the vault.
+ * A new process with no unlock input starts locked by default, with the provider
+ * key readable only from the vault. This fixture exercises that path. A
+ * supervised update can restore the key through its in-memory handoff, and
+ * deliberate one-shot `--master-key` or `HEZO_MASTER_KEY` input can inject it at
+ * startup; those unlocked paths bypass the pending engine exercised here.
  *
  * `resolveStartupBackend` defers the open in exactly that case and `startup()`
- * holds the pending engine until the unlock, which is what lets a managed
- * backend survive a restart at all. The trap is that the pending engine throws
- * from every member by design, so any boot-time call against it exits the
- * process - `index.ts` classifies `SandboxBackendError` as a fatal, unreachable
- * backend, which a healthy locked instance is not. That is precisely what an
- * unconditional `prepareHost` at the end of backend setup did: the boot printed
- * "unlock the instance to finish connecting" and then died, and `dev.ts` killed
- * the web server behind it.
+ * holds the pending engine until browser unlock, which keeps this locked-default
+ * process reachable. The trap is that the pending engine throws from every
+ * member by design, so any boot-time call against it exits the process -
+ * `index.ts` classifies `SandboxBackendError` as a fatal, unreachable backend,
+ * which a healthy locked instance is not. That is precisely what an unconditional
+ * `prepareHost` at the end of backend setup did: the boot printed "unlock the
+ * instance to finish connecting" and then died, and `dev.ts` killed the web
+ * server behind it. Supervised in-memory handoff and deliberate one-shot
+ * `--master-key` / `HEZO_MASTER_KEY` input start unlocked and never take this path.
  *
  * Runs with `HEZO_SKIP_DOCKER` **unset**, deliberately: the skip branch bypasses
  * `resolveStartupBackend` entirely and would assert nothing about the deferral.

@@ -33,12 +33,12 @@ import { createStubDocker, createTestApp } from './helpers/app';
  * `HEZO_MASTER_KEY` input can inject it at startup. This fixture exercises none
  * of those inputs, so the operator unlocks from the browser afterwards.
  *
- * That made the vault unusable at the moment the backend was chosen, and both
- * directions were fatal - reading a stored provider key failed as "no API key
- * is configured" for a key plainly on file, and writing a launch-supplied one
- * threw outright. A managed backend could therefore not survive a restart
- * unless the master key was passed on the command line, which is the one thing
- * we never ask an operator to persist.
+ * In that locked-default path, the vault was unusable at the moment the backend
+ * was chosen, and both directions were fatal - reading a stored provider key
+ * failed as "no API key is configured" for a key plainly on file, and writing a
+ * launch-supplied one threw outright. The process therefore exited before a
+ * browser unlock. A supervised in-memory update handoff or deliberate one-shot
+ * `--master-key` / `HEZO_MASTER_KEY` input starts unlocked and bypasses this path.
  *
  * So these assert that neither direction is fatal any more, and - just as
  * important - that the genuine misconfiguration still is.

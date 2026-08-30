@@ -686,6 +686,8 @@ describe('the one-click managed-backend configuration contract', () => {
 		['master-key manager', 'packages/server/src/crypto/master-key.ts'],
 		['shared auth derivation', 'packages/shared/src/crypto/auth.ts'],
 		['sandbox backend startup', 'packages/server/src/services/sandbox/backend-store.ts'],
+		['sandbox backend store test', 'packages/server/test/sandbox-backend-store.test.ts'],
+		['deferred backend startup test', 'packages/server/test/startup-deferred-backend.test.ts'],
 		['pending sandbox backend', 'packages/server/src/services/sandbox/pending.ts'],
 		['server startup', 'packages/server/src/startup.ts'],
 		['runtime configuration types', 'packages/server/src/config/types.ts'],
@@ -714,6 +716,8 @@ describe('the one-click managed-backend configuration contract', () => {
 		['master-key manager', 'packages/server/src/crypto/master-key.ts'],
 		['shared auth derivation', 'packages/shared/src/crypto/auth.ts'],
 		['sandbox backend startup', 'packages/server/src/services/sandbox/backend-store.ts'],
+		['sandbox backend store test', 'packages/server/test/sandbox-backend-store.test.ts'],
+		['deferred backend startup test', 'packages/server/test/startup-deferred-backend.test.ts'],
 		['pending sandbox backend', 'packages/server/src/services/sandbox/pending.ts'],
 		['server startup', 'packages/server/src/startup.ts'],
 		['runtime configuration types', 'packages/server/src/config/types.ts'],
@@ -737,7 +741,7 @@ describe('the one-click managed-backend configuration contract', () => {
 	])('%s contains no contradictory restart-lifecycle shorthand', (_name, rel) => {
 		const source = readFileSync(join(REPO_ROOT, rel), 'utf8');
 		expect(source).not.toMatch(
-			/only by passing the master key on the command line|no way in after any reboot|coming up locked after a restart is intended|cannot bring itself back unlocked|confirmation that warns about the master-key re-unlock|master key is configured at startup|unlock-on-restart|post-restart unlock|locked after a restart|locked is normal after any restart/i,
+			/only by passing the master key on the command line|unless the master key was passed on the command line|survive a restart at all|no way in after any reboot|coming up locked after a restart is intended|cannot bring itself back unlocked|confirmation that warns about the master-key re-unlock|master key is configured at startup|unlock-on-restart|post-restart unlock|locked after a restart|locked is normal after any restart/i,
 		);
 	});
 
