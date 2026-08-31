@@ -27,7 +27,17 @@ interface Actor {
  * bodies stay off the audit row (the task thread's description-change comment
  * holds bounded previews instead).
  */
-export type TaskUpdateField = 'title' | 'description' | 'status' | 'assignee' | 'parent';
+export type TaskUpdateField =
+	| 'title'
+	| 'description'
+	| 'status'
+	| 'priority'
+	| 'assignee'
+	| 'progress_summary'
+	| 'rules'
+	| 'branch'
+	| 'runtime'
+	| 'parent';
 
 export type DomainEvent =
 	| ({ type: 'task.created'; taskId: string; identifier: string } & Scope & Actor)

@@ -1,11 +1,176 @@
-import { CommentContentType, wsRoom } from '@hezo/shared';
+import { type AuditActorType, CommentContentType, wsRoom } from '@hezo/shared';
 import type { Db } from '../db/database';
+import type { DomainEventBus } from '../events/bus';
 import { broadcastRowChange } from '../lib/broadcast';
 import type { WebSocketManager } from './ws';
 
 const TASK_IDENTIFIER_RE = /(?<![\w-])([A-Z][A-Z0-9]{1,3}-\d+)(?![\w-])/g;
 const FENCED_RE = /(?:^|\n)(?:```|~~~)[^\n]*\n[\s\S]*?(?:```|~~~)(?=\n|$)/g;
 const INLINE_RE = /`[^`]*`/g;
+
+export interface TaskUpdateSnapshot {
+	title: string;
+	description: string | null;
+	status: string;
+	priority: string;
+	assignee_id: string | null;
+	progress_summary: string | null;
+	rules: string | null;
+	branch_name: string | null;
+	runtime_type: string | null;
+	parent_task_id: string | null;
+}
+
+export interface TaskUpdateMutationRow {
+	before: TaskUpdateSnapshot;
+	after: TaskUpdateSnapshot & Record<string, unknown>;
+}
+
+const TASK_UPDATE_SNAPSHOT_COLUMNS =
+	'title, description, status, priority, assignee_id, progress_summary, rules, branch_name, runtime_type, parent_task_id';
+
+/** Capture the persisted pre-update row under lock and return both versions atomically. */
+export function taskUpdateMutationSql(sets: readonly string[], taskIdParam: number): string {
+	return `WITH before AS MATERIALIZED (
+		SELECT ${TASK_UPDATE_SNAPSHOT_COLUMNS} FROM tasks WHERE id = $${taskIdParam} FOR UPDATE
+	), updated AS (
+		UPDATE tasks AS target SET ${sets.join(', ')}
+		FROM before WHERE target.id = $${taskIdParam}
+		RETURNING target.*
+	)
+	SELECT to_jsonb(before) AS before,
+	       to_jsonb(updated) - 'search_tsv' AS after
+	FROM before CROSS JOIN updated`;
+}
+
+interface TaskUpdateEventContext {
+	teamId: string;
+	projectId: string;
+	actorType: AuditActorType;
+	actorMemberId: string | null;
+	actorApiKeyId: string | null;
+	taskId: string;
+}
+
+export type TaskUpdateSnapshotKey = keyof TaskUpdateSnapshot;
+
+interface TaskUpdateAuditField {
+	field: import('../events/types').TaskUpdateField;
+	key: TaskUpdateSnapshotKey;
+	redact?: boolean;
+	emptyIsNull?: boolean;
+	label?: 'member' | 'task';
+}
+
+const TASK_UPDATE_AUDIT_FIELDS: readonly TaskUpdateAuditField[] = [
+	{ field: 'title', key: 'title' },
+	{ field: 'description', key: 'description', redact: true, emptyIsNull: true },
+	{ field: 'status', key: 'status' },
+	{ field: 'priority', key: 'priority' },
+	{ field: 'assignee', key: 'assignee_id', label: 'member' },
+	{ field: 'progress_summary', key: 'progress_summary', redact: true },
+	{ field: 'rules', key: 'rules', redact: true },
+	{ field: 'branch', key: 'branch_name', emptyIsNull: true },
+	{ field: 'runtime', key: 'runtime_type' },
+	{ field: 'parent', key: 'parent_task_id', label: 'task' },
+];
+
+function comparableTaskValue(value: string | null, emptyIsNull: boolean): string | null {
+	return emptyIsNull && value === '' ? null : value;
+}
+
+/** Compare a requested direct-edit value with the locked persisted snapshot. */
+export function taskUpdateValueChanged(
+	before: TaskUpdateSnapshot,
+	key: TaskUpdateSnapshotKey,
+	to: string | null,
+): boolean {
+	const field = TASK_UPDATE_AUDIT_FIELDS.find((candidate) => candidate.key === key);
+	return (
+		comparableTaskValue(before[key], field?.emptyIsNull ?? false) !==
+		comparableTaskValue(to, field?.emptyIsNull ?? false)
+	);
+}
+
+async function taskUpdateLabels(
+	db: Db,
+	before: TaskUpdateSnapshot,
+	after: TaskUpdateSnapshot,
+	includeMembers: boolean,
+	includeTasks: boolean,
+): Promise<{ members: Map<string, string>; tasks: Map<string, string> }> {
+	const memberIds = [before.assignee_id, after.assignee_id].filter(
+		(id): id is string => id !== null,
+	);
+	const taskIds = [before.parent_task_id, after.parent_task_id].filter(
+		(id): id is string => id !== null,
+	);
+	const [members, tasks] = await Promise.all([
+		includeMembers && memberIds.length > 0
+			? db.query<{ id: string; label: string }>(
+					`SELECT m.id, COALESCE(ma.title, NULLIF(m.display_name, ''), 'Admin') AS label
+					   FROM members m LEFT JOIN member_agents ma ON ma.id = m.id
+					  WHERE m.id = ANY($1::uuid[])`,
+					[memberIds],
+				)
+			: Promise.resolve({ rows: [] as Array<{ id: string; label: string }> }),
+		includeTasks && taskIds.length > 0
+			? db.query<{ id: string; label: string }>(
+					'SELECT id, identifier AS label FROM tasks WHERE id = ANY($1::uuid[])',
+					[taskIds],
+				)
+			: Promise.resolve({ rows: [] as Array<{ id: string; label: string }> }),
+	]);
+	return {
+		members: new Map(members.rows.map((row) => [row.id, row.label])),
+		tasks: new Map(tasks.rows.map((row) => [row.id, row.label])),
+	};
+}
+
+/**
+ * Emit the persisted task changes shared by REST PATCH and MCP update_task.
+ * Prose bodies stay off audit rows; the task thread carries bounded previews
+ * for descriptions, while the Activity entry only names the field changed.
+ */
+export async function emitTaskUpdateEvents(
+	db: Db,
+	events: DomainEventBus | undefined,
+	context: TaskUpdateEventContext,
+	before: TaskUpdateSnapshot,
+	after: TaskUpdateSnapshot,
+): Promise<void> {
+	if (!events) return;
+	const changed = TASK_UPDATE_AUDIT_FIELDS.filter(({ key }) => {
+		return taskUpdateValueChanged(before, key, after[key]);
+	});
+	if (changed.length === 0) return;
+
+	const labels = await taskUpdateLabels(
+		db,
+		before,
+		after,
+		changed.some(({ label }) => label === 'member'),
+		changed.some(({ label }) => label === 'task'),
+	);
+	for (const { field, key, redact = false, label } of changed) {
+		const from = before[key];
+		const to = after[key];
+		const labelMap = label === 'member' ? labels.members : label === 'task' ? labels.tasks : null;
+		events.emit({
+			type: 'task.updated',
+			...context,
+			field,
+			from: redact ? null : from,
+			to: redact ? null : to,
+			...(labelMap
+				? {
+						fromLabel: from ? (labelMap.get(from) ?? from) : null,
+						toLabel: to ? (labelMap.get(to) ?? to) : null,
+					}
+				: {}),
+		});
+	}
+}
 
 export function extractTaskIdentifiers(text: string | null | undefined): string[] {
 	if (!text) return [];

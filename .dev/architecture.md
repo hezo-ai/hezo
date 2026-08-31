@@ -219,6 +219,13 @@ preview of each end plus the full lengths, never the bodies: the comments skelet
 the MCP `list_comments` tool both return a system comment's `content` whole, so a stored body
 would ride into every comment fetch and every agent prompt for the life of the task. The
 matching `task.updated` audit event omits both ends for the same reason.
+Both update paths lock the task row before applying mutation policies and feed atomically captured
+before-and-after rows through one event producer.
+For direct edits, it emits only real changes to title, description, status, priority, assignee,
+progress summary, rules, branch, runtime, and parent. Description, progress-summary, and rules
+bodies stay off the audit row; assignee names and parent identifiers are resolved into labels for
+the Activity view. Internal task transitions outside these update surfaces need their own event
+producer.
 Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_task`,
 shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —

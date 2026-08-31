@@ -203,7 +203,15 @@ export function ChatWidget({ open, onOpenChange, launch = null }: ChatWidgetProp
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (!el) return;
-		el.scrollTop = el.scrollHeight;
+		const pin = () => el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
+		pin();
+		// Collapsing can add a scrollbar after the first layout, narrowing message
+		// bubbles and growing the list. Re-pin when the scroll box reaches its final
+		// size instead of guessing how many animation frames the reflow needs.
+		if (typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver(pin);
+		observer.observe(el);
+		return () => observer.disconnect();
 	}, [lastId, lastLen, streaming, open, expanded]);
 
 	// A thread just created by a launch request. The thread list is cached, so on a
