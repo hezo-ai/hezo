@@ -139,9 +139,11 @@ test('setup → password → provider, then restart → unlock → password logi
 	// Phase A — unset: the pre-active vault setup screen at mobile viewport.
 	await expect(page.getByTestId('master-key-setup')).toBeVisible();
 	await page.getByRole('button', { name: /generate master key/i }).click();
-	await expect(page.getByText('Encrypts your data and unlocks Hezo.')).toBeVisible();
+	await expect(page.getByText('Encrypts your secrets and unlocks Hezo.')).toBeVisible();
 	await expect(
-		page.getByText(/New processes start locked by default.*one-shot --master-key/i),
+		page.getByText(
+			/New processes start locked.*supervisor can pass the key.*reboot, crash, or direct service restart.*--master-key or HEZO_MASTER_KEY/i,
+		),
 	).toBeVisible();
 	const words = page.getByTestId('mnemonic-word');
 	await expect(words).toHaveCount(12);

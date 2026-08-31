@@ -10,6 +10,16 @@ The `hezo` binary **is the server.** Running it with no command starts Hezo; a c
 subcommands and flags cover the rest. Run `hezo --help` for the authoritative list on
 your version.
 
+## Validate a config file
+
+```sh
+hezo config validate --config /etc/hezo/hezo.config.cjs
+```
+
+Loads the CommonJS module and validates every setting, then exits without opening the
+database or starting the server. Provisioning uses this command before publishing a
+generated config or removing a credential source.
+
 ## Start the server
 
 ```sh

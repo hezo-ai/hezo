@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { deriveAuthKeyPair, deriveUnlockKey } from '@hezo/shared';
 import { afterAll, describe, expect, it } from 'vitest';
-import { resolveConfig, resolveDevDataDir, runVersion } from '../src/cli';
+import { resolveConfig, resolveDevDataDir, runConfigValidation, runVersion } from '../src/cli';
 import { HEZO_VERSION } from '../src/version';
 
 // Canonical BIP39 vector — parseMasterKey only accepts a valid mnemonic.
@@ -30,6 +30,32 @@ function configFile(body: string): string {
 	writeFileSync(path, body);
 	return path;
 }
+
+describe('runConfigValidation', () => {
+	it('ignores other commands', () => {
+		expect(runConfigValidation(argv())).toBe(false);
+	});
+
+	it('loads and validates a CommonJS config without starting the server', () => {
+		const path = configFile("module.exports = { dataDir: '/srv/hezo' };");
+		const output: string[] = [];
+		expect(
+			runConfigValidation(argv('config', 'validate', '--config', path), output.push.bind(output)),
+		).toBe(true);
+		expect(output).toEqual([`Valid Hezo config: ${path}`]);
+	});
+
+	it('rejects syntax-invalid and schema-invalid CommonJS configs', () => {
+		const syntaxInvalid = configFile("module.exports = { dataDir: '/srv/hezo' ");
+		const schemaInvalid = configFile("module.exports = { dataDIr: '/srv/hezo' };");
+		expect(() =>
+			runConfigValidation(argv('config', 'validate', '--config', syntaxInvalid)),
+		).toThrow(/Could not load the config file/);
+		expect(() =>
+			runConfigValidation(argv('config', 'validate', '--config', schemaInvalid)),
+		).toThrow(/dataDIr/);
+	});
+});
 
 /** Build argv that loads a config file exporting `obj`. */
 const withConfig = (obj: unknown, ...flags: string[]) =>

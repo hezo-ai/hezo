@@ -61,12 +61,13 @@ test('the generated-key warning states the complete restart lifecycle', async ()
 
 	fireEvent.click(screen.getByRole('button', { name: /generate master key/i }));
 
-	expect(await screen.findByText('Encrypts your data and unlocks Hezo.')).toBeTruthy();
+	expect(await screen.findByText('Encrypts your secrets and unlocks Hezo.')).toBeTruthy();
 	expect(
 		screen.getByText(
-			/New processes start locked by default.*in-app update.*key forward in memory.*reboot, crash, or direct service restart.*one-shot --master-key or HEZO_MASTER_KEY input/i,
+			/New processes start locked.*in-app update.*supervisor.*new process in memory.*reboot, crash, or direct service restart.*enter this key again.*--master-key or HEZO_MASTER_KEY/i,
 		),
 	).toBeTruthy();
+	expect(screen.queryByText('Encrypts your data and unlocks Hezo.')).toBeNull();
 });
 
 test('copy writes the space-joined phrase and reveals Continue', async () => {

@@ -146,14 +146,28 @@ json_string() {
 CONFIG_READY=""
 NEEDS_GENERATED_CONFIG=""
 
+# Use Hezo's real CommonJS loader and schema validator. The downloaded binary is
+# present before a generated candidate reaches this check; on an upgrade, an
+# older installed binary that lacks the command fails closed and leaves every
+# credential source untouched for the next rerun.
+commonjs_config_valid() {
+	local path="$1"
+	/usr/local/bin/hezo config validate --config "${path}" >/dev/null 2>&1
+}
+
 # The completion marker is the current provisioner's durable boundary. The
-# closing-line check recognizes config files written before that marker existed.
+# closing-line check recognizes config files written before that marker existed,
+# but neither shape authorizes cleanup unless the real config loader accepts it.
 generated_config_complete() {
 	local path="$1"
 	[[ -f "${path}" ]] || return 1
-	grep -Fqx "${GENERATED_CONFIG_COMPLETE_MARKER}" "${path}" && return 0
+	if grep -Fqx "${GENERATED_CONFIG_COMPLETE_MARKER}" "${path}"; then
+		commonjs_config_valid "${path}"
+		return
+	fi
 	grep -Fqx "${GENERATED_CONFIG_HEADER}" "${path}" || return 1
-	grep -Eq '^};([[:space:]]*//.*)?$' "${path}"
+	grep -Eq '^};([[:space:]]*//.*)?$' "${path}" || return 1
+	commonjs_config_valid "${path}"
 }
 
 # Only the exact partial objects left by interrupted provisioners are
@@ -161,10 +175,36 @@ generated_config_complete() {
 # may retain it while changing the export shape or removing the completion
 # marker from an otherwise valid CommonJS config.
 interrupted_generated_config() {
-	local path="$1"
+	local path="$1" normalized
 	[[ -f "${path}" ]] || return 1
 	[[ "$(cat "${path}")" == "${GENERATED_CONFIG_START_MARKER}"$'\n'"${GENERATED_CONFIG_HEADER}"$'\n''module.exports = {' ]] && return 0
-	[[ "$(tr -d '[:space:]' <"${path}")" == 'module.exports={' ]]
+	[[ "$(tr -d '[:space:]' <"${path}")" == 'module.exports={' ]] && return 0
+
+	# The pre-marker provisioner wrote this whole heredoc before appending managed
+	# backends and the closing object. Normalize only its two host-specific paths,
+	# then compare every other byte so arbitrary invalid operator files stay put.
+	normalized="$(sed -E \
+		-e "s|^const webUrlFile = '[^']*';$|const webUrlFile = '<web-url-file>';|" \
+		-e "s|^([[:space:]]*)dataDir: '[^']*',$|\\1dataDir: '<data-dir>',|" \
+		"${path}")"
+	[[ "${normalized}" == "$(cat <<'EOF'
+// Hezo configuration. Edit and restart: systemctl restart hezo
+// Reference: https://hezo.ai/docs/deployment/configuration
+//
+// Do NOT put your master key in this file. Hezo keeps it in memory only and comes up
+// locked after each restart by design; unlock it from the browser gate. A copy of the
+// key on disk next to the encrypted data would let anyone who reads this box decrypt
+// your vault.
+const { existsSync, readFileSync } = require('node:fs');
+
+// Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
+const webUrlFile = '<web-url-file>';
+
+module.exports = {
+	dataDir: '<data-dir>',
+	webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
+EOF
+)" ]]
 }
 
 if generated_config_complete "${CONFIG_FILE}"; then
@@ -430,7 +470,10 @@ fi
 
 # Now that the settings live in the config file, take the old one out of the way:
 # nothing reads it any more, and leaving it invites a hand-edit that does nothing.
-if [[ -n "${LEGACY_ENV_CARRIED}" && -n "${CONFIG_READY}" && -f "${LEGACY_ENV}" ]]; then
+if [[ -n "${CONFIG_READY}" && -f "${LEGACY_ENV}" ]] &&
+	{ [[ -n "${LEGACY_ENV_CARRIED}" ]] ||
+		{ grep -Fqx "${GENERATED_CONFIG_START_MARKER}" "${CONFIG_FILE}" &&
+			grep -Fqx "${GENERATED_CONFIG_COMPLETE_MARKER}" "${CONFIG_FILE}"; }; }; then
 	mv "${LEGACY_ENV}" "${LEGACY_ENV}.migrated"
 	log "Renamed ${LEGACY_ENV} to ${LEGACY_ENV}.migrated (no longer read)."
 fi
