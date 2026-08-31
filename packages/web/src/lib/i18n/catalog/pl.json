@@ -626,7 +626,7 @@
 	"setup.aiProvider.title": "Skonfiguruj dostawcę AI",
 	"setup.masterKey.confirmDescription": "Wprowadź klucz główny, aby ustawić hasło administratora dla tej instancji.",
 	"setup.masterKey.confirmTitle": "Potwierdź klucz główny",
-	"setup.masterKey.lifecycleDescription": "Nowe procesy uruchamiają się w stanie zablokowanym. Podczas aktualizacji w aplikacji nadzorca może przekazać klucz nowemu procesowi w pamięci. Po ponownym uruchomieniu, awarii lub bezpośrednim restarcie usługi wpisz ten klucz ponownie albo przekaż go jednorazowo przez --master-key lub HEZO_MASTER_KEY.",
+	"setup.masterKey.lifecycleDescription": "Miej ten klucz pod ręką. Nowe procesy Hezo uruchamiają się domyślnie w stanie zablokowanym. Nadzorowana aktualizacja w aplikacji może przekazać klucz procesowi zastępczemu w pamięci. Po ponownym uruchomieniu, awarii lub bezpośrednim restarcie usługi odblokuj Hezo w przeglądarce, chyba że to uruchomienie otrzyma klucz jednorazowo przez --master-key lub HEZO_MASTER_KEY.",
 	"setup.masterKey.lifecycleTitle": "Szyfruje Twoje dane poufne i odblokowuje Hezo.",
 	"setup.password.description": "Od teraz będziesz logować się tym hasłem. Jeśli je zapomnisz, możesz je zresetować kluczem głównym.",
 	"setup.password.submit": "Ustaw hasło i kontynuuj",
@@ -683,7 +683,7 @@
 	"toast.success": "Gotowe",
 	"updates.confirm.drain": "Hezo zatrzymuje trwające uruchomienia agentów, ponownie umieszcza je w kolejce i uruchamia od początku.",
 	"updates.confirm.restart": "Hezo zostanie zamkniete i uruchomi sie ponownie w wersji {version}.",
-	"updates.confirm.reunlock": "Nowe procesy są domyślnie uruchamiane w stanie zablokowanym. Nadzorowana aktualizacja w aplikacji może przekazać klucz w pamięci. Po ponownym uruchomieniu, awarii lub bezpośrednim restarcie usługi potrzebny będzie 12-wyrazowy klucz główny, chyba że to uruchomienie otrzyma jednorazowe dane wejściowe --master-key lub HEZO_MASTER_KEY.",
+	"updates.confirm.reunlock": "Miej pod ręką 12-wyrazowy klucz główny. Nowe procesy Hezo uruchamiają się domyślnie w stanie zablokowanym. Ta nadzorowana aktualizacja w aplikacji może przekazać klucz procesowi zastępczemu w pamięci. Po ponownym uruchomieniu, awarii lub bezpośrednim restarcie usługi ponownie odblokuj Hezo, chyba że to uruchomienie otrzyma klucz jednorazowo przez --master-key lub HEZO_MASTER_KEY.",
 	"updates.confirm.runsInFlight.one": "Trwa teraz {count} uruchomienie agenta.",
 	"updates.confirm.runsInFlight.other": "Trwa teraz {count} uruchomien agentow."
 }

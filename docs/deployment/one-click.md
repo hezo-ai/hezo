@@ -181,6 +181,9 @@ sudo $EDITOR /etc/hezo/hezo.config.cjs
 sudo systemctl restart hezo
 ```
 
+After the restart, unlock Hezo from the browser gate unless that startup received
+one-shot `--master-key` or `HEZO_MASTER_KEY` input.
+
 > **Already have data on the server?** Adding these settings points Hezo at the new
 > backends but does not move existing rows or files. Move them first with
 > `hezo backup` / `hezo restore` - see [Configuration → Switching an existing

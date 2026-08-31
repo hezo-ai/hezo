@@ -626,7 +626,7 @@
 	"setup.aiProvider.title": "Configurer un fournisseur d'IA",
 	"setup.masterKey.confirmDescription": "Saisissez votre clé maîtresse pour définir un mot de passe administrateur sur cette instance.",
 	"setup.masterKey.confirmTitle": "Confirmez votre clé maîtresse",
-	"setup.masterKey.lifecycleDescription": "Les nouveaux processus démarrent verrouillés. Pendant une mise à jour dans l'application, le superviseur peut transmettre la clé au nouveau processus en mémoire. Après un redémarrage, un plantage ou un redémarrage direct du service, saisissez de nouveau cette clé ou fournissez-la une fois avec --master-key ou HEZO_MASTER_KEY.",
+	"setup.masterKey.lifecycleDescription": "Gardez cette clé à portée de main. Les nouveaux processus Hezo démarrent verrouillés par défaut. Une mise à jour supervisée dans l'application peut transmettre la clé au processus de remplacement en mémoire. Après un redémarrage, un plantage ou un redémarrage direct du service, déverrouillez Hezo dans votre navigateur, sauf si ce démarrage reçoit la clé une fois avec --master-key ou HEZO_MASTER_KEY.",
 	"setup.masterKey.lifecycleTitle": "Chiffre vos secrets et déverrouille Hezo.",
 	"setup.password.description": "Vous vous connecterez avec ce mot de passe désormais. Si vous l'oubliez, vous pourrez le réinitialiser avec votre clé maîtresse.",
 	"setup.password.submit": "Définir le mot de passe et continuer",
@@ -683,7 +683,7 @@
 	"toast.success": "Terminé",
 	"updates.confirm.drain": "Hezo arrête les exécutions d'agent en cours, les remet en file d'attente et les relance depuis le début.",
 	"updates.confirm.restart": "Hezo va s’arrêter puis redémarrer sur {version}.",
-	"updates.confirm.reunlock": "Les nouveaux processus démarrent verrouillés par défaut. Une mise à jour supervisée dans l'application peut transmettre la clé en mémoire. Après un redémarrage, un plantage ou un redémarrage direct du service, vous aurez besoin de votre clé maîtresse de 12 mots, sauf si ce démarrage reçoit l'entrée à usage unique --master-key ou HEZO_MASTER_KEY.",
+	"updates.confirm.reunlock": "Gardez votre clé maîtresse de 12 mots à portée de main. Les nouveaux processus Hezo démarrent verrouillés par défaut. Cette mise à jour supervisée dans l'application peut transmettre la clé au processus de remplacement en mémoire. Après un redémarrage, un plantage ou un redémarrage direct du service, déverrouillez de nouveau Hezo, sauf si ce démarrage reçoit la clé une fois avec --master-key ou HEZO_MASTER_KEY.",
 	"updates.confirm.runsInFlight.one": "{count} exécution d'agent est en cours.",
 	"updates.confirm.runsInFlight.other": "{count} exécutions d'agent sont en cours."
 }

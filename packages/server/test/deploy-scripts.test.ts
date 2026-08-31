@@ -131,6 +131,33 @@ function legacyGeneratedConfigPrefix(webUrlFile: string, dataDir: string): strin
 	].join('\n');
 }
 
+function completeLegacyGeneratedConfig(webUrlFile: string, dataDir: string): string {
+	return [
+		'// Hezo configuration. Edit and restart: systemctl restart hezo',
+		'// Reference: https://hezo.ai/docs/deployment/configuration',
+		'//',
+		'// Do NOT put your master key in this file. Hezo keeps it in memory only and comes up',
+		'// locked after each restart by design; unlock it from the browser gate. A copy of the',
+		'// key on disk next to the encrypted data would let anyone who reads this box decrypt',
+		'// your vault.',
+		"const { existsSync, readFileSync } = require('node:fs');",
+		'',
+		'// Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).',
+		`const webUrlFile = ${JSON.stringify(webUrlFile)};`,
+		'',
+		'module.exports = {',
+		`\tdataDir: ${JSON.stringify(dataDir)},`,
+		"\twebUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',",
+		'\tdatabase: {',
+		`\t\turl: ${JSON.stringify('postgres://hezo:legacy@db-host:5432/hezo?sslmode=require')},`,
+		'\t\tpoolSize: 23,',
+		'\t},',
+		`\tassetStorage: { url: ${JSON.stringify('s3://legacy:secret@storage-host/bucket')} },`,
+		'};',
+		'',
+	].join('\n');
+}
+
 describe('deploy shell scripts', () => {
 	const scripts = shellScripts(DEPLOY);
 
@@ -517,6 +544,8 @@ describe('the one-click managed-backend configuration contract', () => {
 	it('preserves a valid markerless operator config even when it retains the generated header', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-markerless-operator-config-'));
 		const configFile = join(dir, 'hezo.config.cjs');
+		const legacyEnv = join(dir, 'hezo.env');
+		const originalLegacy = 'HEZO_DATA_DIR=/srv/hezo-legacy';
 		const operatorConfig = [
 			'// Hezo configuration. Edit and restart: systemctl restart hezo',
 			"const config = { dataDir: '/srv/hezo-markerless' };",
@@ -524,6 +553,7 @@ describe('the one-click managed-backend configuration contract', () => {
 			'',
 		].join('\n');
 		writeFileSync(configFile, operatorConfig);
+		writeFileSync(legacyEnv, originalLegacy);
 
 		try {
 			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
@@ -533,13 +563,15 @@ describe('the one-click managed-backend configuration contract', () => {
 					CONFIG_FILE: configFile,
 					WEB_URL_FILE: join(dir, 'web-url'),
 					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
+					LEGACY_ENV: legacyEnv,
 					BEHIND_GATEWAY: '',
 				},
 				stdio: 'pipe',
 			});
 
 			expect(readFileSync(configFile, 'utf8')).toBe(operatorConfig);
+			expect(readFileSync(legacyEnv, 'utf8')).toBe(originalLegacy);
+			expect(existsSync(`${legacyEnv}.migrated`)).toBe(false);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -714,6 +746,48 @@ describe('the one-click managed-backend configuration contract', () => {
 		}
 	});
 
+	it('finishes legacy cleanup for the complete config written by the pre-marker provisioner', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-pre-marker-legacy-cleanup-'));
+		const deployEnv = join(dir, 'deploy.env');
+		const configFile = join(dir, 'hezo.config.cjs');
+		const legacyEnv = join(dir, 'hezo.env');
+		const originalLegacy = [
+			`HEZO_DATA_DIR=${join(dir, 'legacy-data')}`,
+			'HEZO_DATABASE_URL=postgres://hezo:legacy@db-host:5432/hezo?sslmode=require',
+			'HEZO_DATABASE_POOL_SIZE=23',
+			'HEZO_ASSET_STORAGE_URL=s3://legacy:secret@storage-host/bucket',
+		].join('\n');
+		const originalConfig = completeLegacyGeneratedConfig(
+			join(dir, 'web-url'),
+			join(dir, 'legacy-data'),
+		);
+		writeFileSync(deployEnv, '');
+		writeFileSync(legacyEnv, originalLegacy);
+		writeFileSync(configFile, originalConfig);
+
+		try {
+			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+				env: {
+					...process.env,
+					DEPLOY_ENV: deployEnv,
+					CONFIG_FILE: configFile,
+					WEB_URL_FILE: join(dir, 'web-url'),
+					DATA_DIR: join(dir, 'default-data'),
+					LEGACY_ENV: legacyEnv,
+					LEGACY_ENV_CARRIED: '',
+					BEHIND_GATEWAY: '',
+				},
+				stdio: 'pipe',
+			});
+
+			expect(readFileSync(configFile, 'utf8')).toBe(originalConfig);
+			expect(existsSync(legacyEnv)).toBe(false);
+			expect(readFileSync(`${legacyEnv}.migrated`, 'utf8')).toBe(originalLegacy);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('parses the final managed setting without a trailing newline', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-no-final-newline-'));
 		const deployEnv = join(dir, 'deploy.env');
@@ -857,6 +931,12 @@ describe('the one-click managed-backend configuration contract', () => {
 		expect(CLOUD).not.toMatch(/keep working around the clock/i);
 		expect(ONE_CLICK).toMatch(/host stays reachable[\s\S]*agent execution pauses/i);
 		expect(ONE_CLICK).not.toMatch(/public, always-on Hezo/i);
+	});
+
+	it('puts the post-edit unlock step beside the one-click service restart', () => {
+		expect(ONE_CLICK).toMatch(
+			/systemctl restart hezo[\s\S]{0,300}unlock Hezo from the browser gate unless that startup received\s+one-shot `--master-key` or `HEZO_MASTER_KEY` input/i,
+		);
 	});
 
 	it.each([

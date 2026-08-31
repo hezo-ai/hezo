@@ -142,7 +142,7 @@ test('setup → password → provider, then restart → unlock → password logi
 	await expect(page.getByText('Encrypts your secrets and unlocks Hezo.')).toBeVisible();
 	await expect(
 		page.getByText(
-			/New processes start locked.*supervisor can pass the key.*reboot, crash, or direct service restart.*--master-key or HEZO_MASTER_KEY/i,
+			/Keep this key handy.*New Hezo processes start locked.*supervised in-app update.*replacement process in memory.*reboot, crash, or direct service restart.*unlock Hezo in your browser.*--master-key or HEZO_MASTER_KEY/i,
 		),
 	).toBeVisible();
 	const words = page.getByTestId('mnemonic-word');
