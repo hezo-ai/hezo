@@ -82,6 +82,14 @@ describe('MCP API reference (docs/reference/mcp-api.md)', () => {
 		expect(doc.section).toBe('Reference');
 		expect(doc.order).toBe(32);
 	});
+
+	it('renders the API base URL example as code instead of a navigation link', () => {
+		const { tools, onboarding } = collectReferenceTools();
+		const reference = generateMcpReference(tools, onboarding);
+		expect(reference).toContain(
+			"For kind 'api' - the REST API base URL agents call (e.g. `https://www.googleapis.com/youtube/v3`).",
+		);
+	});
 });
 
 describe('registry conventions', () => {
