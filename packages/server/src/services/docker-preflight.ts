@@ -13,7 +13,7 @@ import {
  * Covers Docker Engine (Linux), Docker Desktop (macOS/Windows), and the
  * post-install steps for starting the daemon.
  */
-export const DOCKER_INSTALL_URL = 'https://docs.docker.com/get-docker/';
+export const DOCKER_INSTALL_URL = 'https://docs.docker.com/get-started/get-docker/';
 
 /** Where the supported-runtime list and socket-discovery order are documented. */
 export const CONTAINER_RUNTIMES_DOCS_URL = 'https://hezo.ai/docs/deployment/container-runtimes';

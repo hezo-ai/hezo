@@ -4079,7 +4079,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					"For kind 'api' - the REST API base URL agents call (e.g. https://www.googleapis.com/youtube/v3).",
+					"For kind 'api' - the REST API base URL agents call (e.g. `https://www.googleapis.com/youtube/v3`).",
 				),
 			allowed_hosts: z
 				.array(z.string())
