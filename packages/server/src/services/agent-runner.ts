@@ -73,6 +73,7 @@ import {
 	createAgentStreamParser,
 	extractGrokUsageFromDebugLog,
 	extractKimiUsageFromSessionLog,
+	type RuntimeErrorVerdict,
 } from './agent-stream-parser';
 import {
 	type AiProviderCredential,
@@ -142,7 +143,12 @@ import {
 	MCP_CLI_WRAPPER_SOURCE,
 	renderMcpCliManifest,
 } from './mcp-cli/manifest';
-import { retryOrEscalateLostRun, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
+import {
+	fileProviderRefusalApproval,
+	PROVIDER_REFUSAL_GIVEUP_MIN,
+	retryOrEscalateLostRun,
+	STALE_STATE_GRACE_SECONDS,
+} from './orphan-detector';
 import type { PricingService } from './pricing';
 import type { ProgressActivityCandidates, ProgressActivityKind } from './project-activity';
 import { loadReactionsForTask, type ReactionGroup } from './reactions';
@@ -276,14 +282,18 @@ export interface RunResult {
 	/** The run ended by hitting its wall-clock time limit; drives an automatic same-task continuation. */
 	timedOut?: boolean;
 	/**
-	 * The run never started because the instance was busy, and handed its work
-	 * back. Not a failure: the wakeup is re-queued and dispatched again, and no
-	 * failure ping is posted. Two waits reach it - the container-memory budget and
-	 * the rotating provider credential - so the cause travels beside it rather
-	 * than being assumed.
+	 * The run did not do its work, and handed it back. Not a failure: the wakeup
+	 * is re-queued and dispatched again, and no failure ping is posted.
+	 *
+	 * Four causes reach it, so the reason travels beside it rather than being
+	 * assumed. Three never started the CLI at all - the container-memory budget,
+	 * the rotating provider credential, and a shutdown landing mid-flight. The
+	 * fourth did start it: the model provider refused the run before the agent got
+	 * a turn, which the runner accepts as a handback only once the run has also
+	 * proved it spent nothing and wrote nothing.
 	 */
 	requeued?: boolean;
-	/** Which wait gave up, so the queued wakeup reports the real reason it is waiting. */
+	/** Which cause gave up, so the queued wakeup reports the real reason it is waiting. */
 	requeueReason?: WakeupSkipReason;
 }
 
@@ -1645,6 +1655,51 @@ export async function runAgent(
 		};
 	};
 
+	/**
+	 * Which cooldown the handback earns after the model provider refused this run,
+	 * or null once the work has been owed too long to keep absorbing.
+	 *
+	 * The refusal itself is unbounded in laps - it clears on the provider's clock,
+	 * and the dispatch cooldown paces the retries - so the bound is on how long the
+	 * work has been owed rather than on how many attempts it has had. Past the
+	 * ceiling this returns null: the caller falls through to the ordinary terminal
+	 * failure, the run lights up the Errored view and fires its failure ping, and
+	 * an approval puts the outage somewhere a person looks.
+	 *
+	 * The clock is the wakeup's own `created_at`, which a handback does not reset,
+	 * so it costs one query on a path that is about to tear the run down anyway. A
+	 * synthetic on-demand wakeup is created at dispatch, so the ceiling never bites
+	 * a manual run - correct: that should hand back once and let the operator see
+	 * it queued.
+	 */
+	const providerRefusalSkipReason = async (
+		verdict: RuntimeErrorVerdict,
+	): Promise<WakeupSkipReason | null> => {
+		const owed = await deps.db.query<{ owed_min: number }>(
+			`SELECT EXTRACT(EPOCH FROM (now() - created_at)) / 60 AS owed_min
+			   FROM agent_wakeup_requests WHERE id = $1`,
+			[effectiveWakeupId],
+		);
+		if ((owed.rows[0]?.owed_min ?? 0) >= PROVIDER_REFUSAL_GIVEUP_MIN) {
+			await fileProviderRefusalApproval(deps.db, {
+				runId: heartbeatRunId,
+				memberId: agent.id,
+				teamId: runTeamId,
+				taskId: task?.id ?? null,
+				reason: verdict.message,
+			}).catch((e) =>
+				log.error(`Run ${heartbeatRunId}: could not file a provider-refusal approval:`, e),
+			);
+			return null;
+		}
+		// Read off the verdict, never re-matched from its text: which clock the
+		// dispatcher holds this on is a control signal, and deriving one from prose
+		// is the defect this whole path was careful to avoid.
+		return verdict.family === 'usage_limit'
+			? WakeupSkipReason.ProviderUsageLimit
+			: WakeupSkipReason.ProviderAtCapacity;
+	};
+
 	const finalizeAbort = async (): Promise<RunResult> => {
 		const abortReason = runAbortReason(runAbort.signal);
 		// A shutdown is not a verdict on this run, and the work is still owed. Hand
@@ -2960,6 +3015,44 @@ export async function runAgent(
 				!success && !exitedClean
 					? `agent CLI exited with code ${execOutcome.exitCode} without reporting a reason - see the log above for anything the CLI printed`
 					: undefined;
+			// The model provider refused this run before it got a turn: hand the work
+			// back rather than failing it, the way a full instance already does. Sits
+			// above the error ranking below because it does not rank - it returns.
+			//
+			// The classification is one of six conditions and the *least* trusted of
+			// them. It reads phrasing, and a runtime's error arm also carries errors
+			// the agent's own tool calls produced - so the other five are structural,
+			// and together they mean a false positive cannot discard work. Chiefly the
+			// token gate: "never got a turn" is a fact the run reports about itself,
+			// and a run that spent 50k tokens before hitting a mid-stream 503 has
+			// results worth keeping and is failed normally. Read through the same
+			// expression the row write below uses, so the two cannot drift.
+			//
+			// `unpushedError` is excluded because those commits exist in exactly one
+			// container, which the handback is about to release; `signalError` and
+			// `backgroundWorkTerminated` because a destroyed process is the later and
+			// dispositive fact, per the ranking comment below.
+			const refusalVerdict = success ? null : parser.getTerminalVerdict();
+			const refusalUsage = runUsage ?? parser.getUsage();
+			if (
+				refusalVerdict?.failure === RunFailureClass.Transient &&
+				(refusalUsage?.inputTokens ?? 0) + (refusalUsage?.outputTokens ?? 0) === 0 &&
+				!producedOutput &&
+				!reportedNoWork &&
+				!unpushedError &&
+				!signalError &&
+				!backgroundWorkTerminated
+			) {
+				const skipReason = await providerRefusalSkipReason(refusalVerdict);
+				if (skipReason) {
+					// Cleanup before finalizing, as the shutdown handback does: it scrubs
+					// this run's per-run secrets off a pooled container, and the row
+					// should not read terminal until that has happened.
+					await cleanupRunArtifacts();
+					return finalizeRequeue(refusalVerdict.message, skipReason);
+				}
+			}
+
 			// Ordered by what the human has to act on. Stranded commits come first
 			// because they are the only one where the fix is time-sensitive: the work
 			// exists in exactly one container.

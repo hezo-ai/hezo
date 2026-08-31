@@ -12,6 +12,7 @@ import {
 	extractKimiUsageFromSessionLog,
 	type PriceModelFn,
 } from '../src/services/agent-stream-parser';
+import { RunFailureClass } from '../src/services/run-failure-classification';
 
 /** A price function backed by a fixed rate table, mirroring PricingService. */
 const RATES: Record<string, ModelRate> = {
@@ -340,6 +341,37 @@ describe('agent-stream-parser', () => {
 			const out = parser.onStdout(`${JSON.stringify(event)}\n`);
 			expect(out).toContain('[done] error turns=1 tokens=10/2');
 			expect(parser.getUsage()?.outputTokens).toBe(2);
+		});
+
+		it("reads a failed turn's reason off the turn event itself", () => {
+			// Codex does not always follow `turn.failed` with a top-level `error` event,
+			// so a reason read only from that arm was lost and the run row fell through
+			// to the exit-code backstop with the provider's explanation left in the log.
+			// No `type: 'error'` event here on purpose - that is the whole point.
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			const out = parser.onStdout(
+				`${JSON.stringify({
+					type: 'turn.failed',
+					error: { message: 'Selected model is at capacity. Please try a different model.' },
+					usage: {},
+				})}\n`,
+			);
+			// The line the log viewer renders as the reported `error · 1 turns · 0 in / 0 out`.
+			expect(out).toContain('[done] error turns=1 tokens=0/0');
+			expect(parser.getTerminalError()).toContain('at capacity');
+			expect(parser.getTerminalVerdict()?.failure).toBe(RunFailureClass.Transient);
+		});
+
+		it('leaves an unrecognised failed turn permanent', () => {
+			const parser = createAgentStreamParser(AgentRuntime.Codex);
+			parser.onStdout(
+				`${JSON.stringify({
+					type: 'turn.failed',
+					error: { message: 'the sandbox refused this command' },
+					usage: {},
+				})}\n`,
+			);
+			expect(parser.getTerminalVerdict()?.failure).toBe(RunFailureClass.Permanent);
 		});
 
 		it('renders an agent message item as plain text', () => {
