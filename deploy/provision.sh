@@ -75,17 +75,143 @@ RELEASE_TAG="${HEZO_RELEASE_TAG:-latest}"
 # firewall rule cannot drift apart.
 APP_PORT=3100
 
-# Cloud-init can seed optional settings (managed database / asset storage, domain
-# override) into deploy.env before this script runs — pick them up. Explicit shell
-# environment still wins over the file.
-if [[ -f "${DEPLOY_ENV}" ]]; then
+log() { echo "[hezo-provision] $*"; }
+
+# BEGIN CONFIG ADAPTER FUNCTIONS
+load_env_file() {
+	local path="$1" allowed="$2" key value
+	[[ -f "${path}" ]] || return 0
 	while IFS='=' read -r key value; do
-		[[ "${key}" =~ ^(HEZO_[A-Z_]+|BEHIND_GATEWAY)$ ]] || continue
+		[[ "${key}" =~ ${allowed} ]] || continue
 		if [[ -z "${!key:-}" ]]; then
 			export "${key}=${value}"
 		fi
-	done <"${DEPLOY_ENV}"
-fi
+	done <"${path}"
+}
+
+json_string() {
+	local input="$1" output="" char escaped code index
+	local LC_ALL=C
+	for ((index = 0; index < ${#input}; index++)); do
+		char="${input:index:1}"
+		case "${char}" in
+		'"') output+='\"' ;;
+		'\') output+='\\' ;;
+		$'\b') output+='\b' ;;
+		$'\f') output+='\f' ;;
+		$'\n') output+='\n' ;;
+		$'\r') output+='\r' ;;
+		$'\t') output+='\t' ;;
+		*)
+			printf -v code '%d' "'${char}"
+			if ((code < 32)); then
+				printf -v escaped '\\u%04x' "${code}"
+				output+="${escaped}"
+			else
+				output+="${char}"
+			fi
+			;;
+		esac
+	done
+	printf '"%s"' "${output}"
+}
+
+prepare_config_values() {
+	if [[ -n "${HEZO_DATABASE_POOL_SIZE:-}" ]]; then
+		if [[ ! "${HEZO_DATABASE_POOL_SIZE}" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
+			echo "HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100." >&2
+			return 1
+		fi
+		HEZO_DATABASE_POOL_SIZE_JSON="${HEZO_DATABASE_POOL_SIZE}"
+	else
+		HEZO_DATABASE_POOL_SIZE_JSON=""
+	fi
+	WEB_URL_FILE_JSON="$(json_string "${WEB_URL_FILE}")"
+	DATA_DIR_JSON="$(json_string "${DATA_DIR}")"
+	HEZO_DATABASE_URL_JSON="$(json_string "${HEZO_DATABASE_URL:-}")"
+	HEZO_ASSET_STORAGE_URL_JSON="$(json_string "${HEZO_ASSET_STORAGE_URL:-}")"
+}
+
+load_legacy_config() {
+	LEGACY_ENV_CARRIED=""
+	if [[ -f "${LEGACY_ENV}" && ! -f "${CONFIG_FILE}" ]]; then
+		while IFS='=' read -r key value; do
+			[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
+			if [[ -z "${!key:-}" ]]; then
+				export "${key}=${value}"
+				LEGACY_ENV_CARRIED+=" ${key}"
+			fi
+		done <"${LEGACY_ENV}"
+		log "Found ${LEGACY_ENV} from a pre-0.50 install."
+		if [[ -n "${LEGACY_ENV_CARRIED}" ]]; then
+			log "Carrying into ${CONFIG_FILE}:${LEGACY_ENV_CARRIED}"
+		fi
+		if [[ -n "${HEZO_WEB_URL:-}" && ! -s "${WEB_URL_FILE}" ]]; then
+			echo "${HEZO_WEB_URL}" >"${WEB_URL_FILE}"
+			log "Seeded ${WEB_URL_FILE} with ${HEZO_WEB_URL}"
+		fi
+	fi
+}
+
+write_hezo_config() {
+	[[ -f "${CONFIG_FILE}" ]] && return
+	# Mode 600: this file can hold database and object-storage credentials.
+	install -m 600 /dev/null "${CONFIG_FILE}"
+	cat >"${CONFIG_FILE}" <<EOF
+// Hezo configuration. Edit and restart: systemctl restart hezo
+// Reference: https://hezo.ai/docs/deployment/configuration
+//
+// Do NOT put your master key in this file. Hezo keeps it in memory only and comes up
+// locked after each restart by design; unlock it from the browser gate. A copy of the
+// key on disk next to the encrypted data would let anyone who reads this box decrypt
+// your vault.
+const { existsSync, readFileSync } = require('node:fs');
+
+// Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
+const webUrlFile = ${WEB_URL_FILE_JSON};
+
+module.exports = {
+	dataDir: ${DATA_DIR_JSON},
+	webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
+EOF
+	# Managed data hosting (optional): persist the database / asset-storage settings
+	# provided at provision time. To wire them into an already-provisioned host, edit
+	# this file directly and restart hezo - see
+	# docs/deployment/one-click.md § Using managed data hosting.
+	if [[ -n "${HEZO_DATABASE_URL:-}" || -n "${HEZO_DATABASE_POOL_SIZE_JSON}" ]]; then
+		{
+			printf '\tdatabase: {\n'
+			[[ -n "${HEZO_DATABASE_URL:-}" ]] && printf '\t\turl: %s,\n' "${HEZO_DATABASE_URL_JSON}"
+			[[ -n "${HEZO_DATABASE_POOL_SIZE_JSON}" ]] && printf '\t\tpoolSize: %s,\n' "${HEZO_DATABASE_POOL_SIZE_JSON}"
+			printf '\t},\n'
+		} >>"${CONFIG_FILE}"
+	fi
+	if [[ -n "${HEZO_ASSET_STORAGE_URL:-}" ]]; then
+		printf '\tassetStorage: { url: %s },\n' "${HEZO_ASSET_STORAGE_URL_JSON}" >>"${CONFIG_FILE}"
+	fi
+	echo "};" >>"${CONFIG_FILE}"
+}
+
+retire_legacy_config() {
+	if [[ -n "${LEGACY_ENV_CARRIED}" && -f "${CONFIG_FILE}" && -f "${LEGACY_ENV}" ]]; then
+		mv "${LEGACY_ENV}" "${LEGACY_ENV}.migrated"
+		log "Renamed ${LEGACY_ENV} to ${LEGACY_ENV}.migrated (no longer read)."
+	fi
+}
+
+write_firstboot_env() {
+	install -m 600 /dev/null "${DEPLOY_ENV}"
+	[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && printf 'HEZO_DOMAIN_OVERRIDE=%s\n' "${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV}"
+	[[ -n "${HEZO_SWAP_SIZE:-}" ]] && printf 'HEZO_SWAP_SIZE=%s\n' "${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV}"
+	[[ -n "${BEHIND_GATEWAY}" ]] && printf 'BEHIND_GATEWAY=%s\n' "${BEHIND_GATEWAY}" >>"${DEPLOY_ENV}"
+	return 0
+}
+# END CONFIG ADAPTER FUNCTIONS
+
+# Cloud-init can seed optional settings (managed database / asset storage, domain
+# override) into deploy.env before this script runs - pick them up as literal data.
+# Explicit shell environment still wins over the file.
+load_env_file "${DEPLOY_ENV}" '^(HEZO_[A-Z_]+|BEHIND_GATEWAY)$'
 
 # Resolved once so every branch below reads the same answer, and so `set -u`
 # never trips on an unset optional flag.
@@ -95,8 +221,6 @@ if [[ "${BEHIND_GATEWAY}" == "1" && -z "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
 	echo "and this machine's own address is not the one users reach it by." >&2
 	exit 1
 fi
-
-log() { echo "[hezo-provision] $*"; }
 
 # ---------------------------------------------------------------------------
 # 1a. Migrate a pre-0.50 /etc/hezo/hezo.env
@@ -110,31 +234,13 @@ log() { echo "[hezo-provision] $*"; }
 #     nothing.
 # ---------------------------------------------------------------------------
 LEGACY_ENV="/etc/hezo/hezo.env"
-LEGACY_ENV_CARRIED=""
-if [[ -f "${LEGACY_ENV}" && ! -f "${CONFIG_FILE}" ]]; then
-	while IFS='=' read -r key value; do
-		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
-		if [[ -z "${!key:-}" ]]; then
-			export "${key}=${value}"
-			LEGACY_ENV_CARRIED+=" ${key}"
-		fi
-	done <"${LEGACY_ENV}"
-	log "Found ${LEGACY_ENV} from a pre-0.50 install."
-	if [[ -n "${LEGACY_ENV_CARRIED}" ]]; then
-		log "Carrying into ${CONFIG_FILE}:${LEGACY_ENV_CARRIED}"
-	fi
-	# The generated config reads its webUrl from the side file hezo-firstboot
-	# writes, and firstboot will not re-run here - its sentinel was set the day
-	# this host was provisioned. Seed the file from the old variable instead of
-	# special-casing the generator, so both paths keep one mechanism.
-	if [[ -n "${HEZO_WEB_URL:-}" && ! -s "${WEB_URL_FILE}" ]]; then
-		echo "${HEZO_WEB_URL}" >"${WEB_URL_FILE}"
-		log "Seeded ${WEB_URL_FILE} with ${HEZO_WEB_URL}"
-	fi
-fi
+load_legacy_config
 
 # An operator who moved the data dir keeps it. Everything below writes to this path.
 DATA_DIR="${HEZO_DATA_DIR:-${DATA_DIR}}"
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+	prepare_config_values
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Swap file — give low-RAM hosts a memory cushion so the install itself and
@@ -286,62 +392,16 @@ curl -fsSL -o /usr/local/bin/hezo "${BINARY_URL}"
 chmod +x /usr/local/bin/hezo
 
 # ---------------------------------------------------------------------------
-# 4. Data dir + environment file (never overwrite an operator-edited env file)
+# 4. Data dir + config file (never overwrite an operator-edited config file)
 # ---------------------------------------------------------------------------
 install -d -m 700 /etc/hezo
 install -d -m 755 "${DATA_DIR}"
-if [[ ! -f "${CONFIG_FILE}" ]]; then
-	# Mode 600: this file can hold database and object-storage credentials.
-	install -m 600 /dev/null "${CONFIG_FILE}"
-	cat >"${CONFIG_FILE}" <<EOF
-// Hezo configuration. Edit and restart: systemctl restart hezo
-// Reference: https://hezo.ai/docs/deployment/configuration
-//
-// Do NOT put your master key in this file. Hezo keeps it in memory only and comes up
-// locked after each restart by design; unlock it from the browser gate. A copy of the
-// key on disk next to the encrypted data would let anyone who reads this box decrypt
-// your vault.
-const { existsSync, readFileSync } = require('node:fs');
+write_hezo_config
+retire_legacy_config
 
-// Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
-const webUrlFile = '${WEB_URL_FILE}';
-
-module.exports = {
-	dataDir: '${DATA_DIR}',
-	webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
-EOF
-	# Managed data hosting (optional): persist the database / asset-storage settings
-	# provided at provision time. To wire them into an already-provisioned host, edit
-	# this file directly and restart hezo — see
-	# docs/deployment/one-click.md § Using managed data hosting.
-	if [[ -n "${HEZO_DATABASE_URL:-}" || -n "${HEZO_DATABASE_POOL_SIZE:-}" ]]; then
-		{
-			echo "	database: {"
-			[[ -n "${HEZO_DATABASE_URL:-}" ]] && echo "		url: '${HEZO_DATABASE_URL}',"
-			[[ -n "${HEZO_DATABASE_POOL_SIZE:-}" ]] && echo "		poolSize: ${HEZO_DATABASE_POOL_SIZE},"
-			echo "	},"
-		} >>"${CONFIG_FILE}"
-	fi
-	if [[ -n "${HEZO_ASSET_STORAGE_URL:-}" ]]; then
-		echo "	assetStorage: { url: '${HEZO_ASSET_STORAGE_URL}' }," >>"${CONFIG_FILE}"
-	fi
-	echo "};" >>"${CONFIG_FILE}"
-fi
-
-# Now that the settings live in the config file, take the old one out of the way:
-# nothing reads it any more, and leaving it invites a hand-edit that does nothing.
-if [[ -n "${LEGACY_ENV_CARRIED}" && -f "${CONFIG_FILE}" && -f "${LEGACY_ENV}" ]]; then
-	mv "${LEGACY_ENV}" "${LEGACY_ENV}.migrated"
-	log "Renamed ${LEGACY_ENV} to ${LEGACY_ENV}.migrated (no longer read)."
-fi
-
-# Persist optional settings the first-boot unit reads (domain override, swap size).
-if [[ -n "${HEZO_DOMAIN_OVERRIDE:-}" || -n "${HEZO_SWAP_SIZE:-}" || -n "${BEHIND_GATEWAY}" ]]; then
-	install -m 600 /dev/null "${DEPLOY_ENV}"
-	[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && echo "HEZO_DOMAIN_OVERRIDE=${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV}"
-	[[ -n "${HEZO_SWAP_SIZE:-}" ]] && echo "HEZO_SWAP_SIZE=${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV}"
-	[[ -n "${BEHIND_GATEWAY}" ]] && echo "BEHIND_GATEWAY=${BEHIND_GATEWAY}" >>"${DEPLOY_ENV}"
-fi
+# Keep only settings the first-boot unit still needs. Managed credentials now live
+# in the root-only CommonJS config and must not remain in a second file.
+write_firstboot_env
 
 # ---------------------------------------------------------------------------
 # 5. Caddy (reverse proxy, automatic HTTPS, WebSocket passthrough)
@@ -399,11 +459,14 @@ cat >/usr/local/sbin/hezo-firstboot.sh <<'EOF'
 # writes it where Caddy (/etc/caddy/hezo.env) and Hezo (/etc/hezo/web-url, read
 # by /etc/hezo/hezo.config.cjs) each pick it up.
 set -euo pipefail
+EOF
+declare -f load_env_file >>/usr/local/sbin/hezo-firstboot.sh
+cat >>/usr/local/sbin/hezo-firstboot.sh <<'EOF'
 
 SENTINEL="/var/lib/hezo/.firstboot-done"
 [[ -f "${SENTINEL}" ]] && exit 0
 
-[[ -f /etc/hezo/deploy.env ]] && . /etc/hezo/deploy.env
+load_env_file /etc/hezo/deploy.env '^(HEZO_DOMAIN_OVERRIDE|HEZO_SWAP_SIZE|BEHIND_GATEWAY)$'
 
 # Ensure host swap exists before Caddy/Hezo start (no-op if already active). On the
 # machine-image path this is where swap first gets created, since provision.sh
