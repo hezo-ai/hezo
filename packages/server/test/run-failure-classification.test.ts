@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { classifyRuntimeError } from '../src/services/agent-stream-parser';
 import {
 	classifyRunFailure,
 	RunFailureClass,
@@ -53,6 +54,18 @@ describe('classifyRunFailure', () => {
 		for (const thrown of [undefined, null, 'a string', 42, { name: 'ExecStreamLostError' }]) {
 			expect(classifyRunFailure(thrown)).toBe(RunFailureClass.Permanent);
 		}
+	});
+
+	it('shares one vocabulary with the parsed path', () => {
+		// Two entry points, one answer type: `classifyRunFailure` for a thrown
+		// failure, `classifyRuntimeError` for one a runtime reported on its stream.
+		// If either stops returning a `RunFailureClass`, the exec path and the parsed
+		// path have drifted on what a retry is for, and this is what says so.
+		expect(classifyRuntimeError('Selected model is at capacity')?.failure).toBe(
+			RunFailureClass.Transient,
+		);
+		expect(classifyRuntimeError('invalid api key')?.failure).toBe(RunFailureClass.Permanent);
+		expect(classifyRunFailure(new ExecStreamLostError('docker'))).toBe(RunFailureClass.Transient);
 	});
 
 	it('names no backend, so nothing above the container seam branches on a provider', () => {

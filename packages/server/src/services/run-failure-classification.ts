@@ -7,6 +7,14 @@
  * misconfigured connector is a fact about the instance, and a retry reproduces
  * it exactly - having claimed a container first.
  */
+/**
+ * Two entry points, one vocabulary. {@link classifyRunFailure} below answers for
+ * a *thrown* failure, keyed on its type; `classifyRuntimeError`
+ * (`agent-stream-parser.ts`) answers for a failure a runtime *reported on its
+ * stream*, keyed on the provider's own wording. They return the same
+ * `RunFailureClass`, so the exec path and the parsed path cannot drift into
+ * disagreeing about what a retry is for.
+ */
 export const RunFailureClass = {
 	Transient: 'transient',
 	Permanent: 'permanent',

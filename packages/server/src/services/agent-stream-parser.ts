@@ -23,6 +23,7 @@ import {
 	type CostTokens,
 	claudeCodeProviderUsesCustomEndpoint,
 } from '@hezo/shared';
+import { RunFailureClass } from './run-failure-classification';
 import { HEZO_MCP_SERVER_NAME } from './runtime-adapters/types';
 
 export interface AgentRunUsage {
@@ -94,6 +95,17 @@ export interface AgentStreamParser {
 	 */
 	getTerminalError(): string | null;
 	/**
+	 * Whether that terminal error is worth handing the work back for, or null when
+	 * the run carried none.
+	 *
+	 * The same `RunFailureClass` vocabulary `classifyRunFailure` answers a *thrown*
+	 * failure in, so the two entry points cannot drift into disagreeing about what
+	 * a retry is for. Transient means the provider refused before the agent got a
+	 * turn; the runner still checks that the run in fact spent nothing and wrote
+	 * nothing before acting on it.
+	 */
+	getTerminalVerdict(): RuntimeErrorVerdict | null;
+	/**
 	 * The run's last human-visible assistant text (its final message), or null
 	 * when the run produced none. A run's final message is otherwise delivered to
 	 * no one — it is logged, not posted — so the runner uses this to detect a
@@ -135,28 +147,131 @@ export interface AgentStreamParser {
 }
 
 /**
- * Maps a runtime's terminal error message to a concise, operator-actionable
- * reason. Recognises the common provider failure modes — exhausted credit/quota
- * and rejected authentication — so a failed run states the cause; falls back to
- * the runtime's own message for anything else.
+ * What a runtime said went wrong, and whether the next attempt will see it again.
+ *
+ * Two answers rather than one because the message is for a person and the class
+ * is for the runner. Deriving the second from the first later would mean reading
+ * a control signal out of prose, which is the defect `requeueContainerKilledRuns`
+ * already has (`WHERE error = 'container_error'`) - a signal built on a sentence,
+ * in an area whose sentences get reworded.
  */
-export function classifyRuntimeError(raw: string | undefined | null): string | null {
+export interface RuntimeErrorVerdict {
+	/** The operator-actionable reason, or the runtime's own text when unrecognised. */
+	message: string;
+	/** Whether handing the work back stands a chance of a different outcome. */
+	failure: RunFailureClass;
+	/**
+	 * Which family matched, for callers that need to tell two transient refusals
+	 * apart - a capacity blip and a spent subscription allowance clear on very
+	 * different clocks. Carried rather than re-derived, so nothing downstream has
+	 * to match the message text a second time.
+	 */
+	family: RuntimeErrorFamily;
+}
+
+/** The failure modes {@link classifyRuntimeError} names. */
+export type RuntimeErrorFamily =
+	| 'credit'
+	| 'auth'
+	| 'capacity'
+	| 'rate_limit'
+	| 'usage_limit'
+	| 'unknown';
+
+/**
+ * The provider failure modes worth naming, as a table read top to bottom.
+ *
+ * A table rather than a chain of `if`s so the ordering is explicit rather than
+ * implicit in statement order, and so a new family is one row. **The order is
+ * load-bearing**: the two terminal families are tested first because they are the
+ * more specific match. `429 ... exceeded your current quota` is a billing problem
+ * and must stay terminal, while a bare `429 Too Many Requests` is a pacing
+ * problem and clears on its own - the same status code, two different faults,
+ * separated by the words around it. `runtime-error-families` in
+ * `agent-stream-parser-coverage.test.ts` asserts both directions.
+ *
+ * `server_error` is deliberately absent from the capacity row: it is OpenAI's
+ * catch-all type and also covers genuinely malformed requests, which reproduce
+ * exactly. So is `try again later`, which an agent's own tool error can carry.
+ * The failure directions are asymmetric the way `run-failure-classification.ts`
+ * documents - a wrong `Permanent` costs one honest failed run with an actionable
+ * message, a wrong `Transient` costs a paced loop nobody was told about.
+ */
+const RUNTIME_ERROR_FAMILIES: readonly {
+	family: RuntimeErrorFamily;
+	match: RegExp;
+	failure: RunFailureClass;
+	describe?: (text: string) => string;
+}[] = [
+	{
+		family: 'credit',
+		match:
+			/402|insufficient\s+balance|insufficient\s+(funds|credit|quota)|payment\s+required|billing|exceeded your current quota/,
+		failure: RunFailureClass.Permanent,
+		describe: (text) =>
+			`AI provider rejected the request for lack of credit/quota — top up or switch the team's provider credential. (${text})`,
+	},
+	{
+		family: 'auth',
+		match: /401|authentication|unauthorized|invalid api key|invalid x-api-key|not logged in/,
+		failure: RunFailureClass.Permanent,
+		describe: (text) =>
+			`AI provider authentication failed — check the team's provider credential. (${text})`,
+	},
+	{
+		family: 'capacity',
+		// The upstream is refusing everyone, not this run. Clears on the provider's
+		// own clock with no operator action, so the work is handed back rather than
+		// failed. `overloaded` covers Anthropic's `overloaded_error` and a bare
+		// `Overloaded` by substring.
+		match:
+			/at capacity|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|\b(502|503|504|529)\b/,
+		failure: RunFailureClass.Transient,
+		describe: (text) =>
+			`The model provider is temporarily at capacity - this run never got a turn. (${text})`,
+	},
+	{
+		family: 'rate_limit',
+		// Our own request volume, so it clears on a clock too, but retrying on the
+		// same cadence can prolong it - which is what the dispatch cooldown is for.
+		match: /\b429\b|rate limit|too many requests/,
+		failure: RunFailureClass.Transient,
+		describe: (text) => `The model provider rate-limited this run before it got a turn. (${text})`,
+	},
+	{
+		family: 'usage_limit',
+		// A subscription window being spent. Transient, but on a multi-hour clock,
+		// which is why it earns a longer cooldown than the two above.
+		match: /usage limit|resets at/,
+		failure: RunFailureClass.Transient,
+		describe: (text) =>
+			`The provider subscription's usage limit is spent - this run never got a turn. (${text})`,
+	},
+];
+
+/**
+ * Maps a runtime's terminal error message to a concise, operator-actionable
+ * reason and a retry verdict. Recognises the common provider failure modes so a
+ * failed run states the cause; falls back to the runtime's own message, classed
+ * `Permanent`, for anything else.
+ *
+ * Unrecognised means permanent here for the same reason it does in
+ * `run-failure-classification.ts`: a retry is a recovery mechanism for a named,
+ * known-transient condition, never a default posture.
+ */
+export function classifyRuntimeError(raw: string | undefined | null): RuntimeErrorVerdict | null {
 	const text = (raw ?? '').trim();
 	if (!text) return null;
 	const lower = text.toLowerCase();
-	if (
-		/402|insufficient\s+balance|insufficient\s+(funds|credit|quota)|payment\s+required|billing|exceeded your current quota/.test(
-			lower,
-		)
-	) {
-		return `AI provider rejected the request for lack of credit/quota — top up or switch the team's provider credential. (${text})`;
+	for (const family of RUNTIME_ERROR_FAMILIES) {
+		if (!family.match.test(lower)) continue;
+		return {
+			message: family.describe?.(text) ?? text,
+			failure: family.failure,
+			family: family.family,
+		};
 	}
-	if (
-		/401|authentication|unauthorized|invalid api key|invalid x-api-key|not logged in/.test(lower)
-	) {
-		return `AI provider authentication failed — check the team's provider credential. (${text})`;
-	}
-	return text;
+	return { message: text, failure: RunFailureClass.Permanent, family: 'unknown' };
 }
 
 /**
@@ -220,6 +335,7 @@ function createPassthroughParser(): AgentStreamParser {
 		flush: () => '',
 		getUsage: () => null,
 		getTerminalError: () => null,
+		getTerminalVerdict: () => null,
 		getFinalAssistantMessage: () => null,
 		getMcpToolCounts: () => null,
 		getToolCallCounts: () => null,
@@ -257,7 +373,7 @@ function createToolCallTally(): ToolCallTally {
 function createJsonlParser(
 	renderEvent: (event: unknown) => string[],
 	getUsage: () => AgentRunUsage | null,
-	getTerminalError: () => string | null = () => null,
+	getTerminalVerdict: () => RuntimeErrorVerdict | null = () => null,
 	getFinalAssistantMessage: () => string | null = () => null,
 	getMcpToolCounts: () => Record<string, number> | null = () => null,
 	getToolCallCounts: () => Record<string, number> | null = () => null,
@@ -295,7 +411,10 @@ function createJsonlParser(
 			return consumeLine(remainder);
 		},
 		getUsage,
-		getTerminalError,
+		// Both derived from the one retained verdict, here rather than in each of
+		// the six callers, so a parser cannot report a message without its class.
+		getTerminalError: () => getTerminalVerdict()?.message ?? null,
+		getTerminalVerdict,
 		getFinalAssistantMessage,
 		getMcpToolCounts,
 		getToolCallCounts,
@@ -701,7 +820,7 @@ function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): Age
 	const toolTally = createToolCallTally();
 	let usage: AgentRunUsage | null = null;
 	let modelId: string | undefined;
-	let terminalError: string | null = null;
+	let terminalError: RuntimeErrorVerdict | null = null;
 	// Running token totals, accumulated from each assistant turn's `message.usage`,
 	// so a run interrupted before its terminal `result` event (e.g. a server
 	// restart mid-run) still reports the tokens it burned. Each assistant message
@@ -763,7 +882,16 @@ function createClaudeCodeParser(price: PriceModelFn, provider?: AiProvider): Age
 				// Recorded as the run's terminal error rather than just logged: it is
 				// the *cause* of everything that follows, and the runner surfaces it on
 				// the run row ahead of the "produced no output" symptom.
-				terminalError = mcpFailure;
+				// Permanent by nature, and stated rather than classified: this is Hezo's
+				// own sentence about a broken injection, not a runtime's report of an
+				// upstream fault. A retry reproduces it exactly, having claimed a
+				// container first - the case `run-failure-classification.ts` was
+				// written for.
+				terminalError = {
+					message: mcpFailure,
+					failure: RunFailureClass.Permanent,
+					family: 'unknown',
+				};
 				out.push(`[runner] ${mcpFailure}`);
 			}
 			return out;
@@ -930,7 +1058,7 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 	let turns = 0;
 	let modelId: string | undefined = runModel;
 	let finalMessage: string | null = null;
-	let terminalError: string | null = null;
+	let terminalError: RuntimeErrorVerdict | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {
 		const event = raw as CodexEvent;
@@ -960,6 +1088,15 @@ function createCodexParser(price: PriceModelFn, runModel?: string): AgentStreamP
 				cacheReadTokens: cached,
 				outputTokens: output,
 			});
+			// Codex puts a failed turn's reason on the turn event itself, and does not
+			// always follow it with a top-level `error` event - so a reason read only
+			// from that arm was lost, and the row fell through to the exit-code
+			// backstop with the provider's own explanation left in the log text.
+			// Reading a field the protocol defines, rather than matching on the line.
+			if (type === 'turn.failed') {
+				terminalError =
+					classifyRuntimeError(extractErrorMessage(event.error, event.message)) ?? terminalError;
+			}
 			const status = type === 'turn.failed' ? 'error' : 'success';
 			return [`[done] ${status} turns=${turns} tokens=${input}/${output}`];
 		}
@@ -1089,7 +1226,7 @@ function createAntigravityParser(
 ): AgentStreamParser {
 	let usage: AgentRunUsage | null = null;
 	let finalMessage: string | null = null;
-	let terminalError: string | null = null;
+	let terminalError: RuntimeErrorVerdict | null = null;
 	// agy names its model in the `init` event; the run's own model is the fallback.
 	let model = runModel;
 
@@ -1373,7 +1510,7 @@ function createGenericJsonlParser(
 	let modelId: string | undefined = fallbackModelId;
 	let finalMessage: string | null = null;
 	let doneEmitted = false;
-	let terminalError: string | null = null;
+	let terminalError: RuntimeErrorVerdict | null = null;
 
 	// The running total rather than the terminal step's own counts: the line reads
 	// as what the whole run spent, which is what it is once several steps report.
@@ -1509,7 +1646,7 @@ interface GrokEvent {
 }
 
 function createGrokParser(): AgentStreamParser {
-	let terminalError: string | null = null;
+	let terminalError: RuntimeErrorVerdict | null = null;
 	let thoughtBuf = '';
 	let textBuf = '';
 	let finalMessage: string | null = null;
@@ -1706,7 +1843,7 @@ function kimiContentText(content: unknown): string {
 
 function createKimiParser(): AgentStreamParser {
 	const toolTally = createToolCallTally();
-	let terminalError: string | null = null;
+	let terminalError: RuntimeErrorVerdict | null = null;
 	let finalAssistantMessage: string | null = null;
 
 	const renderEvent = (raw: unknown): string[] => {

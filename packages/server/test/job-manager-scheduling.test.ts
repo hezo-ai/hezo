@@ -338,6 +338,39 @@ describe('JobManager scheduling & dispatch', () => {
 		});
 	});
 
+	describe('provider refusal cooldown', () => {
+		// One case here, on purpose: this proves the fragment is actually wired into
+		// the scan. What the fragment *means* - which reasons, which clocks, and that
+		// a held row cannot crowd out a fresh one - is pinned in
+		// `provider-refusal-cooldown.test.ts` against real rows, without dispatching
+		// an agent for it.
+		it('holds a wakeup the provider just refused, claiming nothing', async () => {
+			const manager = createJobManager();
+			const wakeupId = await insertQueuedWakeup(agentId, 'timer');
+			await ctx.db.query(
+				`UPDATE agent_wakeup_requests
+				    SET last_skipped_reason = $2, last_skipped_at = now()
+				  WHERE id = $1`,
+				[wakeupId, WakeupSkipReason.ProviderAtCapacity],
+			);
+
+			await (manager as unknown as JmInternals).processWakeups();
+
+			const w = await wakeupRow(wakeupId);
+			expect(w.status).toBe(WakeupStatus.Queued);
+			expect(w.claimed_at).toBeNull();
+			// Still queued and still carrying its reason, so the task keeps showing a
+			// queued badge for the whole outage rather than reading as idle.
+			expect(w.last_skipped_reason).toBe(WakeupSkipReason.ProviderAtCapacity);
+			const runs = await ctx.db.query<{ n: string }>(
+				'SELECT count(*)::text AS n FROM heartbeat_runs WHERE team_id = $1',
+				[teamId],
+			);
+			expect(runs.rows[0].n).toBe('0');
+			manager.shutdown();
+		});
+	});
+
 	describe('processWakeups branches', () => {
 		it('skips a task-less wakeup with agent_running while the member is running anywhere', async () => {
 			const manager = createJobManager();

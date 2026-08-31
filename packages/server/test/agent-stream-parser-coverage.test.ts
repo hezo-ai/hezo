@@ -5,6 +5,7 @@ import {
 	createAgentStreamParser,
 	type PriceModelFn,
 } from '../src/services/agent-stream-parser';
+import { RunFailureClass } from '../src/services/run-failure-classification';
 
 // Feed one or more JSON events as a single newline-delimited stdout chunk.
 function feed(parser: ReturnType<typeof createAgentStreamParser>, events: unknown[]): string {
@@ -26,9 +27,10 @@ describe('classifyRuntimeError', () => {
 			'You exceeded your current quota',
 			'billing hard limit reached',
 		]) {
-			const msg = classifyRuntimeError(raw);
-			expect(msg).toContain('lack of credit/quota');
-			expect(msg).toContain(raw);
+			const verdict = classifyRuntimeError(raw);
+			expect(verdict?.message).toContain('lack of credit/quota');
+			expect(verdict?.message).toContain(raw);
+			expect(verdict?.failure).toBe(RunFailureClass.Permanent);
 		}
 	});
 
@@ -40,14 +42,75 @@ describe('classifyRuntimeError', () => {
 			'invalid x-api-key header',
 			'not logged in',
 		]) {
-			const msg = classifyRuntimeError(raw);
-			expect(msg).toContain('authentication failed');
-			expect(msg).toContain(raw);
+			const verdict = classifyRuntimeError(raw);
+			expect(verdict?.message).toContain('authentication failed');
+			expect(verdict?.message).toContain(raw);
+			expect(verdict?.failure).toBe(RunFailureClass.Permanent);
 		}
 	});
 
-	it('passes through an unrecognized error verbatim (trimmed)', () => {
-		expect(classifyRuntimeError('  some other failure  ')).toBe('some other failure');
+	it('passes through an unrecognized error verbatim (trimmed), and calls it permanent', () => {
+		// "Unrecognised means permanent" holds on the parsed path too: a retry is a
+		// recovery mechanism for a named condition, never a default posture.
+		const verdict = classifyRuntimeError('  some other failure  ');
+		expect(verdict?.message).toBe('some other failure');
+		expect(verdict?.failure).toBe(RunFailureClass.Permanent);
+	});
+
+	it('classifies a provider capacity or overload refusal as transient', () => {
+		for (const raw of [
+			'Selected model is at capacity. Please try a different model.',
+			'API Error: 529 overloaded',
+			'overloaded_error',
+			'503 Service Unavailable',
+			'502 Bad Gateway',
+			'504 Gateway Timeout',
+			'the service is temporarily unavailable',
+		]) {
+			const verdict = classifyRuntimeError(raw);
+			expect(verdict?.failure).toBe(RunFailureClass.Transient);
+			expect(verdict?.message).toContain(raw);
+		}
+	});
+
+	it('classifies a rate limit as transient and a spent usage allowance as transient', () => {
+		for (const raw of ['429 Too Many Requests', 'rate limit exceeded']) {
+			expect(classifyRuntimeError(raw)?.failure).toBe(RunFailureClass.Transient);
+		}
+		for (const raw of ['usage limit reached', 'your limit resets at 5pm']) {
+			const verdict = classifyRuntimeError(raw);
+			expect(verdict?.failure).toBe(RunFailureClass.Transient);
+			expect(verdict?.message).toContain('usage limit');
+		}
+	});
+
+	it('tests the terminal families first, so a 429 that names a quota stays terminal', () => {
+		// The ordering assertion, in both directions. The same status code carries
+		// two different faults: a 429 whose body names the quota is a billing problem
+		// no retry fixes, while a bare 429 is pacing and clears on its own. If the
+		// table is ever reordered, this is what fails.
+		const billing = classifyRuntimeError('429: You exceeded your current quota');
+		expect(billing?.failure).toBe(RunFailureClass.Permanent);
+		expect(billing?.message).toContain('lack of credit/quota');
+
+		expect(classifyRuntimeError('429 Too Many Requests')?.failure).toBe(RunFailureClass.Transient);
+	});
+
+	it('carries the matched family, so nothing downstream re-reads the message', () => {
+		// The two transient refusals clear on very different clocks, and the runner
+		// picks the dispatch cooldown from this rather than by matching the text a
+		// second time.
+		expect(classifyRuntimeError('Selected model is at capacity')?.family).toBe('capacity');
+		expect(classifyRuntimeError('429 Too Many Requests')?.family).toBe('rate_limit');
+		expect(classifyRuntimeError('usage limit reached')?.family).toBe('usage_limit');
+		expect(classifyRuntimeError('something else entirely')?.family).toBe('unknown');
+	});
+
+	it('does not treat a provider catch-all as transient', () => {
+		// `server_error` is OpenAI's catch-all and also covers malformed requests,
+		// which reproduce exactly. Excluded on purpose - widening it should be a
+		// conscious act, so it is asserted rather than left to the regex.
+		expect(classifyRuntimeError('server_error')?.failure).toBe(RunFailureClass.Permanent);
 	});
 });
 
