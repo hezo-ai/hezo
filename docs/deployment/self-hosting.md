@@ -36,7 +36,7 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 ## The data directory
 
-Everything Hezo keeps lives in one place - the **data directory** (default `~/.hezo/`):
+By default, Hezo keeps its local runtime data in the **data directory** (`~/.hezo/`):
 
 - the embedded database (teams, projects, tasks),
 - your **encrypted** secrets and signing keys, and
@@ -49,9 +49,11 @@ database, and
 [S3-compatible object storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-storage)
 for assets (step-by-step:
 [Managed database & asset storage](/docs/deployment/cloud#managed-database--asset-storage)).
-The data directory is still required for workspaces and keys either way. Because this
-directory holds everything by default, it's the one thing to back up - see
-[Backup & recovery](/docs/deployment/backup-and-recovery).
+The data directory is still required for workspaces and keys either way. Full recovery
+needs more than this directory: keep a Hezo backup bundle, the complete data directory,
+the config file, files it references, backend credentials, service settings or
+startup flags, and the master key stored separately. See
+[Backup & recovery](/docs/deployment/backup-and-recovery) for the complete procedure.
 
 ## Running it
 

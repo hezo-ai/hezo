@@ -47,6 +47,44 @@ describe('Bun.spawn exit-code propagation (supervisor sentinel routing)', () => 
 	test('propagates a normal exit code 0', async () => {
 		expect(await spawnExit(0)).toBe(0);
 	});
+
+	test('the real supervisor loop retains its key only across sentinel 75', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'hezo-supervisor-loop-'));
+		const fixture = join(import.meta.dir, '../fixtures/supervisor-loop-worker.ts');
+		const binary = join(
+			dir,
+			process.platform === 'win32' ? 'supervisor-fixture.exe' : 'supervisor-fixture',
+		);
+		const state = join(dir, 'state');
+		const report = join(dir, 'report');
+		const dataDir = join(dir, 'data');
+
+		try {
+			const build = Bun.spawn(
+				[process.execPath, 'build', '--compile', fixture, '--outfile', binary],
+				{ stdout: 'ignore', stderr: 'pipe' },
+			);
+			const buildCode = await build.exited;
+			expect(buildCode).toBe(0);
+
+			const update = Bun.spawn([binary, 'update', state, report, dataDir], {
+				stdout: 'ignore',
+				stderr: 'ignore',
+			});
+			expect(await update.exited).toBe(0);
+			expect(await readFile(report, 'utf8')).toBe('ab'.repeat(32));
+
+			await rm(report, { force: true });
+			const directRestart = Bun.spawn([binary, 'direct', state, report, dataDir], {
+				stdout: 'ignore',
+				stderr: 'ignore',
+			});
+			expect(await directRestart.exited).toBe(0);
+			expect(await readFile(report, 'utf8')).toBe('none');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe('applyStagedUpdate replaces a live binary on this platform', () => {

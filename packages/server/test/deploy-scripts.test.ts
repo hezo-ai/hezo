@@ -43,6 +43,7 @@ const MASTER_KEY = readFileSync(join(REPO_ROOT, 'docs/security/master-key.md'), 
 const ARCHITECTURE = readFileSync(join(REPO_ROOT, '.dev/architecture.md'), 'utf8');
 const HOSTED_ARCHITECTURE = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
 const CLOUD_REQUIREMENTS = readFileSync(join(REPO_ROOT, '.dev/hezo-cloud-requirements.md'), 'utf8');
+const GCP_TUTORIAL = readFileSync(join(REPO_ROOT, 'deploy/gcp/tutorial.md'), 'utf8');
 
 function shellScripts(dir: string): string[] {
 	const out: string[] = [];
@@ -90,6 +91,7 @@ function configAdapterScript(): string {
 	]) {
 		expect(boundary).toBeGreaterThan(-1);
 	}
+	const productionValidator = `import { loadConfigFile } from ${JSON.stringify(join(REPO_ROOT, 'packages/server/src/config/load.ts'))}; loadConfigFile(process.argv[1]);`;
 	return [
 		'log() { :; }',
 		PROVISION.slice(serializerStart, serializerEnd),
@@ -103,7 +105,7 @@ function configAdapterScript(): string {
 		.join('\n')
 		.replace(
 			`/usr/local/bin/hezo config validate --config "\${path}" >/dev/null 2>&1`,
-			`${JSON.stringify(process.execPath)} -e 'require(process.argv[1])' "\${path}" >/dev/null 2>&1`,
+			`bun -e ${JSON.stringify(productionValidator)} "\${path}" >/dev/null 2>&1`,
 		);
 }
 
@@ -577,6 +579,86 @@ describe('the one-click managed-backend configuration contract', () => {
 		}
 	});
 
+	it('preserves a valid header-bearing operator config and its newline-less sole credential source', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-header-operator-config-'));
+		const deployEnv = join(dir, 'deploy.env');
+		const configFile = join(dir, 'hezo.config.cjs');
+		const operatorConfig = [
+			'// Hezo configuration. Edit and restart: systemctl restart hezo',
+			'module.exports = {',
+			"\tdataDir: '/srv/hezo-operator',",
+			'};',
+			'',
+		].join('\n');
+		writeFileSync(configFile, operatorConfig);
+		writeFileSync(deployEnv, 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo');
+		const configHash = sha256(configFile);
+		const sourceHash = sha256(deployEnv);
+
+		try {
+			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+				env: {
+					...process.env,
+					DEPLOY_ENV: deployEnv,
+					CONFIG_FILE: configFile,
+					WEB_URL_FILE: join(dir, 'web-url'),
+					DATA_DIR: join(dir, 'data'),
+					LEGACY_ENV: join(dir, 'hezo.env'),
+					BEHIND_GATEWAY: '',
+				},
+				stdio: 'pipe',
+			});
+
+			expect(sha256(configFile)).toBe(configHash);
+			expect(sha256(deployEnv)).toBe(sourceHash);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('preserves a syntactically valid but schema-invalid config and its credential source', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-schema-invalid-config-'));
+		const deployEnv = join(dir, 'deploy.env');
+		const configFile = join(dir, 'hezo.config.cjs');
+		const invalidConfig = [
+			'// Hezo configuration. Edit and restart: systemctl restart hezo',
+			'module.exports = {',
+			"\tdataDir: '/srv/hezo-operator',",
+			'\tdatabase: { poolSize: 0 },',
+			'};',
+			'',
+		].join('\n');
+		writeFileSync(configFile, invalidConfig);
+		writeFileSync(deployEnv, 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo');
+		const configHash = sha256(configFile);
+		const sourceHash = sha256(deployEnv);
+		expect(() =>
+			execFileSync(process.execPath, ['-e', `require(${JSON.stringify(configFile)})`], {
+				stdio: 'pipe',
+			}),
+		).not.toThrow();
+
+		try {
+			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+				env: {
+					...process.env,
+					DEPLOY_ENV: deployEnv,
+					CONFIG_FILE: configFile,
+					WEB_URL_FILE: join(dir, 'web-url'),
+					DATA_DIR: join(dir, 'data'),
+					LEGACY_ENV: join(dir, 'hezo.env'),
+					BEHIND_GATEWAY: '',
+				},
+				stdio: 'pipe',
+			});
+
+			expect(sha256(configFile)).toBe(configHash);
+			expect(sha256(deployEnv)).toBe(sourceHash);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('preserves a valid operator config with a generated-start marker and no completion marker', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-marked-operator-config-'));
 		const configFile = join(dir, 'hezo.config.cjs');
@@ -788,6 +870,70 @@ describe('the one-click managed-backend configuration contract', () => {
 		}
 	});
 
+	it.each([
+		[
+			'web URL file expression',
+			(config: string) =>
+				config.replace(
+					/^const webUrlFile = (.*);$/m,
+					'const webUrlFile = $1; const operatorPath = "/operator/path";',
+				),
+		],
+		[
+			'data directory line',
+			(config: string) =>
+				config.replace(/^\tdataDir: (.*),$/m, '\tdataDir: $1, telemetry: { enabled: false },'),
+		],
+		[
+			'database URL line',
+			(config: string) => config.replace(/^\t\turl: (.*),$/m, '\t\turl: $1, poolSize: 31,'),
+		],
+		[
+			'database pool expression',
+			(config: string) => config.replace(/^\t\tpoolSize: 23,$/m, '\t\tpoolSize: 20 + 3,'),
+		],
+		[
+			'asset storage line',
+			(config: string) =>
+				config.replace(
+					/^\tassetStorage: \{ url: (.*) \},$/m,
+					'\tassetStorage: { url: $1 }, telemetry: { endpoint: "https://operator.example" },',
+				),
+		],
+	])('does not treat operator content on the generated %s as pre-marker provenance', (_name, mutate) => {
+		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-pre-marker-negative-'));
+		const configFile = join(dir, 'hezo.config.cjs');
+		const legacyEnv = join(dir, 'hezo.env');
+		const operatorConfig = mutate(
+			completeLegacyGeneratedConfig(join(dir, 'web-url'), join(dir, 'data')),
+		);
+		writeFileSync(configFile, operatorConfig);
+		writeFileSync(legacyEnv, 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo');
+		const configHash = sha256(configFile);
+		const sourceHash = sha256(legacyEnv);
+
+		try {
+			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+				env: {
+					...process.env,
+					DEPLOY_ENV: join(dir, 'deploy.env'),
+					CONFIG_FILE: configFile,
+					WEB_URL_FILE: join(dir, 'web-url'),
+					DATA_DIR: join(dir, 'data'),
+					LEGACY_ENV: legacyEnv,
+					BEHIND_GATEWAY: '',
+				},
+				stdio: 'pipe',
+			});
+
+			expect(sha256(configFile)).toBe(configHash);
+			expect(sha256(legacyEnv)).toBe(sourceHash);
+			expect(existsSync(`${legacyEnv}.migrated`)).toBe(false);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('parses the final managed setting without a trailing newline', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-no-final-newline-'));
 		const deployEnv = join(dir, 'deploy.env');
@@ -910,6 +1056,8 @@ describe('the one-click managed-backend configuration contract', () => {
 
 	it.each([
 		['backup guide', BACKUP],
+		['self-hosting guide', SELF_HOSTING],
+		['GCP tutorial', GCP_TUTORIAL],
 		['cloud guide', CLOUD],
 		['configuration guide', CONFIGURATION],
 		['CLI reference', CLI],

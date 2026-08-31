@@ -626,7 +626,7 @@
 	"setup.aiProvider.title": "AI プロバイダーを設定",
 	"setup.masterKey.confirmDescription": "このインスタンスの管理者パスワードを設定するために、マスターキーを入力してください。",
 	"setup.masterKey.confirmTitle": "マスターキーを確認",
-	"setup.masterKey.lifecycleDescription": "このキーをすぐ使えるように保管してください。新しい Hezo プロセスはデフォルトでロックされた状態で起動します。監視付きのアプリ内アップデートでは、メモリ内のキーを置き換え後のプロセスに渡せます。再起動、クラッシュ、またはサービスの直接再起動後は、その起動時に --master-key または HEZO_MASTER_KEY でキーを一度だけ渡していない限り、ブラウザーで Hezo のロックを解除してください。",
+	"setup.masterKey.lifecycleDescription": "ブラウザーで Hezo のロックを解除できるよう、このキーをすぐ使える状態で保管してください。新しい Hezo プロセスはデフォルトでロックされた状態で起動します。監視付きのアプリ内アップデートでは、メモリ内のキーを置き換え後のプロセスに渡せます。再起動、クラッシュ、またはサービスの直接再起動では、その起動時に --master-key または HEZO_MASTER_KEY を一度限りの入力として渡さない限り、ブラウザーでのロック解除が必要です。",
 	"setup.masterKey.lifecycleTitle": "機密情報を暗号化し、Hezo のロックを解除します。",
 	"setup.password.description": "今後はこのパスワードでサインインします。忘れた場合は、マスターキーで再設定できます。",
 	"setup.password.submit": "パスワードを設定して続ける",
@@ -683,7 +683,7 @@
 	"toast.success": "完了",
 	"updates.confirm.drain": "Hezo は実行中のエージェント実行を停止して再度キューに入れ、最初からやり直します。",
 	"updates.confirm.restart": "Hezo を停止し、{version} で再起動します。",
-	"updates.confirm.reunlock": "12 語のマスターキーをすぐ使えるように保管してください。新しい Hezo プロセスはデフォルトでロックされた状態で起動します。この監視付きアプリ内アップデートでは、メモリ内のキーを置き換え後のプロセスに渡せます。再起動、クラッシュ、またはサービスの直接再起動後は、その起動時に --master-key または HEZO_MASTER_KEY でキーを一度だけ渡していない限り、Hezo のロックをもう一度解除してください。",
+	"updates.confirm.reunlock": "12 語のマスターキーをすぐ使える状態で保管してください。この再起動ではキーを置き換え後のプロセスに渡せないため、起動後にブラウザーで Hezo のロックを解除してください。",
 	"updates.confirm.runsInFlight.one": "現在 {count} 件のエージェント実行が進行中です。",
 	"updates.confirm.runsInFlight.other": "現在 {count} 件のエージェント実行が進行中です。"
 }

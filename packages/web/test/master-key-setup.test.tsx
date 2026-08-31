@@ -64,7 +64,7 @@ test('the generated-key warning states the complete restart lifecycle', async ()
 	expect(await screen.findByText('Encrypts your secrets and unlocks Hezo.')).toBeTruthy();
 	expect(
 		screen.getByText(
-			/Keep this key handy.*New Hezo processes start locked.*supervised in-app update.*replacement process in memory.*reboot, crash, or direct service restart.*unlock Hezo in your browser.*--master-key or HEZO_MASTER_KEY/i,
+			/Keep this key handy so you can unlock Hezo in your browser.*New Hezo processes start locked by default.*supervised in-app update.*replacement process in memory.*reboot, crash, or direct service restart needs a browser unlock.*one-shot --master-key or HEZO_MASTER_KEY input/i,
 		),
 	).toBeTruthy();
 	expect(screen.queryByText('Encrypts your data and unlocks Hezo.')).toBeNull();

@@ -626,7 +626,7 @@
 	"setup.aiProvider.title": "Stel een AI-aanbieder in",
 	"setup.masterKey.confirmDescription": "Voer je hoofdsleutel in om een beheerderswachtwoord voor deze instantie in te stellen.",
 	"setup.masterKey.confirmTitle": "Bevestig je hoofdsleutel",
-	"setup.masterKey.lifecycleDescription": "Houd deze sleutel bij de hand. Nieuwe Hezo-processen starten standaard vergrendeld. Een begeleide update in de app kan de sleutel in het geheugen aan het vervangende proces doorgeven. Ontgrendel Hezo na een herstart, crash of directe serviceherstart in je browser, tenzij die start de sleutel eenmalig via --master-key of HEZO_MASTER_KEY ontvangt.",
+	"setup.masterKey.lifecycleDescription": "Houd deze sleutel bij de hand zodat je Hezo in je browser kunt ontgrendelen. Nieuwe Hezo-processen starten standaard vergrendeld. Een begeleide update in de app kan de sleutel in het geheugen aan het vervangende proces doorgeven. Na een herstart, crash of directe serviceherstart moet je Hezo in de browser ontgrendelen, tenzij die start --master-key of HEZO_MASTER_KEY als eenmalige invoer ontvangt.",
 	"setup.masterKey.lifecycleTitle": "Versleutelt je geheimen en ontgrendelt Hezo.",
 	"setup.password.description": "Vanaf nu log je in met dit wachtwoord. Ben je het vergeten, dan kun je het opnieuw instellen met je hoofdsleutel.",
 	"setup.password.submit": "Wachtwoord instellen en doorgaan",
@@ -683,7 +683,7 @@
 	"toast.success": "Klaar",
 	"updates.confirm.drain": "Hezo stopt lopende agent-runs, zet ze opnieuw in de wachtrij en start ze vanaf het begin.",
 	"updates.confirm.restart": "Hezo wordt afgesloten en start opnieuw op met {version}.",
-	"updates.confirm.reunlock": "Houd je hoofdsleutel van 12 woorden bij de hand. Nieuwe Hezo-processen starten standaard vergrendeld. Deze begeleide update in de app kan de sleutel in het geheugen aan het vervangende proces doorgeven. Ontgrendel Hezo na een herstart, crash of directe serviceherstart opnieuw, tenzij die start de sleutel eenmalig via --master-key of HEZO_MASTER_KEY ontvangt.",
+	"updates.confirm.reunlock": "Houd je hoofdsleutel van 12 woorden bij de hand. Deze herstart kan de sleutel niet aan het vervangende proces doorgeven. Ontgrendel Hezo daarom na het starten in je browser.",
 	"updates.confirm.runsInFlight.one": "Er is nu {count} agent-run bezig.",
 	"updates.confirm.runsInFlight.other": "Er zijn nu {count} agent-runs bezig."
 }

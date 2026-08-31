@@ -626,7 +626,7 @@
 	"setup.aiProvider.title": "Configure um provedor de IA",
 	"setup.masterKey.confirmDescription": "Digite sua chave mestra para definir uma senha de administrador nesta instância.",
 	"setup.masterKey.confirmTitle": "Confirme sua chave mestra",
-	"setup.masterKey.lifecycleDescription": "Mantenha esta chave à mão. Novos processos do Hezo iniciam bloqueados por padrão. Uma atualização supervisionada no aplicativo pode passar a chave ao processo substituto na memória. Após uma reinicialização, falha ou reinício direto do serviço, desbloqueie o Hezo no navegador, a menos que essa inicialização receba a chave uma vez por --master-key ou HEZO_MASTER_KEY.",
+	"setup.masterKey.lifecycleDescription": "Mantenha esta chave à mão para poder desbloquear o Hezo no navegador. Novos processos do Hezo iniciam bloqueados por padrão. Uma atualização supervisionada no aplicativo pode passar a chave ao processo substituto na memória. Uma reinicialização, falha ou reinício direto do serviço exige o desbloqueio no navegador, a menos que essa inicialização receba --master-key ou HEZO_MASTER_KEY como entrada de uso único.",
 	"setup.masterKey.lifecycleTitle": "Criptografa seus segredos e desbloqueia o Hezo.",
 	"setup.password.description": "A partir de agora você entrará com esta senha. Se esquecê-la, pode redefini-la com sua chave mestra.",
 	"setup.password.submit": "Definir senha e continuar",
@@ -683,7 +683,7 @@
 	"toast.success": "Pronto",
 	"updates.confirm.drain": "O Hezo interrompe as execuções de agente em andamento, coloca-as de volta na fila e as reinicia do começo.",
 	"updates.confirm.restart": "O Hezo vai desligar e reiniciar na {version}.",
-	"updates.confirm.reunlock": "Mantenha sua chave mestra de 12 palavras à mão. Novos processos do Hezo iniciam bloqueados por padrão. Esta atualização supervisionada no aplicativo pode passar a chave ao processo substituto na memória. Após uma reinicialização, falha ou reinício direto do serviço, desbloqueie o Hezo novamente, a menos que essa inicialização receba a chave uma vez por --master-key ou HEZO_MASTER_KEY.",
+	"updates.confirm.reunlock": "Mantenha sua chave mestra de 12 palavras à mão. Este reinício não pode passar a chave ao processo substituto, então desbloqueie o Hezo no navegador depois que ele iniciar.",
 	"updates.confirm.runsInFlight.one": "{count} execução de agente está em andamento agora.",
 	"updates.confirm.runsInFlight.other": "{count} execuções de agente estão em andamento agora."
 }

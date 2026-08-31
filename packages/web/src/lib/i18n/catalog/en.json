@@ -626,7 +626,7 @@
 	"setup.aiProvider.title": "Set up an AI provider",
 	"setup.masterKey.confirmDescription": "Enter your master key to set an admin password for this instance.",
 	"setup.masterKey.confirmTitle": "Confirm your master key",
-	"setup.masterKey.lifecycleDescription": "Keep this key handy. New Hezo processes start locked by default. A supervised in-app update can pass the key to the replacement process in memory. After a reboot, crash, or direct service restart, unlock Hezo in your browser unless that startup receives the key once through --master-key or HEZO_MASTER_KEY.",
+	"setup.masterKey.lifecycleDescription": "Keep this key handy so you can unlock Hezo in your browser. New Hezo processes start locked by default. A supervised in-app update can pass the key to the replacement process in memory. A reboot, crash, or direct service restart needs a browser unlock unless that startup receives one-shot --master-key or HEZO_MASTER_KEY input.",
 	"setup.masterKey.lifecycleTitle": "Encrypts your secrets and unlocks Hezo.",
 	"setup.password.description": "You'll sign in with this password from now on. If you forget it, you can reset it with your master key.",
 	"setup.password.submit": "Set password & continue",
@@ -683,7 +683,7 @@
 	"toast.success": "Done",
 	"updates.confirm.drain": "Hezo stops agent runs in flight, re-queues them, and starts them over.",
 	"updates.confirm.restart": "Hezo will shut down and restart on {version}.",
-	"updates.confirm.reunlock": "Keep your 12-word master key handy. New Hezo processes start locked by default. This supervised in-app update can pass the key to the replacement process in memory. After a reboot, crash, or direct service restart, unlock Hezo again unless that startup receives the key once through --master-key or HEZO_MASTER_KEY.",
+	"updates.confirm.reunlock": "Keep your 12-word master key handy. This restart cannot pass the key to the replacement process, so unlock Hezo in your browser after it starts.",
 	"updates.confirm.runsInFlight.one": "{count} agent run is in flight right now.",
 	"updates.confirm.runsInFlight.other": "{count} agent runs are in flight right now."
 }
