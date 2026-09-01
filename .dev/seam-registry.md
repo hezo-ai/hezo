@@ -53,6 +53,7 @@ rather than here, is how a codebase ends up with two of everything.
 | A migration test | `createDataPreservationHarness()` (`test/helpers/migrate.ts`) |
 | A component test | `renderApp()` + `seed*()` (`packages/web/test/helpers/`) |
 | A complete test double | `createStubDocker()` (`test/helpers/app.ts`) - never a hand-rolled partial |
+| Seeding container uptime a calendar-window reader will bill | `seedUptimeStretch()` / `seedMonthToDateSeconds()` (`test/helpers/uptime.ts`) - web tests reach them through `@hezo/server/test/helpers/uptime` |
 | A CLI runtime's own quirk (env, flags, model-id form, usage recovery, run-end behaviour) | that runtime's `services/runtime-adapters/<runtime>.ts`, its section in `agent-stream-parser.ts`, or its `RUNTIME_*` row (`@hezo/shared`) |
 | An AI provider's own quirk (endpoint, credential env, subscription blob, judge model) | that provider's `PROVIDER_RUNTIME_ADAPTERS` entry (`@hezo/shared`), or its row in the per-provider table that owns the behaviour |
 
