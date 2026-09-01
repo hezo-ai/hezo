@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.57.0 - 2026-09-01
+
+### Features
+
+- **runs:** requeue a run the model provider refused before it got a turn ([#1065](https://github.com/hezo-ai/hezo/pull/1065))
+
+### Bug Fixes
+
+- canonicalize audited docs links ([#1064](https://github.com/hezo-ai/hezo/pull/1064))
+- **deploy:** serialize provisioned config safely ([#1063](https://github.com/hezo-ai/hezo/pull/1063))
+- audit agent task updates ([#1059](https://github.com/hezo-ai/hezo/pull/1059))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.56.0...0.57.0
+
 ## 0.56.0 - 2026-08-28
 
 ### Features
