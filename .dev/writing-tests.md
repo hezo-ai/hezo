@@ -22,6 +22,7 @@ in `AGENTS.md`; this is the how.
 - Use `ctx.app` / `ctx.baseUrl` / `ctx.port` — never a shared singleton, never a hardcoded port. No mutable state shared between files.
 - Pure logic tests can call functions directly.
 - GitHub OAuth/repo/SSH-key tests use `test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the context boots.
+- **Seed against the window the assertion reads, never a flat offset from `now()`.** A reader that clips to a calendar window bills only the part of the seeded row inside it, so `now() - interval '1 hour'` banks most of an hour in *last* month during the first hour of a new one and every fixed expectation reads the clipping as a bug — green all month, red on the release that lands after midnight UTC on the 1st. Seed through `test/helpers/uptime.ts` for container hours, and assert the width it hands back; elsewhere, cut the seed to the window and derive the expectation from what it actually covers.
 - `HEZO_SKIP_DOCKER=1` swaps in the in-process fake (`services/fake-docker.ts`). **Test/CI-only — never expose it to users.** The supported backends are the real ones (a local Docker-compatible runtime, or a managed sandbox service), so the fake must not appear in CLI/preflight output, `docs/`, README or `--help`; `docker-preflight.test.ts` guards this. Code comments and `.dev/` may reference it.
 
 ### Test-setup performance

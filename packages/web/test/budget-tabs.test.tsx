@@ -1,3 +1,4 @@
+import { seedMonthToDateSeconds } from '@hezo/server/test/helpers/uptime';
 import { expect, test } from 'vitest';
 import { getTestContext, renderApp } from './helpers/render';
 import { seedProject, seedWorkspace } from './helpers/seed';
@@ -11,16 +12,17 @@ import { seedProject, seedWorkspace } from './helpers/seed';
  * carry a tab strip of its own, is asserted to have none.
  */
 
-/** A closed uptime interval of `minutes`, ending now. */
+/**
+ * `minutes` of closed container time banked so far this month.
+ *
+ * Not one interval `minutes` long: the tiles below read a month-to-date figure,
+ * and on the first hour of a month a stretch that far back is mostly last
+ * month's - which is what the meter would rightly report, leaving every fixed
+ * expectation here short.
+ */
 async function seedUptime(projectId: string, minutes: number, chat = false): Promise<void> {
 	const { db } = getTestContext();
-	await db.query(
-		`INSERT INTO container_uptime_entries
-		     (project_id, container_id, started_at, ended_at, reserved_for_chat, backend)
-		 VALUES ($1, 'ctr-' || gen_random_uuid()::text,
-		         now() - ($2::int * interval '1 minute'), now(), $3, 'docker')`,
-		[projectId, minutes, chat],
-	);
+	await seedMonthToDateSeconds(db, minutes * 60, { projectId, chat });
 }
 
 /** Insert a finished run of `minutes`, for the per-agent figure on the Spend tab. */
