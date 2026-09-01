@@ -121,6 +121,28 @@ describe('pickLatestModel', () => {
 		expect(pickLatestModel(AiProvider.XAi, catalog)).toBe('grok-4.5');
 	});
 
+	it('picks OpenRouter’s own auto route out of a catalog of vendor lines', () => {
+		const catalog = [
+			'anthropic/claude-haiku-4.5',
+			'anthropic/claude-opus-5',
+			'openrouter/auto',
+			'openai/gpt-5.3-codex',
+			'google/gemini-3.6-flash',
+		];
+		// A router's value is the routing: a vendor line inside its catalog would
+		// out-version the auto route on every comparison, so the family is that one
+		// id exactly and nothing else in the catalog is reachable from this pin.
+		expect(pickLatestModel(AiProvider.OpenRouter, catalog)).toBe('openrouter/auto');
+	});
+
+	it('holds the OpenRouter pin when the catalog stops listing the auto route', () => {
+		// Nothing else here is a sane substitute, so null - the caller keeps what it
+		// had rather than picking a vendor line the operator never chose.
+		expect(
+			pickLatestModel(AiProvider.OpenRouter, ['anthropic/claude-opus-5', 'openai/gpt-5.3-codex']),
+		).toBeNull();
+	});
+
 	it('holds the previous pin when the family matches nothing', () => {
 		// Renamed upstream, or a key that sees a restricted catalog. Null means the
 		// caller keeps what it had rather than pinning something from another tier.
