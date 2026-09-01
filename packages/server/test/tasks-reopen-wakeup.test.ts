@@ -1,6 +1,6 @@
 import { COACH_AGENT_SLUG, HeartbeatRunStatus, WakeupSource, WakeupStatus } from '@hezo/shared';
 import type { Hono } from 'hono';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { MasterKeyManager } from '../src/crypto/master-key';
 import type { Db } from '../src/db/database';
 import type { Env } from '../src/lib/types';
@@ -82,6 +82,64 @@ async function reopenWakeups(taskId: string): Promise<{ source: string; trigger?
 }
 
 describe('re-opening a terminal task wakes the assignee', () => {
+	it('uses the assignee from the locked before-state for a concurrent re-open', async () => {
+		const secondAgentRes = await app.request(`/api/projects/${projectSlug}/agents`, {
+			method: 'POST',
+			headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+			body: JSON.stringify({ title: 'Concurrent Assignee' }),
+		});
+		const secondAgentId = (await secondAgentRes.json()).data.id as string;
+		const task = await insertTaskDirect('done', 'Concurrent reassignment before reopen');
+		await db.query('DELETE FROM agent_wakeup_requests');
+
+		const originalQuery = db.query.bind(db);
+		const originalTransaction = db.transaction.bind(db);
+		let interleaved = false;
+		const interleaveAssignee = async () => {
+			if (interleaved) return;
+			interleaved = true;
+			await originalQuery('UPDATE tasks SET assignee_id = $1 WHERE id = $2', [
+				secondAgentId,
+				task.id,
+			]);
+		};
+		const transactionSpy = vi.spyOn(db, 'transaction').mockImplementation(async (fn) => {
+			await interleaveAssignee();
+			return originalTransaction(fn);
+		});
+		const querySpy = vi.spyOn(db, 'query').mockImplementation(async (sql, params) => {
+			const result = await originalQuery(sql, params);
+			if (
+				!interleaved &&
+				typeof sql === 'string' &&
+				sql.includes('SELECT id, title, description, status, priority') &&
+				params?.[0] === task.id
+			) {
+				await interleaveAssignee();
+			}
+			return result;
+		});
+		try {
+			const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ status: 'backlog' }),
+			});
+			expect(res.status).toBe(200);
+		} finally {
+			querySpy.mockRestore();
+			transactionSpy.mockRestore();
+		}
+		await flushAsyncWakeups();
+
+		const recipients = await db.query<{ member_id: string }>(
+			`SELECT member_id FROM agent_wakeup_requests
+			  WHERE payload->>'task_id' = $1 AND payload->>'trigger' = 'task_reopened'`,
+			[task.id],
+		);
+		expect(recipients.rows.map((row) => row.member_id)).toEqual([secondAgentId]);
+	});
+
 	it('fires an automation wakeup with trigger=task_reopened when an admin re-opens a cancelled task', async () => {
 		const task = await insertTaskDirect('cancelled', 'Cancelled task to reopen');
 		await db.query('DELETE FROM agent_wakeup_requests');
@@ -133,6 +191,35 @@ describe('re-opening a terminal task wakes the assignee', () => {
 
 		const wakeups = await reopenWakeups(task.id);
 		expect(wakeups.some((w) => w.trigger === 'task_reopened')).toBe(false);
+	});
+
+	it('does not repeat terminal automations when done is persisted unchanged', async () => {
+		const task = await insertTaskDirect('done', 'Already done');
+		await db.query('DELETE FROM agent_wakeup_requests');
+
+		for (let i = 0; i < 2; i++) {
+			const res = await app.request(`/api/projects/${projectSlug}/tasks/${task.id}`, {
+				method: 'PATCH',
+				headers: { ...authHeader(token), 'Content-Type': 'application/json' },
+				body: JSON.stringify({ status: 'done' }),
+			});
+			expect(res.status).toBe(200);
+		}
+		await flushAsyncWakeups();
+
+		const coachWakeups = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM agent_wakeup_requests
+			  WHERE payload->>'task_id' = $1 AND payload->>'trigger' = 'task_done'`,
+			[task.id],
+		);
+		expect(coachWakeups.rows[0].count).toBe(0);
+		const comments = await db.query<{ count: number }>(
+			`SELECT count(*)::int AS count FROM task_comments
+			  WHERE task_id = $1 AND content_type = 'system'
+			    AND content->>'kind' = 'status_change'`,
+			[task.id],
+		);
+		expect(comments.rows[0].count).toBe(0);
 	});
 
 	it('still forbids an agent from re-opening a terminal task', async () => {

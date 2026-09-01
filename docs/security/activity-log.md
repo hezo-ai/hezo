@@ -6,18 +6,19 @@ section: Security
 
 # Activity log & audit trail
 
-Hezo keeps a complete, automatic **activity log** - an append-only record of
-everything that happened, newest first. You never switch it on, and nothing can quietly
-edit or delete it after the fact. When you need to know *who did what, and when* - a person
+Hezo keeps an automatic **activity log** - an append-only record of supported
+project changes, newest first. You never switch it on, and nothing can quietly edit or
+delete an entry after the fact. When you need to know *who did what, and when* - a person
 or an agent - this is where you look.
 
 Open **Settings** and choose **Activity** under the instance section (Admin only).
 
 ## What gets recorded
 
-The log captures every state-changing action on the project:
+The log captures these project actions:
 
-- **Tasks** - created, renamed, status changes, reassignments.
+- **Tasks** - created; direct edits to title, description, status, priority, assignee,
+  progress summary, rules, branch, runtime, and parent.
 - **Agent runs** - each run started and completed, with its outcome.
 - **Documents** - created, updated, archived, restored, and deleted, including edits to an
   agent's instructions.
@@ -66,7 +67,6 @@ their own project's log through the API - the Admin view is simply where people 
 
 ## Why it matters
 
-The activity log makes Hezo's autonomy accountable. Agents act on their own, but every
-state-changing action they take is on the record, attributed, and impossible
-to rewrite. When something looks off, you can trace exactly what happened and roll back from
-a position of knowledge.
+The activity log makes Hezo's autonomy accountable. Agents act on their own, but supported
+changes are recorded with their actor and cannot be rewritten. When something looks off, you
+can trace the recorded activity and roll back from a position of knowledge.

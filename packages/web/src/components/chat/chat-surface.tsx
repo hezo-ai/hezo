@@ -181,12 +181,19 @@ export function ChatSurface({
 
 	const lastId = messages.at(-1)?.id;
 	const lastLen = messages.at(-1)?.content.length ?? 0;
-	// Pin to the latest message as it streams in.
+	// Pin to the latest message as it streams in, and re-pin whenever the scroll
+	// box resizes. A reflow that changes its size does not move scrollTop, so the
+	// newest message can silently drop below the fold while still mounted.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: deliberate scroll-to-bottom triggers
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (!el) return;
-		el.scrollTop = el.scrollHeight;
+		const pin = () => el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
+		pin();
+		if (typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver(pin);
+		observer.observe(el);
+		return () => observer.disconnect();
 	}, [lastId, lastLen, streaming, active]);
 
 	// Apply a launch request's composer side. An empty launch draft (a room card

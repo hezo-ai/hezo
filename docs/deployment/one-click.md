@@ -87,7 +87,7 @@ runcmd:
   # - [ sh, -c, "echo 'HEZO_DOMAIN_OVERRIDE=hezo.example.com' >> /etc/environment" ]
   # To use a managed database and/or object storage for assets, seed the URLs into
   # /etc/hezo/deploy.env (root-only, mode 600 - not /etc/environment: they carry credentials).
-  # provision.sh persists them into the service's env file. sslmode=require encrypts
+  # provision.sh persists them into the CommonJS config. sslmode=require encrypts
   # without verifying the certificate; for verified TLS use sslmode=verify-full plus
   # &sslrootcert=/etc/hezo/db-ca.crt when the provider signs with its own CA (most do).
   # - [ sh, -c, "install -d -m 700 /etc/hezo && install -m 600 /dev/null /etc/hezo/deploy.env" ]
@@ -242,7 +242,7 @@ HTTPS is essential for a working instance - OAuth-connected MCP servers only com
 their connect flow on an HTTPS address, installing Hezo on your phone needs a secure
 context, and the web app streams agent activity over a secure WebSocket. But a fresh
 server has a public IP and usually no domain. To bridge that, the deploy uses
-**[sslip.io](https://sslip.io)** - a DNS service where `<ip>.sslip.io` always resolves
+**[sslip.io](https://nip.io/)** - a DNS service where `<ip>.sslip.io` always resolves
 to `<ip>`. So `https://203.0.113.10.sslip.io` points straight at your server, and Caddy
 automatically obtains a real Let's Encrypt certificate for it. No domain to buy, no DNS
 to configure, and no browser warnings.

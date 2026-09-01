@@ -32,6 +32,7 @@ import {
 } from '../src/services/sandbox/pool-db';
 import { safeClose } from './helpers';
 import { authHeader, createTestApp, createTestTeam, projectSlugForTeamSlug } from './helpers/app';
+import { seedUptimeStretch } from './helpers/uptime';
 
 let app: Hono<Env>;
 let db: Db;
@@ -220,52 +221,59 @@ describe('aggregation', () => {
 	it('sums concurrent containers rather than merging them', async () => {
 		// Two containers up for the same hour is two container-hours - which is
 		// exactly what a provider bills, and exactly where per-agent run hours go
-		// wrong by merging runs that shared one container.
-		for (const id of ['c-par-a', 'c-par-b']) {
-			await db.query(
-				`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
-				 VALUES ($1, $2, now() - interval '1 hour', now(), 'docker')`,
-				[projectId, id],
-			);
-		}
+		// wrong by merging runs that shared one container. Asserted against the
+		// span the seed actually banked: on the first hour of a month the
+		// month-to-date window is narrower than the hour asked for, and a merging
+		// reader still differs from a summing one by the same factor of two.
+		const span = await seedUptimeStretch(db, {
+			containers: ['c-par-a', 'c-par-b'],
+			minutes: 60,
+			projectId,
+		});
 		const totals = await containerHoursTotals(db, projectId);
-		expect(totals.month_seconds).toBe(2 * 3600);
+		expect(totals.month_seconds).toBe(2 * span);
 	});
 
 	it('bills an open interval up to now rather than counting it as zero', async () => {
-		await db.query(
-			`INSERT INTO container_uptime_entries (project_id, container_id, started_at, backend)
-			 VALUES ($1, 'c-open', now() - interval '30 minutes', 'docker')`,
-			[projectId],
-		);
+		const banked = await seedUptimeStretch(db, {
+			containers: ['c-open'],
+			minutes: 30,
+			projectId,
+			open: true,
+		});
 		const totals = await containerHoursTotals(db, projectId);
-		expect(totals.month_seconds).toBeGreaterThanOrEqual(29 * 60);
-		expect(totals.month_seconds).toBeLessThanOrEqual(31 * 60);
+		expect(totals.month_seconds).toBeGreaterThanOrEqual(banked);
+		expect(totals.month_seconds).toBeLessThanOrEqual(banked + 60);
 		expect(totals.open_intervals).toBe(1);
 	});
 
 	it('counts pinned-era chat stretches inside the total like any other row', async () => {
 		// A historical row flagged reserved_for_chat is still an hour a container
 		// was up; the aggregation no longer reports it as a separate series.
-		await db.query(
-			`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, reserved_for_chat, backend)
-			 VALUES ($1, 'c-chat-h', now() - interval '1 hour', now(), true, 'docker'),
-			        ($1, 'c-task-h', now() - interval '1 hour', now(), false, 'docker')`,
-			[projectId],
-		);
+		const chat = await seedUptimeStretch(db, {
+			containers: ['c-chat-h'],
+			minutes: 60,
+			projectId,
+			chat: true,
+		});
+		const task = await seedUptimeStretch(db, {
+			containers: ['c-task-h'],
+			minutes: 60,
+			projectId,
+		});
 		const totals = await containerHoursTotals(db, projectId);
-		expect(totals.month_seconds).toBe(2 * 3600);
+		expect(totals.month_seconds).toBe(chat + task);
 	});
 
 	it('scopes a project read to that project and keeps the instance read whole', async () => {
-		await db.query(
-			`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
-			 VALUES ($1, 'c-mine', now() - interval '1 hour', now(), 'docker'),
-			        ($2, 'c-theirs', now() - interval '2 hours', now(), 'docker')`,
-			[projectId, otherProjectId],
-		);
-		expect((await containerHoursTotals(db, projectId)).month_seconds).toBe(3600);
-		expect((await containerHoursTotals(db, null)).month_seconds).toBe(3 * 3600);
+		const mine = await seedUptimeStretch(db, { containers: ['c-mine'], minutes: 60, projectId });
+		const theirs = await seedUptimeStretch(db, {
+			containers: ['c-theirs'],
+			minutes: 120,
+			projectId: otherProjectId,
+		});
+		expect((await containerHoursTotals(db, projectId)).month_seconds).toBe(mine);
+		expect((await containerHoursTotals(db, null)).month_seconds).toBe(mine + theirs);
 	});
 
 	it("keeps a deleted project's hours under one heading rather than dropping them", async () => {
@@ -287,16 +295,24 @@ describe('aggregation', () => {
 	it('counts only the part of an interval that falls inside this month', async () => {
 		// Straddles the month boundary. The month-to-date figure is what the hours
 		// cap is enforced against, so banking the whole interval would cut an
-		// instance off partway through its first day.
-		await db.query(
+		// instance off partway through its first day. It ends an hour into the
+		// month or now, whichever came first - a stretch that has not finished
+		// happening is not one the meter has any business billing.
+		const seeded = await db.query<{ seconds: number }>(
 			`INSERT INTO container_uptime_entries (project_id, container_id, started_at, ended_at, backend)
 			 VALUES ($1, 'c-month',
 			         date_trunc('month', now() AT TIME ZONE 'UTC') - interval '2 hours',
-			         date_trunc('month', now() AT TIME ZONE 'UTC') + interval '1 hour',
-			         'docker')`,
+			         LEAST(date_trunc('month', now() AT TIME ZONE 'UTC') + interval '1 hour',
+			               date_trunc('second', now())),
+			         'docker')
+			 RETURNING EXTRACT(EPOCH FROM
+			   (ended_at - date_trunc('month', now() AT TIME ZONE 'UTC')))::int AS seconds`,
 			[projectId],
 		);
-		expect(await monthToDateContainerSeconds(db)).toBe(3600);
+		// Non-zero, or the equality below would hold for a reader that banked
+		// nothing at all.
+		expect(seeded.rows[0].seconds).toBeGreaterThan(0);
+		expect(await monthToDateContainerSeconds(db)).toBe(seeded.rows[0].seconds);
 	});
 
 	it('emits every bucket in the window, including the quiet ones', async () => {

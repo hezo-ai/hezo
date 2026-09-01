@@ -1222,7 +1222,7 @@ Two kinds:
 | `mcp_url` | `string` | No | URL of the MCP server (HTTP / SSE) - required for kind 'saas'. The OAuth dance is discovered by probing this URL for a 401 + WWW-Authenticate header. |
 | `mcp_transport` | `http` \| `sse` | No | Transport for the MCP server. Defaults to http. |
 | `provider_id` | `string` | No | Optional MCP capability-registry key (e.g. "datocms", "github"). When set, capability defaults from the shared registry pre-fill display name and allowed hosts. This is the MCP-server registry namespace - not the OAuth-broker provider (see oauth_provider_id). |
-| `base_url` | `string` | No | For kind 'api' - the REST API base URL agents call (e.g. https://www.googleapis.com/youtube/v3). |
+| `base_url` | `string` | No | For kind 'api' - the REST API base URL agents call (e.g. `https://www.googleapis.com/youtube/v3`). |
 | `allowed_hosts` | `string[]` | No | For kind 'api' - the hosts the credential may be sent to (e.g. ["*.googleapis.com"]). Required for api connectors. |
 | `auth` | `object` | No | For kind 'api' - where the credential rides. Defaults to an `Authorization: Bearer ` header when omitted (the right default for OAuth access tokens). |
 | `oauth_provider_id` | `string` | No | For kind 'api' only - a bundled OAuth-broker provider key (e.g. "google-youtube") to pre-select for the human. The provider is then LOCKED in the completion UI: the human finishes the OAuth device flow inline (in the task comment or on the Connectors page) by pasting only a client id - no provider picker. Omit for a plain API-key REST connector. |

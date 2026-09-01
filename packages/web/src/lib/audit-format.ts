@@ -1,5 +1,34 @@
-import { TASK_STATUS_LABELS, type TaskStatus } from '@hezo/shared';
+import {
+	AGENT_RUNTIME_LABELS,
+	type AgentRuntime,
+	TASK_STATUS_LABELS,
+	type TaskStatus,
+} from '@hezo/shared';
 import type { AuditEntry } from '../hooks/use-audit-log';
+import type { MessageKey } from './i18n';
+import en from './i18n/catalog/en.json';
+
+type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
+const TASK_VALUE_KEYS = {
+	branch: {
+		set: 'activity.task.branch.set',
+		cleared: 'activity.task.branch.cleared',
+		changed: 'activity.task.branch.changed',
+	},
+	runtime: {
+		set: 'activity.task.runtime.set',
+		cleared: 'activity.task.runtime.cleared',
+		changed: 'activity.task.runtime.changed',
+	},
+} as const;
+
+const english: Translate = (key, vars = {}) => {
+	let message = en[key];
+	for (const [name, value] of Object.entries(vars))
+		message = message.replace(`{${name}}`, String(value));
+	return message;
+};
 
 /** Past-tense verb for an audit action, used to open a description sentence. */
 function actionVerb(action: string): string {
@@ -21,14 +50,53 @@ function actionVerb(action: string): string {
 	}
 }
 
-function statusLabel(value: string | null | undefined): string {
-	if (!value) return 'none';
-	return TASK_STATUS_LABELS[value as TaskStatus] ?? value;
+const TASK_STATUS_VALUE_KEYS: Partial<Record<TaskStatus, MessageKey>> = {
+	backlog: 'activity.task.status.backlog',
+	in_progress: 'activity.task.status.inProgress',
+	blocked: 'activity.task.status.blocked',
+	done: 'activity.task.status.done',
+	cancelled: 'activity.task.status.cancelled',
+};
+
+function statusLabel(value: string | null | undefined, t: Translate): string {
+	if (!value) return t('activity.task.status.none');
+	const key = TASK_STATUS_VALUE_KEYS[value as TaskStatus];
+	return key ? t(key) : (TASK_STATUS_LABELS[value as TaskStatus] ?? value);
 }
 
 function str(details: Record<string, unknown>, key: string): string | null {
 	const v = details[key];
 	return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+function describeTranslatedValueChange(
+	field: 'branch' | 'runtime',
+	task: string,
+	from: string | null,
+	to: string | null,
+	t: Translate,
+): string {
+	const keys = TASK_VALUE_KEYS[field];
+	if (!from && to) return t(keys.set, { task, to });
+	if (from && !to) return t(keys.cleared, { task, from });
+	return t(keys.changed, { task, from: from ?? 'none', to: to ?? 'none' });
+}
+
+function runtimeLabel(value: string | null): string | null {
+	return value ? (AGENT_RUNTIME_LABELS[value as AgentRuntime] ?? value) : null;
+}
+
+const TASK_PRIORITY_VALUE_KEYS: Record<string, MessageKey> = {
+	low: 'activity.task.priority.low',
+	medium: 'activity.task.priority.medium',
+	high: 'activity.task.priority.high',
+	urgent: 'activity.task.priority.urgent',
+};
+
+function priorityLabel(value: string | null, t: Translate): string {
+	if (!value) return t('activity.task.value.none');
+	const key = TASK_PRIORITY_VALUE_KEYS[value];
+	return key ? t(key) : value;
 }
 
 /** A tri-state flag: true / false / absent (the key was never written). */
@@ -55,7 +123,7 @@ function taskRef(entry: AuditEntry): string | null {
  * (task identifier, resource name) and the relevant change. Falls back to a
  * generic "<verb> <entity_type> <name>" so every row still reads sensibly.
  */
-export function describeAuditEntry(entry: AuditEntry): string {
+export function describeAuditEntry(entry: AuditEntry, t: Translate = english): string {
 	const d = entry.details ?? {};
 	const verb = actionVerb(entry.action);
 	const task = taskRef(entry);
@@ -66,27 +134,54 @@ export function describeAuditEntry(entry: AuditEntry): string {
 			if (entry.action === 'created') return `Created task ${id}`;
 			const field = str(d, 'field');
 			if (field === 'title') {
-				return `Renamed ${id} from "${str(d, 'from') ?? ''}" to "${str(d, 'to') ?? ''}"`;
+				return t('activity.task.title.changed', {
+					task: id,
+					from: str(d, 'from') ?? '',
+					to: str(d, 'to') ?? '',
+				});
 			}
 			// No from/to: the description bodies deliberately never reach the audit
 			// row (see TaskUpdateField), so there is nothing to quote here.
-			if (field === 'description') return `Updated the description of ${id}`;
+			if (field === 'description') return t('activity.task.description.updated', { task: id });
 			if (field === 'status') {
-				return `Changed status of ${id} from ${statusLabel(str(d, 'from'))} to ${statusLabel(str(d, 'to'))}`;
+				return t('activity.task.status.changed', {
+					task: id,
+					from: statusLabel(str(d, 'from'), t),
+					to: statusLabel(str(d, 'to'), t),
+				});
+			}
+			if (field === 'priority') {
+				return t('activity.task.priority.changed', {
+					task: id,
+					from: priorityLabel(str(d, 'from'), t),
+					to: priorityLabel(str(d, 'to'), t),
+				});
 			}
 			if (field === 'assignee') {
-				const from = str(d, 'from_label') ?? 'Unassigned';
-				const to = str(d, 'to_label') ?? 'Unassigned';
-				return `Reassigned ${id} from ${from} to ${to}`;
+				const from = str(d, 'from_label') ?? str(d, 'from') ?? t('activity.task.assignee.none');
+				const to = str(d, 'to_label') ?? str(d, 'to') ?? t('activity.task.assignee.none');
+				return t('activity.task.assignee.changed', { task: id, from, to });
 			}
 			if (field === 'parent') {
-				const from = str(d, 'from_label');
-				const to = str(d, 'to_label');
-				if (from && to) return `Moved ${id} from ${from} to ${to}`;
-				if (to) return `Moved ${id} under ${to}`;
-				if (from) return `Moved ${id} out of ${from} to top level`;
-				return `Moved ${id} to top level`;
+				const from = str(d, 'from_label') ?? str(d, 'from');
+				const to = str(d, 'to_label') ?? str(d, 'to');
+				if (from && to) return t('activity.task.parent.changed', { task: id, from, to });
+				if (to) return t('activity.task.parent.nested', { task: id, to });
+				return t('activity.task.parent.promoted', { task: id, from: from ?? '' });
 			}
+			if (field === 'progress_summary')
+				return t('activity.task.progressSummary.updated', { task: id });
+			if (field === 'rules') return t('activity.task.rules.updated', { task: id });
+			if (field === 'branch')
+				return describeTranslatedValueChange('branch', id, str(d, 'from'), str(d, 'to'), t);
+			if (field === 'runtime')
+				return describeTranslatedValueChange(
+					'runtime',
+					id,
+					runtimeLabel(str(d, 'from')),
+					runtimeLabel(str(d, 'to')),
+					t,
+				);
 			return `${verb} task ${id}`;
 		}
 		case 'project':

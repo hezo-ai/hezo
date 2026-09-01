@@ -219,6 +219,13 @@ preview of each end plus the full lengths, never the bodies: the comments skelet
 the MCP `list_comments` tool both return a system comment's `content` whole, so a stored body
 would ride into every comment fetch and every agent prompt for the life of the task. The
 matching `task.updated` audit event omits both ends for the same reason.
+Both update paths lock the task row before applying mutation policies and feed atomically captured
+before-and-after rows through one event producer.
+For direct edits, it emits only real changes to title, description, status, priority, assignee,
+progress summary, rules, branch, runtime, and parent. Description, progress-summary, and rules
+bodies stay off the audit row; assignee names and parent identifiers are resolved into labels for
+the Activity view. Internal task transitions outside these update surfaces need their own event
+producer.
 Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_task`,
 shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —
@@ -2570,6 +2577,25 @@ parks the task, including one inside a routine status update. It is marked `comp
 same query because migration 061's frozen comment names `noWorkCooldownActive` and that file,
 so neither can be renamed to cover both.
 
+**The provider-refusal cooldown.** The third suppression, and the only one applied *before*
+the claim rather than after task resolution - `processWakeups` NULLs `last_skipped_at` and
+`last_skipped_reason` when it claims a row, so a predicate placed beside the two above could
+not read the very fields this one keys on. `providerRefusalCooldownSql`
+(`services/no-work-backoff.ts`) is therefore a fragment in the scan's own `WHERE`, excluding
+a wakeup handed back for `provider_at_capacity` within 5 minutes or `provider_usage_limit`
+within 30. It is in the SQL rather than as a `continue` in the dispatch loop because that
+scan takes the ten **oldest** queued wakeups: a cooling-down row is by then an old row, so
+filtering after the fact would let a handful of them fill the window every tick and starve
+newer work for as long as the outage lasted. The `NOT` is wrapped in `COALESCE(..., false)`
+- a never-skipped wakeup has a NULL reason, every arm evaluates to NULL, and a bare
+`NOT (NULL)` is NULL, which a `WHERE` treats as false and drops the entire ordinary queue.
+Nothing is written per tick: the row is simply not selected, so its clock runs from the
+handback's own timestamp, no unchanged row is rewritten, and the wakeup stays `queued` with
+its reason set so the task keeps its queued badge throughout. Unlike the two above it has
+**no exempt sources** - a human's mention or reply cannot change how loaded the provider is,
+so dispatching for one would claim a container to be refused again. `dispatchWakeupNow`
+selects by id and does not apply it, which is the operator's override.
+
 **The container-start fan-out.** `provisionContainer` ends by nudging the project's agents
 (`wakeAgentsWithPendingWork`) so work queued while the container was still coming up starts
 without waiting for a heartbeat. That is right for a provision
@@ -2700,6 +2726,31 @@ consequences elsewhere: the idle-stop scan's busy set excludes a parked run
 (`BUSY_PROJECTS_SQL`), since it holds no container and is waiting on the very reclaim that
 scan feeds; and the run reads honestly while parked, the run comment and run detail page
 both rendering "Queued - waiting for container capacity" from `queued_reason`.
+
+**Provider refusal.** The fourth handback cause, and the only one that *did* start the CLI.
+When a runtime's stream reports a `Transient` failure - the model at capacity, a rate limit,
+a spent subscription allowance - the run is handed back through `finalizeRequeue` rather than
+finalized `Failed`, carrying `provider_at_capacity` or `provider_usage_limit` so the dispatch
+cooldown above knows which clock to hold it on. The classification reads phrasing and is the
+*least* trusted of six conditions; the other five are structural, and together they mean a
+false positive cannot discard work. Chiefly the token gate: the run must have spent nothing
+(`in + out === 0`, read through the same expression the row write uses so the two cannot
+drift), written nothing (`produced_output`, `reported_no_work`), hold no unpushed commits -
+those exist in exactly one container, which the handback is about to release - and have died
+to no signal. A run that burned 50k tokens before a mid-stream 503 fails normally and keeps
+its usage. The same preconditions are what stop an agent's *own* HTTP tool call returning 503
+from triggering this, since a runtime's error arm renders those too.
+
+The refusal has no lap ceiling - it clears on the provider's clock, not on an attempt count -
+so the bound is on how long the work has been owed instead, measured from the wakeup's
+`created_at`, which a handback does not reset. Past `PROVIDER_REFUSAL_GIVEUP_MIN` (120)
+`runAgent` stops absorbing: the run falls through to its ordinary terminal failure, so the
+Errored view and the failure ping both fire, and `fileProviderRefusalApproval` files the same
+shape of Inbox record the two lost-run give-up paths use, sharing their one-per-stuck-agent
+dedupe and differing only in the message - "failed 3 consecutive times" would send the reader
+after the agent when the fault is upstream. A synthetic on-demand wakeup is created at
+dispatch, so the ceiling never bites a manual run: that hands back once and lets the operator
+see it queued.
 
 **Credential wait — two separate properties.** A credential raises two independent
 questions, and collapsing them was a bug the measurements caught. **Does the CLI rewrite its
@@ -4034,6 +4085,26 @@ the run home (`extractKimiUsageFromSessionLog`, counting turn-scoped records and
 summing cumulative session totals). `recoverOffStreamRunUsage` dispatches both and scrubs the
 file afterwards — Grok's holds the `XAI_API_KEY`, and a wire log plausibly captures the
 Moonshot bearer.
+
+**A runtime's reported error carries a retry verdict, not just a message.**
+`classifyRuntimeError` returns a `RuntimeErrorVerdict` - the operator-facing sentence plus a
+`RunFailureClass` - read from one `RUNTIME_ERROR_FAMILIES` table that all six parsers share
+through `createJsonlParser`, which derives `getTerminalError()` and
+`getTerminalFailureClass()` from the one retained verdict so a parser cannot report a message
+without its class. Five families: credit/quota and auth are `Permanent`, while capacity or
+overload, rate limits, and a spent subscription allowance are `Transient` and let the runner
+hand the work back. **The table order is load-bearing** - the two terminal families are
+tested first because they are the more specific match, so `429 ... exceeded your current
+quota` stays a billing problem while a bare `429 Too Many Requests` is pacing. `server_error`
+is deliberately excluded from the capacity family: it is OpenAI's catch-all and also covers
+malformed requests, which reproduce exactly. This is the second entry point into the
+`RunFailureClass` vocabulary `classifyRunFailure` answers for thrown failures; the two share
+the type so the exec path and the parsed path cannot drift on what a retry is for.
+
+**Codex reports a failed turn's reason on the turn event.** The `turn.failed` arm reads
+`event.error`, not only the separate top-level `error` event - Codex does not always emit
+both, so a reason read from that arm alone was lost and the row fell through to the
+exit-code backstop with the provider's own explanation left in the log text.
 
 **Grok's text buffer flushes at every turn boundary, not just at `end`.** Its stream carries
 assistant text as `text` deltas with no `result` event, so the parser accumulates them and the

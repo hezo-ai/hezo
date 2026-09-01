@@ -26,7 +26,7 @@ rather than here, is how a codebase ends up with two of everything.
 | "Is this hosted MCP answering right now?", asked by a human or an agent | `discoverConnectorMethods` + `describeProbeVerdict` (`services/connectors/method-discovery.ts`), reached through `POST .../connectors/:id/test` on both scopes. The `test_connector` MCP tool is a **second, divergent probe**: a raw `GET` that writes `auth_error` but never `probed_at`/`probe_error`, so its verdict never reaches the card, the banner or the run gate. Fold it into this seam rather than copying it |
 | Which hosted connector a run's egress request is aimed at, and its allowlist | `loadMcpHostBindings` / `connectorForPath` (`services/connectors/connections.ts`) - the proxy inspects bodies only where `restriction` is set |
 | "A hosted connector refused a run's request - what do the run and the operator hear?" | `RunProxyScope.onConnectorRejection` (`services/egress/proxy.ts`) fires it; `reportConnectorRunRejection` (`services/connectors/run-rejection.ts`) turns it into the two sentences and the re-probe, the caller supplying only where they go - never a direct write to `auth_error` / `probe_error` |
-| "Is this run failure worth another attempt?" | `classifyRunFailure` (`services/run-failure-classification.ts`) - unrecognised is permanent, and no row may name a backend |
+| "Is this run failure worth another attempt?" | `classifyRunFailure` (`services/run-failure-classification.ts`) for a thrown failure, `classifyRuntimeError` (`services/agent-stream-parser.ts`) for one a runtime reported on its stream - both return `RunFailureClass`, unrecognised is permanent, and no `TRANSIENT_ERROR_NAMES` row may name a backend |
 | Waking the assignee after an assignment write | `wakeAgentIfAssigned` (`services/wakeup.ts`) |
 | What happens to the work a finished run was woken for | `settleWakeupForRun` (`services/wakeup.ts`) - it reports `handback_failed`, so no caller may assume the work is queued |
 | "Is this cancelled run still owed, and can a human act on it?" | `heartbeat_runs.cancel_reason` read through `RUN_CANCEL_BEHAVIOUR` (`@hezo/shared`) - never the `error` prose |
@@ -55,6 +55,7 @@ rather than here, is how a codebase ends up with two of everything.
 | A migration test | `createDataPreservationHarness()` (`test/helpers/migrate.ts`) |
 | A component test | `renderApp()` + `seed*()` (`packages/web/test/helpers/`) |
 | A complete test double | `createStubDocker()` (`test/helpers/app.ts`) - never a hand-rolled partial |
+| Seeding container uptime a calendar-window reader will bill | `seedUptimeStretch()` / `seedMonthToDateSeconds()` (`test/helpers/uptime.ts`) - web tests reach them through `@hezo/server/test/helpers/uptime` |
 | A CLI runtime's own quirk (env, flags, model-id form, usage recovery, run-end behaviour) | that runtime's `services/runtime-adapters/<runtime>.ts`, its section in `agent-stream-parser.ts`, or its `RUNTIME_*` row (`@hezo/shared`) |
 | An AI provider's own quirk (endpoint, credential env, subscription blob, judge model) | that provider's `PROVIDER_RUNTIME_ADAPTERS` entry (`@hezo/shared`), or its row in the per-provider table that owns the behaviour |
 

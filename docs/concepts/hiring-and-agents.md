@@ -104,6 +104,17 @@ and it is why cancelled runs are their own thing rather than errors. Hover the q
 info icon to see the reason. See
 [how much can run at once](/docs/containers/overview#how-much-can-run-at-once).
 
+The model provider can also turn a run away before the agent gets a turn - the model is at
+capacity, the request was rate limited, or a subscription's usage allowance is spent. The
+run consumed nothing, so Hezo treats it the same way: the run is recorded as cancelled and
+the work goes back on the queue. It waits a few minutes before trying again, rather than
+retrying straight into a provider that is still busy, and longer when the reason is a spent
+allowance, which resets on a much slower clock. Nothing on your side clears this one - no
+container frees it - so the wait is for the provider to recover. Press **Run now** on the
+task to try again immediately. If the work is still being turned away after two hours, Hezo
+stops retrying and raises an item in your Inbox, so a long outage does not sit unnoticed;
+switching the agent or task to another model is usually the fastest way through.
+
 Cancelled covers one more case, and it is the only one that asks anything of you. If a run
 is queued but never begins - Hezo lost track of it before the agent launched - the work is
 put back on the queue and runs again on its own. Should that keep happening, Hezo stops
