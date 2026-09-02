@@ -33,6 +33,7 @@ the two disagree, this one is newer.
 | **H16** | Make the container backend pinnable | tenant can't break itself | small |
 | H10 | Unprefix provision-script env vars | nothing | optional |
 | H18 | A 1-vCPU Daytona shape | 38% off the container-hour rate | optional |
+| **H21** | Extract a `@hezo/ui` package | the control plane writing its own primitives | **done** |
 
 `H1 → H3`; `H2 → H3`; `H4 → H5`; `H3 → H5`. **H9, H14, H15 and H16 are
 independent** of the SSO chain and of each other.
@@ -566,6 +567,54 @@ the largest remaining lever on container cost.
 Not a launch blocker, and not free: a 1-vCPU agent container is a product
 decision about how a run feels, not only a price. Recorded here so it is chosen
 rather than defaulted.
+
+---
+
+## H21 — extract a `@hezo/ui` package *(done)*
+
+The control plane was writing its own dialog, button and input because this
+repo's could not be imported. `packages/web` is `"private": true` with no
+`exports`, `main` or barrel — an application, not a library — so nothing outside
+this repo resolved a subpath from it, and a consumer adding it to a workspace
+would have inherited `@hezo/server` along with Radix, the router, recharts and
+react-markdown, none of which a control plane has a use for.
+
+**Three things made the primitives unshareable, and none of them was large.**
+
+1. **`useI18n` inside a primitive.** `DialogContent` called it for
+   `common.close` and `ConfirmDialog` for `common.cancel`. `lib/i18n` throws
+   without its provider, and that provider pulls the `@hezo/shared` barrel,
+   `date-fns` with twelve locale bundles and roughly half a megabyte of
+   catalogs — to supply two strings.
+2. **A raw token in a class string.** `bg-[var(--overlay)]` read the unprefixed
+   custom property rather than the theme utility, so against any stylesheet that
+   namespaces its raw tokens the backdrop was silently transparent.
+3. **This application's stacking.** The dialog hardcoded z-indices chosen
+   against the task-detail preview panel and the review editor bottom sheet,
+   which mean nothing elsewhere.
+
+**What shipped.** `packages/ui` (`@hezo/ui`), shaped the way `packages/shared`
+is — an `exports` map, `"private"` absent, source exported for the consumer to
+transpile — holding `dialog`, `confirm-dialog`, `button`, `input`,
+`shortcut-kbd`, `shortcuts` and `use-shortcut`. Every user-visible string is now
+a prop with an English default; `bg-overlay` replaces the raw property; the two
+z-indices are named exports a consumer can override through the `className` that
+is already appended last.
+
+**Nothing moved for a caller.** `components/ui/*` are pass-throughs, and the two
+dialogs are thin wrappers that look up `common.close` / `common.cancel` and pass
+them down — so all twelve catalogs are untouched and the 1852 web specs pass
+unchanged. `test/ui-package-standalone.test.tsx` is the guard: it renders the
+primitives with **no** `I18nProvider`, which is the one thing every other spec
+in the tree cannot catch.
+
+**Sizing is stated, not inherited.** `body` sets `13px` here and a consumer
+inheriting Tailwind's 16px renders the same component noticeably larger, so a
+shared primitive carries its own `text-*`.
+
+The cloud side adopts this by bumping its vendored submodule to a release
+containing it; until then it keeps its own small kit, which already looks right
+because the two `@theme` surfaces agree token for token.
 
 ---
 

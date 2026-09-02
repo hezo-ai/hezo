@@ -55,14 +55,15 @@ manager (agents bring their own models and runtimes).
 | Crypto | AES-256-GCM at rest; master key held in memory only |
 | Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired per member after a fixed 2-minute idle window (15 for a live assistant chat), or sooner when another project needs the memory |
 
-**Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
+**Monorepo** — Bun workspaces + Turborepo. **Four** packages plus a root `agents/`
 tree:
 
 ```
 packages/
 ├── server/   # Hono + PGlite + MCP backend; compiles to the binary (embeds web)
 ├── web/      # React frontend, bundled into the server binary at build time
-└── shared/   # Shared enums, types, crypto, pricing, mention parsing (@hezo/shared)
+├── shared/   # Shared enums, types, crypto, pricing, mention parsing (@hezo/shared)
+└── ui/       # The primitives more than one app draws with (@hezo/ui)
 agents/       # Agent system-prompt markdown — the source of truth for seeded roles
 ```
 
@@ -70,6 +71,20 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   type (`src/types/common.ts`), the provider→runtime maps, BIP39/HKDF crypto helpers,
   budget/pricing math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
+- **`packages/ui`** (`@hezo/ui`) holds the dialog, the confirmation, the button, the
+  input, the shortcut keycap and the key binding behind them — the primitives a second
+  app draws with. Source-only, with an `exports` map, so a consumer transpiles it the
+  way `web` already transpiles its own `.tsx`. **Two rules keep it importable**: no copy
+  is resolved inside it (every user-visible string is a prop with an English default, and
+  `web`'s `components/ui/` wrappers supply the translated one), and no class string reads
+  a raw `var(--token)` — `bg-overlay`, never `bg-[var(--overlay)]`, because the raw
+  property is undefined wherever a consumer namespaces its own and the backdrop then goes
+  transparent with nothing in the markup to say so. What a consumer must define is the
+  `@theme` colour surface those classes name, plus `text-eyebrow`. **It ships no test
+  suite of its own** — `web` exercises it and `web/test/ui-package-standalone.test.tsx`
+  is the guard on the two rules above, rendering the primitives with no `I18nProvider`,
+  which every other spec in that tree has. It is outside `web`'s coverage report, whose
+  include cannot reach past its own package root.
 - **`packages/server`** imports from `shared` and embeds `web` at build time.
 - **`agents/`** holds role prose by team (`app-dev/`, `blank/`, `influencer/`, `investment/`), the two
   instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable `_partials/`.

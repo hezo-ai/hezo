@@ -176,6 +176,7 @@ Before writing a helper, check whether it has a home. **Extend the seam; never a
 | A resolved operator setting | `runtimeConfig()` - never a bare `process.env` read |
 | Serialising async work per key | `lib/keyed-lock.ts` - never a second mutex |
 | An optimistic mutation | `useOptimisticMutation` |
+| A primitive more than one app draws with | `@hezo/ui` - never resolve copy or read a raw `var(--token)` inside it |
 | A complete test double | `createStubDocker()` |
 | A test context | `createTestContext()` (server), `renderApp()` + `seed*()` (web) |
 | A runtime's or provider's own quirk | that entity's adapter or table row |

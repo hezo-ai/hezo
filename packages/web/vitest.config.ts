@@ -35,6 +35,7 @@ export default defineConfig({
 			'@hezo/server': resolve(ROOT, 'packages/server/src'),
 			'@hezo/web': resolve(__dir, 'src'),
 			'@hezo/shared': resolve(ROOT, 'packages/shared/src/index.ts'),
+			'@hezo/ui': resolve(ROOT, 'packages/ui/src/index.ts'),
 			react: reactDir,
 			'react-dom': reactDomDir,
 		},
@@ -103,6 +104,11 @@ export default defineConfig({
 			reportOnFailure: true,
 			// See the server config for why all:false is mandatory under sharding.
 			all: false,
+			// Scoped to this package's own tree. `@hezo/ui` is exercised by this
+			// suite but not measured by it — an include reaching past the project
+			// root is silently dropped, and the merge job downstream keys on these
+			// paths. Its guard is `test/ui-package-standalone.test.tsx`, not a
+			// percentage.
 			include: ['src/**/*.{ts,tsx}'],
 			exclude: [
 				'src/**/*.d.ts',

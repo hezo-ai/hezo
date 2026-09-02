@@ -32,7 +32,7 @@
     },
     "packages/server": {
       "name": "@hezo/server",
-      "version": "0.46.0",
+      "version": "0.57.0",
       "dependencies": {
         "@electric-sql/pglite": "^0.2",
         "@hezo/shared": "workspace:*",
@@ -59,7 +59,7 @@
     },
     "packages/shared": {
       "name": "@hezo/shared",
-      "version": "0.46.0",
+      "version": "0.57.0",
       "dependencies": {
         "@noble/curves": "^1.9.1",
         "@noble/hashes": "^1.8.0",
@@ -71,11 +71,28 @@
         "vitest": "^3",
       },
     },
+    "packages/ui": {
+      "name": "@hezo/ui",
+      "version": "0.57.0",
+      "dependencies": {
+        "@radix-ui/react-alert-dialog": "^1",
+        "@radix-ui/react-dialog": "^1",
+        "lucide-react": "^0.500",
+      },
+      "devDependencies": {
+        "@types/react": "^19",
+        "typescript": "^5",
+      },
+      "peerDependencies": {
+        "react": "^19",
+      },
+    },
     "packages/web": {
       "name": "@hezo/web",
-      "version": "0.46.0",
+      "version": "0.57.0",
       "dependencies": {
         "@hezo/shared": "workspace:*",
+        "@hezo/ui": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1",
         "@radix-ui/react-checkbox": "^1",
         "@radix-ui/react-dialog": "^1",
@@ -298,6 +315,8 @@
     "@hezo/server": ["@hezo/server@workspace:packages/server"],
 
     "@hezo/shared": ["@hezo/shared@workspace:packages/shared"],
+
+    "@hezo/ui": ["@hezo/ui@workspace:packages/ui"],
 
     "@hezo/web": ["@hezo/web@workspace:packages/web"],
 
