@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.58.0 - 2026-09-02
+
+### Features
+
+- **models:** default OpenRouter connections to openrouter/auto ([#1069](https://github.com/hezo-ai/hezo/pull/1069))
+- **ui:** a package the primitives can be drawn from twice (H21) ([#1070](https://github.com/hezo-ai/hezo/pull/1070))
+
+**Full Changelog**: https://github.com/hezo-ai/hezo/compare/0.57.0...0.58.0
+
 ## 0.57.0 - 2026-09-01
 
 ### Features
