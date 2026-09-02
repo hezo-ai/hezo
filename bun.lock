@@ -32,7 +32,7 @@
     },
     "packages/server": {
       "name": "@hezo/server",
-      "version": "0.46.0",
+      "version": "0.57.0",
       "dependencies": {
         "@electric-sql/pglite": "^0.2",
         "@hezo/shared": "workspace:*",
@@ -59,7 +59,7 @@
     },
     "packages/shared": {
       "name": "@hezo/shared",
-      "version": "0.46.0",
+      "version": "0.57.0",
       "dependencies": {
         "@noble/curves": "^1.9.1",
         "@noble/hashes": "^1.8.0",
@@ -71,11 +71,37 @@
         "vitest": "^3",
       },
     },
+    "packages/ui": {
+      "name": "@hezo/ui",
+      "version": "0.57.0",
+      "dependencies": {
+        "@radix-ui/react-alert-dialog": "^1",
+        "@radix-ui/react-dialog": "^1",
+        "@radix-ui/react-popover": "^1",
+        "@radix-ui/react-tooltip": "^1",
+        "lucide-react": "^0.500",
+      },
+      "devDependencies": {
+        "@testing-library/react": "^16.3.2",
+        "@testing-library/user-event": "^14.6.1",
+        "@types/react": "^19",
+        "@vitejs/plugin-react": "^4",
+        "@vitest/coverage-v8": "3.2.4",
+        "happy-dom": "^20.9.0",
+        "react-dom": "^19",
+        "typescript": "^5",
+        "vitest": "^3",
+      },
+      "peerDependencies": {
+        "react": "^19",
+      },
+    },
     "packages/web": {
       "name": "@hezo/web",
-      "version": "0.46.0",
+      "version": "0.57.0",
       "dependencies": {
         "@hezo/shared": "workspace:*",
+        "@hezo/ui": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1",
         "@radix-ui/react-checkbox": "^1",
         "@radix-ui/react-dialog": "^1",
@@ -298,6 +324,8 @@
     "@hezo/server": ["@hezo/server@workspace:packages/server"],
 
     "@hezo/shared": ["@hezo/shared@workspace:packages/shared"],
+
+    "@hezo/ui": ["@hezo/ui@workspace:packages/ui"],
 
     "@hezo/web": ["@hezo/web@workspace:packages/web"],
 
@@ -1669,6 +1697,8 @@
 
     "@babel/helper-compilation-targets/semver": ["semver@6.3.1", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA=="],
 
+    "@hezo/ui/@vitejs/plugin-react": ["@vitejs/plugin-react@4.7.0", "", { "dependencies": { "@babel/core": "^7.28.0", "@babel/plugin-transform-react-jsx-self": "^7.27.1", "@babel/plugin-transform-react-jsx-source": "^7.27.1", "@rolldown/pluginutils": "1.0.0-beta.27", "@types/babel__core": "^7.20.5", "react-refresh": "^0.17.0" }, "peerDependencies": { "vite": "^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0" } }, "sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA=="],
+
     "@hezo/web/@vitejs/plugin-react": ["@vitejs/plugin-react@4.7.0", "", { "dependencies": { "@babel/core": "^7.28.0", "@babel/plugin-transform-react-jsx-self": "^7.27.1", "@babel/plugin-transform-react-jsx-source": "^7.27.1", "@rolldown/pluginutils": "1.0.0-beta.27", "@types/babel__core": "^7.20.5", "react-refresh": "^0.17.0" }, "peerDependencies": { "vite": "^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0" } }, "sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA=="],
 
     "@httptoolkit/subscriptions-transport-ws/eventemitter3": ["eventemitter3@3.1.2", "", {}, "sha512-tvtQIeLVHjDkJYnzf2dgVMxfuSGJeM/7UCG17TT4EumTfNtF+0nebF/4zWOIkCreAbtNqhGEboB6BWrwqNaw4Q=="],
@@ -1750,6 +1780,8 @@
     "wrap-ansi/ansi-styles": ["ansi-styles@4.3.0", "", { "dependencies": { "color-convert": "^2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
 
     "wrap-ansi-cjs/ansi-styles": ["ansi-styles@4.3.0", "", { "dependencies": { "color-convert": "^2.0.1" } }, "sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg=="],
+
+    "@hezo/ui/@vitejs/plugin-react/@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-beta.27", "", {}, "sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA=="],
 
     "@hezo/web/@vitejs/plugin-react/@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-beta.27", "", {}, "sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA=="],
 

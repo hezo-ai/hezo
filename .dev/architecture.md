@@ -55,14 +55,15 @@ manager (agents bring their own models and runtimes).
 | Crypto | AES-256-GCM at rest; master key held in memory only |
 | Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired per member after a fixed 2-minute idle window (15 for a live assistant chat), or sooner when another project needs the memory |
 
-**Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
+**Monorepo** — Bun workspaces + Turborepo. **Four** packages plus a root `agents/`
 tree:
 
 ```
 packages/
 ├── server/   # Hono + PGlite + MCP backend; compiles to the binary (embeds web)
 ├── web/      # React frontend, bundled into the server binary at build time
-└── shared/   # Shared enums, types, crypto, pricing, mention parsing (@hezo/shared)
+├── shared/   # Shared enums, types, crypto, pricing, mention parsing (@hezo/shared)
+└── ui/       # The primitives more than one app draws with (@hezo/ui)
 agents/       # Agent system-prompt markdown — the source of truth for seeded roles
 ```
 
@@ -70,6 +71,32 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   type (`src/types/common.ts`), the provider→runtime maps, BIP39/HKDF crypto helpers,
   budget/pricing math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
+- **`packages/ui`** (`@hezo/ui`) holds the primitives a second app draws with — the
+  dialog and confirmation, the button, input, textarea, toggle and password field, the
+  badges, card, breadcrumb, data table, tooltips, selects, segmented control, filter
+  pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
+  them. Source-only, with an `exports` map, so a consumer transpiles it the way `web`
+  already transpiles its own `.tsx`. **Three rules keep it importable**: no copy is
+  resolved inside it (every user-visible string is a prop with an English default, and
+  `web`'s `components/ui/` wrappers supply the translated one); no class string reads a
+  raw `var(--token)` — `bg-overlay`, never `bg-[var(--overlay)]`, because the raw
+  property is undefined wherever a consumer namespaces its own and the backdrop then
+  goes transparent with nothing in the markup to say so; and nothing here imports a
+  router, a store or a fetch layer. What a consumer must define is the `@theme` colour
+  surface those classes name, plus `text-eyebrow`, and **its stylesheet must name this
+  package as a Tailwind source** — the scan root stops at the consuming app, so without
+  that every utility used only by a primitive is missing from the stylesheet and the
+  component renders unstyled with nothing to say so. `web` declares it in `index.css`
+  and `test/stylesheet-sources.test.ts` holds it there.
+  **A component stays in `web` when it names a Hezo concept** — an actor, a budget, an
+  archived asset — or when its copy is a paragraph rather than a word: a sentence with a
+  node in it goes through the catalog whole, which a label prop cannot do. That is why
+  `device-code-steps` and `expandable-text` did not move, and why `tabs` did not (it
+  binds to the router).
+  **It runs its own tier** (`packages/ui/test/`, `bun run test --package ui`, one CI
+  job), rendering every primitive with no provider of any kind. That is the property the
+  package exists to have, and the web suite — which always supplies a catalog and a
+  router — is structurally unable to check it.
 - **`packages/server`** imports from `shared` and embeds `web` at build time.
 - **`agents/`** holds role prose by team (`app-dev/`, `blank/`, `influencer/`, `investment/`), the two
   instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable `_partials/`.
