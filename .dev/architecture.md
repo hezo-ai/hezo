@@ -3837,9 +3837,12 @@ model or jump price tier; version comparison reads `.` and `-` alike and drops d
 suffixes, so `claude-haiku-4-5-20251001` cannot outrank a later release on a date. The refresh
 **never touches an existing row** — it moves only the default offered to the next config
 added — and holds the previous pin on an unreachable provider, a rejected key or a family that
-matched nothing. Providers with no spec (the local runners) get no pin at all. It exists
-because a hardcoded id cannot notice its own retirement: a withdrawn one — once
-`gemini-1.5-flash`, the Google stop-hook judge — 404s on every run while the hook fails open.
+matched nothing. Providers with no spec (the local runners) get no pin at all. **OpenRouter's
+family is a single id**, `openrouter/auto`: a router has no version ladder inside it, and
+pinning one vendor line there discards the routing the operator chose OpenRouter for, so the
+refresh only ever confirms the catalog still lists that route. It exists because a hardcoded
+id cannot notice its own retirement: a withdrawn one — once `gemini-1.5-flash`, the Google
+stop-hook judge — 404s on every run while the hook fails open.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →

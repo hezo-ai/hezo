@@ -64,12 +64,13 @@ export const MODEL_PIN_SPECS: Partial<Record<AiProvider, ModelPinSpec>> = {
 	[AiProvider.Kimi]: { family: /^kimi-k[\d.]+(-code)?$/, fallback: 'kimi-k3' },
 	[AiProvider.XAi]: { family: /^grok-[\d.]+$/, fallback: 'grok-4.5' },
 	// OpenRouter is a router, not a vendor: "the latest model" across its whole
-	// catalog is not a question with an answer. The family names one vendor line
-	// known to serve tool use, which is what an agent run needs at all.
-	[AiProvider.OpenRouter]: {
-		family: /^anthropic\/claude-haiku-[\d.]+$/,
-		fallback: 'anthropic/claude-haiku-4.5',
-	},
+	// catalog is not a question with an answer, and pinning one vendor line inside
+	// it throws away the routing the operator came here for. So the pin names
+	// `openrouter/auto`, OpenRouter's own route, and lets it choose per request.
+	// The family is that one id exactly - an auto route carries no version to
+	// climb, so a refresh only ever confirms the catalog still lists it and holds
+	// the previous pin if it ever stops.
+	[AiProvider.OpenRouter]: { family: /^openrouter\/auto$/, fallback: 'openrouter/auto' },
 };
 
 /**
