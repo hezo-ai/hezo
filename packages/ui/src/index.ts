@@ -17,6 +17,13 @@
  *   publishes, and the raw property is not defined wherever a consumer
  *   namespaces its own.
  *
+ * **A consumer's stylesheet must also scan this package's source.** Tailwind
+ * generates a utility only where it reads the class string, and its default
+ * root stops at the app's own package. Without an `@source` naming this
+ * directory every utility used only by a primitive is absent from the
+ * stylesheet, and the component renders unstyled with nothing in the markup to
+ * say so.
+ *
  * What a consumer's stylesheet must define is the `@theme` colour surface these
  * classes name — `surface`, `border`, `text-1`/`2`/`3`, `accent*`, `danger*`,
  * `success*`, `warning*`, `info*`, `live*`, `neutral-soft*`, `pink*`,

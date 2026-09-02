@@ -83,7 +83,11 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   property is undefined wherever a consumer namespaces its own and the backdrop then
   goes transparent with nothing in the markup to say so; and nothing here imports a
   router, a store or a fetch layer. What a consumer must define is the `@theme` colour
-  surface those classes name, plus `text-eyebrow`.
+  surface those classes name, plus `text-eyebrow`, and **its stylesheet must name this
+  package as a Tailwind source** — the scan root stops at the consuming app, so without
+  that every utility used only by a primitive is missing from the stylesheet and the
+  component renders unstyled with nothing to say so. `web` declares it in `index.css`
+  and `test/stylesheet-sources.test.ts` holds it there.
   **A component stays in `web` when it names a Hezo concept** — an actor, a budget, an
   archived asset — or when its copy is a paragraph rather than a word: a sentence with a
   node in it goes through the catalog whole, which a label prop cannot do. That is why

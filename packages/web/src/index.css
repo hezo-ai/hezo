@@ -1,5 +1,11 @@
 @import 'tailwindcss';
 @plugin "@tailwindcss/typography";
+/* Tailwind scans the Vite root, which stops at this package. The primitives
+   live outside it, so their class strings are named here explicitly - without
+   this every utility used only by a shared primitive is absent from the
+   stylesheet, and the component renders unstyled with nothing in the markup to
+   say so. Any app drawing with the package needs the same declaration. */
+@source '../../ui/src';
 
 /* ============================================================================
    Hezo "Wire" design system — single source of truth for tokens.
