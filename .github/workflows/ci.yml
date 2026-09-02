@@ -334,6 +334,33 @@ jobs:
           path: packages/shared/coverage/coverage-final.json
           if-no-files-found: ignore
 
+  # The shared UI package (packages/ui) renders its primitives with no app
+  # around them — no server, no router, no catalog — so like packages/shared it
+  # runs as a single fast job. Its whole point is catching a dependency on the
+  # app creeping back in, which the web tier cannot see.
+  test-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run test --package ui --coverage
+      - name: Upload ui coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-coverage
+          path: packages/ui/coverage/coverage-final.json
+          if-no-files-found: ignore
+
   # External-Postgres driver conformance: the database-* suites run their
   # env-gated postgres legs against a real postgres:16 service, proving the
   # PostgresDb driver returns byte-identical shapes to PGlite (the contract the
@@ -568,6 +595,14 @@ jobs:
     steps:
       - run: '[ "${{ needs.test-shared.result }}" = "success" ]'
 
+  test-ui-complete:
+    if: always()
+    needs: test-ui
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: '[ "${{ needs.test-ui.result }}" = "success" ]'
+
   test-browser-complete:
     if: always()
     needs: test-browser
@@ -589,7 +624,7 @@ jobs:
   # Requires the repo to be enabled on Coveralls (see .dev/ci-and-commands.md).
   coverage-merge:
     if: always()
-    needs: [test-backend, test-containers, test-integration, test-shared]
+    needs: [test-backend, test-containers, test-integration, test-shared, test-ui]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

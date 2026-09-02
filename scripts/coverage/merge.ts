@@ -30,6 +30,8 @@ export interface MergeInputs {
 	webJson: string[];
 	/** istanbul coverage-final.json paths for the (unsharded) shared tier. */
 	sharedJson: string[];
+	/** istanbul coverage-final.json paths for the (unsharded) ui tier. */
+	uiJson?: string[];
 	/** Bun-native tier lcov path (no branch data); reconciled against merged server. */
 	bunLcov?: string;
 }
@@ -39,6 +41,7 @@ export interface MergeResult {
 	server: string;
 	web: string;
 	shared: string;
+	ui: string;
 	bun: string;
 	stats: CoverageStats;
 }
@@ -54,17 +57,21 @@ export function buildCombinedLcov(inputs: MergeInputs): MergeResult {
 	const shared = inputs.sharedJson.length
 		? normalizeLcov(mergeCoverageJsonToLcov(inputs.sharedJson), 'packages/shared')
 		: '';
+	const ui = inputs.uiJson?.length
+		? normalizeLcov(mergeCoverageJsonToLcov(inputs.uiJson), 'packages/ui')
+		: '';
 	let bun = '';
 	if (inputs.bunLcov && existsSync(inputs.bunLcov)) {
 		const normalized = normalizeLcov(readFileSync(inputs.bunLcov, 'utf8'), 'packages/server');
 		bun = server ? reconcileBunLcovLineModel(normalized, server) : normalized;
 	}
-	const parts = [server, bun, web, shared].filter(Boolean);
+	const parts = [server, bun, web, shared, ui].filter(Boolean);
 	return {
 		combined: parts.join(''),
 		server,
 		web,
 		shared,
+		ui,
 		bun,
 		stats: combinedCoverageStats(parts),
 	};
@@ -74,7 +81,7 @@ export function buildCombinedLcov(inputs: MergeInputs): MergeResult {
  * Locate each tier's coverage input inside a directory of downloaded CI
  * artifacts. Artifact names are fixed by ci.yml: `backend-coverage-<suffix>` and
  * `web-coverage-<shard>` each hold a `coverage-final.json`; `shared-coverage`
- * holds the shared `coverage-final.json`; `backend-bun-coverage` holds the Bun
+ * and `ui-coverage` hold theirs; `backend-bun-coverage` holds the Bun
  * `lcov.info`.
  *
  * The backend suffix is not just a shard ordinal: the container suites run off
@@ -95,8 +102,15 @@ export function resolveArtifacts(dir: string): MergeInputs {
 		.map(jsonIn)
 		.filter(existsSync);
 	const sharedJson = [jsonIn('shared-coverage')].filter(existsSync);
+	const uiJson = [jsonIn('ui-coverage')].filter(existsSync);
 	const bunLcov = resolve(dir, 'backend-bun-coverage', 'lcov.info');
-	return { serverJson, webJson, sharedJson, bunLcov: existsSync(bunLcov) ? bunLcov : undefined };
+	return {
+		serverJson,
+		webJson,
+		sharedJson,
+		uiJson,
+		bunLcov: existsSync(bunLcov) ? bunLcov : undefined,
+	};
 }
 
 export function formatStats(stats: CoverageStats): string {

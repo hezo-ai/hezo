@@ -34,6 +34,7 @@ the canonical check rather than a local full run - are in `AGENTS.md`; this is t
 
 ## Running one file or one test
 
+- **`--package ui`** runs the shared-primitive tier: every component rendered with no provider of any kind, which is the property that lets a second app draw them and the one thing the web tier (always wrapped in a catalog and a router) cannot check.
 - vitest: `cd packages/<pkg> && bunx vitest run <path>`; `-t '<substring>'` filters by name, dropping `run` watches.
 - Bun-native: `cd packages/server && bun test ./test/bun/<spec>.bun.test.ts` (never under vitest).
 - Playwright: `bunx playwright test test/browser/<spec>.spec.ts` from the root; `--headed --debug` to step through.

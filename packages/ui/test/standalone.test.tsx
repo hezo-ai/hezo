@@ -1,4 +1,11 @@
-import { ConfirmDialog, DialogContent } from '@hezo/ui';
+import {
+	BackLink,
+	ConfirmDialog,
+	DialogContent,
+	InPlaceForm,
+	ThemeProvider,
+	ThemeSwitcher,
+} from '@hezo/ui';
 import * as Dialog from '@radix-ui/react-dialog';
 import { render, screen } from '@testing-library/react';
 import { expect, test } from 'vitest';
@@ -58,4 +65,45 @@ test('the overlay is painted through the theme utility', async () => {
 
 	expect(dialogOverlayClassName).toContain('bg-overlay');
 	expect(dialogOverlayClassName).not.toContain('var(--');
+});
+
+test('the back link renders without a translation context', () => {
+	render(<BackLink onClick={() => {}} />);
+
+	expect(screen.getByRole('button', { name: /Back/ })).toBeTruthy();
+});
+
+test('the inline edit panel renders without a translation context', () => {
+	render(
+		<InPlaceForm title="Add connector" onClose={() => {}}>
+			<span>fields</span>
+		</InPlaceForm>,
+	);
+
+	expect(screen.getByTestId('in-place-form-close').getAttribute('aria-label')).toBe('Close');
+});
+
+// **The choices carry an icon and a value, never a catalog key.** A key here
+// would put the app's translation layer back inside the package.
+test('the theme menu renders without a translation context', async () => {
+	render(
+		<ThemeProvider>
+			<ThemeSwitcher />
+		</ThemeProvider>,
+	);
+
+	expect(screen.getByRole('button', { name: 'Theme' })).toBeTruthy();
+});
+
+test('the theme menu takes the words it is given', () => {
+	render(
+		<ThemeProvider>
+			<ThemeSwitcher
+				label="Thema"
+				optionLabels={{ system: 'System', light: 'Hell', dark: 'Dunkel' }}
+			/>
+		</ThemeProvider>,
+	);
+
+	expect(screen.getByRole('button', { name: 'Thema' })).toBeTruthy();
 });

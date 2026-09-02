@@ -595,18 +595,28 @@ react-markdown, none of which a control plane has a use for.
 
 **What shipped.** `packages/ui` (`@hezo/ui`), shaped the way `packages/shared`
 is — an `exports` map, `"private"` absent, source exported for the consumer to
-transpile — holding `dialog`, `confirm-dialog`, `button`, `input`,
-`shortcut-kbd`, `shortcuts` and `use-shortcut`. Every user-visible string is now
-a prop with an English default; `bg-overlay` replaces the raw property; the two
-z-indices are named exports a consumer can override through the `className` that
-is already appended last.
+transpile. It holds the primitives any Hezo site could draw: the dialog and
+confirmation, the button, input, textarea, toggle and password field, the
+badges, card, breadcrumb, data table, tooltips, selects, segmented control,
+filter pills, avatar, brand mark, theme menu, and the shortcut binding and
+keycap behind them. Every user-visible string is a prop with an English default;
+`bg-overlay` replaces the raw property; the z-indices are named exports a
+consumer overrides through the `className` already appended last.
 
-**Nothing moved for a caller.** `components/ui/*` are pass-throughs, and the two
-dialogs are thin wrappers that look up `common.close` / `common.cancel` and pass
-them down — so all twelve catalogs are untouched and the 1852 web specs pass
-unchanged. `test/ui-package-standalone.test.tsx` is the guard: it renders the
-primitives with **no** `I18nProvider`, which is the one thing every other spec
-in the tree cannot catch.
+**What stayed.** A component that names a Hezo concept — `actor-badge`,
+`budget-bar`, `archived-badge`, `name-switcher`'s callers — and one whose copy is
+a paragraph rather than a word. `device-code-steps` has thirteen strings and a
+`<Trans>`; turning those into props would push sentence assembly onto the
+consumer, which is exactly what the translation rule forbids. `tabs` binds to the
+router, and `expandable-text` to the markdown renderer.
+
+**Nothing moved for a caller.** `components/ui/*` are pass-throughs, and the ones
+with copy are thin wrappers that look the keys up and pass them down — so all
+twelve catalogs are untouched and the web specs pass unchanged.
+
+**The package runs its own tier**, one CI job, rendering every primitive with no
+provider of any kind. That is the property it exists to have, and the web suite —
+always wrapped in a catalog and a router — is structurally unable to check it.
 
 **Sizing is stated, not inherited.** `body` sets `13px` here and a consumer
 inheriting Tailwind's 16px renders the same component noticeably larger, so a

@@ -71,20 +71,28 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   type (`src/types/common.ts`), the provider→runtime maps, BIP39/HKDF crypto helpers,
   budget/pricing math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
-- **`packages/ui`** (`@hezo/ui`) holds the dialog, the confirmation, the button, the
-  input, the shortcut keycap and the key binding behind them — the primitives a second
-  app draws with. Source-only, with an `exports` map, so a consumer transpiles it the
-  way `web` already transpiles its own `.tsx`. **Two rules keep it importable**: no copy
-  is resolved inside it (every user-visible string is a prop with an English default, and
-  `web`'s `components/ui/` wrappers supply the translated one), and no class string reads
-  a raw `var(--token)` — `bg-overlay`, never `bg-[var(--overlay)]`, because the raw
-  property is undefined wherever a consumer namespaces its own and the backdrop then goes
-  transparent with nothing in the markup to say so. What a consumer must define is the
-  `@theme` colour surface those classes name, plus `text-eyebrow`. **It ships no test
-  suite of its own** — `web` exercises it and `web/test/ui-package-standalone.test.tsx`
-  is the guard on the two rules above, rendering the primitives with no `I18nProvider`,
-  which every other spec in that tree has. It is outside `web`'s coverage report, whose
-  include cannot reach past its own package root.
+- **`packages/ui`** (`@hezo/ui`) holds the primitives a second app draws with — the
+  dialog and confirmation, the button, input, textarea, toggle and password field, the
+  badges, card, breadcrumb, data table, tooltips, selects, segmented control, filter
+  pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
+  them. Source-only, with an `exports` map, so a consumer transpiles it the way `web`
+  already transpiles its own `.tsx`. **Three rules keep it importable**: no copy is
+  resolved inside it (every user-visible string is a prop with an English default, and
+  `web`'s `components/ui/` wrappers supply the translated one); no class string reads a
+  raw `var(--token)` — `bg-overlay`, never `bg-[var(--overlay)]`, because the raw
+  property is undefined wherever a consumer namespaces its own and the backdrop then
+  goes transparent with nothing in the markup to say so; and nothing here imports a
+  router, a store or a fetch layer. What a consumer must define is the `@theme` colour
+  surface those classes name, plus `text-eyebrow`.
+  **A component stays in `web` when it names a Hezo concept** — an actor, a budget, an
+  archived asset — or when its copy is a paragraph rather than a word: a sentence with a
+  node in it goes through the catalog whole, which a label prop cannot do. That is why
+  `device-code-steps` and `expandable-text` did not move, and why `tabs` did not (it
+  binds to the router).
+  **It runs its own tier** (`packages/ui/test/`, `bun run test --package ui`, one CI
+  job), rendering every primitive with no provider of any kind. That is the property the
+  package exists to have, and the web suite — which always supplies a catalog and a
+  router — is structurally unable to check it.
 - **`packages/server`** imports from `shared` and embeds `web` at build time.
 - **`agents/`** holds role prose by team (`app-dev/`, `blank/`, `influencer/`, `investment/`), the two
   instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable `_partials/`.

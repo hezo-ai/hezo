@@ -70,9 +70,11 @@ export function AppearanceSection() {
 	const updateSettings = useUpdateInstanceSettings();
 	const viewOptions = useTaskViewOptions();
 
-	const themeOptions = THEME_OPTIONS.map(({ value, labelKey, icon }) => ({
+	// The option list carries an icon and a value; the words are this app's, and
+	// the theme menu in the header does the same lookup against the same keys.
+	const themeOptions = THEME_OPTIONS.map(({ value, icon }) => ({
 		value,
-		label: t(labelKey),
+		label: t(`theme.${value}`),
 		icon,
 	}));
 

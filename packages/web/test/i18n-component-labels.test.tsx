@@ -3,12 +3,13 @@
 // this proves the reference renders the translated value under a non-English
 // locale.
 //
-// The shared primitives get the most attention on purpose. `ConfirmDialog`'s
-// cancel label and `BackLink`'s link text used to be parameter defaults
-// (`cancelLabel = 'Cancel'`); a default value cannot call a hook, so they moved
-// into the component body as `prop ?? t(key)`. Both halves of that need a test:
-// the default resolves through the catalog, and an explicitly-passed prop still
-// wins (the exported prop shape did not change).
+// The shared primitives get the most attention on purpose. They ship from
+// `@hezo/ui`, which resolves no copy of its own - every label is a prop with an
+// English default - and the `components/ui/` files imported below are the thin
+// wrappers that look the keys up. Both halves of that need a test: the wrapper's
+// default resolves through the catalog, and an explicitly-passed prop still wins
+// (the exported prop shape did not change). The other half, that the primitives
+// render at all without a provider, is `ui-package-standalone.test.tsx`.
 //
 // Rendered directly rather than through `renderApp`: the locale is a global
 // instance setting the server reports, so the app harness has no seam to seed a

@@ -89,7 +89,7 @@ if (forceBunNative && skipBunNative) {
 	process.exit(1);
 }
 
-const TEST_PACKAGES = ['packages/server', 'packages/web', 'packages/shared'];
+const TEST_PACKAGES = ['packages/server', 'packages/web', 'packages/shared', 'packages/ui'];
 
 async function buildShared() {
 	console.log('Building shared...');
@@ -132,12 +132,14 @@ async function buildAgentBundle() {
 //   packages/server/coverage-bun/lcov.info         (bun test --coverage)
 //   packages/web/coverage/coverage-final.json      (vitest)
 //   packages/shared/coverage/coverage-final.json   (vitest)
+//   packages/ui/coverage/coverage-final.json       (vitest)
 function printCombinedCoverage(): void {
 	const finalJson = (pkg: string) => resolve(ROOT, pkg, 'coverage/coverage-final.json');
 	const result = buildCombinedLcov({
 		serverJson: [finalJson('packages/server')].filter(existsSync),
 		webJson: [finalJson('packages/web')].filter(existsSync),
 		sharedJson: [finalJson('packages/shared')].filter(existsSync),
+		uiJson: [finalJson('packages/ui')].filter(existsSync),
 		bunLcov: resolve(ROOT, 'packages/server/coverage-bun/lcov.info'),
 	});
 	mkdirSync(resolve(ROOT, 'coverage'), { recursive: true });
