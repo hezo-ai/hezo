@@ -245,5 +245,9 @@ yours until you change it, and a refresh only moves the default offered to the *
 connection you add. If a provider is unreachable when the refresh runs, its previous
 default stands.
 
+**OpenRouter starts on `openrouter/auto`**, OpenRouter's own routing endpoint, which picks a
+model per request instead of fixing one. That is the routing you signed up for; pick a
+specific model from the list if you would rather choose yourself.
+
 Local model servers have no pinned default: the catalog is whatever you have pulled, so
 the CLI's own choice applies until you pick one.
