@@ -1,30 +1,18 @@
-import { ArrowLeft } from 'lucide-react';
+import { BackLink as UiBackLink } from '@hezo/ui';
+import type { ComponentPropsWithoutRef } from 'react';
 import { useI18n } from '../../lib/i18n';
 
-interface BackLinkProps {
-	onClick: () => void;
-	/** Link text after the arrow. Defaults to the translated "Back". */
-	label?: string;
-	className?: string;
-}
+type UiProps = ComponentPropsWithoutRef<typeof UiBackLink>;
 
 /**
- * Standard top-left "← Back" affordance for the onboarding / setup screens. A
- * quiet arrow-and-text link rather than a full-width button, so it reads as
- * secondary navigation above the card's centered heading.
+ * The "← Back" affordance, in this app's languages.
+ *
+ * The primitive resolves no copy of its own, so this wrapper is where the key
+ * is looked up. Coalesced rather than spread over: a caller passing `label`
+ * explicitly as `undefined` would otherwise fall through to the English
+ * default instead of this app's translation.
  */
-export function BackLink({ onClick, label, className = '' }: BackLinkProps) {
-	// Defaulted here rather than in the parameter list - a default value cannot
-	// call a hook. The prop stays an optional string.
+export function BackLink({ label, ...props }: UiProps) {
 	const { t } = useI18n();
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className={`inline-flex items-center gap-1 text-[13px] text-text-2 hover:text-text-1 transition-colors ${className}`}
-		>
-			<ArrowLeft className="w-4 h-4" />
-			{label ?? t('common.back')}
-		</button>
-	);
+	return <UiBackLink label={label ?? t('common.back')} {...props} />;
 }

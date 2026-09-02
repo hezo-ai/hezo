@@ -1,0 +1,17 @@
+// Source-only, so no emit and no `outDir`.
+//
+// `exports` points at `src/index.ts` and every consumer transpiles it, the way
+// the web app already transpiles its own `.tsx`. A dist build would be a second
+// artifact to keep in step with nothing reading it.
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"jsx": "react-jsx",
+		"rootDir": ".",
+		"noEmit": true,
+		"declaration": false,
+		"declarationMap": false,
+		"sourceMap": false
+	},
+	"include": ["src", "test"]
+}

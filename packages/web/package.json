@@ -13,6 +13,7 @@
 	},
 	"dependencies": {
 		"@hezo/shared": "workspace:*",
+		"@hezo/ui": "workspace:*",
 		"@radix-ui/react-alert-dialog": "^1",
 		"@radix-ui/react-checkbox": "^1",
 		"@radix-ui/react-dialog": "^1",

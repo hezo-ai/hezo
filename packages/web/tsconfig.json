@@ -14,6 +14,7 @@
 		"paths": {
 			"@hezo/shared": ["../shared/src/index.ts"],
 			"@hezo/shared/*": ["../shared/src/*"],
+			"@hezo/ui": ["../ui/src/index.ts"],
 			"@hezo/web/*": ["src/*"]
 		}
 	},
