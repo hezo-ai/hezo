@@ -1,4 +1,4 @@
-import { THEME_OPTIONS, ThemeSwitcher as UiThemeSwitcher } from '@hezo/ui';
+import { ThemeSwitcher as UiThemeSwitcher } from '@hezo/ui';
 import { useI18n } from '../../lib/i18n';
 
 export { THEME_OPTIONS } from '@hezo/ui';

@@ -21,6 +21,14 @@ interface HelpDialogProps {
 	/** Width of the modal. Defaults to `md`. */
 	size?: DialogSize;
 	/**
+	 * The close button's accessible name, passed to the dialog body.
+	 *
+	 * **A prop with an English default, never a lookup.** A component holding a
+	 * dialog has to forward the name, or the body falls back to English on a
+	 * surface whose every other string is translated.
+	 */
+	closeLabel?: string;
+	/**
 	 * Trigger rendering: the default circled `HelpCircle` icon, or a bare "?"
 	 * text glyph with no circle/border — for surfaces where the ring reads as
 	 * visual noise (e.g. next to a floating toolbar).
@@ -43,6 +51,7 @@ export function HelpDialog({
 	className,
 	size = 'md',
 	variant = 'icon',
+	closeLabel,
 	'data-testid': testId,
 }: HelpDialogProps) {
 	const [open, setOpen] = useState(false);
@@ -67,7 +76,7 @@ export function HelpDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={setOpen}>
 			{tooltip ? <Tooltip content={tooltip}>{trigger}</Tooltip> : trigger}
-			<DialogContent size={size}>
+			<DialogContent size={size} closeLabel={closeLabel}>
 				<Dialog.Title className="mb-4 pr-8 text-lg font-semibold">{title}</Dialog.Title>
 				{children}
 			</DialogContent>

@@ -29,8 +29,10 @@ import {
 } from '../packages/server/src/release/index.js';
 
 const ROOT = resolve(import.meta.dir, '..');
-const PACKAGE_PATHS = ['packages/shared', 'packages/server', 'packages/web'].map((p) =>
-	resolve(ROOT, p, 'package.json'),
+// Every workspace package carries the release version. One left out here keeps
+// whatever version it was created at, through every release that follows.
+const PACKAGE_PATHS = ['packages/shared', 'packages/server', 'packages/ui', 'packages/web'].map(
+	(p) => resolve(ROOT, p, 'package.json'),
 );
 const CHANGELOG_PATH = resolve(ROOT, 'CHANGELOG.md');
 const SEMVER_TAG_RE = /^\d+\.\d+\.\d+$/;

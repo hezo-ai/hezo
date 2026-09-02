@@ -21,7 +21,13 @@ import { expect, test } from 'vitest';
 
 test('the shared confirmation renders without a translation context', () => {
 	render(
-		<ConfirmDialog open onOpenChange={() => {}} title="Delete project?" onConfirm={() => {}} />,
+		<ConfirmDialog
+			open
+			onOpenChange={() => {}}
+			title="Delete project?"
+			description="This cannot be undone."
+			onConfirm={() => {}}
+		/>,
 	);
 
 	expect(screen.getByRole('button', { name: /Cancel/ })).toBeTruthy();
@@ -34,6 +40,7 @@ test('the shared confirmation takes the labels it is given', () => {
 			open
 			onOpenChange={() => {}}
 			title="Delete project?"
+			description="This cannot be undone."
 			cancelLabel="Annuleren"
 			closeLabel="Sluiten"
 			onConfirm={() => {}}
@@ -49,6 +56,7 @@ test('the shared dialog body renders without a translation context', () => {
 		<Dialog.Root open>
 			<DialogContent>
 				<Dialog.Title>Settings</Dialog.Title>
+				<Dialog.Description>How this instance behaves.</Dialog.Description>
 			</DialogContent>
 		</Dialog.Root>,
 	);

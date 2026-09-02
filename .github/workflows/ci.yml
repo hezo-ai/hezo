@@ -640,6 +640,7 @@ jobs:
       - run: bun install --frozen-lockfile
       # Every per-shard artifact lands under its own subdir of coverage-artifacts/
       # (backend-coverage-<n>/, backend-coverage-containers/, web-coverage-<n>/,
+      # ui-coverage/,
       # shared-coverage/, backend-bun-coverage/), which resolveArtifacts() in
       # scripts/coverage/merge.ts globs. The `*coverage*` pattern skips unrelated
       # artifacts (e.g. playwright-report-*).

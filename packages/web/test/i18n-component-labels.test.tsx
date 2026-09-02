@@ -9,7 +9,7 @@
 // wrappers that look the keys up. Both halves of that need a test: the wrapper's
 // default resolves through the catalog, and an explicitly-passed prop still wins
 // (the exported prop shape did not change). The other half, that the primitives
-// render at all without a provider, is `ui-package-standalone.test.tsx`.
+// render at all without a provider, is the `@hezo/ui` tier's own suite.
 //
 // Rendered directly rather than through `renderApp`: the locale is a global
 // instance setting the server reports, so the app harness has no seam to seed a

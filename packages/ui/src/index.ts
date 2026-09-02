@@ -25,9 +25,12 @@
  * say so.
  *
  * What a consumer's stylesheet must define is the `@theme` colour surface these
- * classes name — `surface`, `border`, `text-1`/`2`/`3`, `accent*`, `danger*`,
- * `success*`, `warning*`, `info*`, `live*`, `neutral-soft*`, `pink*`,
- * `inverse*`, `ring` and `overlay` — plus the `text-eyebrow` utility.
+ * classes name — `bg`, `surface`, `border`, `text-1`/`2`/`3`, `accent*`,
+ * `danger*`, `success*`, `warning*`, `info*`, `live*`, `neutral-soft*`,
+ * `pink*`, `purple-soft*`, `inverse*`, `ring` and `overlay` — plus the
+ * `text-eyebrow` and `scrollbar-none` utilities and the `.breadcrumb-row`
+ * overflow masks the breadcrumb reads. A colour it does not define renders as
+ * nothing rather than as an error.
  *
  * **A component belongs here when any Hezo site could draw it.** One that names
  * a Hezo concept — an actor, a budget, an archived asset — stays in the app,

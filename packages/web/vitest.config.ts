@@ -107,7 +107,7 @@ export default defineConfig({
 			// Scoped to this package's own tree. `@hezo/ui` is exercised by this
 			// suite but not measured by it — an include reaching past the project
 			// root is silently dropped, and the merge job downstream keys on these
-			// paths. Its guard is `test/ui-package-standalone.test.tsx`, not a
+			// paths. Its guard is the `@hezo/ui` tier's own suite, not a
 			// percentage.
 			include: ['src/**/*.{ts,tsx}'],
 			exclude: [

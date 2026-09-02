@@ -1,4 +1,4 @@
-import { type ButtonHTMLAttributes, useRef } from 'react';
+import { type ButtonHTMLAttributes, type Ref, useRef } from 'react';
 import { kbdSizeClass, ShortcutKbd } from './shortcut-kbd.js';
 import { ariaKeyshortcuts, isMacPlatform } from './shortcuts.js';
 import { useShortcut } from './use-shortcut.js';
@@ -61,6 +61,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 	 * native Escape, a scoped textarea handler). Defaults to true.
 	 */
 	shortcutFire?: boolean;
+	/**
+	 * Forwarded to the underlying element, and composed with the internal one
+	 * the shortcut binding clicks through - a caller's ref never displaces it.
+	 */
+	ref?: Ref<HTMLButtonElement>;
 }
 
 export function Button({
@@ -70,9 +75,17 @@ export function Button({
 	shortcut,
 	shortcutFire = true,
 	children,
+	ref: forwardedRef,
 	...props
 }: ButtonProps) {
 	const ref = useRef<HTMLButtonElement>(null);
+	// The shortcut clicks through the internal ref, so the caller's is attached
+	// alongside rather than in place of it.
+	const attachRef = (node: HTMLButtonElement | null) => {
+		ref.current = node;
+		if (typeof forwardedRef === 'function') forwardedRef(node);
+		else if (forwardedRef) forwardedRef.current = node;
+	};
 	const kbdCls = variant === 'link' ? kbdSizeClass.md : kbdSizeClass[size];
 
 	useShortcut(shortcut && shortcutFire ? shortcut : undefined, () => ref.current?.click(), {
@@ -81,7 +94,7 @@ export function Button({
 
 	return (
 		<button
-			ref={ref}
+			ref={attachRef}
 			aria-keyshortcuts={shortcut ? ariaKeyshortcuts(shortcut, isMacPlatform()) : undefined}
 			className={buttonClassName({ variant, size, className })}
 			{...props}

@@ -77,14 +77,18 @@
       "dependencies": {
         "@radix-ui/react-alert-dialog": "^1",
         "@radix-ui/react-dialog": "^1",
+        "@radix-ui/react-popover": "^1",
+        "@radix-ui/react-tooltip": "^1",
         "lucide-react": "^0.500",
       },
       "devDependencies": {
         "@testing-library/react": "^16.3.2",
+        "@testing-library/user-event": "^14.6.1",
         "@types/react": "^19",
         "@vitejs/plugin-react": "^4",
         "@vitest/coverage-v8": "3.2.4",
         "happy-dom": "^20.9.0",
+        "react-dom": "^19",
         "typescript": "^5",
         "vitest": "^3",
       },
