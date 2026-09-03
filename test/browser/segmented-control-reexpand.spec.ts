@@ -2,13 +2,14 @@ import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { createProjectAndClearPlanning, waitForPageLoad } from './helpers';
 
-// Real Chromium, because the whole assertion is a measurement: the control reads
-// what its labels need against what its container offers, and happy-dom reports
-// every width as 0 (#1 in the test-tier decision tree - real layout).
+// Real Chromium, because the whole thing is a measurement: the control reads what
+// its labels need against the space its container offers, and happy-dom reports
+// every width as zero (#1 in the test-tier decision tree - real layout).
 //
-// The control used to take the available width from *itself*. Hiding the labels
-// shrank it, so the next measurement saw even less room and the collapse could
-// never be undone - a sidebar widened back out kept its icons forever.
+// What this pins is that the collapse is reversible. The task sidebar is 190px on
+// a desktop layout, where the English labels do not fit, and 248px once the layout
+// stacks below 900px, where they do - so widening the container has to bring the
+// words back rather than leaving the control latched to icons.
 
 type CreatedProject = { id: string; slug: string; team_id: string };
 
@@ -47,15 +48,16 @@ test('the view control shows its labels again once there is room for them', asyn
 	await page.goto(`/projects/${project.slug}/tasks/${task.identifier}`);
 	await waitForPageLoad(page);
 
+	// The desktop sidebar is narrower than the words need, so the control is icons.
 	const control = page.getByTestId('task-view-segmented');
 	await expect(control).toBeVisible();
-	await expect(control).not.toHaveAttribute('data-icons-only', 'true');
-
-	// Narrow enough that the labels no longer fit beside one another.
-	await page.setViewportSize({ width: 900, height: 900 });
 	await expect(control).toHaveAttribute('data-icons-only', 'true');
 
-	// And back: this is the half that never used to happen.
-	await page.setViewportSize({ width: 1440, height: 900 });
+	// The stacked layout gives it a wider container, and the labels come back.
+	await page.setViewportSize({ width: 900, height: 900 });
 	await expect(control).not.toHaveAttribute('data-icons-only', 'true');
+
+	// And they go again rather than sticking once the room is gone.
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await expect(control).toHaveAttribute('data-icons-only', 'true');
 });

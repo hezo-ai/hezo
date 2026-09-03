@@ -1,6 +1,8 @@
 import {
 	Button,
+	type Column,
 	ConfirmDialog,
+	DataTable,
 	DialogContent,
 	HelpDialog,
 	Input,
@@ -172,6 +174,34 @@ test('a confirmation given loading=false still fires only once', async () => {
 	fireEvent.click(confirm);
 
 	expect(onConfirm).toHaveBeenCalledTimes(1);
+});
+
+test('a clickable row is reachable by key, and is still a row', async () => {
+	const user = userEvent.setup();
+	const onRowClick = vi.fn();
+	const columns: Column<{ id: string; name: string }>[] = [
+		{ key: 'name', header: 'Name', render: (r) => r.name },
+	];
+	render(
+		<DataTable
+			columns={columns}
+			data={[{ id: '1', name: 'alpha' }]}
+			rowKey={(r) => r.id}
+			onRowClick={onRowClick}
+		/>,
+	);
+
+	// The row is the table's whole interaction, so leaving it mouse-only put the
+	// only action out of reach of a keyboard.
+	const row = screen.getByRole('row', { name: /alpha/ });
+	expect(row.getAttribute('tabindex')).toBe('0');
+
+	row.focus();
+	await user.keyboard('{Enter}');
+	expect(onRowClick).toHaveBeenCalledTimes(1);
+
+	await user.keyboard(' ');
+	expect(onRowClick).toHaveBeenCalledTimes(2);
 });
 
 test('an unmeasurable width shows the labels rather than hiding them', () => {

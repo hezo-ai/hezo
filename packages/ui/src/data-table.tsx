@@ -170,8 +170,10 @@ export function DataTable<T>({
 												}
 											: undefined
 									}
+									// Focusable and activatable, but still a row: an explicit
+									// `role` here would replace the one the table gives it, and a
+									// table whose rows are buttons is no longer navigable as a table.
 									tabIndex={onRowClick ? 0 : undefined}
-									role={onRowClick ? 'button' : undefined}
 									className={`${onRowClick ? 'cursor-pointer hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring' : ''} ${
 										isFocused ? 'bg-info-soft' : ''
 									} ${rowClassName?.(row) ?? ''}`.trim()}
