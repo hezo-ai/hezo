@@ -1,3 +1,4 @@
+import { TooltipProvider } from '@hezo/ui';
 import { createRouter, Navigate, RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -34,8 +35,15 @@ createRoot(document.getElementById('root') as HTMLElement).render(
 		 */}
 		<I18nProvider>
 			<ThemeProvider>
-				<RouterProvider router={router} />
-				<Toaster />
+				{/*
+				 * One tooltip provider for the whole app: the delay grouping that lets a
+				 * pointer move between neighbouring tooltips without waiting again lives
+				 * on it, so one per tooltip would be no grouping at all.
+				 */}
+				<TooltipProvider>
+					<RouterProvider router={router} />
+					<Toaster />
+				</TooltipProvider>
 			</ThemeProvider>
 		</I18nProvider>
 	</StrictMode>,

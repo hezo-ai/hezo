@@ -66,7 +66,6 @@ export function AssetFilterDialog({
 							onChange={onFilterChange}
 							label={t('assets.filters.showLabel')}
 							stretch
-							className=""
 						/>
 					</div>
 
@@ -78,7 +77,6 @@ export function AssetFilterDialog({
 							onChange={(next) => onSortChange(next, direction)}
 							label={t('assets.filters.sortLabel')}
 							stretch
-							className=""
 						/>
 					</div>
 
@@ -91,7 +89,6 @@ export function AssetFilterDialog({
 							label={t('assets.filters.orderLabel')}
 							tone="plain"
 							stretch
-							className=""
 						/>
 					</div>
 				</div>

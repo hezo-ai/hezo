@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { Button, buttonClassName } from '@hezo/ui';
+export { Button, type ButtonProps, buttonClassName } from '@hezo/ui';

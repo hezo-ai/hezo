@@ -52,9 +52,9 @@ export const fullscreenContentClassName = `fixed inset-0 ${CONTENT_Z} flex flex-
  */
 export const dialogOverlayClassName = `fixed inset-0 bg-overlay backdrop-blur-sm ${OVERLAY_Z}`;
 
-type DialogContentBaseProps = ComponentPropsWithoutRef<typeof Dialog.Content>;
+export type DialogContentBaseProps = ComponentPropsWithoutRef<typeof Dialog.Content>;
 
-interface DialogContentProps extends Omit<DialogContentBaseProps, 'className'> {
+export interface DialogContentProps extends Omit<DialogContentBaseProps, 'className'> {
 	/** Width preset. Ignored when `fullscreen` is set. Defaults to `md`. */
 	size?: DialogSize;
 	/** Fill the viewport (with a desktop inset) instead of centring at a preset width. */
@@ -83,6 +83,13 @@ interface DialogContentProps extends Omit<DialogContentBaseProps, 'className'> {
 	 * with catalogs passes its own translation; one without gets English.
 	 */
 	closeLabel?: string;
+	/**
+	 * Whether the body renders a `Dialog.Description`.
+	 *
+	 * A dialog points at its description by id, so one that never renders it
+	 * leaves the reference dangling. Say so instead, and the reference is dropped.
+	 */
+	described?: boolean;
 }
 
 /**
@@ -93,11 +100,13 @@ interface DialogContentProps extends Omit<DialogContentBaseProps, 'className'> {
  * remember a close button?" is a bug waiting to happen. Use this instead of hand-
  * rolling `Dialog.Portal`/`Overlay`/`Content`.
  *
- * Render `Dialog.Title`/`Dialog.Description` and the body as children:
+ * Render `Dialog.Title`/`Dialog.Description` and the body as children. A dialog
+ * that renders a description says so, so the reference to it is kept:
  * ```tsx
  * <Dialog.Root open={open} onOpenChange={onOpenChange}>
- *   <DialogContent size="lg" data-testid="my-dialog">
+ *   <DialogContent size="lg" described data-testid="my-dialog">
  *     <Dialog.Title>…</Dialog.Title>
+ *     <Dialog.Description>…</Dialog.Description>
  *     …
  *   </DialogContent>
  * </Dialog.Root>
@@ -110,6 +119,7 @@ export function DialogContent({
 	cornerActions,
 	showClose = true,
 	closeLabel = 'Close',
+	described = false,
 	children,
 	...props
 }: DialogContentProps) {
@@ -119,6 +129,9 @@ export function DialogContent({
 			<Dialog.Overlay className={dialogOverlayClassName} />
 			<Dialog.Content
 				className={className ? `${contentClass} ${className}` : contentClass}
+				// Spread conditionally rather than written: passing the attribute at all
+				// would override the id Radix wires to a description that does exist.
+				{...(described ? {} : { 'aria-describedby': undefined })}
 				{...props}
 			>
 				{(showClose || cornerActions) && (
@@ -132,7 +145,7 @@ export function DialogContent({
 									aria-label={closeLabel}
 									data-testid="dialog-close"
 								>
-									<X className="h-4 w-4" />
+									<X className="h-4 w-4" aria-hidden />
 								</button>
 							</Dialog.Close>
 						)}

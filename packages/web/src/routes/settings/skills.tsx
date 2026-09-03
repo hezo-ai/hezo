@@ -282,13 +282,13 @@ function InstanceSkillsPage() {
 										value={name}
 										onChange={(e) => setName(e.target.value)}
 										required
-										className="flex-1"
+										wrapperClassName="flex-1"
 									/>
 									<Input
 										placeholder="Tags (comma-separated, optional)"
 										value={tags}
 										onChange={(e) => setTags(e.target.value)}
-										className="flex-1"
+										wrapperClassName="flex-1"
 									/>
 								</div>
 								<Input
@@ -577,7 +577,7 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 							placeholder="skills.sh API token"
 							value={tokenInput}
 							onChange={(e) => setTokenInput(e.target.value)}
-							className="flex-1"
+							wrapperClassName="flex-1"
 							aria-label="skills.sh API token"
 						/>
 						<Button
@@ -604,7 +604,7 @@ function RegistrySearch({ onClose }: { onClose: () => void }) {
 							placeholder="Search skills.sh (e.g. react, stripe, playwright)"
 							value={queryInput}
 							onChange={(e) => setQueryInput(e.target.value)}
-							className="flex-1"
+							wrapperClassName="flex-1"
 							aria-label="Search skills.sh"
 						/>
 						<Button type="submit" size="sm" disabled={queryInput.trim().length < 2}>

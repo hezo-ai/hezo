@@ -1,8 +1,5 @@
-import { ConfirmDialog as UiConfirmDialog } from '@hezo/ui';
-import type { ComponentPropsWithoutRef } from 'react';
+import { type ConfirmDialogProps, ConfirmDialog as UiConfirmDialog } from '@hezo/ui';
 import { useI18n } from '../../lib/i18n';
-
-type UiProps = ComponentPropsWithoutRef<typeof UiConfirmDialog>;
 
 /**
  * The shared confirmation, in this app's languages.
@@ -13,16 +10,21 @@ type UiProps = ComponentPropsWithoutRef<typeof UiConfirmDialog>;
  * the keys are looked up, so every call site keeps the import and the
  * translation it already had.
  *
- * `cancelLabel` is coalesced rather than spread over: a caller passing it
- * explicitly as `undefined` would otherwise fall through to the primitive's
- * English default instead of this app's translation.
+ * `cancelLabel` and `errorLabel` are coalesced rather than spread over: a caller
+ * passing either explicitly as `undefined` would otherwise fall through to the
+ * primitive's English default instead of this app's translation.
  */
-export function ConfirmDialog({ cancelLabel, ...props }: Omit<UiProps, 'closeLabel'>) {
+export function ConfirmDialog({
+	cancelLabel,
+	errorLabel,
+	...props
+}: Omit<ConfirmDialogProps, 'closeLabel'>) {
 	const { t } = useI18n();
 	return (
 		<UiConfirmDialog
 			closeLabel={t('common.close')}
 			cancelLabel={cancelLabel ?? t('common.cancel')}
+			errorLabel={errorLabel ?? (() => t('common.actionFailed'))}
 			{...props}
 		/>
 	);

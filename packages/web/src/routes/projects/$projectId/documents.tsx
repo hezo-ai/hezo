@@ -249,7 +249,6 @@ function ProjectDocumentsPage() {
 				listExtras={
 					<FilterPills
 						stretch
-						className=""
 						options={[
 							{ value: ArchiveFilter.Active, label: 'Active', count: counts.active },
 							{ value: ArchiveFilter.Archived, label: 'Archived', count: counts.archived },

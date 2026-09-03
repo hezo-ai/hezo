@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-interface FilterPillsProps<T extends string> {
+export interface FilterPillsProps<T extends string> {
 	options: { value: T; label: string; count?: number; badge?: ReactNode }[];
 	value: T;
 	onChange: (value: T) => void;
@@ -19,6 +19,7 @@ interface FilterPillsProps<T extends string> {
 	 * element resolve by stylesheet order, not by the order they are written in.
 	 */
 	tone?: 'default' | 'plain';
+	/** Appended to the track, like every other primitive's - not a replacement. */
 	className?: string;
 }
 
@@ -31,7 +32,7 @@ export function FilterPills<T extends string>({
 	stretch,
 	label,
 	tone = 'default',
-	className = 'mb-3.5',
+	className = '',
 }: FilterPillsProps<T>) {
 	return (
 		// `min-w-0` is load-bearing: a fieldset defaults to

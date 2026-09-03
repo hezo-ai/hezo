@@ -77,7 +77,7 @@ function BaseUrlForm({ settings }: { settings: InstanceSettings }) {
 					placeholder="https://hezo.example.com"
 					value={baseUrl}
 					onChange={(e) => setBaseUrl(e.target.value)}
-					className="sm:w-96"
+					wrapperClassName="sm:w-96"
 				/>
 				<Button
 					size="sm"

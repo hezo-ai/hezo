@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { Code } from '@hezo/ui';
+export { Code, type CodeProps } from '@hezo/ui';

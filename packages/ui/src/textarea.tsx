@@ -1,6 +1,6 @@
-import { forwardRef, type TextareaHTMLAttributes } from 'react';
+import { forwardRef, type TextareaHTMLAttributes, useId } from 'react';
 
-interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
 	label?: string;
 	/** Class override for the flex wrapper (e.g. `flex-1 min-h-0` so the textarea
 	 *  can grow to fill a flex column). Defaults to the standard stacked layout. */
@@ -11,7 +11,9 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
 	{ label, className = '', wrapperClassName = 'flex flex-col gap-1.5', id, ...props },
 	ref,
 ) {
-	const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
+	// A generated id, never one derived from the label - see `input.tsx`.
+	const generatedId = useId();
+	const inputId = id ?? generatedId;
 	return (
 		<div className={wrapperClassName}>
 			{label && (

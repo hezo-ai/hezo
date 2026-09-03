@@ -16,13 +16,12 @@ export const kbdSizeClass = {
 	lg: 'text-[11.5px] px-1.5 py-0.5 -mr-1',
 } as const;
 
-export function ShortcutKbd({
-	shortcut,
-	sizeClassName = kbdSizeClass.md,
-}: {
+export interface ShortcutKbdProps {
 	shortcut: string;
 	sizeClassName?: string;
-}) {
+}
+
+export function ShortcutKbd({ shortcut, sizeClassName = kbdSizeClass.md }: ShortcutKbdProps) {
 	return (
 		// biome-ignore lint/a11y/noAriaHiddenOnFocusable: a <kbd> is not focusable; the shortcut is exposed to assistive tech via aria-keyshortcuts on the owning button, and hiding the visual keycap avoids a duplicate, oddly-verbalized accessible name.
 		<kbd

@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { StatusDot } from '@hezo/ui';
+export { StatusDot, type StatusDotProps } from '@hezo/ui';

@@ -88,6 +88,18 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   that every utility used only by a primitive is missing from the stylesheet and the
   component renders unstyled with nothing to say so. `web` declares it in `index.css`
   and `test/stylesheet-sources.test.ts` holds it there.
+  **Its props types are part of the contract.** Every component exports its own
+  `*Props`, because `ComponentProps<typeof X>` erases the parameter of a generic — a
+  consumer cannot wrap `DataTable`, `SegmentedControl` or `FilterPills` type-safely
+  without them.
+  **Three things a consumer supplies, each failing loudly rather than guessing**:
+  `ThemeProvider` takes a required `storageKey`, since a default would be a name every
+  app on one origin shares (`web` passes `THEME_STORAGE_KEY` from `lib/theme.tsx`, which
+  the pre-paint script in `index.html` duplicates under the guard in
+  `test/theme-first-paint.test.tsx`); `TooltipProvider` is mounted once near the root,
+  because the cross-tooltip delay grouping lives on it and one provider per tooltip is
+  no grouping at all; and `Logo` takes its `src`, `alt` and wordmark, since the package
+  ships no image and a baked-in path resolves against whichever app is serving.
   **A component stays in `web` when it names a Hezo concept** — an actor, a budget, an
   archived asset — or when its copy is a paragraph rather than a word: a sentence with a
   node in it goes through the catalog whole, which a label prop cannot do. That is why

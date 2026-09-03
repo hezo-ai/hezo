@@ -11,7 +11,7 @@ export interface BreadcrumbSegment {
 }
 
 /** Which edges have more row beyond them, so only those get a fade. */
-interface EdgeState {
+export interface EdgeState {
 	left: boolean;
 	right: boolean;
 }
@@ -45,6 +45,18 @@ function readEdges(el: HTMLElement): EdgeState {
  * the task name once the heading scrolls away). It backs off the moment the
  * reader scrolls the row themselves.
  */
+export interface BreadcrumbRowProps {
+	children: ReactNode;
+	className?: string;
+	anchor?: 'start' | 'end';
+	/** Object ref onto the row itself, for a caller that measures the band it occupies. */
+	ref?: RefObject<HTMLElement | null>;
+	/** The navigation landmark's name. English default; the app passes its own. */
+	'aria-label'?: string;
+	'data-testid'?: string;
+	'data-pinned'?: string;
+}
+
 export function BreadcrumbRow({
 	children,
 	className = '',
@@ -53,16 +65,7 @@ export function BreadcrumbRow({
 	'aria-label': ariaLabel = 'Breadcrumb',
 	'data-testid': testId,
 	'data-pinned': dataPinned,
-}: {
-	children: ReactNode;
-	className?: string;
-	anchor?: 'start' | 'end';
-	/** Object ref onto the row itself, for a caller that measures the band it occupies. */
-	ref?: RefObject<HTMLElement | null>;
-	'aria-label'?: string;
-	'data-testid'?: string;
-	'data-pinned'?: string;
-}) {
+}: BreadcrumbRowProps) {
 	const ownRef = useRef<HTMLElement>(null);
 	const ref = externalRef ?? ownRef;
 	// The row's content, sized to itself (`w-max`) so the nav has something to
@@ -158,27 +161,43 @@ export function BreadcrumbRow({
  * Non-leaf segments navigate via callback so callers can drive route params
  * or search params alike.
  */
+export interface BreadcrumbProps {
+	segments: BreadcrumbSegment[];
+	/** The navigation landmark's name. English default; the app passes its own. */
+	'aria-label'?: string;
+	'data-testid'?: string;
+}
+
 export function Breadcrumb({
 	segments,
+	'aria-label': ariaLabel,
 	'data-testid': testId,
-}: {
-	segments: BreadcrumbSegment[];
-	'data-testid'?: string;
-}) {
+}: BreadcrumbProps) {
 	return (
-		<BreadcrumbRow className="text-[13px] font-mono text-text-2" data-testid={testId}>
+		<BreadcrumbRow
+			className="text-[13px] font-mono text-text-2"
+			aria-label={ariaLabel}
+			data-testid={testId}
+		>
 			{segments.map((seg, i) =>
 				i < segments.length - 1 ? (
 					<span key={seg.key} className="flex shrink-0 items-center gap-x-1 whitespace-nowrap">
-						<button
-							type="button"
-							onClick={seg.onNavigate}
-							className="cursor-pointer transition-colors hover:text-text-1 hover:underline"
-							title={seg.title}
-						>
-							{seg.label}
-						</button>
-						<ChevronRight className="h-3 w-3 shrink-0 text-text-3" />
+						{/* A segment with nowhere to go is text, not a control: rendering it
+						    as a button gives it focus and a hover underline that promise a
+						    navigation it cannot perform. */}
+						{seg.onNavigate ? (
+							<button
+								type="button"
+								onClick={seg.onNavigate}
+								className="cursor-pointer transition-colors hover:text-text-1 hover:underline"
+								title={seg.title}
+							>
+								{seg.label}
+							</button>
+						) : (
+							<span title={seg.title}>{seg.label}</span>
+						)}
+						<ChevronRight className="h-3 w-3 shrink-0 text-text-3" aria-hidden />
 					</span>
 				) : (
 					<span

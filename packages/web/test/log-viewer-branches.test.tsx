@@ -23,6 +23,7 @@ import { render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type React from 'react';
 import { expect, test, vi } from 'vitest';
+import { withI18n } from './helpers/i18n';
 
 const copyMock = vi.fn(async (_text: string) => true);
 vi.mock('../src/lib/clipboard', () => ({
@@ -43,10 +44,12 @@ async function renderViewer(props: React.ComponentProps<typeof LogViewer>) {
 		history: createMemoryHistory({ initialEntries: ['/'] }),
 	});
 	const utils = render(
-		<QueryClientProvider client={qc}>
-			{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
-			<RouterProvider router={router as any} />
-		</QueryClientProvider>,
+		withI18n(
+			<QueryClientProvider client={qc}>
+				{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
+				<RouterProvider router={router as any} />
+			</QueryClientProvider>,
+		),
 	);
 	// RouterProvider resolves its pending route on a microtask.
 	await waitFor(() =>
