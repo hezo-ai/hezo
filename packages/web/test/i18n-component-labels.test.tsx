@@ -3,12 +3,13 @@
 // this proves the reference renders the translated value under a non-English
 // locale.
 //
-// The shared primitives get the most attention on purpose. `ConfirmDialog`'s
-// cancel label and `BackLink`'s link text used to be parameter defaults
-// (`cancelLabel = 'Cancel'`); a default value cannot call a hook, so they moved
-// into the component body as `prop ?? t(key)`. Both halves of that need a test:
-// the default resolves through the catalog, and an explicitly-passed prop still
-// wins (the exported prop shape did not change).
+// The shared primitives get the most attention on purpose. They ship from
+// `@hezo/ui`, which resolves no copy of its own - every label is a prop with an
+// English default - and the `components/ui/` files imported below are the thin
+// wrappers that look the keys up. Both halves of that need a test: the wrapper's
+// default resolves through the catalog, and an explicitly-passed prop still wins
+// (the exported prop shape did not change). The other half, that the primitives
+// render at all without a provider, is the `@hezo/ui` tier's own suite.
 //
 // Rendered directly rather than through `renderApp`: the locale is a global
 // instance setting the server reports, so the app harness has no seam to seed a
@@ -22,24 +23,11 @@ import { ConfirmDialog } from '../src/components/ui/confirm-dialog';
 import { ThemeSwitcher } from '../src/components/ui/theme-switcher';
 import { I18nProvider } from '../src/lib/i18n';
 import { ThemeProvider } from '../src/lib/theme';
+import { installMatchMedia } from './helpers/match-media';
 
 /** German, chosen because its values differ from the English for these keys. */
 function installGermanBrowser() {
 	vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['de-DE', 'en-US']);
-}
-
-/** ThemeSwitcher reaches useTheme, which reads prefers-color-scheme. */
-function installMatchMedia() {
-	vi.spyOn(window, 'matchMedia').mockReturnValue({
-		matches: false,
-		media: '(prefers-color-scheme: dark)',
-		onchange: null,
-		addEventListener: () => {},
-		removeEventListener: () => {},
-		addListener: () => {},
-		removeListener: () => {},
-		dispatchEvent: () => true,
-	} as unknown as MediaQueryList);
 }
 
 function InGerman({ children }: { children: ReactNode }) {
@@ -58,7 +46,7 @@ describe('component labels render from the catalog', () => {
 	});
 
 	test('the theme menu labels its trigger and options in the active language', async () => {
-		installMatchMedia();
+		installMatchMedia(false);
 		const user = userEvent.setup({ delay: null });
 		render(
 			<InGerman>

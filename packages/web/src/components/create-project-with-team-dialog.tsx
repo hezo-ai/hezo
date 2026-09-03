@@ -647,7 +647,7 @@ export function CreateProjectWithTeamDialog({
 									aria-label="Search teams"
 									placeholder="Search teams…"
 									value={search}
-									className="shrink-0"
+									wrapperClassName="shrink-0"
 									onChange={(e) => setSearch(e.target.value)}
 									data-testid="team-search"
 								/>

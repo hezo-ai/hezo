@@ -19,7 +19,7 @@ the instance at a managed sandbox service instead (below).
   Docker all work - Hezo finds the daemon's socket automatically, whichever you use. On
   startup it checks for a working daemon and, if none is reachable, prints how to install
   or start one (with a link to
-  [Docker's install page](https://docs.docker.com/get-docker/)) and exits - so set one up
+  [Docker's install page](https://docs.docker.com/get-started/get-docker/)) and exits - so set one up
   first. On **Windows**, where the console window closes with the process and would take
   that message with it, Hezo instead shows a dialog and offers to open Docker Desktop in
   the Microsoft Store. See [Container runtimes](/docs/deployment/container-runtimes) for

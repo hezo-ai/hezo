@@ -20,6 +20,7 @@ import {
 } from '../src/services/run-concurrency';
 import { createStubDocker } from './helpers/app';
 import { createTestDbWithMigrations } from './helpers/db';
+import { seedMonthToDateSeconds } from './helpers/uptime';
 
 /**
  * A stub engine so the budget resolves the same way it does in production: from
@@ -316,17 +317,13 @@ describe('container capacity', () => {
 	describe('the container-hours allowance', () => {
 		/** `hours` of closed uptime already spent this calendar month. */
 		async function seedSpentHours(hours: number): Promise<void> {
-			await db.query(
-				`INSERT INTO container_uptime_entries (container_id, started_at, ended_at, backend)
-				 VALUES ('spent', date_trunc('month', now() AT TIME ZONE 'UTC'),
-				         date_trunc('month', now() AT TIME ZONE 'UTC') + ($1::int * interval '1 hour'),
-				         'docker')`,
-				[hours],
-			);
+			await seedMonthToDateSeconds(db, hours * 3600);
 		}
 
 		it('never trips while no cap is set, however many hours were spent', async () => {
-			await seedSpentHours(10_000);
+			// The very spend that exhausts the ten-hour cap below: with no cap set
+			// the meter is never consulted at all.
+			await seedSpentHours(10);
 			expect((await getActiveContainers(db, engine)).hoursExhausted).toBe(false);
 		});
 

@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
 	existsSync,
@@ -109,8 +109,93 @@ function configAdapterScript(): string {
 		);
 }
 
+/** The `load_env_file` definition provision.sh also copies into hezo-firstboot.sh. */
+function loadEnvFileDefinition(): string {
+	const start = PROVISION.indexOf('load_env_file() {');
+	const end = PROVISION.indexOf('\n}\n', start);
+	expect(start).toBeGreaterThan(-1);
+	expect(end).toBeGreaterThan(start);
+	return PROVISION.slice(start, end + 3);
+}
+
 function sha256(path: string): string {
 	return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+interface GeneratedConfig {
+	dataDir: string;
+	webUrl: string;
+	database?: { url?: string; poolSize?: number };
+	assetStorage?: { url: string };
+}
+
+/**
+ * Run the provisioner's config adapter over a throwaway /etc/hezo, and report
+ * what it left behind. `mode` picks the starting state: a host with no config,
+ * one an operator already edited, or one still carrying a pre-0.50 hezo.env.
+ */
+function runConfigAdapter(
+	env: Record<string, string>,
+	mode: 'fresh' | 'existing' | 'legacy' = 'fresh',
+): {
+	config?: GeneratedConfig;
+	configExists: boolean;
+	commandExecuted: boolean;
+	deployEnvContents: string;
+	legacyMigrated: boolean;
+	stderr: string;
+	status: number;
+} {
+	const dir = mkdtempSync(join(tmpdir(), 'hezo-provision-config-'));
+	try {
+		const configFile = join(dir, 'hezo.config.cjs');
+		const commandMarker = join(dir, 'command-ran');
+		const deployEnv = join(dir, 'deploy.env');
+		const legacyEnv = join(dir, 'hezo.env');
+		// Quotes and a backslash in the side-file path too: it is serialized by the
+		// same function as every credential the config carries.
+		const webUrlFile = join(dir, 'web-\'url\\"path');
+		const { DEPLOY_CONTENT = '', LEGACY_CONTENT = '', ...adapterEnv } = env;
+		writeFileSync(deployEnv, DEPLOY_CONTENT.replaceAll('__COMMAND_MARKER__', commandMarker));
+		if (mode === 'legacy') writeFileSync(legacyEnv, LEGACY_CONTENT);
+		if (mode === 'existing')
+			writeFileSync(configFile, 'module.exports = { dataDir: "/existing" };\n');
+		const result = spawnSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+			encoding: 'utf8',
+			env: {
+				...process.env,
+				CONFIG_FILE: configFile,
+				DEPLOY_ENV: deployEnv,
+				LEGACY_ENV: legacyEnv,
+				WEB_URL_FILE: webUrlFile,
+				DATA_DIR: join(dir, 'data'),
+				LEGACY_ENV_CARRIED: '',
+				BEHIND_GATEWAY: '',
+				...adapterEnv,
+			},
+		});
+		const configExists = existsSync(configFile);
+		const config = configExists
+			? (JSON.parse(
+					execFileSync(
+						process.execPath,
+						['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', configFile],
+						{ encoding: 'utf8' },
+					),
+				) as GeneratedConfig)
+			: undefined;
+		return {
+			config,
+			configExists,
+			commandExecuted: existsSync(commandMarker),
+			deployEnvContents: readFileSync(deployEnv, 'utf8'),
+			legacyMigrated: existsSync(`${legacyEnv}.migrated`),
+			stderr: result.stderr,
+			status: result.status ?? 1,
+		};
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 function legacyGeneratedConfigPrefix(webUrlFile: string, dataDir: string): string {
@@ -303,6 +388,139 @@ describe('the one-click managed-backend configuration contract', () => {
 		expect(ONE_CLICK).toMatch(
 			/Post-boot, or on an existing server[\s\S]*\/etc\/hezo\/hezo\.config\.cjs[\s\S]*database: \{ url: 'postgres:\/\/hezo:PASSWORD@db-host:5432\/hezo\?sslmode=require' \},[\s\S]*assetStorage: \{ url: 's3:\/\/ACCESS_KEY:SECRET@endpoint\/bucket' \},[\s\S]*systemctl restart hezo/,
 		);
+	});
+
+	it('keeps literal firstboot settings while removing managed credentials from deploy.env', () => {
+		const result = runConfigAdapter({
+			DEPLOY_CONTENT: [
+				'HEZO_DOMAIN_OVERRIDE=hezo.example.test',
+				'HEZO_SWAP_SIZE=2G',
+				'BEHIND_GATEWAY=1',
+				'HEZO_DATABASE_URL=postgres://hezo:password@db-host:5432/hezo',
+				'HEZO_ASSET_STORAGE_URL=s3://key:secret@endpoint/bucket',
+				'',
+			].join('\n'),
+		});
+		expect(result).toMatchObject({
+			deployEnvContents: [
+				'HEZO_DOMAIN_OVERRIDE=hezo.example.test',
+				'HEZO_SWAP_SIZE=2G',
+				'BEHIND_GATEWAY=1',
+				'',
+			].join('\n'),
+			status: 0,
+		});
+	});
+
+	// Every value below reaches the config through the same serializer, so a
+	// missed escape in any one of them writes CommonJS that will not parse.
+	it('preserves quotes and backslashes from deploy.env in every generated string value', () => {
+		const dataDir = '/var/lib/hezo/user\'s\\"data';
+		const databaseUrl = 'postgres://hezo:pa\'ss\\"word@db-host:5432/hezo';
+		const assetUrl = 's3://key:sec\'ret\\"piece@endpoint/bucket';
+		const result = runConfigAdapter({
+			DEPLOY_CONTENT: [
+				`HEZO_DATA_DIR=${dataDir}`,
+				`HEZO_ASSET_STORAGE_URL=${assetUrl}`,
+				`HEZO_DATABASE_URL=${databaseUrl}`,
+				'',
+			].join('\n'),
+		});
+		expect(result.status).toBe(0);
+		expect(result.stderr).toBe('');
+		expect(result.config).toMatchObject({
+			assetStorage: { url: assetUrl },
+			database: { url: databaseUrl },
+			dataDir,
+		});
+	});
+
+	it('treats command substitutions in deploy.env values as data and removes the credential copy', () => {
+		const databaseUrl = 'postgres://hezo:$(touch __COMMAND_MARKER__)@db-host:5432/hezo';
+		const result = runConfigAdapter({
+			DEPLOY_CONTENT: `HEZO_DATABASE_URL=${databaseUrl}\n`,
+		});
+		expect(result).toMatchObject({
+			commandExecuted: false,
+			config: { database: { url: expect.stringContaining('$(touch ') } },
+			deployEnvContents: '',
+			status: 0,
+		});
+	});
+
+	it('serializes shell-provided control characters without changing their values', () => {
+		const dataDir = '/var/lib/hezo/control\b\f\r\t';
+		const result = runConfigAdapter({ DATA_DIR: dataDir });
+		expect(result).toMatchObject({ config: { dataDir }, status: 0 });
+	});
+
+	it('leaves an existing config untouched even when stale provision inputs are invalid', () => {
+		const result = runConfigAdapter(
+			{ DEPLOY_CONTENT: 'HEZO_DATABASE_POOL_SIZE=not-a-number\n' },
+			'existing',
+		);
+		expect(result).toMatchObject({
+			config: { dataDir: '/existing' },
+			status: 0,
+		});
+	});
+
+	it.each([
+		['1', 1],
+		['100', 100],
+	])('accepts database pool-size boundary %s', (poolSize, expected) => {
+		const result = runConfigAdapter({
+			DEPLOY_CONTENT: `HEZO_DATABASE_POOL_SIZE=${poolSize}\n`,
+		});
+		expect(result).toMatchObject({
+			config: { database: { poolSize: expected } },
+			status: 0,
+		});
+	});
+
+	// An unvalidated pool size is interpolated unquoted, so anything but a bare
+	// integer lands as executable JavaScript in the generated config.
+	it.each([
+		'0',
+		'101',
+		'1; globalThis.injected = true',
+		'10.5',
+	])('rejects invalid database pool size %s before writing config', (poolSize) => {
+		const result = runConfigAdapter({
+			DEPLOY_CONTENT: `HEZO_DATABASE_POOL_SIZE=${poolSize}\n`,
+		});
+		expect(result.status).not.toBe(0);
+		expect(result.configExists).toBe(false);
+		expect(result.stderr).toContain('HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100');
+	});
+
+	it('carries legacy values exactly and retires the legacy env only after writing config', () => {
+		const dataDir = "/srv/hezo/legacy's\\data";
+		const databaseUrl = "postgres://hezo:old'pass\\word@db-host:5432/hezo";
+		const assetUrl = "s3://key:old'secret\\part@endpoint/bucket";
+		const result = runConfigAdapter(
+			{
+				LEGACY_CONTENT: [
+					`HEZO_DATA_DIR=${dataDir}`,
+					'HEZO_WEB_URL=https://legacy.example.test',
+					`HEZO_DATABASE_URL=${databaseUrl}`,
+					'HEZO_DATABASE_POOL_SIZE=17',
+					`HEZO_ASSET_STORAGE_URL=${assetUrl}`,
+					'',
+				].join('\n'),
+			},
+			'legacy',
+		);
+		expect(result).toMatchObject({
+			config: {
+				assetStorage: { url: assetUrl },
+				database: { poolSize: 17, url: databaseUrl },
+				dataDir,
+				webUrl: 'https://legacy.example.test',
+			},
+			legacyMigrated: true,
+			status: 0,
+		});
 	});
 
 	it('does not publish or scrub credentials after an interrupted config write', () => {
@@ -1182,27 +1400,34 @@ describe('the one-click managed-backend configuration contract', () => {
 	});
 
 	it('parses retained first-boot settings as literal data', () => {
-		const parserStart = PROVISION.indexOf('if [[ -f /etc/hezo/deploy.env ]]');
-		const parserEnd = PROVISION.indexOf('# Ensure host swap exists', parserStart);
-		expect(parserStart).toBeGreaterThan(-1);
-		expect(parserEnd).toBeGreaterThan(parserStart);
+		// firstboot gets the provisioner's own parser verbatim, so the two cannot
+		// drift into one that reads deploy.env as shell and one that does not.
+		expect(PROVISION).toContain('declare -f load_env_file >>/usr/local/sbin/hezo-firstboot.sh');
+		const call =
+			"load_env_file /etc/hezo/deploy.env '^(HEZO_DOMAIN_OVERRIDE|HEZO_SWAP_SIZE|BEHIND_GATEWAY)$'";
+		expect(PROVISION).toContain(call);
+		expect(PROVISION).not.toMatch(/(?:^|\n)\s*(?:[.]|source)\s+\/etc\/hezo\/deploy\.env/m);
 
 		const dir = mkdtempSync(join(tmpdir(), 'hezo-firstboot-literal-data-'));
 		const deployEnv = join(dir, 'deploy.env');
 		const executed = join(dir, 'literal-executed');
 		const domain = `host-'\\-\t-$(touch ${executed})`;
-		writeFileSync(deployEnv, `HEZO_DOMAIN_OVERRIDE=${domain}`);
+		// No trailing newline: the sole retained setting must still be read.
+		writeFileSync(deployEnv, `HEZO_SWAP_SIZE=6G\nHEZO_DOMAIN_OVERRIDE=${domain}`);
 		try {
-			const parser = PROVISION.slice(parserStart, parserEnd).replaceAll(
-				'/etc/hezo/deploy.env',
-				JSON.stringify(deployEnv),
-			);
+			const parser = [
+				loadEnvFileDefinition(),
+				call.replace('/etc/hezo/deploy.env', JSON.stringify(deployEnv)),
+			].join('\n');
 			const parsed = execFileSync(
 				'bash',
-				['-c', `set -euo pipefail\n${parser}\nprintf %s "\${HEZO_DOMAIN_OVERRIDE}"`],
+				[
+					'-c',
+					`set -euo pipefail\n${parser}\nprintf '%s\\n%s' "\${HEZO_SWAP_SIZE}" "\${HEZO_DOMAIN_OVERRIDE}"`,
+				],
 				{ encoding: 'utf8' },
 			);
-			expect(parsed).toBe(domain);
+			expect(parsed).toBe(`6G\n${domain}`);
 			expect(() => readFileSync(executed)).toThrow();
 		} finally {
 			rmSync(dir, { recursive: true, force: true });

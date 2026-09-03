@@ -15,6 +15,7 @@ import type React from 'react';
 import { expect, test } from 'vitest';
 import type { CommentDataOf } from '../src/components/comment-renderers/comment-data';
 import { TextComment } from '../src/components/comment-renderers/text-comment';
+import { withI18n } from './helpers/i18n';
 
 function renderNode(node: React.ReactNode) {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -24,10 +25,12 @@ function renderNode(node: React.ReactNode) {
 		history: createMemoryHistory({ initialEntries: ['/'] }),
 	});
 	return render(
-		<QueryClientProvider client={qc}>
-			{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
-			<RouterProvider router={router as any} />
-		</QueryClientProvider>,
+		withI18n(
+			<QueryClientProvider client={qc}>
+				{/* biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary. */}
+				<RouterProvider router={router as any} />
+			</QueryClientProvider>,
+		),
 	);
 }
 

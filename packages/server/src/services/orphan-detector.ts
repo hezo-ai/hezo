@@ -541,6 +541,39 @@ async function fileLostRunApproval(
 }
 
 /**
+ * Record that the model provider has been refusing an agent's runs for long
+ * enough that a person should decide what to do.
+ *
+ * Delegates to the same writer the two lost-run give-up paths use, so all three
+ * leave a human the same shape of record and share its one-per-stuck-agent
+ * dedupe. The message is the only thing that differs, and it has to: "failed 3
+ * consecutive times" would send the reader after the agent when the fault is
+ * upstream, and there is no fix here beyond waiting or switching the model.
+ */
+export async function fileProviderRefusalApproval(
+	db: Db,
+	run: { runId: string; memberId: string; teamId: string; taskId?: string | null; reason: string },
+): Promise<void> {
+	await fileLostRunApproval(
+		db,
+		run,
+		undefined,
+		`The model provider has been refusing this agent's runs for over ${PROVIDER_REFUSAL_GIVEUP_MIN} minutes, so Hezo has stopped retrying. ${run.reason} Switch the agent or task to another model, or wait for the provider to recover and press Retry.`,
+	);
+}
+
+/**
+ * How long work may sit owed while the provider keeps refusing it, before Hezo
+ * stops handing it back and asks for a human.
+ *
+ * The refusal itself has no lap ceiling - it clears on the provider's clock, not
+ * on an attempt count - so the bound is on elapsed owed time instead. Two hours
+ * outlasts any capacity blip and most rate-limit windows, while still being
+ * short enough that a spent subscription allowance surfaces the same day.
+ */
+export const PROVIDER_REFUSAL_GIVEUP_MIN = 120;
+
+/**
  * Repair DB state stranded when a run's completion bookkeeping never landed
  * (process wedge, swallowed error, crash between the run going terminal and
  * `onAgentComplete`). The orphan detector above only covers runs still marked

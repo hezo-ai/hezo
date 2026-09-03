@@ -1,15 +1,7 @@
-import { Logo } from './logo';
+import { type PageLogoProps, PageLogo as UiPageLogo } from '@hezo/ui';
+import { LOGO_ALT, LOGO_SRC, LOGO_WORDMARK } from './logo';
 
-/**
- * Brand mark pinned to the top-left of a full-screen auth / onboarding / login
- * page, mirroring where the logo sits in the signed-in app chrome. Absolutely
- * positioned so it never shifts the centered card it sits over. The parent shell
- * must be `relative`.
- */
-export function PageLogo() {
-	return (
-		<div className="absolute left-0 top-0 p-4 sm:p-6">
-			<Logo size="md" wordmark />
-		</div>
-	);
+/** The corner brand mark for a full-screen page, in this app's identity. */
+export function PageLogo(props: Omit<PageLogoProps, 'src' | 'alt' | 'wordmark'>) {
+	return <UiPageLogo {...props} src={LOGO_SRC} alt={LOGO_ALT} wordmark={LOGO_WORDMARK} />;
 }

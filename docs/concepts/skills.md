@@ -39,7 +39,7 @@ each project's manifest focused while still letting broadly-useful know-how reac
 - **Author them yourself.** Open **Settings → Skills** (the global Skills page) and write
   one directly, choosing its scope (global, or a specific project) as you add it. The editor
   previews the markdown as you go.
-- **Search and add from [skills.sh](https://skills.sh).** With a skills.sh token
+- **Search and add from [skills.sh](https://www.skills.sh/).** With a skills.sh token
   configured, search the public registry and install a skill straight into your catalog.
 - **Let agents contribute.** While working, an agent can add a skill directly
   (`create_skill`) or, when you'd rather review first, file one for your approval
@@ -71,7 +71,7 @@ how to drive that service as a skill, and keeps the skill updated as it learns m
 teammates can use the connection without re-deriving the integration from vendor docs. The
 skill's scope follows the connector's: a connector shared with every project gets a global
 skill, a project's own connector a project skill. Where a good public skill already exists
-on [skills.sh](https://skills.sh), agents persist that one into your catalog instead of
+on [skills.sh](https://www.skills.sh/), agents persist that one into your catalog instead of
 writing their own, and layer anything project-specific as a separate project skill that
 references it.
 

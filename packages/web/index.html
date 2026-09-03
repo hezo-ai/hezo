@@ -43,12 +43,14 @@
 			href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400..600&display=swap"
 		/>
 		<script>
+			// The theme, before the bundle exists. Adds the same one of the two classes
+			// ThemeProvider does, so the frame this paints matches the frame React does;
+			// theme-first-paint.test.tsx holds the key and the outcome in step.
 			(function () {
 				var t = localStorage.getItem('theme');
 				var d = window.matchMedia('(prefers-color-scheme: dark)').matches;
-				if (t === 'dark' || (t !== 'light' && d)) {
-					document.documentElement.classList.add('dark');
-				}
+				var dark = t === 'dark' || (t !== 'light' && d);
+				document.documentElement.classList.add(dark ? 'dark' : 'light');
 			})();
 		</script>
 		<script>

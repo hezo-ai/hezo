@@ -6,12 +6,13 @@ ships with tests that exercise functionality, prefer integration over heavily-mo
 default to the cheapest tier that can observe the thing, a green run has a quiet log - are
 in `AGENTS.md`; this is the how.
 
-## The five tiers
+## The six tiers
 
 | Tier | Where | Cost | What it tests | When to use |
 |---|---|---|---|---|
 | Server unit/integration | `packages/server/test/**/*.test.ts` | ~ms | API handlers, DB queries, services, MCP tools, agent run plumbing. Fresh PGlite + Hono app via `createTestContext()`. | Everything backend. |
 | Web component | `packages/web/test/**/*.test.{ts,tsx}` | ~100-700ms | React tree in happy-dom against an in-process Hono + PGlite backend via `renderApp()`. DOM, forms, React Query refetches, navigation, mention rendering. Stubs WebSocket and `IntersectionObserver`. | Anything render-driven not needing a real layout engine or WebSocket stream. ~80% of what would otherwise be a browser test. |
+| Shared primitives | `packages/ui/test/**/*.test.{ts,tsx}` | ~ms | Every `@hezo/ui` component rendered in happy-dom with **no provider of any kind** — no catalog, no router, no server. That is the property the package exists to have, and the one the web tier is structurally unable to check, since it always supplies both. | Anything in `packages/ui`. A spec needing an app around it belongs in the web tier instead. |
 | Shared pure-logic | `packages/shared/test/**/*.test.ts` | ~ms | Pure functions in `@hezo/shared` — crypto/auth, mnemonic, mention parsing, budget/pricing math, task-progress, type guards. | The shared package's logic. |
 | Playwright browser | `test/browser/**/*.spec.ts` | ~10-30s | Real Chromium. | The thin slice that genuinely needs a browser (see the decision tree). |
 | Bun-native runtime | `packages/server/test/bun/**/*.bun.test.ts` | ~ms | Code diverging between Node and Bun, on the production Bun runtime. Today: egress proxy TLS MITM + streaming, docker exec/log frame transport + process sweep, node-postgres driver, S3 asset client, updater / shutdown-deadline / unlock-handoff. | Anything relying on runtime-specific `node:` behaviour (TLS, `net`, `crypto`, `child_process`). |
@@ -22,6 +23,7 @@ in `AGENTS.md`; this is the how.
 - Use `ctx.app` / `ctx.baseUrl` / `ctx.port` — never a shared singleton, never a hardcoded port. No mutable state shared between files.
 - Pure logic tests can call functions directly.
 - GitHub OAuth/repo/SSH-key tests use `test/helpers/github-sim.ts` — set `GITHUB_API_BASE_URL` and `GITHUB_OAUTH_BASE_URL` before the context boots.
+- **Seed against the window the assertion reads, never a flat offset from `now()`.** A reader that clips to a calendar window bills only the part of the seeded row inside it, so `now() - interval '1 hour'` banks most of an hour in *last* month during the first hour of a new one and every fixed expectation reads the clipping as a bug — green all month, red on the release that lands after midnight UTC on the 1st. Seed through `test/helpers/uptime.ts` for container hours, and assert the width it hands back; elsewhere, cut the seed to the window and derive the expectation from what it actually covers.
 - `HEZO_SKIP_DOCKER=1` swaps in the in-process fake (`services/fake-docker.ts`). **Test/CI-only — never expose it to users.** The supported backends are the real ones (a local Docker-compatible runtime, or a managed sandbox service), so the fake must not appear in CLI/preflight output, `docs/`, README or `--help`; `docker-preflight.test.ts` guards this. Code comments and `.dev/` may reference it.
 
 ### Test-setup performance

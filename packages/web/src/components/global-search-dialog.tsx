@@ -39,7 +39,7 @@ export function GlobalSearchDialog({
 				{/* Right gutter so the shared corner close button never overlaps the input. */}
 				<Input
 					autoFocus
-					className="pr-8 sm:pr-9"
+					wrapperClassName="pr-8 sm:pr-9"
 					icon={<Search className="h-4 w-4" />}
 					placeholder="Search tasks, comments, docs, skills…"
 					value={query}

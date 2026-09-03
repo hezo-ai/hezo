@@ -77,16 +77,22 @@ RELEASE_TAG="${HEZO_RELEASE_TAG:-latest}"
 APP_PORT=3100
 
 # Cloud-init can seed optional settings (managed database / asset storage, domain
-# override) into deploy.env before this script runs — pick them up. Explicit shell
-# environment still wins over the file.
-if [[ -f "${DEPLOY_ENV}" ]]; then
+# override) into deploy.env before this script runs - pick them up as literal data,
+# never as shell. Only keys matching the caller's pattern are taken, explicit shell
+# environment still wins over the file, and a final line without a trailing newline
+# is still read. hezo-firstboot.sh below gets this same function verbatim.
+load_env_file() {
+	local path="$1" allowed="$2" key value
+	[[ -f "${path}" ]] || return 0
 	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
-		[[ "${key}" =~ ^(HEZO_[A-Z_]+|BEHIND_GATEWAY)$ ]] || continue
+		[[ "${key}" =~ ${allowed} ]] || continue
 		if [[ -z "${!key:-}" ]]; then
 			export "${key}=${value}"
 		fi
-	done <"${DEPLOY_ENV}"
-fi
+	done <"${path}"
+}
+
+load_env_file "${DEPLOY_ENV}" '^(HEZO_[A-Z_]+|BEHIND_GATEWAY)$'
 
 # Resolved once so every branch below reads the same answer, and so `set -u`
 # never trips on an unset optional flag.
@@ -598,16 +604,14 @@ cat >/usr/local/sbin/hezo-firstboot.sh <<'EOF'
 # writes it where Caddy (/etc/caddy/hezo.env) and Hezo (/etc/hezo/web-url, read
 # by /etc/hezo/hezo.config.cjs) each pick it up.
 set -euo pipefail
+EOF
+declare -f load_env_file >>/usr/local/sbin/hezo-firstboot.sh
+cat >>/usr/local/sbin/hezo-firstboot.sh <<'EOF'
 
 SENTINEL="/var/lib/hezo/.firstboot-done"
 [[ -f "${SENTINEL}" ]] && exit 0
 
-if [[ -f /etc/hezo/deploy.env ]]; then
-	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
-		[[ "${key}" =~ ^(HEZO_DOMAIN_OVERRIDE|HEZO_SWAP_SIZE|BEHIND_GATEWAY)$ ]] || continue
-		export "${key}=${value}"
-	done </etc/hezo/deploy.env
-fi
+load_env_file /etc/hezo/deploy.env '^(HEZO_DOMAIN_OVERRIDE|HEZO_SWAP_SIZE|BEHIND_GATEWAY)$'
 
 # Ensure host swap exists before Caddy/Hezo start (no-op if already active). On the
 # machine-image path this is where swap first gets created, since provision.sh

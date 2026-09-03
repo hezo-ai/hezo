@@ -259,14 +259,14 @@ export function ModelPricingSection() {
 							value={input}
 							onChange={(e) => setInput(e.target.value)}
 							required
-							className="flex-1"
+							wrapperClassName="flex-1"
 						/>
 						<Input
 							placeholder="Output $ / Mtok"
 							value={output}
 							onChange={(e) => setOutput(e.target.value)}
 							required
-							className="flex-1"
+							wrapperClassName="flex-1"
 						/>
 					</div>
 					<div className="flex flex-col sm:flex-row gap-2">
@@ -274,13 +274,13 @@ export function ModelPricingSection() {
 							placeholder="Cache read $ / Mtok (optional)"
 							value={cacheRead}
 							onChange={(e) => setCacheRead(e.target.value)}
-							className="flex-1"
+							wrapperClassName="flex-1"
 						/>
 						<Input
 							placeholder="Cache write $ / Mtok (optional)"
 							value={cacheCreation}
 							onChange={(e) => setCacheCreation(e.target.value)}
-							className="flex-1"
+							wrapperClassName="flex-1"
 						/>
 					</div>
 					{error && <p className="text-[13px] text-danger">{error}</p>}

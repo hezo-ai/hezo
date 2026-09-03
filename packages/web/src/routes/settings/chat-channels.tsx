@@ -154,7 +154,7 @@ function SlackSection() {
 						placeholder={slack?.has_token ? '••••••••' : 'Paste bot token'}
 						value={botToken}
 						onChange={(e) => setBotToken(e.target.value)}
-						className="sm:w-96"
+						wrapperClassName="sm:w-96"
 					/>
 				</div>
 				<div>
@@ -170,7 +170,7 @@ function SlackSection() {
 						placeholder={slack?.has_app_token ? '••••••••' : 'Paste app-level token'}
 						value={appToken}
 						onChange={(e) => setAppToken(e.target.value)}
-						className="sm:w-96"
+						wrapperClassName="sm:w-96"
 					/>
 				</div>
 				<div className="flex flex-col gap-1.5">
@@ -271,7 +271,7 @@ function DiscordSection() {
 						placeholder={discord?.has_token ? '••••••••' : 'Paste bot token'}
 						value={botToken}
 						onChange={(e) => setBotToken(e.target.value)}
-						className="sm:w-96"
+						wrapperClassName="sm:w-96"
 					/>
 				</div>
 				<div className="flex flex-col gap-1.5">
@@ -364,7 +364,7 @@ function ChannelForm({
 					placeholder={config?.has_token ? '••••••••' : 'Paste bot token'}
 					value={token}
 					onChange={(e) => setToken(e.target.value)}
-					className="sm:w-96"
+					wrapperClassName="sm:w-96"
 				/>
 			</div>
 			<div>
@@ -378,7 +378,7 @@ function ChannelForm({
 					placeholder="-1001234567890"
 					value={groupId}
 					onChange={(e) => setGroupId(e.target.value)}
-					className="sm:w-96"
+					wrapperClassName="sm:w-96"
 				/>
 			</div>
 			<label className="flex items-center gap-2 text-[13px]">
@@ -455,7 +455,7 @@ function IdentitiesSection() {
 						data-testid="identity-external-id"
 						value={externalId}
 						onChange={(e) => setExternalId(e.target.value)}
-						className="sm:w-48"
+						wrapperClassName="sm:w-48"
 					/>
 				</div>
 				<div>
@@ -468,7 +468,7 @@ function IdentitiesSection() {
 						placeholder="@you"
 						value={handle}
 						onChange={(e) => setHandle(e.target.value)}
-						className="sm:w-40"
+						wrapperClassName="sm:w-40"
 					/>
 				</div>
 				<Button

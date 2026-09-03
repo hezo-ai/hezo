@@ -55,14 +55,15 @@ manager (agents bring their own models and runtimes).
 | Crypto | AES-256-GCM at rest; master key held in memory only |
 | Containers | Docker Engine API or a managed sandbox service, behind one `ContainerEngine` seam — a pool per project, one run per container, started on demand and retired per member after a fixed 2-minute idle window (15 for a live assistant chat), or sooner when another project needs the memory |
 
-**Monorepo** — Bun workspaces + Turborepo. **Three** packages plus a root `agents/`
+**Monorepo** — Bun workspaces + Turborepo. **Four** packages plus a root `agents/`
 tree:
 
 ```
 packages/
 ├── server/   # Hono + PGlite + MCP backend; compiles to the binary (embeds web)
 ├── web/      # React frontend, bundled into the server binary at build time
-└── shared/   # Shared enums, types, crypto, pricing, mention parsing (@hezo/shared)
+├── shared/   # Shared enums, types, crypto, pricing, mention parsing (@hezo/shared)
+└── ui/       # The primitives more than one app draws with (@hezo/ui)
 agents/       # Agent system-prompt markdown — the source of truth for seeded roles
 ```
 
@@ -70,6 +71,44 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   type (`src/types/common.ts`), the provider→runtime maps, BIP39/HKDF crypto helpers,
   budget/pricing math, and mention parsing. Add new status/type values here first —
   no raw status strings in `server`/`web` (see `AGENTS.md` › Conventions).
+- **`packages/ui`** (`@hezo/ui`) holds the primitives a second app draws with — the
+  dialog and confirmation, the button, input, textarea, toggle and password field, the
+  badges, card, breadcrumb, data table, tooltips, selects, segmented control, filter
+  pills, avatar, brand mark, theme menu, and the shortcut binding and keycap behind
+  them. Source-only, with an `exports` map, so a consumer transpiles it the way `web`
+  already transpiles its own `.tsx`. **Three rules keep it importable**: no copy is
+  resolved inside it (every user-visible string is a prop with an English default, and
+  `web`'s `components/ui/` wrappers supply the translated one); no class string reads a
+  raw `var(--token)` — `bg-overlay`, never `bg-[var(--overlay)]`, because the raw
+  property is undefined wherever a consumer namespaces its own and the backdrop then
+  goes transparent with nothing in the markup to say so; and nothing here imports a
+  router, a store or a fetch layer. What a consumer must define is the `@theme` colour
+  surface those classes name, plus `text-eyebrow`, and **its stylesheet must name this
+  package as a Tailwind source** — the scan root stops at the consuming app, so without
+  that every utility used only by a primitive is missing from the stylesheet and the
+  component renders unstyled with nothing to say so. `web` declares it in `index.css`
+  and `test/stylesheet-sources.test.ts` holds it there.
+  **Its props types are part of the contract.** Every component exports its own
+  `*Props`, because `ComponentProps<typeof X>` erases the parameter of a generic — a
+  consumer cannot wrap `DataTable`, `SegmentedControl` or `FilterPills` type-safely
+  without them.
+  **Three things a consumer supplies, each failing loudly rather than guessing**:
+  `ThemeProvider` takes a required `storageKey`, since a default would be a name every
+  app on one origin shares (`web` passes `THEME_STORAGE_KEY` from `lib/theme.tsx`, which
+  the pre-paint script in `index.html` duplicates under the guard in
+  `test/theme-first-paint.test.tsx`); `TooltipProvider` is mounted once near the root,
+  because the cross-tooltip delay grouping lives on it and one provider per tooltip is
+  no grouping at all; and `Logo` takes its `src`, `alt` and wordmark, since the package
+  ships no image and a baked-in path resolves against whichever app is serving.
+  **A component stays in `web` when it names a Hezo concept** — an actor, a budget, an
+  archived asset — or when its copy is a paragraph rather than a word: a sentence with a
+  node in it goes through the catalog whole, which a label prop cannot do. That is why
+  `device-code-steps` and `expandable-text` did not move, and why `tabs` did not (it
+  binds to the router).
+  **It runs its own tier** (`packages/ui/test/`, `bun run test --package ui`, one CI
+  job), rendering every primitive with no provider of any kind. That is the property the
+  package exists to have, and the web suite — which always supplies a catalog and a
+  router — is structurally unable to check it.
 - **`packages/server`** imports from `shared` and embeds `web` at build time.
 - **`agents/`** holds role prose by team (`app-dev/`, `blank/`, `influencer/`, `investment/`), the two
   instance roles (`_instance/ceo.md`, `_instance/coach.md`), and reusable `_partials/`.
@@ -219,6 +258,13 @@ preview of each end plus the full lengths, never the bodies: the comments skelet
 the MCP `list_comments` tool both return a system comment's `content` whole, so a stored body
 would ride into every comment fetch and every agent prompt for the life of the task. The
 matching `task.updated` audit event omits both ends for the same reason.
+Both update paths lock the task row before applying mutation policies and feed atomically captured
+before-and-after rows through one event producer.
+For direct edits, it emits only real changes to title, description, status, priority, assignee,
+progress summary, rules, branch, runtime, and parent. Description, progress-summary, and rules
+bodies stay off the audit row; assignee names and parent identifiers are resolved into labels for
+the Activity view. Internal task transitions outside these update surfaces need their own event
+producer.
 Marking a task `done` is gated in both update paths (REST PATCH and MCP `update_task`,
 shared helpers in `lib/task-relationships.ts`): every sub-task terminal, no outstanding
 pinged-agent activity by others (active runs, pending mention/comment/reply wakeups), and —
@@ -2468,6 +2514,25 @@ parks the task, including one inside a routine status update. It is marked `comp
 same query because migration 061's frozen comment names `noWorkCooldownActive` and that file,
 so neither can be renamed to cover both.
 
+**The provider-refusal cooldown.** The third suppression, and the only one applied *before*
+the claim rather than after task resolution - `processWakeups` NULLs `last_skipped_at` and
+`last_skipped_reason` when it claims a row, so a predicate placed beside the two above could
+not read the very fields this one keys on. `providerRefusalCooldownSql`
+(`services/no-work-backoff.ts`) is therefore a fragment in the scan's own `WHERE`, excluding
+a wakeup handed back for `provider_at_capacity` within 5 minutes or `provider_usage_limit`
+within 30. It is in the SQL rather than as a `continue` in the dispatch loop because that
+scan takes the ten **oldest** queued wakeups: a cooling-down row is by then an old row, so
+filtering after the fact would let a handful of them fill the window every tick and starve
+newer work for as long as the outage lasted. The `NOT` is wrapped in `COALESCE(..., false)`
+- a never-skipped wakeup has a NULL reason, every arm evaluates to NULL, and a bare
+`NOT (NULL)` is NULL, which a `WHERE` treats as false and drops the entire ordinary queue.
+Nothing is written per tick: the row is simply not selected, so its clock runs from the
+handback's own timestamp, no unchanged row is rewritten, and the wakeup stays `queued` with
+its reason set so the task keeps its queued badge throughout. Unlike the two above it has
+**no exempt sources** - a human's mention or reply cannot change how loaded the provider is,
+so dispatching for one would claim a container to be refused again. `dispatchWakeupNow`
+selects by id and does not apply it, which is the operator's override.
+
 **The container-start fan-out.** `provisionContainer` ends by nudging the project's agents
 (`wakeAgentsWithPendingWork`) so work queued while the container was still coming up starts
 without waiting for a heartbeat. That is right for a provision
@@ -2598,6 +2663,31 @@ consequences elsewhere: the idle-stop scan's busy set excludes a parked run
 (`BUSY_PROJECTS_SQL`), since it holds no container and is waiting on the very reclaim that
 scan feeds; and the run reads honestly while parked, the run comment and run detail page
 both rendering "Queued - waiting for container capacity" from `queued_reason`.
+
+**Provider refusal.** The fourth handback cause, and the only one that *did* start the CLI.
+When a runtime's stream reports a `Transient` failure - the model at capacity, a rate limit,
+a spent subscription allowance - the run is handed back through `finalizeRequeue` rather than
+finalized `Failed`, carrying `provider_at_capacity` or `provider_usage_limit` so the dispatch
+cooldown above knows which clock to hold it on. The classification reads phrasing and is the
+*least* trusted of six conditions; the other five are structural, and together they mean a
+false positive cannot discard work. Chiefly the token gate: the run must have spent nothing
+(`in + out === 0`, read through the same expression the row write uses so the two cannot
+drift), written nothing (`produced_output`, `reported_no_work`), hold no unpushed commits -
+those exist in exactly one container, which the handback is about to release - and have died
+to no signal. A run that burned 50k tokens before a mid-stream 503 fails normally and keeps
+its usage. The same preconditions are what stop an agent's *own* HTTP tool call returning 503
+from triggering this, since a runtime's error arm renders those too.
+
+The refusal has no lap ceiling - it clears on the provider's clock, not on an attempt count -
+so the bound is on how long the work has been owed instead, measured from the wakeup's
+`created_at`, which a handback does not reset. Past `PROVIDER_REFUSAL_GIVEUP_MIN` (120)
+`runAgent` stops absorbing: the run falls through to its ordinary terminal failure, so the
+Errored view and the failure ping both fire, and `fileProviderRefusalApproval` files the same
+shape of Inbox record the two lost-run give-up paths use, sharing their one-per-stuck-agent
+dedupe and differing only in the message - "failed 3 consecutive times" would send the reader
+after the agent when the fault is upstream. A synthetic on-demand wakeup is created at
+dispatch, so the ceiling never bites a manual run: that hands back once and lets the operator
+see it queued.
 
 **Credential wait — two separate properties.** A credential raises two independent
 questions, and collapsing them was a bug the measurements caught. **Does the CLI rewrite its
@@ -3761,9 +3851,12 @@ model or jump price tier; version comparison reads `.` and `-` alike and drops d
 suffixes, so `claude-haiku-4-5-20251001` cannot outrank a later release on a date. The refresh
 **never touches an existing row** — it moves only the default offered to the next config
 added — and holds the previous pin on an unreachable provider, a rejected key or a family that
-matched nothing. Providers with no spec (the local runners) get no pin at all. It exists
-because a hardcoded id cannot notice its own retirement: a withdrawn one — once
-`gemini-1.5-flash`, the Google stop-hook judge — 404s on every run while the hook fails open.
+matched nothing. Providers with no spec (the local runners) get no pin at all. **OpenRouter's
+family is a single id**, `openrouter/auto`: a router has no version ladder inside it, and
+pinning one vendor line there discards the routing the operator chose OpenRouter for, so the
+refresh only ever confirms the catalog still lists that route. It exists because a hardcoded
+id cannot notice its own retirement: a withdrawn one — once `gemini-1.5-flash`, the Google
+stop-hook judge — 404s on every run while the hook fails open.
 
 **Reasoning effort.** Each run resolves an `agent_effort` level
 (`minimal|low|medium|high|max`) from the wakeup payload → `member_agents.default_effort` →
@@ -3941,6 +4034,26 @@ the run home (`extractKimiUsageFromSessionLog`, counting turn-scoped records and
 summing cumulative session totals). `recoverOffStreamRunUsage` dispatches both and scrubs the
 file afterwards — Grok's holds the `XAI_API_KEY`, and a wire log plausibly captures the
 Moonshot bearer.
+
+**A runtime's reported error carries a retry verdict, not just a message.**
+`classifyRuntimeError` returns a `RuntimeErrorVerdict` - the operator-facing sentence plus a
+`RunFailureClass` - read from one `RUNTIME_ERROR_FAMILIES` table that all six parsers share
+through `createJsonlParser`, which derives `getTerminalError()` and
+`getTerminalFailureClass()` from the one retained verdict so a parser cannot report a message
+without its class. Five families: credit/quota and auth are `Permanent`, while capacity or
+overload, rate limits, and a spent subscription allowance are `Transient` and let the runner
+hand the work back. **The table order is load-bearing** - the two terminal families are
+tested first because they are the more specific match, so `429 ... exceeded your current
+quota` stays a billing problem while a bare `429 Too Many Requests` is pacing. `server_error`
+is deliberately excluded from the capacity family: it is OpenAI's catch-all and also covers
+malformed requests, which reproduce exactly. This is the second entry point into the
+`RunFailureClass` vocabulary `classifyRunFailure` answers for thrown failures; the two share
+the type so the exec path and the parsed path cannot drift on what a retry is for.
+
+**Codex reports a failed turn's reason on the turn event.** The `turn.failed` arm reads
+`event.error`, not only the separate top-level `error` event - Codex does not always emit
+both, so a reason read from that arm alone was lost and the row fell through to the
+exit-code backstop with the provider's own explanation left in the log text.
 
 **Grok's text buffer flushes at every turn boundary, not just at `end`.** Its stream carries
 assistant text as `text` deltas with no `result` event, so the parser accumulates them and the

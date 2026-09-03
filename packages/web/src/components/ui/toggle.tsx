@@ -1,27 +1,6 @@
-interface ToggleProps {
-	checked: boolean;
-	onChange: (checked: boolean) => void;
-	disabled?: boolean;
-	className?: string;
-}
-
-export function Toggle({ checked, onChange, disabled = false, className = '' }: ToggleProps) {
-	return (
-		<button
-			type="button"
-			role="switch"
-			aria-checked={checked}
-			disabled={disabled}
-			onClick={() => onChange(!checked)}
-			className={`relative inline-flex w-8 h-[18px] rounded-full transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-				checked ? 'bg-accent' : 'bg-border-strong'
-			} ${className}`}
-		>
-			<span
-				className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-surface shadow-sm transition-transform duration-200 ${
-					checked ? 'translate-x-[14px]' : 'translate-x-0'
-				}`}
-			/>
-		</button>
-	);
-}
+/**
+ * Now ships from `@hezo/ui`.
+ *
+ * Re-exported from its old path so every call site keeps the import it had.
+ */
+export { Toggle, type ToggleProps } from '@hezo/ui';

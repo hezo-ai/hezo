@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import type { AuditEntry } from '../hooks/use-audit-log';
 import { auditEntryLink, describeAuditEntry } from '../lib/audit-format';
+import { useI18n } from '../lib/i18n';
 import { ActorBadge } from './ui/actor-badge';
 import { type Column, DataTable } from './ui/data-table';
 import { RelativeTime } from './ui/relative-time';
@@ -19,13 +20,19 @@ export function AuditLogTable({
 	showProject?: boolean;
 	emptyText?: string;
 }) {
+	const { t } = useI18n();
 	if (!entries?.length) {
 		return <p className="text-[13px] text-text-2">{emptyText}</p>;
 	}
-	return <DataTable columns={buildColumns(showProject)} data={entries} rowKey={(row) => row.id} />;
+	return (
+		<DataTable columns={buildColumns(showProject, t)} data={entries} rowKey={(row) => row.id} />
+	);
 }
 
-function buildColumns(showProject: boolean): Column<AuditEntry>[] {
+function buildColumns(
+	showProject: boolean,
+	t: ReturnType<typeof useI18n>['t'],
+): Column<AuditEntry>[] {
 	const columns: Column<AuditEntry>[] = [
 		{
 			key: 'time',
@@ -50,7 +57,7 @@ function buildColumns(showProject: boolean): Column<AuditEntry>[] {
 			key: 'activity',
 			header: 'Activity',
 			render: (e) => {
-				const text = describeAuditEntry(e);
+				const text = describeAuditEntry(e, t);
 				const link = auditEntryLink(e);
 				if (!link) return <span className="text-[13px] text-text-1">{text}</span>;
 				return (

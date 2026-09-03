@@ -1,4 +1,4 @@
-import { WakeupSource } from '@hezo/shared';
+import { WakeupSkipReason, WakeupSource } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { outstandingAdminAskExistsSql } from '../lib/task-sort';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
@@ -165,4 +165,64 @@ export async function parkedOnAdminAsk(
 	);
 
 	return r.rows[0]?.parked === true;
+}
+
+/**
+ * How long the dispatcher holds a wakeup the model provider just refused,
+ * keyed by which refusal it was.
+ *
+ * Two clocks because the two clear on different ones. Capacity, overload and
+ * rate limits are minutes-long and often seconds-long, so five minutes delays a
+ * genuine blip barely at all while capping the cost at twelve laps an hour. A
+ * spent subscription allowance resets on a multi-hour clock, so retrying it on
+ * the capacity cadence would be twelve wasted container claims an hour for
+ * hours - it gets thirty minutes instead.
+ *
+ * Both are judgement calls, not read from upstream: none of the runtimes
+ * surfaces a `Retry-After` on its stream, so there is no value to honour. Not a
+ * `runtimeConfig()` key - that would drag in the config schema, the defaults,
+ * the deployment docs and an upgrade pass for a knob nobody asked to tune.
+ * Tests reach these by back-dating `last_skipped_at`.
+ */
+const PROVIDER_REFUSAL_COOLDOWN_MIN: Record<string, number> = {
+	[WakeupSkipReason.ProviderAtCapacity]: 5,
+	[WakeupSkipReason.ProviderUsageLimit]: 30,
+};
+
+/**
+ * A `WHERE` fragment excluding wakeups still cooling down after the provider
+ * refused them.
+ *
+ * Written as SQL rather than as a predicate the dispatch loop calls, because
+ * the wakeup scan is `ORDER BY created_at ASC LIMIT 10`: a cooling-down wakeup
+ * is an *old* row, so filtering it after the scan would let a handful of them
+ * occupy the whole window every tick and starve newer work. Excluding them in
+ * the query removes them from the window instead.
+ *
+ * Reads `last_skipped_reason` / `last_skipped_at`, which the handback wrote and
+ * which the claim clears - so this must be applied to the scan, before the
+ * claim, and not where the two dispatch suppressions above are applied.
+ *
+ * Nothing is written per tick: the row is simply not selected, so its clock
+ * keeps running from the handback's own timestamp and no unchanged row is
+ * rewritten. The wakeup stays `queued` throughout, so the task keeps showing
+ * its queued badge for the whole outage.
+ *
+ * Deliberately has no exempt sources, unlike the two suppressions above. A
+ * human's mention or reply cannot change how loaded the provider is, so
+ * dispatching for one would claim a container to fail again. "Run now"
+ * (`dispatchWakeupNow`) selects by id and does not apply this, which is the
+ * operator's override.
+ */
+export function providerRefusalCooldownSql(alias = ''): string {
+	const col = (name: string) => (alias ? `${alias}.${name}` : name);
+	const arms = Object.entries(PROVIDER_REFUSAL_COOLDOWN_MIN).map(
+		([reason, minutes]) =>
+			`(${col('last_skipped_reason')} = '${reason}' AND ${col('last_skipped_at')} > now() - interval '${minutes} minutes')`,
+	);
+	// `COALESCE(..., false)` is load-bearing, not defensive. A wakeup that has never
+	// been skipped has a NULL `last_skipped_reason`, so every arm evaluates to NULL,
+	// the OR is NULL, and a bare `NOT (NULL)` is NULL - which a WHERE treats as
+	// false, silently filtering out every ordinary wakeup in the queue.
+	return `NOT COALESCE(${arms.join(' OR ')}, false)`;
 }

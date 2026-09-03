@@ -169,13 +169,13 @@ function ProjectSkillsPage() {
 									value={name}
 									onChange={(e) => setName(e.target.value)}
 									required
-									className="flex-1"
+									wrapperClassName="flex-1"
 								/>
 								<Input
 									placeholder="Tags (comma-separated, optional)"
 									value={tags}
 									onChange={(e) => setTags(e.target.value)}
-									className="flex-1"
+									wrapperClassName="flex-1"
 								/>
 							</div>
 							<Input

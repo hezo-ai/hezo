@@ -77,7 +77,11 @@ import { getDueGoals } from './goals';
 import { heartbeatIntervalFloorMin } from './heartbeat-schedule';
 import type { LogStreamBroker } from './log-stream-broker';
 import { refreshModelPins } from './model-pins';
-import { noWorkCooldownActive, parkedOnAdminAsk } from './no-work-backoff';
+import {
+	noWorkCooldownActive,
+	parkedOnAdminAsk,
+	providerRefusalCooldownSql,
+} from './no-work-backoff';
 import { detectOrphans, healStaleRunState, STALE_STATE_GRACE_SECONDS } from './orphan-detector';
 import type { PricingService } from './pricing';
 import { collectCandidateRunIds, decideSweepKills } from './process-sweeper';
@@ -1857,10 +1861,16 @@ export class JobManager {
 			payload: Record<string, unknown>;
 			created_at: string;
 		}>(
+			// The cooldown is a residual filter on an already-bounded scan, so it needs
+			// no index of its own. It belongs here rather than as a `continue` in the
+			// loop below because this scan takes the ten OLDEST queued wakeups: a
+			// cooling-down row is by then an old row, so skipping it after the fact
+			// would let a few of them fill the window every tick and starve newer work.
 			`SELECT id, member_id, team_id, source, payload, created_at
 			 FROM agent_wakeup_requests
 			 WHERE status = $2::wakeup_status
 			   AND created_at < $1
+			   AND ${providerRefusalCooldownSql()}
 			 ORDER BY created_at ASC
 			 LIMIT 10`,
 			[coalescingCutoff, WakeupStatus.Queued],

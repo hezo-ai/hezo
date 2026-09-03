@@ -981,6 +981,21 @@ export const WakeupSkipReason = {
 	 * the dispatcher should pick this up on its next tick.
 	 */
 	RunNeverStarted: 'run_never_started',
+	/**
+	 * The model provider refused the run before it got a turn - at capacity,
+	 * overloaded, or rate limited. Distinct from `InstanceAtCapacity` because
+	 * nothing this instance does clears it: no container frees it and no operator
+	 * action helps, only the provider's own clock. The dispatcher holds the wakeup
+	 * for a short cooldown; "Run now" overrides it.
+	 */
+	ProviderAtCapacity: 'provider_at_capacity',
+	/**
+	 * The provider subscription's usage allowance is spent. Transient like
+	 * `ProviderAtCapacity`, but on a multi-hour clock rather than a minutes-long
+	 * one, which is the whole reason it is a separate reason: it earns a longer
+	 * cooldown before the dispatcher tries again.
+	 */
+	ProviderUsageLimit: 'provider_usage_limit',
 } as const;
 export type WakeupSkipReason = (typeof WakeupSkipReason)[keyof typeof WakeupSkipReason];
 

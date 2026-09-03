@@ -1,24 +1,25 @@
-// The Hezo brand mark (red rounded square). Served from /logo.svg (public/).
-const sizeMap = {
-	sm: 'h-5 w-5',
-	md: 'h-6 w-6',
-	lg: 'h-8 w-8',
-} as const;
+import { type LogoProps, Logo as UiLogo } from '@hezo/ui';
 
-interface LogoProps {
-	size?: keyof typeof sizeMap;
-	/** Render the lowercase "hezo" wordmark next to the mark. */
-	wordmark?: boolean;
-	className?: string;
-}
+/** Where this app serves its mark, and what the mark is called. */
+export const LOGO_SRC = '/logo.svg';
+export const LOGO_ALT = 'Hezo';
+export const LOGO_WORDMARK = 'hezo';
 
-export function Logo({ size = 'md', wordmark = false, className = '' }: LogoProps) {
+/**
+ * The brand mark, in this app's identity.
+ *
+ * **The image and the word live here, never in the package.** A path baked into
+ * a primitive resolves against whichever app is serving, so a second consumer
+ * would render a broken image with nothing in the markup to say why.
+ */
+export function Logo(props: Omit<LogoProps, 'src' | 'alt' | 'wordmark'> & { wordmark?: boolean }) {
+	const { wordmark, ...rest } = props;
 	return (
-		<span className={`inline-flex items-center gap-2 ${className}`}>
-			<img src="/logo.svg" alt="Hezo" className={`${sizeMap[size]} rounded-[22%]`} />
-			{wordmark && (
-				<span className="text-[15px] font-semibold lowercase tracking-tight text-text-1">hezo</span>
-			)}
-		</span>
+		<UiLogo
+			{...rest}
+			src={LOGO_SRC}
+			alt={LOGO_ALT}
+			wordmark={wordmark ? LOGO_WORDMARK : undefined}
+		/>
 	);
 }

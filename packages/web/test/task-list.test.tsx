@@ -138,7 +138,7 @@ test('multi-select status filter narrows results and reset restores defaults', a
 	// Radix Popover.Portal renders into body
 	let clear = await findByRole('button', { name: 'Clear selection' });
 	await user.click(clear);
-	const doneOption = await findByRole('button', { name: 'Done' });
+	const doneOption = await findByRole('menuitemcheckbox', { name: 'Done' });
 	await user.click(doneOption);
 	// Close popover by clicking the trigger again
 	await user.click(statusBtn);
@@ -157,7 +157,7 @@ test('multi-select status filter narrows results and reset restores defaults', a
 	await user.click(statusBtn);
 	clear = await findByRole('button', { name: 'Clear selection' });
 	await user.click(clear);
-	const backlogOption = await findByRole('button', { name: 'Backlog' });
+	const backlogOption = await findByRole('menuitemcheckbox', { name: 'Backlog' });
 	await user.click(backlogOption);
 	await user.click(statusBtn);
 
@@ -224,7 +224,7 @@ test('terminal tasks render in a Done section split out from the Backlog', async
 	await user.click(toggle);
 	const statusBtn = await findByTestId('task-filter-status');
 	await user.click(statusBtn);
-	const cancelledOption = await findByRole('button', { name: 'Cancelled' });
+	const cancelledOption = await findByRole('menuitemcheckbox', { name: 'Cancelled' });
 	await user.click(cancelledOption);
 	await user.click(statusBtn);
 
@@ -328,7 +328,7 @@ test('Done section hides when only terminal tasks remain after filtering them ou
 	await user.click(statusBtn);
 	const clear = await findByRole('button', { name: 'Clear selection' });
 	await user.click(clear);
-	const doneOption = await findByRole('button', { name: 'Done' });
+	const doneOption = await findByRole('menuitemcheckbox', { name: 'Done' });
 	await user.click(doneOption);
 	await user.click(statusBtn);
 
@@ -662,7 +662,7 @@ test('blocked tasks pin to the in progress section, not the backlog', async () =
 	expect(queryAllByRole('button', { name: 'Blocked' })).toHaveLength(0);
 	const clear = await findByRole('button', { name: 'Clear selection' });
 	await user.click(clear);
-	const backlogOption = await findByRole('button', { name: 'Backlog' });
+	const backlogOption = await findByRole('menuitemcheckbox', { name: 'Backlog' });
 	await user.click(backlogOption);
 	await user.click(statusBtn);
 

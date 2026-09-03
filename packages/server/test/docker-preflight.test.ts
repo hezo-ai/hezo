@@ -194,6 +194,7 @@ describe('formatDockerPreflightMessage', () => {
 
 	it('points at the Docker install page when nothing is installed', () => {
 		const msg = formatDockerPreflightMessage(notInstalled);
+		expect(DOCKER_INSTALL_URL).toBe('https://docs.docker.com/get-started/get-docker/');
 		expect(msg).toContain(DOCKER_INSTALL_URL);
 		expect(msg).toContain('A Docker-compatible container runtime is required');
 	});

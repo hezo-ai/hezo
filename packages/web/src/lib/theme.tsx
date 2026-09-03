@@ -1,79 +1,18 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
-import { readStored, writeStored } from './safe-storage';
+import { ThemeProvider as UiThemeProvider } from '@hezo/ui';
+import type { ReactNode } from 'react';
 
-export type ThemePreference = 'system' | 'light' | 'dark';
-export type ResolvedTheme = 'light' | 'dark';
+export { type ResolvedTheme, type ThemePreference, useTheme } from '@hezo/ui';
 
-interface ThemeContextValue {
-	preference: ThemePreference;
-	resolvedTheme: ResolvedTheme;
-	setPreference: (preference: ThemePreference) => void;
-}
+/**
+ * Where this app's saved theme preference lives.
+ *
+ * **Duplicated in `index.html`, on purpose and under guard.** The pre-paint
+ * script has to read the key before any module loads, so it cannot import this;
+ * `theme-first-paint.test.tsx` fails if the two ever drift apart.
+ */
+export const THEME_STORAGE_KEY = 'theme';
 
-const ThemeContext = createContext<ThemeContextValue | null>(null);
-
-const STORAGE_KEY = 'theme';
-
-function getSystemTheme(): ResolvedTheme {
-	if (typeof window === 'undefined') return 'light';
-	return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-function resolveTheme(preference: ThemePreference): ResolvedTheme {
-	if (preference === 'system') return getSystemTheme();
-	return preference;
-}
-
-function applyTheme(theme: ResolvedTheme) {
-	const root = document.documentElement;
-	root.classList.remove('light', 'dark');
-	root.classList.add(theme);
-}
-
+/** The shared provider, bound to this app's storage key. */
 export function ThemeProvider({ children }: { children: ReactNode }) {
-	const [preference, setPreferenceState] = useState<ThemePreference>(() => {
-		if (typeof window === 'undefined') return 'system';
-		const stored = readStored(STORAGE_KEY);
-		if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
-		return 'system';
-	});
-
-	const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(preference));
-
-	const setPreference = useCallback((newPreference: ThemePreference) => {
-		setPreferenceState(newPreference);
-		writeStored(STORAGE_KEY, newPreference);
-	}, []);
-
-	useEffect(() => {
-		const resolved = resolveTheme(preference);
-		setResolvedTheme(resolved);
-		applyTheme(resolved);
-	}, [preference]);
-
-	useEffect(() => {
-		if (preference !== 'system') return;
-
-		const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-		const handleChange = () => {
-			const resolved = getSystemTheme();
-			setResolvedTheme(resolved);
-			applyTheme(resolved);
-		};
-
-		mediaQuery.addEventListener('change', handleChange);
-		return () => mediaQuery.removeEventListener('change', handleChange);
-	}, [preference]);
-
-	return (
-		<ThemeContext.Provider value={{ preference, resolvedTheme, setPreference }}>
-			{children}
-		</ThemeContext.Provider>
-	);
-}
-
-export function useTheme() {
-	const context = useContext(ThemeContext);
-	if (!context) throw new Error('useTheme must be used within a ThemeProvider');
-	return context;
+	return <UiThemeProvider storageKey={THEME_STORAGE_KEY}>{children}</UiThemeProvider>;
 }
