@@ -16,7 +16,7 @@ export interface SearchableSelectOption {
 	separatorBefore?: boolean;
 }
 
-interface SearchableSelectProps {
+export interface SearchableSelectProps {
 	options: SearchableSelectOption[];
 	value: string | null;
 	onChange: (value: string) => void;
@@ -127,7 +127,7 @@ export function SearchableSelect({
 						<span className={`truncate ${selected ? '' : 'text-text-2'}`}>
 							{selected ? selected.label : placeholder}
 						</span>
-						<ChevronDown className="w-3.5 h-3.5 text-text-3 shrink-0" />
+						<ChevronDown className="w-3.5 h-3.5 text-text-3 shrink-0" aria-hidden />
 					</button>
 				)}
 			</Popover.Trigger>
@@ -153,9 +153,13 @@ export function SearchableSelect({
 							/>
 						</div>
 					)}
-					<div className="max-h-64 overflow-y-auto">
+					{/* A listbox, so the choices are announced as choices and the current
+					    one as chosen - the rendered tick says so only to whoever sees it. */}
+					<div className="max-h-64 overflow-y-auto" role="listbox">
 						{filtered.length === 0 && !loading && (
-							<div className="px-2.5 py-2 text-[13px] text-text-2">{emptyLabel}</div>
+							<div role="status" className="px-2.5 py-2 text-[13px] text-text-2">
+								{emptyLabel}
+							</div>
 						)}
 						{filtered.map((opt, i) => {
 							const active = opt.value === value;
@@ -166,6 +170,8 @@ export function SearchableSelect({
 									{opt.separatorBefore && i > 0 && <div className="mx-1.5 my-1 h-px bg-border" />}
 									<button
 										type="button"
+										role="option"
+										aria-selected={active}
 										onClick={() => handleSelect(opt.value)}
 										data-testid={testId ? `${testId}-option-${opt.value}` : undefined}
 										className={`flex w-full items-start gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors cursor-pointer ${
@@ -175,6 +181,7 @@ export function SearchableSelect({
 										}`}
 									>
 										<Check
+											aria-hidden
 											className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${active ? 'text-info' : 'text-transparent'}`}
 										/>
 										<span className="min-w-0 flex-1">
@@ -190,7 +197,10 @@ export function SearchableSelect({
 							);
 						})}
 						{loading && (
-							<div className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-text-2">
+							<div
+								role="status"
+								className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-text-2"
+							>
 								<Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-text-3" />
 								{loadingLabel}
 							</div>

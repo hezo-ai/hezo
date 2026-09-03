@@ -1,7 +1,8 @@
 import { X } from 'lucide-react';
 import type { FormEvent, ReactNode } from 'react';
+import { type HeadingLevel, headingTag } from './heading.js';
 
-interface InPlaceFormProps {
+export interface InPlaceFormProps {
 	/** Panel heading, e.g. "Add connector" or "Edit credential". */
 	title: string;
 	/** Fired by the top-right close button — hide the panel and reset its state. */
@@ -16,6 +17,8 @@ interface InPlaceFormProps {
 	 * buttons must not submit it (e.g. the skill editor's revisions panel).
 	 */
 	footer?: ReactNode;
+	/** The heading rank this panel sits at in the page's outline. */
+	headingLevel?: HeadingLevel;
 	className?: string;
 	'data-testid'?: string;
 }
@@ -34,16 +37,18 @@ export function InPlaceForm({
 	onSubmit,
 	children,
 	footer,
+	headingLevel = 2,
 	className = '',
 	'data-testid': testId = 'in-place-form',
 }: InPlaceFormProps) {
+	const Heading = headingTag(headingLevel);
 	return (
 		<section
 			className={`mb-4 rounded-lg border border-border bg-surface-2 p-3 sm:p-4 ${className}`}
 			data-testid={testId}
 		>
 			<div className="mb-3 flex items-center justify-between gap-2">
-				<h2 className="text-[13px] font-medium text-text-1">{title}</h2>
+				<Heading className="text-[13px] font-medium text-text-1">{title}</Heading>
 				<button
 					type="button"
 					onClick={onClose}
@@ -51,7 +56,7 @@ export function InPlaceForm({
 					data-testid="in-place-form-close"
 					className="-m-1 p-1 text-text-3 hover:text-text-1 transition-colors"
 				>
-					<X className="w-4 h-4" />
+					<X className="w-4 h-4" aria-hidden />
 				</button>
 			</div>
 			{onSubmit ? (

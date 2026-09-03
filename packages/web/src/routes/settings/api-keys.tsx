@@ -215,7 +215,7 @@ function ApiKeysPage() {
 								value={name}
 								onChange={(e) => setName(e.target.value)}
 								required
-								className="flex-1"
+								wrapperClassName="flex-1"
 							/>
 							<Button type="submit" size="sm" disabled={create.isPending}>
 								Create

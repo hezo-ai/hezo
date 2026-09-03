@@ -83,6 +83,12 @@ export function parseShortcut(spec: string): ParsedShortcut {
 			parsed.key = normalizeKey(token);
 		}
 	}
+	// A spec naming only modifiers can never match an event, and a button given one
+	// still renders a keycap promising a key that does nothing. Fail here, the one
+	// place a spec becomes meaning, rather than binding nothing and looking bound.
+	if (!parsed.key) {
+		throw new Error(`parseShortcut: "${spec}" names modifiers but no key.`);
+	}
 	return parsed;
 }
 
@@ -148,12 +154,19 @@ export function formatShortcut(spec: string, isMac: boolean): string {
 		return parts.join('') + key;
 	}
 	const parts: string[] = [];
+	if (p.meta) parts.push('Meta');
 	if (p.mod || p.ctrl) parts.push('Ctrl');
 	if (p.alt) parts.push('Alt');
 	if (p.shift) parts.push('Shift');
 	parts.push(key);
 	return parts.join('+');
 }
+
+// The attribute holds a space-separated list of shortcuts, so a key whose own
+// value is a space has to be named rather than written literally.
+const ARIA_KEY_NAMES: Record<string, string> = {
+	' ': 'Space',
+};
 
 /** ARIA `aria-keyshortcuts` value (space-free, platform-independent tokens). */
 export function ariaKeyshortcuts(spec: string, isMac: boolean): string {
@@ -163,11 +176,11 @@ export function ariaKeyshortcuts(spec: string, isMac: boolean): string {
 	if (p.ctrl || (p.mod && !isMac)) parts.push('Control');
 	if (p.alt) parts.push('Alt');
 	if (p.shift) parts.push('Shift');
-	parts.push(p.key.length === 1 ? p.key.toUpperCase() : p.key);
+	parts.push(ARIA_KEY_NAMES[p.key] ?? (p.key.length === 1 ? p.key.toUpperCase() : p.key));
 	return parts.join('+');
 }
 
-interface KeyEventLike {
+export interface KeyEventLike {
 	key: string;
 	metaKey: boolean;
 	ctrlKey: boolean;
@@ -189,6 +202,23 @@ export function matchesShortcut(spec: string, event: KeyEventLike, isMac: boolea
 	return event.key === p.key;
 }
 
+// Input types that consume no typed characters, so a bare-letter shortcut is
+// safe while one of them holds focus. Named as an exclusion set on purpose: an
+// unfamiliar type is treated as text-entry, which suppresses a shortcut rather
+// than firing one into someone's typing.
+const NON_TEXT_INPUT_TYPES = new Set([
+	'button',
+	'checkbox',
+	'color',
+	'file',
+	'hidden',
+	'image',
+	'radio',
+	'range',
+	'reset',
+	'submit',
+]);
+
 /**
  * True when the event target is a text-entry surface. Modifier-less shortcuts
  * (a bare letter) are suppressed here so typing never triggers a button.
@@ -196,7 +226,8 @@ export function matchesShortcut(spec: string, event: KeyEventLike, isMac: boolea
 export function isEditableTarget(target: EventTarget | null): boolean {
 	if (!(target instanceof HTMLElement)) return false;
 	const tag = target.tagName;
-	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+	if (tag === 'INPUT') return !NON_TEXT_INPUT_TYPES.has((target as HTMLInputElement).type);
+	if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
 	if (target.isContentEditable) return true;
 	return target.getAttribute('role') === 'textbox';
 }

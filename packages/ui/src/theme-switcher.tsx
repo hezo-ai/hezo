@@ -22,7 +22,7 @@ const DEFAULT_LABELS: Record<ThemePreference, string> = {
 	dark: 'Dark',
 };
 
-interface ThemeSwitcherProps {
+export interface ThemeSwitcherProps {
 	/** The trigger's accessible name. */
 	label?: string;
 	/** What each choice is called. English defaults; the app passes its own. */
@@ -44,31 +44,41 @@ export function ThemeSwitcher({
 					className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-2 hover:text-text-1 hover:bg-surface-3 transition-colors cursor-pointer"
 					aria-label={label}
 				>
-					<CurrentIcon className="w-4 h-4" />
+					<CurrentIcon className="w-4 h-4" aria-hidden />
 				</button>
 			</Popover.Trigger>
 			<Popover.Portal>
 				<Popover.Content
 					align="end"
 					sideOffset={4}
-					className="z-50 min-w-[140px] rounded-md border bg-surface p-1 shadow-md"
+					aria-label={label}
+					// `border-border`, not a bare `border`: with no colour class the border
+					// falls back to the current text colour and the panel draws a dark rule.
+					className="z-50 min-w-[140px] rounded-md border border-border bg-surface p-1 shadow-md"
 				>
-					{THEME_OPTIONS.map(({ value, icon: Icon }) => (
-						<button
-							key={value}
-							type="button"
-							onClick={() => setPreference(value)}
-							className={`flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-[13px] transition-colors cursor-pointer ${
-								preference === value
-									? 'bg-surface-3 text-text-1 font-medium'
-									: 'text-text-2 hover:text-text-1 hover:bg-surface-3'
-							}`}
-						>
-							<Icon className="w-4 h-4" />
-							<span className="flex-1 text-left">{optionLabels[value]}</span>
-							{preference === value && <Check className="w-3.5 h-3.5" />}
-						</button>
-					))}
+					<div role="menu" aria-label={label}>
+						{THEME_OPTIONS.map(({ value, icon: Icon }) => (
+							// Wrapped in `Popover.Close`, so choosing one dismisses the menu -
+							// setting the preference alone leaves it open over the change it made.
+							<Popover.Close asChild key={value}>
+								<button
+									type="button"
+									role="menuitemradio"
+									aria-checked={preference === value}
+									onClick={() => setPreference(value)}
+									className={`flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-[13px] transition-colors cursor-pointer ${
+										preference === value
+											? 'bg-surface-3 text-text-1 font-medium'
+											: 'text-text-2 hover:text-text-1 hover:bg-surface-3'
+									}`}
+								>
+									<Icon className="w-4 h-4" aria-hidden />
+									<span className="flex-1 text-left">{optionLabels[value]}</span>
+									{preference === value && <Check className="w-3.5 h-3.5" aria-hidden />}
+								</button>
+							</Popover.Close>
+						))}
+					</div>
 				</Popover.Content>
 			</Popover.Portal>
 		</Popover.Root>

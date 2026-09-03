@@ -4,7 +4,7 @@ import { type ReactNode, useState } from 'react';
 import { DialogContent, type DialogSize } from './dialog.js';
 import { Tooltip } from './tooltip.js';
 
-interface HelpDialogProps {
+export interface HelpDialogProps {
 	/** Heading shown at the top of the modal. */
 	title: ReactNode;
 	/** Modal body content. */

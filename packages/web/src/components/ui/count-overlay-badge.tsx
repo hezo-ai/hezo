@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { CountOverlayBadge } from '@hezo/ui';
+export { CountOverlayBadge, type CountOverlayBadgeProps } from '@hezo/ui';

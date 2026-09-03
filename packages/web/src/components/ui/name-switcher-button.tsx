@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { NameSwitcherButton } from '@hezo/ui';
+export { NameSwitcherButton, type NameSwitcherButtonProps } from '@hezo/ui';

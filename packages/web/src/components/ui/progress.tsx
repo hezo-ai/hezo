@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { Progress } from '@hezo/ui';
+export { Progress, type ProgressProps } from '@hezo/ui';

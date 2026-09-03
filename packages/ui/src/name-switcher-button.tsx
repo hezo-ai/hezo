@@ -1,7 +1,7 @@
 import { ChevronDown } from 'lucide-react';
 import { SearchableSelect, type SearchableSelectOption } from './searchable-select.js';
 
-interface NameSwitcherButtonProps {
+export interface NameSwitcherButtonProps {
 	options: SearchableSelectOption[];
 	/** The currently-open item's value (checked in the list); null when none. */
 	value: string | null;

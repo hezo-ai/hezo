@@ -1,4 +1,4 @@
-interface ProgressProps {
+export interface ProgressProps {
 	/** Completion 0–100. Values outside the range are clamped. */
 	value: number;
 	className?: string;

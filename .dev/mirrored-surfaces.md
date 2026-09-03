@@ -21,6 +21,8 @@ one to read: where it says *nothing*, no test will catch you.
 | A docs page (add / remove / frontmatter) | the embedded docs bundle | `docs-bundle.test.ts` |
 | A link in a `docs/` page (another page, an anchor, a repo file, an external URL) | the target it names | `docs-links.test.ts` + the `check-docs-links.ts` hook |
 | A new conformance suite | `conformance/index.ts` | `conformance-coverage.test.ts` |
+| The theme storage key | `THEME_STORAGE_KEY` (`web/src/lib/theme.tsx`) and the pre-paint script in `web/index.html`, which cannot import it | `theme-first-paint.test.tsx` |
+| A `@hezo/ui` component's props | its exported `*Props`, and the barrel | **nothing - on you** |
 | A new doc- or string-bearing path | `DOC_BEARING_PATTERNS` / `STRING_BEARING_PATTERNS` | its ack-hook test |
 | Container backend behaviour | `SANDBOX_AGENT_ENVIRONMENTS`, that provider's `docs/containers/remote/` page, the Containers settings UI | compile error, **new backend only** |
 | A pool-member state transition | its `container_uptime_entries` open or close - the ledger is written inside `pool-db.ts`, so a transition added elsewhere is billed nowhere | **nothing - on you** |

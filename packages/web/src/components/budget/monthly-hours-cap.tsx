@@ -77,7 +77,7 @@ export function MonthlyHoursCap({ monthlyHours }: { monthlyHours: number }) {
 						onChange={(e) => setValue(e.target.value)}
 						placeholder={t('budget.hours.cap.placeholder')}
 						data-testid="monthly-hours-cap-input"
-						className="sm:w-56"
+						wrapperClassName="sm:w-56"
 					/>
 					<div className="flex gap-2">
 						<Button type="submit" size="sm" disabled={setCap.isPending}>

@@ -1,6 +1,5 @@
 import {
 	Avatar,
-	avatarColorFromString,
 	Badge,
 	Breadcrumb,
 	BreadcrumbRow,
@@ -26,6 +25,7 @@ import {
 	Textarea,
 	Toggle,
 	Tooltip,
+	TooltipProvider,
 } from '@hezo/ui';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -44,16 +44,34 @@ test('initials come from the words, not the first two letters', () => {
 	expect(getInitials('ada')).toBe('AD');
 });
 
-test('a name maps to a stable colour', () => {
-	expect(avatarColorFromString('acme')).toBe(avatarColorFromString('acme'));
-});
-
 test('an avatar shows the initials it is given, running or not', () => {
 	const { rerender } = render(<Avatar initials="AL" />);
 	expect(screen.getByText('AL')).toBeTruthy();
 
 	rerender(<Avatar initials="AL" running />);
 	expect(screen.getByText('AL')).toBeTruthy();
+});
+
+// An image-backed avatar used to carry an empty `alt`, which left it with no
+// accessible name at all - the initials that would otherwise name it are gone.
+test('an image-backed avatar is named by its label', () => {
+	// An empty `alt` is the decorative role, which is right only beside a visible
+	// name - and wrong the moment the caller has one to give.
+	const { rerender } = render(<Avatar initials="AL" imageUrl="/ada.png" />);
+	expect(screen.getByRole('presentation')).toBeTruthy();
+
+	rerender(<Avatar initials="AL" imageUrl="/ada.png" label="Ada Lovelace" />);
+	expect(screen.getByRole('img', { name: 'Ada Lovelace' })).toBeTruthy();
+});
+
+// The live ring is the only thing that shows a running agent, so a reader who
+// cannot see it is told instead.
+test('a running avatar says so, not only draws so', () => {
+	const { rerender } = render(<Avatar initials="AL" runningLabel="Working" />);
+	expect(screen.queryByText('Working')).toBeNull();
+
+	rerender(<Avatar initials="AL" running runningLabel="Working" />);
+	expect(screen.getByText('Working')).toBeTruthy();
 });
 
 test('a badge renders its label', () => {
@@ -118,16 +136,18 @@ test('a keycap renders the key', () => {
 });
 
 test('the brand mark renders, with and without the wordmark', () => {
-	const { rerender } = render(<Logo />);
-	expect(screen.getByRole('img', { hidden: true })).toBeTruthy();
+	const { rerender } = render(<Logo src="/mark.svg" alt="Acme" />);
+	expect(screen.getByRole('img', { hidden: true }).getAttribute('src')).toBe('/mark.svg');
+	expect(screen.queryByText('acme')).toBeNull();
 
-	rerender(<Logo wordmark />);
-	expect(screen.getByText('hezo')).toBeTruthy();
+	rerender(<Logo src="/mark.svg" alt="Acme" wordmark="acme" />);
+	expect(screen.getByText('acme')).toBeTruthy();
 });
 
-test('the page logo renders the mark', () => {
-	render(<PageLogo />);
-	expect(screen.getByText('hezo')).toBeTruthy();
+test('the page logo renders the mark it is given', () => {
+	render(<PageLogo src="/mark.svg" alt="Acme" wordmark="acme" />);
+	expect(screen.getByRole('img', { hidden: true }).getAttribute('alt')).toBe('Acme');
+	expect(screen.getByText('acme')).toBeTruthy();
 });
 
 test('a toggle reports and changes its state', async () => {
@@ -153,7 +173,14 @@ test('a textarea takes typing', async () => {
 // **The point of the control is that the secret is hidden until asked for.**
 test('a password field hides its value until revealed', async () => {
 	const user = userEvent.setup();
-	render(<PasswordInput aria-label="Token" revealLabel="key" defaultValue="s3cret" />);
+	render(
+		<PasswordInput
+			aria-label="Token"
+			showLabel="Show key"
+			hideLabel="Hide key"
+			defaultValue="s3cret"
+		/>,
+	);
 
 	expect((screen.getByLabelText('Token') as HTMLInputElement).type).toBe('password');
 
@@ -262,16 +289,31 @@ test('a data table with nothing in it still names its columns', () => {
 
 test('a tooltip renders the thing it describes', () => {
 	render(
-		<Tooltip content="Copy to clipboard">
-			<button type="button">Copy</button>
-		</Tooltip>,
+		<TooltipProvider>
+			<Tooltip content="Copy to clipboard">
+				<button type="button">Copy</button>
+			</Tooltip>
+		</TooltipProvider>,
 	);
 	expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
 });
 
-test('an info tooltip renders its trigger', () => {
-	render(<InfoTooltip content="What this means" label="More about this" />);
-	expect(screen.getByRole('button')).toBeTruthy();
+// A tooltip left uncontrolled opens on hover and focus but never on a tap, and
+// this trigger is the only route to what it holds.
+test('an info tooltip opens on a tap, not only on hover', async () => {
+	const user = userEvent.setup();
+	render(
+		<TooltipProvider>
+			<InfoTooltip content="What this means" label="More about this" />
+		</TooltipProvider>,
+	);
+
+	const trigger = screen.getByRole('button', { name: 'More about this' });
+	expect(trigger.getAttribute('aria-expanded')).toBe('false');
+
+	await user.click(trigger);
+	expect(trigger.getAttribute('aria-expanded')).toBe('true');
+	expect(await screen.findAllByText('What this means')).not.toHaveLength(0);
 });
 
 test('a searchable select opens and reports a choice', async () => {

@@ -76,7 +76,7 @@ export function AutomationsSection({
 						if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
 					}}
 					disabled={!team || updateTeam.isPending}
-					className="w-24"
+					wrapperClassName="w-24"
 					data-testid="subtask-page-size-input"
 				/>
 			</div>

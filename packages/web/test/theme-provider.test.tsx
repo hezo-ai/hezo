@@ -6,34 +6,10 @@ import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { writeStored } from '../src/lib/safe-storage';
-import { ThemeProvider, useTheme } from '../src/lib/theme';
+import { THEME_STORAGE_KEY, ThemeProvider, useTheme } from '../src/lib/theme';
+import { installMatchMedia } from './helpers/match-media';
 
-const STORAGE_KEY = 'theme';
-
-/** A controllable matchMedia returning `matches` and capturing change listeners. */
-function installMatchMedia(matches: boolean) {
-	const listeners = new Set<() => void>();
-	const mql = {
-		matches,
-		media: '(prefers-color-scheme: dark)',
-		onchange: null,
-		addEventListener: (_type: string, cb: () => void) => listeners.add(cb),
-		removeEventListener: (_type: string, cb: () => void) => listeners.delete(cb),
-		addListener: (cb: () => void) => listeners.add(cb),
-		removeListener: (cb: () => void) => listeners.delete(cb),
-		dispatchEvent: () => true,
-	};
-	const spy = vi.spyOn(window, 'matchMedia').mockReturnValue(mql as unknown as MediaQueryList);
-	return {
-		spy,
-		listeners,
-		/** Flip the system preference and fire the captured change listeners. */
-		setMatches(next: boolean) {
-			mql.matches = next;
-			for (const cb of listeners) cb();
-		},
-	};
-}
+const STORAGE_KEY = THEME_STORAGE_KEY;
 
 function wrapper({ children }: { children: ReactNode }) {
 	return <ThemeProvider>{children}</ThemeProvider>;

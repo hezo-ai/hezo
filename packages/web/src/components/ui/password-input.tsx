@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { PasswordInput } from '@hezo/ui';
+export { PasswordInput, type PasswordInputProps } from '@hezo/ui';

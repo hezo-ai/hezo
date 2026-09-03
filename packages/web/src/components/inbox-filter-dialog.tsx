@@ -57,7 +57,6 @@ export function InboxFilterDialog<TReadFilter extends string>({
 							onChange={onReadFilterChange}
 							label={t('inbox.filters.showLabel')}
 							stretch
-							className=""
 						/>
 					</div>
 
@@ -70,7 +69,6 @@ export function InboxFilterDialog<TReadFilter extends string>({
 							label={t('inbox.filters.sortLabel')}
 							tone="plain"
 							stretch
-							className=""
 						/>
 					</div>
 

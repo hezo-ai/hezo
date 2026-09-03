@@ -459,7 +459,7 @@ function ContainerMemoryBudgetForm({ settings }: { settings: InstanceSettings })
 					max={MAX_CONTAINER_MEMORY_GB_MAX}
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
-					className="sm:w-40"
+					wrapperClassName="sm:w-40"
 				/>
 				<Button
 					size="sm"
@@ -554,7 +554,7 @@ function RamCapForm({ settings }: { settings: InstanceSettings }) {
 					max={RAM_CAP_PER_CONTAINER_GB_MAX}
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
-					className="sm:w-40"
+					wrapperClassName="sm:w-40"
 				/>
 				<Button
 					size="sm"
@@ -628,7 +628,7 @@ function ContainerDiskForm({ settings }: { settings: InstanceSettings }) {
 					max={CONTAINER_DISK_GB_MAX}
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
-					className="sm:w-40"
+					wrapperClassName="sm:w-40"
 				/>
 				<Button
 					size="sm"

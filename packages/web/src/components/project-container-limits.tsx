@@ -93,7 +93,7 @@ function ProjectContainerLimitSection({ projectId, spec }: { projectId: string; 
 						placeholder={inherited ? String(inherited) : ''}
 						value={value}
 						onChange={(e) => setValue(e.target.value)}
-						className="sm:w-40"
+						wrapperClassName="sm:w-40"
 					/>
 					<Button
 						size="sm"

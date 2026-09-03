@@ -4,7 +4,12 @@
  * inbox icon and the per-project rail avatars. Renders nothing when the count
  * is zero. The parent element must establish a positioning context (`relative`).
  */
-export function CountOverlayBadge({ count, testId }: { count: number; testId?: string }) {
+export interface CountOverlayBadgeProps {
+	count: number;
+	testId?: string;
+}
+
+export function CountOverlayBadge({ count, testId }: CountOverlayBadgeProps) {
 	if (count <= 0) return null;
 	return (
 		<span

@@ -1,6 +1,6 @@
 import { ArrowLeft } from 'lucide-react';
 
-interface BackLinkProps {
+export interface BackLinkProps {
 	onClick: () => void;
 	/** Link text after the arrow. English default; the app passes its own. */
 	label?: string;

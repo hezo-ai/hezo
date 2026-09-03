@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { FilterPills } from '@hezo/ui';
+export { FilterPills, type FilterPillsProps } from '@hezo/ui';

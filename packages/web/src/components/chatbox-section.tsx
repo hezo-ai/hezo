@@ -123,7 +123,7 @@ function HistorySizeForm({ settings }: { settings: InstanceSettings }) {
 					max={MAX_KB}
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
-					className="sm:w-40"
+					wrapperClassName="sm:w-40"
 				/>
 				<Button
 					size="sm"

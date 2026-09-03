@@ -1,26 +1,32 @@
 import { useState } from 'react';
 
-// Avatars are monochrome (the spec: "monochrome, color = state"). Identity is
-// the initials; state (a running agent) is shown by a cyan `--live` ring.
+// Avatars are monochrome: identity is the initials, and colour is reserved for
+// state - a running agent gets a live ring.
 const sizeMap = {
 	sm: 'w-[26px] h-[26px] text-[10px]',
-	// Matches the intake-chat bubble min-height (avatar aligns with one text line).
+	// Sized to one line of body text, so the avatar aligns with a single-line
+	// message rather than overhanging it.
 	chat: 'w-[2.625rem] h-[2.625rem] text-[13px]',
 	md: 'w-[36px] h-[36px] text-[13px]',
 	lg: 'w-[56px] h-[56px] text-[20px]',
 } as const;
 
-/** Retained for API compatibility; avatars no longer tint per colour. */
-export type AvatarColor = 'blue' | 'green' | 'amber' | 'purple' | 'red' | 'neutral';
-const AVATAR_COLORS: AvatarColor[] = ['blue', 'green', 'amber', 'purple', 'red'];
+export type AvatarSize = keyof typeof sizeMap;
 
-interface AvatarProps {
+export interface AvatarProps {
 	initials: string;
-	size?: keyof typeof sizeMap;
-	/** Accepted for back-compat but no longer changes the (monochrome) fill. */
-	color?: AvatarColor;
-	/** Running agents get a cyan live ring. */
+	size?: AvatarSize;
+	/**
+	 * Who or what the avatar stands for.
+	 *
+	 * Without it an image-backed avatar has no accessible name at all, and an
+	 * initials-backed one is announced two letters at a time.
+	 */
+	label?: string;
+	/** Marks the subject as currently working, with a live ring and a spoken state. */
 	running?: boolean;
+	/** Names the running state for assistive tech. English default. */
+	runningLabel?: string;
 	/** Optional image (e.g. a project icon). Falls back to initials on load error. */
 	imageUrl?: string | null;
 	className?: string;
@@ -33,18 +39,12 @@ export function getInitials(name: string): string {
 	return name.slice(0, 2).toUpperCase();
 }
 
-export function avatarColorFromString(str: string): AvatarColor {
-	let hash = 0;
-	for (let i = 0; i < str.length; i++) {
-		hash = str.charCodeAt(i) + ((hash << 5) - hash);
-	}
-	return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
 export function Avatar({
 	initials,
 	size = 'md',
+	label,
 	running = false,
+	runningLabel = 'Running',
 	imageUrl,
 	className = '',
 }: AvatarProps) {
@@ -63,15 +63,21 @@ export function Avatar({
 			} ${className}`}
 		>
 			{showImage ? (
+				// Named where the caller says who this is; decorative otherwise, since an
+				// unlabelled avatar sits beside the name it stands for. An empty `alt` on
+				// both left every image-backed avatar with no accessible name at all.
 				<img
 					src={imageUrl}
-					alt=""
+					alt={label ?? ''}
 					className="h-full w-full object-cover"
 					onError={() => setFailedUrl(imageUrl)}
 				/>
 			) : (
 				initials.slice(0, 2).toUpperCase()
 			)}
+			{/* The live ring is the only thing that shows a running agent, so the state
+			    is said as well as drawn. */}
+			{running && <span className="sr-only">{runningLabel}</span>}
 		</div>
 	);
 }

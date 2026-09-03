@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { Textarea } from '@hezo/ui';
+export { Textarea, type TextareaProps } from '@hezo/ui';

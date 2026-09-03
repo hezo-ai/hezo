@@ -345,7 +345,8 @@ export function MasterKeyForm({ state, embedded, onAuthenticated }: MasterKeyFor
 						</label>
 						<PasswordInput
 							id="mnemonic-entry"
-							revealLabel="key"
+							showLabel="Show key"
+							hideLabel="Hide key"
 							className="font-mono"
 							value={key}
 							onChange={(e) => setKey(e.target.value)}

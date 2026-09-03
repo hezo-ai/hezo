@@ -3,4 +3,4 @@
  *
  * Re-exported from its old path so every call site keeps the import it had.
  */
-export { SegmentedControl, type SegmentedOption } from '@hezo/ui';
+export { SegmentedControl, type SegmentedControlProps, type SegmentedOption } from '@hezo/ui';

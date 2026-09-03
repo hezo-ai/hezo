@@ -37,59 +37,106 @@
  * and so does one whose copy is a paragraph rather than a word: a sentence with
  * a node in it goes through the catalog whole, which a label prop cannot do.
  */
-export { Avatar, type AvatarColor, avatarColorFromString, getInitials } from './avatar.js';
-export { BackLink } from './back-link.js';
-export { Badge, type BadgeColor } from './badge.js';
-export { Breadcrumb, BreadcrumbRow, type BreadcrumbSegment } from './breadcrumb.js';
-export { Button, buttonClassName } from './button.js';
-export { Card } from './card.js';
+export { Avatar, type AvatarProps, type AvatarSize, getInitials } from './avatar.js';
+export { BackLink, type BackLinkProps } from './back-link.js';
+export { Badge, type BadgeColor, type BadgeProps, type Tone } from './badge.js';
+export {
+	Breadcrumb,
+	type BreadcrumbProps,
+	BreadcrumbRow,
+	type BreadcrumbRowProps,
+	type BreadcrumbSegment,
+	type EdgeState,
+} from './breadcrumb.js';
+export {
+	Button,
+	type ButtonClassNameOptions,
+	type ButtonProps,
+	type ButtonSize,
+	type ButtonVariant,
+	buttonClassName,
+} from './button.js';
+export { Card, type CardProps } from './card.js';
 export { copyToClipboard } from './clipboard.js';
-export { Code } from './code.js';
-export { ConfirmDialog } from './confirm-dialog.js';
-export { CountOverlayBadge } from './count-overlay-badge.js';
-export { type Column, DataTable, type DataTableSort } from './data-table.js';
+export { Code, type CodeProps } from './code.js';
+export { ConfirmDialog, type ConfirmDialogProps } from './confirm-dialog.js';
+export { CountOverlayBadge, type CountOverlayBadgeProps } from './count-overlay-badge.js';
+export {
+	type Column,
+	DataTable,
+	type DataTableProps,
+	type DataTableSort,
+} from './data-table.js';
 export {
 	CONTENT_Z,
 	DialogContent,
+	type DialogContentProps,
 	type DialogSize,
 	dialogContentClassName,
 	dialogOverlayClassName,
 	fullscreenContentClassName,
 	OVERLAY_Z,
 } from './dialog.js';
-export { EmptyState } from './empty-state.js';
-export { FilterPills } from './filter-pills.js';
-export { HelpDialog } from './help-dialog.js';
-export { InPlaceForm } from './in-place-form.js';
-export { InfoTooltip } from './info-tooltip.js';
-export { Input } from './input.js';
-export { Kbd } from './kbd.js';
-export { Logo } from './logo.js';
-export { MultiSelect, type MultiSelectOption } from './multi-select.js';
-export { NameSwitcherButton } from './name-switcher-button.js';
-export { PageLogo } from './page-logo.js';
-export { PasswordInput } from './password-input.js';
-export { Progress } from './progress.js';
+export { EmptyState, type EmptyStateProps } from './empty-state.js';
+export { FilterPills, type FilterPillsProps } from './filter-pills.js';
+export { type HeadingLevel, headingTag } from './heading.js';
+export { HelpDialog, type HelpDialogProps } from './help-dialog.js';
+export { InPlaceForm, type InPlaceFormProps } from './in-place-form.js';
+export { InfoTooltip, type InfoTooltipProps } from './info-tooltip.js';
+export { Input, type InputProps } from './input.js';
+export { Kbd, type KbdProps } from './kbd.js';
+export { Logo, type LogoProps, type LogoSize } from './logo.js';
+export {
+	MultiSelect,
+	type MultiSelectOption,
+	type MultiSelectProps,
+} from './multi-select.js';
+export { NameSwitcherButton, type NameSwitcherButtonProps } from './name-switcher-button.js';
+export { PageLogo, type PageLogoProps } from './page-logo.js';
+export { PasswordInput, type PasswordInputProps } from './password-input.js';
+export { Progress, type ProgressProps } from './progress.js';
 export { readStored, removeStored, writeStored } from './safe-storage.js';
-export { SearchableSelect, type SearchableSelectOption } from './searchable-select.js';
-export { SectionHeader } from './section-header.js';
-export { SegmentedControl, type SegmentedOption } from './segmented-control.js';
+export {
+	SearchableSelect,
+	type SearchableSelectOption,
+	type SearchableSelectProps,
+} from './searchable-select.js';
+export { SectionHeader, type SectionHeaderProps } from './section-header.js';
+export {
+	SegmentedControl,
+	type SegmentedControlProps,
+	type SegmentedOption,
+} from './segmented-control.js';
 export { SEGMENTED_FIT_TOLERANCE_PX, segmentedLabelsFit } from './segmented-fit.js';
-export { kbdSizeClass, ShortcutKbd } from './shortcut-kbd.js';
+export { kbdSizeClass, ShortcutKbd, type ShortcutKbdProps } from './shortcut-kbd.js';
 export {
 	ariaKeyshortcuts,
 	formatShortcut,
 	isEditableTarget,
 	isMacPlatform,
+	type KeyEventLike,
 	matchesShortcut,
 	type ParsedShortcut,
 	parseShortcut,
 	shortcutBypassesInput,
 } from './shortcuts.js';
-export { StatusDot } from './status-dot.js';
-export { Textarea } from './textarea.js';
-export { type ResolvedTheme, type ThemePreference, ThemeProvider, useTheme } from './theme.js';
-export { THEME_OPTIONS, ThemeSwitcher } from './theme-switcher.js';
-export { Toggle } from './toggle.js';
-export { Tooltip } from './tooltip.js';
-export { useShortcut } from './use-shortcut.js';
+export { StatusDot, type StatusDotProps } from './status-dot.js';
+export { Textarea, type TextareaProps } from './textarea.js';
+export {
+	type ResolvedTheme,
+	type ThemeContextValue,
+	type ThemePreference,
+	ThemeProvider,
+	type ThemeProviderProps,
+	useTheme,
+} from './theme.js';
+export { THEME_OPTIONS, ThemeSwitcher, type ThemeSwitcherProps } from './theme-switcher.js';
+export { Toggle, type ToggleProps } from './toggle.js';
+export {
+	TOOLTIP_Z,
+	Tooltip,
+	type TooltipProps,
+	TooltipProvider,
+	type TooltipProviderProps,
+} from './tooltip.js';
+export { type UseShortcutOptions, useShortcut } from './use-shortcut.js';

@@ -14,6 +14,7 @@ import { render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { SidebarNav, type SidebarNavSection } from '../src/components/sidebar-nav';
+import { withI18n } from './helpers/i18n';
 
 // The RouterProvider resolves its pending route on a microtask, so the nav is
 // not in the DOM synchronously after render — wait for it to mount.
@@ -24,8 +25,10 @@ async function renderNav(sections: SidebarNavSection[], initialPath = '/') {
 		history: createMemoryHistory({ initialEntries: [initialPath] }),
 	});
 	const utils = render(
-		// biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary.
-		<RouterProvider router={router as any} />,
+		withI18n(
+			// biome-ignore lint/suspicious/noExplicitAny: opaque router type at the test boundary.
+			<RouterProvider router={router as any} />,
+		),
 	);
 	await waitFor(() =>
 		expect(utils.container.querySelector('nav[aria-label="Sidebar"]')).not.toBeNull(),
