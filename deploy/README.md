@@ -44,8 +44,11 @@ you finish there (master key → admin password → connect a model). Password a
 makes exposing that URL safe.
 
 Unattended upgrades: Ubuntu's post-upgrade `needrestart` hook restarts services
-running against replaced libraries, which would leave Hezo **locked** (its master
-key is in memory only) until an operator unlocked it from the browser. The script
+running against replaced libraries, which would start a new locked Hezo process because
+the supervisor cannot hand its key through a direct service restart. The supervised
+in-app update does hand the key to the new process in memory. An operator can unlock from
+the browser or deliberately supply the one-shot `--master-key` or `HEZO_MASTER_KEY`
+input. The script
 drops `/etc/needrestart/conf.d/hezo.conf` so the restart is reported but never
 performed - patches still install on schedule, and the restart is taken
 deliberately. See `docs/deployment/self-hosting.md` § Keeping the host patched.

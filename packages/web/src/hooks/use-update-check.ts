@@ -16,9 +16,9 @@ export interface UpdateStatusInfo extends UpdateInfo {
 	targetVersion: string | null;
 	error: string | null;
 	/**
-	 * The instance comes back unlocked after the update restart — either a master
-	 * key is configured at startup, or the supervisor holds the in-memory unlock
-	 * key across the restart and hands it to the relaunched worker.
+	 * The instance comes back unlocked after the update restart - either the
+	 * deliberate one-shot `--master-key` / `HEZO_MASTER_KEY` input supplies the key,
+	 * or the supervisor holds the in-memory key and hands it to the relaunched worker.
 	 */
 	autoUnlock: boolean;
 	/** The server can actually apply-and-restart (supervised compiled binary). */

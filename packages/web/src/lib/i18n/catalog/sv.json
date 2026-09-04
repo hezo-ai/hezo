@@ -659,6 +659,8 @@
 	"setup.aiProvider.title": "Konfigurera en AI-leverantör",
 	"setup.masterKey.confirmDescription": "Ange din huvudnyckel för att sätta ett administratörslösenord för den här instansen.",
 	"setup.masterKey.confirmTitle": "Bekräfta din huvudnyckel",
+	"setup.masterKey.lifecycleDescription": "Ha nyckeln till hands så att du kan låsa upp Hezo i webbläsaren. Nya Hezo-processer startar låsta som standard. En övervakad uppdatering i appen kan föra nyckeln vidare till ersättningsprocessen i minnet. En omstart, krasch eller direkt omstart av tjänsten kräver upplåsning i webbläsaren, om inte starten får --master-key eller HEZO_MASTER_KEY som engångsinmatning.",
+	"setup.masterKey.lifecycleTitle": "Krypterar dina känsliga uppgifter och låser upp Hezo.",
 	"setup.password.description": "Hädanefter loggar du in med det här lösenordet. Om du glömmer det kan du återställa det med din huvudnyckel.",
 	"setup.password.submit": "Ange lösenord och fortsätt",
 	"setup.password.title": "Skapa ett administratörslösenord",
@@ -712,9 +714,9 @@
 	"toast.error": "Något gick fel",
 	"toast.info": "Observera",
 	"toast.success": "Klart",
-	"updates.confirm.drain": "Hezo väntar några sekunder på att pågående agentkörningar ska bli klara och stannar sedan. Det som fortfarande kör läggs tillbaka i kön och börjar om.",
+	"updates.confirm.drain": "Hezo stoppar pågående agentkörningar, lägger tillbaka dem i kön och startar om dem från början.",
 	"updates.confirm.restart": "Hezo stängs av och startar om på {version}.",
-	"updates.confirm.reunlock": "Du behöver din huvudnyckel på 12 ord för att låsa upp Hezo igen efter omstarten.",
+	"updates.confirm.reunlock": "Ha huvudnyckeln på 12 ord till hands. Den här omstarten kan inte föra nyckeln vidare till ersättningsprocessen, så lås upp Hezo i webbläsaren efter starten.",
 	"updates.confirm.runsInFlight.one": "{count} agentkörning pågår just nu.",
 	"updates.confirm.runsInFlight.other": "{count} agentkörningar pågår just nu."
 }

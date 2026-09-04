@@ -962,10 +962,12 @@ export class JobManager {
 	 *
 	 * **Deliberately callable before the vault is unlocked.** It is raw SQL and
 	 * broadcasts; nothing here decrypts anything or touches the container backend.
-	 * Coming up locked after a restart is the intended behaviour, not a gap - but
-	 * while this was behind the unlock hook, an instance that came up locked
-	 * served stranded `running` rows and stuck-busy agents until a human arrived,
-	 * with the orphan cron not started either.
+	 * A new process starts locked by default, though a supervised update may restore
+	 * the key through its in-memory IPC handoff and deliberate one-shot
+	 * `--master-key` or `HEZO_MASTER_KEY` input may inject it at startup. This pass
+	 * cannot wait on any of those states: while it was behind the unlock hook, a
+	 * locked instance served stranded `running` rows and stuck-busy agents until a
+	 * human arrived, with the orphan cron not started either.
 	 *
 	 * Idempotent by construction: every UPDATE is guarded by a status predicate,
 	 * so a second call finds no rows and queues no wakeups.

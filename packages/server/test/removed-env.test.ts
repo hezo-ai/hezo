@@ -10,6 +10,8 @@ import {
 	type ResolvedDataLocation,
 } from '../src/config/removed-env';
 
+const REPO_ROOT = join(import.meta.dirname, '../../..');
+
 const at = (dataDir: string, extra: Partial<ResolvedDataLocation> = {}): ResolvedDataLocation => ({
 	dataDir,
 	database: {},
@@ -241,5 +243,107 @@ describe('resolveConfig', () => {
 				'legal winner thank year wave sausage worth useful legal winner thank yellow',
 		});
 		expect(config.masterKey?.unlockKeyHex).toBeTruthy();
+	});
+});
+
+describe('configuration documentation after the environment-variable migration', () => {
+	it('keeps the active hosted design on config-file settings', () => {
+		const design = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
+		const hezoEnvNames = [...new Set(design.match(/\bHEZO_[A-Z0-9_]+\b/g) ?? [])].sort();
+
+		expect(design).toContain('/etc/hezo/hezo.config.cjs');
+		expect(design).not.toContain('/etc/hezo/hezo.env');
+		expect(design).toContain('`sso.issuerUrl`');
+		expect(design).toContain('`sso.logoutUrl`');
+		expect(design).toContain('`sso.issuerPublicKey`');
+		expect(design).toContain('`sso.ownerSubject`');
+		expect(design).toContain('`sso.audience`');
+		expect(hezoEnvNames).toEqual(['HEZO_IMAGE_BUILD', 'HEZO_MASTER_KEY']);
+	});
+
+	it('keeps hosted recovery and logout claims consistent with runtime state', () => {
+		const design = readFileSync(join(REPO_ROOT, '.dev/hosted-architecture.md'), 'utf8');
+		const architecture = readFileSync(join(REPO_ROOT, '.dev/architecture.md'), 'utf8');
+		const backup = readFileSync(join(REPO_ROOT, 'docs/deployment/backup-and-recovery.md'), 'utf8');
+		const configuration = readFileSync(join(REPO_ROOT, 'docs/deployment/configuration.md'), 'utf8');
+		const cli = readFileSync(join(REPO_ROOT, 'docs/reference/cli.md'), 'utf8');
+		const oneClick = readFileSync(join(REPO_ROOT, 'docs/deployment/one-click.md'), 'utf8');
+		const cloud = readFileSync(join(REPO_ROOT, 'docs/deployment/cloud.md'), 'utf8');
+		const publicDocs = `${backup}\n${configuration}\n${cli}\n${oneClick}\n${cloud}`;
+
+		expect(design).toMatch(/the\s+droplet still carries required local state/);
+		expect(design).toMatch(/Restore `\/var\/lib\/hezo` before starting a replacement droplet/);
+		expect(design).toMatch(
+			/restore or recreate `\/etc\/hezo\/hezo\.config\.cjs`[\s\S]*backend credentials[\s\S]*referenced files[\s\S]*service\s+settings/,
+		);
+		expect(design).toContain('The export bundle includes `/var/lib/hezo`');
+		expect(design).toMatch(/The cold archive includes\s+the final `\/var\/lib\/hezo` snapshot/);
+		expect(design).toMatch(
+			/verify the `\/var\/lib\/hezo` snapshot before destroying\s+the droplet/,
+		);
+		expect(design).toContain(
+			'`dataDir` | `/var/lib/hezo` | persistent workspaces, worktrees, and instance keys',
+		);
+		expect(design).toContain('database dump + bucket export + `dataDir` archive');
+		expect(design).toMatch(/Logout is a two-session browser flow/);
+		expect(design).toMatch(/Neither step revokes the instance JWT\s+server-side/);
+		expect(design).toMatch(/Suspension cuts off access to\s+the instance/);
+		expect(design).not.toContain('hard revocation is instance suspension');
+		expect(design).toContain('SSO tokens assert identity only');
+		expect(design).toContain('historical planning record');
+		expect(design).toMatch(
+			/The former\s+`unlock_key` field and `system:unlock` subject are obsolete/,
+		);
+		expect(oneClick).toContain('Managed backends do not make the server disposable');
+		expect(oneClick).toContain('`/var/lib/hezo` still holds workspaces and keys');
+		expect(oneClick).toMatch(
+			/Back up `\/var\/lib\/hezo`, `\/etc\/hezo\/hezo\.config\.cjs`, referenced files/,
+		);
+		expect(cloud).toContain('Managed backends do not replace a host backup');
+		expect(cloud).toMatch(
+			/`dataDir`, `\/etc\/hezo\/hezo\.config\.cjs`, any referenced files[\s\S]*backend credentials/,
+		);
+		expect(backup).not.toMatch(/captures a \*\*complete instance\*\*|whole instance \(database/i);
+		expect(configuration).not.toContain('moves the whole instance');
+		expect(cli).not.toMatch(/captures a \*\*complete instance\*\*/i);
+		expect(architecture).not.toMatch(/captures the whole instance/i);
+		expect(backup).toContain('database-and-assets migration bundle');
+		expect(configuration).toContain('database and assets between storage backends');
+		expect(cli).toContain('database-and-assets migration bundle');
+		expect(architecture).toContain('database-and-assets migration bundle');
+		for (const doc of [backup, configuration, cli, architecture]) {
+			expect(doc).toMatch(/dataDir/);
+			expect(doc).toMatch(/workspaces/);
+			expect(doc).toMatch(/worktrees/);
+			expect(doc).toMatch(/instance (?:keys|key state)/);
+		}
+		expect(publicDocs).not.toContain('little worth losing');
+		expect(publicDocs).not.toContain('nearly stateless');
+		expect(design).not.toContain('near-stateless');
+		expect(design).not.toContain('without data loss');
+		expect(design).not.toContain('scratch only');
+		expect(design).not.toContain('Logout stays instance-local');
+		expect(design).not.toContain('the token carries the unlock key');
+		expect(design.match(/unlock_key/g)).toHaveLength(1);
+		expect(design.match(/system:unlock/g)).toHaveLength(1);
+		expect(design).not.toContain('unlock-key custody');
+		expect(design).not.toContain('proactive re-unlock');
+		expect(design).not.toContain('auto-unlock');
+		expect(design).toMatch(
+			/A provisioned\s+droplet stays online\.[\s\S]*new Hezo process starts locked by default[\s\S]*supervised in-app\s+update hands the key forward in memory[\s\S]*reboot, crash, or direct service restart[\s\S]*one-shot `--master-key`[\s\S]*Background work remains paused while Hezo is locked/,
+		);
+		expect(design).toMatch(
+			/The database and bucket credentials in this file are per-tenant scoped[\s\S]*compromised droplet exposes those credentials only for that\s+tenant/,
+		);
+		expect(design).not.toContain('a compromised droplet exposes only that tenant');
+	});
+
+	it.each([
+		'docs/getting-started/installation.md',
+		'docs/deployment/container-runtimes.md',
+	])('%s describes the configuration reference as config-file settings and flags', (rel) => {
+		const doc = readFileSync(join(REPO_ROOT, rel), 'utf8');
+		expect(doc).toMatch(/config-file settings\s+and flags/);
+		expect(doc).not.toContain('every flag and environment variable');
 	});
 });

@@ -28,7 +28,7 @@ language you don't speak is a bad way to start. See
 
 **After that**, in **Settings -> Languages & formats**.
 
-While you are signed out - at the unlock screen after a restart, or at the sign-in screen -
+While you are signed out - at the unlock screen after a locked start, or at the sign-in screen -
 there is a language button in the top right, because those screens have no menu to reach
 Settings through. Changing the language there applies to that browser only and tells you
 so; sign in to change it for everyone.

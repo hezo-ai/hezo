@@ -1,16 +1,14 @@
 /**
  * The engine an instance holds while its backend cannot be opened yet.
  *
- * An instance comes back **locked** after every restart - the master key is
- * memory-only, which is what makes encryption at rest mean anything - so a
- * provider credential that lives only in the encrypted vault is unreadable at
- * the moment the backend would otherwise be opened. Two non-options bracket
- * this: failing the boot would mean a managed backend cannot survive a restart
- * at all (the operator would have to pass the master key on the command line
- * every time, which is the one thing we never ask for), and opening local
- * Docker instead would be exactly the silent fallback this directory exists to
- * prevent. So the holder starts on this, and the unlock swaps in the real
- * engine.
+ * A new process starts locked by default. A supervised update can restore the
+ * key through its in-memory IPC handoff, and deliberate one-shot `--master-key`
+ * or `HEZO_MASTER_KEY` input can inject it at startup. Without either path, a
+ * provider credential held only in the encrypted vault is unreadable when the
+ * backend would otherwise open. Failing the boot would mean a managed backend
+ * cannot wait for browser unlock, while opening local Docker would be the silent
+ * fallback this directory exists to prevent. So the holder starts on this, and
+ * the unlock swaps in the real engine.
  *
  * Nothing legitimate reaches it. Everything that drives the engine - the job
  * manager, the chat manager, the HQ warm-up, the orphan sweep - already starts

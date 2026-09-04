@@ -266,8 +266,10 @@ instance without ever being able to read what is in it.
 **Signing out ends a session, and does not lock the instance.** It clears the
 session here and then goes to `logoutUrl` to end the one at the issuer; without
 that second half the issuer would sign you straight back in on the next redirect.
-The master key stays in memory until the process restarts, exactly as it does on
-any other instance.
+The master key stays in memory. A new process starts locked by default, a supervised
+in-app update can carry the key forward in memory, and a reboot, crash, or direct service
+restart stays locked unless that startup receives one-shot `--master-key` or
+`HEZO_MASTER_KEY` input.
 
 **List both keys while you rotate.** `issuerPublicKey` takes several keys so an
 issuer can add a new one, move signing to it, and drop the old one, with no moment
@@ -285,8 +287,11 @@ with an error rather than accepting it. It is kept in memory only, which is what
 encryption at rest meaningful: a copy of the key on disk next to the encrypted data would
 let anyone who reads the host decrypt your vault.
 
-Hezo starts **locked** by design; you unlock it from the browser gate. To unlock a single
-non-interactive startup, pass the phrase to that one invocation with `HEZO_MASTER_KEY` (an
+Hezo starts **locked** by default. A supervised in-app update hands the key to the new
+process in memory. A reboot, crash, or direct service restart stays locked unless that
+invocation receives a one-shot `--master-key` or `HEZO_MASTER_KEY` input. To unlock a
+single non-interactive startup, pass the phrase to that one invocation with
+`HEZO_MASTER_KEY` (an
 environment variable rather than a flag, because flags are visible in the process list):
 
 ```sh
@@ -312,7 +317,7 @@ hezo --port 8080 --data-dir /var/lib/hezo
 ```
 
 Unlock a single startup non-interactively by passing the master key to that one
-invocation (Hezo normally starts **locked** and you unlock from the browser gate):
+invocation (Hezo normally starts **locked**; the browser gate is the interactive route):
 
 ```js
 // /etc/hezo/hezo.config.cjs
@@ -502,10 +507,12 @@ Recommendations:
 
 ### Switching an existing instance
 
-`hezo backup` / `hezo restore` move an instance's assets between local storage and a bucket
-for you - they carry the database in the same backup bundle, so one pair of commands moves
-the whole instance (see [Backup & recovery](/docs/deployment/backup-and-recovery)). To move
-existing assets into a bucket:
+`hezo backup` / `hezo restore` move an instance's database and assets between storage backends
+(see [Backup & recovery](/docs/deployment/backup-and-recovery)). They do not copy the rest of
+`dataDir`, including project workspaces, git worktrees, and instance key state. Full host
+recovery also needs the config file, its backend credentials, referenced files such as a
+database CA certificate, and the service definition or startup flags that load it. Back up
+those inputs or record how to recreate them. To move existing assets into a bucket:
 
 1. Stop the server.
 2. Back up the instance: `hezo backup --output move/`. If your data directory isn't the

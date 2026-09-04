@@ -6,19 +6,22 @@ section: Deployment
 
 # Backup & recovery
 
-`hezo backup` captures a **complete instance** - the database *and* every uploaded asset
-file - as a portable **backup bundle**. It works for both database backends (embedded and
+`hezo backup` writes a portable **database-and-assets migration bundle** containing the
+database and every uploaded asset file. It works for both database backends (embedded and
 [external Postgres](/docs/deployment/configuration)) and both asset backends (local files
 and an [S3-compatible bucket](/docs/deployment/configuration)), which also makes it the way
-to **move an instance between them**. But there's one crucial pairing to understand first.
+to move those two stores between backends. It does not copy the rest of `dataDir`.
 
-## You need the data *and* the master key
+## You need data, runtime settings, and the master key
 
 Your secrets are **encrypted with your master key**, and the master key is never stored
-with them. To restore a working instance you need **both**:
+with them. To restore a working instance you need all of these:
 
-- a **backup** (and, for a complete instance, the data directory - see below), and
-- the **twelve-word master key** that unlocks it.
+- the **backup bundle** for database rows and assets;
+- the complete **data directory** for workspaces, worktrees, and instance keys;
+- the **config file**, any files it references such as a database CA certificate, and
+  the service definition or startup flags that select that config; and
+- the **twelve-word master key** that unlocks the restored data.
 
 A backup without the master key cannot decrypt the secrets inside it. Store the master
 key separately and safely (see [Master key & encryption](/docs/security/master-key)).
@@ -26,7 +29,7 @@ key separately and safely (see [Master key & encryption](/docs/security/master-k
 ## Backing up
 
 ```sh
-hezo backup                         # whole instance (database + assets) → a bundle directory; stop the server first
+hezo backup                         # database + assets → a migration bundle; stop the server first
 hezo backup --output /safe/place/hezo-backup/   # choose where the bundle goes
 hezo backup --no-assets             # database only → a single .backup.gz file
 hezo backup --config /etc/hezo/hezo.config.cjs   # back up a hosted instance, any time
@@ -54,18 +57,18 @@ versioning.
 
 ### Point the command at your data directory
 
-`hezo backup` resolves its data directory the **same way the server does** - the `--config` file
-first, then `--data-dir`, then the default `~/.hezo`. This matters the moment your instance
-does **not** live at the default location.
+`hezo backup` resolves its data directory the **same way the server does** - an explicit
+`--data-dir` flag first, then the `--config` file, then the default `~/.hezo`. This matters
+the moment your instance does **not** live at the default location.
 
 **If your server runs with a custom data directory, the backup command has to know about it
 too.** Run `hezo backup` with the same `--config` the server uses,
 or pass `--data-dir /your/path` explicitly. Otherwise the command falls back to `~/.hezo` - a
 directory your instance never used - and backs up the wrong database instead of yours.
 
-- **systemd / Docker** (the env var is already set for the service): `hezo backup` needs no
-  extra flag - run it with the unit's environment (an `EnvironmentFile` / `systemd-run`), or
-  `docker exec <container> hezo backup --config <path>`, and the same file resolves your database.
+- **systemd / Docker:** pass the same `--config` to the backup command - for example,
+  `hezo backup --config /etc/hezo/hezo.config.cjs` or
+  `docker exec <container> hezo backup --config <path>`.
 - **A custom dir passed only as a startup flag** (`hezo --data-dir /var/lib/hezo`): pass the
   **same** `--data-dir /var/lib/hezo` to `hezo backup` (there is no env var to inherit).
 
@@ -75,11 +78,14 @@ it's on you to point it at the *right* directory; a valid-but-wrong data dir is 
 backup of the wrong instance. The same resolution applies to `hezo restore`, which **writes**
 into the resolved data directory.
 
-**The bundle does not cover the whole data directory.** Project workspaces (git worktrees)
-and the instance's keys live under `<data-dir>` and are **not** in a backup, so a full
-disaster-recovery copy is the bundle **plus** a copy of the data directory (a file backup
-or volume snapshot works; stopped-server copies are cleanest). If your assets already live
-in [S3-compatible object storage](/docs/deployment/configuration), `hezo backup` reads them
+**The bundle does not cover the whole host.** Project workspaces, git worktrees,
+and instance key state live under `<data-dir>` and are **not** in a backup, so full host
+recovery requires the bundle **plus** a copy of the data directory (a file backup or volume
+snapshot works; stopped-server copies are cleanest). Also back up the config file and
+service definition, including backend credentials, startup flags, and referenced files
+outside `dataDir` such as `/etc/hezo/db-ca.crt`. If you choose to recreate them instead,
+record the exact values and restore those files before starting Hezo. If your assets already
+live in [S3-compatible object storage](/docs/deployment/configuration), `hezo backup` reads them
 straight from the bucket into the bundle - or rely on the bucket's own
 versioning/replication and take a `--no-assets` database backup.
 

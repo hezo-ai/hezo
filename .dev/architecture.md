@@ -1488,13 +1488,15 @@ refused -> `read-only`. Logged at `error` with the runtime-specific fix but **no
 exiting would take down the UI the operator needs. Opt out with `containers.skipMountCheck`.
 
 **A vault-backed credential defers the open to unlock, and only then.** The provider API
-key lives in the `secrets` vault, encrypted with the master key, which is memory-only — so
-an instance, which comes back **locked** after every restart, cannot read it at the moment
-the backend is chosen. Making that fatal aborts startup on every boot — a stored key reads
-back as "no API key is configured" and a launch-supplied `containers.daytona.apiKey` throws
-"the instance is locked" from `storeDaytonaApiKey` — so a managed backend could not survive a
-restart at all, workable only by passing the master key on the command line, the one thing
-Hezo never asks an operator to persist.
+key lives in the `secrets` vault, encrypted with the master key, which is memory-only. A
+new process starts locked by default. A supervised in-app update hands the key to the new
+process in memory, while a deliberate one-shot `--master-key` or `HEZO_MASTER_KEY`
+invocation supplies it at launch. A reboot, crash, or direct service restart without either
+input cannot read the credential until the operator uses the browser unlock gate. Making
+that locked path fatal would abort startup: a stored key reads back as "no API key is
+configured" and a launch-supplied `containers.daytona.apiKey` throws "the instance is
+locked" from `storeDaytonaApiKey`. Deferring the backend keeps all three paths workable
+without asking an operator to persist the master key.
 
 So `resolveStartupBackend` returns `deferred` when (and only when) the backend needs a
 credential, none is in hand, the vault is locked, and `hasDaytonaApiKey` says one is on
@@ -5306,15 +5308,18 @@ enrolled at setup in `system_meta.auth_public_key`) and a 32-byte **unlock key**
 input to the server's at-rest derivations — canary, secrets encryption, JWT signing —
 held in memory only). The server needs symmetric key material at runtime because it
 decrypts secrets with no client in the loop (egress substitution, ssh signing, provider
-keys), so the unlock key transits exactly twice per boot — at setup and at
-unlock-after-restart — always inside an Ed25519-signed payload.
+keys). A new process starts locked by default. The unlock key reaches it through an
+Ed25519-signed web setup or unlock payload, a supervised update's private in-memory IPC
+handoff, or direct startup injection derived from deliberate one-shot `--master-key` or
+`HEZO_MASTER_KEY` input.
 
 **Bootstrap (challenge-response).** `POST /auth/setup` enrolls the public key + unlock key
 + canary in one transaction (self-certifying signature, `unset` state only). The mnemonic
 transmits **zero key material** on routine use: `POST /auth/challenge` issues a single-use
 nonce, `POST /auth/verify` verifies the signature over a reconstructed, domain-separated
-message (`hezo-auth-v1:login:<nonce>`). After a restart the server starts **locked**; the
-first `verify` includes the `unlock_key`. Messages are versioned and domain-separated so
+message (`hezo-auth-v1:login:<nonce>`). Without a supervisor handoff or one-shot
+master-key input, the server starts **locked**; the first `verify` includes the
+`unlock_key`. Messages are versioned and domain-separated so
 signatures can't be replayed or cross-purposed; on unlock `MasterKeyManager` fires
 `onUnlock` callbacks that start the `JobManager`.
 
@@ -6090,8 +6095,8 @@ deletes, which also collects orphans). The in-process S3 sim
 (`test/helpers/s3-sim.ts`) backs the driver-conformance and integration suites; the
 `test-s3` CI job runs the env-gated leg against real MinIO.
 
-**Backup/restore.** `hezo backup` captures the whole instance — database **and** asset
-blobs — as a **backup bundle** directory: `database.backup.gz` (the portable logical
+**Backup/restore.** `hezo backup` writes a **database-and-assets migration bundle**:
+`database.backup.gz` (the portable logical
 database backup) + `assets/<projectId>/<assetId>` blob files + a `manifest.json` written
 **last** as the completion marker. The database half is the **portable logical backup**
 (`src/db/logical-backup.ts`): gzipped JSONL carrying the applied-migration set plus every
@@ -6152,7 +6157,11 @@ and hosted storage in either direction — direction is expressed purely by whic
 artifact internal callers still use), `--no-database` an assets-only bundle, and
 `--strict-assets` fails restore on any blob with no verifying row. Restore auto-detects the
 input: a directory is a bundle, a file whose header parses is a `.backup.gz`, and anything
-else is refused with a message naming the expected format. The physical pgdata tarball
+else is refused with a message naming the expected format. These commands do not export
+or restore the rest of `dataDir`; full host recovery also requires its project workspaces,
+git worktrees, instance key state, config file, backend credentials, files referenced by
+the config, and the service definition or startup flags that load it. The physical pgdata
+tarball
 (`db/backup.ts`) is **gone** — it only ever loaded into embedded PGlite, so it was never a
 backup that could restore onto both backends; converting one needs a Hezo old enough to read
 it, then a fresh `hezo backup`. Restoring a large instance is minutes of work inside two loops (row inserts, blob
@@ -6282,9 +6291,10 @@ supervisor code talks to the new worker binary) on every `onUnlock`; the supervi
 in memory only (`createSupervisorUnlockKeyStore`) and answers the relaunched worker's request
 on a locked boot (`setupWorkerUnlockHandoff`, wired in `index.ts`). The reply still passes the
 master-key canary check, so a stale key just leaves the instance locked; the key never touches
-disk, argv, or env. Restarts the supervisor doesn't survive (crash, service restart, reboot)
-still come up locked — the web restart overlay polls `/api/status` and reloads onto the
-master-key gate. `GET /api/updates/status` surfaces the staged-update state plus an
+disk, argv, or env. Restarts the supervisor doesn't survive (crash, direct service restart,
+reboot) still come up locked unless that invocation deliberately receives the one-shot
+`--master-key` or `HEZO_MASTER_KEY` input. The web restart overlay polls `/api/status`
+and reloads onto the master-key gate. `GET /api/updates/status` surfaces the staged-update state plus an
 `autoUnlock` hint (startup master key **or** an active handoff channel on a supervised worker)
 so the UI's confirmation only warns about re-unlock when re-unlock will actually be needed. The web banner shows an **"Install & restart"** button only once the
 binary is `Staged` (so the restart is instant); while the background download is in flight it

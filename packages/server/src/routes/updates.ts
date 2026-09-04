@@ -100,10 +100,11 @@ export async function getLatestInfo(opts?: { force?: boolean }): Promise<UpdateI
 }
 
 /**
- * Build the updates router. `autoUnlock` reflects whether a master key is
- * configured at startup (env/CLI). The status route reports auto-unlock when
- * either that is true or the supervisor unlock-key handoff is active (supervised
- * worker with an IPC channel — see `lib/unlock-handoff.ts`), so the UI can
+ * Build the updates router. `autoUnlock` reflects whether the deliberate one-shot
+ * `--master-key` or `HEZO_MASTER_KEY` input supplied a key at launch. The status
+ * route reports auto-unlock when either that is true or the supervisor's in-memory
+ * unlock-key handoff is active (supervised worker with an IPC channel - see
+ * `lib/unlock-handoff.ts`), so the UI can
  * soften the "you'll need your master key" warning: an update restart hands the
  * in-memory unlock key to the relaunched worker.
  */

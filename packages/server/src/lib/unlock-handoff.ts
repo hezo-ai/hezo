@@ -18,8 +18,11 @@ const log = logger.child('unlock-handoff');
  * The key never touches disk, argv (visible in `ps`), or the environment
  * (inherited by every child spawn — the supervisor itself spreads
  * `process.env` into the worker); it moves only over the private IPC channel
- * between the two processes. Restarts the supervisor does not survive (crash,
- * service restart, reboot) still come up locked by design.
+ * between the two processes. A new process starts locked by default, this
+ * supervised update can restore the key through the in-memory handoff, and a
+ * deliberate direct startup can instead inject it from one-shot `--master-key`
+ * or `HEZO_MASTER_KEY` input. Without either input path, a crash, direct service
+ * restart or reboot comes up locked.
  *
  * The wire format is JSON (`serialization: 'json'` on the spawn) and must stay
  * backward compatible: after an update the supervisor still runs the OLD

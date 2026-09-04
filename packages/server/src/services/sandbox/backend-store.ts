@@ -147,15 +147,17 @@ export interface StartupBackendResolution {
  * instance boots with is visible on the Containers page rather than being
  * invisible state that only the launch command knows about.
  *
- * **Nothing here is fatal because the instance is locked.** An instance comes
- * back locked after every restart by design, so a rule that needed the vault at
- * this point would fire on every single boot: reading a stored provider key
- * would fail ("no API key is configured", for a key that is plainly on file),
- * and writing a flag-supplied one would fail outright ("the instance is
- * locked"). Between them they made `containers.daytona.apiKey` unusable in exactly
- * the setup that needs it - an operator who put it in their launch env and
- * unlocks from the browser. So the vault write is opportunistic and the vault
- * read is allowed to defer; both are completed on unlock.
+ * **Nothing here is fatal when the instance is locked.** A new process starts
+ * locked by default, a supervised update can restore the key through its
+ * in-memory IPC handoff, and deliberate one-shot `--master-key` or
+ * `HEZO_MASTER_KEY` input can inject it at startup. When neither unlock path is
+ * present, reading a stored provider key would fail ("no API key is configured",
+ * for a key that is plainly on file), and writing a flag-supplied one would fail
+ * outright ("the instance is locked"). Between them they made
+ * `containers.daytona.apiKey` unusable in exactly the setup that needs it - an
+ * operator who put it in their launch env and unlocks from the browser. So the
+ * vault write is opportunistic and the vault read is allowed to defer; both are
+ * completed on unlock.
  */
 export async function resolveStartupBackend(
 	db: Db,

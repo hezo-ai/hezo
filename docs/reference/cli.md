@@ -10,6 +10,16 @@ The `hezo` binary **is the server.** Running it with no command starts Hezo; a c
 subcommands and flags cover the rest. Run `hezo --help` for the authoritative list on
 your version.
 
+## Validate a config file
+
+```sh
+hezo config validate --config /etc/hezo/hezo.config.cjs
+```
+
+Loads the CommonJS module and validates every setting, then exits without opening the
+database or starting the server. Provisioning uses this command before publishing a
+generated config or removing a credential source.
+
 ## Start the server
 
 ```sh
@@ -95,14 +105,19 @@ hezo backup [--output <path>] [--data-dir <path>] \
   [--database-url <url>] [--asset-storage-url <url>] [--no-assets] [--no-database]
 ```
 
-By default `hezo backup` captures a **complete instance** - the database *and* every
-uploaded asset file - as a **backup bundle** directory (default
+By default `hezo backup` writes a **database-and-assets migration bundle** directory (default
 `<data-dir>/backups/hezo-<timestamp>/`), containing `database.backup.gz`, an `assets/`
 tree, and a `manifest.json`. The bundle restores onto either storage backend, which is
 how you move an instance's database and assets between local storage and hosted
 providers (external Postgres and an S3-compatible bucket). Point `--asset-storage-url`
 (or `assetStorage.url`) at the source bucket when the instance already keeps its
 assets in S3.
+
+The bundle does not include the rest of `dataDir`. Full host recovery also requires a copy
+of that directory because project workspaces, git worktrees, and instance key state are not
+exported or restored by these commands. Preserve the config file, backend credentials,
+referenced files such as a database CA certificate, and the service definition or startup
+flags that load the config, or record how to recreate them on the replacement host.
 
 - `--no-assets` - database only. Writes the single portable `.backup.gz` file (default
   `<data-dir>/backups/hezo-<timestamp>.backup.gz`) instead of a bundle.

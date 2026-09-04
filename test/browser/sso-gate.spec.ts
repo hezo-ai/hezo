@@ -165,8 +165,8 @@ test('an unidentified visitor is handed to the issuer, not asked for a password'
 test('a token at a LOCKED instance survives the passphrase and becomes a session', async ({
 	page,
 }) => {
-	// Locked is the normal state after any restart: the passphrase lives only in
-	// the operator's head, so it is not on this command line.
+	// This fixture deliberately supplies neither a supervisor handoff nor the one-shot
+	// --master-key / HEZO_MASTER_KEY input, so the new process starts locked by default.
 	await startServer({ reset: false, enrol: false });
 	await stubIssuer(page);
 

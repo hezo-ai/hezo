@@ -659,6 +659,8 @@
 	"setup.aiProvider.title": "Configurer un fournisseur d'IA",
 	"setup.masterKey.confirmDescription": "Saisissez votre clé maîtresse pour définir un mot de passe administrateur sur cette instance.",
 	"setup.masterKey.confirmTitle": "Confirmez votre clé maîtresse",
+	"setup.masterKey.lifecycleDescription": "Gardez cette clé à portée de main afin de pouvoir déverrouiller Hezo dans votre navigateur. Les nouveaux processus Hezo démarrent verrouillés par défaut. Une mise à jour supervisée dans l'application peut transmettre la clé au processus de remplacement en mémoire. Un redémarrage, un plantage ou un redémarrage direct du service nécessite un déverrouillage dans le navigateur, sauf si ce démarrage reçoit --master-key ou HEZO_MASTER_KEY comme entrée à usage unique.",
+	"setup.masterKey.lifecycleTitle": "Chiffre vos secrets et déverrouille Hezo.",
 	"setup.password.description": "Vous vous connecterez avec ce mot de passe désormais. Si vous l'oubliez, vous pourrez le réinitialiser avec votre clé maîtresse.",
 	"setup.password.submit": "Définir le mot de passe et continuer",
 	"setup.password.title": "Créer un mot de passe administrateur",
@@ -712,9 +714,9 @@
 	"toast.error": "Une erreur est survenue",
 	"toast.info": "À noter",
 	"toast.success": "Terminé",
-	"updates.confirm.drain": "Hezo attend quelques secondes que les exécutions d'agent en cours se terminent, puis s'arrête. Ce qui tourne encore est remis en file et repart de zéro.",
+	"updates.confirm.drain": "Hezo arrête les exécutions d'agent en cours, les remet en file d'attente et les relance depuis le début.",
 	"updates.confirm.restart": "Hezo va s’arrêter puis redémarrer sur {version}.",
-	"updates.confirm.reunlock": "Vous aurez besoin de votre clé maîtresse de 12 mots pour déverrouiller Hezo après le redémarrage.",
+	"updates.confirm.reunlock": "Gardez votre clé maîtresse de 12 mots à portée de main. Ce redémarrage ne peut pas transmettre la clé au processus de remplacement. Déverrouillez donc Hezo dans votre navigateur après son démarrage.",
 	"updates.confirm.runsInFlight.one": "{count} exécution d'agent est en cours.",
 	"updates.confirm.runsInFlight.other": "{count} exécutions d'agent sont en cours."
 }

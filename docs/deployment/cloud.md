@@ -6,9 +6,13 @@ section: Deployment
 
 # Deploying to a cloud server
 
-Running Hezo on an always-on cloud server lets your teams keep working around the clock
-without your laptop being on. Any VPS that can run Docker works - for example
-DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
+Running Hezo on a cloud server keeps the host reachable without your laptop being on.
+Agent execution continues while the instance is unlocked. A new Hezo process starts
+**locked** by default. A supervised in-app update hands the key to the new process in
+memory. A reboot, crash, or direct service restart comes up locked unless that invocation
+deliberately receives the one-shot `--master-key` or `HEZO_MASTER_KEY` input. Any VPS
+that can run Docker works - for example DigitalOcean, Hetzner, Fly, Linode, or an EC2
+instance.
 
 > **Want the fast path?** [One-click deploy](/docs/deployment/one-click) provisions all
 > of the below for you from a single cloud-init snippet - Docker, the binary, automatic
@@ -23,7 +27,7 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
 > ([configuration](/docs/deployment/configuration#running-agent-containers-on-a-managed-sandbox-service)),
 > or move an already-running instance over from **Settings -> Containers**
 > ([Switching at any time](/docs/containers/overview#switching-at-any-time)) - restarting
-> with different environment variables does not switch an existing instance.
+> with a different startup config does not switch an existing instance.
 
 ## The shape of a cloud deployment
 
@@ -42,8 +46,8 @@ DigitalOcean, Hetzner, Fly, Linode, or an EC2 instance.
    see [Managed database & asset storage](#managed-database--asset-storage) below.
 3. **Serve it over HTTPS** with a reverse proxy - required, not a nice-to-have; see
    [below](#serve-it-over-https).
-4. **Unlock it from the browser.** After boot Hezo starts **locked** - open its gate
-   and enter your twelve-word master key to unlock the instance. This is by design:
+4. **Unlock it.** After boot Hezo starts **locked** - open its browser gate and enter
+   your twelve-word master key to unlock the instance. This is by design:
    the master key is kept in memory only and is never stored on the server, so a stolen
    disk image can't decrypt your vault. If you need to unlock a single startup without
    the browser, you can pass the key to that one invocation - but don't bake it into a
@@ -64,9 +68,13 @@ See the [Configuration reference](/docs/deployment/configuration) for every opti
 ## Managed database & asset storage
 
 Local disk is the default, not a requirement: point Hezo at a **managed Postgres**
-and/or an **S3-compatible bucket** and the server itself becomes nearly stateless -
-the data directory then holds only workspaces, SSH/signing keys, and pre-migration
-backups. Each backend is one setting, adoptable independently:
+and/or an **S3-compatible bucket** to move database rows and asset files off the
+server. Managed backends do not replace a host backup: a replacement host also needs
+`dataDir`, `/etc/hezo/hezo.config.cjs`, any referenced files such as a database CA
+certificate, and the service definition or startup flags that select the config. Back up
+those inputs, including backend credentials, or record how to recreate them before replacing
+the server. Each backend is one setting,
+adoptable independently:
 
 1. **Provision a PostgreSQL 14+ instance** in the same region as your server (Hezo's
    scheduling polls every 1-5 seconds, so latency counts), with TLS. Direct,
@@ -76,11 +84,11 @@ backups. Each backend is one setting, adoptable independently:
    DigitalOcean Spaces, Backblaze B2, MinIO, …) with an access key. The bucket stays
    private - Hezo serves asset bytes through signed URLs. URL grammar and options:
    [Storing assets in S3-compatible object storage](/docs/deployment/configuration#storing-assets-in-s3-compatible-object-storage).
-3. **Set the URL(s) where your service definition reads its environment** - e.g. the
-   `EnvironmentFile` of your systemd unit (see
-   [Self-hosting](/docs/deployment/self-hosting)), kept root-only (mode 600) since the
+3. **Write the URL(s) into the config file your service starts with** - for example,
+   `/etc/hezo/hezo.config.cjs` for the systemd unit in
+   [Self-hosting](/docs/deployment/self-hosting). Keep it root-only (mode 600) since the
    URLs carry credentials. Prefer the config file over the CLI flags - flags are visible
-   in the process list - and give it mode 600:
+   in the process list:
 
    ```js
    // /etc/hezo/hezo.config.cjs

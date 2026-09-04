@@ -14,12 +14,14 @@ import { BoundedMap } from '../lib/bounded-map';
  * Verifying an issuer's assertion, and holding a verified identity across an
  * unlock.
  *
- * The two halves exist for the same reason. An instance boots locked and cannot
- * mint a session while it is - the session key is derived from the master key -
- * so a token whose whole life is a minute cannot also wait for someone to find
- * twelve words. The token is verified on arrival and what survives is a handle:
- * proof that this identity was asserted, and nothing else. It carries no key
- * material and unlocks nothing.
+ * The two halves exist for the same reason. A new process starts locked by
+ * default, though a supervised update may restore the key through its in-memory
+ * IPC handoff and deliberate one-shot `--master-key` or `HEZO_MASTER_KEY` input
+ * may inject it at startup. While locked, Hezo cannot mint a session because the
+ * session key derives from the master key, so a token whose whole life is a
+ * minute cannot also wait for someone to find twelve words. The token is
+ * verified on arrival and what survives is a handle: proof that this identity
+ * was asserted, and nothing else. It carries no key material and unlocks nothing.
  */
 
 /**
@@ -51,7 +53,10 @@ function issuerKeys(config: SsoConfig): Map<string, string> {
  * a token old enough to be evicted under the cap has to outlive its own window
  * to be worth replaying, and the window is a minute.
  *
- * In memory only. A restart drops it, and also re-locks the instance.
+ * In memory only. Every new process drops it and starts locked by default. A
+ * supervised update may restore the master key through its in-memory IPC
+ * handoff, while deliberate one-shot `--master-key` or `HEZO_MASTER_KEY` input
+ * may inject the key at startup; neither path restores this replay cache.
  */
 const REPLAY_CACHE_MAX_ENTRIES = 1024;
 const replayCache = new BoundedMap<string, number>(REPLAY_CACHE_MAX_ENTRIES);

@@ -46,8 +46,10 @@ const SIGNATURE_HEX = /^[0-9a-f]{128}$/;
 const SALT_HEX = /^[0-9a-f]{32}$/;
 
 // In-memory brute-force throttle for password login. Single admin, so one global
-// counter suffices. Not persisted — a restart clears it, which is fine (a
-// restart re-locks the instance behind the master key anyway).
+// counter suffices. Every new process clears it and starts locked by default. A
+// supervised update may restore the key through its in-memory IPC handoff, and
+// deliberate one-shot --master-key or HEZO_MASTER_KEY input may inject it at
+// startup; neither path preserves this throttle.
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCKOUT_MS = 60_000;
 const loginThrottle = { failures: 0, lockedUntil: 0 };
@@ -76,8 +78,10 @@ export const authRoutes = new Hono<Env>();
 
 // Challenge-response auth. The master-key mnemonic never reaches the server:
 // the client derives an Ed25519 keypair (enrolled at setup, signs challenges
-// thereafter) and an unlock key (transits only at setup and unlock — inside a
-// signed payload — to root the server's at-rest encryption).
+// thereafter) and an unlock key. A new process starts locked by default; signed
+// web setup or unlock sends the key, a supervised update carries it through an
+// in-memory IPC handoff, and deliberate one-shot --master-key or HEZO_MASTER_KEY
+// input derives it for direct startup injection.
 
 // Enrollment, first boot only: bind the auth public key and store the canary.
 authRoutes.post('/auth/setup', async (c) => {

@@ -110,9 +110,11 @@ export async function checkStatus(): Promise<StatusResponse> {
 /**
  * Authenticate with the 12-word master key phrase. The phrase never leaves the
  * browser: it derives an Ed25519 keypair (whose signature over a server
- * challenge proves ownership) and an unlock key (transmitted only at setup and
- * unlock-after-restart, inside the signed payload, to root the server's at-rest
- * encryption).
+ * challenge proves ownership) and an unlock key. A new process starts locked by
+ * default. Signed web setup or unlock sends the key, a supervised update can
+ * carry it through an in-memory IPC handoff, and deliberate one-shot
+ * `--master-key` or `HEZO_MASTER_KEY` input derives it for direct startup
+ * injection.
  *
  * The master key only *unlocks* — it does not mint a session. The server returns
  * a short-lived, password-setup-scoped token, held in memory here; the caller
@@ -138,8 +140,8 @@ export async function authenticateWithMnemonic(
 	try {
 		await challengeLogin(keys, state === 'locked' ? unlockKey : null);
 	} catch (err) {
-		// The server restarted (and locked) between the status fetch and this
-		// attempt — retry once with the unlock key included.
+		// The server changed to the locked state between the status fetch and this
+		// attempt - retry once with the unlock key included.
 		if ((err as ApiError).code === 'UNLOCK_KEY_REQUIRED') {
 			await challengeLogin(keys, unlockKey);
 			return;
@@ -256,8 +258,10 @@ export async function changePassword(currentPassword: string, newPassword: strin
  * redirect, so signing out looks like nothing happened. Handing the browser to
  * the issuer's logout is what actually ends it.
  *
- * This ends a session; it does not re-lock the instance. The master key stays
- * in memory until the process restarts, as it always has.
+ * This ends a session; it does not re-lock the instance. A new process starts
+ * locked by default, though a supervised update may restore the key through its
+ * in-memory IPC handoff and deliberate one-shot `--master-key` or
+ * `HEZO_MASTER_KEY` input may inject it at startup.
  */
 export function logout(issuerLogoutUrl?: string) {
 	api.clearToken();

@@ -254,7 +254,7 @@ function AppShell() {
 
 	// Step 0 of a fresh instance, ahead of the master key. Only ever shown when
 	// the operator has never chosen a locale AND the instance is brand new
-	// (`unset`): a locked-after-restart instance predates this feature at worst,
+	// (`unset`): an initialized instance in the locked state predates this feature at worst,
 	// and must land on the unlock screen rather than be re-onboarded. The locale
 	// control stays in the corner of every later gate, so this never becomes the
 	// only chance to set it.
@@ -264,7 +264,7 @@ function AppShell() {
 
 	if (status.masterKeyState !== 'unlocked') {
 		api.clearToken();
-		// Pre-active vault gate. Both first-run setup (unset) and post-restart unlock
+		// Pre-active vault gate. Both first-run setup (unset) and locked-instance unlock
 		// (locked) share the same full-screen "vault" treatment to signal the
 		// instance isn't live yet; the master key only unlocks — it never grants a
 		// session. After the unlock reveal, the gate re-evaluates below.

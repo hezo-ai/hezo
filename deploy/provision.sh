@@ -14,7 +14,8 @@
 #   3. downloads the arch-matched `hezo` binary from GitHub Releases
 #   4. installs Caddy as a reverse proxy with automatic HTTPS + WebSocket passthrough
 #   5. installs systemd units (a first-boot unit that derives the public URL, then Hezo)
-#   6. exempts Hezo from needrestart's automatic restarts (it comes back locked)
+#   6. exempts Hezo from needrestart's automatic restarts (a direct restart without
+#      one-shot --master-key or HEZO_MASTER_KEY input starts locked)
 #   7. locks the firewall down (only 80/443 public, or nothing public behind a
 #      gateway; the app port + egress ports stay host-local either way)
 #
@@ -75,13 +76,15 @@ RELEASE_TAG="${HEZO_RELEASE_TAG:-latest}"
 # firewall rule cannot drift apart.
 APP_PORT=3100
 
-log() { echo "[hezo-provision] $*"; }
-
-# BEGIN CONFIG ADAPTER FUNCTIONS
+# Cloud-init can seed optional settings (managed database / asset storage, domain
+# override) into deploy.env before this script runs - pick them up as literal data,
+# never as shell. Only keys matching the caller's pattern are taken, explicit shell
+# environment still wins over the file, and a final line without a trailing newline
+# is still read. hezo-firstboot.sh below gets this same function verbatim.
 load_env_file() {
 	local path="$1" allowed="$2" key value
 	[[ -f "${path}" ]] || return 0
-	while IFS='=' read -r key value; do
+	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
 		[[ "${key}" =~ ${allowed} ]] || continue
 		if [[ -z "${!key:-}" ]]; then
 			export "${key}=${value}"
@@ -89,6 +92,25 @@ load_env_file() {
 	done <"${path}"
 }
 
+load_env_file "${DEPLOY_ENV}" '^(HEZO_[A-Z_]+|BEHIND_GATEWAY)$'
+
+# Resolved once so every branch below reads the same answer, and so `set -u`
+# never trips on an unset optional flag.
+BEHIND_GATEWAY="${BEHIND_GATEWAY:-}"
+if [[ "${BEHIND_GATEWAY}" == "1" && -z "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
+	echo "BEHIND_GATEWAY=1 needs HEZO_DOMAIN_OVERRIDE: the gateway owns the host name," >&2
+	echo "and this machine's own address is not the one users reach it by." >&2
+	exit 1
+fi
+
+log() { echo "[hezo-provision] $*"; }
+
+GENERATED_CONFIG_HEADER='// Hezo configuration. Edit and restart: systemctl restart hezo'
+GENERATED_CONFIG_START_MARKER='// hezo-provision: generated'
+GENERATED_CONFIG_COMPLETE_MARKER='// hezo-provision: complete'
+
+# Serialize a shell value as a JSON string, which is also a JavaScript string
+# literal. Shell variables cannot contain NUL; every other byte is preserved.
 json_string() {
 	local input="$1" output="" char escaped code index
 	local LC_ALL=C
@@ -116,48 +138,52 @@ json_string() {
 	printf '"%s"' "${output}"
 }
 
-prepare_config_values() {
-	if [[ -n "${HEZO_DATABASE_POOL_SIZE:-}" ]]; then
-		if [[ ! "${HEZO_DATABASE_POOL_SIZE}" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
-			echo "HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100." >&2
-			return 1
-		fi
-		HEZO_DATABASE_POOL_SIZE_JSON="${HEZO_DATABASE_POOL_SIZE}"
-	else
-		HEZO_DATABASE_POOL_SIZE_JSON=""
-	fi
-	WEB_URL_FILE_JSON="$(json_string "${WEB_URL_FILE}")"
-	DATA_DIR_JSON="$(json_string "${DATA_DIR}")"
-	HEZO_DATABASE_URL_JSON="$(json_string "${HEZO_DATABASE_URL:-}")"
-	HEZO_ASSET_STORAGE_URL_JSON="$(json_string "${HEZO_ASSET_STORAGE_URL:-}")"
+# ---------------------------------------------------------------------------
+# 1a. Config provenance helpers
+#     Every one of these runs Hezo's own loader through the installed binary,
+#     so they are only called from section 4, after section 3 has put this
+#     release's binary in place. Calling them earlier would ask whatever
+#     binary the host was already carrying, which on any upgrade predates
+#     `hezo config validate` and answers no to everything.
+# ---------------------------------------------------------------------------
+
+# Hezo's real CommonJS loader and schema validator, as a yes/no.
+commonjs_config_valid() {
+	local path="$1"
+	/usr/local/bin/hezo config validate --config "${path}" >/dev/null 2>&1
 }
 
-load_legacy_config() {
-	LEGACY_ENV_CARRIED=""
-	if [[ -f "${LEGACY_ENV}" && ! -f "${CONFIG_FILE}" ]]; then
-		while IFS='=' read -r key value; do
-			[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
-			if [[ -z "${!key:-}" ]]; then
-				export "${key}=${value}"
-				LEGACY_ENV_CARRIED+=" ${key}"
-			fi
-		done <"${LEGACY_ENV}"
-		log "Found ${LEGACY_ENV} from a pre-0.50 install."
-		if [[ -n "${LEGACY_ENV_CARRIED}" ]]; then
-			log "Carrying into ${CONFIG_FILE}:${LEGACY_ENV_CARRIED}"
-		fi
-		if [[ -n "${HEZO_WEB_URL:-}" && ! -s "${WEB_URL_FILE}" ]]; then
-			echo "${HEZO_WEB_URL}" >"${WEB_URL_FILE}"
-			log "Seeded ${WEB_URL_FILE} with ${HEZO_WEB_URL}"
-		fi
-	fi
+# Both markers are the current provisioner's durable provenance boundary. Schema
+# validity alone says an operator config can run; it does not authorize cleanup.
+generated_config_complete() {
+	local path="$1"
+	[[ -f "${path}" ]] || return 1
+	grep -Fqx "${GENERATED_CONFIG_START_MARKER}" "${path}" || return 1
+	grep -Fqx "${GENERATED_CONFIG_COMPLETE_MARKER}" "${path}" || return 1
+	commonjs_config_valid "${path}"
 }
 
-write_hezo_config() {
-	[[ -f "${CONFIG_FILE}" ]] && return
-	# Mode 600: this file can hold database and object-storage credentials.
-	install -m 600 /dev/null "${CONFIG_FILE}"
-	cat >"${CONFIG_FILE}" <<EOF
+# A complete config from the last provisioner before durable markers existed may
+# also authorize legacy cleanup. Match its generated bytes exactly after replacing
+# only the values that provisioner serialized, so a valid operator config cannot.
+pre_marker_generated_config_complete() {
+	local path="$1" normalized prefix database asset expected json_string_literal
+	[[ -f "${path}" ]] || return 1
+	commonjs_config_valid "${path}" || return 1
+	# One complete JSON string literal, not a greedy span that can consume a
+	# second expression or property on the same generated line.
+	json_string_literal='"([^"\\[:cntrl:]]|\\(["\\/bfnrt]|u[[:xdigit:]]{4}))*"'
+	normalized="$(
+		sed -E \
+			-e "s#^const webUrlFile = ${json_string_literal};\$#const webUrlFile = \"<web-url-file>\";#" \
+			-e "s#^([[:space:]]*)dataDir: ${json_string_literal},\$#\\1dataDir: \"<data-dir>\",#" \
+			-e "s#^([[:space:]]*)url: ${json_string_literal},\$#\\1url: \"<database-url>\",#" \
+			-e 's#^([[:space:]]*)poolSize: ([1-9]|[1-9][0-9]|100),$#\1poolSize: <pool-size>,#' \
+			-e "s#^([[:space:]]*)assetStorage: \\{ url: ${json_string_literal} \\},\$#\\1assetStorage: { url: \"<asset-storage-url>\" },#" \
+			"${path}"
+		printf '\034'
+	)"
+	prefix="$(cat <<'EOF'
 // Hezo configuration. Edit and restart: systemctl restart hezo
 // Reference: https://hezo.ai/docs/deployment/configuration
 //
@@ -168,79 +194,62 @@ write_hezo_config() {
 const { existsSync, readFileSync } = require('node:fs');
 
 // Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
-const webUrlFile = ${WEB_URL_FILE_JSON};
+const webUrlFile = "<web-url-file>";
 
 module.exports = {
-	dataDir: ${DATA_DIR_JSON},
+	dataDir: "<data-dir>",
 	webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
 EOF
-	# Managed data hosting (optional): persist the database / asset-storage settings
-	# provided at provision time. To wire them into an already-provisioned host, edit
-	# this file directly and restart hezo - see
-	# docs/deployment/one-click.md § Using managed data hosting.
-	if [[ -n "${HEZO_DATABASE_URL:-}" || -n "${HEZO_DATABASE_POOL_SIZE_JSON}" ]]; then
-		{
-			printf '\tdatabase: {\n'
-			[[ -n "${HEZO_DATABASE_URL:-}" ]] && printf '\t\turl: %s,\n' "${HEZO_DATABASE_URL_JSON}"
-			[[ -n "${HEZO_DATABASE_POOL_SIZE_JSON}" ]] && printf '\t\tpoolSize: %s,\n' "${HEZO_DATABASE_POOL_SIZE_JSON}"
-			printf '\t},\n'
-		} >>"${CONFIG_FILE}"
-	fi
-	if [[ -n "${HEZO_ASSET_STORAGE_URL:-}" ]]; then
-		printf '\tassetStorage: { url: %s },\n' "${HEZO_ASSET_STORAGE_URL_JSON}" >>"${CONFIG_FILE}"
-	fi
-	echo "};" >>"${CONFIG_FILE}"
+)"
+	for database in \
+		'' \
+		$'\tdatabase: {\n\t\turl: "<database-url>",\n\t},\n' \
+		$'\tdatabase: {\n\t\tpoolSize: <pool-size>,\n\t},\n' \
+		$'\tdatabase: {\n\t\turl: "<database-url>",\n\t\tpoolSize: <pool-size>,\n\t},\n'; do
+		for asset in '' $'\tassetStorage: { url: "<asset-storage-url>" },\n'; do
+			expected="${prefix}"$'\n'"${database}${asset}"$'};\n\034'
+			[[ "${normalized}" == "${expected}" ]] && return 0
+		done
+	done
+	return 1
 }
 
-retire_legacy_config() {
-	if [[ -n "${LEGACY_ENV_CARRIED}" && -f "${CONFIG_FILE}" && -f "${LEGACY_ENV}" ]]; then
-		mv "${LEGACY_ENV}" "${LEGACY_ENV}.migrated"
-		log "Renamed ${LEGACY_ENV} to ${LEGACY_ENV}.migrated (no longer read)."
-	fi
+# Only the exact partial objects left by interrupted provisioners are
+# recoverable. A marker alone is not proof of an incomplete file: an operator
+# may retain it while changing the export shape or removing the completion
+# marker from an otherwise valid CommonJS config.
+interrupted_generated_config() {
+	local path="$1" normalized
+	[[ -f "${path}" ]] || return 1
+	[[ "$(cat "${path}")" == "${GENERATED_CONFIG_START_MARKER}"$'\n'"${GENERATED_CONFIG_HEADER}"$'\n''module.exports = {' ]] && return 0
+	[[ "$(tr -d '[:space:]' <"${path}")" == 'module.exports={' ]] && return 0
+
+	# The pre-marker provisioner wrote this whole heredoc before appending managed
+	# backends and the closing object. Normalize only its two host-specific paths,
+	# then compare every other byte so arbitrary invalid operator files stay put.
+	normalized="$(sed -E \
+		-e "s|^const webUrlFile = '[^']*';$|const webUrlFile = '<web-url-file>';|" \
+		-e "s|^([[:space:]]*)dataDir: '[^']*',$|\\1dataDir: '<data-dir>',|" \
+		"${path}")"
+	[[ "${normalized}" == "$(cat <<'EOF'
+// Hezo configuration. Edit and restart: systemctl restart hezo
+// Reference: https://hezo.ai/docs/deployment/configuration
+//
+// Do NOT put your master key in this file. Hezo keeps it in memory only and comes up
+// locked after each restart by design; unlock it from the browser gate. A copy of the
+// key on disk next to the encrypted data would let anyone who reads this box decrypt
+// your vault.
+const { existsSync, readFileSync } = require('node:fs');
+
+// Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
+const webUrlFile = '<web-url-file>';
+
+module.exports = {
+	dataDir: '<data-dir>',
+	webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
+EOF
+)" ]]
 }
-
-write_firstboot_env() {
-	install -m 600 /dev/null "${DEPLOY_ENV}"
-	[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && printf 'HEZO_DOMAIN_OVERRIDE=%s\n' "${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV}"
-	[[ -n "${HEZO_SWAP_SIZE:-}" ]] && printf 'HEZO_SWAP_SIZE=%s\n' "${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV}"
-	[[ -n "${BEHIND_GATEWAY}" ]] && printf 'BEHIND_GATEWAY=%s\n' "${BEHIND_GATEWAY}" >>"${DEPLOY_ENV}"
-	return 0
-}
-# END CONFIG ADAPTER FUNCTIONS
-
-# Cloud-init can seed optional settings (managed database / asset storage, domain
-# override) into deploy.env before this script runs - pick them up as literal data.
-# Explicit shell environment still wins over the file.
-load_env_file "${DEPLOY_ENV}" '^(HEZO_[A-Z_]+|BEHIND_GATEWAY)$'
-
-# Resolved once so every branch below reads the same answer, and so `set -u`
-# never trips on an unset optional flag.
-BEHIND_GATEWAY="${BEHIND_GATEWAY:-}"
-if [[ "${BEHIND_GATEWAY}" == "1" && -z "${HEZO_DOMAIN_OVERRIDE:-}" ]]; then
-	echo "BEHIND_GATEWAY=1 needs HEZO_DOMAIN_OVERRIDE: the gateway owns the host name," >&2
-	echo "and this machine's own address is not the one users reach it by." >&2
-	exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# 1a. Migrate a pre-0.50 /etc/hezo/hezo.env
-#     Before 0.50 this script wrote an env file and wired it in with
-#     EnvironmentFile=. 0.50 reads a config file instead and ignores those
-#     variables entirely, so a host upgraded in place would fall back to the
-#     built-in defaults - an empty database that looks like a fresh install.
-#     Read the old file into this shell so the config file written below carries
-#     its settings; the shell environment still wins. The file itself is only
-#     renamed aside once the config file exists, so an interrupted run loses
-#     nothing.
-# ---------------------------------------------------------------------------
-LEGACY_ENV="/etc/hezo/hezo.env"
-load_legacy_config
-
-# An operator who moved the data dir keeps it. Everything below writes to this path.
-DATA_DIR="${HEZO_DATA_DIR:-${DATA_DIR}}"
-if [[ ! -f "${CONFIG_FILE}" ]]; then
-	prepare_config_values
-fi
 
 # ---------------------------------------------------------------------------
 # 1. Swap file — give low-RAM hosts a memory cushion so the install itself and
@@ -392,16 +401,163 @@ curl -fsSL -o /usr/local/bin/hezo "${BINARY_URL}"
 chmod +x /usr/local/bin/hezo
 
 # ---------------------------------------------------------------------------
-# 4. Data dir + config file (never overwrite an operator-edited config file)
+# 4. Data directory + Hezo config file (never overwrite an operator-edited config file)
+#
+#    Runs after section 3 so every check below asks this release's binary.
 # ---------------------------------------------------------------------------
 install -d -m 700 /etc/hezo
-install -d -m 755 "${DATA_DIR}"
-write_hezo_config
-retire_legacy_config
 
-# Keep only settings the first-boot unit still needs. Managed credentials now live
-# in the root-only CommonJS config and must not remain in a second file.
-write_firstboot_env
+# What is at CONFIG_FILE, and may this run clean up after it? Only a config this
+# script provably generated authorizes retiring the credential sources it was
+# built from. Schema validity alone says an operator's own config can run.
+CONFIG_PROVEN_GENERATED=""
+NEEDS_GENERATED_CONFIG=""
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+	NEEDS_GENERATED_CONFIG=1
+elif generated_config_complete "${CONFIG_FILE}"; then
+	CONFIG_PROVEN_GENERATED=1
+elif pre_marker_generated_config_complete "${CONFIG_FILE}"; then
+	CONFIG_PROVEN_GENERATED=1
+elif commonjs_config_valid "${CONFIG_FILE}"; then
+	log "Keeping the operator-edited config at ${CONFIG_FILE}."
+elif interrupted_generated_config "${CONFIG_FILE}"; then
+	NEEDS_GENERATED_CONFIG=1
+	log "Replacing an incomplete generated config at ${CONFIG_FILE}."
+else
+	# Not loadable, and not a shape this script wrote - so not ours to replace,
+	# and the service would fail to start on it. Say which, and stop.
+	echo "The config at ${CONFIG_FILE} does not load, and does not match anything this" >&2
+	echo "script generated, so it has been left exactly as it is. Fix it or move it" >&2
+	echo "aside, then rerun. To see why it does not load:" >&2
+	echo "  hezo config validate --config ${CONFIG_FILE}" >&2
+	exit 1
+fi
+
+# A pre-0.50 install wired /etc/hezo/hezo.env in with EnvironmentFile=. 0.50 reads
+# a config file instead and ignores those variables entirely, so a host upgraded in
+# place would fall back to the built-in defaults - an empty database that reads as a
+# fresh install. Carry the old settings into the config written below; the shell
+# environment still wins. The file is renamed aside only once that config is in
+# place, so an interrupted run loses nothing.
+LEGACY_ENV="/etc/hezo/hezo.env"
+LEGACY_ENV_CARRIED=""
+if [[ -f "${LEGACY_ENV}" && -n "${NEEDS_GENERATED_CONFIG}" ]]; then
+	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
+		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
+		if [[ -z "${!key:-}" ]]; then
+			export "${key}=${value}"
+			LEGACY_ENV_CARRIED+=" ${key}"
+		fi
+	done <"${LEGACY_ENV}"
+	log "Found ${LEGACY_ENV} from a pre-0.50 install."
+	if [[ -n "${LEGACY_ENV_CARRIED}" ]]; then
+		log "Carrying into ${CONFIG_FILE}:${LEGACY_ENV_CARRIED}"
+	fi
+	# The generated config reads its webUrl from the side file hezo-firstboot
+	# writes, and firstboot will not re-run here - its sentinel was set the day
+	# this host was provisioned. Seed the file from the old variable instead of
+	# special-casing the generator, so both paths keep one mechanism.
+	if [[ -n "${HEZO_WEB_URL:-}" && ! -s "${WEB_URL_FILE}" ]]; then
+		echo "${HEZO_WEB_URL}" >"${WEB_URL_FILE}"
+		log "Seeded ${WEB_URL_FILE} with ${HEZO_WEB_URL}"
+	fi
+fi
+
+# An operator who moved the data dir keeps it. Everything below writes to this path.
+DATA_DIR="${HEZO_DATA_DIR:-${DATA_DIR}}"
+
+if [[ -n "${NEEDS_GENERATED_CONFIG}" ]]; then
+	if [[ -n "${HEZO_DATABASE_POOL_SIZE:-}" && ! "${HEZO_DATABASE_POOL_SIZE}" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
+		echo "HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100." >&2
+		exit 1
+	fi
+	WEB_URL_FILE_JSON="$(json_string "${WEB_URL_FILE}")"
+	DATA_DIR_JSON="$(json_string "${DATA_DIR}")"
+	HEZO_DATABASE_URL_JSON="$(json_string "${HEZO_DATABASE_URL:-}")"
+	HEZO_ASSET_STORAGE_URL_JSON="$(json_string "${HEZO_ASSET_STORAGE_URL:-}")"
+fi
+
+# The data directory the config above will name, created before anything writes to it.
+install -d -m 755 "${DATA_DIR}"
+CONFIG_CANDIDATE=""
+DEPLOY_ENV_CANDIDATE=""
+cleanup_config_candidates() {
+	[[ -z "${CONFIG_CANDIDATE}" ]] || rm -f -- "${CONFIG_CANDIDATE}"
+	[[ -z "${DEPLOY_ENV_CANDIDATE}" ]] || rm -f -- "${DEPLOY_ENV_CANDIDATE}"
+}
+trap cleanup_config_candidates EXIT
+
+if [[ -n "${NEEDS_GENERATED_CONFIG}" ]]; then
+	# Build beside the destination so the final rename is atomic. Mode 600: this
+	# file can hold database and object-storage credentials.
+	CONFIG_CANDIDATE="$(mktemp "${CONFIG_FILE}.tmp.XXXXXX")"
+	chmod 600 "${CONFIG_CANDIDATE}"
+	cat >"${CONFIG_CANDIDATE}" <<EOF
+${GENERATED_CONFIG_START_MARKER}
+${GENERATED_CONFIG_HEADER}
+// Reference: https://hezo.ai/docs/deployment/configuration
+//
+// Do NOT put your master key in this file. Hezo keeps it in memory only. A supervised
+// in-app update hands it forward in memory. A reboot, crash, or direct service restart
+// comes up locked unless that invocation receives one-shot --master-key or
+// HEZO_MASTER_KEY input; you can otherwise use the browser gate. A copy
+// of the key on disk next to the encrypted data would let anyone who reads this box
+// decrypt your vault.
+const { existsSync, readFileSync } = require('node:fs');
+
+// Written by hezo-firstboot on first boot (see /usr/local/sbin/hezo-firstboot.sh).
+const webUrlFile = ${WEB_URL_FILE_JSON};
+
+module.exports = {
+	dataDir: ${DATA_DIR_JSON},
+	webUrl: existsSync(webUrlFile) ? readFileSync(webUrlFile, 'utf8').trim() : '',
+EOF
+	# Managed data hosting (optional): persist the database / asset-storage settings
+	# provided at provision time. To wire them into an already-provisioned host, edit
+	# this file directly and restart hezo — see
+	# docs/deployment/one-click.md § Using managed data hosting.
+	if [[ -n "${HEZO_DATABASE_URL:-}" || -n "${HEZO_DATABASE_POOL_SIZE:-}" ]]; then
+		{
+			printf '\tdatabase: {\n'
+			[[ -n "${HEZO_DATABASE_URL:-}" ]] && printf '\t\turl: %s,\n' "${HEZO_DATABASE_URL_JSON}"
+			[[ -n "${HEZO_DATABASE_POOL_SIZE:-}" ]] && printf '\t\tpoolSize: %s,\n' "${HEZO_DATABASE_POOL_SIZE}"
+			printf '\t},\n'
+		} >>"${CONFIG_CANDIDATE}"
+	fi
+	if [[ -n "${HEZO_ASSET_STORAGE_URL:-}" ]]; then
+		printf '\tassetStorage: { url: %s },\n' "${HEZO_ASSET_STORAGE_URL_JSON}" >>"${CONFIG_CANDIDATE}"
+	fi
+	echo "};" >>"${CONFIG_CANDIDATE}"
+	echo "${GENERATED_CONFIG_COMPLETE_MARKER}" >>"${CONFIG_CANDIDATE}"
+	if ! generated_config_complete "${CONFIG_CANDIDATE}" ||
+		[[ "$(tail -n 1 "${CONFIG_CANDIDATE}")" != "${GENERATED_CONFIG_COMPLETE_MARKER}" ]]; then
+		echo "Generated Hezo config did not pass its completion check." >&2
+		exit 1
+	fi
+	mv -fT "${CONFIG_CANDIDATE}" "${CONFIG_FILE}"
+	CONFIG_CANDIDATE=""
+	CONFIG_PROVEN_GENERATED=1
+fi
+
+# Now that the settings live in the config file, take the old one out of the way:
+# nothing reads it any more, and leaving it invites a hand-edit that does nothing.
+if [[ -n "${CONFIG_PROVEN_GENERATED}" && -f "${LEGACY_ENV}" ]]; then
+	mv "${LEGACY_ENV}" "${LEGACY_ENV}.migrated"
+	log "Renamed ${LEGACY_ENV} to ${LEGACY_ENV}.migrated (no longer read)."
+fi
+
+# Keep only settings the first-boot unit still needs after the generated config
+# is complete. The atomic rewrite retains the credential source if cleanup is
+# interrupted, rather than truncating the only copy in place.
+if [[ -n "${CONFIG_PROVEN_GENERATED}" ]]; then
+	DEPLOY_ENV_CANDIDATE="$(mktemp "${DEPLOY_ENV}.tmp.XXXXXX")"
+	chmod 600 "${DEPLOY_ENV_CANDIDATE}"
+	[[ -n "${HEZO_DOMAIN_OVERRIDE:-}" ]] && printf 'HEZO_DOMAIN_OVERRIDE=%s\n' "${HEZO_DOMAIN_OVERRIDE}" >>"${DEPLOY_ENV_CANDIDATE}"
+	[[ -n "${HEZO_SWAP_SIZE:-}" ]] && printf 'HEZO_SWAP_SIZE=%s\n' "${HEZO_SWAP_SIZE}" >>"${DEPLOY_ENV_CANDIDATE}"
+	[[ -n "${BEHIND_GATEWAY}" ]] && printf 'BEHIND_GATEWAY=%s\n' "${BEHIND_GATEWAY}" >>"${DEPLOY_ENV_CANDIDATE}"
+	mv -fT "${DEPLOY_ENV_CANDIDATE}" "${DEPLOY_ENV}"
+	DEPLOY_ENV_CANDIDATE=""
+fi
 
 # ---------------------------------------------------------------------------
 # 5. Caddy (reverse proxy, automatic HTTPS, WebSocket passthrough)
@@ -553,8 +709,9 @@ EOF
 #    Ubuntu runs needrestart from the APT hook in automatic mode, so a security
 #    upgrade replacing a library the binary maps (the C library among them)
 #    restarts the service with no prompt. Hezo keeps its master key in memory
-#    only and comes back locked, so an unattended restart takes agent execution
-#    offline until someone unlocks it from the browser gate - minutes if you are
+#    only and comes back locked unless that invocation deliberately receives the
+#    one-shot --master-key or HEZO_MASTER_KEY input. An unattended restart therefore
+#    takes agent execution offline until someone unlocks it - minutes if you are
 #    awake, hours if it lands overnight. Patches still install on schedule; the
 #    restart becomes yours to make when you can unlock it straight after.
 #    See docs/deployment/self-hosting.md § Keeping the host patched.
@@ -562,8 +719,10 @@ EOF
 install -d /etc/needrestart/conf.d
 cat >/etc/needrestart/conf.d/hezo.conf <<'EOF'
 # Managed by Hezo provision.sh.
-# Hezo comes back locked after a restart (its master key lives in memory only),
-# so an unattended restart takes agent execution offline until an operator
+# A new Hezo process starts locked by default (its master key lives in memory only).
+# The supervised in-app update hands the key forward; a direct service restart does
+# not, unless that invocation receives one-shot --master-key or HEZO_MASTER_KEY input.
+# An unattended restart therefore takes agent execution offline until an operator
 # unlocks it. needrestart still reports Hezo as needing a restart - check with
 # `needrestart -b -r l` - it just must never perform one on its own.
 $nrconf{override_rc} = { qr(^hezo\.service$) => 0 };
