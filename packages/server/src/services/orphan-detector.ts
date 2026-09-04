@@ -1,5 +1,6 @@
 import {
 	AgentRuntimeStatus,
+	ApprovalStatus,
 	ApprovalType,
 	HeartbeatRunStatus,
 	WakeupSkipReason,
@@ -9,9 +10,12 @@ import {
 } from '@hezo/shared';
 import type { Db } from '../db/database';
 import { readRunLogTail } from '../db/run-log-chunks';
+import type { DomainEventBus } from '../events/bus';
 import { broadcastRowChange } from '../lib/broadcast';
 import { logger } from '../logger';
 import { setAgentIdleIfNoActiveRuns } from './agent-runtime-status';
+import { broadcastApprovalChange } from './approval-broadcast';
+import { resolveApproval } from './approval-resolve';
 import { HANDBACK_OUTCOME_COPY, type HandbackOutcome, recordHandbackOutcome } from './run-handback';
 import { createWakeup, settleWakeupForRun } from './wakeup';
 import type { WebSocketManager } from './ws';
@@ -560,6 +564,53 @@ export async function fileProviderRefusalApproval(
 		undefined,
 		`The model provider has been refusing this agent's runs for over ${PROVIDER_REFUSAL_GIVEUP_MIN} minutes, so Hezo has stopped retrying. ${run.reason} Switch the agent or task to another model, or wait for the provider to recover and press Retry.`,
 	);
+}
+
+/**
+ * Close the agent-error notices a recovered agent no longer needs.
+ *
+ * The inverse of {@link fileLostRunApproval}: a successful run is the proof that
+ * whatever the notice was about - a spent retry budget, a refusing provider - is
+ * over, so the pending record would otherwise sit in the Inbox until a person
+ * pressed Dismiss on something already fixed. Scoped to the member, not the
+ * team the notice was filed in: the notice is about the agent, and a success
+ * anywhere is the agent working again.
+ *
+ * Goes through `resolveApproval` and the approvals broadcast so the row lands
+ * exactly as a human resolve does - same status write, same side-effect
+ * dispatch (a no-op for this payload), same realtime update. Only a SELECT is
+ * spent when nothing is pending, so a healthy agent's runs write nothing here.
+ * Returns the number of notices closed.
+ */
+export async function clearAgentErrorApprovalsOnRecovery(
+	db: Db,
+	run: { runId: string; memberId: string },
+	deps: { dataDir: string; wsManager?: WebSocketManager; events?: DomainEventBus },
+): Promise<number> {
+	const pending = await db.query<{ id: string; team_id: string }>(
+		`SELECT id, team_id FROM approvals
+		 WHERE status = 'pending'::approval_status
+		   AND payload->>'type' = 'agent_error'
+		   AND payload->>'member_id' = $1`,
+		[run.memberId],
+	);
+	let cleared = 0;
+	for (const row of pending.rows) {
+		const resolved = await resolveApproval(db, row.id, {
+			status: ApprovalStatus.Approved,
+			resolutionNote: `Agent recovered on run ${run.runId}.`,
+			dataDir: deps.dataDir,
+			actorMemberId: null,
+			wsManager: deps.wsManager,
+			events: deps.events,
+		});
+		// A row resolved by a person between the SELECT and here is the same
+		// outcome, not an error.
+		if (!resolved.ok) continue;
+		broadcastApprovalChange(deps.wsManager, row.team_id, 'UPDATE', resolved.row);
+		cleared++;
+	}
+	return cleared;
 }
 
 /**

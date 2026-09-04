@@ -144,6 +144,7 @@ import {
 	renderMcpCliManifest,
 } from './mcp-cli/manifest';
 import {
+	clearAgentErrorApprovalsOnRecovery,
 	fileProviderRefusalApproval,
 	PROVIDER_REFUSAL_GIVEUP_MIN,
 	retryOrEscalateLostRun,
@@ -3112,6 +3113,19 @@ export async function runAgent(
 				},
 				runBroadcast,
 			);
+
+			// A success is the proof that whatever the give-up paths filed a notice
+			// about is over. Awaited so the Inbox the caller's next refetch shows is
+			// already clear, but caught: the run did succeed whatever this does.
+			if (success) {
+				await clearAgentErrorApprovalsOnRecovery(
+					deps.db,
+					{ runId: heartbeatRunId, memberId: agent.id },
+					{ dataDir: deps.dataDir, wsManager: deps.wsManager, events: deps.events },
+				).catch((e) =>
+					log.error(`Run ${heartbeatRunId}: could not clear the agent-error notice:`, e),
+				);
+			}
 
 			await cleanupRunArtifacts();
 			return { success, exitCode: execOutcome.exitCode, stderr: '', durationMs, heartbeatRunId };

@@ -2688,7 +2688,11 @@ dedupe and differing only in the message - "failed 3 consecutive times" would se
 after the agent when the fault is upstream. The web renders every such `agent_error` record
 as a notice, not a proposal: a link to the task and a Dismiss that closes the row through the
 ordinary resolve route, never Approve/Deny, since neither had any side effect for this payload
-and both read as a decision the reader was not being asked to make. A synthetic on-demand wakeup is created at
+and both read as a decision the reader was not being asked to make. The record's other half
+is `clearAgentErrorApprovalsOnRecovery`, called from `runAgent` on every succeeded run: it
+resolves the member's pending `agent_error` rows through `resolveApproval` and the approvals
+broadcast, exactly as a human Dismiss does, so a recovered agent does not leave a stale notice
+behind. It spends only a SELECT when nothing is pending. A synthetic on-demand wakeup is created at
 dispatch, so the ceiling never bites a manual run: that hands back once and lets the operator
 see it queued.
 
