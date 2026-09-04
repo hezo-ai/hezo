@@ -139,24 +139,15 @@ json_string() {
 }
 
 # ---------------------------------------------------------------------------
-# 1a. Migrate a pre-0.50 /etc/hezo/hezo.env
-#     Before 0.50 this script wrote an env file and wired it in with
-#     EnvironmentFile=. 0.50 reads a config file instead and ignores those
-#     variables entirely, so a host upgraded in place would fall back to the
-#     built-in defaults - an empty database that looks like a fresh install.
-#     Read the old file into this shell so the config file written below carries
-#     its settings; the shell environment still wins. The file itself is only
-#     renamed aside once the config file exists, so an interrupted run loses
-#     nothing.
+# 1a. Config provenance helpers
+#     Every one of these runs Hezo's own loader through the installed binary,
+#     so they are only called from section 4, after section 3 has put this
+#     release's binary in place. Calling them earlier would ask whatever
+#     binary the host was already carrying, which on any upgrade predates
+#     `hezo config validate` and answers no to everything.
 # ---------------------------------------------------------------------------
-CONFIG_READY=""
-CONFIG_PROVEN_GENERATED=""
-NEEDS_GENERATED_CONFIG=""
 
-# Use Hezo's real CommonJS loader and schema validator. The downloaded binary is
-# present before a generated candidate reaches this check; on an upgrade, an
-# older installed binary that lacks the command fails closed and leaves every
-# credential source untouched for the next rerun.
+# Hezo's real CommonJS loader and schema validator, as a yes/no.
 commonjs_config_valid() {
 	local path="$1"
 	/usr/local/bin/hezo config validate --config "${path}" >/dev/null 2>&1
@@ -259,59 +250,6 @@ module.exports = {
 EOF
 )" ]]
 }
-
-if generated_config_complete "${CONFIG_FILE}"; then
-	CONFIG_READY=1
-	CONFIG_PROVEN_GENERATED=1
-elif pre_marker_generated_config_complete "${CONFIG_FILE}"; then
-	CONFIG_READY=1
-	CONFIG_PROVEN_GENERATED=1
-elif commonjs_config_valid "${CONFIG_FILE}"; then
-	CONFIG_READY=1
-elif [[ ! -f "${CONFIG_FILE}" ]]; then
-	NEEDS_GENERATED_CONFIG=1
-elif interrupted_generated_config "${CONFIG_FILE}"; then
-	NEEDS_GENERATED_CONFIG=1
-	log "Replacing an incomplete generated config at ${CONFIG_FILE}."
-fi
-
-LEGACY_ENV="/etc/hezo/hezo.env"
-LEGACY_ENV_CARRIED=""
-if [[ -f "${LEGACY_ENV}" && -n "${NEEDS_GENERATED_CONFIG}" ]]; then
-	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
-		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
-		if [[ -z "${!key:-}" ]]; then
-			export "${key}=${value}"
-			LEGACY_ENV_CARRIED+=" ${key}"
-		fi
-	done <"${LEGACY_ENV}"
-	log "Found ${LEGACY_ENV} from a pre-0.50 install."
-	if [[ -n "${LEGACY_ENV_CARRIED}" ]]; then
-		log "Carrying into ${CONFIG_FILE}:${LEGACY_ENV_CARRIED}"
-	fi
-	# The generated config reads its webUrl from the side file hezo-firstboot
-	# writes, and firstboot will not re-run here - its sentinel was set the day
-	# this host was provisioned. Seed the file from the old variable instead of
-	# special-casing the generator, so both paths keep one mechanism.
-	if [[ -n "${HEZO_WEB_URL:-}" && ! -s "${WEB_URL_FILE}" ]]; then
-		echo "${HEZO_WEB_URL}" >"${WEB_URL_FILE}"
-		log "Seeded ${WEB_URL_FILE} with ${HEZO_WEB_URL}"
-	fi
-fi
-
-# An operator who moved the data dir keeps it. Everything below writes to this path.
-DATA_DIR="${HEZO_DATA_DIR:-${DATA_DIR}}"
-
-if [[ -n "${NEEDS_GENERATED_CONFIG}" ]]; then
-	if [[ -n "${HEZO_DATABASE_POOL_SIZE:-}" && ! "${HEZO_DATABASE_POOL_SIZE}" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
-		echo "HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100." >&2
-		exit 1
-	fi
-	WEB_URL_FILE_JSON="$(json_string "${WEB_URL_FILE}")"
-	DATA_DIR_JSON="$(json_string "${DATA_DIR}")"
-	HEZO_DATABASE_URL_JSON="$(json_string "${HEZO_DATABASE_URL:-}")"
-	HEZO_ASSET_STORAGE_URL_JSON="$(json_string "${HEZO_ASSET_STORAGE_URL:-}")"
-fi
 
 # ---------------------------------------------------------------------------
 # 1. Swap file — give low-RAM hosts a memory cushion so the install itself and
@@ -464,8 +402,82 @@ chmod +x /usr/local/bin/hezo
 
 # ---------------------------------------------------------------------------
 # 4. Data directory + Hezo config file (never overwrite an operator-edited config file)
+#
+#    Runs after section 3 so every check below asks this release's binary.
 # ---------------------------------------------------------------------------
 install -d -m 700 /etc/hezo
+
+# What is at CONFIG_FILE, and may this run clean up after it? Only a config this
+# script provably generated authorizes retiring the credential sources it was
+# built from. Schema validity alone says an operator's own config can run.
+CONFIG_PROVEN_GENERATED=""
+NEEDS_GENERATED_CONFIG=""
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+	NEEDS_GENERATED_CONFIG=1
+elif generated_config_complete "${CONFIG_FILE}"; then
+	CONFIG_PROVEN_GENERATED=1
+elif pre_marker_generated_config_complete "${CONFIG_FILE}"; then
+	CONFIG_PROVEN_GENERATED=1
+elif commonjs_config_valid "${CONFIG_FILE}"; then
+	log "Keeping the operator-edited config at ${CONFIG_FILE}."
+elif interrupted_generated_config "${CONFIG_FILE}"; then
+	NEEDS_GENERATED_CONFIG=1
+	log "Replacing an incomplete generated config at ${CONFIG_FILE}."
+else
+	# Not loadable, and not a shape this script wrote - so not ours to replace,
+	# and the service would fail to start on it. Say which, and stop.
+	echo "The config at ${CONFIG_FILE} does not load, and does not match anything this" >&2
+	echo "script generated, so it has been left exactly as it is. Fix it or move it" >&2
+	echo "aside, then rerun. To see why it does not load:" >&2
+	echo "  hezo config validate --config ${CONFIG_FILE}" >&2
+	exit 1
+fi
+
+# A pre-0.50 install wired /etc/hezo/hezo.env in with EnvironmentFile=. 0.50 reads
+# a config file instead and ignores those variables entirely, so a host upgraded in
+# place would fall back to the built-in defaults - an empty database that reads as a
+# fresh install. Carry the old settings into the config written below; the shell
+# environment still wins. The file is renamed aside only once that config is in
+# place, so an interrupted run loses nothing.
+LEGACY_ENV="/etc/hezo/hezo.env"
+LEGACY_ENV_CARRIED=""
+if [[ -f "${LEGACY_ENV}" && -n "${NEEDS_GENERATED_CONFIG}" ]]; then
+	while IFS='=' read -r key value || [[ -n "${key}" || -n "${value}" ]]; do
+		[[ "${key}" =~ ^(HEZO_DATA_DIR|HEZO_WEB_URL|HEZO_DATABASE_URL|HEZO_DATABASE_POOL_SIZE|HEZO_ASSET_STORAGE_URL)$ ]] || continue
+		if [[ -z "${!key:-}" ]]; then
+			export "${key}=${value}"
+			LEGACY_ENV_CARRIED+=" ${key}"
+		fi
+	done <"${LEGACY_ENV}"
+	log "Found ${LEGACY_ENV} from a pre-0.50 install."
+	if [[ -n "${LEGACY_ENV_CARRIED}" ]]; then
+		log "Carrying into ${CONFIG_FILE}:${LEGACY_ENV_CARRIED}"
+	fi
+	# The generated config reads its webUrl from the side file hezo-firstboot
+	# writes, and firstboot will not re-run here - its sentinel was set the day
+	# this host was provisioned. Seed the file from the old variable instead of
+	# special-casing the generator, so both paths keep one mechanism.
+	if [[ -n "${HEZO_WEB_URL:-}" && ! -s "${WEB_URL_FILE}" ]]; then
+		echo "${HEZO_WEB_URL}" >"${WEB_URL_FILE}"
+		log "Seeded ${WEB_URL_FILE} with ${HEZO_WEB_URL}"
+	fi
+fi
+
+# An operator who moved the data dir keeps it. Everything below writes to this path.
+DATA_DIR="${HEZO_DATA_DIR:-${DATA_DIR}}"
+
+if [[ -n "${NEEDS_GENERATED_CONFIG}" ]]; then
+	if [[ -n "${HEZO_DATABASE_POOL_SIZE:-}" && ! "${HEZO_DATABASE_POOL_SIZE}" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
+		echo "HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100." >&2
+		exit 1
+	fi
+	WEB_URL_FILE_JSON="$(json_string "${WEB_URL_FILE}")"
+	DATA_DIR_JSON="$(json_string "${DATA_DIR}")"
+	HEZO_DATABASE_URL_JSON="$(json_string "${HEZO_DATABASE_URL:-}")"
+	HEZO_ASSET_STORAGE_URL_JSON="$(json_string "${HEZO_ASSET_STORAGE_URL:-}")"
+fi
+
+# The data directory the config above will name, created before anything writes to it.
 install -d -m 755 "${DATA_DIR}"
 CONFIG_CANDIDATE=""
 DEPLOY_ENV_CANDIDATE=""
@@ -524,7 +536,6 @@ EOF
 	fi
 	mv -fT "${CONFIG_CANDIDATE}" "${CONFIG_FILE}"
 	CONFIG_CANDIDATE=""
-	CONFIG_READY=1
 	CONFIG_PROVEN_GENERATED=1
 fi
 

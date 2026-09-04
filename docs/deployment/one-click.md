@@ -287,6 +287,12 @@ standalone:
 curl -fsSL https://raw.githubusercontent.com/hezo-ai/hezo/main/deploy/provision.sh | sudo bash
 ```
 
+It is safe to run again on a server it already provisioned. A config file you edited
+yourself is kept exactly as it is. If that file no longer loads, the installer stops
+before changing anything and tells you so, rather than replacing your settings; check
+it with `hezo config validate --config /etc/hezo/hezo.config.cjs`, then run the
+installer again.
+
 For the fully manual path - your own systemd unit, reverse proxy, and firewall rules,
 step by step - see [Self-hosting](/docs/deployment/self-hosting) and
 [Deploying to the cloud](/docs/deployment/cloud).

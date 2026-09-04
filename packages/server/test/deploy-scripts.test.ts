@@ -1,5 +1,4 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
 	existsSync,
 	mkdtempSync,
@@ -55,71 +54,43 @@ function shellScripts(dir: string): string[] {
 	return out;
 }
 
+/**
+ * The provisioner's config adapter, lifted out of provision.sh so it can run
+ * against a throwaway /etc/hezo. Sections 1a and 4 are taken verbatim; the only
+ * substitution is the validator, which in production shells out to the binary
+ * section 3 just installed and here calls the same `loadConfigFile` directly.
+ */
 function configAdapterScript(): string {
-	const serializerStart = PROVISION.indexOf('GENERATED_CONFIG_HEADER=');
-	const serializerEnd = PROVISION.indexOf(
-		'# ---------------------------------------------------------------------------',
-		serializerStart,
-	);
-	const envStart = PROVISION.indexOf('# Cloud-init can seed optional settings');
-	const envEnd = PROVISION.indexOf('# Resolved once so every branch below');
-	const migrationStart = PROVISION.indexOf('# 1a. Migrate a pre-0.50');
-	const prepareStart = PROVISION.indexOf('CONFIG_READY=""', migrationStart);
-	const prepareEnd = PROVISION.indexOf(
-		'# ---------------------------------------------------------------------------',
-		prepareStart,
-	);
-	const configSection = PROVISION.indexOf('# 4. Data directory + Hezo config file');
-	const configStart = PROVISION.indexOf('CONFIG_CANDIDATE=""', configSection);
-	const configEnd = PROVISION.indexOf(
-		'# Now that the settings live in the config file',
-		configStart,
-	);
-	const cleanupEnd = PROVISION.indexOf('# 5. Caddy', configEnd);
-	for (const boundary of [
-		serializerStart,
-		serializerEnd,
-		envStart,
-		envEnd,
-		migrationStart,
-		prepareStart,
-		prepareEnd,
-		configSection,
-		configStart,
-		configEnd,
-		cleanupEnd,
-	]) {
-		expect(boundary).toBeGreaterThan(-1);
+	const RULE = '# ---------------------------------------------------------------------------';
+	function between(from: string, to: string, after = 0): string {
+		const start = PROVISION.indexOf(from, after);
+		const end = PROVISION.indexOf(to, start + from.length);
+		expect(start, `provision.sh boundary: ${from}`).toBeGreaterThan(-1);
+		expect(end, `provision.sh boundary: ${to}`).toBeGreaterThan(start);
+		return PROVISION.slice(start, end);
 	}
+
 	const productionValidator = `import { loadConfigFile } from ${JSON.stringify(join(REPO_ROOT, 'packages/server/src/config/load.ts'))}; loadConfigFile(process.argv[1]);`;
-	return [
-		'log() { :; }',
-		PROVISION.slice(serializerStart, serializerEnd),
-		PROVISION.slice(envStart, envEnd),
-		PROVISION.slice(migrationStart, prepareEnd).replace(
-			'LEGACY_ENV="/etc/hezo/hezo.env"',
-			`LEGACY_ENV="\${LEGACY_ENV:-/etc/hezo/hezo.env}"`,
-		),
-		`${PROVISION.slice(configStart, cleanupEnd)}\ntrue`,
-	]
-		.join('\n')
-		.replace(
-			`/usr/local/bin/hezo config validate --config "\${path}" >/dev/null 2>&1`,
-			`bun -e ${JSON.stringify(productionValidator)} "\${path}" >/dev/null 2>&1`,
-		);
-}
-
-/** The `load_env_file` definition provision.sh also copies into hezo-firstboot.sh. */
-function loadEnvFileDefinition(): string {
-	const start = PROVISION.indexOf('load_env_file() {');
-	const end = PROVISION.indexOf('\n}\n', start);
-	expect(start).toBeGreaterThan(-1);
-	expect(end).toBeGreaterThan(start);
-	return PROVISION.slice(start, end + 3);
-}
-
-function sha256(path: string): string {
-	return createHash('sha256').update(readFileSync(path)).digest('hex');
+	return (
+		[
+			'log() { :; }',
+			// Serializer constants and json_string.
+			between('GENERATED_CONFIG_HEADER=', RULE),
+			// load_env_file and the deploy.env read.
+			between('# Cloud-init can seed optional settings', '# Resolved once so every branch below'),
+			// Section 1a: the provenance helpers.
+			between("# Hezo's real CommonJS loader", `${RULE}\n# 1. Swap file`),
+			// Section 4: classify, carry the legacy file, generate, install, clean up.
+			`${between('CONFIG_PROVEN_GENERATED=""', `${RULE}\n# 5. Caddy`)}\ntrue`,
+		]
+			.join('\n')
+			// The one path the harness redirects, so a test can point at its own temp dir.
+			.replace('LEGACY_ENV="/etc/hezo/hezo.env"', `LEGACY_ENV="\${LEGACY_ENV}"`)
+			.replace(
+				`/usr/local/bin/hezo config validate --config "\${path}" >/dev/null 2>&1`,
+				`bun -e ${JSON.stringify(productionValidator)} "\${path}" >/dev/null 2>&1`,
+			)
+	);
 }
 
 interface GeneratedConfig {
@@ -129,73 +100,160 @@ interface GeneratedConfig {
 	assetStorage?: { url: string };
 }
 
-/**
- * Run the provisioner's config adapter over a throwaway /etc/hezo, and report
- * what it left behind. `mode` picks the starting state: a host with no config,
- * one an operator already edited, or one still carrying a pre-0.50 hezo.env.
- */
-function runConfigAdapter(
-	env: Record<string, string>,
-	mode: 'fresh' | 'existing' | 'legacy' = 'fresh',
-): {
-	config?: GeneratedConfig;
-	configExists: boolean;
-	commandExecuted: boolean;
-	deployEnvContents: string;
-	legacyMigrated: boolean;
-	stderr: string;
+/** The starting state of one throwaway /etc/hezo, plus how to disturb the run. */
+interface ProvisionSetup {
+	/** Exact bytes already at the config path. Omitted means a host with none. */
+	config?: string | ((paths: ProvisionPaths) => string);
+	/** Exact bytes of deploy.env. Defaults to empty. */
+	deployEnv?: string;
+	/** Exact bytes of a pre-0.50 hezo.env. Omitted means a host without one. */
+	legacy?: string;
+	/** Shell inputs, overriding the defaults below. */
+	env?: Record<string, string>;
+	/** Rewrite the script to force a failure partway, as an interrupted run would. */
+	mutate?: (script: string) => string;
+	/** Give the web-url side file a name with quotes and a backslash in it. */
+	awkwardWebUrlPath?: boolean;
+}
+
+interface ProvisionPaths {
+	dir: string;
+	configFile: string;
+	deployEnvFile: string;
+	legacyFile: string;
+	webUrlFile: string;
+	dataDir: string;
+	/** A path the run must never create: proof no value was executed as shell. */
+	commandMarker: string;
+}
+
+interface ProvisionResult extends ProvisionPaths {
 	status: number;
-} {
-	const dir = mkdtempSync(join(tmpdir(), 'hezo-provision-config-'));
+	stderr: string;
+	/** The three credential-bearing files as they were before the run. */
+	before: { config: string; deployEnv: string; legacy: string };
+	configExists: boolean;
+	configText: string;
+	configMode?: number;
+	/** The config as Node loads it, or undefined when it is absent or unloadable. */
+	config?: GeneratedConfig;
+	deployEnvText: string;
+	legacyText: string;
+	legacyMigrated: boolean;
+	commandExecuted: boolean;
+	/** Candidate files the run should have cleaned up after itself. */
+	leftoverCandidates: string[];
+}
+
+function readIfPresent(path: string): string {
+	return existsSync(path) ? readFileSync(path, 'utf8') : '';
+}
+
+/**
+ * Run the config adapter over a fresh throwaway directory, hand the outcome to
+ * `assertions`, and remove the directory whether or not they pass.
+ */
+function withProvision(setup: ProvisionSetup, assertions: (r: ProvisionResult) => void): void {
+	const dir = mkdtempSync(join(tmpdir(), 'hezo-provision-'));
 	try {
-		const configFile = join(dir, 'hezo.config.cjs');
-		const commandMarker = join(dir, 'command-ran');
-		const deployEnv = join(dir, 'deploy.env');
-		const legacyEnv = join(dir, 'hezo.env');
-		// Quotes and a backslash in the side-file path too: it is serialized by the
-		// same function as every credential the config carries.
-		const webUrlFile = join(dir, 'web-\'url\\"path');
-		const { DEPLOY_CONTENT = '', LEGACY_CONTENT = '', ...adapterEnv } = env;
-		writeFileSync(deployEnv, DEPLOY_CONTENT.replaceAll('__COMMAND_MARKER__', commandMarker));
-		if (mode === 'legacy') writeFileSync(legacyEnv, LEGACY_CONTENT);
-		if (mode === 'existing')
-			writeFileSync(configFile, 'module.exports = { dataDir: "/existing" };\n');
-		const result = spawnSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
+		const paths: ProvisionPaths = {
+			dir,
+			configFile: join(dir, 'hezo.config.cjs'),
+			deployEnvFile: join(dir, 'deploy.env'),
+			legacyFile: join(dir, 'hezo.env'),
+			// Quotes and a backslash in the side-file path too: the same serializer
+			// writes it as writes every credential the config carries.
+			webUrlFile: join(dir, setup.awkwardWebUrlPath ? 'web-\'url\\"path' : 'web-url'),
+			dataDir: join(dir, 'data'),
+			commandMarker: join(dir, 'command-ran'),
+		};
+		const seedConfig = typeof setup.config === 'function' ? setup.config(paths) : setup.config;
+		if (seedConfig !== undefined) writeFileSync(paths.configFile, seedConfig);
+		writeFileSync(
+			paths.deployEnvFile,
+			(setup.deployEnv ?? '').replaceAll('__COMMAND_MARKER__', paths.commandMarker),
+		);
+		if (setup.legacy !== undefined) writeFileSync(paths.legacyFile, setup.legacy);
+		const before = {
+			config: readIfPresent(paths.configFile),
+			deployEnv: readIfPresent(paths.deployEnvFile),
+			legacy: readIfPresent(paths.legacyFile),
+		};
+
+		const base = configAdapterScript();
+		const script = setup.mutate ? setup.mutate(base) : base;
+		if (setup.mutate) expect(script, 'mutate() changed nothing').not.toBe(base);
+		const run = spawnSync('bash', ['-c', `set -euo pipefail\n${script}`], {
 			encoding: 'utf8',
 			env: {
 				...process.env,
-				CONFIG_FILE: configFile,
-				DEPLOY_ENV: deployEnv,
-				LEGACY_ENV: legacyEnv,
-				WEB_URL_FILE: webUrlFile,
-				DATA_DIR: join(dir, 'data'),
+				CONFIG_FILE: paths.configFile,
+				DEPLOY_ENV: paths.deployEnvFile,
+				LEGACY_ENV: paths.legacyFile,
+				WEB_URL_FILE: paths.webUrlFile,
+				DATA_DIR: paths.dataDir,
 				LEGACY_ENV_CARRIED: '',
 				BEHIND_GATEWAY: '',
-				...adapterEnv,
+				...setup.env,
 			},
 		});
-		const configExists = existsSync(configFile);
-		const config = configExists
-			? (JSON.parse(
+
+		const configExists = existsSync(paths.configFile);
+		let config: GeneratedConfig | undefined;
+		if (configExists) {
+			try {
+				config = JSON.parse(
 					execFileSync(
 						process.execPath,
-						['-e', 'process.stdout.write(JSON.stringify(require(process.argv[1])))', configFile],
-						{ encoding: 'utf8' },
+						[
+							'-e',
+							'process.stdout.write(JSON.stringify(require(process.argv[1])))',
+							paths.configFile,
+						],
+						{ encoding: 'utf8', stdio: 'pipe' },
 					),
-				) as GeneratedConfig)
-			: undefined;
-		return {
-			config,
+				) as GeneratedConfig;
+			} catch {
+				config = undefined;
+			}
+		}
+
+		assertions({
+			...paths,
+			status: run.status ?? 1,
+			stderr: run.stderr,
+			before,
 			configExists,
-			commandExecuted: existsSync(commandMarker),
-			deployEnvContents: readFileSync(deployEnv, 'utf8'),
-			legacyMigrated: existsSync(`${legacyEnv}.migrated`),
-			stderr: result.stderr,
-			status: result.status ?? 1,
-		};
+			configText: readIfPresent(paths.configFile),
+			configMode: configExists ? statSync(paths.configFile).mode & 0o777 : undefined,
+			config,
+			deployEnvText: readIfPresent(paths.deployEnvFile),
+			legacyText: readIfPresent(paths.legacyFile),
+			legacyMigrated: existsSync(`${paths.legacyFile}.migrated`),
+			commandExecuted: existsSync(paths.commandMarker),
+			leftoverCandidates: readdirSync(dir).filter((name) =>
+				name.startsWith('hezo.config.cjs.tmp.'),
+			),
+		});
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+}
+
+/** Assert a run left every credential-bearing file exactly as it found it. */
+function expectNothingTouched(r: ProvisionResult): void {
+	expect(r.configText).toBe(r.before.config);
+	expect(r.deployEnvText).toBe(r.before.deployEnv);
+	expect(r.legacyText).toBe(r.before.legacy);
+	expect(r.legacyMigrated).toBe(false);
+	expect(r.leftoverCandidates).toEqual([]);
+}
+function loadEnvFileDefinition(): string {
+	const start = PROVISION.indexOf('load_env_file() {');
+	const end = PROVISION.indexOf('\n}\n', start);
+	expect(start).toBeGreaterThan(-1);
+	expect(end).toBeGreaterThan(start);
+	return PROVISION.slice(start, end + 3);
 }
 
 function legacyGeneratedConfigPrefix(webUrlFile: string, dataDir: string): string {
@@ -307,7 +365,6 @@ describe('the behind-a-gateway seam in provision.sh', () => {
 		expect(script).toMatch(/^#\s+BEHIND_GATEWAY\s/m);
 	});
 });
-
 describe('the one-click managed-backend configuration contract', () => {
 	it.each([
 		['the checked-in cloud-init file', CLOUD_INIT],
@@ -323,64 +380,39 @@ describe('the one-click managed-backend configuration contract', () => {
 		);
 	});
 
+	// Everything the adapter can validate runs through the binary section 3 installs,
+	// so nothing above may ask the binary the host arrived with.
+	it('classifies the config only after the binary that validates it is in place', () => {
+		const binaryInstall = PROVISION.indexOf('chmod +x /usr/local/bin/hezo');
+		const validatorCall = PROVISION.indexOf(`generated_config_complete "\${CONFIG_FILE}"`);
+		expect(binaryInstall).toBeGreaterThan(-1);
+		expect(validatorCall).toBeGreaterThan(binaryInstall);
+	});
+
 	it('carries deploy.env inputs into the generated CommonJS config', () => {
 		expect(PROVISION).toContain('DEPLOY_ENV="/etc/hezo/deploy.env"');
 		expect(PROVISION).toContain('CONFIG_FILE="/etc/hezo/hezo.config.cjs"');
 		expect(PROVISION).toContain('ExecStart=/usr/local/bin/hezo --config /etc/hezo/hezo.config.cjs');
 
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-contract-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const webUrlFile = join(dir, 'web-url');
-		const legacyEnv = join(dir, 'hezo.env');
 		const databaseUrl = 'postgres://hezo:secret@db-host:5432/hezo?sslmode=require';
 		const assetStorageUrl = 's3://access:secret@storage-host/bucket';
-		writeFileSync(
-			deployEnv,
-			[
-				`HEZO_DATABASE_URL=${databaseUrl}`,
-				'HEZO_DATABASE_POOL_SIZE=17',
-				`HEZO_ASSET_STORAGE_URL=${assetStorageUrl}`,
-				'',
-			].join('\n'),
+		withProvision(
+			{
+				deployEnv: [
+					`HEZO_DATABASE_URL=${databaseUrl}`,
+					'HEZO_DATABASE_POOL_SIZE=17',
+					`HEZO_ASSET_STORAGE_URL=${assetStorageUrl}`,
+					'',
+				].join('\n'),
+			},
+			(r) => {
+				expect(r.status).toBe(0);
+				expect(r.config?.database).toEqual({ url: databaseUrl, poolSize: 17 });
+				expect(r.config?.assetStorage).toEqual({ url: assetStorageUrl });
+				expect(r.deployEnvText).toBe('');
+				expect(r.configMode).toBe(0o600);
+			},
 		);
-
-		try {
-			execFileSync(
-				'bash',
-				[
-					'-c',
-					[
-						'set -euo pipefail',
-						`DEPLOY_ENV=${JSON.stringify(deployEnv)}`,
-						`CONFIG_FILE=${JSON.stringify(configFile)}`,
-						`WEB_URL_FILE=${JSON.stringify(webUrlFile)}`,
-						`DATA_DIR=${JSON.stringify(join(dir, 'data'))}`,
-						`LEGACY_ENV=${JSON.stringify(legacyEnv)}`,
-						'LEGACY_ENV_CARRIED=',
-						'BEHIND_GATEWAY=',
-						configAdapterScript(),
-					].join('\n'),
-				],
-				{ stdio: 'pipe' },
-			);
-
-			const generated = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			) as {
-				database?: { url?: string; poolSize?: number };
-				assetStorage?: { url?: string };
-			};
-			expect(generated.database).toEqual({ url: databaseUrl, poolSize: 17 });
-			expect(generated.assetStorage).toEqual({ url: assetStorageUrl });
-			expect(readFileSync(deployEnv, 'utf8')).toBe('');
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
 
 		expect(ONE_CLICK).toMatch(
 			/At provision time[\s\S]*\/etc\/hezo\/deploy\.env[\s\S]*persists them into `\/etc\/hezo\/hezo\.config\.cjs`/,
@@ -391,77 +423,112 @@ describe('the one-click managed-backend configuration contract', () => {
 	});
 
 	it('keeps literal firstboot settings while removing managed credentials from deploy.env', () => {
-		const result = runConfigAdapter({
-			DEPLOY_CONTENT: [
-				'HEZO_DOMAIN_OVERRIDE=hezo.example.test',
-				'HEZO_SWAP_SIZE=2G',
-				'BEHIND_GATEWAY=1',
-				'HEZO_DATABASE_URL=postgres://hezo:password@db-host:5432/hezo',
-				'HEZO_ASSET_STORAGE_URL=s3://key:secret@endpoint/bucket',
-				'',
-			].join('\n'),
-		});
-		expect(result).toMatchObject({
-			deployEnvContents: [
-				'HEZO_DOMAIN_OVERRIDE=hezo.example.test',
-				'HEZO_SWAP_SIZE=2G',
-				'BEHIND_GATEWAY=1',
-				'',
-			].join('\n'),
-			status: 0,
-		});
+		withProvision(
+			{
+				deployEnv: [
+					'HEZO_DOMAIN_OVERRIDE=hezo.example.test',
+					'HEZO_SWAP_SIZE=2G',
+					'BEHIND_GATEWAY=1',
+					'HEZO_DATABASE_URL=postgres://hezo:password@db-host:5432/hezo',
+					'HEZO_ASSET_STORAGE_URL=s3://key:secret@endpoint/bucket',
+					'',
+				].join('\n'),
+			},
+			(r) => {
+				expect(r.status).toBe(0);
+				expect(r.deployEnvText).toBe(
+					[
+						'HEZO_DOMAIN_OVERRIDE=hezo.example.test',
+						'HEZO_SWAP_SIZE=2G',
+						'BEHIND_GATEWAY=1',
+						'',
+					].join('\n'),
+				);
+			},
+		);
 	});
 
-	// Every value below reaches the config through the same serializer, so a
-	// missed escape in any one of them writes CommonJS that will not parse.
+	// Every value below reaches the config through the same serializer, so a missed
+	// escape in any one of them writes CommonJS that will not parse.
 	it('preserves quotes and backslashes from deploy.env in every generated string value', () => {
 		const dataDir = '/var/lib/hezo/user\'s\\"data';
 		const databaseUrl = 'postgres://hezo:pa\'ss\\"word@db-host:5432/hezo';
 		const assetUrl = 's3://key:sec\'ret\\"piece@endpoint/bucket';
-		const result = runConfigAdapter({
-			DEPLOY_CONTENT: [
-				`HEZO_DATA_DIR=${dataDir}`,
-				`HEZO_ASSET_STORAGE_URL=${assetUrl}`,
-				`HEZO_DATABASE_URL=${databaseUrl}`,
-				'',
-			].join('\n'),
-		});
-		expect(result.status).toBe(0);
-		expect(result.stderr).toBe('');
-		expect(result.config).toMatchObject({
-			assetStorage: { url: assetUrl },
-			database: { url: databaseUrl },
-			dataDir,
-		});
-	});
-
-	it('treats command substitutions in deploy.env values as data and removes the credential copy', () => {
-		const databaseUrl = 'postgres://hezo:$(touch __COMMAND_MARKER__)@db-host:5432/hezo';
-		const result = runConfigAdapter({
-			DEPLOY_CONTENT: `HEZO_DATABASE_URL=${databaseUrl}\n`,
-		});
-		expect(result).toMatchObject({
-			commandExecuted: false,
-			config: { database: { url: expect.stringContaining('$(touch ') } },
-			deployEnvContents: '',
-			status: 0,
-		});
+		withProvision(
+			{
+				awkwardWebUrlPath: true,
+				deployEnv: [
+					`HEZO_DATA_DIR=${dataDir}`,
+					`HEZO_ASSET_STORAGE_URL=${assetUrl}`,
+					`HEZO_DATABASE_URL=${databaseUrl}`,
+					'',
+				].join('\n'),
+			},
+			(r) => {
+				expect(r.stderr).toBe('');
+				expect(r.status).toBe(0);
+				expect(r.config).toMatchObject({
+					assetStorage: { url: assetUrl },
+					database: { url: databaseUrl },
+					dataDir,
+				});
+			},
+		);
 	});
 
 	it('serializes shell-provided control characters without changing their values', () => {
-		const dataDir = '/var/lib/hezo/control\b\f\r\t';
-		const result = runConfigAdapter({ DATA_DIR: dataDir });
-		expect(result).toMatchObject({ config: { dataDir }, status: 0 });
+		const dataDir = '/var/lib/hezo/control\b\f\r\t';
+		withProvision({ env: { DATA_DIR: dataDir } }, (r) => {
+			expect(r.status).toBe(0);
+			expect(r.config?.dataDir).toBe(dataDir);
+		});
 	});
 
-	it('leaves an existing config untouched even when stale provision inputs are invalid', () => {
-		const result = runConfigAdapter(
-			{ DEPLOY_CONTENT: 'HEZO_DATABASE_POOL_SIZE=not-a-number\n' },
-			'existing',
+	it('serializes persisted paths and managed-backend values as literal data', () => {
+		expect(PROVISION).not.toMatch(/(?:^|\n)\s*(?:[.]|source)\s+\/etc\/hezo\/deploy\.env/m);
+		const commandLiteral = '$(touch __COMMAND_MARKER__)';
+		const databaseUrl = `postgres://hezo:pa'ss\\word\t${commandLiteral}@db-host:5432/hezo?note=`;
+		const assetStorageUrl = `s3://access:se'cret\\word\t${commandLiteral}@storage-host/bucket?note=`;
+		withProvision(
+			{
+				awkwardWebUrlPath: true,
+				deployEnv: [
+					`HEZO_DATABASE_URL=${databaseUrl}`,
+					'HEZO_DATABASE_POOL_SIZE=17',
+					`HEZO_ASSET_STORAGE_URL=${assetStorageUrl}`,
+					'',
+				].join('\n'),
+			},
+			(r) => {
+				expect(r.status).toBe(0);
+				const expectedDatabaseUrl = databaseUrl.replace('__COMMAND_MARKER__', r.commandMarker);
+				const expectedAssetUrl = assetStorageUrl.replace('__COMMAND_MARKER__', r.commandMarker);
+				expect(r.config?.dataDir).toBe(r.dataDir);
+				expect(r.config?.database).toEqual({ url: expectedDatabaseUrl, poolSize: 17 });
+				expect(r.config?.assetStorage).toEqual({ url: expectedAssetUrl });
+				expect(r.commandExecuted).toBe(false);
+				expect(r.deployEnvText).toBe('');
+			},
 		);
-		expect(result).toMatchObject({
-			config: { dataDir: '/existing' },
-			status: 0,
+	});
+
+	it('treats command substitutions in deploy.env values as data and removes the credential copy', () => {
+		withProvision(
+			{ deployEnv: 'HEZO_DATABASE_URL=postgres://hezo:$(touch __COMMAND_MARKER__)@db-host/hezo\n' },
+			(r) => {
+				expect(r.status).toBe(0);
+				expect(r.commandExecuted).toBe(false);
+				expect(r.config?.database?.url).toContain('$(touch ');
+				expect(r.deployEnvText).toBe('');
+			},
+		);
+	});
+
+	it('parses the final managed setting without a trailing newline', () => {
+		const assetStorageUrl = 's3://access:last-record@storage-host/bucket';
+		withProvision({ deployEnv: `HEZO_ASSET_STORAGE_URL=${assetStorageUrl}` }, (r) => {
+			expect(r.status).toBe(0);
+			expect(r.config?.assetStorage?.url).toBe(assetStorageUrl);
 		});
 	});
 
@@ -469,16 +536,13 @@ describe('the one-click managed-backend configuration contract', () => {
 		['1', 1],
 		['100', 100],
 	])('accepts database pool-size boundary %s', (poolSize, expected) => {
-		const result = runConfigAdapter({
-			DEPLOY_CONTENT: `HEZO_DATABASE_POOL_SIZE=${poolSize}\n`,
-		});
-		expect(result).toMatchObject({
-			config: { database: { poolSize: expected } },
-			status: 0,
+		withProvision({ deployEnv: `HEZO_DATABASE_POOL_SIZE=${poolSize}\n` }, (r) => {
+			expect(r.status).toBe(0);
+			expect(r.config?.database).toEqual({ poolSize: expected });
 		});
 	});
 
-	// An unvalidated pool size is interpolated unquoted, so anything but a bare
+	// The pool size is the one value interpolated unquoted, so anything but a bare
 	// integer lands as executable JavaScript in the generated config.
 	it.each([
 		'0',
@@ -486,21 +550,34 @@ describe('the one-click managed-backend configuration contract', () => {
 		'1; globalThis.injected = true',
 		'10.5',
 	])('rejects invalid database pool size %s before writing config', (poolSize) => {
-		const result = runConfigAdapter({
-			DEPLOY_CONTENT: `HEZO_DATABASE_POOL_SIZE=${poolSize}\n`,
+		withProvision({ deployEnv: `HEZO_DATABASE_POOL_SIZE=${poolSize}\n` }, (r) => {
+			expect(r.status).not.toBe(0);
+			expect(r.configExists).toBe(false);
+			expect(r.stderr).toContain('HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100');
 		});
-		expect(result.status).not.toBe(0);
-		expect(result.configExists).toBe(false);
-		expect(result.stderr).toContain('HEZO_DATABASE_POOL_SIZE must be an integer from 1 to 100');
+	});
+
+	it('leaves an existing config untouched even when stale provision inputs are invalid', () => {
+		withProvision(
+			{
+				config: 'module.exports = { dataDir: "/existing" };\n',
+				deployEnv: 'HEZO_DATABASE_POOL_SIZE=not-a-number\n',
+			},
+			(r) => {
+				expect(r.status).toBe(0);
+				expect(r.config?.dataDir).toBe('/existing');
+				expect(r.configText).toBe(r.before.config);
+			},
+		);
 	});
 
 	it('carries legacy values exactly and retires the legacy env only after writing config', () => {
 		const dataDir = "/srv/hezo/legacy's\\data";
 		const databaseUrl = "postgres://hezo:old'pass\\word@db-host:5432/hezo";
 		const assetUrl = "s3://key:old'secret\\part@endpoint/bucket";
-		const result = runConfigAdapter(
+		withProvision(
 			{
-				LEGACY_CONTENT: [
+				legacy: [
 					`HEZO_DATA_DIR=${dataDir}`,
 					'HEZO_WEB_URL=https://legacy.example.test',
 					`HEZO_DATABASE_URL=${databaseUrl}`,
@@ -509,422 +586,131 @@ describe('the one-click managed-backend configuration contract', () => {
 					'',
 				].join('\n'),
 			},
-			'legacy',
-		);
-		expect(result).toMatchObject({
-			config: {
-				assetStorage: { url: assetUrl },
-				database: { poolSize: 17, url: databaseUrl },
-				dataDir,
-				webUrl: 'https://legacy.example.test',
+			(r) => {
+				expect(r.status).toBe(0);
+				expect(r.config).toMatchObject({
+					assetStorage: { url: assetUrl },
+					database: { poolSize: 17, url: databaseUrl },
+					dataDir,
+					webUrl: 'https://legacy.example.test',
+				});
+				expect(r.legacyMigrated).toBe(true);
 			},
-			legacyMigrated: true,
-			status: 0,
-		});
+		);
 	});
 
 	it('does not publish or scrub credentials after an interrupted config write', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-interrupted-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const databaseUrl = 'postgres://hezo:only-copy@db-host:5432/hezo';
-		const originalEnv = `HEZO_DATABASE_URL=${databaseUrl}\n`;
-		writeFileSync(deployEnv, originalEnv);
-
-		try {
-			const interrupted = configAdapterScript().replace(
-				`echo "};" >>"\${CONFIG_CANDIDATE}"`,
-				`printf 'module.exports = {\\n' >>"\${CONFIG_CANDIDATE}"\nfalse`,
-			);
-			expect(interrupted).not.toBe(configAdapterScript());
-			expect(() =>
-				execFileSync('bash', ['-c', `set -euo pipefail\n${interrupted}`], {
-					env: {
-						...process.env,
-						DEPLOY_ENV: deployEnv,
-						CONFIG_FILE: configFile,
-						WEB_URL_FILE: join(dir, 'web-url'),
-						DATA_DIR: join(dir, 'data'),
-						LEGACY_ENV: join(dir, 'hezo.env'),
-						LEGACY_ENV_CARRIED: '',
-						BEHIND_GATEWAY: '',
-					},
-					stdio: 'pipe',
-				}),
-			).toThrow();
-			expect(existsSync(configFile)).toBe(false);
-			expect(readdirSync(dir).some((name) => name.startsWith('hezo.config.cjs.tmp.'))).toBe(false);
-			expect(readFileSync(deployEnv, 'utf8')).toBe(originalEnv);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it('does not trust a structurally complete legacy config that CommonJS cannot load', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-invalid-legacy-config-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		writeFileSync(deployEnv, "HEZO_DATABASE_URL=postgres://hezo:pa'ss@db-host/hezo");
-		writeFileSync(
-			configFile,
-			[
-				'// Hezo configuration. Edit and restart: systemctl restart hezo',
-				'module.exports = {',
-				"\tdatabase: { url: 'postgres://hezo:pa'ss@db-host/hezo' },",
-				'};',
-			].join('\n'),
+		withProvision(
+			{
+				deployEnv: 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo\n',
+				mutate: (s) =>
+					s.replace(
+						`\techo "};" >>"\${CONFIG_CANDIDATE}"`,
+						`\tprintf 'module.exports = {\\n' >>"\${CONFIG_CANDIDATE}"\n\tfalse`,
+					),
+			},
+			(r) => {
+				expect(r.status).not.toBe(0);
+				expect(r.configExists).toBe(false);
+				expectNothingTouched(r);
+			},
 		);
-		const configHash = sha256(configFile);
-		const sourceHash = sha256(deployEnv);
-
-		try {
-			expect(() =>
-				execFileSync(process.execPath, ['-e', `require(${JSON.stringify(configFile)})`], {
-					stdio: 'pipe',
-				}),
-			).toThrow();
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: deployEnv,
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			expect(sha256(configFile)).toBe(configHash);
-			expect(sha256(deployEnv)).toBe(sourceHash);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
 	});
 
 	it('leaves the destination and newline-less credential source unchanged when validation fails', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-validation-failure-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const webUrlFile = join(dir, 'web-url');
-		const dataDir = join(dir, 'data');
-		writeFileSync(deployEnv, 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo');
-		writeFileSync(configFile, legacyGeneratedConfigPrefix(webUrlFile, dataDir));
-		const configHash = sha256(configFile);
-		const sourceHash = sha256(deployEnv);
-		const validationFailure = configAdapterScript().replace(
-			`if ! generated_config_complete "\${CONFIG_CANDIDATE}" ||`,
-			'if ! false ||',
+		withProvision(
+			{
+				config: (p) => legacyGeneratedConfigPrefix(p.webUrlFile, p.dataDir),
+				deployEnv: 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo',
+				mutate: (s) =>
+					s.replace(`if ! generated_config_complete "\${CONFIG_CANDIDATE}" ||`, 'if ! false ||'),
+			},
+			(r) => {
+				expect(r.status).not.toBe(0);
+				expectNothingTouched(r);
+			},
 		);
-		expect(validationFailure).not.toBe(configAdapterScript());
-
-		try {
-			expect(() =>
-				execFileSync('bash', ['-c', `set -euo pipefail\n${validationFailure}`], {
-					env: {
-						...process.env,
-						DEPLOY_ENV: deployEnv,
-						CONFIG_FILE: configFile,
-						WEB_URL_FILE: webUrlFile,
-						DATA_DIR: dataDir,
-						LEGACY_ENV: join(dir, 'hezo.env'),
-						BEHIND_GATEWAY: '',
-					},
-					stdio: 'pipe',
-				}),
-			).toThrow();
-			expect(sha256(configFile)).toBe(configHash);
-			expect(sha256(deployEnv)).toBe(sourceHash);
-			expect(readdirSync(dir).some((name) => name.startsWith('hezo.config.cjs.tmp.'))).toBe(false);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
 	});
 
 	it('replaces an interrupted generated config before scrubbing its credential source', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-recovery-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
 		const databaseUrl = 'postgres://hezo:recovered@db-host:5432/hezo';
-		writeFileSync(deployEnv, `HEZO_DATABASE_URL=${databaseUrl}\n`);
-		writeFileSync(configFile, 'module.exports = {');
-
-		try {
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: deployEnv,
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
-					LEGACY_ENV_CARRIED: '',
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-			const generated = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			) as { database?: { url?: string } };
-			expect(generated.database?.url).toBe(databaseUrl);
-			expect(readFileSync(deployEnv, 'utf8')).toBe('');
-			expect(statSync(configFile).mode & 0o777).toBe(0o600);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
+		withProvision(
+			{ config: 'module.exports = {', deployEnv: `HEZO_DATABASE_URL=${databaseUrl}\n` },
+			(r) => {
+				expect(r.status).toBe(0);
+				expect(r.config?.database?.url).toBe(databaseUrl);
+				expect(r.deployEnvText).toBe('');
+				expect(r.configMode).toBe(0o600);
+			},
+		);
 	});
 
 	it('recovers the complete legacy heredoc prefix left before the object closes', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-legacy-prefix-recovery-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const webUrlFile = join(dir, 'web-url');
 		const databaseUrl = 'postgres://hezo:recovered-prefix@db-host/hezo';
-		writeFileSync(deployEnv, `HEZO_DATABASE_URL=${databaseUrl}\n`);
-		writeFileSync(configFile, legacyGeneratedConfigPrefix(webUrlFile, join(dir, 'data')));
-
-		try {
-			expect(() =>
-				execFileSync(process.execPath, ['-e', `require(${JSON.stringify(configFile)})`], {
-					stdio: 'pipe',
-				}),
-			).toThrow();
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: deployEnv,
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: webUrlFile,
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-			const generated = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			) as { database?: { url?: string } };
-			expect(generated.database?.url).toBe(databaseUrl);
-			expect(readFileSync(deployEnv, 'utf8')).toBe('');
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
+		withProvision(
+			{
+				config: (p) => legacyGeneratedConfigPrefix(p.webUrlFile, p.dataDir),
+				deployEnv: `HEZO_DATABASE_URL=${databaseUrl}\n`,
+			},
+			(r) => {
+				// The seeded prefix is an unterminated object: it cannot load at all.
+				expect(r.before.config).not.toContain('};');
+				expect(r.status).toBe(0);
+				expect(r.config?.database?.url).toBe(databaseUrl);
+				expect(r.deployEnvText).toBe('');
+			},
+		);
 	});
 
-	it('preserves a valid operator-edited CommonJS config byte-for-byte on rerun', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-operator-config-'));
-		const configFile = join(dir, 'hezo.config.cjs');
-		const operatorConfig = [
-			'// Hezo configuration. Edit and restart: systemctl restart hezo',
-			"const config = { dataDir: '/srv/hezo-operator' };",
-			'module.exports = config;',
-			'// hezo-provision: complete',
-			'',
-		].join('\n');
-		writeFileSync(configFile, operatorConfig);
-
-		try {
-			const loaded = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			) as { dataDir?: string };
-			expect(loaded.dataDir).toBe('/srv/hezo-operator');
-
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: join(dir, 'deploy.env'),
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			expect(readFileSync(configFile, 'utf8')).toBe(operatorConfig);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it('preserves a valid markerless operator config even when it retains the generated header', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-markerless-operator-config-'));
-		const configFile = join(dir, 'hezo.config.cjs');
-		const legacyEnv = join(dir, 'hezo.env');
+	it('finishes legacy cleanup after config publication was interrupted before the rename', () => {
 		const originalLegacy = 'HEZO_DATA_DIR=/srv/hezo-legacy';
-		const operatorConfig = [
-			'// Hezo configuration. Edit and restart: systemctl restart hezo',
-			"const config = { dataDir: '/srv/hezo-markerless' };",
-			'module.exports = config;',
-			'',
-		].join('\n');
-		writeFileSync(configFile, operatorConfig);
-		writeFileSync(legacyEnv, originalLegacy);
+		const seed = { config: 'module.exports = {', deployEnv: '', legacy: originalLegacy };
+		withProvision(
+			{
+				...seed,
+				mutate: (s) => s.replace(`mv "\${LEGACY_ENV}" "\${LEGACY_ENV}.migrated"`, 'false'),
+			},
+			(r) => {
+				// The config is published, but the legacy source is still in place.
+				expect(r.status).not.toBe(0);
+				expect(r.config?.dataDir).toBe('/srv/hezo-legacy');
+				expect(r.legacyText).toBe(originalLegacy);
+				expect(r.legacyMigrated).toBe(false);
 
-		try {
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: join(dir, 'deploy.env'),
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: legacyEnv,
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			expect(readFileSync(configFile, 'utf8')).toBe(operatorConfig);
-			expect(readFileSync(legacyEnv, 'utf8')).toBe(originalLegacy);
-			expect(existsSync(`${legacyEnv}.migrated`)).toBe(false);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
+				// A rerun over that exact state finishes the rename rather than stalling.
+				withProvision({ ...seed, config: r.configText }, (rerun) => {
+					expect(rerun.status).toBe(0);
+					expect(rerun.legacyMigrated).toBe(true);
+					expect(rerun.configText).toBe(r.configText);
+				});
+			},
+		);
 	});
 
-	it('preserves a valid header-bearing operator config and its newline-less sole credential source', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-header-operator-config-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const operatorConfig = [
-			'// Hezo configuration. Edit and restart: systemctl restart hezo',
-			'module.exports = {',
-			"\tdataDir: '/srv/hezo-operator',",
-			'};',
-			'',
-		].join('\n');
-		writeFileSync(configFile, operatorConfig);
-		writeFileSync(deployEnv, 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo');
-		const configHash = sha256(configFile);
-		const sourceHash = sha256(deployEnv);
-
-		try {
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: deployEnv,
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			expect(sha256(configFile)).toBe(configHash);
-			expect(sha256(deployEnv)).toBe(sourceHash);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it('preserves a syntactically valid but schema-invalid config and its credential source', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-schema-invalid-config-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const invalidConfig = [
-			'// Hezo configuration. Edit and restart: systemctl restart hezo',
-			'module.exports = {',
-			"\tdataDir: '/srv/hezo-operator',",
-			'\tdatabase: { poolSize: 0 },',
-			'};',
-			'',
-		].join('\n');
-		writeFileSync(configFile, invalidConfig);
-		writeFileSync(deployEnv, 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo');
-		const configHash = sha256(configFile);
-		const sourceHash = sha256(deployEnv);
-		expect(() =>
-			execFileSync(process.execPath, ['-e', `require(${JSON.stringify(configFile)})`], {
-				stdio: 'pipe',
-			}),
-		).not.toThrow();
-
-		try {
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: deployEnv,
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			expect(sha256(configFile)).toBe(configHash);
-			expect(sha256(deployEnv)).toBe(sourceHash);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it('preserves a valid operator config with a generated-start marker and no completion marker', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-marked-operator-config-'));
-		const configFile = join(dir, 'hezo.config.cjs');
-		const operatorConfig = [
-			'// hezo-provision: generated',
-			'// Hezo configuration. Edit and restart: systemctl restart hezo',
-			"const config = { dataDir: '/srv/hezo-marked-operator' };",
-			'module.exports = config;',
-			'',
-		].join('\n');
-		writeFileSync(configFile, operatorConfig);
-
-		try {
-			const loaded = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			) as { dataDir?: string };
-			expect(loaded.dataDir).toBe('/srv/hezo-marked-operator');
-
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: join(dir, 'deploy.env'),
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			expect(readFileSync(configFile, 'utf8')).toBe(operatorConfig);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
+	it('finishes legacy cleanup for the complete config written by the pre-marker provisioner', () => {
+		withProvision(
+			{
+				config: (p) => completeLegacyGeneratedConfig(p.webUrlFile, p.dataDir),
+				deployEnv: '',
+				legacy: [
+					'HEZO_DATA_DIR=/srv/hezo-legacy',
+					'HEZO_DATABASE_URL=postgres://hezo:legacy@db-host:5432/hezo?sslmode=require',
+					'HEZO_DATABASE_POOL_SIZE=23',
+					'HEZO_ASSET_STORAGE_URL=s3://legacy:secret@storage-host/bucket',
+				].join('\n'),
+			},
+			(r) => {
+				expect(r.status).toBe(0);
+				// Recognized as this script's own earlier output, so cleanup is authorized -
+				// but the config itself is not rewritten.
+				expect(r.configText).toBe(r.before.config);
+				expect(r.legacyMigrated).toBe(true);
+			},
+		);
 	});
 
 	it('recovers an interrupted pre-0.50 migration with every legacy setting intact', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-legacy-recovery-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const webUrlFile = join(dir, 'web-url');
-		const legacyEnv = join(dir, 'hezo.env');
-		const dataDir = join(dir, 'legacy-data');
+		const dataDir = '/srv/hezo-legacy-data';
 		const databaseUrl = 'postgres://hezo:legacy@db-host:5432/hezo?sslmode=require';
 		const assetStorageUrl = 's3://legacy:secret@storage-host/bucket';
 		const webUrl = 'https://legacy.example.test';
@@ -935,157 +721,141 @@ describe('the one-click managed-backend configuration contract', () => {
 			'HEZO_DATABASE_POOL_SIZE=23',
 			`HEZO_ASSET_STORAGE_URL=${assetStorageUrl}`,
 		].join('\n');
-		writeFileSync(deployEnv, '');
-		writeFileSync(legacyEnv, originalLegacy);
-		writeFileSync(
-			configFile,
-			[
+		const seed = {
+			config: [
 				'// hezo-provision: generated',
 				'// Hezo configuration. Edit and restart: systemctl restart hezo',
 				'module.exports = {',
 			].join('\n'),
-		);
-
-		const env = {
-			...process.env,
-			DEPLOY_ENV: deployEnv,
-			CONFIG_FILE: configFile,
-			WEB_URL_FILE: webUrlFile,
-			DATA_DIR: join(dir, 'default-data'),
-			LEGACY_ENV: legacyEnv,
-			BEHIND_GATEWAY: '',
+			deployEnv: '',
+			legacy: originalLegacy,
 		};
 
-		try {
-			const interrupted = configAdapterScript().replace(
-				`echo "\${GENERATED_CONFIG_COMPLETE_MARKER}" >>"\${CONFIG_CANDIDATE}"`,
-				'false',
-			);
-			expect(interrupted).not.toBe(configAdapterScript());
-			expect(() =>
-				execFileSync('bash', ['-c', `set -euo pipefail\n${interrupted}`], {
-					env,
-					stdio: 'pipe',
-				}),
-			).toThrow();
-			expect(readFileSync(legacyEnv, 'utf8')).toBe(originalLegacy);
-			expect(existsSync(`${legacyEnv}.migrated`)).toBe(false);
+		// A run that dies before the completion marker publishes nothing and retires
+		// nothing, so the legacy file is still the only copy of these settings.
+		withProvision(
+			{
+				...seed,
+				mutate: (s) =>
+					s.replace(
+						`echo "\${GENERATED_CONFIG_COMPLETE_MARKER}" >>"\${CONFIG_CANDIDATE}"`,
+						'false',
+					),
+			},
+			(r) => {
+				expect(r.status).not.toBe(0);
+				expect(r.legacyText).toBe(originalLegacy);
+				expect(r.legacyMigrated).toBe(false);
+			},
+		);
 
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env,
-				stdio: 'pipe',
-			});
-			const generated = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			) as {
-				dataDir?: string;
-				webUrl?: string;
-				database?: { url?: string; poolSize?: number };
-				assetStorage?: { url?: string };
-			};
-			expect(generated).toEqual({
+		withProvision(seed, (r) => {
+			expect(r.status).toBe(0);
+			expect(r.config).toMatchObject({
+				assetStorage: { url: assetStorageUrl },
+				database: { poolSize: 23, url: databaseUrl },
 				dataDir,
 				webUrl,
-				database: { url: databaseUrl, poolSize: 23 },
-				assetStorage: { url: assetStorageUrl },
 			});
-			expect(existsSync(legacyEnv)).toBe(false);
-			expect(readFileSync(`${legacyEnv}.migrated`, 'utf8')).toBe(originalLegacy);
-			expect(statSync(configFile).mode & 0o777).toBe(0o600);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
+			expect(r.legacyMigrated).toBe(true);
+		});
 	});
 
-	it('finishes legacy cleanup after config publication was interrupted before the rename', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-idempotent-legacy-cleanup-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const legacyEnv = join(dir, 'hezo.env');
-		const originalLegacy = 'HEZO_DATA_DIR=/srv/hezo-legacy';
-		writeFileSync(deployEnv, '');
-		writeFileSync(legacyEnv, originalLegacy);
-		writeFileSync(configFile, 'module.exports = {');
-		const env = {
-			...process.env,
-			DEPLOY_ENV: deployEnv,
-			CONFIG_FILE: configFile,
-			WEB_URL_FILE: join(dir, 'web-url'),
-			DATA_DIR: join(dir, 'default-data'),
-			LEGACY_ENV: legacyEnv,
-			BEHIND_GATEWAY: '',
-		};
-
-		try {
-			const interruptedCleanup = configAdapterScript().replace(
-				`mv "\${LEGACY_ENV}" "\${LEGACY_ENV}.migrated"`,
-				'false',
-			);
-			expect(interruptedCleanup).not.toBe(configAdapterScript());
-			expect(() =>
-				execFileSync('bash', ['-c', `set -euo pipefail\n${interruptedCleanup}`], {
-					env,
-					stdio: 'pipe',
-				}),
-			).toThrow();
-			expect(existsSync(configFile)).toBe(true);
-			expect(readFileSync(legacyEnv, 'utf8')).toBe(originalLegacy);
-
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env,
-				stdio: 'pipe',
-			});
-			expect(existsSync(legacyEnv)).toBe(false);
-			expect(readFileSync(`${legacyEnv}.migrated`, 'utf8')).toBe(originalLegacy);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it('finishes legacy cleanup for the complete config written by the pre-marker provisioner', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-pre-marker-legacy-cleanup-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const legacyEnv = join(dir, 'hezo.env');
-		const originalLegacy = [
-			`HEZO_DATA_DIR=${join(dir, 'legacy-data')}`,
-			'HEZO_DATABASE_URL=postgres://hezo:legacy@db-host:5432/hezo?sslmode=require',
-			'HEZO_DATABASE_POOL_SIZE=23',
-			'HEZO_ASSET_STORAGE_URL=s3://legacy:secret@storage-host/bucket',
-		].join('\n');
-		const originalConfig = completeLegacyGeneratedConfig(
-			join(dir, 'web-url'),
-			join(dir, 'legacy-data'),
+	it.each([
+		[
+			'a completion marker it kept',
+			'/srv/hezo-operator',
+			[
+				'// Hezo configuration. Edit and restart: systemctl restart hezo',
+				"const config = { dataDir: '/srv/hezo-operator' };",
+				'module.exports = config;',
+				'// hezo-provision: complete',
+				'',
+			].join('\n'),
+		],
+		[
+			'the generated header and no marker',
+			'/srv/hezo-markerless',
+			[
+				'// Hezo configuration. Edit and restart: systemctl restart hezo',
+				"const config = { dataDir: '/srv/hezo-markerless' };",
+				'module.exports = config;',
+				'',
+			].join('\n'),
+		],
+		[
+			'the generated header and the generated export shape',
+			'/srv/hezo-shaped',
+			[
+				'// Hezo configuration. Edit and restart: systemctl restart hezo',
+				'module.exports = {',
+				"\tdataDir: '/srv/hezo-shaped',",
+				'};',
+				'',
+			].join('\n'),
+		],
+		[
+			'a generated-start marker and no completion marker',
+			'/srv/hezo-start-marker',
+			[
+				'// hezo-provision: generated',
+				'// Hezo configuration. Edit and restart: systemctl restart hezo',
+				"const config = { dataDir: '/srv/hezo-start-marker' };",
+				'module.exports = config;',
+				'',
+			].join('\n'),
+		],
+	])('preserves a valid operator config byte-for-byte, and its credential sources, given %s', (_name, dataDir, operatorConfig) => {
+		withProvision(
+			{
+				config: operatorConfig,
+				// The sole remaining copy of this credential, with no trailing newline.
+				deployEnv: 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo',
+				legacy: 'HEZO_DATA_DIR=/srv/hezo-legacy',
+			},
+			(r) => {
+				expect(r.status).toBe(0);
+				expect(r.config?.dataDir).toBe(dataDir);
+				expectNothingTouched(r);
+			},
 		);
-		writeFileSync(deployEnv, '');
-		writeFileSync(legacyEnv, originalLegacy);
-		writeFileSync(configFile, originalConfig);
+	});
 
-		try {
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: deployEnv,
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'default-data'),
-					LEGACY_ENV: legacyEnv,
-					LEGACY_ENV_CARRIED: '',
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			expect(readFileSync(configFile, 'utf8')).toBe(originalConfig);
-			expect(existsSync(legacyEnv)).toBe(false);
-			expect(readFileSync(`${legacyEnv}.migrated`, 'utf8')).toBe(originalLegacy);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
+	it.each([
+		[
+			'CommonJS that cannot load',
+			[
+				'// Hezo configuration. Edit and restart: systemctl restart hezo',
+				'module.exports = {',
+				"\tdatabase: { url: 'postgres://hezo:pa'ss@db-host/hezo' },",
+				'};',
+			].join('\n'),
+		],
+		[
+			'a syntactically valid but schema-invalid config',
+			[
+				'// Hezo configuration. Edit and restart: systemctl restart hezo',
+				'module.exports = {',
+				"\tdataDir: '/srv/hezo-operator',",
+				'\tdatabase: { poolSize: 0 },',
+				'};',
+				'',
+			].join('\n'),
+		],
+	])('stops loudly on %s, changing nothing', (_name, badConfig) => {
+		withProvision(
+			{
+				config: badConfig,
+				deployEnv: 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo',
+				legacy: 'HEZO_DATA_DIR=/srv/hezo-legacy',
+			},
+			(r) => {
+				expect(r.status).not.toBe(0);
+				expect(r.stderr).toContain('does not load');
+				expect(r.stderr).toContain('hezo config validate --config');
+				expectNothingTouched(r);
+			},
+		);
 	});
 
 	it.each([
@@ -1118,138 +888,18 @@ describe('the one-click managed-backend configuration contract', () => {
 					'\tassetStorage: { url: $1 }, telemetry: { endpoint: "https://operator.example" },',
 				),
 		],
-	])('does not treat operator content on the generated %s as pre-marker provenance', (_name, mutate) => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-pre-marker-negative-'));
-		const configFile = join(dir, 'hezo.config.cjs');
-		const legacyEnv = join(dir, 'hezo.env');
-		const operatorConfig = mutate(
-			completeLegacyGeneratedConfig(join(dir, 'web-url'), join(dir, 'data')),
+	])('does not treat operator content on the generated %s as pre-marker provenance', (_name, edit) => {
+		withProvision(
+			{
+				config: (p) => edit(completeLegacyGeneratedConfig(p.webUrlFile, p.dataDir)),
+				legacy: 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo',
+			},
+			(r) => {
+				expect(r.before.config).not.toBe(completeLegacyGeneratedConfig(r.webUrlFile, r.dataDir));
+				expect(r.status).toBe(0);
+				expectNothingTouched(r);
+			},
 		);
-		writeFileSync(configFile, operatorConfig);
-		writeFileSync(legacyEnv, 'HEZO_DATABASE_URL=postgres://hezo:sole-copy@db-host/hezo');
-		const configHash = sha256(configFile);
-		const sourceHash = sha256(legacyEnv);
-
-		try {
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: join(dir, 'deploy.env'),
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: legacyEnv,
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			expect(sha256(configFile)).toBe(configHash);
-			expect(sha256(legacyEnv)).toBe(sourceHash);
-			expect(existsSync(`${legacyEnv}.migrated`)).toBe(false);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it('parses the final managed setting without a trailing newline', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-no-final-newline-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const assetStorageUrl = 's3://access:last-record@storage-host/bucket';
-		writeFileSync(deployEnv, `HEZO_ASSET_STORAGE_URL=${assetStorageUrl}`);
-
-		try {
-			execFileSync('bash', ['-c', `set -euo pipefail\n${configAdapterScript()}`], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: deployEnv,
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: join(dir, 'web-url'),
-					DATA_DIR: join(dir, 'data'),
-					LEGACY_ENV: join(dir, 'hezo.env'),
-					LEGACY_ENV_CARRIED: '',
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-			const generated = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			) as { assetStorage?: { url?: string } };
-			expect(generated.assetStorage?.url).toBe(assetStorageUrl);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-
-	it('serializes persisted paths and managed-backend values as literal data', () => {
-		const dir = mkdtempSync(join(tmpdir(), 'hezo-deploy-literal-data-'));
-		const deployEnv = join(dir, 'deploy.env');
-		const configFile = join(dir, 'hezo.config.cjs');
-		const webUrlFile = join(dir, 'web-url');
-		const legacyEnv = join(dir, 'hezo.env');
-		const executed = join(dir, 'literal-executed');
-		const commandLiteral = `$(touch ${executed})`;
-		const dataDir = join(dir, `data-'\\-\t-${commandLiteral}`);
-		const databaseUrl = `postgres://hezo:pa'ss\\word\t${commandLiteral}@db-host:5432/hezo?note=\u0001`;
-		const assetStorageUrl = `s3://access:se'cret\\word\t${commandLiteral}@storage-host/bucket?note=\u0002`;
-		writeFileSync(
-			deployEnv,
-			[
-				`HEZO_DATABASE_URL=${databaseUrl}`,
-				'HEZO_DATABASE_POOL_SIZE=17',
-				`HEZO_ASSET_STORAGE_URL=${assetStorageUrl}`,
-				'',
-			].join('\n'),
-		);
-
-		try {
-			execFileSync('bash', ['-c', ['set -euo pipefail', configAdapterScript()].join('\n')], {
-				env: {
-					...process.env,
-					DEPLOY_ENV: deployEnv,
-					CONFIG_FILE: configFile,
-					WEB_URL_FILE: webUrlFile,
-					DATA_DIR: dataDir,
-					LEGACY_ENV: legacyEnv,
-					LEGACY_ENV_CARRIED: '',
-					BEHIND_GATEWAY: '',
-				},
-				stdio: 'pipe',
-			});
-
-			const generated = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			) as {
-				dataDir?: string;
-				database?: { url?: string; poolSize?: number };
-				assetStorage?: { url?: string };
-			};
-			expect(generated.dataDir).toBe(dataDir);
-			expect(generated.database).toEqual({ url: databaseUrl, poolSize: 17 });
-			expect(generated.assetStorage).toEqual({ url: assetStorageUrl });
-			const restarted = JSON.parse(
-				execFileSync(
-					process.execPath,
-					['-e', `process.stdout.write(JSON.stringify(require(${JSON.stringify(configFile)})))`],
-					{ encoding: 'utf8' },
-				),
-			);
-			expect(restarted).toEqual(generated);
-			expect(readFileSync(deployEnv, 'utf8')).toBe('');
-			expect(() => readFileSync(executed)).toThrow();
-			expect(PROVISION).not.toMatch(/(?:^|\n)\s*(?:[.]|source)\s+\/etc\/hezo\/deploy\.env/m);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
 	});
 
 	it('keeps hosted instances on the normal user-confirmed update flow', () => {
