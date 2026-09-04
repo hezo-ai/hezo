@@ -80,8 +80,13 @@ function configAdapterScript(): string {
 			between('# Cloud-init can seed optional settings', '# Resolved once so every branch below'),
 			// Section 1a: the provenance helpers.
 			between("# Hezo's real CommonJS loader", `${RULE}\n# 1. Swap file`),
-			// Section 4: classify, carry the legacy file, generate, install, clean up.
-			`${between('CONFIG_PROVEN_GENERATED=""', `${RULE}\n# 5. Caddy`)}\ntrue`,
+			// Section 4, as far as the data directory: classify, then carry the legacy file.
+			between('CONFIG_PROVEN_GENERATED=""', '# The data directory the config above will name'),
+			// `install -d "${DATA_DIR}"` sits between these two slices and is deliberately
+			// skipped: tests name absolute paths to pin down how a value is serialized, and
+			// a harness must not create directories on the machine running it.
+			// The rest of section 4: generate, install, retire the legacy sources.
+			`${between('CONFIG_CANDIDATE=""', `${RULE}\n# 5. Caddy`)}\ntrue`,
 		]
 			.join('\n')
 			// The one path the harness redirects, so a test can point at its own temp dir.
