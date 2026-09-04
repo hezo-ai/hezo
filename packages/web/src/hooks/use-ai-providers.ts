@@ -1,4 +1,4 @@
-import type { AgentRuntime, AiProviderModel } from '@hezo/shared';
+import type { AgentRuntime, AiProviderModel, SubscriptionLoginFailure } from '@hezo/shared';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { queryClient } from '../lib/query-client';
@@ -207,7 +207,7 @@ export type SubscriptionLoginState =
 			expires_at: string;
 	  }
 	| { status: 'succeeded'; config_id: string }
-	| { status: 'failed'; error: string; code: string };
+	| { status: 'failed'; error: string; code: SubscriptionLoginFailure };
 
 export async function startSubscriptionLogin(input: {
 	provider: string;

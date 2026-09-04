@@ -2309,6 +2309,31 @@ export const RUNTIMES_WITH_GUIDED_SIGN_IN: readonly AgentRuntime[] = [
 ];
 
 /**
+ * Why a guided sign-in ended without a credential.
+ *
+ * Lives here because the web turns each one into a translated sentence: the
+ * server's own message is English and, for most of these, a fixed sentence that
+ * belongs in the catalogs like any other. A new member is a compile error in
+ * that table rather than an operator reading English in a German UI.
+ *
+ * `poll_failed` and `submit_failed` are raised by the browser, not the server -
+ * the sign-in failed either way, and the operator reads them from the same
+ * place. `internal` is the one whose message is a diagnostic rather than a
+ * sentence, so it is shown alongside a fixed lead rather than replaced by one.
+ */
+export type SubscriptionLoginFailure =
+	| 'unsupported'
+	| 'probe_failed'
+	| 'challenge_timeout'
+	| 'completion_timeout'
+	| 'code_rejected'
+	| 'exited_without_credential'
+	| 'cancelled'
+	| 'internal'
+	| 'poll_failed'
+	| 'submit_failed';
+
+/**
  * Whether a provider's sign-in can be driven, for the runtime this credential
  * would actually run on.
  *

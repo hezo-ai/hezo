@@ -3774,9 +3774,14 @@ registers a flow in `subscriptionLoginService`. The host polls the merged log th
 redirects stderr to a file drained only on close, so a challenge printed there would strand
 the flow. `GET …/:flowId` returns the challenge (URL, and a one-time code where the flow has
 one), `POST …/:flowId/code` writes the operator's code to the CLI's stdin FIFO terminated by a
-**carriage return** — the paste prompt is a raw-mode TUI, where nothing translates LF into
-CR and an LF arrives as an ordinary character that leaves the code sitting in the prompt
-unsubmitted — and `DELETE …/:flowId` cancels. Which runtimes can be driven is `RUNTIMES_WITH_GUIDED_SIGN_IN`
+**carriage return** and framed as a **bracketed paste** where the log shows the prompt has
+enabled that mode (`bracketedPasteEnabled`) — the paste prompt is a raw-mode TUI, where
+nothing translates LF into CR, and one that groups a burst of input into pasted text takes an
+unframed CR as part of the paste rather than as the return key; either way the code sits in
+the prompt unsubmitted, which is what a real callback code (long enough to read as a paste)
+hit. A delivered code that has not become a credential within `CODE_ACCEPT_TIMEOUT_MS` fails
+the flow as `code_rejected`, since a CLI that refuses one keeps running with its error on a
+screen nobody is watching. `DELETE …/:flowId` cancels. Which runtimes can be driven is `RUNTIMES_WITH_GUIDED_SIGN_IN`
 (`@hezo/shared`, read by the web to decide whether to offer the button) paired with
 `SUBSCRIPTION_LOGIN_DRIVERS` (the server's argv, output parsers and harvest shape); a test
 asserts the two agree. Codex uses its device flow and needs nothing back; Claude Code needs
@@ -4780,6 +4785,15 @@ and the rail adapts to what that state carries - no `userCode` drops the copy st
 the operator clicks, never an automatic `window.open`: a tab fired before the code is on
 screen arrives asking for something the operator has not seen, and is pop-up blocked often
 enough that the code was all they had left.
+
+**A guided sign-in's failures are translated, not relayed.** `SubscriptionLoginFailure`
+(`@hezo/shared`) is the closed set of ways one can end without a credential, server-raised
+and browser-raised alike, and `SubscriptionLoginPanel` maps it onto catalog keys with a total
+`Record` — a new code is a compile error there rather than English inside a translated
+dialog. `internal` is the exception: its server message is a diagnostic rather than a
+sentence, so the key is a lead and the message is kept as the banner's `detail`. A code this
+build has no row for keeps the server's message, which is what an older web against a newer
+server would otherwise render empty.
 
 ### Connector storage & OAuth flows
 
