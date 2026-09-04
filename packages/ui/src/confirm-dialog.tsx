@@ -2,6 +2,7 @@ import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { Loader2, X } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { buttonClassName } from './button.js';
+import { hitAreaClassName } from './density.js';
 import { dialogContentClassName, dialogOverlayClassName } from './dialog.js';
 import { kbdSizeClass, ShortcutKbd } from './shortcut-kbd.js';
 import { ariaKeyshortcuts, isMacPlatform } from './shortcuts.js';
@@ -117,7 +118,7 @@ export function ConfirmDialog({
 						<button
 							type="button"
 							disabled={loading}
-							className="absolute right-3 top-3 z-10 -m-1 p-2 text-text-2 hover:text-text-1 disabled:opacity-50 disabled:pointer-events-none sm:right-4 sm:top-4"
+							className={`absolute right-3 top-3 z-10 -m-1 p-2 text-text-2 hover:text-text-1 disabled:opacity-50 disabled:pointer-events-none sm:right-4 sm:top-4 ${hitAreaClassName}`}
 							aria-label={closeLabel}
 							data-testid="confirm-dialog-close"
 						>

@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import type { FormEvent, ReactNode } from 'react';
+import { hitAreaClassName } from './density.js';
 import { type HeadingLevel, headingTag } from './heading.js';
 
 export interface InPlaceFormProps {
@@ -54,7 +55,7 @@ export function InPlaceForm({
 					onClick={onClose}
 					aria-label={closeLabel}
 					data-testid="in-place-form-close"
-					className="-m-1 p-1 text-text-3 hover:text-text-1 transition-colors"
+					className={`relative -m-1 p-1 text-text-3 hover:text-text-1 transition-colors ${hitAreaClassName}`}
 				>
 					<X className="w-4 h-4" aria-hidden />
 				</button>

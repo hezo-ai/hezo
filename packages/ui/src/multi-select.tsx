@@ -1,5 +1,6 @@
 import * as Popover from '@radix-ui/react-popover';
 import { Check, ChevronDown } from 'lucide-react';
+import { touchMinHeightClassName } from './density.js';
 
 export interface MultiSelectOption {
 	value: string;
@@ -64,7 +65,7 @@ export function MultiSelect({
 				<button
 					type="button"
 					data-testid={testId}
-					className={`flex items-center justify-between gap-2 min-w-[140px] rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-1 outline-none hover:border-border-strong cursor-pointer ${className}`}
+					className={`flex items-center justify-between gap-2 min-w-[140px] rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-1 outline-none hover:border-border-strong cursor-pointer ${touchMinHeightClassName} ${className}`}
 				>
 					<span className="flex items-center gap-1.5 min-w-0">
 						<span className="text-text-3">{label}:</span>
@@ -97,7 +98,7 @@ export function MultiSelect({
 										role="menuitemcheckbox"
 										aria-checked={checked}
 										onClick={() => toggle(opt.value)}
-										className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors cursor-pointer text-left ${
+										className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors cursor-pointer text-left ${touchMinHeightClassName} ${
 											checked
 												? 'text-text-1 bg-surface-2'
 												: 'text-text-2 hover:text-text-1 hover:bg-surface-3'
@@ -117,7 +118,7 @@ export function MultiSelect({
 							<button
 								type="button"
 								onClick={() => onChange([])}
-								className="w-full text-[11px] text-text-3 hover:text-text-1 py-1 cursor-pointer"
+								className={`w-full text-[11px] text-text-3 hover:text-text-1 py-1 cursor-pointer ${touchMinHeightClassName}`}
 							>
 								{clearLabel}
 							</button>

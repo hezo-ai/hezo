@@ -24,6 +24,18 @@
  * stylesheet, and the component renders unstyled with nothing in the markup to
  * say so.
  *
+ * **Density is the consumer's choice, made once.** Every control is drawn at
+ * this app's desktop density; a consumer that wants 44px touch targets sets
+ * `data-density="touch"` on `<html>` - that element, so the dialogs and menus
+ * Radix portals under `<body>` are covered - and every stacked control takes a
+ * 44px floor through the `in-data-[density=touch]:` variant, the buttons the
+ * package renders on the consumer's behalf included. An isolated control (a
+ * close button, a menu trigger, a switch) is 44px in every density through a
+ * pseudo-element that leaves the visual as drawn. `hitAreaClassName` and the
+ * `touch*ClassName` constants are exported so a consumer's own controls can
+ * take the same treatment; `density.ts` says which one a control gets and why.
+ * There is no `pointer-coarse` branch and no context.
+ *
  * What a consumer's stylesheet must define is the `@theme` colour surface these
  * classes name — `bg`, `surface`, `border`, `text-1`/`2`/`3`, `accent*`,
  * `danger*`, `success*`, `warning*`, `info*`, `live*`, `neutral-soft*`,
@@ -56,7 +68,7 @@ export {
 	type ButtonVariant,
 	buttonClassName,
 } from './button.js';
-export { Card, type CardProps } from './card.js';
+export { Card, type CardElement, type CardProps } from './card.js';
 export { copyToClipboard } from './clipboard.js';
 export { Code, type CodeProps } from './code.js';
 export { ConfirmDialog, type ConfirmDialogProps } from './confirm-dialog.js';
@@ -67,6 +79,13 @@ export {
 	type DataTableProps,
 	type DataTableSort,
 } from './data-table.js';
+export {
+	DENSITY_ATTRIBUTE,
+	hitAreaClassName,
+	TOUCH_DENSITY,
+	touchCellHeightClassName,
+	touchMinHeightClassName,
+} from './density.js';
 export {
 	CONTENT_Z,
 	DialogContent,
@@ -83,7 +102,7 @@ export { type HeadingLevel, headingTag } from './heading.js';
 export { HelpDialog, type HelpDialogProps } from './help-dialog.js';
 export { InPlaceForm, type InPlaceFormProps } from './in-place-form.js';
 export { InfoTooltip, type InfoTooltipProps } from './info-tooltip.js';
-export { Input, type InputProps } from './input.js';
+export { Input, type InputProps, type InputSize, inputSizeClassName } from './input.js';
 export { Kbd, type KbdProps } from './kbd.js';
 export { Logo, type LogoProps, type LogoSize } from './logo.js';
 export {

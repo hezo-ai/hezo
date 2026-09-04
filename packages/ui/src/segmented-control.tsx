@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { touchMinHeightClassName } from './density.js';
 import { segmentedLabelsFit } from './segmented-fit.js';
 
 export interface SegmentedOption<T extends string> {
@@ -126,7 +127,7 @@ export function SegmentedControl<T extends string>({
 						aria-label={iconsOnly ? optionLabel : undefined}
 						title={iconsOnly ? optionLabel : undefined}
 						onClick={() => onChange(optionValue)}
-						className={`flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 border-r border-border px-2 py-1.5 text-[11.5px] whitespace-nowrap transition-colors last:border-r-0 ${
+						className={`flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 border-r border-border px-2 py-1.5 text-[11.5px] whitespace-nowrap transition-colors last:border-r-0 ${touchMinHeightClassName} ${
 							active
 								? 'bg-surface-3 text-text-1 font-semibold'
 								: 'bg-surface text-text-2 hover:bg-surface-2 hover:text-text-1'

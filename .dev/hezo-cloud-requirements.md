@@ -630,6 +630,12 @@ The cloud side adopts this by bumping its vendored submodule to a release
 containing it; until then it keeps its own small kit, which already looks right
 because the two `@theme` surfaces agree token for token.
 
+**Density is set once, not per control.** The dashboard sizes every control at
+44px and had kept its own kit for that alone; it now sets `data-density="touch"`
+on `<html>` and every stacked primitive - the buttons `ConfirmDialog` renders on
+its behalf included - takes the 44px floor, while the isolated controls carry a
+44px target in every density. `density.ts` in the package is the contract.
+
 ---
 
 ## Already satisfied upstream — do not build these

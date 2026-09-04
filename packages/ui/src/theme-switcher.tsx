@@ -1,5 +1,6 @@
 import * as Popover from '@radix-ui/react-popover';
 import { Check, Monitor, Moon, Sun } from 'lucide-react';
+import { hitAreaClassName, touchMinHeightClassName } from './density.js';
 import { type ThemePreference, useTheme } from './theme.js';
 
 /**
@@ -41,7 +42,7 @@ export function ThemeSwitcher({
 			<Popover.Trigger asChild>
 				<button
 					type="button"
-					className="inline-flex items-center justify-center w-8 h-8 rounded-md text-text-2 hover:text-text-1 hover:bg-surface-3 transition-colors cursor-pointer"
+					className={`relative inline-flex items-center justify-center w-8 h-8 rounded-md text-text-2 hover:text-text-1 hover:bg-surface-3 transition-colors cursor-pointer ${hitAreaClassName}`}
 					aria-label={label}
 				>
 					<CurrentIcon className="w-4 h-4" aria-hidden />
@@ -66,7 +67,7 @@ export function ThemeSwitcher({
 									role="menuitemradio"
 									aria-checked={preference === value}
 									onClick={() => setPreference(value)}
-									className={`flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-[13px] transition-colors cursor-pointer ${
+									className={`flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-[13px] transition-colors cursor-pointer ${touchMinHeightClassName} ${
 										preference === value
 											? 'bg-surface-3 text-text-1 font-medium'
 											: 'text-text-2 hover:text-text-1 hover:bg-surface-3'

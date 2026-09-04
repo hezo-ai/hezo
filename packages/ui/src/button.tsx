@@ -1,4 +1,5 @@
 import { type ButtonHTMLAttributes, type Ref, useRef } from 'react';
+import { touchMinHeightClassName } from './density.js';
 import { kbdSizeClass, ShortcutKbd } from './shortcut-kbd.js';
 import { ariaKeyshortcuts, isMacPlatform } from './shortcuts.js';
 import { useShortcut } from './use-shortcut.js';
@@ -18,10 +19,13 @@ const variants = {
 	link: 'bg-transparent text-accent border-none hover:underline',
 } as const;
 
+// Each row carries the touch floor rather than `shape`, so the `link` variant -
+// which skips the rows - stays an inline text control that a 44px box would
+// break the line around.
 const sizes = {
-	sm: 'h-[26px] px-2.5 text-[12.5px] rounded-sm gap-1.5',
-	md: 'h-[30px] px-3 text-[13px] rounded-md gap-1.5',
-	lg: 'h-[38px] px-4 text-sm rounded-md gap-2',
+	sm: `h-[26px] px-2.5 text-[12.5px] rounded-sm gap-1.5 ${touchMinHeightClassName}`,
+	md: `h-[30px] px-3 text-[13px] rounded-md gap-1.5 ${touchMinHeightClassName}`,
+	lg: `h-[38px] px-4 text-sm rounded-md gap-2 ${touchMinHeightClassName}`,
 } as const;
 
 const shape =

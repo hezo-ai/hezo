@@ -8,6 +8,7 @@ import {
 	Input,
 	Kbd,
 	segmentedLabelsFit,
+	Textarea,
 	Toggle,
 } from '@hezo/ui';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -55,6 +56,22 @@ test('a field is tied to its label by a generated id, not by the label text', ()
 	// labels pointed at the first field and clicking either focused it.
 	expect(fields[0].id).not.toBe(fields[1].id);
 	expect(fields[0].id).toBeTruthy();
+});
+
+// `size` is the height preset, never the native character count - a preset
+// that reached the element as `size="lg"` would be an invalid attribute.
+test("a field's size is a preset, never the native character count", async () => {
+	const user = userEvent.setup();
+	render(
+		<>
+			<Input label="Name" size="lg" />
+			<Textarea label="Notes" size="sm" />
+		</>,
+	);
+	expect(screen.getByLabelText('Name').getAttribute('size')).toBeNull();
+
+	await user.type(screen.getByLabelText('Notes'), 'hello');
+	expect((screen.getByLabelText('Notes') as HTMLTextAreaElement).value).toBe('hello');
 });
 
 test('a field keeps an id it is given', () => {

@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
+import { hitAreaClassName } from './density.js';
 
 /**
  * Where a dialog sits, and what it has to clear.
@@ -141,7 +142,7 @@ export function DialogContent({
 							<Dialog.Close asChild>
 								<button
 									type="button"
-									className="-m-1 p-2 text-text-2 hover:text-text-1"
+									className={`relative -m-1 p-2 text-text-2 hover:text-text-1 ${hitAreaClassName}`}
 									aria-label={closeLabel}
 									data-testid="dialog-close"
 								>
