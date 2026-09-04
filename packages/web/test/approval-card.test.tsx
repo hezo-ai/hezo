@@ -263,3 +263,81 @@ test('the global inbox shows the team name on each card (showTeam)', async () =>
 	expect(planCard).toBeTruthy();
 	await waitFor(() => expect(planCard?.textContent).toContain(seededTeamName.name));
 });
+
+// The run pipeline files a Strategy row with an `agent_error` payload when it
+// has given up on an agent (retry budget spent, or the provider refusing for
+// hours). It is a notice, not a proposal: the card offers the task and a
+// Dismiss, never Approve/Deny, and its history badge reads "Dismissed".
+test('an agent-error notice offers the task and Dismiss instead of Approve/Deny', async () => {
+	const seeded: { identifier: string } = { identifier: '' };
+	const { findAllByTestId, findByTestId, findByText, queryByRole, user } = await renderTeamInbox(
+		async ({ ws, project }) => {
+			const task = await seedTask(ws, project, { title: 'Refused task' });
+			seeded.identifier = task.identifier;
+			await insertApproval(ws, {
+				type: 'strategy',
+				requestedByMemberId: ws.agents[0].id,
+				payload: {
+					type: 'agent_error',
+					member_id: ws.agents[0].id,
+					run_id: null,
+					task_id: task.id,
+					last_error: null,
+					message: 'The model provider has been refusing this agent runs for over 120 minutes.',
+				},
+			});
+		},
+	);
+
+	await findByText(/refusing this agent runs/, undefined, { timeout: 15_000 });
+	const cards = await findAllByTestId('approval-card');
+	const card = cards.find((c) =>
+		/refusing this agent runs/.test(c.textContent ?? ''),
+	) as HTMLElement;
+	expect(card).toBeTruthy();
+
+	expect(within(card).queryByRole('button', { name: 'Approve' })).toBeNull();
+	expect(within(card).queryByRole('button', { name: 'Deny' })).toBeNull();
+
+	const openTask = await findByTestId('approval-open-task');
+	expect(openTask.textContent).toContain(`Open task ${seeded.identifier}`);
+	expect(openTask.closest('a')?.getAttribute('href')).toMatch(
+		new RegExp(`/tasks/${seeded.identifier.toLowerCase()}$`),
+	);
+
+	await user.click(await findByTestId('approval-dismiss'));
+
+	// Dismissing clears it from Unread, and history shows it as dismissed with no actions.
+	await waitFor(() => expect(queryByRole('button', { name: 'Dismiss' })).toBeNull());
+	await user.click(await findByText('All'));
+	await findByText(/refusing this agent runs/, undefined, { timeout: 15_000 });
+	await findByText('Dismissed');
+	expect(queryByRole('button', { name: 'Approve' })).toBeNull();
+	expect(queryByRole('button', { name: 'Dismiss' })).toBeNull();
+});
+
+test('an agent-error notice for a task-less run has Dismiss and no task link', async () => {
+	const { findByTestId, findByText, queryByTestId, queryByRole } = await renderTeamInbox(
+		async ({ ws }) => {
+			await insertApproval(ws, {
+				type: 'strategy',
+				requestedByMemberId: ws.agents[0].id,
+				payload: {
+					type: 'agent_error',
+					member_id: ws.agents[0].id,
+					run_id: null,
+					task_id: null,
+					last_error: 'exit 137',
+					message: 'Agent has failed 3 consecutive times. Manual intervention required.',
+				},
+			});
+		},
+	);
+
+	await findByText(/failed 3 consecutive times/, undefined, { timeout: 15_000 });
+	await findByText('exit 137');
+	await findByTestId('approval-dismiss');
+	expect(queryByTestId('approval-open-task')).toBeNull();
+	expect(queryByRole('button', { name: 'Approve' })).toBeNull();
+	expect(queryByRole('button', { name: 'Deny' })).toBeNull();
+});

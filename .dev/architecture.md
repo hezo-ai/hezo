@@ -2685,7 +2685,10 @@ so the bound is on how long the work has been owed instead, measured from the wa
 Errored view and the failure ping both fire, and `fileProviderRefusalApproval` files the same
 shape of Inbox record the two lost-run give-up paths use, sharing their one-per-stuck-agent
 dedupe and differing only in the message - "failed 3 consecutive times" would send the reader
-after the agent when the fault is upstream. A synthetic on-demand wakeup is created at
+after the agent when the fault is upstream. The web renders every such `agent_error` record
+as a notice, not a proposal: a link to the task and a Dismiss that closes the row through the
+ordinary resolve route, never Approve/Deny, since neither had any side effect for this payload
+and both read as a decision the reader was not being asked to make. A synthetic on-demand wakeup is created at
 dispatch, so the ceiling never bites a manual run: that hands back once and lets the operator
 see it queued.
 
