@@ -100,6 +100,13 @@ agents/       # Agent system-prompt markdown — the source of truth for seeded 
   because the cross-tooltip delay grouping lives on it and one provider per tooltip is
   no grouping at all; and `Logo` takes its `src`, `alt` and wordmark, since the package
   ships no image and a baked-in path resolves against whichever app is serving.
+  **Density is the consumer's choice, made once.** A consumer wanting 44px touch targets
+  sets `data-density="touch"` on `<html>` (there, so portalled dialogs and menus are
+  covered); every stacked control - the buttons `ConfirmDialog` renders for it included -
+  takes a 44px floor through the `in-data-[density=touch]:` variant, and an isolated
+  control (a close button, a menu trigger, a switch) is 44px in every density through the
+  pseudo-element `density.ts` exports. `web` does not opt in. There is no `pointer-coarse`
+  branch: one attribute, one variant.
   **A component stays in `web` when it names a Hezo concept** — an actor, a budget, an
   archived asset — or when its copy is a paragraph rather than a word: a sentence with a
   node in it goes through the catalog whole, which a label prop cannot do. That is why

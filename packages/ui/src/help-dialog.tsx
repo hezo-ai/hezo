@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { HelpCircle } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
+import { hitAreaClassName } from './density.js';
 import { DialogContent, type DialogSize } from './dialog.js';
 import { Tooltip } from './tooltip.js';
 
@@ -61,7 +62,7 @@ export function HelpDialog({
 				type="button"
 				aria-label={triggerLabel}
 				data-testid={testId}
-				className={`shrink-0 text-text-3 hover:text-text-1 transition-colors ${className ?? ''}`}
+				className={`relative shrink-0 text-text-3 hover:text-text-1 transition-colors ${hitAreaClassName} ${className ?? ''}`}
 			>
 				{variant === 'glyph' ? (
 					<span className="text-[15px] font-semibold leading-none" aria-hidden>

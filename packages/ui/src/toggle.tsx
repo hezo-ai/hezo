@@ -1,3 +1,5 @@
+import { hitAreaClassName } from './density.js';
+
 export interface ToggleProps {
 	checked: boolean;
 	onChange: (checked: boolean) => void;
@@ -38,7 +40,7 @@ export function Toggle({
 			onClick={() => onChange(!checked)}
 			// The track stays 32x18; the pseudo-element gives the finger a target the
 			// size of a fingertip without changing what anything looks like.
-			className={`relative inline-flex w-8 h-[18px] rounded-full transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] ${
+			className={`relative inline-flex w-8 h-[18px] rounded-full transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${hitAreaClassName} ${
 				checked ? 'bg-accent' : 'bg-border-strong'
 			} ${className}`}
 		>

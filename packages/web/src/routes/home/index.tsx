@@ -294,7 +294,7 @@ function ActiveProjectCard({
 }) {
 	return (
 		<Link to="/projects/$projectId" params={{ projectId: project.slug }}>
-			<Card className="cursor-pointer h-full" data-testid="home-active-card">
+			<Card interactive className="cursor-pointer h-full" data-testid="home-active-card">
 				<div className="flex items-start gap-3">
 					<Avatar initials={getInitials(project.name)} imageUrl={project.icon_url} />
 					<div className="flex flex-col gap-1 min-w-0 flex-1">

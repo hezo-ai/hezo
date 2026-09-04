@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { touchMinHeightClassName } from './density.js';
 
 export interface FilterPillsProps<T extends string> {
 	options: { value: T; label: string; count?: number; badge?: ReactNode }[];
@@ -50,7 +51,7 @@ export function FilterPills<T extends string>({
 						type="button"
 						aria-pressed={active}
 						onClick={() => onChange(opt.value)}
-						className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[5px] px-2.5 py-1 text-[12.5px] font-medium transition-colors ${
+						className={`inline-flex cursor-pointer items-center gap-1.5 rounded-[5px] px-2.5 py-1 text-[12.5px] font-medium transition-colors ${touchMinHeightClassName} ${
 							stretch ? 'flex-1 justify-center px-1' : ''
 						} ${active ? 'bg-inverse text-inverse-fg' : 'text-text-2 hover:text-text-1'}`}
 					>

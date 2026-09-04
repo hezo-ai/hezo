@@ -1,5 +1,6 @@
 import { ArrowDown } from 'lucide-react';
 import { Fragment, type ReactNode, useCallback } from 'react';
+import { touchCellHeightClassName, touchMinHeightClassName } from './density.js';
 
 export interface Column<T> {
 	key: string;
@@ -120,7 +121,7 @@ export function DataTable<T>({
 											onClick={() => sort.onSort(sortKey)}
 											aria-label={sort.label(col.header)}
 											data-testid={`data-table-sort-${sortKey}`}
-											className={`inline-flex w-full cursor-pointer items-center gap-1 px-2 py-2 transition-colors hover:bg-surface-2 hover:text-text-1 ${
+											className={`inline-flex w-full cursor-pointer items-center gap-1 px-2 py-2 transition-colors hover:bg-surface-2 hover:text-text-1 ${touchMinHeightClassName} ${
 												col.alignRight ? 'justify-end' : ''
 											} ${sorted ? 'font-semibold' : ''}`}
 										>
@@ -186,7 +187,9 @@ export function DataTable<T>({
 										return (
 											<td
 												key={col.key}
-												className={`px-2 py-2.5 ${cellBorder} text-[13px] align-middle ${
+												// The floor rides the cells: a `<tr>` cannot carry it, and a cell
+												// ignores `min-height`. Only a clickable row is a target.
+												className={`${onRowClick ? `${touchCellHeightClassName} ` : ''}px-2 py-2.5 ${cellBorder} text-[13px] align-middle ${
 													col.alignRight ? 'text-right ' : ''
 												}${col.hideOnMobile ? 'hidden md:table-cell ' : ''}${
 													indent ? `${indent} ` : ''

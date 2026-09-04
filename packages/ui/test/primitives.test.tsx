@@ -88,6 +88,26 @@ test('a card renders what it wraps', () => {
 	expect(screen.getByText('inside')).toBeTruthy();
 });
 
+// A card stacked as page structure wants to be a section, not a div.
+test('a card renders as the element it is asked to be', () => {
+	const { container, rerender } = render(
+		<Card as="section">
+			<p>inside</p>
+		</Card>,
+	);
+	expect(container.querySelector('section')).not.toBeNull();
+	expect(container.querySelector('div')).toBeNull();
+
+	rerender(
+		<ul>
+			<Card as="li">
+				<p>inside</p>
+			</Card>
+		</ul>,
+	);
+	expect(screen.getByRole('listitem')).toBeTruthy();
+});
+
 test('code renders its content', () => {
 	render(<Code>bun run test</Code>);
 	expect(screen.getByText('bun run test')).toBeTruthy();
@@ -118,6 +138,32 @@ test('a progress bar reports its position to assistive tech', () => {
 	// Out of range is clamped rather than reported as nonsense.
 	render(<Progress value={140} label="Overrun" />);
 	expect(screen.getByLabelText('Overrun').getAttribute('aria-valuenow')).toBe('100');
+});
+
+// A bar over discrete steps says "5 of 6", not "83 of 100": the ARIA range is
+// what is being counted, and only the drawn width is a percentage.
+test("a progress bar counts in the caller's units", () => {
+	const { rerender } = render(<Progress value={5} max={6} label="Steps" />);
+	const bar = () => screen.getByRole('progressbar');
+	const fill = () => bar().firstElementChild as HTMLElement;
+	expect(bar().getAttribute('aria-valuenow')).toBe('5');
+	expect(bar().getAttribute('aria-valuemin')).toBe('0');
+	expect(bar().getAttribute('aria-valuemax')).toBe('6');
+	expect(fill().style.width).toBe('83%');
+
+	rerender(<Progress value={9} max={6} label="Steps" />);
+	expect(bar().getAttribute('aria-valuenow')).toBe('6');
+	expect(fill().style.width).toBe('100%');
+
+	rerender(<Progress value={15} min={10} max={20} label="Steps" />);
+	expect(bar().getAttribute('aria-valuemin')).toBe('10');
+	expect(fill().style.width).toBe('50%');
+
+	// "Step 0 of 0" comes from live data, so an empty range draws an empty bar
+	// rather than throwing at the page.
+	rerender(<Progress value={2} min={2} max={2} label="Steps" />);
+	expect(bar().getAttribute('aria-valuenow')).toBe('2');
+	expect(fill().style.width).toBe('0%');
 });
 
 test('a section header renders its title', () => {

@@ -1,5 +1,6 @@
 import { Info } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
+import { hitAreaClassName } from './density.js';
 import { Tooltip } from './tooltip.js';
 
 export interface InfoTooltipProps {
@@ -35,7 +36,7 @@ export function InfoTooltip({
 				onClick={() => setOpen((v) => !v)}
 				// The glyph stays 14px; the padding and the matching negative margin
 				// give the finger something to hit without moving anything around it.
-				className={`shrink-0 -m-1.5 p-1.5 text-text-3 hover:text-text-1 transition-colors ${className ?? ''}`}
+				className={`relative shrink-0 -m-1.5 p-1.5 text-text-3 hover:text-text-1 transition-colors ${hitAreaClassName} ${className ?? ''}`}
 			>
 				<Info className="w-3.5 h-3.5" aria-hidden />
 			</button>
